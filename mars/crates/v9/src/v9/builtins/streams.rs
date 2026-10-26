@@ -159,7 +159,7 @@ fn take_list(vm: &mut Vm, id: ObjectId, name: &str) -> Vec<JsValue> {
         return Vec::new();
     };
     match vm.heap.get_mut(list).map(|object| &mut object.class) {
-        Some(Class::Array(elements)) => std::mem::take(elements),
+        Some(Class::Array(elements)) => std::mem::take(elements).into_iter().collect(),
         _ => Vec::new(),
     }
 }

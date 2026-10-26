@@ -3,12 +3,16 @@ API (`load_page` to run, `check` for parse-phase negatives) and writes per-direc
 Ignored by default; run it with
 
     TEST262=built-ins/Array cargo test --release --offline -p mars-v9 --test test262_runner -- --ignored --nocapture test262
-    MJSUNIT=es6 cargo test --release --offline -p mars-v9 --test test262_runner -- --ignored --nocapture mjsunit
+    MJSUNIT=es6 cargo test --release --offline -p mars-v9 --features conformance --test test262_runner -- --ignored --nocapture mjsunit
 
 `TEST262` / `MJSUNIT` are comma-separated path prefixes under `test/` (test262) or the mjsunit
 folder; unset means everything. `TEST262_ROOT` / `MJSUNIT_ROOT` override the checkouts,
-`CONF_OUT` the results folder, `CONF_JOBS` the thread count, `CONF_TIMEOUT_MS` the per-run timeout. */
+`CONF_OUT` the results folder, `CONF_JOBS` the thread count, `CONF_TIMEOUT_MS` the per-run timeout.
+Set `CONF_REQUIRE_PASS=1` to fail the command after saving results when any executed case fails.
+The opt-in `conformance` feature supplies d8.file fixture operations; the browser build omits it. */
 mod common;
+#[path = "support/mjsunit.rs"]
+mod mjsunit_host;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -96,6 +100,8 @@ struct Host {
     file: PathBuf,
     /** For `flags: [module]`: the harness, run as a classic script before the test module. */
     prelude: Option<String>,
+    /** V8's separately parsed harness, declared prerequisites and actual test. */
+    mjsunit: Option<mjsunit_host::Scripts>,
 }
 
 /** Frontmatter fields the runner reads. */
@@ -309,6 +315,7 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
             host: (module || source.contains("import")).then(|| Host {
                 file: file.clone(),
                 prelude,
+                mjsunit: None,
             }),
         });
     }
@@ -318,7 +325,6 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
 /** Build the mjsunit cases: mjsunit.js as the harness, sloppy mode, pass means no uncaught error. */
 fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
     let harness = std::fs::read_to_string(root.join("mjsunit.js")).expect("mjsunit.js");
-    let base = format!("{PRELUDE}{harness}\n");
     let filter = prefixes("MJSUNIT");
     let mut files = Vec::new();
     walk(root, &mut files);
@@ -358,10 +364,16 @@ fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> 
         cases.push(Case {
             group: group(&rel, 1),
             rel,
-            runs: vec![("sloppy", format!("{base}{source}"))],
+            runs: vec![("sloppy", source.clone())],
             negative: None,
             is_async: false,
-            host: None,
+            host: Some(Host {
+                file: file.clone(),
+                prelude: None,
+                mjsunit: Some(mjsunit_host::Scripts::for_test(
+                    root, &harness, &source, &file,
+                )),
+            }),
         });
     }
     cases
@@ -429,6 +441,9 @@ fn run_hosted(
     is_async: bool,
     host: &Host,
 ) -> Result<(), String> {
+    if let Some(scripts) = &host.mjsunit {
+        return scripts.execute();
+    }
     use mars_v9::{EntryKind, ModuleEntry, ModuleInput, ModuleSource};
     let url = url::Url::from_file_path(&host.file).map_err(|_| "bad test path".to_string())?;
     let mut environment = common::environment();
@@ -789,6 +804,28 @@ fn score(suite: &'static str, cases: Vec<Case>, skips: BTreeMap<String, usize>) 
     let body = json!({"suite": suite, "pass": pass, "fail": fail, "skipped": skips, "groups": groups, "top_failures": top, "failures": failures});
     std::fs::write(&file, serde_json::to_string_pretty(&body).unwrap()).unwrap();
     println!("results in {}", file.display());
+    require_pass(
+        fail,
+        std::env::var("CONF_REQUIRE_PASS").as_deref() == Ok("1"),
+    );
+}
+
+/** A strict conformance gate fails after writing the complete diagnostic scoreboard. */
+fn require_pass(fail: usize, required: bool) {
+    if required {
+        assert_eq!(
+            fail, 0,
+            "Conformance gate requires every executed case to pass."
+        );
+    }
+}
+
+#[test]
+/** Research scoring stays available, but the strict gate never treats case failures as success. */
+fn strict_gate_reports_case_failures() {
+    require_pass(0, true);
+    require_pass(1, false);
+    assert!(std::panic::catch_unwind(|| require_pass(1, true)).is_err());
 }
 
 /** tc39 test262 against V9. */

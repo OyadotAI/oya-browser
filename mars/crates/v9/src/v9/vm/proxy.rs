@@ -3,14 +3,15 @@
  * handler has none. Trap-less proxies are followed in a loop (`proxy_trap`), so a chain of any
  * length costs no native stack; each trap call and each forward to an ordinary target is one
  * level of native recursion (`deeper`), so chains whose traps or prototypes lead back into
- * proxies meet the call-depth bound as a RangeError instead of overflowing. V9 does not check the
- * specification's invariants against non-configurable target properties, and getPrototypeOf
- * reads the target's prototype without a trap.
+ * proxies meet the call-depth bound as a RangeError instead of overflowing. Successful traps
+ * are checked against actual target descriptors and extensibility before their results escape.
  */
 use super::data::{Class, ProxyData};
 use super::heap::{Key, Prop};
 use super::{Res, Vm};
 use crate::v9::value::{JsValue, ObjectId};
+
+mod invariants;
 
 impl Vm<'_> {
     /** The proxy data of an object, if it is a proxy. */
@@ -50,7 +51,9 @@ impl Vm<'_> {
     ) -> Res<(ProxyData, ObjectId, Option<JsValue>)> {
         let mut proxy = proxy.clone();
         loop {
-            let (target, trap) = self.trap(&proxy, name)?;
+            // Looking up a missing trap can re-enter this proxy through the handler's
+            // prototype, before any trap call or forwarding path gets its own guard.
+            let (target, trap) = self.deeper(|vm| vm.trap(&proxy, name))?;
             match (trap, self.proxy_of(target)) {
                 (None, Some(next)) => {
                     // Each hop is work, so even a forged cyclic chain meets the operation budget.
@@ -87,7 +90,11 @@ impl Vm<'_> {
         match self.proxy_trap(proxy, "get")? {
             (proxy, target, Some(trap)) => {
                 let args = vec![JsValue::Object(target), key.value(), receiver.clone()];
-                self.call_trap(&proxy, trap, args)
+                let result = self.call_trap(&proxy, trap, args)?;
+                self.proxy_check(target, &[result.clone()], |vm| {
+                    vm.check_get(target, key, &result)
+                })?;
+                Ok(result)
             }
             (_, target, None) => self.deeper(|vm| vm.get_from(target, key, receiver)),
         }
@@ -95,7 +102,7 @@ impl Vm<'_> {
     /** [[Set]]; the receiver becomes the target when it is the proxy itself. */
     pub fn proxy_set(
         &mut self,
-        id: ObjectId,
+        _id: ObjectId,
         proxy: &ProxyData,
         key: Key,
         value: JsValue,
@@ -106,36 +113,47 @@ impl Vm<'_> {
                 let args = vec![
                     JsValue::Object(target),
                     key.value(),
-                    value,
+                    value.clone(),
                     receiver.clone(),
                 ];
-                Ok(self.call_trap(&proxy, trap, args)?.truthy())
+                let success = self.call_trap(&proxy, trap, args)?.truthy();
+                if success {
+                    self.proxy_check(target, &[value.clone()], |vm| {
+                        vm.check_set(target, &key, &value)
+                    })?;
+                }
+                Ok(success)
             }
-            (_, target, None) => {
-                let receiver = if *receiver == JsValue::Object(id) {
-                    JsValue::Object(target)
-                } else {
-                    receiver.clone()
-                };
-                self.deeper(|vm| vm.set_from(target, key, value, &receiver))
-            }
+            (_, target, None) => self.deeper(|vm| vm.set_from(target, key, value, receiver)),
         }
     }
     /** [[HasProperty]]. */
     pub fn proxy_has(&mut self, proxy: &ProxyData, key: &Key) -> Res<bool> {
         match self.proxy_trap(proxy, "has")? {
-            (proxy, target, Some(trap)) => Ok(self
-                .call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?
-                .truthy()),
+            (proxy, target, Some(trap)) => {
+                let result = self
+                    .call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?
+                    .truthy();
+                if !result {
+                    self.proxy_check(target, &[], |vm| vm.check_hidden(target, key))?;
+                }
+                Ok(result)
+            }
             (_, target, None) => self.deeper(|vm| vm.has_property(target, key)),
         }
     }
     /** [[Delete]]. */
     pub fn proxy_delete(&mut self, proxy: &ProxyData, key: &Key) -> Res<bool> {
         match self.proxy_trap(proxy, "deleteProperty")? {
-            (proxy, target, Some(trap)) => Ok(self
-                .call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?
-                .truthy()),
+            (proxy, target, Some(trap)) => {
+                let result = self
+                    .call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?
+                    .truthy();
+                if result {
+                    self.proxy_check(target, &[], |vm| vm.check_hidden(target, key))?;
+                }
+                Ok(result)
+            }
             (_, target, None) => self.deeper(|vm| vm.delete(target, key)),
         }
     }
@@ -145,11 +163,9 @@ impl Vm<'_> {
             (proxy, target, Some(trap)) => {
                 let result =
                     self.call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?;
-                if result.nullish() {
-                    return Ok(None);
-                }
-                let desc = crate::v9::builtins::to_descriptor(self, &result)?;
-                Ok(Some(super::property::merge(None, desc)))
+                self.proxy_check(target, &[result.clone()], |vm| {
+                    vm.checked_own(target, key, &result)
+                })
             }
             (_, target, None) => self.deeper(|vm| vm.own(target, key)),
         }
@@ -163,16 +179,20 @@ impl Vm<'_> {
     ) -> Res<bool> {
         match self.proxy_trap(proxy, "defineProperty")? {
             (proxy, target, Some(trap)) => {
-                let probe = self.new_object()?;
-                self.define(probe, key.clone(), desc)?;
-                let attributes = crate::v9::builtins::from_descriptor(self, probe, &key)?;
-                Ok(self
+                let attributes = invariants::descriptor_object(self, &desc)?;
+                let success = self
                     .call_trap(
                         &proxy,
                         trap,
-                        vec![JsValue::Object(target), key.value(), attributes],
+                        vec![JsValue::Object(target), key.value(), attributes.clone()],
                     )?
-                    .truthy())
+                    .truthy();
+                if success {
+                    self.proxy_check(target, &[attributes], |vm| {
+                        vm.check_define(target, &key, &desc)
+                    })?;
+                }
+                Ok(success)
             }
             (_, target, None) => self.deeper(|vm| vm.define(target, key, desc)),
         }
@@ -182,14 +202,7 @@ impl Vm<'_> {
         match self.proxy_trap(proxy, "ownKeys")? {
             (proxy, target, Some(trap)) => {
                 let list = self.call_trap(&proxy, trap, vec![JsValue::Object(target)])?;
-                let mut keys = Vec::new();
-                for value in self.iterate_to_vec(&list)? {
-                    if !matches!(value, JsValue::String(_) | JsValue::Symbol(_)) {
-                        return Err(self.type_error("proxy [[OwnPropertyKeys]] must return an array with only string and symbol elements"));
-                    }
-                    keys.push(self.to_key(&value)?);
-                }
-                Ok(keys)
+                self.proxy_check(target, &[list.clone()], |vm| vm.checked_keys(target, &list))
             }
             (_, target, None) => self.deeper(|vm| vm.own_keys(target)),
         }

@@ -230,6 +230,7 @@ fn run_hoisting(vm: &mut Vm, code: Arc<Code>, args: Vec<JsValue>) -> Res<()> {
         None => None,
     };
     vm.frames.push(Frame {
+        realm: vm.active_realm,
         regs: vec![JsValue::Undefined; code.registers as usize],
         code,
         pc: 0,
@@ -242,6 +243,7 @@ fn run_hoisting(vm: &mut Vm, code: Arc<Code>, args: Vec<JsValue>) -> Res<()> {
         handlers: Vec::new(),
         envs: 0,
         boundary: true,
+        caller_hidden: false,
         construct: false,
         resume: Resume::Next,
     });

@@ -1,6 +1,8 @@
 /** ECMAScript numeric grammar and one-rounding power-of-two integer conversion. */
 use super::super::source::whitespace;
 use crate::protocol::{EngineError, EngineResult};
+
+mod radix;
 /** Literal separators are accepted only between two digits of the same radix. */
 pub(in crate::v9) fn literal(source: &str) -> EngineResult<f64> {
     let radix = radix(source);
@@ -158,43 +160,7 @@ pub(in crate::v9) fn number_to_string(value: f64) -> String {
     ryu_js::Buffer::new().format(value).to_string()
 }
 
-/** Number::toString(radix) for radixes other than ten, as browsers print them. */
+/** Number::toString(radix) uses the pinned conversion algorithm under the binary64 precision bound. */
 pub(in crate::v9) fn radix_string(value: f64, radix: u32) -> String {
-    if !value.is_finite() || radix == 10 {
-        return number_to_string(value);
-    }
-    let negative = value < 0.0;
-    let value = value.abs();
-    let mut integer = value.trunc();
-    let mut fraction = value - integer;
-    let mut digits = Vec::new();
-    if integer == 0.0 {
-        digits.push(b'0');
-    }
-    while integer >= 1.0 {
-        let digit = (integer % f64::from(radix)) as u32;
-        digits.push(std::char::from_digit(digit, radix).unwrap_or('0') as u8);
-        integer = (integer / f64::from(radix)).trunc();
-    }
-    digits.reverse();
-    let mut text = String::from_utf8(digits).unwrap_or_default();
-    if fraction > 0.0 {
-        text.push('.');
-        // Fifty-two bits of fraction need at most this many digits in the smallest radix.
-        let mut count = 0;
-        while fraction > 0.0 && count < RADIX_FRACTION_DIGITS {
-            fraction *= f64::from(radix);
-            let digit = fraction.trunc() as u32;
-            text.push(std::char::from_digit(digit, radix).unwrap_or('0'));
-            fraction -= f64::from(digit);
-            count += 1;
-        }
-    }
-    if negative {
-        text.insert(0, '-');
-    }
-    text
+    radix::format(value, radix)
 }
-
-/** Fraction digits printed for a non-decimal radix. */
-const RADIX_FRACTION_DIGITS: usize = 52;

@@ -1,3 +1,4 @@
+mod legacy;
 /** V8 scanner-guided bounded lexical rules; upstream mapping and notices live beside this crate. */
 mod number;
 use super::{
@@ -17,12 +18,16 @@ use number::number;
 pub(super) struct Token {
     pub kind: Kind,
     pub location: SourceLocation,
+    /** Exclusive byte end keeps comments and exact function source observable. */
+    pub end: usize,
     /// Decoded equality cannot make an escaped string a strict-mode directive.
     pub exact_strict: bool,
     /** Trivia before this token, rather than lines inside its predecessor, controls restricted grammar. */
     pub line_terminator_before: bool,
     /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
     pub escaped: bool,
+    /// Annex B numeric spellings and string escapes are legal only outside strict code.
+    pub legacy: bool,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
@@ -43,6 +48,8 @@ pub(super) enum Kind {
     Opaque(&'static str),
     /** A BigInt literal within V9's 128-bit bound. */
     BigInt(i128),
+    /** Wide literal digits stay exact for property names; runtime values retain their bound. */
+    BigIntWide(String),
     /** Operators that V9 parses for syntax but does not evaluate, such as `**` or `>>>`. */
     Punct(&'static str),
     /** `#name` class member names. */
@@ -53,6 +60,8 @@ pub(super) enum Kind {
         cooked: Option<JsString>,
         /** The chunk's source text, for String.raw and tag functions. */
         raw: JsString,
+        /** Invalid escapes are early errors only when no tag receives this chunk. */
+        invalid: bool,
         head: bool,
         tail: bool,
     },
@@ -94,9 +103,11 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
             tokens.push(Token {
                 kind: Kind::End,
                 location: source.location(),
+                end: source.location().byte_offset,
                 exact_strict: false,
                 line_terminator_before,
                 escaped: false,
+                legacy: false,
             });
             break;
         }
@@ -118,12 +129,15 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         })?;
         let consumed = text.len() - source.rest().len();
         let escaped = matches!(kind, Kind::Name(_)) && text[..consumed].contains('\\');
+        let legacy = legacy::literal(&text[..consumed], &kind);
         tokens.push(Token {
             kind,
             location,
+            end: source.location().byte_offset,
             exact_strict,
             line_terminator_before,
             escaped,
+            legacy,
         });
     }
     Ok(tokens)
@@ -142,7 +156,7 @@ fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> En
             braces.pop();
         }
         let before = source.rest();
-        let (cooked, tail) = literals::template(source, start)?;
+        let (cooked, tail, invalid) = literals::template(source, start)?;
         let consumed = &before[..before.len() - source.rest().len()];
         let text = consumed
             .strip_suffix(if tail { "`" } else { "${" })
@@ -155,6 +169,7 @@ fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> En
         return Ok(Kind::Template {
             cooked,
             raw,
+            invalid,
             head,
             tail,
         });
@@ -206,6 +221,7 @@ fn regex_allowed(previous: Option<&Kind>) -> bool {
         Some(
             Kind::Number(_)
             | Kind::BigInt(_)
+            | Kind::BigIntWide(_)
             | Kind::String(_)
             | Kind::Opaque(_)
             | Kind::Private(_)

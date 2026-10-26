@@ -22,6 +22,9 @@ pub(super) fn install(b: &mut Builder) {
     for (name, length, function) in functions {
         let id = b.function(name, length, function);
         b.global(name, id);
+        if matches!(name, "parseInt" | "parseFloat") {
+            super::number::install_parser(b, name, id);
+        }
     }
 }
 

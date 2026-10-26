@@ -15,6 +15,9 @@ type Specifiers = Vec<(String, Option<Url>)>;
 /** Every import map the page declared, merged. */
 #[derive(Default)]
 pub(super) struct ImportMap {
+    /** The opt-in d8 shell resolves bare filenames against their referrer; browser import maps stay strict. */
+    #[cfg(feature = "conformance")]
+    pub(super) d8: bool,
     /** The top-level `imports`. */
     imports: Specifiers,
     /** Scope prefix and its map, most specific scope first. */
@@ -103,6 +106,10 @@ impl ImportMap {
         }
         if let Some(found) = matched(&self.imports, normalized, as_url.is_some()) {
             return found;
+        }
+        #[cfg(feature = "conformance")]
+        if as_url.is_none() && self.d8 {
+            return base.join(specifier).map_err(|error| error.to_string());
         }
         as_url.ok_or_else(|| {
             format!(

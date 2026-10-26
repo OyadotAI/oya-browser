@@ -117,6 +117,22 @@ impl Default for Props {
 }
 
 impl Props {
+    /** Shared immutable shape caches are engine metadata; these are this object's retained allocations. */
+    #[cfg(feature = "conformance")]
+    pub fn memory_bounds(&self) -> (usize, usize) {
+        let mut lower = self.slots.capacity() * std::mem::size_of::<Prop>();
+        let mut upper = lower;
+        if let Layout::Dictionary(keys, index) = &self.layout {
+            lower += keys.capacity() * std::mem::size_of::<Key>();
+            upper = lower;
+            if let Some(index) = index {
+                let bounds = super::memory::hash_index_bounds::<(Key, usize)>(index.capacity());
+                lower += bounds.0;
+                upper += bounds.1;
+            }
+        }
+        (lower, upper)
+    }
     /** Number of own properties. */
     pub fn len(&self) -> usize {
         self.slots.len()

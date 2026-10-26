@@ -4,11 +4,14 @@ use super::heap::{
     CONFIGURABLE, DEFAULT_ATTRS, ENUMERABLE, INTRINSIC_BASE, Key, NATIVE_BASE, Object, Prop, Slot,
     WRITABLE,
 };
-use super::realm::{Static, realm};
+use super::realm::{Static, native_index, realm, realm_for};
 use super::{Res, Thrown, Vm};
 use crate::constants::VM_PROPERTY_KEY_UNITS;
 use crate::protocol::EngineError;
 use crate::v9::value::{JsString, JsValue, ObjectId};
+
+mod descriptor;
+pub(super) use descriptor::compatible;
 
 /** A property descriptor as defineProperty takes it; absent fields stay unchanged. */
 #[derive(Clone, Debug, Default)]
@@ -54,9 +57,13 @@ and typed views all have their own). */
 fn ordinary_slot(class: &Class, key: &Key) -> bool {
     match class {
         Class::Proxy(_) | Class::Host(_) | Class::Namespace(_) => false,
-        Class::Array(_) | Class::String(_) | Class::View(_) => {
-            key.index().is_none() && !key_is(key, "length")
+        Class::View(view) => {
+            (view.kind == super::data::ElementKind::DataView
+                || crate::v9::builtins::typed_numeric_index(key).is_none())
+                && !key_is(key, "length")
         }
+        Class::Array(_) | Class::String(_) => key.index().is_none() && !key_is(key, "length"),
+        Class::MappedArguments(_) => key.index().is_none(),
         _ => true,
     }
 }
@@ -65,6 +72,33 @@ fn ordinary_slot(class: &Class, key: &Key) -> bool {
 pub(in crate::v9) const CHAIN_STEPS: usize = 4096;
 
 impl Vm<'_> {
+    /** V8's interesting-property lookup skips records that cannot own either well-known hook. */
+    pub(in crate::v9) fn interesting_holder(&self, start: ObjectId) -> Option<ObjectId> {
+        let tag = Key::Sym(super::realm::symbol::TO_STRING_TAG);
+        let primitive = Key::Sym(super::realm::symbol::TO_PRIMITIVE);
+        let mut current = Some(start);
+        for _ in 0..CHAIN_STEPS {
+            let id = current?;
+            if let Some(object) = self.heap.get(id) {
+                #[cfg(feature = "conformance")]
+                if object.global {
+                    return Some(id);
+                }
+                if matches!(object.class, Class::Proxy(_) | Class::Host(_))
+                    || object.props.get(&tag).is_some()
+                    || object.props.get(&primitive).is_some()
+                {
+                    return Some(id);
+                }
+            } else if let Some(def) = realm_for(id).object(id) {
+                if def.get(&tag).is_some() || def.get(&primitive).is_some() {
+                    return Some(id);
+                }
+            }
+            current = self.proto_of(id);
+        }
+        Some(start)
+    }
     /** Whether the identity has a heap record (including materialized intrinsics). */
     pub fn in_heap(&self, id: ObjectId) -> bool {
         self.heap.get(id).is_some()
@@ -83,9 +117,9 @@ impl Vm<'_> {
             return object.proto;
         }
         if id >= NATIVE_BASE {
-            return Some(realm().ids.function_prototype);
+            return Some(realm_for(id).ids.function_prototype);
         }
-        realm().object(id).and_then(|def| def.proto)
+        realm_for(id).object(id).and_then(|def| def.proto)
     }
     /** Copy an intrinsic into the heap so scripts can change it. */
     pub fn materialize(&mut self, id: ObjectId) -> Res<()> {
@@ -93,7 +127,7 @@ impl Vm<'_> {
             return Ok(());
         }
         let mut object = if id >= NATIVE_BASE {
-            let index = id - NATIVE_BASE;
+            let index = native_index(id);
             Object::new(
                 Class::Function(Box::new(super::data::Function {
                     kind: FunctionKind::Native {
@@ -102,11 +136,12 @@ impl Vm<'_> {
                     },
                     home: None,
                     fields: None,
+                    name: None,
                 })),
-                Some(realm().ids.function_prototype),
+                Some(realm_for(id).ids.function_prototype),
             )
         } else {
-            let def = realm()
+            let def = realm_for(id)
                 .object(id)
                 .ok_or_else(|| EngineError::invalid("Invalid V9 intrinsic identity."))?;
             let class = match def.call {
@@ -117,11 +152,16 @@ impl Vm<'_> {
                     },
                     home: None,
                     fields: None,
+                    name: None,
                 })),
+                None if id == realm_for(id).ids.array_prototype => Class::Array(Vec::new().into()),
                 None => Class::Plain,
             };
             let mut object = Object::new(class, def.proto);
             for (key, value, attrs) in &def.props {
+                if id == realm_for(id).ids.array_prototype && key_is(key, "length") {
+                    continue;
+                }
                 let slot = match value {
                     Static::Value(value) => Slot::Data(value.clone()),
                     Static::Accessor(get, set) => Slot::Accessor(*get, *set),
@@ -136,16 +176,29 @@ impl Vm<'_> {
             }
             object
         };
-        object.extensible = id != realm().ids.throw_type_error;
+        #[cfg(feature = "conformance")]
+        {
+            object.realm = super::realm::banks::owner(id);
+        }
+        object.extensible = id != realm_for(id).ids.throw_type_error;
         self.heap.insert_at(id, object);
         Ok(())
     }
     /** An own property, if present. */
     pub fn own(&mut self, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
+        self.guard_realm_global(id)?;
         let Some(object) = self.heap.get(id) else {
             return Ok(self.intrinsic_own(id, key));
         };
         match &object.class {
+            Class::MappedArguments(_) => {
+                if let Some(value) = self.argument_value(id, key)?
+                    && let Some(mut prop) = object.props.get(key).cloned()
+                {
+                    prop.slot = Slot::Data(value);
+                    return Ok(Some(prop));
+                }
+            }
             // Private keys live on the proxy object itself and never reach a trap.
             Class::Proxy(proxy) if !key.hidden() => {
                 let proxy = (**proxy).clone();
@@ -191,20 +244,18 @@ impl Vm<'_> {
             }
             Class::Namespace(module) => {
                 let module = module.clone();
-                if let Some(prop) = crate::v9::modules::namespace_own(self, &module, key)? {
+                let bank = self.object_realm(id);
+                if let Some(prop) = self.with_realm(bank, |vm| {
+                    crate::v9::modules::namespace_own(vm, &module, key)
+                })? {
                     return Ok(Some(prop));
                 }
             }
             Class::View(_) => {
-                if let Some(index) = key.index() {
-                    return Ok(
-                        crate::v9::builtins::typed_load(self, id, index as usize).map(|value| {
-                            Prop {
-                                slot: Slot::Data(value),
-                                attrs: WRITABLE | ENUMERABLE | CONFIGURABLE,
-                            }
-                        }),
-                    );
+                if let Some(index) = crate::v9::builtins::typed_index(self, id, key) {
+                    return Ok(index
+                        .and_then(|index| crate::v9::builtins::typed_load(self, id, index))
+                        .map(Prop::data));
                 }
             }
             _ => {}
@@ -221,10 +272,12 @@ impl Vm<'_> {
     /** Static properties of an intrinsic not yet copied to the heap. */
     fn intrinsic_own(&self, id: ObjectId, key: &Key) -> Option<Prop> {
         if id >= NATIVE_BASE {
-            let def = realm().native(id)?;
+            let def = realm_for(id).native(id)?;
             return if key_is(key, "name") {
                 Some(Prop {
-                    slot: Slot::Data(super::realm::string(def.name)),
+                    slot: Slot::Data(super::realm::string(
+                        def.display_name.as_deref().unwrap_or(def.name),
+                    )),
                     attrs: CONFIGURABLE,
                 })
             } else if key_is(key, "length") {
@@ -236,7 +289,7 @@ impl Vm<'_> {
                 None
             };
         }
-        let (_, value, attrs) = realm().object(id)?.get(key)?;
+        let (_, value, attrs) = realm_for(id).object(id)?.get(key)?;
         Some(Prop {
             slot: match value {
                 Static::Value(value) => Slot::Data(value.clone()),
@@ -246,7 +299,7 @@ impl Vm<'_> {
         })
     }
     /** Whether a function's virtual `name` or `length` was deleted. */
-    fn virtual_deleted(&self, id: ObjectId, key: &Key) -> bool {
+    pub(super) fn virtual_deleted(&self, id: ObjectId, key: &Key) -> bool {
         (key_is(key, "name") || key_is(key, "length"))
             && self
                 .heap
@@ -255,6 +308,20 @@ impl Vm<'_> {
     }
     /** `name`, `length` and a lazily created `prototype` of functions. */
     fn function_virtual(&mut self, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
+        if key_is(key, "name")
+            && let Some(name) = self
+                .heap
+                .get(id)
+                .and_then(|object| object.function())
+                .and_then(|function| function.name.clone())
+        {
+            let value = self.render_name_snapshot(&name)?;
+            return Ok(Some(Prop {
+                slot: Slot::Data(value),
+                attrs: name.attrs,
+            }));
+        }
+        let intrinsics = self.object_intrinsics(id);
         let readonly = |value: JsValue| Prop {
             slot: Slot::Data(value),
             attrs: CONFIGURABLE,
@@ -285,10 +352,13 @@ impl Vm<'_> {
                     && !code.strict
                     && (key_is(key, "caller") || key_is(key, "arguments"))
                 {
-                    // V8 gives sloppy functions their own null `caller` and `arguments`, so
-                    // pages reading `f.caller` never reach Function.prototype's thrower.
+                    let value = if key_is(key, "arguments") {
+                        self.active_arguments(id)?
+                    } else {
+                        self.active_caller(id)
+                    };
                     return Ok(Some(Prop {
-                        slot: Slot::Data(JsValue::Null),
+                        slot: Slot::Data(value),
                         attrs: 0,
                     }));
                 }
@@ -297,13 +367,20 @@ impl Vm<'_> {
                         || !flags.arrow && !flags.method && !flags.asynchronous && !flags.fields)
                 {
                     let proto = if flags.generator && flags.asynchronous {
-                        realm().ids.async_generator_prototype
+                        intrinsics.ids.async_generator_prototype
                     } else if flags.generator {
-                        realm().ids.generator_prototype
+                        intrinsics.ids.generator_prototype
                     } else {
-                        realm().ids.object_prototype
+                        intrinsics.ids.object_prototype
                     };
-                    let prototype = self.alloc(Object::new(Class::Plain, Some(proto)))?;
+                    let object = Object::new(Class::Plain, Some(proto));
+                    #[cfg(feature = "conformance")]
+                    let object = {
+                        let mut object = object;
+                        object.realm = self.object_realm(id);
+                        object
+                    };
+                    let prototype = self.alloc(object)?;
                     if !flags.generator {
                         self.heap.put(
                             prototype,
@@ -323,39 +400,18 @@ impl Vm<'_> {
                 }
             }
             FunctionKind::Native { id: native, .. } => {
-                let def = &realm().natives[native as usize];
+                let def = &self.object_intrinsics(id).natives[native as usize];
                 if key_is(key, "name") {
-                    return Ok(Some(readonly(super::realm::string(def.name))));
+                    return Ok(Some(readonly(super::realm::string(
+                        def.display_name.as_deref().unwrap_or(def.name),
+                    ))));
                 }
                 if key_is(key, "length") {
                     return Ok(Some(readonly(JsValue::Number(f64::from(def.length)))));
                 }
             }
-            FunctionKind::Bound { target, args, .. } => {
-                if key_is(key, "name") {
-                    let name = self.get(&JsValue::Object(target), &Key::from("name"))?;
-                    let name = match name {
-                        JsValue::String(name) => name,
-                        _ => JsString::empty(),
-                    };
-                    let bound = JsString::from_utf8("bound ")?.concat(&name)?;
-                    return Ok(Some(readonly(JsValue::String(bound))));
-                }
-                if key_is(key, "length") {
-                    // BoundFunctionCreate reads `length` only when the target owns it.
-                    let length_key = Key::from("length");
-                    let length = if self.own(target, &length_key)?.is_some() {
-                        self.get(&JsValue::Object(target), &length_key)?
-                    } else {
-                        JsValue::Undefined
-                    };
-                    let length = match length {
-                        JsValue::Number(length) => (length - args.len() as f64).max(0.0),
-                        _ => 0.0,
-                    };
-                    return Ok(Some(readonly(JsValue::Number(length))));
-                }
-            }
+            // bind captured these own data properties before returning the function.
+            FunctionKind::Bound { .. } => {}
         }
         Ok(None)
     }
@@ -376,7 +432,7 @@ impl Vm<'_> {
             JsValue::Number(_) => realm().ids.number_prototype,
             JsValue::Boolean(_) => realm().ids.boolean_prototype,
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
-            JsValue::BigInt(_) => realm().ids.bigint_prototype,
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => realm().ids.bigint_prototype,
             JsValue::Undefined | JsValue::Null | JsValue::Hole => {
                 let what = if matches!(base, JsValue::Null) {
                     "null"
@@ -395,6 +451,13 @@ impl Vm<'_> {
     pub fn get_from(&mut self, start: ObjectId, key: &Key, receiver: &JsValue) -> Res<JsValue> {
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
+            // V8's GetPropertyWithFailedAccessCheck returns undefined for well-known symbols.
+            if matches!(key, Key::Sym(symbol) if *symbol < super::realm::symbol::WELL_KNOWN)
+                && !self.realm_global_accessible(id)
+            {
+                return Ok(JsValue::Undefined);
+            }
+            self.guard_realm_global(id)?;
             match self.fast_own(id, key) {
                 Fast::Value(value) => return Ok(value),
                 Fast::Missing(Some(proto)) => {
@@ -406,6 +469,11 @@ impl Vm<'_> {
             }
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_get(&proxy, key, receiver);
+            }
+            if let Some(index) = crate::v9::builtins::typed_index(self, id, key) {
+                return Ok(index
+                    .and_then(|index| crate::v9::builtins::typed_load(self, id, index))
+                    .unwrap_or(JsValue::Undefined));
             }
             if let Some(prop) = self.own(id, key)? {
                 return match prop.slot {
@@ -442,7 +510,7 @@ impl Vm<'_> {
             JsValue::Number(_) => realm().ids.number_prototype,
             JsValue::Boolean(_) => realm().ids.boolean_prototype,
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
-            JsValue::BigInt(_) => realm().ids.bigint_prototype,
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => realm().ids.bigint_prototype,
         };
         let done = self.set_from(start, key.clone(), value, base)?;
         if !done && strict {
@@ -461,6 +529,12 @@ impl Vm<'_> {
         value: JsValue,
         receiver: &JsValue,
     ) -> Res<bool> {
+        self.guard_realm_global(start)?;
+        if *receiver == JsValue::Object(start)
+            && crate::v9::builtins::typed_index(self, start, &key).is_some()
+        {
+            return crate::v9::builtins::typed_set_integer(self, start, &key, &value);
+        }
         if *receiver == JsValue::Object(start) && self.fast_write(start, &key, &value) {
             return Ok(true);
         }
@@ -469,7 +543,7 @@ impl Vm<'_> {
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_set(id, &proxy, key, value, receiver);
             }
-            if let Some(prop) = self.own(id, &key)? {
+            if let Some(prop) = self.own_for_write(id, &key)? {
                 match prop.slot {
                     Slot::Accessor(_, Some(setter)) => {
                         self.call(JsValue::Object(setter), receiver.clone(), vec![value])?;
@@ -547,16 +621,24 @@ impl Vm<'_> {
     /** Create or update an own data property as assignment does. */
     pub fn write_own(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
         if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
-            let desc = Descriptor {
-                value: Some(value),
-                writable: Some(true),
-                enumerable: Some(true),
-                configurable: Some(true),
-                ..Descriptor::default()
+            let desc = match self.own(id, &key)? {
+                Some(prop)
+                    if matches!(prop.slot, Slot::Accessor(..)) || prop.attrs & WRITABLE == 0 =>
+                {
+                    return Ok(false);
+                }
+                Some(_) => Descriptor {
+                    value: Some(value),
+                    ..Descriptor::default()
+                },
+                None => Descriptor::data(value),
             };
             return self.proxy_define(&proxy, key, desc);
         }
         self.materialize(id)?;
+        if let Some(done) = self.write_name_snapshot(id, &key, &value)? {
+            return Ok(done);
+        }
         if let Some(handled) = self.exotic_write(id, &key, &value)? {
             return Ok(handled);
         }
@@ -570,6 +652,7 @@ impl Vm<'_> {
                     return Ok(false);
                 }
                 let attrs = prop.attrs;
+                let value = self.argument_write(id, &key, value);
                 self.heap.put(
                     id,
                     key,
@@ -599,8 +682,11 @@ impl Vm<'_> {
             Class::Array(elements) => {
                 if let Some(index) = key.index() {
                     let index = index as usize;
-                    if index >= limit {
-                        return Err(EngineError::limit("V9 array length", limit).into());
+                    let resident = elements
+                        .get(index)
+                        .is_some_and(|value| *value != JsValue::Hole);
+                    if !object.extensible && !resident && object.props.get(key).is_none() {
+                        return Ok(Some(false));
                     }
                     let fixed = object.props.get(&fixed_length_mark()).is_some();
                     if index >= elements.len() && (!object.extensible || fixed) {
@@ -609,13 +695,22 @@ impl Vm<'_> {
                     if object.props.get(key).is_some() {
                         return Ok(None);
                     }
+                    if elements.resident_len() >= limit && !resident {
+                        return Err(EngineError::limit("V9 resident array elements", limit).into());
+                    }
                     self.array_store(id, index, value.clone());
                     return Ok(Some(true));
                 }
                 if key_is(key, "length") {
+                    let length = self.array_length_value(value)?;
+                    let Some(object) = self.heap.get(id) else {
+                        return Ok(Some(false));
+                    };
+                    let Class::Array(elements) = &object.class else {
+                        return Ok(Some(false));
+                    };
                     let current = elements.len();
                     let fixed = object.props.get(&fixed_length_mark()).is_some();
-                    let length = self.array_length_value(value)?;
                     if fixed {
                         return Ok(Some(length == current));
                     }
@@ -623,30 +718,32 @@ impl Vm<'_> {
                 }
                 Ok(None)
             }
-            Class::String(_) if key.index().is_some() || key_is(key, "length") => Ok(Some(false)),
+            Class::String(text)
+                if key_is(key, "length")
+                    || key
+                        .index()
+                        .is_some_and(|index| (index as usize) < text.len()) =>
+            {
+                Ok(Some(false))
+            }
             Class::Host(_) => super::super::platform::host_write(self, id, key, value),
             // A namespace's exports are read-only to their importers.
             Class::Namespace(_) => Ok(Some(false)),
             // Integer-indexed: in-range writes store into the buffer, others are dropped.
-            Class::View(_) if key.index().is_some() => {
-                let index = key.index().unwrap_or(0) as usize;
-                crate::v9::builtins::typed_store(self, id, index, value)?;
-                Ok(Some(true))
+            Class::View(_) if crate::v9::builtins::typed_index(self, id, key).is_some() => {
+                crate::v9::builtins::typed_set_integer(self, id, key, value).map(Some)
             }
             _ => Ok(None),
         }
     }
-    /** Store one array element, growing with holes and keeping counts. */
+    /** Store one resident array element without allocating gaps, keeping exact live counts. */
     pub fn array_store(&mut self, id: ObjectId, index: usize, value: JsValue) {
         let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
         else {
             return;
         };
         let (mut properties, mut units) = (0isize, 0isize);
-        if index >= elements.len() {
-            elements.resize(index + 1, JsValue::Hole);
-        }
-        let old = std::mem::replace(&mut elements[index], value);
+        let old = elements.set(index, value);
         let new = &elements[index];
         if old == JsValue::Hole && *new != JsValue::Hole {
             properties += 1;
@@ -656,19 +753,21 @@ impl Vm<'_> {
         units += new.string_units() as isize - old.string_units() as isize;
         self.heap.adjust(properties, units);
     }
-    /** ToUint32 for array lengths, rejecting non-integers. */
+    /** ArraySetLength observes both ToUint32 and ToNumber conversions before validating equality. */
     fn array_length_value(&mut self, value: &JsValue) -> Res<usize> {
         let number = self.to_number(value)?;
-        if number < 0.0 || number.fract() != 0.0 || number > f64::from(u32::MAX) {
+        let length = crate::v9::value::to_uint32(number);
+        let checked = self.to_number(value)?;
+        if f64::from(length) != checked {
             return Err(self.range_error("Invalid array length"));
         }
-        Ok(number as usize)
+        Ok(length as usize)
     }
     /** Truncate or extend an array (spec ArraySetLength): deleting stops above the highest
     non-configurable element, and false reports that the length could not shrink that far. */
     pub fn set_array_length(&mut self, id: ObjectId, length: usize) -> Res<bool> {
-        if length > self.limits.array_length {
-            return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
+        if length > u32::MAX as usize {
+            return Err(self.range_error("Invalid array length"));
         }
         let (length, done) = self.trim_dictionary_elements(id, length);
         let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
@@ -676,9 +775,9 @@ impl Vm<'_> {
             return Ok(done);
         };
         let removed: Vec<JsValue> = if length < elements.len() {
-            elements.drain(length..).collect()
+            elements.truncate_collect(length)
         } else {
-            elements.resize(length, JsValue::Hole);
+            elements.resize_holes(length);
             Vec::new()
         };
         let properties = removed
@@ -721,16 +820,29 @@ impl Vm<'_> {
         if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             return self.proxy_define(&proxy, key, desc);
         }
+        if let Some(result) = crate::v9::builtins::typed_define_integer(self, id, &key, &desc) {
+            return result;
+        }
         if let Some(done) = crate::v9::modules::namespace_define(self, id, &key, &desc)? {
             return Ok(done);
         }
         self.materialize(id)?;
+        if let Some(done) = self.define_name_snapshot(id, &key, &desc)? {
+            return Ok(done);
+        }
         let existing = self.own(id, &key)?;
         let is_array = matches!(self.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
         if is_array && key_is(&key, "length") {
             return self.define_array_length(id, &desc);
         }
         if is_array && let Some(index) = key.index() {
+            if let Some(object) = self.heap.get(id)
+                && let Class::Array(elements) = &object.class
+                && index as usize >= elements.len()
+                && object.props.get(&fixed_length_mark()).is_some()
+            {
+                return Ok(false);
+            }
             if self.dense_element_define(id, &key, &desc, existing.is_some()) {
                 let value = desc.value.clone().unwrap_or(JsValue::Undefined);
                 if existing.is_some() && desc.value.is_none() {
@@ -740,40 +852,17 @@ impl Vm<'_> {
                     .exotic_write(id, &key, &value)
                     .map(|done| done.unwrap_or(true));
             }
-            if index as usize >= self.limits.array_length {
-                return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
-            }
-        }
-        if let Some(existing) = &existing
-            && existing.attrs & CONFIGURABLE == 0
-        {
-            // A non-configurable property only accepts a new value while writable, or the same
-            // value again (a polyfill redefining `Number.MAX_SAFE_INTEGER` is allowed to).
-            let same_value = match (&desc.value, &existing.slot) {
-                (None, _) => true,
-                (Some(value), Slot::Data(current)) => value.same_value(current),
-                _ => false,
-            };
-            let compatible = !desc.accessor()
-                && desc.configurable != Some(true)
-                && desc
-                    .enumerable
-                    .is_none_or(|e| e == (existing.attrs & ENUMERABLE != 0))
-                && (existing.attrs & WRITABLE != 0 || same_value && desc.writable != Some(true));
-            if !compatible {
-                return Ok(false);
-            }
         }
         let extensible = self.heap.get(id).is_some_and(|object| object.extensible);
-        if existing.is_none() && !extensible {
+        if !compatible(extensible, &desc, existing.as_ref()) {
             return Ok(false);
         }
         if existing.is_none() {
             check_key(&key)?;
         }
-        let prop = merge(existing, desc);
+        let mut prop = merge(existing, desc);
         if is_array && let Some(index) = key.index() {
-            // The element moves to the property list; its dense slot becomes a hole that still
+            // The element moves to the property list; its indexed slot becomes a hole that still
             // counts toward the length.
             self.array_store(id, index as usize, JsValue::Hole);
         }
@@ -783,6 +872,17 @@ impl Vm<'_> {
         {
             return Ok(done);
         }
+        if self.argument_slot(id, &key).is_some() {
+            if let Slot::Data(value) = &prop.slot {
+                self.argument_write(id, &key, value.clone());
+            }
+            if matches!(prop.slot, Slot::Accessor(..)) || prop.attrs & WRITABLE == 0 {
+                self.detach_argument(id, &key);
+            } else {
+                prop.slot = Slot::Data(JsValue::Undefined);
+            }
+        }
+        self.clear_name_snapshot(id, &key)?;
         self.heap.put(id, key, prop);
         Ok(true)
     }
@@ -846,7 +946,10 @@ impl Vm<'_> {
         if let Some(exported) = crate::v9::modules::namespace_has(self, id, key) {
             return Ok(!exported);
         }
-        let Some(prop) = self.own(id, key)? else {
+        if let Some(index) = crate::v9::builtins::typed_index(self, id, key) {
+            return Ok(index.is_none());
+        }
+        let Some(prop) = self.own_for_write(id, key)? else {
             return Ok(true);
         };
         if prop.attrs & CONFIGURABLE == 0 {
@@ -878,6 +981,8 @@ impl Vm<'_> {
             };
             self.heap.put(id, deleted_mark(key), mark);
         }
+        self.detach_argument(id, key);
+        self.clear_name_snapshot(id, key)?;
         self.heap.remove(id, key);
         Ok(true)
     }
@@ -891,6 +996,9 @@ impl Vm<'_> {
             if crate::v9::modules::namespace_has(self, current, key) == Some(true) {
                 return Ok(true);
             }
+            if let Some(index) = crate::v9::builtins::typed_index(self, current, key) {
+                return Ok(index.is_some());
+            }
             if self.own(current, key)?.is_some() {
                 return Ok(true);
             }
@@ -903,11 +1011,12 @@ impl Vm<'_> {
     }
     /** Own keys in spec order, without private names. */
     pub fn own_keys(&mut self, id: ObjectId) -> Res<Vec<Key>> {
+        self.guard_realm_global(id)?;
         let Some(object) = self.heap.get(id) else {
             if id >= NATIVE_BASE {
                 return Ok(vec![Key::from("length"), Key::from("name")]);
             }
-            return Ok(realm()
+            return Ok(realm_for(id)
                 .object(id)
                 .map(|def| def.props.iter().map(|(key, ..)| key.clone()).collect())
                 .unwrap_or_default());
@@ -919,15 +1028,9 @@ impl Vm<'_> {
         let mut keys = Vec::new();
         match &object.class {
             Class::Array(elements) => {
-                keys.extend(
-                    elements
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, value)| **value != JsValue::Hole)
-                        .map(|(index, _)| {
-                            Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
-                        }),
-                );
+                keys.extend(elements.resident_entries().map(|(index, _)| {
+                    Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
+                }));
                 keys.push(Key::from("length"));
             }
             Class::String(text) => {
@@ -942,9 +1045,11 @@ impl Vm<'_> {
                 keys.extend(crate::v9::modules::namespace_keys(self, &module)?);
             }
             Class::View(view) if view.kind != super::data::ElementKind::DataView => {
-                keys.extend((0..view.length).map(|index| {
-                    Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
-                }));
+                keys.extend(
+                    (0..crate::v9::builtins::typed_keys_length(self, id)).map(|index| {
+                        Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
+                    }),
+                );
             }
             _ => {}
         }
@@ -994,13 +1099,25 @@ impl Vm<'_> {
         }
         Ok(out)
     }
-    /** Change an object's prototype, refusing cycles. */
+    /** Ordinary prototype mutation stops its cycle scan at exotic GetPrototypeOf implementations. */
     pub fn set_proto(&mut self, id: ObjectId, proto: Option<ObjectId>) -> Res<bool> {
+        if self.proto_of(id) == proto {
+            return Ok(true);
+        }
+        self.materialize(id)?;
+        if self.heap.get(id).is_some_and(|object| !object.extensible)
+            || id == self.object_intrinsics(id).ids.object_prototype
+        {
+            return Ok(false);
+        }
         let mut cursor = proto;
         let mut steps = 0;
         while let Some(current) = cursor {
             if current == id {
                 return Ok(false);
+            }
+            if self.proxy_of(current).is_some() {
+                break;
             }
             steps += 1;
             if steps > CHAIN_STEPS {
@@ -1008,17 +1125,10 @@ impl Vm<'_> {
             }
             cursor = self.proto_of(current);
         }
-        if self.proto_of(id) == proto {
-            return Ok(true);
-        }
-        self.materialize(id)?;
         let object = self
             .heap
             .get_mut(id)
             .ok_or_else(|| EngineError::invalid("Invalid V9 object reference."))?;
-        if !object.extensible {
-            return Ok(false);
-        }
         object.proto = proto;
         Ok(true)
     }
@@ -1054,7 +1164,13 @@ pub(super) fn merge(existing: Option<Prop>, desc: Descriptor) -> Prop {
     };
     set_bit(&mut attrs, ENUMERABLE, desc.enumerable);
     set_bit(&mut attrs, CONFIGURABLE, desc.configurable);
-    let slot = if desc.accessor() {
+    let accessor = desc.accessor()
+        || desc.value.is_none()
+            && desc.writable.is_none()
+            && existing
+                .as_ref()
+                .is_some_and(|prop| matches!(prop.slot, Slot::Accessor(..)));
+    let slot = if accessor {
         attrs &= !WRITABLE;
         let (old_get, old_set) = match existing.as_ref().map(|prop| &prop.slot) {
             Some(Slot::Accessor(get, set)) => (*get, *set),

@@ -6,11 +6,11 @@ use crate::v9::vm::heap::Object;
 /** The revoke function's native index, set once at install. */
 static REVOKE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
-/** Proxy and Proxy.revocable. ponytail: V9's Proxy carries an unused `prototype` object (the
-specification gives it none); drop it if a page ever depends on its absence. */
+/** Proxy has no own prototype property; construction still preserves its intrinsic identity and revocable method. */
 pub(super) fn install(b: &mut Builder) {
     let unused = b.object(Some(b.ids.object_prototype));
     let ctor = b.constructor("Proxy", 2, construct, unused, None);
+    b.remove(ctor, "prototype");
     b.method(ctor, "revocable", 2, revocable);
     b.global("Proxy", ctor);
     let _ = REVOKE.set(b.native("", 0, revoke));
@@ -24,6 +24,8 @@ fn new_proxy(vm: &mut Vm, target: &JsValue, handler: &JsValue) -> Res<ObjectId> 
     let data = ProxyData {
         target: Some(*target),
         handler: Some(*handler),
+        callable: Some(vm.is_callable(&JsValue::Object(*target))),
+        constructible: Some(vm.is_constructor(&JsValue::Object(*target))),
     };
     vm.proxies = true;
     vm.alloc(Object::new(Class::Proxy(Box::new(data)), None))

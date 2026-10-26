@@ -46,20 +46,24 @@ pub(super) fn string(
 pub(super) fn template(
     source: &mut Source<'_>,
     start: SourceLocation,
-) -> EngineResult<(Option<JsString>, bool)> {
+) -> EngineResult<(Option<JsString>, bool, bool)> {
     let mut units = Vec::new();
     let mut cooked = true;
+    let mut invalid = false;
     loop {
         let Some(character) = source.next() else {
             return Err(errors::syntax(start, "unterminated template literal"));
         };
         match character {
-            '`' => break Ok((cook(units, cooked)?, true)),
+            '`' => break Ok((cook(units, cooked && !invalid)?, true, invalid)),
             '$' if source.peek() == Some('{') => {
                 source.next();
-                break Ok((cook(units, cooked)?, false));
+                break Ok((cook(units, cooked && !invalid)?, false, invalid));
             }
-            '\\' => cooked &= escape(source, &mut units, start).is_ok(),
+            '\\' => {
+                invalid |= template_decimal_escape(source.rest());
+                invalid |= escape(source, &mut units, start).is_err();
+            }
             '\r' => {
                 if source.peek() == Some('\n') {
                     source.next();
@@ -73,6 +77,12 @@ pub(super) fn template(
             units.clear();
         }
     }
+}
+/** Templates forbid legacy decimal/octal escapes while preserving the standalone null escape. */
+fn template_decimal_escape(text: &str) -> bool {
+    let mut chars = text.chars();
+    matches!(chars.next(), Some('1'..='9'))
+        || text.starts_with('0') && chars.next().is_some_and(|c| c.is_ascii_digit())
 }
 /** Only a fully decoded, bounded chunk becomes a string value. */
 fn cook(units: Vec<u16>, cooked: bool) -> EngineResult<Option<JsString>> {
@@ -132,9 +142,10 @@ fn hex(source: &mut Source<'_>, count: usize, start: SourceLocation) -> EngineRe
     let mut value = 0;
     for _ in 0..count {
         let digit = source
-            .next()
+            .peek()
             .and_then(|c| c.to_digit(16))
             .ok_or_else(|| errors::syntax(start, "invalid hexadecimal escape"))?;
+        source.next();
         value = value * 16 + digit;
     }
     Ok(value)
@@ -149,9 +160,10 @@ pub(super) fn unicode(source: &mut Source<'_>, start: SourceLocation) -> EngineR
     let mut digits = 0;
     while source.peek() != Some('}') {
         let digit = source
-            .next()
+            .peek()
             .and_then(|c| c.to_digit(16))
             .ok_or_else(|| errors::syntax(start, "invalid Unicode escape"))?;
+        source.next();
         value = value
             .checked_mul(16)
             .and_then(|n| n.checked_add(digit))

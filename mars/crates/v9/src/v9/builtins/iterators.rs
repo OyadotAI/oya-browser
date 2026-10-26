@@ -6,7 +6,12 @@ use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{Static, string, symbol};
 
 mod asyncgen;
+mod dispose;
+mod eager;
+mod from;
 mod helpers;
+mod lazy;
+mod prototype;
 
 /** %IteratorPrototype%, the native iterator prototypes, and generator prototypes. */
 pub(super) fn install(b: &mut Builder) {
@@ -15,6 +20,8 @@ pub(super) fn install(b: &mut Builder) {
     b.ids.iterator_prototype = iterator;
     b.symbol_method(iterator, symbol::ITERATOR, "[Symbol.iterator]", 0, identity);
     helpers::install(b, iterator);
+    lazy::install(b, iterator);
+    eager::install(b, iterator);
     for (tag, slot) in [
         ("Array Iterator", 0),
         ("String Iterator", 1),
@@ -74,6 +81,7 @@ pub(super) fn install(b: &mut Builder) {
         CONFIGURABLE,
     );
     asyncgen::install(b);
+    dispose::install(b);
 }
 
 /** `[Symbol.iterator]() { return this }`. */
@@ -89,7 +97,7 @@ fn next(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Iter(_))) {
         return Err(vm.type_error("next method called on incompatible receiver"));
     }
-    match vm.iter_step(id)? {
+    match vm.native_step(id)? {
         Some(value) => vm.iter_result(value, false),
         None => vm.iter_result(JsValue::Undefined, true),
     }

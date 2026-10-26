@@ -32,8 +32,24 @@ pub(super) struct Unit {
 
 impl Unit {
     /** A unit over freshly compiled codes. */
-    pub fn new(codes: Vec<Code>, entry: Code, info: Option<ModuleInfo>) -> Self {
-        let bytes = codes.iter().chain([&entry]).map(Code::footprint).sum();
+    pub fn new(
+        mut codes: Vec<Code>,
+        mut entry: Code,
+        info: Option<ModuleInfo>,
+        source: Option<(&str, usize)>,
+    ) -> Self {
+        let mut bytes = codes
+            .iter()
+            .chain([&entry])
+            .map(Code::footprint)
+            .sum::<usize>();
+        if let Some((source, base)) = source {
+            bytes += source.len();
+            let shared: Arc<str> = Arc::from(source);
+            for code in codes.iter_mut().chain([&mut entry]) {
+                code.source = Some((shared.clone(), base));
+            }
+        }
         Self {
             codes: codes.into_iter().map(Arc::new).collect(),
             entry: Arc::new(entry),

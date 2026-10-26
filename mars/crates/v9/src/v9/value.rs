@@ -1,4 +1,11 @@
 /** ECMAScript values: UTF-16 strings, binary64 numbers and arena identities, never native handles. */
+mod f16;
+pub(super) use f16::{decode as decode_f16, encode as encode_f16};
+mod bigint;
+pub use bigint::BigInt as BigInteger;
+pub(in crate::v9) use bigint::{MAX_BITS as BIGINT_MAX_BITS, ParseError as BigIntParseError};
+mod bigint_key;
+pub(super) use bigint_key::bigint_property_key;
 mod number;
 mod string;
 mod wire;
@@ -112,9 +119,10 @@ pub enum JsValue {
     Object(ObjectId),
     /// A symbol identity.
     Symbol(u32),
-    /// A BigInt. V9 bounds BigInts to 128 bits (RangeError beyond), which covers the 64-bit
-    /// integer arithmetic real pages do (protobuf and Closure int64) without arbitrary precision.
+    /// Inline BigInts retain the existing compact public representation.
     BigInt(i128),
+    /// Wider mathematical integers own immutable, bounded limbs.
+    BigIntWide(BigInteger),
     /// Never visible to scripts: an uninitialized binding or a missing array element.
     #[doc(hidden)]
     Hole,
@@ -140,6 +148,7 @@ impl JsValue {
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
             Self::BigInt(value) => *value != 0,
+            Self::BigIntWide(value) => !value.is_zero(),
             Self::Object(id) => !is_html_dda(*id),
             Self::Symbol(_) => true,
         }
@@ -148,7 +157,26 @@ impl JsValue {
     pub fn string_units(&self) -> usize {
         match self {
             Self::String(value) => value.len(),
+            Self::BigIntWide(value) => value.units(),
             _ => 0,
+        }
+    }
+    /** Every mathematical integer result returns to the inline representation whenever it fits. */
+    pub(in crate::v9) fn bigint(value: BigInteger) -> Self {
+        value
+            .to_i128()
+            .map_or_else(|| Self::BigIntWide(value), Self::BigInt)
+    }
+    /** Numeric operators recognize both storage forms as the one ECMAScript BigInt type. */
+    pub(in crate::v9) fn is_bigint(&self) -> bool {
+        matches!(self, Self::BigInt(_) | Self::BigIntWide(_))
+    }
+    /** Shared immutable limbs make numeric dispatch independent of the storage form. */
+    pub(in crate::v9) fn bigint_value(&self) -> Option<BigInteger> {
+        match self {
+            Self::BigInt(value) => Some(BigInteger::from_i128(*value)),
+            Self::BigIntWide(value) => Some(value.clone()),
+            _ => None,
         }
     }
     /// Null or undefined.
@@ -169,6 +197,7 @@ impl JsValue {
             Self::Number(value) => number_to_string(*value),
             Self::Boolean(value) => value.to_string(),
             Self::BigInt(value) => value.to_string(),
+            Self::BigIntWide(value) => value.to_string(),
             Self::Null => "null".into(),
             Self::Undefined | Self::Hole => "undefined".into(),
             Self::Object(_) | Self::Symbol(_) => {
@@ -198,6 +227,9 @@ impl JsValue {
             (Undefined | Null | Hole, Undefined | Null | Hole) => true,
             (Undefined | Null | Hole, _) | (_, Undefined | Null | Hole) => false,
             (Object(_) | Symbol(_), Object(_) | Symbol(_)) => self == other,
+            (BigIntWide(big), Number(number)) | (Number(number), BigIntWide(big)) => {
+                BigInteger::from_f64(*number).is_some_and(|number| *big == number)
+            }
             (BigInt(big), Number(number)) | (Number(number), BigInt(big)) => {
                 bigint_equals_number(*big, *number)
             }
@@ -218,6 +250,9 @@ impl JsValue {
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Number(a), Self::Number(b)) => a == b,
+            (Self::BigInt(a), Self::BigIntWide(b)) | (Self::BigIntWide(b), Self::BigInt(a)) => {
+                b.to_i128() == Some(*a)
+            }
             (Self::Undefined | Self::Hole, Self::Undefined | Self::Hole) => true,
             _ => self == other,
         }
@@ -242,5 +277,5 @@ impl JsValue {
 
 /// Whether a BigInt and a Number denote the same mathematical value (`1n == 1`).
 pub(in crate::v9) fn bigint_equals_number(big: i128, number: f64) -> bool {
-    number.is_finite() && number.trunc() == number && big as f64 == number && number as i128 == big
+    BigInteger::from_f64(number).and_then(|value| value.to_i128()) == Some(big)
 }

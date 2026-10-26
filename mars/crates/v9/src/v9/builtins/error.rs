@@ -4,18 +4,31 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Object};
 use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{NativeFn, realm, string};
+mod trace;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use trace::stack as formatted_stack;
 
 /** Error, the native error types, and AggregateError. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
     b.ids.error_prototype = proto;
     let error = b.constructor("Error", 1, construct, proto, None);
+    b.ids.error = error;
+    trace::install(b);
     b.global("Error", error);
     b.value(proto, "name", string("Error"), HIDDEN_ATTRS);
     b.value(proto, "message", string(""), HIDDEN_ATTRS);
     b.method(proto, "toString", 0, to_string);
-    b.builtin_accessor(proto, "stack", Some(stack_get), Some(stack_set));
+    let stack_getter = b.function("get stack", 0, stack_get);
+    let stack_setter = b.function("set stack", 1, stack_set);
+    b.put(
+        proto,
+        Key::private("errorStackAccessor"),
+        crate::v9::vm::realm::Static::Accessor(Some(stack_getter), Some(stack_setter)),
+        crate::v9::vm::heap::CONFIGURABLE,
+    );
     b.method(error, "captureStackTrace", 1, capture_stack_trace);
+    b.method(error, "isError", 1, is_error);
     b.value(
         error,
         "stackTraceLimit",
@@ -242,6 +255,7 @@ fn aggregate(vm: &mut Vm, call: Call) -> Res<JsValue> {
             ..Descriptor::default()
         },
     )?;
+    vm.record_trace(id)?;
     Ok(JsValue::Object(id))
 }
 
@@ -272,29 +286,10 @@ fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** `stack`: the error's summary line; V9 records no call sites. */
 fn stack_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !matches!(call.this, JsValue::Object(_)) {
-        return Ok(JsValue::Undefined);
+    match call.this.object() {
+        Some(id) => trace::stack(vm, id),
+        None => Ok(JsValue::Undefined),
     }
-    let summary = to_string(
-        vm,
-        Call {
-            this: call.this.clone(),
-            args: &[],
-            new_target: None,
-            callee: call.callee,
-        },
-    )?;
-    let summary = vm.to_text(&summary)?;
-    let trace = vm.get(&call.this, &Key::private(crate::v9::vm::error::TRACE_KEY))?;
-    let trace = match trace {
-        JsValue::String(trace) if !trace.as_units().is_empty() => trace
-            .lossy()
-            .lines()
-            .map(|line| format!("\n    at {line}"))
-            .collect::<String>(),
-        _ => "\n    at <anonymous>".into(),
-    };
-    text(vm, &format!("{summary}{trace}"))
 }
 
 /** Assigning `stack` stores an own value. */
@@ -319,26 +314,21 @@ fn stack_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn capture_stack_trace(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let target = call.arg(0);
     if let JsValue::Object(id) = target {
-        let value = stack_get(
-            vm,
-            Call {
-                this: target.clone(),
-                args: &[],
-                new_target: None,
-                callee: call.callee,
-            },
-        )?;
-        vm.define(
-            id,
-            key("stack"),
-            Descriptor {
-                value: Some(value),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Descriptor::default()
-            },
-        )?;
+        vm.record_trace(id)?;
+        trace::skip_constructor(vm, id, &call.arg(1));
+    } else {
+        return Err(vm.type_error("Error.captureStackTrace requires an object"));
     }
     Ok(JsValue::Undefined)
+}
+
+/** Error.isError tests native ErrorData identity without traversing prototypes or proxy targets. */
+fn is_error(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(JsValue::Boolean(matches!(
+        call.arg(0)
+            .object()
+            .and_then(|id| vm.heap.get(id))
+            .map(|object| &object.class),
+        Some(Class::Error)
+    )))
 }

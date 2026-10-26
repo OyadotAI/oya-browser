@@ -3,14 +3,20 @@ use super::*;
 use crate::constants::{JS_STRING_UNITS, SYNTAX_DEPTH};
 use crate::protocol::EngineError;
 use crate::v9::vm::data::Class;
-use crate::v9::vm::heap::CONFIGURABLE;
+use crate::v9::vm::heap::{CONFIGURABLE, FastMap};
 use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{Static, string, symbol};
+
+mod raw;
+pub(in crate::v9) use raw::branded as is_raw_json;
+mod reviver;
+use reviver::{Parsed, Reviver, Snapshot};
 
 /** The JSON namespace. */
 pub(super) fn install(b: &mut Builder) {
     let json = b.object(Some(b.ids.object_prototype));
     b.global("JSON", json);
+    raw::install(b, json);
     b.method(json, "parse", 2, parse);
     b.method(json, "stringify", 3, stringify);
     b.put(
@@ -26,9 +32,20 @@ struct Reader<'a> {
     units: &'a [u16],
     position: usize,
     depth: usize,
+    /** Retain source spans only when a callable reviver can observe them. */
+    capture: bool,
+    snapshot: Snapshot,
 }
 
 impl Reader<'_> {
+    /** A property's original value and source span, captured before its parent is complete. */
+    fn remember(&mut self, holder: ObjectId, name: Key) {
+        if let Some(parsed) = &self.snapshot.root {
+            self.snapshot
+                .properties
+                .insert((holder, name), parsed.clone());
+        }
+    }
     /** Skip JSON whitespace. */
     fn skip(&mut self) {
         while matches!(
@@ -52,6 +69,7 @@ impl Reader<'_> {
     /** One value. */
     fn value(&mut self, vm: &mut Vm) -> Res<JsValue> {
         self.skip();
+        let start = self.position;
         self.depth += 1;
         if self.depth > SYNTAX_DEPTH {
             return Err(EngineError::limit("JSON nesting", SYNTAX_DEPTH).into());
@@ -68,6 +86,15 @@ impl Reader<'_> {
             _ => Err(self.error(vm)),
         };
         self.depth -= 1;
+        if self.capture
+            && let Ok(value) = &result
+        {
+            self.snapshot.root = Some(Parsed {
+                value: value.clone(),
+                start,
+                end: self.position,
+            });
+        }
         result
     }
     /** A literal word. */
@@ -191,9 +218,12 @@ impl Reader<'_> {
             self.position += 1;
             return Ok(JsValue::Object(array));
         }
+        let mut index = 0;
         loop {
             let value = self.value(vm)?;
+            self.remember(array, key(&index.to_string()));
             vm.array_append(&JsValue::Object(array), value)?;
+            index += 1;
             self.skip();
             match self.units.get(self.position) {
                 Some(0x2c) => self.position += 1,
@@ -226,6 +256,7 @@ impl Reader<'_> {
             }
             self.position += 1;
             let value = self.value(vm)?;
+            self.remember(object, Key::Str(name.clone()));
             vm.define(object, Key::Str(name), Descriptor::data(value))?;
             self.skip();
             match self.units.get(self.position) {
@@ -242,17 +273,24 @@ impl Reader<'_> {
 
 /** Parse JSON text from units into heap values. */
 pub(in crate::v9) fn json_parse_units(vm: &mut Vm, units: &[u16]) -> Res<JsValue> {
+    read_json(vm, units, false).map(|(value, _)| value)
+}
+
+/** Parse once, optionally preserving source records for JSON.parse's reviver context. */
+fn read_json(vm: &mut Vm, units: &[u16], capture: bool) -> Res<(JsValue, Snapshot)> {
     let mut reader = Reader {
         units,
         position: 0,
         depth: 0,
+        capture,
+        snapshot: Snapshot::default(),
     };
     let value = reader.value(vm)?;
     reader.skip();
     if reader.position < units.len() {
         return Err(reader.error(vm));
     }
-    Ok(value)
+    Ok((value, reader.snapshot))
 }
 
 /** Parse JSON text held outside the VM (a response body), which may exceed one string's bound. */
@@ -264,31 +302,25 @@ pub(in crate::v9) fn json_parse_text(vm: &mut Vm, text: &str) -> Res<JsValue> {
 /** JSON.parse. */
 fn parse(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
-    let value = json_parse_units(vm, text.as_units())?;
     let reviver = call.arg(1);
-    if !vm.is_callable(&reviver) {
+    let callable = vm.is_callable(&reviver);
+    let (value, snapshot) = read_json(vm, text.as_units(), callable)?;
+    if !callable {
         return Ok(value);
     }
     let root = vm.new_object()?;
     vm.put(root, "", value)?;
-    revive(vm, &reviver, JsValue::Object(root), Key::from(""))
-}
-
-/** Apply a reviver bottom-up. */
-fn revive(vm: &mut Vm, reviver: &JsValue, holder: JsValue, name: Key) -> Res<JsValue> {
-    let value = vm.get(&holder, &name)?;
-    if let JsValue::Object(id) = value {
-        let keys = vm.enumerable_keys(id)?;
-        for child in keys {
-            let revived = revive(vm, reviver, value.clone(), child.clone())?;
-            if revived == JsValue::Undefined {
-                vm.delete(id, &child)?;
-            } else {
-                vm.define(id, child, Descriptor::data(revived))?;
-            }
-        }
-    }
-    vm.call(reviver.clone(), holder, vec![name.value(), value])
+    let visitor = Reviver {
+        function: reviver,
+        units: text.as_units(),
+        snapshot,
+    };
+    visitor.visit(
+        vm,
+        JsValue::Object(root),
+        Key::from(""),
+        visitor.snapshot.root.as_ref(),
+    )
 }
 
 /** State for one stringify call. */
@@ -351,12 +383,17 @@ impl Writer {
 
 /** SerializeJSONProperty: false when the value is skipped (undefined, functions, symbols). */
 fn serialize(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> Res<bool> {
+    vm.deeper(|vm| serialize_property(vm, writer, holder, name))
+}
+
+/** Property callbacks can create new nesting, so serialization shares the native call guard. */
+fn serialize_property(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> Res<bool> {
     vm.charge(1)?;
-    if writer.out.len() > JSON_OUTPUT_UNITS {
-        return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
-    }
     let mut value = vm.get(holder, name)?;
-    if matches!(value, JsValue::Object(_)) {
+    if matches!(
+        value,
+        JsValue::Object(_) | JsValue::BigInt(_) | JsValue::BigIntWide(_)
+    ) {
         let to_json = vm.get(&value, &key("toJSON"))?;
         if vm.is_callable(&to_json) {
             value = vm.call(to_json, value.clone(), vec![name.value()])?;
@@ -375,11 +412,14 @@ fn serialize(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> 
             Some(Class::String(_)) => value = JsValue::String(vm.to_string(&value)?),
             Some(Class::Boolean(flag)) => value = JsValue::Boolean(*flag),
             Some(Class::BigInt(big)) => value = JsValue::BigInt(*big),
+            Some(Class::BigIntWide(big)) => value = JsValue::BigIntWide(big.clone()),
             _ => {}
         }
     }
     match &value {
-        JsValue::BigInt(_) => return Err(vm.type_error("Do not know how to serialize a BigInt")),
+        JsValue::BigInt(_) | JsValue::BigIntWide(_) => {
+            return Err(vm.type_error("Do not know how to serialize a BigInt"));
+        }
         JsValue::Null => writer.ascii("null"),
         JsValue::Boolean(flag) => writer.ascii(if *flag { "true" } else { "false" }),
         JsValue::String(text) => writer.quote(text.as_units()),
@@ -391,6 +431,13 @@ fn serialize(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> 
             }
         }
         JsValue::Object(id) if !vm.is_callable(&value) => {
+            if let Some(source) = raw::text(vm, &value)? {
+                if writer.out.len().saturating_add(source.len()) > JS_STRING_UNITS {
+                    return Err(vm.range_error("Invalid string length"));
+                }
+                writer.out.extend_from_slice(source.as_units());
+                return Ok(true);
+            }
             if writer.stack.contains(id) {
                 return Err(vm.type_error("Converting circular structure to JSON"));
             }
@@ -398,7 +445,7 @@ fn serialize(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> 
                 return Err(EngineError::limit("JSON nesting", SYNTAX_DEPTH).into());
             }
             writer.stack.push(*id);
-            let result = if super::array::is_array_value(vm, &value) {
+            let result = if super::array::is_array_checked(vm, &value)? {
                 serialize_array(vm, writer, &value)
             } else {
                 serialize_object(vm, writer, &value)
@@ -408,11 +455,11 @@ fn serialize(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: &Key) -> 
         }
         _ => return Ok(false),
     }
+    if writer.out.len() > JS_STRING_UNITS {
+        return Err(vm.range_error("Invalid string length"));
+    }
     Ok(true)
 }
-
-/** Most UTF-16 units stringify builds before the final string bound applies. */
-const JSON_OUTPUT_UNITS: usize = JS_STRING_UNITS * 4;
 
 /** An array body. */
 fn serialize_array(vm: &mut Vm, writer: &mut Writer, value: &JsValue) -> Res<()> {
@@ -478,15 +525,15 @@ fn serialize_object(vm: &mut Vm, writer: &mut Writer, value: &JsValue) -> Res<()
 }
 
 /** JSON.stringify. */
-fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
+pub(in crate::v9) fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let replacer = call.arg(1);
-    let allow = if super::array::is_array_value(vm, &replacer) {
+    let allow = if !vm.is_callable(&replacer) && super::array::is_array_checked(vm, &replacer)? {
         let mut names = Vec::new();
         let length = vm.length_of(&replacer)?;
         for index in 0..length {
             let item = vm.get(&replacer, &key(&index.to_string()))?;
-            if matches!(item, JsValue::String(_) | JsValue::Number(_)) {
-                let name = vm.to_key(&item)?;
+            if replacer_name(vm, &item) {
+                let name = Key::Str(vm.to_string(&item)?);
                 if !names.contains(&name) {
                     names.push(name);
                 }
@@ -496,7 +543,7 @@ fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         None
     };
-    let gap: Vec<u16> = match call.arg(2) {
+    let gap: Vec<u16> = match spacing_value(vm, call.arg(2))? {
         JsValue::Number(count) => vec![0x20; count.clamp(0.0, MAX_GAP as f64) as usize],
         JsValue::String(text) => text.as_units().iter().take(MAX_GAP).copied().collect(),
         _ => Vec::new(),
@@ -517,7 +564,37 @@ fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !serialize(vm, &mut writer, &JsValue::Object(holder), &key(""))? {
         return Ok(JsValue::Undefined);
     }
+    if writer.out.len() > JS_STRING_UNITS {
+        return Err(vm.range_error("Invalid string length"));
+    }
     Ok(JsValue::String(JsString::from_units(writer.out)?))
+}
+
+/** Only strings and numbers, including their wrappers, become replacer property names. */
+fn replacer_name(vm: &Vm, value: &JsValue) -> bool {
+    match value {
+        JsValue::String(_) | JsValue::Number(_) => true,
+        JsValue::Object(id) => matches!(
+            vm.heap.get(*id).map(|object| &object.class),
+            Some(Class::String(_) | Class::Number(_))
+        ),
+        _ => false,
+    }
+}
+
+/** Boxed spacing values use the observable numeric or string conversion before indentation. */
+fn spacing_value(vm: &mut Vm, value: JsValue) -> Res<JsValue> {
+    let class = value
+        .object()
+        .and_then(|id| vm.heap.get(id))
+        .map(|o| &o.class);
+    if matches!(class, Some(Class::Number(_))) {
+        return Ok(JsValue::Number(vm.to_number(&value)?));
+    }
+    if matches!(class, Some(Class::String(_))) {
+        return Ok(JsValue::String(vm.to_string(&value)?));
+    }
+    Ok(value)
 }
 
 /** JSON indentation is capped at ten characters. */

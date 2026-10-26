@@ -48,7 +48,7 @@ fn ctor(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(target) = call.new_target.clone() else {
         return Err(vm.type_error("Temporal.Instant requires 'new'"));
     };
-    let ns = super::super::bigint::to_bigint(vm, &call.arg(0))?;
+    let ns = super::super::bigint::to_bigint_checked(vm, &call.arg(0))?;
     new_instant(vm, Some(&target), ns)
 }
 
@@ -69,7 +69,7 @@ fn from_ms(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Instant.fromEpochNanoseconds. */
 fn from_ns(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let ns = super::super::bigint::to_bigint(vm, &call.arg(0))?;
+    let ns = super::super::bigint::to_bigint_checked(vm, &call.arg(0))?;
     new_instant(vm, None, ns)
 }
 

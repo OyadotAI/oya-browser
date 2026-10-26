@@ -59,6 +59,14 @@ pub(super) fn install(b: &mut Builder) {
 
 /** `Object(value)` and `new Object()`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if let Some(target) = &call.new_target
+        && target != &JsValue::Object(call.callee)
+    {
+        let prototype = vm.prototype_for(target, realm().ids.object_prototype)?;
+        return vm
+            .alloc(Object::new(Class::Plain, Some(prototype)))
+            .map(JsValue::Object);
+    }
     let value = call.arg(0);
     if value.nullish() {
         return Ok(JsValue::Object(vm.new_object()?));
@@ -184,59 +192,15 @@ pub(in crate::v9) fn to_descriptor(vm: &mut Vm, value: &JsValue) -> Res<Descript
     Ok(desc)
 }
 
-/** Fill defaults for a newly defined property. */
-fn with_defaults(mut desc: Descriptor, existing: bool) -> Descriptor {
-    if !existing {
-        desc.enumerable.get_or_insert(false);
-        desc.configurable.get_or_insert(false);
-        if !desc.accessor() {
-            desc.writable.get_or_insert(false);
-            desc.value.get_or_insert(JsValue::Undefined);
-        }
-    }
-    desc
-}
-
-/** DefinePropertyOrThrow. A refused define still succeeds when every field the descriptor
-gives already holds that value (ValidateAndApplyPropertyDescriptor's "nothing changes" step),
-which the VM's check does not always see for non-configurable accessors. */
+/** DefinePropertyOrThrow forwards the original partial descriptor without extra target lookups. */
 fn define_or_throw(vm: &mut Vm, id: ObjectId, name: Key, desc: Descriptor) -> Res<()> {
-    let existing = vm.own(id, &name)?;
-    if vm.define(
-        id,
-        name.clone(),
-        with_defaults(desc.clone(), existing.is_some()),
-    )? {
-        return Ok(());
-    }
-    if existing.is_some_and(|prop| unchanged(&prop, &desc)) {
+    if vm.define(id, name.clone(), desc)? {
         return Ok(());
     }
     Err(vm.type_error(&format!(
         "Cannot redefine property: {}",
         crate::v9::vm::property::key_text(&name)
     )))
-}
-
-/** Whether each field the descriptor gives matches the current property. */
-fn unchanged(prop: &crate::v9::vm::heap::Prop, desc: &Descriptor) -> bool {
-    let flag = |want: Option<bool>, bit: u8| want.is_none_or(|w| w == (prop.attrs & bit != 0));
-    let flags = flag(desc.enumerable, ENUMERABLE) && flag(desc.configurable, CONFIGURABLE);
-    flags
-        && match &prop.slot {
-            Slot::Data(value) => {
-                desc.get.is_none()
-                    && desc.set.is_none()
-                    && flag(desc.writable, WRITABLE)
-                    && desc.value.as_ref().is_none_or(|v| v.same_value(value))
-            }
-            Slot::Accessor(get, set) => {
-                desc.value.is_none()
-                    && desc.writable.is_none()
-                    && desc.get.is_none_or(|g| g == *get)
-                    && desc.set.is_none_or(|s| s == *set)
-            }
-        }
 }
 
 /** Object.defineProperty. */
@@ -386,7 +350,12 @@ fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if let JsValue::Object(id) = target
         && !super::integrity::set_prototype_of(vm, id, proto)?
     {
-        return Err(vm.type_error("Object.setPrototypeOf could not set the prototype"));
+        let message = if id == vm.object_intrinsics(id).ids.object_prototype {
+            "Immutable prototype object 'Object.prototype' cannot have their prototype set"
+        } else {
+            "Object.setPrototypeOf could not set the prototype"
+        };
+        return Err(vm.type_error(message));
     }
     Ok(target)
 }
@@ -524,13 +493,31 @@ fn is(_: &mut Vm, call: Call) -> Res<JsValue> {
 /** Object.fromEntries. */
 fn from_entries(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let result = vm.new_object()?;
-    for entry in vm.iterate_to_vec(&call.arg(0))? {
-        let name = vm.get(&entry, &key("0"))?;
-        let value = vm.get(&entry, &key("1"))?;
-        let property = vm.to_key(&name)?;
-        vm.define(result, property, Descriptor::data(value))?;
+    let record = vm.get_iterator(&call.arg(0))?;
+    let roots = vm.pins.len();
+    while let Some(entry) = vm.iter_step(record)? {
+        vm.pin(entry.clone());
+        if let Err(error) = from_entry(vm, result, entry) {
+            return Err(super::grouping::close_error(vm, record, error));
+        }
+        vm.pins.truncate(roots);
+        vm.charge(1)?;
     }
     Ok(JsValue::Object(result))
+}
+
+/** Each entry is an object; key and value gets precede key coercion and property definition. */
+fn from_entry(vm: &mut Vm, result: ObjectId, entry: JsValue) -> Res<()> {
+    if !matches!(entry, JsValue::Object(_)) {
+        return Err(vm.type_error("Iterator value is not an entry object"));
+    }
+    let name = vm.get(&entry, &key("0"))?;
+    vm.pin(name.clone());
+    let value = vm.get(&entry, &key("1"))?;
+    vm.pin(value.clone());
+    let property = vm.to_key(&name)?;
+    vm.define(result, property, Descriptor::data(value))?;
+    Ok(())
 }
 
 /** Object.hasOwn. */
@@ -543,29 +530,7 @@ fn has_own(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Object.groupBy. */
 fn group_by(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let callback = call.arg(1);
-    let result = vm.alloc(Object::new(Class::Plain, None))?;
-    for (index, item) in vm.iterate_to_vec(&call.arg(0))?.into_iter().enumerate() {
-        let group = vm.call(
-            callback.clone(),
-            JsValue::Undefined,
-            vec![item.clone(), JsValue::Number(index as f64)],
-        )?;
-        let property = vm.to_key(&group)?;
-        let list = match vm.own(result, &property)? {
-            Some(prop) => match prop.slot {
-                Slot::Data(list) => list,
-                Slot::Accessor(..) => JsValue::Undefined,
-            },
-            None => {
-                let list = JsValue::Object(vm.new_array(Vec::new())?);
-                vm.define(result, property, Descriptor::data(list.clone()))?;
-                list
-            }
-        };
-        vm.array_append(&list, item)?;
-    }
-    Ok(JsValue::Object(result))
+    super::grouping::group(vm, call, true)
 }
 
 /** Object.prototype.hasOwnProperty. */
@@ -583,7 +548,7 @@ fn is_prototype_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let id = this_object(vm, &call, "Object.prototype.isPrototypeOf")?;
     for _ in 0..crate::v9::vm::property::CHAIN_STEPS {
-        match vm.proto_of(current) {
+        match super::integrity::get_prototype_of(vm, current)? {
             Some(proto) if proto == id => return Ok(JsValue::Boolean(true)),
             Some(proto) => current = proto,
             None => break,
@@ -611,12 +576,27 @@ pub(in crate::v9) fn builtin_tag(vm: &mut Vm, value: &JsValue) -> Res<String> {
         JsValue::Object(id) => *id,
         other => vm.to_object(other)?,
     };
-    let tag = vm.get(&JsValue::Object(id), &Key::Sym(symbol::TO_STRING_TAG))?;
+    let array = super::array::is_array_for(vm, &JsValue::Object(id), "Object.prototype.toString")?;
+    let tag = match vm.interesting_holder(id) {
+        Some(holder) => vm.get_from(
+            holder,
+            &Key::Sym(symbol::TO_STRING_TAG),
+            &JsValue::Object(id),
+        )?,
+        None => JsValue::Undefined,
+    };
     if let JsValue::String(tag) = tag {
         return Ok(tag.lossy());
     }
+    if array {
+        return Ok("Array".into());
+    }
     if vm.is_callable(&JsValue::Object(id)) {
         return Ok("Function".into());
+    }
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 && id == crate::v9::vm::GLOBAL {
+        return Ok("Object".into());
     }
     if let Some(tag) = crate::v9::platform::interface_tag(vm, id) {
         return Ok(tag);
@@ -640,7 +620,7 @@ pub(in crate::v9) fn builtin_tag(vm: &mut Vm, value: &JsValue) -> Res<String> {
         Some(Class::String(_)) => "String",
         Some(Class::Date(_)) => "Date",
         Some(Class::RegExp(_)) => "RegExp",
-        Some(Class::Arguments) => "Arguments",
+        Some(Class::Arguments | Class::MappedArguments(_)) => "Arguments",
         _ => "Object",
     }
     .into())
@@ -654,6 +634,9 @@ fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Object.prototype.toLocaleString calls toString. */
 fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.this.nullish() {
+        return Err(vm.type_error("Cannot convert undefined or null to object"));
+    }
     let method = vm.get(&call.this, &key("toString"))?;
     vm.call(method, call.this.clone(), Vec::new())
 }
@@ -763,18 +746,21 @@ fn lookup_accessor(vm: &mut Vm, call: Call, method: &str, setter: bool) -> Res<J
 /** The __proto__ getter. */
 fn proto_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_object(vm, &call, "__proto__")?;
-    Ok(vm.proto_of(id).map_or(JsValue::Null, JsValue::Object))
+    Ok(super::integrity::get_prototype_of(vm, id)?.map_or(JsValue::Null, JsValue::Object))
 }
 
 /** The __proto__ setter. */
 fn proto_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.this.nullish() {
+        return Err(vm.type_error("Cannot convert undefined or null to object"));
+    }
     if let JsValue::Object(id) = call.this {
         let proto = match call.arg(0) {
             JsValue::Object(proto) => Some(proto),
             JsValue::Null => None,
             _ => return Ok(JsValue::Undefined),
         };
-        if !vm.set_proto(id, proto)? {
+        if !super::integrity::set_prototype_of(vm, id, proto)? {
             return Err(vm.type_error("Cyclic __proto__ value"));
         }
     }

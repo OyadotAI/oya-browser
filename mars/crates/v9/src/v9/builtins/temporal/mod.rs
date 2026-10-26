@@ -68,7 +68,7 @@ static PROTOS: OnceLock<[ObjectId; 8]> = OnceLock::new();
 
 /** A new Temporal object with `new_target`'s prototype, or the kind's own. */
 pub(super) fn make(vm: &mut Vm, target: Option<&JsValue>, t: T) -> Res<JsValue> {
-    let fallback = PROTOS.get().expect("temporal installed")[t.kind as usize];
+    let fallback = vm.intrinsic_id(PROTOS.get().expect("temporal installed")[t.kind as usize]);
     let proto = match target {
         Some(target) => vm.prototype_for(target, fallback)?,
         None => fallback,

@@ -243,15 +243,15 @@ fn random_uuid_is_unpredictable_and_well_formed() {
     }
 }
 
-/** Absent platform APIs are undefined so feature detection takes its fallback. */
+/** Native shared-memory APIs are present while the unsupported WebSocket surface remains absent. */
 #[test]
-fn absent_apis_are_undefined() {
+fn supported_and_absent_platform_apis_are_distinct() {
     assert_eq!(
         eval(
             "const r=[typeof Atomics,typeof SharedArrayBuffer,typeof WebSocket,typeof fetch,typeof XMLHttpRequest].join();",
             "r"
         ),
-        "undefined,undefined,undefined,function,function"
+        "object,function,undefined,function,function"
     );
 }
 

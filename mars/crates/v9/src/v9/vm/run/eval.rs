@@ -5,27 +5,28 @@
  * callee is an ordinary call. Also the eval-var object ops a sloppy eval's `var`s live in.
  */
 use super::{Flow, Vm};
-use crate::constants::{VM_DYNAMIC_BYTES, VM_DYNAMIC_SOURCES};
 use crate::protocol::EngineError;
 use crate::v9::builtins::dynamic_base;
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::DynamicSource;
 use crate::v9::vm::data::Class;
-use crate::v9::vm::heap::{Key, NATIVE_BASE, Object};
+use crate::v9::vm::heap::{Key, Object};
 use crate::v9::vm::realm::realm;
 use crate::v9::vm::{Exit, Frame, Res, Resume};
 use std::sync::OnceLock;
 
 /** The intrinsic %eval% function's identity. */
 fn intrinsic_eval() -> Option<ObjectId> {
-    static ID: OnceLock<Option<ObjectId>> = OnceLock::new();
-    *ID.get_or_init(|| {
-        realm()
-            .natives
-            .iter()
-            .position(|native| native.name == "eval")
-            .map(|index| NATIVE_BASE + index as ObjectId)
-    })
+    static INDEX: OnceLock<Option<u32>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            realm()
+                .natives
+                .iter()
+                .position(|native| native.name == "eval")
+                .map(|index| index as u32)
+        })
+        .map(|index| realm().native_identity(index))
 }
 
 impl Vm<'_> {
@@ -58,10 +59,7 @@ impl Vm<'_> {
     /** Compile direct eval source in the caller context and run it on the caller's frame state. */
     fn run_direct_eval(&mut self, source: String, context: String) -> Res<JsValue> {
         self.check_eval_envs(&context)?;
-        let used: usize = self.dynamic.iter().map(|d| d.source.len()).sum();
-        if self.dynamic.len() >= VM_DYNAMIC_SOURCES || used + source.len() > VM_DYNAMIC_BYTES {
-            return Err(EngineError::limit("V9 dynamic code", VM_DYNAMIC_BYTES).into());
-        }
+        self.prepare_dynamic(source.len())?;
         let base = dynamic_base(&self.dynamic);
         let code =
             match crate::v9::compile_dynamic(&mut self.registry, &source, base, Some(&context)) {
@@ -77,9 +75,11 @@ impl Vm<'_> {
         self.dynamic.push(DynamicSource {
             source,
             context: Some(context),
+            base: Some(base),
         });
         let caller = self.frame();
         let frame = Frame {
+            realm: caller.realm,
             regs: vec![JsValue::Undefined; code.registers as usize],
             code,
             pc: 0,
@@ -92,13 +92,16 @@ impl Vm<'_> {
             handlers: Vec::new(),
             envs: 0,
             boundary: true,
+            caller_hidden: false,
             construct: false,
             resume: Resume::Next,
         };
         self.frames.push(frame);
+        let previous_realm = self.active_realm;
         self.native_depth += 1;
         let result = self.run();
         self.native_depth -= 1;
+        self.select_realm(previous_realm)?;
         match result? {
             Exit::Return(value) => Ok(value),
             _ => Err(EngineError::invalid("V9 eval code suspended.").into()),
@@ -115,6 +118,28 @@ impl Vm<'_> {
             match record {
                 Some(record) if record.slots.len() >= needed as usize => env = record.parent,
                 _ => return Err(EngineError::invalid("V9 eval context exceeds its caller.").into()),
+            }
+        }
+        let sites = crate::v9::compile::eval_private_sites(context)
+            .ok_or_else(|| EngineError::invalid("Malformed V9 private eval context."))?;
+        let mut env = self.frame().env;
+        for site in sites.iter().rev() {
+            let mut found = false;
+            while let Some(id) = env {
+                let record = self
+                    .heap
+                    .env(id)
+                    .ok_or_else(|| EngineError::invalid("Missing V9 private eval environment."))?;
+                env = record.parent;
+                if record.class_site == Some(*site) {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(
+                    EngineError::invalid("V9 private eval context exceeds its caller.").into(),
+                );
             }
         }
         Ok(())
@@ -153,6 +178,20 @@ impl Vm<'_> {
             return Ok(());
         }
         self.push(JsValue::Boolean(false));
+        Ok(())
+    }
+    /** Dynamic eval bindings are deletable; absence continues to the outer binding. */
+    pub(super) fn delete_ext(&mut self, name: u32, hops: u16, slot: u16) -> Res<()> {
+        let key = Key::Str(self.constant(name));
+        if let Some(id) = self.ext_object(hops, slot)?
+            && self.own(id, &key)?.is_some()
+        {
+            let deleted = self.delete(id, &key)?;
+            self.push(JsValue::Boolean(deleted));
+            self.push(JsValue::Boolean(true));
+        } else {
+            self.push(JsValue::Boolean(false));
+        }
         Ok(())
     }
     /** Create an eval var (undefined), making the function's eval-var object on first use. */

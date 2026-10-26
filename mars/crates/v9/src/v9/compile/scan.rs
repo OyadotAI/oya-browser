@@ -126,8 +126,7 @@ impl Walker {
                 self.expr(object);
                 self.stmt(body);
             }
-            StmtKind::Field(key, value) => {
-                self.key(key);
+            StmtKind::Field(_, value) => {
                 if let Some(value) = value {
                     self.expr(value);
                 }
@@ -159,6 +158,9 @@ impl Walker {
         }
         for member in &class.members {
             self.key(&member.key);
+        }
+        for key in super::class_fields::keys(class) {
+            self.expr(key);
         }
     }
     /** Computed keys are expressions. */
@@ -320,8 +322,10 @@ impl Walker {
             ExprKind::ImportMeta
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
+            | ExprKind::BigIntWide(_)
             | ExprKind::String(_)
             | ExprKind::Opaque(_)
+            | ExprKind::InvalidReference(_)
             | ExprKind::Regex(..)
             | ExprKind::Null
             | ExprKind::Bool(_) => {}
@@ -557,7 +561,7 @@ pub(super) fn lexical_names(body: &[Stmt], functions_too: bool) -> Vec<(Name, Va
             stmt = inner;
         }
         match &stmt.kind {
-            StmtKind::Var(kind @ (VarKind::Let | VarKind::Const), list) => {
+            StmtKind::Var(kind, list) if *kind != VarKind::Var => {
                 for declarator in list {
                     let mut names = Vec::new();
                     bound_names(&declarator.target, &mut names);
@@ -641,4 +645,14 @@ pub(super) fn stmt_var_names(stmt: &Stmt) -> Vec<Name> {
     let mut out = Vec::new();
     var_names_stmt(stmt, true, &mut Vec::new(), &mut out);
     out
+}
+
+/** Binding defaults and computed keys can themselves create closures that retain the binding environment. */
+pub(super) fn pattern_has_closure(pattern: &Pattern) -> bool {
+    let mut walker = Walker {
+        uses: Uses::default(),
+        into_arrows: false,
+    };
+    walker.pattern(pattern);
+    walker.uses.closure
 }

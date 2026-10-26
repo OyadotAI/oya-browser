@@ -1,16 +1,35 @@
 /** Precise mark-and-sweep collection over explicit roots, run between instructions. */
 use super::data::{
     Class, FunctionKind, HostData, IterState, Job, PromiseState, ReactionHandler, SavedFrame,
+    TableKey,
 };
 use super::heap::{EnvId, FastSet, INTRINSIC_BASE, Slot};
 use super::{GLOBAL, Res, Vm};
 use crate::v9::value::{JsValue, ObjectId};
+
+/** Two actual young-collection survivals move an object out of the nursery. */
+pub(in crate::v9) const PROMOTION_AGE: u8 = 2;
+
+/** Snapshot pruning preserves weak state; language collections resolve genuine reachability. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Collection {
+    Major,
+    #[cfg(feature = "conformance")]
+    Minor,
+    Snapshot,
+}
 
 /** Marking state; state validation reuses it to find every edge a saved graph holds. */
 #[derive(Default)]
 pub(super) struct Marker {
     pub objects: FastSet<ObjectId>,
     pub envs: FastSet<EnvId>,
+    /** Symbols participate in weak liveness even though their identity ledger is not recycled. */
+    pub symbols: FastSet<u32>,
+    /** A strongly reached object's context retains that context's virtual intrinsic identities. */
+    pub(super) live_banks: FastSet<u32>,
+    /** Newly reached identities wake ephemeron values in linear work rather than repeated scans. */
+    pub(super) weak_live: Vec<TableKey>,
     values: Vec<JsValue>,
     pending_envs: Vec<EnvId>,
 }
@@ -18,16 +37,19 @@ pub(super) struct Marker {
 impl Marker {
     /** Queue a value. */
     pub(super) fn value(&mut self, value: &JsValue) {
-        if let JsValue::Object(id) = value
-            && self.objects.insert(*id)
-        {
-            self.values.push(value.clone());
+        match value {
+            JsValue::Object(id) => self.object(*id),
+            JsValue::Symbol(id) if self.symbols.insert(*id) => {
+                self.weak_live.push(TableKey::Symbol(*id))
+            }
+            _ => {}
         }
     }
     /** Queue an object. */
     pub(super) fn object(&mut self, id: ObjectId) {
         if self.objects.insert(id) {
             self.values.push(JsValue::Object(id));
+            self.weak_live.push(TableKey::Object(id));
         }
     }
     /** Queue an environment. */
@@ -85,14 +107,35 @@ impl Marker {
 impl Vm<'_> {
     /** Collect garbage now: everything unreachable from the roots is freed. */
     pub fn collect_now(&mut self) -> Res<()> {
+        self.collect_with(Collection::Major)
+    }
+    /** Young collection scans old objects for young edges and never reclaims the old generation. */
+    #[cfg(feature = "conformance")]
+    pub fn collect_young(&mut self) -> Res<()> {
+        self.collect_with(Collection::Minor)
+    }
+    /** Packaging a request is not a language GC checkpoint: retain weak identities as state. */
+    pub fn collect_snapshot(&mut self) -> Res<()> {
+        self.collect_with(Collection::Snapshot)
+    }
+    /** All collection modes share the same exact strong roots, tracer, bounds and sweep. */
+    fn collect_with(&mut self, kind: Collection) -> Res<()> {
         let mut marker = Marker::default();
         marker.object(GLOBAL);
+        self.realm_roots(&mut marker);
+        if kind != Collection::Major {
+            for (id, object) in &self.heap.objects {
+                if object.age >= PROMOTION_AGE {
+                    marker.object(*id);
+                }
+            }
+        }
         let materialized: Vec<ObjectId> = self
             .heap
             .objects
             .keys()
             .copied()
-            .filter(|id| *id >= INTRINSIC_BASE)
+            .filter(|id| *id >= INTRINSIC_BASE && self.materialized_realm_root(*id))
             .collect();
         for id in materialized {
             marker.object(id);
@@ -115,6 +158,9 @@ impl Vm<'_> {
             }
         }
         for value in &self.pins {
+            marker.value(value);
+        }
+        for value in self.kept_weak.values() {
             marker.value(value);
         }
         for job in &self.jobs {
@@ -167,12 +213,29 @@ impl Vm<'_> {
             marker.value(value);
         }
         self.trace(&mut marker);
+        let cleanup = if kind == Collection::Snapshot {
+            self.trace_snapshot_weak(&mut marker);
+            Vec::new()
+        } else {
+            self.trace_ephemerons(&mut marker);
+            self.clear_dead_weak(&marker)
+        };
         self.heap
             .objects
-            .retain(|id, _| *id >= INTRINSIC_BASE || marker.objects.contains(id));
+            .retain(|id, _| marker.objects.contains(id));
         self.heap.envs.retain(|id, _| marker.envs.contains(id));
+        #[cfg(feature = "conformance")]
+        if kind == Collection::Minor {
+            for object in self.heap.objects.values_mut() {
+                object.age = object.age.saturating_add(1).min(PROMOTION_AGE);
+            }
+        }
+        self.sweep_realms(&marker.objects);
         self.page.sweep(&marker.objects);
         self.heap.recount();
+        for id in cleanup {
+            crate::v9::builtins::schedule_finalization(self, id)?;
+        }
         Ok(())
     }
     /** A module record keeps its body, namespace and environment alive (namespaces read the
@@ -197,13 +260,20 @@ impl Vm<'_> {
     pub(super) fn trace(&self, marker: &mut Marker) {
         loop {
             if let Some(value) = marker.values.pop() {
+                if let JsValue::Object(id) = &value {
+                    marker.live_banks.insert(self.object_realm(*id));
+                    self.trace_realm(*id, marker);
+                }
                 if let JsValue::Object(id) = value
                     && let Some(object) = self.heap.get(id)
                 {
                     if let Some(proto) = object.proto {
                         marker.object(proto);
                     }
-                    for (_, prop) in object.props.iter() {
+                    for (key, prop) in object.props.iter() {
+                        if let super::heap::Key::Sym(id) = key {
+                            marker.value(&JsValue::Symbol(*id));
+                        }
                         match &prop.slot {
                             Slot::Data(value) => marker.value(value),
                             Slot::Accessor(get, set) => {
@@ -237,8 +307,14 @@ impl Vm<'_> {
 /** Edges held inside an object's internal data. */
 fn trace_class(class: &Class, marker: &mut Marker) {
     match class {
+        Class::SharedArrayBuffer(buffer) => {
+            for callback in buffer.async_callbacks() {
+                marker.object(callback);
+            }
+        }
+        Class::MappedArguments(data) => marker.env(Some(data.env)),
         Class::Array(elements) => {
-            for value in elements {
+            for value in elements.resident_values() {
                 marker.value(value);
             }
         }
@@ -265,10 +341,17 @@ fn trace_class(class: &Class, marker: &mut Marker) {
                 }
             }
         }
-        Class::Map(table) | Class::Set(table) | Class::WeakMap(table) | Class::WeakSet(table) => {
+        Class::Map(table) | Class::Set(table) => {
             for (key, value) in table.entries.iter().flatten() {
                 marker.value(key);
                 marker.value(value);
+            }
+        }
+        Class::Symbol(id) => marker.value(&JsValue::Symbol(*id)),
+        Class::FinalizationRegistry(data) => {
+            marker.object(data.callback);
+            for cell in &data.cells {
+                marker.value(&cell.holdings);
             }
         }
         Class::Promise(data) => {
