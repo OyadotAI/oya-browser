@@ -331,15 +331,16 @@ fn verbose_reporting_invokes_real_onerror_and_observes_its_true_result() {
 /** A native resource-admission failure retains its fatal category when raised directly by a listener. */
 #[test]
 fn listener_native_resource_limits_are_not_changed_into_caught_ordinary_errors() {
-    let execution = common::load_with(
-        "d8.profiler.setOnProfileEndListener(()=>Function('a,'.repeat(64)+'a','return 1'));console.profile();console.profileEnd();",
-        &environment(),
+    let source = format!(
+        "d8.profiler.setOnProfileEndListener(()=> 'x'.repeat({}));console.profile();console.profileEnd();",
+        mars_v9::constants::JS_STRING_UNITS + 1
     );
+    let execution = common::load_with(&source, &environment());
     assert_eq!(
         execution
             .failed
             .first()
-            .expect("existing formal-parameter resource failure")
+            .expect("existing string resource failure")
             .error
             .code,
         "limit_exceeded"
@@ -349,10 +350,11 @@ fn listener_native_resource_limits_are_not_changed_into_caught_ordinary_errors()
 /** Author error formatting is real script work, and its native resource failures must remain fatal as well. */
 #[test]
 fn verbose_error_formatting_preserves_native_fatal_admission_errors() {
-    let execution = common::load_with(
-        "d8.profiler.setOnProfileEndListener(()=>{throw {toString(){return Function('a,'.repeat(64)+'a','return 1')}}});console.profile();console.profileEnd();",
-        &environment(),
+    let source = format!(
+        "d8.profiler.setOnProfileEndListener(()=>{{throw {{toString(){{return 'x'.repeat({})}}}}}});console.profile();console.profileEnd();",
+        mars_v9::constants::JS_STRING_UNITS + 1
     );
+    let execution = common::load_with(&source, &environment());
     assert_eq!(
         execution
             .failed

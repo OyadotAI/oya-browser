@@ -12,13 +12,16 @@ mod files;
 mod test_dom;
 pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
+mod microtasks;
+pub(in crate::v9) use microtasks::enqueue as enqueue_shell_microtask;
 mod output;
 mod profiling;
 pub(in crate::v9) use profiling::{
-    Clock as ProfileClock, State as ProfileState, console as profile_console,
-    tick as profile_tick, validate as validate_profile, validate_state as validate_profile_state,
+    Clock as ProfileClock, State as ProfileState, console as profile_console, tick as profile_tick,
+    validate as validate_profile, validate_state as validate_profile_state,
 };
 mod realms;
+mod reporting;
 mod serializer;
 mod shadow;
 mod strings;
@@ -83,6 +86,7 @@ pub(super) fn install(builder: &mut Builder) {
     shadow::install(builder);
     workers::install(builder);
     memory::install(builder);
+    microtasks::install(builder);
     strings::install(builder);
     async_hooks::install(builder);
     output::install(builder);

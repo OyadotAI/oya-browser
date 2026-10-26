@@ -10,7 +10,9 @@ mod collections;
 #[cfg(feature = "conformance")]
 mod conformance;
 #[cfg(feature = "conformance")]
-pub(in crate::v9) use conformance::{ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state};
+pub(in crate::v9) use conformance::{
+    ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state,
+};
 mod date;
 pub(in crate::v9) use date::validate_timezone;
 mod disposal;
@@ -98,6 +100,8 @@ use super::vm::heap::Key;
 use super::vm::realm::Builder;
 use super::vm::{Call, Res, Vm};
 
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::enqueue_shell_microtask;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]

@@ -263,7 +263,10 @@ fn aggregate(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Error.prototype.toString. */
 fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !matches!(call.this, JsValue::Object(_)) {
-        return Err(vm.type_error("Error.prototype.toString called on non-object"));
+        let receiver = super::function::diagnostic_receiver(vm, &call.this)?;
+        return Err(vm.type_error(&format!(
+            "Method Error.prototype.toString called on incompatible receiver {receiver}"
+        )));
     }
     let name = vm.get(&call.this, &key("name"))?;
     let name = if name == JsValue::Undefined {

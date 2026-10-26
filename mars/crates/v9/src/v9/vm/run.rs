@@ -16,6 +16,7 @@ use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
 
 mod asyncgen;
 mod eval;
+mod super_update;
 mod with;
 
 /** Completion kinds a finally block's registers hold. */
@@ -887,6 +888,9 @@ impl Vm<'_> {
                 self.drop_n(4);
                 self.push(value);
             }
+            Op::CaptureSuperBase => self.capture_super_base()?,
+            Op::ReadSuperReference => self.read_super_reference()?,
+            Op::WriteSuperReference => self.write_super_reference()?,
             Op::ToElementKey => {
                 let object = self.peek(1);
                 let value = self.peek(0);

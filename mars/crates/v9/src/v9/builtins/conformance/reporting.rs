@@ -1,4 +1,4 @@
-/** D8's verbose TryCatch reports ordinary listener exceptions without rethrowing them into the caller. */
+/** The shell reports caught host-callback and microtask exceptions in their real active context. */
 use crate::v9::builtins::{key, text};
 use crate::v9::value::JsValue;
 use crate::v9::vm::{Res, Thrown, Vm};

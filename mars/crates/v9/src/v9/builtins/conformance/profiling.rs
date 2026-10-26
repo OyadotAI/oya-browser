@@ -1,6 +1,5 @@
 /** The opt-in d8 CPU profiler records real cooperative samples and exports bounded actual call trees. */
 mod model;
-mod report;
 mod sampling;
 mod validation;
 use crate::protocol::EngineError;
@@ -93,7 +92,7 @@ fn end(vm: &mut Vm) -> Res<()> {
         vm.with_realm(bank, |vm| {
             match vm.call(JsValue::Object(listener), JsValue::Undefined, vec![value]) {
                 Ok(_) => Ok(()),
-                Err(Thrown::Value(error)) => report::exception(vm, error),
+                Err(Thrown::Value(error)) => super::reporting::exception(vm, error),
                 Err(fatal) => Err(fatal),
             }
         })?;

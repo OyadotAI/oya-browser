@@ -1297,11 +1297,11 @@ mod tests {
 
     #[cfg(feature = "conformance")]
     #[test]
-    /** An uncaught microtask exception is scored as a failure. */
-    fn microtask_exceptions_fail_the_case() {
+    /** Shell reporting cannot hide assertion failures, even if onerror attempts to suppress diagnostics. */
+    fn microtask_assertions_fail_the_case_even_with_onerror() {
         let checkout = Checkout::new();
         let scripts = checkout.scripts(
-            "queueMicrotask(() => { throw new Error('job failure'); });",
+            "class MjsUnitAssertionError extends Error{};onerror=()=>true;queueMicrotask(() => { throw new MjsUnitAssertionError('job failure'); });",
             "",
         );
         assert!(scripts.execute().unwrap_err().contains("job failure"));

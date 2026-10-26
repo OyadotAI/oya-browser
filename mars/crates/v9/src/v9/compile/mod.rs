@@ -19,6 +19,7 @@ mod resources;
 mod scan;
 mod stmt;
 mod strict;
+mod super_update;
 
 use super::errors;
 use super::syntax::{Body, Expr, Func, FuncFlags, Name, Pos, Program, Stmt};
@@ -174,6 +175,12 @@ pub(in crate::v9) enum Op {
     SetSuper(u32),
     /** this home key value -> value */
     SetSuperElem,
+    /** home -> its captured prototype or null, before computed-key conversion. */
+    CaptureSuperBase,
+    /** receiver captured-base key -> same reference plus its value. */
+    ReadSuperReference,
+    /** receiver captured-base key value -> value, writing through the retained reference. */
+    WriteSuperReference,
     ToPropertyKey,
     /** object raw-key -> object canonical-key, checking the receiver before authored key coercion. */
     ToElementKey,

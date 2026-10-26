@@ -364,13 +364,27 @@
     },
     {
       "family": "microtask_error_reporting",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "queue-microtask-cross-realm-callback-report-exception.js"
       ],
       "size": 1,
       "suggested_seams": "queueMicrotask callback creation-realm onerror reporting",
-      "id": "v8-020"
+      "id": "v8-020",
+      "progress": "Queued shell callbacks select and enter their actual relevant realm, reporting ordinary exceptions there while native and assertion failures remain scoring failures. Ten public controls pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-super-microtask-upstream/results-mjsunit.json",
+        "selected_cases": [
+          "queue-microtask-cross-realm-callback-report-exception.js",
+          "regress/regress-crbug-631917.js",
+          "regress/regress-633998.js",
+          "regress/regress-1980.js"
+        ],
+        "pass": 4,
+        "fail": 0,
+        "public_controls": "/private/tmp/mars-v9-super-microtask-release.log",
+        "fatal_control_followup": "/private/tmp/mars-v9-microtask-fatal-controls.log"
+      }
     },
     {
       "family": "data_url_modules",
@@ -1049,14 +1063,28 @@
     },
     {
       "family": "diagnostic_error_tostring_receiver:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "diagnostic",
       "tests": [
         "regress/regress-1980.js"
       ],
       "id": "v8-067",
-      "size": 1
+      "size": 1,
+      "progress": "Error.prototype.toString rejects primitive receivers with the native method/value diagnostic before inspecting object fields. Four public controls pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-super-microtask-upstream/results-mjsunit.json",
+        "selected_cases": [
+          "queue-microtask-cross-realm-callback-report-exception.js",
+          "regress/regress-crbug-631917.js",
+          "regress/regress-633998.js",
+          "regress/regress-1980.js"
+        ],
+        "pass": 4,
+        "fail": 0,
+        "public_controls": "/private/tmp/mars-v9-super-microtask-release.log",
+        "fatal_control_followup": "/private/tmp/mars-v9-microtask-fatal-controls.log"
+      }
     },
     {
       "family": "large_string_storage:1",
@@ -1302,14 +1330,28 @@
     },
     {
       "family": "diagnostic_reflect_apply_target:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "diagnostic",
       "tests": [
         "regress/regress-633998.js"
       ],
       "id": "v8-086",
-      "size": 1
+      "size": 1,
+      "progress": "Reflect.apply rejects noncallable targets before argument-list access with inert native target/type diagnostics. Twelve new and three existing invocation controls pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-super-microtask-upstream/results-mjsunit.json",
+        "selected_cases": [
+          "queue-microtask-cross-realm-callback-report-exception.js",
+          "regress/regress-crbug-631917.js",
+          "regress/regress-633998.js",
+          "regress/regress-1980.js"
+        ],
+        "pass": 4,
+        "fail": 0,
+        "public_controls": "/private/tmp/mars-v9-super-microtask-release.log",
+        "fatal_control_followup": "/private/tmp/mars-v9-microtask-fatal-controls.log"
+      }
     },
     {
       "family": "intl_receiver_brand:1",
@@ -1550,7 +1592,7 @@
     },
     {
       "family": "super_updates",
-      "status": "planned",
+      "status": "verified",
       "rows": [
         253
       ],
@@ -1558,7 +1600,22 @@
         "regress/regress-crbug-631917.js"
       ],
       "id": "v8-102",
-      "size": 1
+      "size": 1,
+      "progress": "Super prefix/postfix updates retain the actual receiver, base and canonical key through numeric conversion and writeback. Fourteen public controls and the pinned Test262 ordering control pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-super-microtask-upstream/results-mjsunit.json",
+        "selected_cases": [
+          "queue-microtask-cross-realm-callback-report-exception.js",
+          "regress/regress-crbug-631917.js",
+          "regress/regress-633998.js",
+          "regress/regress-1980.js"
+        ],
+        "pass": 4,
+        "fail": 0,
+        "public_controls": "/private/tmp/mars-v9-super-microtask-release.log",
+        "fatal_control_followup": "/private/tmp/mars-v9-microtask-fatal-controls.log",
+        "test262_control": "/private/tmp/mars-v9-super-update-test262/results-test262.json"
+      }
     },
     {
       "family": "string_coercion_order",
