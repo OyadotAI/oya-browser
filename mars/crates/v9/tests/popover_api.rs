@@ -135,3 +135,19 @@ fn open_state_is_invisible_to_the_page() {
         "[\"popover\",[\"popover\",\"<div popover=\\\"manual\\\"></div>\",1,true],\"popover\"]"
     );
 }
+
+/** A page can neither read nor forge the engine-only open marker: namespaced reads skip it,
+writing a name with a control character throws, as browsers refuse such names, and removing
+it is a no-op (removeAttribute never throws), so the popover stays open. */
+#[test]
+fn the_open_marker_is_out_of_page_reach() {
+    let source = "const m='\\u0001popover-open';const d=document.createElement('div');d.popover='manual';\
+        document.body.append(d);d.showPopover();const a=[d.getAttributeNS(null,m),d.hasAttributeNS(null,m)];\
+        const t=(f)=>{try{f();a.push('ok')}catch(e){a.push('threw')}};\
+        t(()=>d.removeAttributeNS(null,m));t(()=>d.setAttribute(m,''));t(()=>d.removeAttribute(m));\
+        a.push(d.matches(':popover-open'));const r=JSON.stringify(a);";
+    assert_eq!(
+        eval(source, "r"),
+        "[null,false,\"ok\",\"threw\",\"ok\",true]"
+    );
+}

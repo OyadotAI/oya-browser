@@ -921,6 +921,15 @@ impl Page<'_> {
         name: &str,
         value: Option<&str>,
     ) -> EngineResult<()> {
+        // Browsers refuse names with control characters (InvalidCharacterError); here that
+        // also keeps every engine-only marker, like POPOVER_OPEN_ATTRIBUTE, out of a page's
+        // reach: page writes and removals all come through this method.
+        if name.chars().any(char::is_control) {
+            // "<DOMException name>: message" becomes that catchable DOMException (dom_error).
+            return Err(EngineError::invalid(
+                "InvalidCharacterError: the attribute name contains a control character.",
+            ));
+        }
         let name = name.to_ascii_lowercase();
         let old = self
             .view(id)

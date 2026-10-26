@@ -2156,10 +2156,13 @@ fn namespaced_attribute(vm: &mut Vm, node: usize, call: &Call) -> Res<Option<(St
         .with_element(node, |_, attributes| {
             attributes
                 .get_key_value(&local)
+                .filter(|(name, _)| name.as_str() != crate::document::POPOVER_OPEN_ATTRIBUTE)
                 .or_else(|| {
                     attributes.iter().find(|(name, _)| {
-                        name.split_once(':')
-                            .is_some_and(|(_, after)| after == local)
+                        !name.starts_with(char::is_control)
+                            && name
+                                .split_once(':')
+                                .is_some_and(|(_, after)| after == local)
                     })
                 })
                 .map(|(name, value)| (name.clone(), value.clone()))
