@@ -110,7 +110,7 @@ fn verify_branding(window: &Window) -> EngineResult<()> {
         .ok_or_else(|| EngineError::invalid("Mars application menu is missing."))?;
     let quit = application
         .submenu()
-        .and_then(|menu| menu.itemAtIndex(0))
+        .and_then(|menu| menu.itemWithTag(mars::CLOSE))
         .ok_or_else(|| EngineError::invalid("Mars quit menu is missing."))?;
     let welcome = window.mars.welcome.stringValue().to_string();
     if window.window.title().to_string() != "Mars"

@@ -66,7 +66,7 @@ fn failed_alternatives_and_executions_restore_outer_modes() {
 fn multiline_modes_control_the_actual_anchor_search() {
     assert_eq!(
         common::eval(
-            "const re=/(?m:^foo$)/,match=re.exec('x\nfoo\ny');const r=match.index===2&&match[0]==='foo'&&!/(?m:^foo$)bar/.test('x\nfoo\nbar')&&/(?m:^foo$)|bar/.test('x\nfoo')&&!/(?-m:^foo$)/m.test('x\nfoo\ny')&&/(?-m:^foo$)/m.test('foo');",
+            "const re=/(?m:^foo$)/,match=re.exec('x\\nfoo\\ny');const r=match.index===2&&match[0]==='foo'&&!/(?m:^foo$)bar/.test('x\\nfoo\\nbar')&&/(?m:^foo$)|bar/.test('x\\nfoo')&&!/(?-m:^foo$)/m.test('x\\nfoo\\ny')&&/(?-m:^foo$)/m.test('foo');",
             "r"
         ),
         "true"
@@ -78,7 +78,7 @@ fn multiline_modes_control_the_actual_anchor_search() {
 fn scoped_multiline_lookahead_keeps_later_search_candidates() {
     assert_eq!(
         common::eval(
-            "const match=/(?=(?m:^foo$))foo/.exec('x\nfoo\ny');const r=match.index===2&&match[0]==='foo'&&!/^(?m:foo$)/.test('x\nfoo')&&/(?m:^foo)(?-m:$)/.test('x\nfoo');",
+            "const match=/(?=(?m:^foo$))foo/.exec('x\\nfoo\\ny');const r=match.index===2&&match[0]==='foo'&&!/^(?m:foo$)/.test('x\\nfoo')&&/(?m:^foo)(?-m:$)/.test('x\\nfoo');",
             "r"
         ),
         "true"
@@ -90,7 +90,7 @@ fn scoped_multiline_lookahead_keeps_later_search_candidates() {
 fn dot_all_scopes_preserve_outer_dots_and_other_flags() {
     assert_eq!(
         common::eval(
-            "const r=/^(?s:.)$/.test('\n')&&!/^(?-s:.)$/s.test('\n')&&/^(?s:.).$/.test('\nX')&&!/^(?s:.).$/.test('\n\n')&&/(?ms-i:^f.o$)/i.test('x\nf\ro\ny')&&!/(?ms-i:^f.o$)/i.test('x\nF\ro\ny');",
+            "const r=/^(?s:.)$/.test('\\n')&&!/^(?-s:.)$/s.test('\\n')&&/^(?s:.).$/.test('\\nX')&&!/^(?s:.).$/.test('\\n\\n')&&/(?ms-i:^f.o$)/i.test('x\\nf\\ro\\ny')&&!/(?ms-i:^f.o$)/i.test('x\\nF\\ro\\ny');",
             "r"
         ),
         "true"
@@ -184,7 +184,7 @@ fn nonempty_modifiers_allow_empty_body_and_empty_removal_side() {
 /** Saved patterns recompile scoped nodes under their real flags after a public state round trip. */
 #[test]
 fn scoped_patterns_survive_state_transport() {
-    let sources=vec!["const re=/(?m:^(?i:foo)$)/g;document.getElementById('go').onclick=()=>{const match=re.exec('x\nFoO\ny');console.log(match[0],match.index,re.lastIndex,re.ignoreCase,re.multiline)};".to_owned()];
+    let sources=vec!["const re=/(?m:^(?i:foo)$)/g;document.getElementById('go').onclick=()=>{const match=re.exec('x\\nFoO\\ny');console.log(match[0],match.index,re.lastIndex,re.ignoreCase,re.multiline)};".to_owned()];
     let host = common::host();
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();

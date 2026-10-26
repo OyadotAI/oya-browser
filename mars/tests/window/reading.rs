@@ -200,23 +200,14 @@ fn assert_long_reading(window: &mut Window, url: &str) {
             .ends_with("and all of them a care-killing competency.")
     );
     let layout = window.call("page.layout", json!({}));
-    let painted = layout["items"]
+    let lines = layout["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["node_id"] == paragraph["node_id"])
-        .unwrap();
-    let painted_text = painted["lines"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|line| line["text"].as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join(" ");
-    assert_eq!(
-        painted_text,
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
-    );
+        .filter(|item| item["node_id"] == paragraph["node_id"])
+        .flat_map(|item| item["lines"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert_source_coverage(text, &lines);
     let extent = number(&layout, "height");
     let maximum = (extent - number(&page["viewport"], "height")).max(0.0);
     assert!(maximum > 0.0);
@@ -235,6 +226,24 @@ fn assert_long_reading(window: &mut Window, url: &str) {
         close(number(&current["viewport"], "scroll_y"), y.min(maximum));
         window.capture();
     }
+}
+
+/// Every painted line consumes the normalized source in order; a wrap may omit its boundary
+/// space, but a break after a source hyphen must not invent one or lose any source characters.
+pub(super) fn assert_source_coverage(source: &str, lines: &[&Value]) {
+    let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut remaining = normalized.as_str();
+    assert!(!lines.is_empty(), "the source has no painted lines");
+    for (index, line) in lines.iter().enumerate() {
+        let text = line["text"].as_str().unwrap();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(!text.is_empty(), "painted line {index} is empty");
+        remaining = remaining.strip_prefix(' ').unwrap_or(remaining);
+        remaining = remaining.strip_prefix(&text).unwrap_or_else(|| {
+            panic!("painted line {index} {text:?} does not consume source {remaining:?}")
+        });
+    }
+    assert_eq!(remaining, "", "painted lines omit the end of the source");
 }
 
 /// A blank point in the actual native page viewport must carry the authored root canvas color.

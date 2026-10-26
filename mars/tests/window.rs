@@ -338,25 +338,31 @@ fn visible_window_completes_agent_journey_and_captures_native_states() {
         greet(&mut window, name, count);
         window.capture();
     }
+    let label =
+        "A long native activation label must wrap exactly as the engine reports. ".repeat(6);
     for id in ["next", "greet"] {
         let page = window.call("page.inspect", json!({}));
         let mut params = target(&page, id);
-        params["text"] = json!(
-            "A long native activation label must wrap exactly as the engine reports. ".repeat(6)
-        );
+        params["text"] = json!(label);
         window.call("page.set_text", params);
     }
     let geometry = window.call("page.layout", json!({}));
     let page = window.call("page.inspect", json!({}));
     for id in ["next", "greet"] {
         let params = target(&page, id);
-        let item = geometry["items"]
+        let lines = geometry["items"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|item| item["node_id"] == params["node_id"])
-            .unwrap();
-        assert!(item["lines"].as_array().unwrap().len() > 1);
+            .filter(|item| item["node_id"] == params["node_id"])
+            .flat_map(|item| item["lines"].as_array().unwrap())
+            .collect::<Vec<_>>();
+        assert!(lines.len() > 1, "{id} must paint multiple lines");
+        assert!(
+            lines.windows(2).any(|pair| pair[0]["y"] != pair[1]["y"]),
+            "{id} must wrap onto distinct rows"
+        );
+        reading::assert_source_coverage(&label, &lines);
     }
     window.capture();
     let before = narrow.clone();
