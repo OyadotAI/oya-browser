@@ -39,8 +39,8 @@ impl Reader<'_> {
                 self.node(Kind::Wrapper(JsValue::String(value)))
             }
             b'R' => self.regexp(depth),
-            b'B' | b'~' => self.buffer(tag),
-            b'C' | b'u' | b'p' | b'w' | b'm' | b't' | b'\\' => Err(Failure::Invalid),
+            b'B' | b'~' | b'C' => self.buffer(tag),
+            b'u' | b'p' | b'w' | b'm' | b't' | b'\\' => Err(Failure::Invalid),
             _ => Err(Failure::Invalid),
         }
     }
@@ -151,7 +151,7 @@ impl Reader<'_> {
         }
         self.charge(length.div_ceil(2))?;
         let bytes = self.raw(length)?.to_vec();
-        self.node(Kind::Buffer(bytes, maximum))
+        self.node(Kind::Buffer(bytes, maximum, tag == b'C'))
     }
     /** RegExp flags are native bit positions, with all unsupported bits and Unicode-mode conflicts rejected. */
     fn regexp(&mut self, depth: usize) -> Result<usize> {

@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 mod bundle;
+mod data_modules;
 mod timezone;
 
 /** A runaway interval cannot turn an upstream case into an unbounded host event loop. */
@@ -27,6 +28,10 @@ pub(super) struct Scripts {
     test_url: String,
     /** Metadata belongs to the original container even when native bundle parts execute separately. */
     metadata_source: String,
+    /** Classic sources carry their actual host filenames independently of source text. */
+    source_names: Vec<String>,
+    /** The supplied harness belongs to its actual checkout path. */
+    harness_url: String,
     /** All bundle modules are registered before any ordered Script or module entrypoint executes. */
     bundle: Option<bundle::Bundle>,
     /** Logical module entrypoint identities remain distinct from the physical container filename. */
@@ -51,6 +56,10 @@ impl Scripts {
                 .map(|url| url.to_string())
                 .unwrap_or_default(),
             metadata_source: source.into(),
+            source_names: Vec::new(),
+            harness_url: url::Url::from_file_path(root.join("mjsunit.js"))
+                .map(|url| url.to_string())
+                .unwrap_or_default(),
             bundle: None,
             bundle_entries: BTreeMap::new(),
         };
@@ -59,31 +68,46 @@ impl Scripts {
         scripts
     }
 
-    /** Host print remains available even for tests that explicitly omit the assertion harness. */
+    /** Native d8 output needs no JavaScript shim; the empty bootstrap slot preserves source-name alignment. */
     fn sources(&mut self, harness: &str, source: &str) -> Result<Vec<String>, String> {
+        #[cfg(not(feature = "conformance"))]
         let mut sources =
             vec!["var print = function (value) { console.log(String(value)); };".into()];
+        #[cfg(feature = "conformance")]
+        let mut sources = vec![String::new()];
+        self.source_names.push(String::new());
         if !source.lines().any(|line| line.trim() == "// NO HARNESS") {
             sources.push(harness.into());
+            self.source_names.push(self.harness_url.clone());
         }
         for name in declared_files(source) {
             sources.push(self.read(&name)?);
+            self.source_names.push(
+                url::Url::from_file_path(self.root.join(name))
+                    .map(|url| url.to_string())
+                    .unwrap_or_default(),
+            );
         }
         if boolean_flag(source, "bundle")
             && let Some(bundle) = bundle::parse(source, &self.root)?
         {
             for item in &bundle.items {
                 match item {
-                    bundle::Item::Script(source) => sources.push(source.clone()),
+                    bundle::Item::Script(source) => {
+                        sources.push(source.clone());
+                        self.source_names.push(self.test_url.clone());
+                    }
                     bundle::Item::Module(url) => {
                         self.bundle_entries.insert(sources.len(), url.clone());
                         sources.push(bundle.modules[url].clone());
+                        self.source_names.push(url.clone());
                     }
                 }
             }
             self.bundle = Some(bundle);
         } else {
             sources.push(source.into());
+            self.source_names.push(self.test_url.clone());
         }
         Ok(sources)
     }
@@ -149,9 +173,14 @@ impl Scripts {
         #[cfg(feature = "conformance")]
         let workers = mars_v9::ConformanceWorkerSession::new();
         let mut environment = crate::common::environment();
+        environment.scripts = self.source_names.clone();
         environment.url = self.test_url.clone();
         environment.regexp_buffer_boundaries =
             boolean_flag(&self.metadata_source, "js-regexp-buffer-boundaries");
+        environment.disallow_code_generation_from_strings = boolean_flag(
+            &self.metadata_source,
+            "disallow-code-generation-from-strings",
+        );
         if let Some(zone) = timezone::load(&self.metadata_source)? {
             environment.timezone_initial_offset_seconds = Some(zone.initial);
             environment.timezone_transitions = zone.transitions;
@@ -165,11 +194,25 @@ impl Scripts {
             conformance_sources: self.fixtures.clone(),
             conformance_files: self.files.clone(),
             conformance_d8: true,
+            conformance_cpu_trace_name: string_flag(
+                &self.metadata_source,
+                "expose-cputracemark-as",
+            )?,
+            conformance_random_seed: random_seed_flag(&self.metadata_source)?,
             conformance_fuzzing: boolean_flag(&self.metadata_source, "fuzzing"),
             conformance_expose_fast_api: boolean_flag(&self.metadata_source, "expose-fast-api")
                 && boolean_flag_default(&self.metadata_source, "turbo-fast-api-calls", true)
                 && !boolean_flag(&self.metadata_source, "correctness-fuzzer-suppressions"),
             conformance_async_hooks: boolean_flag(&self.metadata_source, "expose-async-hooks"),
+            conformance_experimental_stack_trace_frames: boolean_flag(
+                &self.metadata_source,
+                "experimental-stack-trace-frames",
+            ),
+            conformance_async_stack_traces: boolean_flag_default(
+                &self.metadata_source,
+                "async-stack-traces",
+                true,
+            ),
             conformance_builtin_subclassing: boolean_flag_default(
                 &self.metadata_source,
                 "builtin-subclassing",
@@ -218,18 +261,20 @@ impl Scripts {
         result
     }
 
-    /** Missing, non-file, traversing or symlink-escaping modules receive a genuine fetch failure. */
+    /** Literal shell data modules and confined checkout files carry real source; other requests fail fetching. */
     fn module_source(&self, request: &mars_v9::ModuleRequest) -> mars_v9::ModuleSource {
-        let source = url::Url::parse(&request.url)
-            .ok()
-            .and_then(|url| url.to_file_path().ok())
-            .and_then(|path| path.canonicalize().ok())
-            .filter(|path| {
-                self.root
-                    .canonicalize()
-                    .is_ok_and(|root| path.starts_with(root))
-            })
-            .and_then(|path| std::fs::read_to_string(path).ok());
+        let source = data_modules::source(&request.url).or_else(|| {
+            url::Url::parse(&request.url)
+                .ok()
+                .and_then(|url| url.to_file_path().ok())
+                .and_then(|path| path.canonicalize().ok())
+                .filter(|path| {
+                    self.root
+                        .canonicalize()
+                        .is_ok_and(|root| path.starts_with(root))
+                })
+                .and_then(|path| std::fs::read_to_string(path).ok())
+        });
         mars_v9::ModuleSource {
             url: request.url.clone(),
             source,
@@ -349,7 +394,10 @@ fn test_exit(error: &mars_v9::protocol::EngineError) -> Option<Result<(), String
     Some(if error.message == "0" {
         Ok(())
     } else {
-        Err(format!("Test host exited with status {}", error.message))
+        Err(format!(
+            "Test host exited with status {}\n{}",
+            error.message, error.hint
+        ))
     })
 }
 
@@ -471,6 +519,45 @@ fn numeric_flag_limit(source: &str, name: &str) -> Result<Option<usize>, String>
 fn boolean_flag(source: &str, name: &str) -> bool {
     boolean_flag_default(source, name, false)
 }
+
+/** V8's signed decimal int seed flag keeps zero distinct from the absence of explicit metadata. */
+#[cfg(feature = "conformance")]
+fn random_seed_flag(source: &str) -> Result<Option<i32>, String> {
+    string_flag(source, "random-seed")?
+        .map(|seed| {
+            seed.parse::<i32>()
+                .map_err(|_| "Invalid --random-seed value".to_string())
+        })
+        .transpose()
+}
+
+/** String flags preserve their actual values and last override while normalizing only the flag key's underscore alias. */
+#[cfg(feature = "conformance")]
+fn string_flag(source: &str, name: &str) -> Result<Option<String>, String> {
+    let expected = format!("--{name}");
+    let mut flags = source
+        .lines()
+        .filter_map(|line| {
+            line.trim_start()
+                .strip_prefix("//")?
+                .trim_start()
+                .strip_prefix("Flags:")
+        })
+        .flat_map(str::split_whitespace);
+    let mut value = None;
+    while let Some(flag) = flags.next() {
+        let (key, inline) = flag
+            .split_once('=')
+            .map_or((flag, None), |(key, value)| (key, Some(value)));
+        if key.replace('_', "-") == expected {
+            let text = inline
+                .or_else(|| flags.next())
+                .ok_or_else(|| format!("Missing {expected} value"))?;
+            value = Some(text.to_string());
+        }
+    }
+    Ok(value)
+}
 /** Flags with a primary default of true retain that default when metadata omits the switch. */
 fn boolean_flag_default(source: &str, name: &str, default: bool) -> bool {
     let mut enabled = default;
@@ -487,7 +574,10 @@ fn boolean_flag_default(source: &str, name: &str, default: bool) -> bool {
         let flag = flag.replace('_', "-");
         if flag == format!("--{name}") || flag == format!("--{name}=true") {
             enabled = true;
-        } else if flag == format!("--no-{name}") || flag == format!("--{name}=false") {
+        } else if flag == format!("--no-{name}")
+            || flag == format!("--no{name}")
+            || flag == format!("--{name}=false")
+        {
             enabled = false;
         }
     }
@@ -515,6 +605,63 @@ fn fixture_names(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /** Literal data source reaches the real compiler and its exported value reaches the importer. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn data_module_source_is_compiled_and_evaluated() {
+        let checkout = Checkout::new();
+        assert_eq!(checkout.scripts("import('data:text/javascript,export const answer=6*7').then(ns=>{if(ns.answer!==42)throw Error('wrong export')});", "").execute(), Ok(()));
+    }
+
+    /** Newline-sensitive comments, private fields and percent text remain literal module bytes. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn data_module_source_is_not_url_normalized_or_decoded() {
+        let checkout = Checkout::new();
+        assert_eq!(checkout.scripts("import(\"data:text/javascript,// comment\\nexport class Box{#x=7;get(){return this.#x}};export const text='%23';\").then(ns=>{if(new ns.Box().get()!==7||ns.text!=='%23')throw Error('changed literal source')});", "").execute(), Ok(()));
+    }
+
+    /** Nested imports are genuine later host requests and preserve their own literal module identities. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn nested_data_modules_complete_through_real_module_delivery() {
+        let checkout = Checkout::new();
+        assert_eq!(checkout.scripts("const inner='data:text/javascript,export default 9';const outer='data:text/javascript,export const ready=import('+JSON.stringify(inner)+')';import(outer).then(ns=>ns.ready).then(ns=>{if(ns.default!==9)throw Error('wrong nested export')});", "").execute(), Ok(()));
+    }
+
+    /** Real module exceptions remain failures unless JavaScript explicitly handles that import rejection. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn data_module_exceptions_are_not_converted_into_success() {
+        let checkout = Checkout::new();
+        let failure = checkout
+            .scripts(
+                "import('data:text/javascript,throw Error(\"literal module failure\")');",
+                "",
+            )
+            .execute()
+            .expect_err("uncaught module failure");
+        assert!(failure.contains("literal module failure"), "{failure}");
+        assert_eq!(checkout.scripts("import('data:text/javascript,throw Error(\"literal module failure\")').catch(e=>{if(e.message!=='literal module failure')throw e});", "").execute(), Ok(()));
+    }
+
+    /** Signed seed values and policy toggles follow original metadata order without filename rules. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn seeded_rng_and_codegen_flags_preserve_values_and_last_overrides() {
+        assert_eq!(
+            random_seed_flag("// Flags: --random_seed -7 --random-seed=12345"),
+            Ok(Some(12345))
+        );
+        assert_eq!(random_seed_flag("// Flags: --random-seed=0"), Ok(Some(0)));
+        assert_eq!(random_seed_flag("// Flags: --other"), Ok(None));
+        assert!(random_seed_flag("// Flags: --random-seed=2147483648").is_err());
+        assert!(!boolean_flag(
+            "// Flags: --disallow-code-generation-from-strings --no-disallow_code_generation_from_strings",
+            "disallow-code-generation-from-strings"
+        ));
+    }
 
     /** quit cannot be caught, cannot continue the source, and prevents pending callbacks. */
     #[cfg(feature = "conformance")]
@@ -688,9 +835,53 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "conformance")]
+    #[test]
+    /** Only real Flags metadata selects an extension name, preserving underscores inside that name and override order. */
+    fn cpu_marker_string_flags_preserve_the_actual_name() {
+        assert_eq!(
+            string_flag(
+                "// Flags: --expose_cputracemark_as=first_name\n// Flags: --expose-cputracemark-as second_name",
+                "expose-cputracemark-as"
+            ),
+            Ok(Some("second_name".into()))
+        );
+        assert_eq!(
+            string_flag(
+                "// Flags: --expose-cputracemark-as=",
+                "expose-cputracemark-as"
+            ),
+            Ok(Some(String::new()))
+        );
+        assert_eq!(
+            string_flag(
+                "const text='--expose-cputracemark-as=ignored';",
+                "expose-cputracemark-as"
+            ),
+            Ok(None)
+        );
+        assert!(
+            string_flag(
+                "// Flags: --expose-cputracemark-as",
+                "expose-cputracemark-as"
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     /** Hook switches use actual metadata, support negative aliases, and follow override order. */
     fn boolean_flags_preserve_actual_metadata_semantics() {
+        assert!(!boolean_flag_default(
+            "// Flags: --noasync-stack-traces",
+            "async-stack-traces",
+            true
+        ));
+        assert!(boolean_flag_default(
+            "// Flags: --noasync-stack-traces --async_stack_traces",
+            "async-stack-traces",
+            true
+        ));
         assert!(boolean_flag_default("", "builtin-subclassing", true));
         assert!(!boolean_flag_default(
             "// Flags: --no-builtin-subclassing",
@@ -718,6 +909,53 @@ mod tests {
             "const text='--expose-async-hooks'",
             "expose-async-hooks"
         ));
+    }
+
+    /** API frames default off, accept native flag aliases, and follow only actual metadata overrides. */
+    #[test]
+    fn experimental_api_stack_frames_use_actual_metadata() {
+        let name = "experimental-stack-trace-frames";
+        assert!(!boolean_flag("", name));
+        assert!(boolean_flag(
+            "// Flags: --experimental-stack-trace-frames",
+            name
+        ));
+        assert!(boolean_flag(
+            "// Flags: --experimental_stack_trace_frames=true",
+            name
+        ));
+        assert!(!boolean_flag(
+            "// Flags: --experimental-stack-trace-frames --noexperimental-stack-trace-frames",
+            name
+        ));
+        assert!(boolean_flag(
+            "// Flags: --no-experimental-stack-trace-frames --experimental-stack-trace-frames",
+            name
+        ));
+        assert!(!boolean_flag(
+            "const text='--experimental-stack-trace-frames'",
+            name
+        ));
+    }
+
+    /** The parser's result reaches actual native entry capture rather than a filename-specific runner shortcut. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn experimental_api_stack_frames_are_delivered_to_execution() {
+        let checkout = Checkout::new();
+        for (flags, expected) in [
+            ("", false),
+            ("// Flags: --experimental-stack-trace-frames\n", true),
+            (
+                "// Flags: --experimental-stack-trace-frames --no-experimental-stack-trace-frames\n",
+                false,
+            ),
+        ] {
+            let source = format!(
+                "{flags}Error.prepareStackTrace=(_,s)=>s;const frames=Realm.eval(0,'new Error()').stack;const exposed=frames.some(f=>f.getFunction()===Realm.eval);if(exposed!=={expected})throw Error('wrong API frame visibility');"
+            );
+            assert_eq!(checkout.scripts(&source, "").execute(), Ok(()));
+        }
     }
 
     #[cfg(feature = "conformance")]

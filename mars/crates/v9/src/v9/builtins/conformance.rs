@@ -6,9 +6,13 @@ use crate::v9::vm::data::PromiseState;
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Vm};
 mod async_hooks;
+mod cputrace;
 mod fast_api;
 mod files;
+mod test_dom;
+pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
+mod output;
 mod realms;
 mod serializer;
 mod shadow;
@@ -18,7 +22,9 @@ pub(in crate::v9) use async_hooks::{
     async_hook_after, async_hook_before, async_hook_init, async_hook_resolve, async_hook_resource,
     async_hook_unwind, expose as expose_async_hooks,
 };
+pub(in crate::v9) use cputrace::validate as validate_environment;
 pub(in crate::v9) use memory::measure as measure_memory;
+pub(in crate::v9) use output::console as console_output;
 use std::sync::OnceLock;
 pub(in crate::v9) use workers::{WorkerGraph, activate as worker_activate, worker_decode};
 
@@ -30,6 +36,7 @@ pub(in crate::v9) fn expose_conformance_globals(
 ) {
     super::expose_async_hooks(vm, global, bank);
     fast_api::expose(vm, bank);
+    cputrace::expose(vm, global, bank);
     expose_iterator_options(vm, bank);
 }
 
@@ -39,14 +46,18 @@ pub(in crate::v9) fn conformance_host_object(vm: &Vm, value: &JsValue) -> bool {
         .object()
         .and_then(|id| vm.heap.get(id))
         .is_some_and(|object| {
-            ["fast-api-brand", "conformance-worker-id"]
-                .iter()
-                .any(|name| {
-                    object
-                        .props
-                        .get(&crate::v9::vm::heap::Key::private(name))
-                        .is_some()
-                })
+            [
+                "fast-api-brand",
+                "conformance-worker-id",
+                test_dom::BRAND_KEY,
+            ]
+            .iter()
+            .any(|name| {
+                object
+                    .props
+                    .get(&crate::v9::vm::heap::Key::private(name))
+                    .is_some()
+            })
         })
 }
 
@@ -69,10 +80,13 @@ pub(super) fn install(builder: &mut Builder) {
     memory::install(builder);
     strings::install(builder);
     async_hooks::install(builder);
+    output::install(builder);
+    cputrace::install(builder);
     files::install(builder);
     let d8 = builder.object(Some(builder.ids.object_prototype));
     serializer::install(builder, d8);
     fast_api::install(builder, d8);
+    test_dom::install(builder, d8);
     builder.method(d8, "terminate", 0, terminate);
     builder.method(d8, "terminateNow", 0, terminate);
     let file = builder.object(Some(builder.ids.object_prototype));
@@ -91,12 +105,14 @@ pub(super) fn install(builder: &mut Builder) {
 /** Return an uncatchable engine outcome so the owning host ends this test with the requested code. */
 fn quit(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let status = crate::v9::value::to_int32(vm.to_number(&call.arg(0))?);
-    Err(crate::protocol::EngineError::new(
-        EXIT_CODE,
-        status.to_string(),
-        "The upstream test requested host termination.",
-    )
-    .into())
+    let mut hint = String::from("The upstream test requested host termination.");
+    if status != 0 && !vm.page.effects.console.is_empty() {
+        hint.push_str("\nHost console before exit:");
+        for entry in &vm.page.effects.console {
+            hint.push_str(&format!("\n{}: {}", entry.level, entry.text));
+        }
+    }
+    Err(crate::protocol::EngineError::new(EXIT_CODE, status.to_string(), &hint).into())
 }
 
 /** Host interruption is delivered at this native boundary and cannot be caught by script. */

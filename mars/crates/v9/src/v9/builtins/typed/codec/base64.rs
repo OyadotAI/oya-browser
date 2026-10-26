@@ -51,10 +51,10 @@ pub(super) fn from(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Getter-induced resize or detachment is observed before selecting the destination capacity. */
 pub(super) fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    receiver(vm, &call)?;
+    write_receiver(vm, &call)?;
     let input = input(vm, call.arg(0))?;
     let (url, tail) = decode_options(vm, call.arg(1))?;
-    let view = receiver(vm, &call)?;
+    let view = write_receiver(vm, &call)?;
     let decoded = decode::parse(vm, &input, url, tail, view.length)?;
     commit(vm, &view, &decoded.bytes)?;
     if decoded.invalid {

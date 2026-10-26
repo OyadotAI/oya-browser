@@ -150,7 +150,7 @@ impl Writer<'_> {
             self.var(view_tag(kind) as u64)?;
             self.var(offset as u64)?;
             self.var((length * width(kind)) as u64)?;
-            let rab = matches!(buffer,Atom::Reference(i)if matches!(self.graph.nodes[i].kind,Kind::Buffer(_,Some(_))));
+            let rab = matches!(buffer,Atom::Reference(i)if matches!(self.graph.nodes[i].kind,Kind::Buffer(_,Some(_),_)));
             return self.var(u64::from(tracking) | (u64::from(rab) << 1));
         }
         self.ids.insert(index, self.ids.len() as u32);
@@ -199,8 +199,17 @@ impl Writer<'_> {
                 self.tag(b',')?;
                 self.var(entries.len() as u64)
             }
-            Kind::Buffer(bytes, maximum) => {
-                self.tag(if maximum.is_some() { b'~' } else { b'B' })?;
+            Kind::Buffer(bytes, maximum, immutable) => {
+                if immutable && maximum.is_some() {
+                    return Err(Failure::Invalid);
+                }
+                self.tag(if immutable {
+                    b'C'
+                } else if maximum.is_some() {
+                    b'~'
+                } else {
+                    b'B'
+                })?;
                 self.var(bytes.len() as u64)?;
                 if let Some(maximum) = maximum {
                     self.var(maximum as u64)?;

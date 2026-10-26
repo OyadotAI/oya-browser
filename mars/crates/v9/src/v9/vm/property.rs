@@ -255,7 +255,15 @@ impl Vm<'_> {
                 if let Some(index) = crate::v9::builtins::typed_index(self, id, key) {
                     return Ok(index
                         .and_then(|index| crate::v9::builtins::typed_load(self, id, index))
-                        .map(Prop::data));
+                        .map(|value| {
+                            let mut prop = Prop::data(value);
+                            if crate::v9::builtins::view_of(self, id).is_some_and(|view| {
+                                crate::v9::builtins::buffer_immutable(self, view.buffer)
+                            }) {
+                                prop.attrs = ENUMERABLE;
+                            }
+                            prop
+                        }));
                 }
             }
             _ => {}
@@ -362,10 +370,7 @@ impl Vm<'_> {
                         attrs: 0,
                     }));
                 }
-                if key_is(key, "prototype")
-                    && (flags.generator
-                        || !flags.arrow && !flags.method && !flags.asynchronous && !flags.fields)
-                {
+                if key_is(key, "prototype") && self.has_function_prototype(id) {
                     let proto = if flags.generator && flags.asynchronous {
                         intrinsics.ids.async_generator_prototype
                     } else if flags.generator {
@@ -1074,9 +1079,13 @@ impl Vm<'_> {
         let own: Vec<Key> = object.props.ordered_keys();
         // Deletion marks are private keys, which `ordered_keys` leaves out, so ask the map.
         let deleted = |name: &str| object.props.get(&deleted_mark(&Key::from(name))).is_some();
-        let virtual_names: Vec<&str> = ["length", "name"]
+        let virtual_names: Vec<&str> = ["length", "name", "prototype"]
             .into_iter()
-            .filter(|name| is_function && !deleted(name))
+            .filter(|name| {
+                is_function
+                    && !deleted(name)
+                    && (*name != "prototype" || self.has_function_prototype(id))
+            })
             .collect();
         let mut indexes: Vec<Key> = own
             .iter()

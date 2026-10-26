@@ -15,6 +15,8 @@ pub(super) enum Step {
     Pending(ObjectId),
 }
 pub(super) struct Frame {
+    /// Active native trace identity is rebuilt from these real frames after each resumption, never serialized.
+    pub trace: Option<usize>,
     pub instance: ObjectId,
     pub module: Arc<Module>,
     pub index: u32,
@@ -55,6 +57,7 @@ impl Frame {
             Program::compile(&module.bodies[index as usize - module.imported_functions()].code)?
         };
         Ok(Self {
+            trace: None,
             program: Arc::new(program),
             controls: vec![],
             instance,
@@ -65,6 +68,24 @@ impl Frame {
             stack: vec![],
             roots: Default::default(),
         })
+    }
+    /** Local functions, unlike imported JS entry records, have genuine running Wasm code. */
+    pub fn enter_trace(&mut self, vm: &mut Vm) {
+        if self.index as usize >= self.module.imported_functions() {
+            let position = self
+                .program
+                .ops
+                .get(self.pc.saturating_sub(1))
+                .map_or(0, |op| op.position);
+            self.trace = Some(vm.begin_wasm_activation(self.instance, self.index, position));
+        }
+    }
+    /** A completed or tail-replaced frame relinquishes only its own transient scope and precise roots. */
+    pub fn release(&mut self, vm: &mut Vm) {
+        self.roots.release(vm);
+        if let Some(trace) = self.trace.take() {
+            vm.end_native_activation(trace);
+        }
     }
     /** Imported calls suspend only for genuine Promise values returned through a Suspending wrapper. */
     fn import(&mut self, vm: &mut Vm) -> Res<Step> {
@@ -179,6 +200,9 @@ impl Frame {
             return Ok(Step::Done(self.stack.split_off(self.stack.len() - count)));
         }
         let op = self.program.ops[self.pc].clone();
+        if let Some(trace) = self.trace {
+            vm.set_wasm_position(trace, op.position)?;
+        }
         self.pc += 1;
         if self
             .controls
@@ -204,6 +228,7 @@ impl Frame {
             }
         }));
         let mut activation = Activation {
+            trace: self.trace,
             index: self.index,
             instance: self.instance,
             module: &module,

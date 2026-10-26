@@ -68,6 +68,8 @@ impl Vm<'_> {
     }
     /** Check the restored graph against the heap and the freshly compiled code. */
     pub fn validate_graph(&self) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        crate::v9::platform::random::validate(self)?;
         crate::v9::platform::animations::validate(self)?;
         let marker = self.mark_everything();
         if !marker.objects.iter().all(|id| self.resolves(*id))
@@ -144,6 +146,13 @@ impl Vm<'_> {
     fn validate_objects(&self) -> EngineResult<()> {
         let functions = self.heap.objects.len();
         for (id, object) in &self.heap.objects {
+            #[cfg(feature = "conformance")]
+            if !crate::v9::builtins::validate_native_test_object(self, *id) {
+                return Err(forged("native test-object brand"));
+            }
+            if !crate::v9::builtins::valid_immutable_brand(self, *id) {
+                return Err(forged("immutable buffer brand"));
+            }
             match &object.class {
                 Class::BigIntWide(value) if value.to_i128().is_some() => {
                     return Err(forged("noncanonical boxed BigInt"));

@@ -27,6 +27,8 @@ mod keyboard;
 pub(in crate::v9) use keyboard::press_key;
 mod net;
 mod nodes;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) mod random;
 mod range;
 pub(in crate::v9) mod scripts;
 mod selector;
@@ -204,6 +206,8 @@ pub struct PageEnvironment {
     pub timezone_initial_daylight: bool,
     /// Seed for Math.random and crypto.randomUUID on a new page.
     pub random_seed: u64,
+    /// Refuse eval and dynamic Function compilation while retaining normal host Script loading.
+    pub disallow_code_generation_from_strings: bool,
     /// `navigator.onLine`.
     pub online: bool,
     /// `document.title` at load.
@@ -259,9 +263,24 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_d8: bool,
+    /// The actual shell flag supplies a native extension name; absence never exposes a CPU marker global.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_cpu_trace_name: Option<String>,
+    /// A shell seed selects its native per-context Math.random stream; zero requests system entropy.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_random_seed: Option<i32>,
     /// Enable d8 Promise lifecycle hooks only when actual test metadata requested that extension.
     #[cfg(feature = "conformance")]
     pub conformance_async_hooks: bool,
+    /** Actual V8 metadata may disable async stack enrichment; physical captured frames are unaffected. */
+    #[cfg(feature = "conformance")]
+    pub conformance_async_stack_traces: bool,
+    /// The actual experimental shell flag exposes real embedder API activations; ordinary pages keep them hidden.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_experimental_stack_trace_frames: bool,
     /// Preserve V8's default-true builtin-subclassing switch as actual opt-in test metadata.
     #[cfg(feature = "conformance")]
     pub conformance_builtin_subclassing: bool,
@@ -338,6 +357,7 @@ impl Default for PageEnvironment {
             timezone_daylight: Vec::new(),
             timezone_initial_daylight: false,
             random_seed: 0,
+            disallow_code_generation_from_strings: false,
             online: true,
             title: String::new(),
             dom_level: DomLevel::Legacy,
@@ -358,7 +378,15 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_d8: false,
             #[cfg(feature = "conformance")]
+            conformance_cpu_trace_name: None,
+            #[cfg(feature = "conformance")]
+            conformance_random_seed: None,
+            #[cfg(feature = "conformance")]
             conformance_async_hooks: false,
+            #[cfg(feature = "conformance")]
+            conformance_async_stack_traces: true,
+            #[cfg(feature = "conformance")]
+            conformance_experimental_stack_trace_frames: false,
             #[cfg(feature = "conformance")]
             conformance_builtin_subclassing: true,
             #[cfg(feature = "conformance")]
@@ -453,6 +481,17 @@ pub struct ConsoleEntry {
     pub text: String,
 }
 
+/// An actual native CPU marker invocation, paired with the owning host's current VM clock.
+#[cfg(feature = "conformance")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuTraceMark {
+    /// The exact accepted unsigned marker, independently of the architecture-specific instruction encoding.
+    pub marker: u32,
+    /// Milliseconds elapsed on the real host-supplied VM clock.
+    pub time_ms: f64,
+}
+
 /// A navigation a script asked for; V9 never performs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -501,6 +540,13 @@ pub struct HostEffects {
     pub console: Vec<ConsoleEntry>,
     /// Console entries dropped past the bound.
     pub console_dropped: usize,
+    /// Actual CPU markers share the console diagnostic entry allowance and never represent sampled profiler data.
+    #[cfg(feature = "conformance")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conformance_trace_marks: Vec<CpuTraceMark>,
+    /// Calls still execute their native marker instruction when bounded host records must be dropped.
+    #[cfg(feature = "conformance")]
+    pub conformance_trace_marks_dropped: usize,
     /// The first actual uncaught callback or rejection, distinct from script console output.
     /// Only the opt-in upstream host uses this to score asynchronous tests honestly.
     #[cfg(feature = "conformance")]
@@ -625,6 +671,10 @@ pub(in crate::v9) struct PageState {
     /** Date.now() at clock zero. */
     pub epoch: f64,
     pub random: u64,
+    /** Only explicit shell seed requests create bounded per-realm xorshift128+ state. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub math_random: BTreeMap<u32, random::State>,
     pub timers: Vec<Timer>,
     pub next_timer: u32,
     /// Active and filling animations retain their actual effect and Promise graphs.
@@ -760,7 +810,10 @@ impl<'h> Page<'h> {
     }
     /** Record a console line within the bounds. */
     pub fn console(&mut self, level: &str, text: String) {
-        if self.effects.console.len() >= VM_CONSOLE_ENTRIES {
+        let used = self.effects.console.len();
+        #[cfg(feature = "conformance")]
+        let used = used + self.effects.conformance_trace_marks.len();
+        if used >= VM_CONSOLE_ENTRIES {
             self.effects.console_dropped += 1;
             return;
         }

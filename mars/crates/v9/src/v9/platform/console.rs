@@ -8,6 +8,10 @@ use crate::v9::vm::{Call, Res, Vm};
 /** Every console method; the registered name picks the level. */
 pub(in crate::v9) fn console(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 {
+        return crate::v9::builtins::conformance_console(vm, call, name);
+    }
     let level = match name {
         "error" | "assert" => "error",
         "warn" => "warn",

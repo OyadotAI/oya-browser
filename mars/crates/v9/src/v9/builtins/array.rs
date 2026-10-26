@@ -435,7 +435,9 @@ fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Array.prototype.map. */
 fn map(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    walk(vm, call, "Array.prototype.map", Walk::Map, false)
+    vm.with_builtin_activation(call.callee, call.this.clone(), |vm| {
+        walk(vm, call, "Array.prototype.map", Walk::Map, false)
+    })
 }
 /** Array.prototype.filter. */
 fn filter(vm: &mut Vm, call: Call) -> Res<JsValue> {

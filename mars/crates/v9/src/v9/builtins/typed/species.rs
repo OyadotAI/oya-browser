@@ -62,6 +62,9 @@ fn create(
     if minimum.is_some_and(|minimum| view.length < minimum) || bigint(view.kind) != bigint(kind) {
         return Err(vm.type_error("TypedArray species returned a short or incompatible view"));
     }
+    if minimum.is_some() {
+        immutable::writable(vm, view.buffer)?;
+    }
     Ok(target)
 }
 
@@ -102,6 +105,7 @@ fn copy_buffer(
     };
     if source == target
         || buffer_state::detached(vm, target)
+        || buffer_state::immutable(vm, target)
         || buffer_bytes(vm, target).is_none_or(|bytes| bytes.len() < count)
     {
         return Err(vm.type_error("ArrayBuffer species returned an invalid buffer"));
@@ -120,7 +124,9 @@ fn copy_buffer(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    write_range(vm, target, 0, &bytes);
+    if !write_range(vm, target, 0, &bytes) {
+        return Err(vm.type_error("ArrayBuffer species returned unwritable backing"));
+    }
     Ok(())
 }
 
@@ -217,7 +223,9 @@ fn copy_view(
             count * size,
         )
         .ok_or_else(|| vm.type_error("Cannot read source typed array"))?;
-        write_range(vm, destination.buffer, destination.offset, &bytes);
+        if !write_range(vm, destination.buffer, destination.offset, &bytes) {
+            return Err(vm.type_error("TypedArray species returned unwritable backing"));
+        }
         return Ok(());
     }
     for index in 0..count {

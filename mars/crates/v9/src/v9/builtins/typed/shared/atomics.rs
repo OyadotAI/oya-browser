@@ -85,6 +85,10 @@ fn converted(vm: &mut Vm, kind: ElementKind, value: &JsValue) -> Res<JsValue> {
 /** Values are converted before any memory lock is acquired, so user code never runs under it. */
 fn operation(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = callee_name(&call);
+    if name != "load" {
+        let (_, initial) = view(vm, &call.arg(0), false)?;
+        immutable::writable(vm, initial.buffer)?;
+    }
     let (_, target, index) = access(vm, &call.arg(0), &call.arg(1), false)?;
     let operand = if name == "load" {
         if matches!(target.kind, ElementKind::BigInt64 | ElementKind::BigUint64) {
@@ -101,6 +105,9 @@ fn operation(vm: &mut Vm, call: Call) -> Res<JsValue> {
         operand.clone()
     };
     let (_, target) = view(vm, &call.arg(0), false)?;
+    if name != "load" {
+        immutable::writable(vm, target.buffer)?;
+    }
     if index >= target.length {
         return Err(vm.range_error("Invalid atomic access index"));
     }

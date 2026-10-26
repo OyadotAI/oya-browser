@@ -552,6 +552,7 @@ fn split(vm: &mut Vm, call: Call) -> Res<JsValue> {
         crate::v9::value::to_uint32(vm.to_number(&call.arg(1))?)
     } as usize;
     let result = vm.new_array(Vec::new())?;
+    let separator = arg_string(vm, &call, 0)?;
     if limit == 0 {
         return Ok(JsValue::Object(result));
     }
@@ -559,7 +560,6 @@ fn split(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.array_append(&JsValue::Object(result), JsValue::String(text))?;
         return Ok(JsValue::Object(result));
     }
-    let separator = arg_string(vm, &call, 0)?;
     let source = text.as_units();
     let mut parts = Vec::new();
     if separator.is_empty() {

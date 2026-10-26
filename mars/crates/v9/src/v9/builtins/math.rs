@@ -181,6 +181,10 @@ fn hypot(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Math.random: xorshift64* over state the page serializes, seeded by the host. */
 fn random(vm: &mut Vm, _: Call) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    if let Some(value) = crate::v9::platform::random::next(vm)? {
+        return Ok(JsValue::Number(value));
+    }
     let mut state = vm.page.state.random;
     if state == 0 {
         state = RANDOM_FALLBACK_SEED;

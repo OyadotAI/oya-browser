@@ -181,6 +181,7 @@ pub(super) fn restore(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
             }
         }
         frames.push(Frame {
+            trace: None,
             program,
             controls,
             instance,

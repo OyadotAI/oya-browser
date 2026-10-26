@@ -1,5 +1,5 @@
-mod legacy;
 /** Date over the page virtual clock and validated host timezone transitions or a fixed offset. */
+mod legacy;
 mod timezone;
 use super::*;
 use crate::v9::vm::data::Class;
@@ -449,7 +449,14 @@ fn this_time(vm: &mut Vm, call: &Call) -> Res<f64> {
     {
         return Ok(*time);
     }
-    Err(vm.type_error("this is not a Date object."))
+    let name = super::function::native_source_name(vm, &JsValue::Object(call.callee));
+    if name.starts_with("get") || name == "valueOf" {
+        return Err(vm.type_error("this is not a Date object."));
+    }
+    let receiver = super::function::diagnostic_receiver(vm, &call.this)?;
+    Err(vm.type_error(&format!(
+        "Method Date.prototype.{name} called on incompatible receiver {receiver}"
+    )))
 }
 
 /** Replace a receiver's time value. */

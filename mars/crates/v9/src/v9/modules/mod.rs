@@ -418,9 +418,24 @@ impl Modules {
             .requests
             .get(request)
             .ok_or("Invalid module request.")?;
-        self.map
-            .resolve(specifier, &compiled.base)
-            .map(String::from)
+        self.resolve_key(specifier, &compiled.base)
+    }
+    /** Native shell data specifiers are literal source identities; browser URLs still use normal import maps. */
+    fn resolve_key(&self, specifier: &str, base: &Url) -> Result<String, String> {
+        #[cfg(feature = "conformance")]
+        if self.map.d8 {
+            let raw = specifier.split('\0').next().unwrap_or_default();
+            if raw.starts_with("data:text/javascript,") {
+                return Ok(raw.into());
+            }
+            if raw
+                .split_once(':')
+                .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("data"))
+            {
+                return Err("d8 only supports literal data:text/javascript, modules.".into());
+            }
+        }
+        self.map.resolve(specifier, base).map(String::from)
     }
     /** Ask the app for a module; false once MODULES would be passed. */
     fn request(&mut self, url: &str) -> bool {
@@ -566,7 +581,7 @@ pub(in crate::v9) fn dynamic_import(
     };
     let (_, base) = vm.modules.referrer(site);
     let resolved = match base {
-        Some(base) => vm.modules.map.resolve(&text, &base),
+        Some(base) => vm.modules.resolve_key(&text, &base),
         None => Err("Failed to resolve module specifier: the page has no base URL.".into()),
     };
     let key = match resolved {
@@ -625,7 +640,7 @@ fn meta_resolve(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .get(&key)
         .map(|module| module.base.clone());
     let resolved = match base {
-        Some(base) => vm.modules.map.resolve(&specifier, &base),
+        Some(base) => vm.modules.resolve_key(&specifier, &base),
         None => Err("Module is not loaded.".into()),
     };
     match resolved {

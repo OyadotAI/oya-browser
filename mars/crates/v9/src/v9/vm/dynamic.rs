@@ -29,8 +29,26 @@ pub(in crate::v9) fn validate_sources(
         }
         end = next.expect("checked range");
         bytes = bytes
-            .checked_add(source.source.len())
+            .checked_add(
+                source
+                    .source
+                    .len()
+                    .saturating_add(source.origin.as_ref().map_or(0, EvalOrigin::bytes)),
+            )
             .ok_or_else(|| EngineError::invalid("Invalid V9 dynamic source size."))?;
+        if source.origin.is_some() && source.context.is_none() {
+            return Err(EngineError::invalid(
+                "Eval provenance requires an eval source.",
+            ));
+        }
+        #[cfg(not(feature = "conformance"))]
+        if source
+            .origin
+            .as_ref()
+            .is_some_and(|origin| origin.realm != 0)
+        {
+            return Err(EngineError::invalid("Invalid eval compilation context."));
+        }
     }
     if bytes > VM_DYNAMIC_BYTES || sources.len() > VM_DYNAMIC_SOURCES {
         return Err(EngineError::limit("V9 dynamic code", VM_DYNAMIC_BYTES));
@@ -68,7 +86,12 @@ impl Vm<'_> {
             || self
                 .dynamic
                 .iter()
-                .map(|source| source.source.len())
+                .map(|source| {
+                    source
+                        .source
+                        .len()
+                        .saturating_add(source.origin.as_ref().map_or(0, EvalOrigin::bytes))
+                })
                 .sum::<usize>()
                 .saturating_add(bytes)
                 > VM_DYNAMIC_BYTES

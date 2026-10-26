@@ -137,6 +137,11 @@ fn this_number(vm: &mut Vm, call: &Call) -> Res<f64> {
 /** A fraction-digit or precision argument in a range. */
 fn digits(vm: &mut Vm, call: &Call, low: f64, high: f64, name: &str) -> Res<usize> {
     let value = vm.to_integer(&call.arg(0))?;
+    digit_range(vm, value, low, high, name)
+}
+
+/** Nonfinite exponential and precision receivers still convert their digit argument before bypassing its range check. */
+fn digit_range(vm: &mut Vm, value: f64, low: f64, high: f64, name: &str) -> Res<usize> {
     if !(low..=high).contains(&value) {
         return Err(vm.range_error(&format!(
             "{name}() argument must be between {low} and {high}"
@@ -178,13 +183,14 @@ fn exponent_text(rust: &str) -> String {
 /** Number.prototype.toExponential. */
 fn to_exponential(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = this_number(vm, &call)?;
+    let fraction = vm.to_integer(&call.arg(0))?;
     if !value.is_finite() {
         return text(vm, &number_to_string(value));
     }
     let rust = if call.arg(0) == JsValue::Undefined {
         format!("{value:e}")
     } else {
-        let fraction = digits(vm, &call, 0.0, 100.0, "toExponential")?;
+        let fraction = digit_range(vm, fraction, 0.0, 100.0, "toExponential")?;
         format!("{value:.fraction$e}")
     };
     text(vm, &exponent_text(&rust))
@@ -193,10 +199,14 @@ fn to_exponential(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Number.prototype.toPrecision. */
 fn to_precision(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = this_number(vm, &call)?;
-    if call.arg(0) == JsValue::Undefined || !value.is_finite() {
+    if call.arg(0) == JsValue::Undefined {
         return text(vm, &number_to_string(value));
     }
-    let precision = digits(vm, &call, 1.0, 100.0, "toPrecision")?;
+    let precision = vm.to_integer(&call.arg(0))?;
+    if !value.is_finite() {
+        return text(vm, &number_to_string(value));
+    }
+    let precision = digit_range(vm, precision, 1.0, 100.0, "toPrecision")?;
     if value == 0.0 {
         let zeros = if precision > 1 {
             format!("0.{}", "0".repeat(precision - 1))

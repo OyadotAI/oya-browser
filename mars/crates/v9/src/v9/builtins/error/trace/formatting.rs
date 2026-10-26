@@ -46,7 +46,9 @@ fn format_stack(vm: &mut Vm, error: ObjectId) -> Res<JsValue> {
 /** Without a hook, the standard error summary precedes actual structured frame positions. */
 fn default_stack(vm: &mut Vm, error: ObjectId) -> Res<JsValue> {
     let mut output = summary(vm, error)?;
-    if let JsValue::String(trace) = data(vm, error, crate::v9::vm::error::TRACE_KEY) {
+    if data(vm, error, crate::v9::vm::error::STRUCTURED_KEY) != JsValue::Boolean(true)
+        && let JsValue::String(trace) = data(vm, error, crate::v9::vm::error::TRACE_KEY)
+    {
         for line in trace
             .lossy()
             .lines()

@@ -6,7 +6,7 @@ use super::{Thrown, Vm};
 use crate::protocol::{EngineError, SourceLocation};
 use crate::v9::value::{JsString, JsValue, ObjectId};
 mod trace;
-pub(in crate::v9) use trace::{CALLSITE_KEY, FRAMES_KEY};
+pub(in crate::v9) use trace::{CALLSITE_KEY, FRAMES_KEY, STRUCTURED_KEY};
 
 /** Error constructors scripts can see. */
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub(in crate::v9) enum ErrorKind {
     Range,
     Reference,
     Syntax,
+    Eval,
     Uri,
 }
 
@@ -43,6 +44,7 @@ impl Vm<'_> {
             ErrorKind::Range => ids.range_error_prototype,
             ErrorKind::Reference => ids.reference_error_prototype,
             ErrorKind::Syntax => ids.syntax_error_prototype,
+            ErrorKind::Eval => ids.eval_error_prototype,
             ErrorKind::Uri => ids.uri_error_prototype,
         };
         self.make_error_from(proto, message)

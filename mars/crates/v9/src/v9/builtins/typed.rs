@@ -11,6 +11,7 @@ use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
 
 mod buffer_state;
+mod immutable;
 mod resizable;
 mod shared;
 mod storage;
@@ -18,8 +19,9 @@ mod transfer;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use buffer_state::{buffer_detachable, detached as buffer_detached};
 pub(in crate::v9) use buffer_state::{
-    detach as detach_buffer, maximum as buffer_maximum, protect_buffer,
-    set_maximum as set_buffer_maximum, valid as valid_buffer, valid_view,
+    detach as detach_buffer, detached as buffer_state_detached, immutable as buffer_immutable,
+    make_immutable as make_buffer_immutable, maximum as buffer_maximum, protect_buffer,
+    set_maximum as set_buffer_maximum, valid as valid_buffer, valid_immutable_brand, valid_view,
 };
 pub(in crate::v9) use shared::{
     import_shared_buffer, initialize as initialize_shared, notify_shared,
@@ -76,6 +78,7 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
     b.method(ctor, "isView", 1, is_view);
     b.builtin_accessor(buffer, "byteLength", Some(buffer_length), None);
     resizable::install(b, buffer);
+    immutable::install(b, buffer);
     b.method(buffer, "slice", 2, buffer_slice);
     tag(b, buffer, "ArrayBuffer");
     species_getter(b, ctor);
@@ -84,7 +87,12 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         b.builtin_accessor(typed, name, Some(view_get), None);
     }
     for (name, length, function) in array_methods {
-        let method = b.method(typed, name, *length, *function);
+        let function = if matches!(*name, "fill" | "copyWithin" | "reverse") {
+            immutable::mutator as NativeFn
+        } else {
+            *function
+        };
+        let method = b.method(typed, name, *length, function);
         if *name == "values" {
             b.put(
                 typed,
@@ -600,6 +608,7 @@ pub(in crate::v9) fn store(vm: &mut Vm, id: ObjectId, index: usize, value: &JsVa
         return Ok(());
     };
     let encoded = encode(vm, view.kind, value)?;
+    immutable::writable(vm, view.buffer)?;
     write_bytes(vm, &view, index * element_size(view.kind), &encoded);
     Ok(())
 }
@@ -623,7 +632,7 @@ fn values_of(vm: &Vm, id: ObjectId, length: usize) -> Vec<JsValue> {
 
 /** %TypedArray%.prototype.set(source, offset). */
 fn typed_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
+    let (id, view) = immutable::typed(vm, &call)?;
     let offset = to_index(vm, &call.arg(1), "offset")?;
     let source = call.arg(0);
     let values = match source
@@ -765,7 +774,7 @@ fn typed_filter(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn typed_sort(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let comparator = call.arg(0);
     super::array::sort_comparator(vm, &comparator)?;
-    let (id, view) = this_typed(vm, &call)?;
+    let (id, view) = immutable::typed(vm, &call)?;
     let mut values = values_of(vm, id, view.length);
     if comparator == JsValue::Undefined {
         values.sort_by(|a, b| match (a, b) {
@@ -891,7 +900,8 @@ fn data_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** DataView setters convert the value before checking bounds, even if it resizes or detaches the buffer. */
 fn data_view_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    data_view_brand(vm, &call)?;
+    let initial = data_view_brand(vm, &call)?;
+    immutable::writable(vm, initial.buffer)?;
     let kind = accessor_kind(callee_name(&call));
     let at = to_index(vm, &call.arg(0), "DataView offset")?;
     let mut bytes = encode(vm, kind, &call.arg(1))?;
@@ -929,6 +939,7 @@ pub(in crate::v9) fn random_values(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(view) = view else {
         return Err(vm.type_error("Failed to execute 'getRandomValues' on 'Crypto': parameter 1 is not an integer typed array."));
     };
+    immutable::writable(vm, view.buffer)?;
     let length = view.length * element_size(view.kind);
     if length > RANDOM_BYTES {
         return Err(vm.dom_exception("QuotaExceededError", "Failed to execute 'getRandomValues' on 'Crypto': the requested length exceeds 65536 bytes."));
@@ -964,12 +975,14 @@ pub(in crate::v9) fn source_bytes(vm: &Vm, value: &JsValue) -> Option<Vec<u8>> {
 }
 
 /** Write `bytes` at the start of a Uint8Array, as far as they fit; returns how many fit. */
-pub(in crate::v9) fn fill_uint8(vm: &mut Vm, value: &JsValue, bytes: &[u8]) -> Option<usize> {
-    let view = value.object().and_then(|id| view_of(vm, id))?;
-    if !matches!(view.kind, ElementKind::Uint8 | ElementKind::Uint8Clamped) {
-        return None;
-    }
+pub(in crate::v9) fn fill_uint8(vm: &mut Vm, value: &JsValue, bytes: &[u8]) -> Res<usize> {
+    let view = value
+        .object()
+        .and_then(|id| view_of(vm, id))
+        .filter(|view| view.kind == ElementKind::Uint8 && !view.invalid)
+        .ok_or_else(|| vm.type_error("TextEncoder destination is not an attached Uint8Array"))?;
+    immutable::writable(vm, view.buffer)?;
     let count = bytes.len().min(view.length);
     write_bytes(vm, &view, 0, &bytes[..count]);
-    Some(count)
+    Ok(count)
 }

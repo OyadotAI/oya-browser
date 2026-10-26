@@ -61,6 +61,23 @@ fn clone(
         Some(Class::SharedArrayBuffer(buffer)) => {
             JsValue::Object(super::import_shared_buffer(vm, buffer.clone())?)
         }
+        Some(Class::ArrayBuffer(bytes)) => {
+            if super::typed::buffer_state_detached(vm, id) {
+                return Err(uncloneable(vm, "A detached ArrayBuffer"));
+            }
+            let copy = vm.alloc(crate::v9::vm::heap::Object::new(
+                Class::ArrayBuffer(bytes.clone()),
+                Some(crate::v9::vm::realm::realm().ids.array_buffer_prototype),
+            ))?;
+            if let Some(maximum) = super::buffer_maximum(vm, id) {
+                super::set_buffer_maximum(vm, copy, maximum);
+            }
+            if super::buffer_immutable(vm, id) {
+                super::make_buffer_immutable(vm, copy);
+            }
+            JsValue::Object(copy)
+        }
+        Some(Class::View(_)) => return clone_view(vm, id, memo, depth),
         Some(Class::WasmShared(root)) => super::wasm::restore_shared_gc(vm, &root.clone())?,
         Some(Class::Boolean(flag)) => JsValue::Object(vm.to_object(&JsValue::Boolean(*flag))?),
         Some(Class::Number(number)) => JsValue::Object(vm.to_object(&JsValue::Number(*number))?),
@@ -92,6 +109,32 @@ fn clone(
             vm.set(&copy, name, field, true)?;
         }
     }
+    Ok(copy)
+}
+
+/** Views clone their native buffer through the same memo table, retaining overlapping aliases. */
+fn clone_view(
+    vm: &mut Vm,
+    id: ObjectId,
+    memo: &mut Vec<(ObjectId, JsValue)>,
+    depth: usize,
+) -> Res<JsValue> {
+    let view = super::view_of(vm, id)
+        .filter(|view| !view.invalid)
+        .ok_or_else(|| uncloneable(vm, "An out-of-bounds view"))?;
+    let buffer = clone(vm, &JsValue::Object(view.buffer), memo, depth + 1)?
+        .object()
+        .expect("cloned buffer");
+    let mut cloned = view;
+    cloned.buffer = buffer;
+    let prototype = crate::v9::vm::realm::realm().ids.view_prototypes[cloned.kind as usize];
+    let copy = vm.alloc(crate::v9::vm::heap::Object::new(
+        Class::View(Box::new(cloned)),
+        Some(prototype),
+    ))?;
+    let copy = JsValue::Object(copy);
+    memo.push((id, copy.clone()));
+    vm.pin(copy.clone());
     Ok(copy)
 }
 

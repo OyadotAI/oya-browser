@@ -15,7 +15,7 @@
     "A source-inspection diagnosis is not a verified fix. A group closes only after its unchanged tests pass.",
     "Preserve execution and storage limits; unsupported native capabilities must not report simulated success."
   ],
-  "current_group": "v8-010",
+  "current_group": "v8-014",
   "group_count": 143,
   "maximum_group_size": 8,
   "groups": [
@@ -200,17 +200,24 @@
     },
     {
       "family": "immutable_array_buffer",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "harmony/uint8array-base64-immutable.js"
       ],
       "size": 1,
       "suggested_seams": "typed buffer transfer state and immutable buffer brand",
-      "id": "v8-010"
+      "id": "v8-010",
+      "progress": "The unchanged immutable-buffer case passes; 24 new public immutable-buffer behavior and transport tests pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups10-11-upstream/results-mjsunit.json",
+        "combined_pass": 4,
+        "combined_fail": 0,
+        "public_pass": 24
+      }
     },
     {
       "family": "error_diagnostics",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "error-tostring-omit.js",
         "json-errors.js",
@@ -218,11 +225,18 @@
       ],
       "size": 3,
       "suggested_seams": "Date incompatible-receiver rendering; JSON parser error selection; ToPropertyDescriptor diagnostics",
-      "id": "v8-011"
+      "id": "v8-011",
+      "progress": "All three unchanged diagnostic cases pass; 12 public diagnostic ordering, formatting and inert-preview cases pass.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups10-11-upstream/results-mjsunit.json",
+        "combined_pass": 4,
+        "combined_fail": 0,
+        "public_pass": 12
+      }
     },
     {
       "family": "async_stack_frames",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "async-stack-traces-prepare-stacktrace-1.js",
         "async-stack-traces-prepare-stacktrace-2.js",
@@ -232,11 +246,18 @@
       ],
       "size": 5,
       "suggested_seams": "async continuation ancestry; Error CallSite capture/rendering",
-      "id": "v8-012"
+      "id": "v8-012",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-88-upstream-followup/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 19,
+        "combined_fail": 3
+      },
+      "progress": "All original cases in this group pass unchanged in the19-pass release probe. The three other failures in that probe belong to the separately repaired stack-metadata group."
     },
     {
       "family": "eval_stack_frames",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "eval-origin.js",
         "eval-stack-trace.js",
@@ -245,22 +266,33 @@
       ],
       "size": 4,
       "suggested_seams": "eval/source-position frame metadata; captureStackTrace boundary filtering",
-      "id": "v8-013"
+      "id": "v8-013",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "cross_realm_stack_frames",
-      "status": "planned",
+      "status": "partial",
       "tests": [
         "cross-realm-filtering.js",
         "harmony/regress/regress-511329274.js"
       ],
       "size": 2,
       "suggested_seams": "CallSite token filtering and ShadowRealm/Wasm trace ancestry",
-      "id": "v8-014"
+      "id": "v8-014",
+      "progress": "The Wasm/ShadowRealm original passes. The cross-realm case now passes all stack/token assertions with real experimental API entries, then fails its obsolete foreign Function-constructor undefined expectation at143; raw failure/status retained."
     },
     {
       "family": "shell_basic",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "console.js",
         "expose-cputracemark.js",
@@ -268,7 +300,15 @@
       ],
       "size": 3,
       "suggested_seams": "conformance console.assert; expose-cputracemark flag; printErr host",
-      "id": "v8-015"
+      "id": "v8-015",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-43-upstream-first/results-mjsunit.json",
+        "combined_pass": 15,
+        "combined_fail": 1,
+        "public_tests_report": "/private/tmp/mars-v9-groups10-43-combined-targets.log",
+        "additional_public_tests_report": "/private/tmp/mars-v9-groups10-43-remaining-targets.log"
+      },
+      "progress": "Every original case in this group passes unchanged in the combined15-pass probe. Authored public regressions pass; exact proof reports retained."
     },
     {
       "family": "external_string_host",
@@ -295,14 +335,22 @@
     },
     {
       "family": "shell_policy_flags",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "disallow-codegen-from-strings.js",
         "math-random.js"
       ],
       "size": 2,
       "suggested_seams": "per-case flag configuration: codegen policy and seeded Math.random",
-      "id": "v8-018"
+      "id": "v8-018",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-43-upstream-first/results-mjsunit.json",
+        "combined_pass": 15,
+        "combined_fail": 1,
+        "public_tests_report": "/private/tmp/mars-v9-groups10-43-combined-targets.log",
+        "additional_public_tests_report": "/private/tmp/mars-v9-groups10-43-remaining-targets.log"
+      },
+      "progress": "Every original case in this group passes unchanged in the combined15-pass probe. Authored public regressions pass; exact proof reports retained."
     },
     {
       "family": "fast_api_wasm",
@@ -326,7 +374,7 @@
     },
     {
       "family": "data_url_modules",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "regress-367066330.js"
       ],
@@ -440,13 +488,21 @@
     },
     {
       "family": "regexp_legacy_accessors",
-      "status": "planned",
+      "status": "verified",
       "tests": [
         "fuzz-accessors.js"
       ],
       "size": 1,
       "suggested_seams": "builtins/regexp/legacy.rs receiver policy versus pinned V8 builtins-regexp.cc",
-      "id": "v8-030"
+      "id": "v8-030",
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-43-upstream-first/results-mjsunit.json",
+        "combined_pass": 15,
+        "combined_fail": 1,
+        "public_tests_report": "/private/tmp/mars-v9-groups10-43-combined-targets.log",
+        "additional_public_tests_report": "/private/tmp/mars-v9-groups10-43-remaining-targets.log"
+      },
+      "progress": "Every original case in this group passes unchanged in the combined15-pass probe. Authored public regressions pass; exact proof reports retained."
     },
     {
       "family": "intl_locales",
@@ -548,25 +604,41 @@
     },
     {
       "family": "split_separator_coercion_order:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-1711.js"
       ],
       "id": "v8-039",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-43-upstream-first/results-mjsunit.json",
+        "combined_pass": 15,
+        "combined_fail": 1,
+        "public_tests_report": "/private/tmp/mars-v9-groups10-43-combined-targets.log",
+        "additional_public_tests_report": "/private/tmp/mars-v9-groups10-43-remaining-targets.log"
+      },
+      "progress": "Every original case in this group passes unchanged in the combined15-pass probe. Authored public regressions pass; exact proof reports retained."
     },
     {
       "family": "number_format_argument_coercion:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-2443.js"
       ],
       "id": "v8-040",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-43-upstream-first/results-mjsunit.json",
+        "combined_pass": 15,
+        "combined_fail": 1,
+        "public_tests_report": "/private/tmp/mars-v9-groups10-43-combined-targets.log",
+        "additional_public_tests_report": "/private/tmp/mars-v9-groups10-43-remaining-targets.log"
+      },
+      "progress": "Every original case in this group passes unchanged in the combined15-pass probe. Authored public regressions pass; exact proof reports retained."
     },
     {
       "family": "function_constructor_grammar_regions:1",
@@ -595,7 +667,7 @@
     },
     {
       "family": "host_data_url_modules:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "host_capability",
       "tests": [
@@ -618,7 +690,7 @@
     },
     {
       "family": "prototype_exotic_getprototypeof:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
@@ -628,18 +700,36 @@
         "regress/regress-9036-3.js"
       ],
       "id": "v8-045",
-      "size": 4
+      "size": 4,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "class_definition_strict_expressions:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-5927.js"
       ],
       "id": "v8-046",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups14-121-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 5,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups14-121-combined-dev-retry.log"
+      },
+      "progress": "All original cases in this group pass unchanged. Supporting parser/strict-context/native fixture proofs are kept separately; fixture assertion fixes await the next public batch."
     },
     {
       "family": "host_default_locale_metadata:1",
@@ -654,14 +744,21 @@
     },
     {
       "family": "named_function_arguments_binding:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-649067.js"
       ],
       "id": "v8-048",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-88-upstream-followup/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 19,
+        "combined_fail": 3
+      },
+      "progress": "All original cases in this group pass unchanged in the19-pass release probe. The three other failures in that probe belong to the separately repaired stack-metadata group."
     },
     {
       "family": "proto_setter_name_inference:1",
@@ -676,14 +773,24 @@
     },
     {
       "family": "continue_chained_iteration_labels:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-8033.js"
       ],
       "id": "v8-050",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "legacy_date_setyear:1",
@@ -698,14 +805,24 @@
     },
     {
       "family": "for_await_classic_header_rejection:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 1,
       "kind": "semantic",
       "tests": [
         "regress/regress-926036.js"
       ],
       "id": "v8-052",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "typedarray_exotic_properties:1",
@@ -800,14 +917,22 @@
     },
     {
       "family": "diagnostic_regexp_flags:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "diagnostic",
       "tests": [
         "regress/regress-136048.js"
       ],
       "id": "v8-060",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups14-121-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 5,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups14-121-combined-dev-retry.log"
+      },
+      "progress": "All original cases in this group pass unchanged. Supporting parser/strict-context/native fixture proofs are kept separately; fixture assertion fixes await the next public batch."
     },
     {
       "family": "site_template_identity:1",
@@ -911,7 +1036,7 @@
     },
     {
       "family": "call_argument_count_boundary:1",
-      "status": "planned",
+      "status": "partial",
       "priority": 3,
       "kind": "semantic",
       "tests": [
@@ -921,7 +1046,8 @@
         "regress/regress-896326.js"
       ],
       "id": "v8-069",
-      "size": 4
+      "size": 4,
+      "progress": "The genuine per-bound-record argument limit case passes unchanged with the rebuilt native runner. Other argument/stack cases remain open; no parameter/call quotas were increased."
     },
     {
       "family": "activation_stack_representation:1",
@@ -1121,25 +1247,42 @@
     },
     {
       "family": "intl_receiver_brand:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "semantic",
       "tests": [
         "regress/regress-677055.js"
       ],
       "id": "v8-087",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "sparse_array_mutator_allocation:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "limit",
       "tests": [
         "regress/regress-784862.js"
       ],
       "id": "v8-088",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups12-88-upstream-followup/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 19,
+        "combined_fail": 3
+      },
+      "progress": "All original cases in this group pass unchanged in the19-pass release probe. The three other failures in that probe belong to the separately repaired stack-metadata group."
     },
     {
       "family": "diagnostic_arrow_assignment_target:1",
@@ -1346,7 +1489,7 @@
     },
     {
       "family": "asm_function_brand",
-      "status": "planned",
+      "status": "verified",
       "rows": [
         266,
         309
@@ -1356,7 +1499,17 @@
         "regress/wasm/regress-985154.js"
       ],
       "id": "v8-105",
-      "size": 2
+      "size": 2,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups13-105-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 14,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups13-105-combined-dev.log",
+        "public_combined_pass": 172,
+        "public_combined_fail": 0
+      },
+      "progress": "Every unchanged original in this group passes in the14-case native conformance probe. Supporting public behavior/GC/transport tests pass in the172-test combined batch. Release full-inventory followup remains separate."
     },
     {
       "family": "timezone_canonicalization",
@@ -1576,7 +1729,7 @@
     },
     {
       "family": "d8_dom",
-      "status": "planned",
+      "status": "verified",
       "rows": [
         231,
         238
@@ -1586,7 +1739,15 @@
         "regress/regress-crbug-1509910.js"
       ],
       "id": "v8-121",
-      "size": 2
+      "size": 2,
+      "validation": {
+        "report": "/private/tmp/mars-v9-groups14-121-upstream-dev/results-mjsunit.json",
+        "profile": "dev",
+        "combined_pass": 5,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-groups14-121-combined-dev-retry.log"
+      },
+      "progress": "All original cases in this group pass unchanged. Supporting parser/strict-context/native fixture proofs are kept separately; fixture assertion fixes await the next public batch."
     },
     {
       "family": "external_string_storage",
@@ -1943,7 +2104,8 @@
         ]
       },
       "group": "v8-012",
-      "baseline_error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')"
+      "baseline_error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')",
+      "status": "verified"
     },
     "async-stack-traces-prepare-stacktrace-2.js": {
       "triage_partition": "first110",
@@ -1960,7 +2122,8 @@
         ]
       },
       "group": "v8-012",
-      "baseline_error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')"
+      "baseline_error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')",
+      "status": "verified"
     },
     "async-stack-traces-prepare-stacktrace-3.js": {
       "triage_partition": "first110",
@@ -1977,7 +2140,8 @@
         ]
       },
       "group": "v8-012",
-      "baseline_error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 11, column 3)\n    at two (script 3 line 27, column 12)"
+      "baseline_error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 11, column 3)\n    at two (script 3 line 27, column 12)",
+      "status": "verified"
     },
     "async-stack-traces-prepare-stacktrace-4.js": {
       "triage_partition": "first110",
@@ -1994,7 +2158,8 @@
         ]
       },
       "group": "v8-012",
-      "baseline_error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 13, column 3)\n    at two (script 3 line 35, column 12)"
+      "baseline_error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 13, column 3)\n    at two (script 3 line 35, column 12)",
+      "status": "verified"
     },
     "big-array-literal.js": {
       "triage_partition": "first110",
@@ -2264,7 +2429,8 @@
         "flags": []
       },
       "group": "v8-015",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected Error\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected Error\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "status": "verified"
     },
     "cross-realm-filtering.js": {
       "triage_partition": "first110",
@@ -2333,7 +2499,8 @@
         ]
       },
       "group": "v8-018",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected EvalError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected EvalError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "status": "verified"
     },
     "duplicate-parameters.js": {
       "triage_partition": "first110",
@@ -2363,7 +2530,8 @@
         "flags": []
       },
       "group": "v8-011",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 48:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 48:3.",
+      "status": "verified"
     },
     "es6/big-weakmap.js": {
       "triage_partition": "first110",
@@ -2536,7 +2704,8 @@
         ]
       },
       "group": "v8-005",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"get x\"]\nfound:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"has x\",\"get x\"]\n    at assertEquals              script 2 513:7\n    at TestBasics                script 3 27:3\n    at                           script 3 30:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"get x\"]\nfound:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"has x\",\"get x\"]\n    at assertEquals              script 2 513:7\n    at TestBasics                script 3 27:3\n    at                           script 3 30:1.",
+      "status": "unresolved_current_standard_conflict"
     },
     "es6/regress/regress-4097.js": {
       "triage_partition": "first110",
@@ -2551,7 +2720,8 @@
         "flags": []
       },
       "group": "v8-005",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at assertThrows              script 2 624:5\n    at StoreToSuper              script 3 16:3\n    at                           script 3 5:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at assertThrows              script 2 624:5\n    at StoreToSuper              script 3 16:3\n    at                           script 3 5:1.",
+      "status": "verified"
     },
     "es6/sloppy-no-duplicate-generators.js": {
       "triage_partition": "first110",
@@ -2661,7 +2831,8 @@
         ]
       },
       "group": "v8-012",
-      "baseline_error": "[sloppy] Test host exited with status 1"
+      "baseline_error": "[sloppy] Test host exited with status 1",
+      "status": "verified"
     },
     "es8/sloppy-no-duplicate-async.js": {
       "triage_partition": "first110",
@@ -2693,7 +2864,8 @@
         ]
       },
       "group": "v8-013",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 40:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 40:3.",
+      "status": "verified"
     },
     "eval-stack-trace.js": {
       "triage_partition": "first110",
@@ -2708,7 +2880,8 @@
         "flags": []
       },
       "group": "v8-013",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"eval\"> found <null>\n    at                           script 3 50:7\n    at Array.                    script 3 46:3\n    at                           script 3 100:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"eval\"> found <null>\n    at                           script 3 50:7\n    at Array.                    script 3 46:3\n    at                           script 3 100:3.",
+      "status": "verified"
     },
     "expose-cputracemark.js": {
       "triage_partition": "first110",
@@ -2725,7 +2898,8 @@
         ]
       },
       "group": "v8-015",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 32, column 1: Uncaught ReferenceError: cputracemark is not defined."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 32, column 1: Uncaught ReferenceError: cputracemark is not defined.",
+      "status": "verified"
     },
     "function-names.js": {
       "triage_partition": "first110",
@@ -2756,7 +2930,8 @@
         "primary_implementation": "src/builtins/builtins-regexp.cc:62-67 capture getter does not check receiver"
       },
       "group": "v8-030",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 95, column 43: Uncaught TypeError: RegExp static accessor called on an incompatible receiver."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 95, column 43: Uncaught TypeError: RegExp static accessor called on an incompatible receiver.",
+      "status": "verified"
     },
     "harmony/async-for-of-non-iterable.js": {
       "triage_partition": "first110",
@@ -2945,7 +3120,8 @@
         ]
       },
       "group": "v8-014",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"functionName: mainRealmThrower this: [object MainGlobal] functionName: null getThis threw eval threw getThis threw functionName: testWasmInstance this: [object MainGlobal] functionName: null this: [object MainGlobal]\"\nfound:\n\"functionName: mainRealmThrower this: [object MainGloba\n    at assertEquals              script 2 513:7\n    at testWasmInstance          script 3 77:3\n    at                           script 3 9:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"functionName: mainRealmThrower this: [object MainGlobal] functionName: null getThis threw eval threw getThis threw functionName: testWasmInstance this: [object MainGlobal] functionName: null this: [object MainGlobal]\"\nfound:\n\"functionName: mainRealmThrower this: [object MainGloba\n    at assertEquals              script 2 513:7\n    at testWasmInstance          script 3 77:3\n    at                           script 3 9:1.",
+      "status": "verified"
     },
     "harmony/string-iswellformed-external-uncached.js": {
       "triage_partition": "first110",
@@ -2979,7 +3155,8 @@
         ]
       },
       "group": "v8-010",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 8, column 22: Uncaught TypeError: undefined is not a function."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 8, column 22: Uncaught TypeError: undefined is not a function.",
+      "status": "verified"
     },
     "huge-typedarrays-helpers.js": {
       "triage_partition": "first110",
@@ -3029,7 +3206,8 @@
         ]
       },
       "group": "v8-013",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 18:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 18:1.",
+      "status": "verified"
     },
     "intl-numberformat-formattoparts.js": {
       "triage_partition": "first110",
@@ -3074,7 +3252,8 @@
         "flags": []
       },
       "group": "v8-011",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Unterminated string in JSON at position 7 (line 1 column 8)\"\nfound:\n\"Unexpected end of JSON input\"\n    at assertEquals              script 2 513:7\n    at TryParse                  script 3 10:5\n    at                           script 3 15:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Unterminated string in JSON at position 7 (line 1 column 8)\"\nfound:\n\"Unexpected end of JSON input\"\n    at assertEquals              script 2 513:7\n    at TryParse                  script 3 10:5\n    at                           script 3 15:1.",
+      "status": "verified"
     },
     "json-parser-recursive.js": {
       "triage_partition": "first110",
@@ -3111,7 +3290,8 @@
         ]
       },
       "group": "v8-005",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <10> found <6>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 33:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <10> found <6>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 33:3.",
+      "status": "unresolved_current_standard_conflict"
     },
     "large-external-string.js": {
       "triage_partition": "first110",
@@ -3175,7 +3355,8 @@
         ]
       },
       "group": "v8-018",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0.07740188933548275> found <0.052790873358508184>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 66:5."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0.07740188933548275> found <0.052790873358508184>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 66:5.",
+      "status": "verified"
     },
     "mjsunit-assertion-error.js": {
       "triage_partition": "first110",
@@ -3190,7 +3371,8 @@
         "flags": []
       },
       "group": "v8-013",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <2> found <5>\n    at assertEquals              script 2 513:7\n    at assertErrorMessage        script 3 20:3\n    at                           script 3 33:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <2> found <5>\n    at assertEquals              script 2 513:7\n    at assertErrorMessage        script 3 20:3\n    at                           script 3 33:3.",
+      "status": "verified"
     },
     "modules-skip-reset1.js": {
       "triage_partition": "first110",
@@ -3268,7 +3450,8 @@
         "flags": []
       },
       "group": "v8-011",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 190:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 190:3.",
+      "status": "verified"
     },
     "parse-surrogates.js": {
       "triage_partition": "first110",
@@ -3298,7 +3481,8 @@
         "flags": []
       },
       "group": "v8-005",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <100> found <200>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 19:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <100> found <200>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 19:1.",
+      "status": "verified"
     },
     "print.js": {
       "triage_partition": "first110",
@@ -3313,7 +3497,8 @@
         "flags": []
       },
       "group": "v8-015",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (printErr should be defined): expected <\"function\"> found <\"undefined\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 6:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (printErr should be defined): expected <\"function\"> found <\"undefined\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 6:1.",
+      "status": "verified"
     },
     "queue-microtask-cross-realm-callback-report-exception.js": {
       "triage_partition": "first110",
@@ -3518,7 +3703,8 @@
         "flags": []
       },
       "group": "v8-021",
-      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,export function v4(){}."
+      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,export function v4(){}.",
+      "status": "verified"
     },
     "regress-478205262.js": {
       "triage_partition": "first110",
@@ -3659,7 +3845,8 @@
         "flags": []
       },
       "group": "v8-005",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <undefined> found <0>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 30:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <undefined> found <0>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 30:1.",
+      "status": "verified"
     },
     "regress/regress-10931.js": {
       "triage_partition": "first110",
@@ -3785,7 +3972,8 @@
       "reason": "The literal is correctly rejected but eval SyntaxError text must identify escaped/invalid RegExp flags.",
       "suggested_batch": "diagnostic_regexp_flags:1",
       "group": "v8-060",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"SyntaxError: Invalid regular expression flags\"\nfound:\n\"SyntaxError: Script syntax error at line 1, column 6: unexpected token.\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 31:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"SyntaxError: Invalid regular expression flags\"\nfound:\n\"SyntaxError: Script syntax error at line 1, column 6: unexpected token.\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 31:3.",
+      "status": "verified"
     },
     "regress/regress-1364429.js": {
       "triage_partition": "middle110",
@@ -3886,7 +4074,8 @@
       "reason": "String.split must perform separator conversion before returning for a zero limit; current early return skips user toString.",
       "suggested_batch": "split_separator_coercion_order:1",
       "group": "v8-039",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 38:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 38:1.",
+      "status": "verified"
     },
     "regress/regress-1757.js": {
       "triage_partition": "middle110",
@@ -3916,7 +4105,8 @@
       "reason": "Number toExponential/toPrecision/toFixed must coerce/check precision arguments in the specified order even for NaN and infinities.",
       "suggested_batch": "number_format_argument_coercion:1",
       "group": "v8-040",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 87:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 87:1.",
+      "status": "verified"
     },
     "regress/regress-2470.js": {
       "triage_partition": "middle110",
@@ -3968,7 +4158,12 @@
       "reason": "Missing native language argument-count/stack boundary: huge bind/spread/construct calls succeed where pinned V8 throws RangeError. Do not replace unrelated VM quotas with catchable errors wholesale.",
       "suggested_batch": "call_argument_count_boundary:1",
       "group": "v8-069",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 12:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 12:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-api-bind-upstream-dev-final/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-353058.js": {
       "triage_partition": "middle110",
@@ -4079,7 +4274,8 @@
       "reason": "The inert module loader supplies only filesystem modules; data:text/javascript module source must be delivered/decoded genuinely, preserving nested/TLA module identity and jobs.",
       "suggested_batch": "host_data_url_modules:1",
       "group": "v8-043",
-      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,const inner_url = \"data:text/javascript,print('executing inner module');\";import(inner_url);."
+      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,const inner_url = \"data:text/javascript,print('executing inner module');\";import(inner_url);.",
+      "status": "verified"
     },
     "regress/regress-451663011.js": {
       "triage_partition": "middle110",
@@ -4332,7 +4528,8 @@
       "reason": "The inert module loader supplies only filesystem modules; data:text/javascript module source must be delivered/decoded genuinely, preserving nested/TLA module identity and jobs.",
       "suggested_batch": "host_data_url_modules:1",
       "group": "v8-043",
-      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,await Promise.resolve();."
+      "baseline_error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,await Promise.resolve();.",
+      "status": "verified"
     },
     "regress/regress-516022777.js": {
       "triage_partition": "middle110",
@@ -4443,7 +4640,8 @@
       "reason": "instanceof/@@hasInstance/isPrototypeOf must use Proxy [[GetPrototypeOf]] traps on every chain step and detect/bound trap-created cycles.",
       "suggested_batch": "prototype_exotic_getprototypeof:1",
       "group": "v8-045",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 18:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 18:1.",
+      "status": "verified"
     },
     "regress/regress-5927.js": {
       "triage_partition": "middle110",
@@ -4453,7 +4651,8 @@
       "reason": "Class heritage and computed-name expressions execute in strict code; assignment to a frozen object must throw even when the surrounding script is sloppy.",
       "suggested_batch": "class_definition_strict_expressions:1",
       "group": "v8-046",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "status": "verified"
     },
     "regress/regress-599414-array-concat-fast-path.js": {
       "triage_partition": "middle110",
@@ -4514,7 +4713,8 @@
       "reason": "The named function-expression binding named arguments incorrectly wins over its inner implicit arguments object through direct eval.",
       "suggested_batch": "named_function_arguments_binding:1",
       "group": "v8-048",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 5:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 5:1.",
+      "status": "verified"
     },
     "regress/regress-655573.js": {
       "triage_partition": "middle110",
@@ -4534,7 +4734,8 @@
       "reason": "Intl.DateTimeFormat.formatToParts must reject a NumberFormat receiver before formatting/default argument behavior.",
       "suggested_batch": "intl_receiver_brand:1",
       "group": "v8-087",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 10:3."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 10:3.",
+      "status": "verified"
     },
     "regress/regress-678917.js": {
       "triage_partition": "middle110",
@@ -4605,7 +4806,8 @@
       "reason": "Array.unshift on one high-index sparse element still enters the old logical array length cap instead of moving resident keys under unchanged resident bounds.",
       "suggested_batch": "sparse_array_mutator_allocation:1",
       "group": "v8-088",
-      "baseline_error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144."
+      "baseline_error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144.",
+      "status": "verified"
     },
     "regress/regress-786573.js": {
       "triage_partition": "middle110",
@@ -4625,7 +4827,8 @@
       "reason": "Consecutive labels directly labeling an iteration are all valid continue targets; current parser/compiler only recognizes the immediate label.",
       "suggested_batch": "continue_chained_iteration_labels:1",
       "group": "v8-050",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: threw an exception: Script syntax error at line 1, column 26: Undefined label.\n    at failWithMessage           script 2 398:11\n    at assertDoesNotThrow        script 2 694:7\n    at                           script 3 29:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: threw an exception: Script syntax error at line 1, column 26: Undefined label.\n    at failWithMessage           script 2 398:11\n    at assertDoesNotThrow        script 2 694:7\n    at                           script 3 29:1.",
+      "status": "verified"
     },
     "regress/regress-852765.js": {
       "triage_partition": "middle110",
@@ -4665,7 +4868,8 @@
       "reason": "instanceof/@@hasInstance/isPrototypeOf must use Proxy [[GetPrototypeOf]] traps on every chain step and detect/bound trap-created cycles.",
       "suggested_batch": "prototype_exotic_getprototypeof:1",
       "group": "v8-045",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1.",
+      "status": "verified"
     },
     "regress/regress-9036-2.js": {
       "triage_partition": "middle110",
@@ -4675,7 +4879,8 @@
       "reason": "instanceof/@@hasInstance/isPrototypeOf must use Proxy [[GetPrototypeOf]] traps on every chain step and detect/bound trap-created cycles.",
       "suggested_batch": "prototype_exotic_getprototypeof:1",
       "group": "v8-045",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1.",
+      "status": "verified"
     },
     "regress/regress-9036-3.js": {
       "triage_partition": "middle110",
@@ -4685,7 +4890,8 @@
       "reason": "instanceof/@@hasInstance/isPrototypeOf must use Proxy [[GetPrototypeOf]] traps on every chain step and detect/bound trap-created cycles.",
       "suggested_batch": "prototype_exotic_getprototypeof:1",
       "group": "v8-045",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 10:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 10:1.",
+      "status": "verified"
     },
     "regress/regress-903874.js": {
       "triage_partition": "middle110",
@@ -4716,7 +4922,8 @@
       "reason": "for await only accepts of iteration; current parser incorrectly accepts the classic for(var a;;) form.",
       "suggested_batch": "for_await_classic_header_rejection:1",
       "group": "v8-052",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 5:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 5:1.",
+      "status": "verified"
     },
     "regress/regress-944945.js": {
       "triage_partition": "middle110",
@@ -4876,7 +5083,8 @@
       "family": "d8_dom_native_div",
       "batch": "d8_dom",
       "group": "v8-121",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 13, column 18: Uncaught TypeError: Cannot read properties of undefined (reading 'Div')."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 13, column 18: Uncaught TypeError: Cannot read properties of undefined (reading 'Div').",
+      "status": "verified"
     },
     "regress/regress-crbug-1357318.js": {
       "triage_partition": "last111",
@@ -4932,7 +5140,8 @@
       "family": "d8_dom_native_div",
       "batch": "d8_dom",
       "group": "v8-121",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 7, column 17: Uncaught TypeError: Cannot read properties of undefined (reading 'Div')."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 7, column 17: Uncaught TypeError: Cannot read properties of undefined (reading 'Div').",
+      "status": "verified"
     },
     "regress/regress-crbug-178790.js": {
       "triage_partition": "last111",
@@ -5156,7 +5365,8 @@
       "family": "asm_fallback_function_brand",
       "batch": "asm_function_brand",
       "group": "v8-105",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 11:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 11:1.",
+      "status": "verified"
     },
     "regress/regress-directive.js": {
       "triage_partition": "last111",
@@ -5500,7 +5710,8 @@
       "family": "asm_fallback_function_brand",
       "batch": "asm_function_brand",
       "group": "v8-105",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array length): expected <3> found <2>\n    at assertArrayEquals         script 2 537:5\n    at TestSloppynessPropagates  script 3 15:3\n    at                           script 3 5:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array length): expected <3> found <2>\n    at assertArrayEquals         script 2 537:5\n    at TestSloppynessPropagates  script 3 15:3\n    at                           script 3 5:1.",
+      "status": "verified"
     },
     "regress/wasm/regress-crbug-816961.js": {
       "triage_partition": "last111",
@@ -5681,13 +5892,24 @@
   },
   "current_test262_revision": "d53ebc8b1931d9f1541e43d59650776e4b766248",
   "latest_full_run": {
-    "report": "/private/tmp/mars-v9-groups01-09-isolated-v8/results-mjsunit.json",
-    "pass": 3407,
-    "fail": 335,
+    "candidate_base": "e64334a2",
+    "changed_rust_sha256": "d8febac112834c3ca91b210df10119175783dc44f7ad246458a8b1590bed1c2f",
+    "report": "/private/tmp/mars-v9-next-isolated-full-v8/results-mjsunit.json",
+    "profile": "release",
+    "jobs": 4,
+    "pass": 3474,
+    "fail": 268,
     "excluded": 5345,
     "baseline_failures_now_passing": [
+      "async-stack-traces-prepare-stacktrace-1.js",
+      "async-stack-traces-prepare-stacktrace-2.js",
+      "async-stack-traces-prepare-stacktrace-3.js",
+      "async-stack-traces-prepare-stacktrace-4.js",
       "compiler/regress-447567.js",
+      "console.js",
+      "disallow-codegen-from-strings.js",
       "duplicate-parameters.js",
+      "error-tostring-omit.js",
       "es6/block-sloppy-function.js",
       "es6/classes-experimental.js",
       "es6/computed-property-names-classes.js",
@@ -5701,70 +5923,74 @@
       "es6/sloppy-no-duplicate-generators.js",
       "es6/templates.js",
       "es7/typed-array-includes.js",
+      "es8/async-function-stacktrace.js",
       "es8/sloppy-no-duplicate-async.js",
+      "eval-origin.js",
+      "eval-stack-trace.js",
+      "expose-cputracemark.js",
       "function-names.js",
+      "fuzz-accessors.js",
       "harmony/async-for-of-non-iterable.js",
       "harmony/class-static-blocks.js",
       "harmony/nullish.js",
+      "harmony/regress/regress-511329274.js",
+      "harmony/uint8array-base64-immutable.js",
+      "ignition/stack-trace-source-position.js",
+      "json-errors.js",
+      "math-random.js",
+      "mjsunit-assertion-error.js",
       "new-function.js",
+      "object-create.js",
       "parse-surrogates.js",
       "primitive-keyed-access.js",
+      "print.js",
+      "regress-367066330.js",
       "regress/regress-1062422.js",
+      "regress/regress-1158124.js",
+      "regress/regress-136048.js",
       "regress/regress-1364429.js",
+      "regress/regress-1711.js",
+      "regress/regress-2443.js",
       "regress/regress-2470.js",
       "regress/regress-2686.js",
+      "regress/regress-344664770.js",
+      "regress/regress-438732677.js",
+      "regress/regress-515494863.js",
+      "regress/regress-517406981.js",
+      "regress/regress-578775.js",
+      "regress/regress-5927.js",
+      "regress/regress-649067.js",
+      "regress/regress-677055.js",
       "regress/regress-7773.js",
+      "regress/regress-784862.js",
+      "regress/regress-8033.js",
+      "regress/regress-9036-1.js",
+      "regress/regress-9036-2.js",
+      "regress/regress-9036-3.js",
       "regress/regress-91.js",
+      "regress/regress-926036.js",
       "regress/regress-95920.js",
+      "regress/regress-crbug-109362.js",
+      "regress/regress-crbug-1308360.js",
+      "regress/regress-crbug-1357318.js",
+      "regress/regress-crbug-1404820.js",
+      "regress/regress-crbug-1509910.js",
       "regress/regress-crbug-419454582.js",
       "regress/regress-crbug-663410.js",
+      "regress/regress-crbug-798026.js",
+      "regress/regress-crbug-935800.js",
       "regress/regress-v8-8799.js",
+      "regress/wasm/regress-985154.js",
       "scanner.js",
       "var.js"
     ],
     "additional_failures": [
       {
-        "test": "apply-arguments-gc-safepoint.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "array-constructor.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
         "test": "array-from-large-set.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "array-indexing.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/array-access.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/osr-big.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/osr-follow.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/osr-forin.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/regress-1161357.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
         "test": "compiler/regress-crbug-1399627.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "compiler/regress-serialized-slots.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
@@ -5776,58 +6002,6 @@
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "es6/block-conflicts-sloppy.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "es6/block-conflicts.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui0.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui1.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui2.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui3.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui4.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui5.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui6.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui7.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui8.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/regexp-property-lu-ui9.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "harmony/sharedarraybuffer-worker-gc-stress.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
         "test": "ignition/regress-599001-verifyheap.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
@@ -5836,40 +6010,20 @@
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "maglev/regress-464612781.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
         "test": "random-bit-correlations.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "regress/regress-113924.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "regress/regress-1139782.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        "test": "regress-332570754.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
       },
       {
         "test": "regress/regress-1449567.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "regress/regress-2073.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "regress/regress-854066.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "regress/regress-crbug-260345.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
-        "test": "regress/regress-crbug-469768.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        "test": "regress/regress-381390367.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
       },
       {
         "test": "regress/regress-crbug-503557995-b.js",
@@ -5878,8 +6032,303 @@
       {
         "test": "regress/wasm/regress-325359458.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "regress/wasm/regress-392928805.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+      },
+      {
+        "test": "regress/wasm/regress-406043349.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+      },
+      {
+        "test": "regress/wasm/regress-413963387.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+      },
+      {
+        "test": "regress/wasm/regress-crbug-1502180.js",
+        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+      },
+      {
+        "test": "stack-trace-cpp-function-template-1.js",
+        "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <5> found <4>\n    at assertEquals (file:///Users/mk/Dev/upstream/v8/test/mjsunit/mjsunit.js:513:7)\n    at <anonymous> (file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:17:3)\n    at file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:35:3."
+      },
+      {
+        "test": "string-replace-one-char.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "string-wrapper.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       }
     ],
-    "note": "Raw full inventory before compiler name-index repairs. Every additional failure is a time-limit failure; they remain counted. Timing checks also fail on the baseline under concurrent machine load. Targeted functional proofs are separate from this raw scoreboard."
-  }
+    "note": "Isolated next checkpoint; user Eye/core/Intl/metadata edits excluded. Unsupported CPU profiling and the additional native API stack requirement remain explicit failures, alongside timing/resource failures. No exclusions or test bodies changed."
+  },
+  "targeted_verified_count": 65,
+  "previous_full_runs": [
+    {
+      "report": "/private/tmp/mars-v9-groups01-09-isolated-v8/results-mjsunit.json",
+      "pass": 3407,
+      "fail": 335,
+      "excluded": 5345,
+      "baseline_failures_now_passing": [
+        "compiler/regress-447567.js",
+        "duplicate-parameters.js",
+        "es6/block-sloppy-function.js",
+        "es6/classes-experimental.js",
+        "es6/computed-property-names-classes.js",
+        "es6/computed-property-names-object-literals-methods.js",
+        "es6/function-name.js",
+        "es6/iteration-semantics.js",
+        "es6/iterator-close.js",
+        "es6/iterator-prototype.js",
+        "es6/proxies-for.js",
+        "es6/regress/regress-4097.js",
+        "es6/sloppy-no-duplicate-generators.js",
+        "es6/templates.js",
+        "es7/typed-array-includes.js",
+        "es8/sloppy-no-duplicate-async.js",
+        "function-names.js",
+        "harmony/async-for-of-non-iterable.js",
+        "harmony/class-static-blocks.js",
+        "harmony/nullish.js",
+        "new-function.js",
+        "parse-surrogates.js",
+        "primitive-keyed-access.js",
+        "regress/regress-1062422.js",
+        "regress/regress-1364429.js",
+        "regress/regress-2470.js",
+        "regress/regress-2686.js",
+        "regress/regress-7773.js",
+        "regress/regress-91.js",
+        "regress/regress-95920.js",
+        "regress/regress-crbug-419454582.js",
+        "regress/regress-crbug-663410.js",
+        "regress/regress-v8-8799.js",
+        "scanner.js",
+        "var.js"
+      ],
+      "additional_failures": [
+        {
+          "test": "apply-arguments-gc-safepoint.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "array-constructor.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "array-from-large-set.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "array-indexing.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/array-access.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/osr-big.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/osr-follow.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/osr-forin.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/regress-1161357.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/regress-crbug-1399627.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/regress-serialized-slots.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "copy-on-write-assert.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "deep-recursion.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "es6/block-conflicts-sloppy.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "es6/block-conflicts.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui0.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui1.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui2.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui3.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui4.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui5.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui6.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui7.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui8.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/regexp-property-lu-ui9.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "harmony/sharedarraybuffer-worker-gc-stress.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "ignition/regress-599001-verifyheap.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "maglev/regress-432847895.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "maglev/regress-464612781.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "random-bit-correlations.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-113924.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-1139782.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-1449567.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-2073.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-854066.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-crbug-260345.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-crbug-469768.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-crbug-503557995-b.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/wasm/regress-325359458.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        }
+      ],
+      "note": "Raw full inventory before compiler name-index repairs. Every additional failure is a time-limit failure; they remain counted. Timing checks also fail on the baseline under concurrent machine load. Targeted functional proofs are separate from this raw scoreboard."
+    },
+    {
+      "verified_commit": "e64334a2",
+      "report": "/private/tmp/mars-v9-e64334a2-final-v8/results-mjsunit.json",
+      "profile": "release",
+      "jobs": 4,
+      "pass": 3443,
+      "fail": 299,
+      "excluded": 5345,
+      "baseline_failures_now_passing": [
+        "compiler/regress-447567.js",
+        "duplicate-parameters.js",
+        "es6/block-sloppy-function.js",
+        "es6/classes-experimental.js",
+        "es6/computed-property-names-classes.js",
+        "es6/computed-property-names-object-literals-methods.js",
+        "es6/function-name.js",
+        "es6/iteration-semantics.js",
+        "es6/iterator-close.js",
+        "es6/iterator-prototype.js",
+        "es6/proxies-for.js",
+        "es6/regress/regress-4097.js",
+        "es6/sloppy-no-duplicate-generators.js",
+        "es6/templates.js",
+        "es7/typed-array-includes.js",
+        "es8/sloppy-no-duplicate-async.js",
+        "function-names.js",
+        "harmony/async-for-of-non-iterable.js",
+        "harmony/class-static-blocks.js",
+        "harmony/nullish.js",
+        "new-function.js",
+        "parse-surrogates.js",
+        "primitive-keyed-access.js",
+        "regress/regress-1062422.js",
+        "regress/regress-1364429.js",
+        "regress/regress-2470.js",
+        "regress/regress-2686.js",
+        "regress/regress-7773.js",
+        "regress/regress-91.js",
+        "regress/regress-95920.js",
+        "regress/regress-crbug-419454582.js",
+        "regress/regress-crbug-663410.js",
+        "regress/regress-v8-8799.js",
+        "scanner.js",
+        "var.js"
+      ],
+      "additional_failures": [
+        {
+          "test": "random-bit-correlations.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-1449567.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-crbug-503557995-b.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        }
+      ],
+      "note": "Exact pushed checkpoint inventory after compiler name-index repairs. Raw timing failures remain counted. Newer working-tree repairs have separate targeted proofs and are not included in this full score."
+    }
+  ],
+  "full_inventory_baseline_failures_passing": 82
 }

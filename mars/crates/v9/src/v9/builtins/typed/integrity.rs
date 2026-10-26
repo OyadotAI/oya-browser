@@ -6,7 +6,9 @@ use crate::v9::vm::heap::{CONFIGURABLE, Slot, WRITABLE};
 pub(in crate::v9::builtins) fn integrity_status(vm: &Vm, id: ObjectId, bits: u8) -> Option<bool> {
     let view = view_of(vm, id).filter(|view| view.kind != ElementKind::DataView)?;
     let object = vm.heap.get(id)?;
-    if object.extensible || bits & WRITABLE != 0 && view.length != 0 {
+    if object.extensible
+        || bits & WRITABLE != 0 && view.length != 0 && !buffer_state::immutable(vm, view.buffer)
+    {
         return Some(false);
     }
     Some(object.props.iter().all(|(key, prop)| {

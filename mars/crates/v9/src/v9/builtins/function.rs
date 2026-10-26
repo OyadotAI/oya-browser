@@ -5,7 +5,9 @@ use crate::v9::vm::data::{Class, Function, FunctionKind};
 use crate::v9::vm::heap::{CONFIGURABLE, Object, Prop, Slot};
 use crate::v9::vm::realm::{realm, symbol};
 
+mod diagnostics;
 mod dynamic;
+pub(super) use diagnostics::receiver as diagnostic_receiver;
 
 /** Indirect eval's global scope supplies vars, while the eval owns its lexical declarations. */
 const INDIRECT_CONTEXT: &str = "n|g";
@@ -99,6 +101,7 @@ pub(super) fn create_dynamic(vm: &mut Vm, call: Call, prefix: &str) -> Res<JsVal
     } else {
         arg_string(vm, &call, count - 1)?.lossy()
     };
+    vm.check_string_codegen()?;
     let head = format!("({prefix}({}\n", params.join(","));
     let parameters_end = head.len();
     let source = format!("{head}) {{\n{body}\n}})");
@@ -156,7 +159,9 @@ pub(in crate::v9) fn compile_indirect_eval(
     vm: &mut Vm,
     source: String,
 ) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
-    vm.prepare_dynamic(source.len())?;
+    vm.check_string_codegen()?;
+    let origin = vm.capture_eval_origin()?;
+    vm.prepare_dynamic(source.len().saturating_add(origin.bytes()))?;
     let base = dynamic_base(&vm.dynamic);
     let code =
         match crate::v9::compile_dynamic(&mut vm.registry, &source, base, Some(INDIRECT_CONTEXT)) {
@@ -169,10 +174,12 @@ pub(in crate::v9) fn compile_indirect_eval(
             }
             Err(error) => return Err(error.into()),
         };
+    let origin = vm.finish_eval_origin(&source, origin)?;
     vm.dynamic.push(crate::v9::vm::DynamicSource {
         source,
         context: Some(INDIRECT_CONTEXT.into()),
         base: Some(base),
+        origin: Some(origin),
     });
     Ok(code)
 }
@@ -254,6 +261,9 @@ fn apply(vm: &mut Vm, call: Call) -> Res<JsValue> {
     vm.forward_call(call.this.clone(), call.arg(0), args)
 }
 
+/** Pinned V8's uint16 call-input representation reserves ten slots and excludes its upper bound for bound captures. */
+const MAX_BOUND_ARGUMENTS: usize = 65_525;
+
 /** Function.prototype.bind. */
 fn bind(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let JsValue::Object(target) = call.this else {
@@ -269,6 +279,11 @@ fn bind(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .unwrap_or_default();
     let proto = super::integrity::get_prototype_of(vm, target)?;
     let count = args.len();
+    if count > MAX_BOUND_ARGUMENTS {
+        return Err(vm.range_error(&format!(
+            "Too many arguments in function call (only {MAX_BOUND_ARGUMENTS} allowed)"
+        )));
+    }
     let id = vm.alloc(Object::new(
         Class::Function(Box::new(Function {
             kind: FunctionKind::Bound {
@@ -378,10 +393,22 @@ pub(in crate::v9) fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Native source uses the installation name and never invokes user name accessors. */
-fn native_source_name(vm: &Vm, value: &JsValue) -> String {
+pub(super) fn native_source_name(vm: &Vm, value: &JsValue) -> String {
     let Some(id) = value.object() else {
         return String::new();
     };
+    if let Some(Slot::Data(JsValue::String(name))) = vm
+        .heap
+        .get(id)
+        .and_then(|object| {
+            object
+                .props
+                .get(&Key::private("native-function-source-name"))
+        })
+        .map(|property| &property.slot)
+    {
+        return name.lossy();
+    }
     if let Some(name) = vm
         .heap
         .get(id)

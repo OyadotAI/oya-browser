@@ -2,6 +2,8 @@
 mod identifier;
 mod legacy;
 mod number;
+mod regexp;
+mod source_url;
 use super::{
     errors, literals,
     operator::{AssignmentOperator, Operator, UpdateOperator},
@@ -14,6 +16,7 @@ use crate::{
 };
 use identifier::{identifier_continue, identifier_start};
 use number::number;
+pub(in crate::v9) use source_url::source_url;
 
 /** Tokens retain locations independently of the value or identifier they carry. */
 #[derive(Clone, Debug, PartialEq)]
@@ -429,11 +432,7 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
             Some(']') => class = false,
             Some('/') if !class => {
                 let pattern = body[..body.len() - before.len()].to_string();
-                let flags_start = source.rest();
-                while source.peek().is_some_and(identifier_continue) {
-                    source.next();
-                }
-                let flags = flags_start[..flags_start.len() - source.rest().len()].to_string();
+                let flags = regexp::flags(source, start)?;
                 return Ok(Kind::Regex { pattern, flags });
             }
             Some(_) => {}

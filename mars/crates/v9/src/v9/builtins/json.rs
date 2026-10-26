@@ -7,7 +7,9 @@ use crate::v9::vm::heap::{CONFIGURABLE, FastMap};
 use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{Static, string, symbol};
 
+mod diagnostics;
 mod raw;
+use diagnostics::Reason;
 pub(in crate::v9) use raw::branded as is_raw_json;
 mod reviver;
 use reviver::{Parsed, Reviver, Snapshot};
@@ -57,14 +59,11 @@ impl Reader<'_> {
     }
     /** The SyntaxError for the current position. */
     fn error(&self, vm: &mut Vm) -> crate::v9::vm::Thrown {
-        if self.position >= self.units.len() {
-            return vm.syntax_error("Unexpected end of JSON input");
-        }
-        let token = char::from_u32(u32::from(self.units[self.position])).unwrap_or('?');
-        vm.syntax_error(&format!(
-            "Unexpected token '{token}' in JSON at position {}",
-            self.position
-        ))
+        self.failure(vm, Reason::Unexpected)
+    }
+    /** The caller retains which grammar production rejected the current token. */
+    fn failure(&self, vm: &mut Vm, reason: Reason) -> crate::v9::vm::Thrown {
+        diagnostics::error(vm, self.units, self.position, reason)
     }
     /** One value. */
     fn value(&mut self, vm: &mut Vm) -> Res<JsValue> {
@@ -99,17 +98,13 @@ impl Reader<'_> {
     }
     /** A literal word. */
     fn word(&mut self, vm: &mut Vm, word: &str, value: JsValue) -> Res<JsValue> {
-        let end = self.position + word.len();
-        if self.units.get(self.position..end).is_some_and(|slice| {
-            slice
-                .iter()
-                .zip(word.bytes())
-                .all(|(a, b)| *a == u16::from(b))
-        }) {
-            self.position = end;
-            return Ok(value);
+        for character in word.bytes() {
+            if self.units.get(self.position) != Some(&u16::from(character)) {
+                return Err(self.error(vm));
+            }
+            self.position += 1;
         }
-        Err(self.error(vm))
+        Ok(value)
     }
     /** A number in JSON's stricter grammar. */
     fn number(&mut self, vm: &mut Vm) -> Res<JsValue> {
@@ -130,13 +125,20 @@ impl Reader<'_> {
         };
         if self.units.get(self.position) == Some(&0x30) {
             self.position += 1;
+            if self
+                .units
+                .get(self.position)
+                .is_some_and(|unit| (0x30..=0x39).contains(unit))
+            {
+                return Err(self.failure(vm, Reason::UnexpectedNumber));
+            }
         } else if !digits(self) {
-            return Err(self.error(vm));
+            return Err(self.failure(vm, Reason::NumberAfterMinus));
         }
         if self.units.get(self.position) == Some(&0x2e) {
             self.position += 1;
             if !digits(self) {
-                return Err(self.error(vm));
+                return Err(self.failure(vm, Reason::Fraction));
             }
         }
         if matches!(self.units.get(self.position), Some(0x65 | 0x45)) {
@@ -145,7 +147,7 @@ impl Reader<'_> {
                 self.position += 1;
             }
             if !digits(self) {
-                return Err(self.error(vm));
+                return Err(self.failure(vm, Reason::Exponent));
             }
         }
         let text = String::from_utf16_lossy(&self.units[start..self.position]);
@@ -157,7 +159,7 @@ impl Reader<'_> {
         let mut out = Vec::new();
         loop {
             let Some(unit) = self.units.get(self.position).copied() else {
-                return Err(self.error(vm));
+                return Err(self.failure(vm, Reason::UnterminatedString));
             };
             self.position += 1;
             match unit {
@@ -176,28 +178,16 @@ impl Reader<'_> {
                         0x6e => 0x0a,
                         0x72 => 0x0d,
                         0x74 => 0x09,
-                        0x75 => {
-                            let hex = self
-                                .units
-                                .get(self.position..self.position + 4)
-                                .map(String::from_utf16_lossy);
-                            match hex.and_then(|hex| u16::from_str_radix(&hex, 16).ok()) {
-                                Some(value) => {
-                                    self.position += 4;
-                                    value
-                                }
-                                None => return Err(self.error(vm)),
-                            }
-                        }
+                        0x75 => self.unicode_escape(vm)?,
                         _ => {
                             self.position -= 1;
-                            return Err(self.error(vm));
+                            return Err(self.failure(vm, Reason::EscapedCharacter));
                         }
                     });
                 }
                 unit if unit < 0x20 => {
                     self.position -= 1;
-                    return Err(self.error(vm));
+                    return Err(self.failure(vm, Reason::ControlCharacter));
                 }
                 unit => out.push(unit),
             }
@@ -208,6 +198,23 @@ impl Reader<'_> {
             }
         }
         Ok(JsString::from_units(out)?)
+    }
+    /** A Unicode escape stops at the first nonhexadecimal source unit, preserving its exact diagnostic position. */
+    fn unicode_escape(&mut self, vm: &mut Vm) -> Res<u16> {
+        let mut value = 0;
+        for _ in 0..4 {
+            let digit = self
+                .units
+                .get(self.position)
+                .and_then(|unit| char::from_u32(u32::from(*unit)))
+                .and_then(|character| character.to_digit(16));
+            let Some(digit) = digit else {
+                return Err(self.failure(vm, Reason::UnicodeEscape));
+            };
+            value = value * 16 + digit as u16;
+            self.position += 1;
+        }
+        Ok(value)
     }
     /** `[...]` */
     fn array(&mut self, vm: &mut Vm) -> Res<JsValue> {
@@ -231,7 +238,7 @@ impl Reader<'_> {
                     self.position += 1;
                     return Ok(JsValue::Object(array));
                 }
-                _ => return Err(self.error(vm)),
+                _ => return Err(self.failure(vm, Reason::ArraySeparator)),
             }
         }
     }
@@ -244,15 +251,23 @@ impl Reader<'_> {
             self.position += 1;
             return Ok(JsValue::Object(object));
         }
+        let mut first = true;
         loop {
             self.skip();
             if self.units.get(self.position) != Some(&0x22) {
-                return Err(self.error(vm));
+                return Err(self.failure(
+                    vm,
+                    if first {
+                        Reason::PropertyNameOrBrace
+                    } else {
+                        Reason::PropertyName
+                    },
+                ));
             }
             let name = self.string(vm)?;
             self.skip();
             if self.units.get(self.position) != Some(&0x3a) {
-                return Err(self.error(vm));
+                return Err(self.failure(vm, Reason::Colon));
             }
             self.position += 1;
             let value = self.value(vm)?;
@@ -260,12 +275,15 @@ impl Reader<'_> {
             vm.define(object, Key::Str(name), Descriptor::data(value))?;
             self.skip();
             match self.units.get(self.position) {
-                Some(0x2c) => self.position += 1,
+                Some(0x2c) => {
+                    self.position += 1;
+                    first = false;
+                }
                 Some(0x7d) => {
                     self.position += 1;
                     return Ok(JsValue::Object(object));
                 }
-                _ => return Err(self.error(vm)),
+                _ => return Err(self.failure(vm, Reason::ObjectSeparator)),
             }
         }
     }
@@ -288,7 +306,7 @@ fn read_json(vm: &mut Vm, units: &[u16], capture: bool) -> Res<(JsValue, Snapsho
     let value = reader.value(vm)?;
     reader.skip();
     if reader.position < units.len() {
-        return Err(reader.error(vm));
+        return Err(reader.failure(vm, Reason::TrailingCharacter));
     }
     Ok((value, reader.snapshot))
 }

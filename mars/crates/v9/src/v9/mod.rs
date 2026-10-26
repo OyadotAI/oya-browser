@@ -26,6 +26,8 @@ pub use worker_runtime::{ConformanceWorkerHost, ConformanceWorkerSession};
 
 pub use binding::{Binding, BindingKind, Globals};
 pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource};
+#[cfg(feature = "conformance")]
+pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
@@ -607,6 +609,8 @@ fn session<'h>(
     }
     storage.validate()?;
     builtins::validate_timezone(environment)?;
+    #[cfg(feature = "conformance")]
+    builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
     state.validate(&limits)?;

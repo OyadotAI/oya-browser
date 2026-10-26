@@ -32,6 +32,8 @@ mod simd;
 mod streaming;
 mod strings;
 mod table;
+mod trace;
+pub(in crate::v9) use trace::trace_metadata;
 mod type_context;
 mod types;
 mod validate;
