@@ -143,6 +143,10 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "setAttribute",
             "removeAttribute",
             "hasAttribute",
+            "getAttributeNS",
+            "setAttributeNS",
+            "removeAttributeNS",
+            "hasAttributeNS",
             "hasAttributes",
             "getAttributeNames",
             "toggleAttribute",
@@ -402,9 +406,17 @@ fn collections(b: &mut Builder) {
         b,
         class_list,
         &[
-            "add", "remove", "toggle", "contains", "item", "replace", "toString",
+            "add", "remove", "toggle", "contains", "item", "replace", "toString", "keys",
+            "entries", "forEach", "supports",
         ],
         dom::class_list,
+    );
+    let values = b.method(class_list, "values", 0, dom::class_list);
+    b.put(
+        class_list,
+        Key::Sym(symbol::ITERATOR),
+        Static::Value(JsValue::Object(values)),
+        HIDDEN_ATTRS,
     );
     getters(b, class_list, &["length", "value"], dom::class_list);
     let style = b.object(Some(object_prototype));
@@ -417,8 +429,17 @@ fn collections(b: &mut Builder) {
             "setProperty",
             "removeProperty",
             "getPropertyPriority",
+            "item",
         ],
         dom::style_method,
+    );
+    b.getter(style, "length", dom::style_method);
+    let style_values = b.method(style, "values", 0, dom::style_method);
+    b.put(
+        style,
+        Key::Sym(symbol::ITERATOR),
+        Static::Value(JsValue::Object(style_values)),
+        HIDDEN_ATTRS,
     );
     b.accessor(
         style,

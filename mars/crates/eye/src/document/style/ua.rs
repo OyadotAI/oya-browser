@@ -237,6 +237,11 @@ pub(super) fn body() -> Vec<(&'static str, &'static str)> {
 pub(super) fn closed(node: &Node, parent: Option<&Node>, summary: Option<usize>) -> bool {
     let shut = |node: &Node| !node.attributes.contains_key("open");
     (node.tag == "dialog" && shut(node))
+        // `[popover]:not(:popover-open) { display: none }`, as Chrome's UA sheet hides one.
+        || (node.attributes.contains_key("popover")
+            && !node
+                .attributes
+                .contains_key(mars_core::dom::POPOVER_OPEN_ATTRIBUTE))
         || parent.is_some_and(|parent| {
             parent.tag == "details" && shut(parent) && summary != Some(node.local_id)
         })

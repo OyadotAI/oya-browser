@@ -91,6 +91,7 @@ pub(in crate::v9::platform) fn removed(vm: &mut Vm, root: usize) {
         if !vm.page.connected(node) {
             if let Some(id) = vm.page.state.wrappers.get(&node).copied() {
                 set_slot(vm, id, SHOWING, JsValue::Undefined);
+                let _ = vm.page.mark_popover_open(node, false);
                 set_slot(vm, id, OPEN_TYPE, JsValue::Undefined);
             }
         }
@@ -450,6 +451,7 @@ fn show(vm: &mut Vm, node: usize, throw: bool) -> Res<()> {
             JsValue::string(original_type.unwrap_or("manual"))?,
         );
         set_slot(vm, id, SHOWING, JsValue::Number(order));
+        vm.page.mark_popover_open(node, true)?;
     }
     queue_toggle(vm, node, true)
 }
@@ -488,6 +490,7 @@ fn hide_steps(vm: &mut Vm, node: usize, id: ObjectId, fire: bool) -> Res<()> {
     }
     set_slot(vm, id, SHOWING, JsValue::Undefined);
     set_slot(vm, id, OPEN_TYPE, JsValue::Undefined);
+    vm.page.mark_popover_open(node, false)?;
     if fire {
         queue_toggle(vm, node, false)?;
     }

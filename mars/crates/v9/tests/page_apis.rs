@@ -467,3 +467,34 @@ fn path2d_exists_for_polyfills() {
     );
     assert_eq!(r, "function|true|function");
 }
+
+/** Namespaced attribute methods work on the qualified name, as YouTube's player builds its SVG
+icons: `setAttributeNS(xlink, 'xlink:href', v)` reads back through either form. */
+#[test]
+fn namespaced_attributes_round_trip() {
+    let r = eval(
+        "const x='http://www.w3.org/1999/xlink';\
+         const u=document.createElementNS('http://www.w3.org/2000/svg','use');\
+         u.setAttributeNS(x,'xlink:href','#shadow');\
+         const a=[u.getAttribute('xlink:href'),u.getAttributeNS(x,'href'),u.hasAttributeNS(x,'href')];\
+         u.removeAttributeNS(x,'href');\
+         a.push(u.hasAttribute('xlink:href'),u.getAttributeNS(x,'href'));\
+         let r=a.join(',');",
+        "r",
+    );
+    assert_eq!(r, "#shadow,#shadow,true,false,");
+}
+
+/** DOM collections a page loops over are iterable, as in browsers: classList (its token set,
+each once, with entries and forEach), children, query results, childNodes, attributes and an
+element's inline style. YouTube spreads classList, and a TypeError there stopped its rendering. */
+#[test]
+fn dom_collections_are_iterable() {
+    assert_eq!(
+        eval(
+            "const d=document.createElement('div');d.className='a b a';d.setAttribute('data-x','1');d.style.color='red';d.innerHTML='<p></p><p></p>';document.body.append(d);const out={};const t=(k,f)=>{try{out[k]=f()}catch(e){out[k]='ERR '+e.message}};t('classList',()=>[...d.classList].join());t('entries',()=>JSON.stringify([...d.classList.entries()]));t('forEach',()=>{const a=[];d.classList.forEach((v,i)=>a.push(i+v));return a.join()});t('children',()=>[...d.children].length);t('qsa',()=>[...d.querySelectorAll('p')].length);t('byTag',()=>[...d.getElementsByTagName('p')].length);t('childNodes',()=>[...d.childNodes].length);t('attributes',()=>[...d.attributes].map(a=>a.name).join());t('style',()=>[...d.style].join());t('forms',()=>[...document.forms].length);t('images',()=>[...document.images].length);let r=JSON.stringify(out);",
+            "r"
+        ),
+        r#"{"classList":"a,b","entries":"[[0,\"a\"],[1,\"b\"]]","forEach":"0a,1b","children":2,"qsa":2,"byTag":2,"childNodes":2,"attributes":"class,data-x,style","style":"color","forms":0,"images":0}"#
+    );
+}

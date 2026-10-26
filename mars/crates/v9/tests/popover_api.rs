@@ -121,3 +121,17 @@ fn popovertarget_buttons_toggle_show_and_hide_their_target() {
         "true|toggle|true|false|false|show|true|false"
     );
 }
+
+/** Opening and closing a popover leaves no attribute a page can see: its open state reaches
+layout through an engine-only marker that attribute lists and serialization leave out. */
+#[test]
+fn open_state_is_invisible_to_the_page() {
+    let source = "const d=document.createElement('div');d.popover='manual';document.body.append(d);\
+        const before=d.getAttributeNames().join();d.showPopover();\
+        const open=[d.getAttributeNames().join(),d.outerHTML,d.attributes.length,d.matches(':popover-open')];\
+        d.hidePopover();const r=JSON.stringify([before,open,d.getAttributeNames().join()]);";
+    assert_eq!(
+        eval(source, "r"),
+        "[\"popover\",[\"popover\",\"<div popover=\\\"manual\\\"></div>\",1,true],\"popover\"]"
+    );
+}

@@ -111,3 +111,36 @@ fn script_driven_states_parse_and_never_match() {
         Some("green")
     );
 }
+
+/** A popover is hidden until its page opens it, as Chrome's UA sheet hides
+`[popover]:not(:popover-open)`; the engine-only marker V9 writes on open shows it. */
+#[test]
+fn popovers_are_hidden_until_opened() {
+    let hidden = |markup: &str| {
+        let document: Document = compute_styles(&parse(markup).unwrap(), &[]).unwrap();
+        document
+            .nodes
+            .iter()
+            .find(|n| n.html_id == "t")
+            .unwrap()
+            .style
+            .hidden
+    };
+    assert!(hidden("<div id=t popover=manual>tip</div>"));
+    assert!(hidden("<div id=t popover>tip</div>"));
+    let mut open = parse("<div id=t popover=manual>tip</div>").unwrap();
+    let node = open.nodes.iter_mut().find(|n| n.html_id == "t").unwrap();
+    node.attributes
+        .insert(mars_core::dom::POPOVER_OPEN_ATTRIBUTE.into(), String::new());
+    let styled = compute_styles(&open, &[]).unwrap();
+    assert!(
+        !styled
+            .nodes
+            .iter()
+            .find(|n| n.html_id == "t")
+            .unwrap()
+            .style
+            .hidden
+    );
+    assert!(!hidden("<div id=t>plain</div>"));
+}

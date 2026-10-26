@@ -2147,6 +2147,26 @@ fn reflected(name: &str) -> (&str, Reflect) {
 }
 
 /** Element methods. */
+/** The attribute a namespaced read names by its local name (the second argument): one stored
+under exactly that name, or under a prefix and that name (`xlink:href` for `href`). */
+fn namespaced_attribute(vm: &mut Vm, node: usize, call: &Call) -> Res<Option<(String, String)>> {
+    let local = vm.to_text(&call.arg(1))?;
+    Ok(vm
+        .page
+        .with_element(node, |_, attributes| {
+            attributes
+                .get_key_value(&local)
+                .or_else(|| {
+                    attributes.iter().find(|(name, _)| {
+                        name.split_once(':')
+                            .is_some_and(|(_, after)| after == local)
+                    })
+                })
+                .map(|(name, value)| (name.clone(), value.clone()))
+        })
+        .flatten())
+}
+
 /** Runs the steps below, then the custom element reactions and records they queued. */
 pub(in crate::v9) fn element_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     components::reacting(vm, |vm| element_method_steps(vm, call))
@@ -2156,6 +2176,33 @@ pub(in crate::v9) fn element_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = this_node(vm, &call)?;
     match native_name(&call) {
+        // Attributes carry no namespace here, so the namespaced forms work on the qualified
+        // name: `setAttributeNS(xlink, 'xlink:href', v)` stores `xlink:href`, as a browser's
+        // getAttribute('xlink:href') reads it, and the other forms find a name by its local
+        // part. YouTube's player builds its SVG icons this way.
+        "setAttributeNS" => {
+            let name = vm.to_text(&call.arg(1))?;
+            let value = vm.to_text(&call.arg(2))?;
+            vm.page
+                .set_attribute(node, &name, Some(&value))
+                .map_err(|error| dom_error(vm, error))?;
+            Ok(JsValue::Undefined)
+        }
+        "getAttributeNS" => match namespaced_attribute(vm, node, &call)? {
+            Some((_, value)) => JsValue::string(&value).map_err(Into::into),
+            None => Ok(JsValue::Null),
+        },
+        "hasAttributeNS" => Ok(JsValue::Boolean(
+            namespaced_attribute(vm, node, &call)?.is_some(),
+        )),
+        "removeAttributeNS" => {
+            if let Some((name, _)) = namespaced_attribute(vm, node, &call)? {
+                vm.page
+                    .set_attribute(node, &name, None)
+                    .map_err(|error| dom_error(vm, error))?;
+            }
+            Ok(JsValue::Undefined)
+        }
         "getAttribute" => {
             let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
             match vm
@@ -2943,6 +2990,45 @@ pub(in crate::v9) fn class_list(vm: &mut Vm, call: Call) -> Res<JsValue> {
     components::reacting(vm, |vm| class_list_steps(vm, call))
 }
 
+/** values, keys, entries and forEach over the ordered set of `classes` (each token once). */
+fn token_iteration(vm: &mut Vm, call: &Call, name: &str, classes: &[String]) -> Res<JsValue> {
+    let mut tokens: Vec<&String> = Vec::new();
+    for class in classes {
+        if !tokens.contains(&class) {
+            tokens.push(class);
+        }
+    }
+    if name == "forEach" {
+        let callback = call.arg(0);
+        if !vm.is_callable(&callback) {
+            return Err(vm.type_error("DOMTokenList.forEach callback is not a function"));
+        }
+        for (index, token) in tokens.iter().enumerate() {
+            let args = vec![
+                JsValue::string(token)?,
+                JsValue::Number(index as f64),
+                call.this.clone(),
+            ];
+            vm.call(callback.clone(), call.arg(1), args)?;
+        }
+        return Ok(JsValue::Undefined);
+    }
+    let mut items = Vec::with_capacity(tokens.len());
+    for (index, token) in tokens.iter().enumerate() {
+        items.push(match name {
+            "keys" => JsValue::Number(index as f64),
+            "values" => JsValue::string(token)?,
+            _ => {
+                let pair = vec![JsValue::Number(index as f64), JsValue::string(token)?];
+                JsValue::Object(vm.new_array(pair)?)
+            }
+        });
+    }
+    let array = JsValue::Object(vm.new_array(items)?);
+    let method = vm.get(&array, &Key::Sym(crate::v9::vm::realm::symbol::ITERATOR))?;
+    vm.call(method, array, Vec::new())
+}
+
 /** The class_list steps themselves. */
 fn class_list_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (node, attribute) = match super::host_data(vm, &call.this) {
@@ -2978,6 +3064,14 @@ fn class_list_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "length" => return Ok(JsValue::Number(classes.len() as f64)),
         "value" | "toString" => return JsValue::string(&current).map_err(Into::into),
+        // DOMTokenList is iterable over its ordered token set, as in browsers: YouTube spreads
+        // and for-of loops classList, and a TypeError there stopped its rendering.
+        "values" | "keys" | "entries" | "forEach" => {
+            return token_iteration(vm, &call, name, &classes);
+        }
+        "supports" => {
+            return Err(vm.type_error("DOMTokenList has no supported tokens."));
+        }
         "add" => {
             for class in arguments {
                 if !classes.contains(&class) {
@@ -3078,6 +3172,32 @@ fn style_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Undefined)
         }
         "getPropertyPriority" => JsValue::string("").map_err(Into::into),
+        // The declared property names, in order: `style.length`, `style.item(i)` and
+        // `[...style]`, as a CSSStyleDeclaration is indexed and iterable in browsers.
+        "length" | "item" | "values" if !computed => {
+            let names: Vec<String> = style_map(vm, node)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+            match name {
+                "length" => Ok(JsValue::Number(names.len() as f64)),
+                "item" => {
+                    let index = vm.to_integer(&call.arg(0))?;
+                    let found = (index >= 0.0).then(|| names.get(index as usize)).flatten();
+                    JsValue::string(found.map_or("", String::as_str)).map_err(Into::into)
+                }
+                _ => {
+                    let items = names
+                        .iter()
+                        .map(|name| JsValue::string(name))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let array = JsValue::Object(vm.new_array(items)?);
+                    let method =
+                        vm.get(&array, &Key::Sym(crate::v9::vm::realm::symbol::ITERATOR))?;
+                    vm.call(method, array, Vec::new())
+                }
+            }
+        }
         "cssText" => {
             let text = vm
                 .page

@@ -102,6 +102,15 @@ impl Page<'_> {
     }
     /** A view of a node. */
     pub fn view(&mut self, id: usize) -> Option<NodeView> {
+        // Every read a page makes goes through here, so the engine-only popover marker never
+        // reaches getAttribute, attribute lists, serialization or clones.
+        let mut view = self.view_with_marker(id)?;
+        view.attributes
+            .remove(crate::document::POPOVER_OPEN_ATTRIBUTE);
+        Some(view)
+    }
+    /** The node as stored, engine-only attributes included. */
+    fn view_with_marker(&mut self, id: usize) -> Option<NodeView> {
         let text = self.node_text(id);
         let value = self.state.values.get(&id).cloned();
         match id {
@@ -927,6 +936,12 @@ impl Page<'_> {
         }
         Ok(())
     }
+    /** Tell layout a popover opened or closed: the engine-only marker, written without a
+    mutation record, since the page set no attribute. */
+    pub fn mark_popover_open(&mut self, id: usize, open: bool) -> EngineResult<()> {
+        let marker = crate::document::POPOVER_OPEN_ATTRIBUTE;
+        self.write_attribute(id, marker, open.then_some(""))
+    }
     /** Set or remove an attribute in whichever store holds the node. */
     fn write_attribute(&mut self, id: usize, name: &str, value: Option<&str>) -> EngineResult<()> {
         let name = name.to_string();
@@ -962,7 +977,7 @@ impl Page<'_> {
             return Ok(());
         }
         let current = self
-            .view(id)
+            .view_with_marker(id)
             .and_then(|view| view.attributes.get(&name).cloned());
         if current.as_deref() == value {
             return Ok(());

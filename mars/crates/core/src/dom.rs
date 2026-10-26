@@ -649,6 +649,13 @@ pub enum ScriptChange {
 
 /// Attributes scripts may write through ScriptChange: everything except inline event handlers
 /// (which would make attribute text executable) and document-replacing srcdoc and http-equiv.
+/// Marks a popover the page opened, for the document engine only. Browsers hide a `popover`
+/// element until it opens; the open state lives in script, so this attribute carries it to
+/// layout. Its name starts with a control character no parser or `setAttribute` produces, and
+/// V9 leaves it out of every attribute a page can read.
+pub const POPOVER_OPEN_ATTRIBUTE: &str = "\u{1}popover-open";
+
+/// Whether a script may set an attribute named `name`.
 pub fn script_attribute_allowed(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     !(name.is_empty()

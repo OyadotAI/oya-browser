@@ -321,8 +321,13 @@ impl Painter {
             };
             CGContext::save_g_state(self.cg());
             self.outside(shape);
-            self.shadowed(shadow.blur, &color);
-            let mut cast = shape.outset(shadow.spread).offset(shadow.x, shadow.y);
+            // The shape is filled SHADOW_REACH to the left and its shadow offset back, so only
+            // the blurred shadow lands on the page: filling in place painted the solid shape
+            // too, a hard band wherever the box has no background to hide it (YouTube's cards).
+            self.cast_from_afar(shadow.blur, &color);
+            let mut cast = shape
+                .outset(shadow.spread)
+                .offset(shadow.x - SHADOW_REACH, shadow.y);
             let [x, _, width, _] = crate::document::sliced_shadow(
                 [cast.x, cast.y, cast.width, cast.height],
                 [shape.x, shape.width],
@@ -382,8 +387,18 @@ impl Painter {
         CGContext::eo_clip(self.cg());
     }
     /** A zero-offset blur in the shadow's color; the cast shape itself carries the offset.
-     * CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur radius,
-     * so the CSS value passes through unchanged. */
+         * CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur radius,
+         * so the CSS value passes through unchanged. */
+    /** A shadow offset that moves what is drawn SHADOW_REACH user units to the left back into
+        place. CoreGraphics applies shadow offsets in device space whatever the transform, so the
+        user-space shift is mapped through the current transform first. */
+    fn cast_from_afar(&self, blur: f64, color: &NSColor) {
+        let [r, g, b, a] = components(color);
+        let cg_color = objc2_core_graphics::CGColor::new_srgb(r, g, b, a);
+        let device = CGContext::user_space_to_device_space_transform(self.cg());
+        let (dx, dy) = (device.a * SHADOW_REACH, device.b * SHADOW_REACH);
+        CGContext::set_shadow_with_color(self.cg(), NSSize::new(dx, dy), blur, Some(&cg_color));
+    }
     fn shadowed(&self, blur: f64, color: &NSColor) {
         let [r, g, b, a] = components(color);
         let cg_color = objc2_core_graphics::CGColor::new_srgb(r, g, b, a);
