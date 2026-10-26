@@ -226,7 +226,7 @@ fn inline_image(
         (start, start + 1),
         outer,
         (margin_box, margin_box),
-        style,
+        (style, Some(super::text::central_offset(context, node))),
         (style.margin[3], style.margin[1]),
     );
     Ok(())

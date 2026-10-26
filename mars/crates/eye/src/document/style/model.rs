@@ -83,6 +83,10 @@ pub struct ComputedStyle {
     /// ideographs and letters or digits.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_autospace: bool,
+    /// Inherited content language (the nearest `lang` attribute, lowercase), which tailors
+    /// `text-transform`'s case mapping.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lang: String,
     /// Inherited CSS `hyphens: none`: soft hyphens are no break opportunities.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hyphens_none: bool,
@@ -502,6 +506,10 @@ pub struct ComputedStyle {
     /// ideographs then break only where letters would (UAX #14 with ID treated as AL).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_keep_all: Option<bool>,
+    /// Declared `word-break: auto-phrase` (Some(true)) or another value, None when inherited:
+    /// CJK text breaks only between phrases.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_break_auto_phrase: Option<bool>,
     /// Declared `line-break: anywhere` (Some(true)) or another value, None when inherited: a
     /// break opportunity between every two typographic letter units, preserved spaces included.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -796,6 +804,7 @@ impl Default for ComputedStyle {
             align_last: String::new(),
             text_justify: "auto".into(),
             text_autospace: false,
+            lang: String::new(),
             hyphens_none: false,
             hyphenate_character: None,
             parent_rtl: None,
@@ -926,6 +935,7 @@ impl Default for ComputedStyle {
             word_break_all: None,
             word_break_fill: None,
             word_break_keep_all: None,
+            word_break_auto_phrase: None,
             line_break_anywhere: None,
             line_break_loose: None,
             text_overflow_ellipsis: false,

@@ -828,7 +828,8 @@ fn unreachable(style: &ComputedStyle) -> bool {
         .is_some_and(|[a, b, c, d, e, f]| (a * d - b * c).abs() < f64::EPSILON || far(e) || far(f));
     offset || shifted || degenerate
 }
-/** An explicit `dir` sets the inherited base direction; other values keep the parent's. */
+/** An explicit `dir` sets the inherited base direction and `lang` the inherited content
+language; elements without them keep the parent's. */
 fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
     // ponytail: `dir=auto` inherits instead of running first-strong detection; add it with bidi.
     match attributes
@@ -839,6 +840,9 @@ fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
         Some("rtl") => style.rtl = true,
         Some("ltr") => style.rtl = false,
         _ => {}
+    }
+    if let Some(lang) = attributes.get("lang") {
+        style.lang = lang.to_ascii_lowercase();
     }
 }
 /** How many times one element's cascade reruns for `revert`; each rerun drops one layer or

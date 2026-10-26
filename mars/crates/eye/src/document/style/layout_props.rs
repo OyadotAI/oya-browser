@@ -101,6 +101,7 @@ pub(super) fn apply(
             style.word_break_all = breaking(value, &["break-all", "break-word"]);
             style.word_break_fill = breaking(value, &["break-all"]);
             style.word_break_keep_all = breaking(value, &["keep-all"]);
+            style.word_break_auto_phrase = breaking(value, &["auto-phrase"]);
         }
         "line-break" => {
             style.line_break_anywhere = breaking(value, &["anywhere"]);

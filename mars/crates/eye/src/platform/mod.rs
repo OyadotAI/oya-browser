@@ -1,5 +1,6 @@
 /** Operating-system text primitives supply shaping, never document or navigation semantics. */
 pub mod autospace;
+pub mod segment;
 #[cfg(target_os = "macos")]
 mod text;
 pub mod upright;

@@ -104,7 +104,13 @@ fn jpeg(bytes: &[u8]) -> EngineResult<DecodedImage> {
     if info.pixel_format == jpeg_decoder::PixelFormat::CMYK32 {
         return Err(invalid());
     }
-    checked(u32::from(info.width), u32::from(info.height))
+    // A quarter-turned EXIF orientation shows the picture with its width and height swapped.
+    let (width, height) = (u32::from(info.width), u32::from(info.height));
+    if super::exif::swaps_axes(super::exif::orientation(bytes)) {
+        checked(height, width)
+    } else {
+        checked(width, height)
+    }
 }
 
 /// WebP's size comes from its first chunk header (lossy VP8, lossless VP8L or extended VP8X);

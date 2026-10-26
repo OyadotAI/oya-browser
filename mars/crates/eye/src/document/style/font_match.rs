@@ -6,7 +6,7 @@
  * table the layout reads, installed from the document before each layout.
  */
 use super::{
-    FontFace, FontStyle,
+    ComputedStyle, FontFace, FontStyle,
     font_face::{FONT_FILES, LoadedFont, content_key},
     formatting::DocumentFormatting,
 };
@@ -72,8 +72,6 @@ const GENERIC: [&str; 12] = [
     "emoji",
 ];
 
-/** The text a box without any stands for when only its font's metrics are wanted. */
-const METRIC_SAMPLE: &str = "x";
 /// The files the document's visible text needs, in document order and within FONT_FILES: for
 /// each text node the first listed family that has faces, then per character the face nearest
 /// the node's style and weight among those covering it. A face whose `local()` font is
@@ -87,30 +85,12 @@ pub fn font_requests(document: &Document) -> Vec<FontRequest> {
         .map(|font| font.face)
         .collect();
     let mut wanted: Vec<usize> = Vec::new();
-    // A page whose lengths measure its fonts (`ex`, `ch`, `ic`, `cap`) needs them even on boxes
-    // without text (border-top-width-080's `1ex` border in an empty Ahem div).
-    let measured = document.formatting.font_metrics;
-    for node in document.nodes.iter().filter(|node| !node.hidden()) {
-        let text = match node.text.trim() {
-            "" if measured => METRIC_SAMPLE,
-            "" => continue,
-            text => text,
-        };
-        let Some(family) = first_family(&node.style.font_families, faces.iter().map(|f| &f.family))
-        else {
+    for (style, text) in styled_texts(document) {
+        let text = text.trim();
+        if text.is_empty() {
             continue;
-        };
-        let candidates: Vec<(usize, &FontFace)> = faces
-            .iter()
-            .enumerate()
-            .filter(|(_, face)| face.family == family)
-            .collect();
-        for index in chosen(
-            &candidates,
-            text,
-            node.style.font_weight,
-            node.style.font_style,
-        ) {
+        }
+        for index in family_faces(faces, style, text) {
             if !wanted.contains(&index) && !loaded.contains(&index) {
                 wanted.push(index);
             }
@@ -132,15 +112,89 @@ pub fn font_requests(document: &Document) -> Vec<FontRequest> {
         .collect()
 }
 
-/** The first family of a list that some face names. */
-fn first_family<'a>(
-    families: &'a [String],
-    named: impl Iterator<Item = &'a String> + Clone,
-) -> Option<&'a str> {
-    families
+/// The characters font-relative units measure (`ch` the zero, `ic` the CJK water ideograph):
+/// an element without text of its own still needs the face that has them.
+const UNIT_SAMPLE: &str = "0\u{6C34}";
+
+/** Each visible node's style with its text (or UNIT_SAMPLE when it has none), then its
+ * pseudo-elements' styles: `::before` and `::after` with their content, and `::first-letter`
+ * and `::first-line` with the next text in document order (the text they style). Without them
+ * a font named only by a `::first-letter` rule, or only measured by a `ch` width, was never
+ * requested, and the letter or unit fell back to a built-in face. */
+// ponytail: an empty element's sample can request a face no text paints; FONT_FILES bounds it.
+fn styled_texts(document: &Document) -> Vec<(&ComputedStyle, &str)> {
+    let visible: Vec<&crate::document::Node> = document
+        .nodes
         .iter()
-        .find(|family| named.clone().any(|name| name == *family))
-        .map(String::as_str)
+        .filter(|node| !node.hidden())
+        .collect();
+    let mut pairs = Vec::new();
+    for (index, node) in visible.iter().enumerate() {
+        let own = node.text.as_str();
+        pairs.push((
+            &node.style,
+            if own.trim().is_empty() {
+                UNIT_SAMPLE
+            } else {
+                own
+            },
+        ));
+        pseudo_texts(&visible[index..], &mut pairs);
+    }
+    pairs
+}
+
+/** Pushes the pseudo-element styles of `nodes[0]` with the text each styles (see
+ * `styled_texts`); the following text is looked up only when a line or letter rule exists. */
+fn pseudo_texts<'a>(
+    nodes: &[&'a crate::document::Node],
+    pairs: &mut Vec<(&'a ComputedStyle, &'a str)>,
+) {
+    let style = &nodes[0].style;
+    let pseudo = [&style.first_letter, &style.first_line];
+    if pseudo.iter().any(|rule| rule.is_some()) {
+        let next = nodes
+            .iter()
+            .map(|n| n.text.as_str())
+            .find(|t| !t.trim().is_empty());
+        for rule in pseudo.into_iter().flatten() {
+            pairs.push((&**rule, next.unwrap_or_default()));
+        }
+    }
+    pairs.extend(
+        style
+            .generated
+            .iter()
+            .map(|g| (&*g.style, g.content.as_str())),
+    );
+}
+
+/** The faces `text` in `style` needs, falling back along the family list as Blink does: each
+ * listed family with faces takes the characters its faces cover, and the rest go on to the next
+ * family, until a generic keyword takes them. Without the fallback a character outside the
+ * first family's `unicode-range` (a CJK `ic` sample after a Latin-only face) was never
+ * requested from the family that has it. */
+fn family_faces(faces: &[FontFace], style: &ComputedStyle, text: &str) -> Vec<usize> {
+    let mut rest: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut out = Vec::new();
+    for family in &style.font_families {
+        if rest.is_empty() || GENERIC.contains(&family.as_str()) {
+            break;
+        }
+        let candidates: Vec<(usize, &FontFace)> = faces
+            .iter()
+            .enumerate()
+            .filter(|(_, face)| &face.family == family)
+            .collect();
+        out.extend(chosen(
+            &candidates,
+            &rest,
+            style.font_weight,
+            style.font_style,
+        ));
+        rest.retain(|c| !candidates.iter().any(|(_, face)| face.covers(c)));
+    }
+    out
 }
 
 /** The faces one text needs: one per distinct character when the family is split by

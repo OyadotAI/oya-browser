@@ -34,7 +34,7 @@ pub use render::{
     FillRule, GradientStop, GradientTile, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine,
     PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible,
     embed_frame, frame_viewport, painted_bounds, render, render_frame, render_scrolled,
-    render_with_context, role, wheel_target,
+    render_with_context, role, spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
 pub use script::{DomFragments, Fragments, script_document};

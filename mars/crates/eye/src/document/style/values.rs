@@ -336,14 +336,18 @@ pub(super) fn contextual_color(
 thread_local! {
     /** The face of the element whose lengths are resolving, for `ch` and `ic`; None outside the
      * cascade. Font-size resolves against the parent's face, everything after against its own. */
-    static FONT_FACE: std::cell::Cell<Option<crate::platform::Face>> = const { std::cell::Cell::new(None) };
+    static FONT_FACE: std::cell::Cell<Option<StyleFaces>> = const { std::cell::Cell::new(None) };
 }
 thread_local! {
     /** Whether the current cascade measured a face for `ch` or `ic`. */
     static MEASURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-/** Sets (or clears) the face `ch` and `ic` measure for the lengths resolved next. */
-pub(super) fn set_font_face(face: Option<crate::platform::Face>) {
+/// A style's faces for font-relative units: its first available font (`ch`, `ex`, `cap`) and
+/// the face its family list draws U+6C34 with (`ic`, which CSS Values 4 measures in the font
+/// that has the ideograph, not in a Latin-only first font).
+pub(super) type StyleFaces = (crate::platform::Face, crate::platform::Face);
+/** Sets (or clears) the faces `ch` and `ic` measure for the lengths resolved next. */
+pub(super) fn set_font_face(face: Option<StyleFaces>) {
     if face.is_some() {
         MEASURED.with(|measured| measured.set(true));
     }
@@ -359,16 +363,23 @@ pub(super) fn take_measured() -> bool {
  * The face a computed style shapes text with, as layout picks it: a loaded page font the family
  * list names, else the generic family. Mirrors the render side so `ch` matches measured text.
  */
-pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face {
+pub(super) fn style_face(style: &super::ComputedStyle) -> StyleFaces {
+    // The first available font is the first whose faces cover a space (CSS Fonts 4 5.4), so a
+    // face whose `unicode-range` leaves the space out sets no `ex`, `cap` or `ch`.
+    (face_for(style, ' '), face_for(style, IDEOGRAPH))
+}
+/// The character `ic` measures: the CJK water ideograph.
+const IDEOGRAPH: char = '\u{6C34}';
+/** The face `style` draws `sample` with: the first loaded page font of its family list that
+ * covers it, else the generic family. */
+fn face_for(style: &super::ComputedStyle, sample: char) -> crate::platform::Face {
     use crate::{document::FontFamily, platform::Family};
     let weight = if style.bold && style.font_weight < 600 {
         700
     } else {
         style.font_weight
     };
-    // CSS Fonts' first available font must cover the space; a face whose unicode-range leaves
-    // it out never sets `ex` or `ch` (ex-unit-004).
-    let web = super::select_font(&style.font_families, weight, style.font_style, Some(' '));
+    let web = super::select_font(&style.font_families, weight, style.font_style, Some(sample));
     crate::platform::Face {
         size: style.font_size,
         weight: web.map_or(weight, |(_, clamped)| clamped),
@@ -392,16 +403,22 @@ pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face 
         },
     }
 }
+/** The current style's first available font, or None outside the cascade. */
+fn primary_face() -> Option<crate::platform::Face> {
+    FONT_FACE
+        .with(std::cell::Cell::get)
+        .map(|(primary, _)| primary)
+}
 /** The current face's advance of `sample` per em, or None outside the cascade. */
 fn advance_per_em(sample: &str) -> Option<f64> {
-    let face = FONT_FACE.with(std::cell::Cell::get)?;
+    let face = primary_face()?;
     let ratio = crate::platform::measure(sample, face) / face.size;
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }
 /** The primary font's cap height (`cap`) or x-height (`ex`) per em, as Blink's `FontMetrics`
  * reads them; None before a face is known. */
 fn edge_per_em(cap: bool) -> Option<f64> {
-    let face = FONT_FACE.with(std::cell::Cell::get)?;
+    let face = primary_face()?;
     let (cap_height, x_height) = crate::platform::edges(face);
     let ratio = if cap { cap_height } else { x_height } / face.size;
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
@@ -417,12 +434,15 @@ fn zero_advance() -> f64 {
  * fonts without that glyph, so only a page font is measured; the rest take the 1em fallback.
  */
 fn ideograph_advance() -> f64 {
-    let web = FONT_FACE.with(|face| {
-        face.get()
-            .is_some_and(|face| matches!(face.family, crate::platform::Family::Web(_)))
-    });
-    if web {
-        advance_per_em("\u{6C34}").unwrap_or(1.0)
+    let Some((_, face)) = FONT_FACE.with(std::cell::Cell::get) else {
+        return 1.0;
+    };
+    if !matches!(face.family, crate::platform::Family::Web(_)) {
+        return 1.0;
+    }
+    let ratio = crate::platform::measure(&IDEOGRAPH.to_string(), face) / face.size;
+    if ratio.is_finite() && ratio > 0.0 {
+        ratio
     } else {
         1.0
     }

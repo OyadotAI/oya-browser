@@ -333,7 +333,7 @@ pub(super) fn control(
             (start, start + 1),
             outer,
             (ascent, total + style.margin[0] + style.margin[2]),
-            style,
+            (style, Some(super::text::central_offset(context, node))),
             (style.margin[3], style.margin[1]),
         );
     }

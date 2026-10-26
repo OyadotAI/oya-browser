@@ -51,6 +51,8 @@ struct Tree<'a> {
     /// scrollable overflow ignores sticky offsets in Blink. Otherwise a `bottom: 0` sticky item
     /// pulled up into view hid the very overflow it sticks within (position-sticky-flex-item).
     measuring: bool,
+    /// The viewport's width and height: the view a sticky box under a fixed ancestor sticks to.
+    viewport: [f64; 2],
 }
 impl<'a> Tree<'a> {
     /** Identity lookup never assumes identities equal vector indexes. */
@@ -94,6 +96,7 @@ pub(super) fn stack(
     document: &Document,
     items: Vec<DisplayItem>,
     offsets: &ScrollOffsets,
+    viewport: [f64; 2],
 ) -> EngineResult<(Vec<DisplayItem>, Vec<ScrollArea>)> {
     let positions = sizing::positions(document);
     let mut boxes = vec![None; positions.len()];
@@ -114,6 +117,7 @@ pub(super) fn stack(
         offsets: ScrollOffsets::new(),
         reach: std::collections::BTreeMap::new(),
         measuring: true,
+        viewport,
     };
     let ranges = scroll_ranges(&mut tree, &items)?;
     tree.measuring = false;
@@ -498,7 +502,8 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
     if style.position == Position::Sticky && !tree.measuring {
         [matrix[4], matrix[5]] = match scroll_container(tree, node) {
             Some(scroller) => inner_sticky_offset(tree, items, node, own, scroller),
-            None => [0.0, sticky_offset(tree, items, node, own)],
+            None => fixed_sticky_offset(tree, items, node, own)
+                .unwrap_or([0.0, sticky_offset(tree, items, node, own)]),
         };
     } else if style.position == Position::Relative {
         let [x, y] = relative_offset(tree, items, node);
@@ -711,6 +716,17 @@ fn inner_sticky_offset(
         own.x + own.width + dx,
         own.y + own.height + dy,
     ];
+    sticky_axes(style, view, room, rect)
+}
+/** A sticky box's offset on both axes for its border box `rect` in the `view` it sticks to and
+the `room` its containing block allows (edges as left, top, right, bottom): a start inset pushes
+it forward, then an end inset pulls it back, each limited by the room. */
+fn sticky_axes(
+    style: &crate::document::ComputedStyle,
+    view: Edges,
+    room: Edges,
+    rect: Edges,
+) -> [f64; 2] {
     let axis = |start: usize, end: usize, low: usize, high: usize| {
         let size = view[high] - view[low];
         let mut min = super::positioned::inset(style, start, size);
@@ -734,6 +750,29 @@ fn inner_sticky_offset(
         offset
     };
     [axis(3, 1, 0, 2), axis(0, 2, 1, 3)]
+}
+/** A sticky box under a fixed ancestor with no scroller between: nothing scrolls it, so it
+sticks to the viewport as laid out, on every side (position-sticky-fixed-ancestor-002: a
+`bottom: 0` box pulled up into a full-viewport fixed container). None without such an ancestor. */
+fn fixed_sticky_offset(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    own: Option<&DisplayItem>,
+) -> Option<[f64; 2]> {
+    let ancestors = tree.ancestors(node).ok()?;
+    ancestors
+        .iter()
+        .find(|a| a.style.position == Position::Fixed)?;
+    let own = own?;
+    let parent = container(tree, node, None)?;
+    let parent_node = tree.node(parent).ok()?;
+    let style = &parent_node.style;
+    let edges = edges_of(tree, items, parent)?;
+    let room = contract(contract(edges, sizing::border_sides(style)), style.padding);
+    let view = [0.0, 0.0, tree.viewport[0], tree.viewport[1]];
+    let rect = [own.x, own.y, own.x + own.width, own.y + own.height];
+    Some(sticky_axes(&node.style, view, room, rect))
 }
 /** How far the sticky boxes at and above `local`, below `scroller`, move it: a nested sticky box
 starts from where its sticky ancestors put it (position-sticky-nested-thead-th). */

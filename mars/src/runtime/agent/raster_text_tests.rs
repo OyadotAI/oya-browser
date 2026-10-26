@@ -89,6 +89,33 @@ fn a_gradient_tile_paints_only_its_tile() {
     assert!(!red(25, 25));
 }
 
+/** A spread shadow of a square box keeps square corners: its corner pixel is shadow. */
+#[test]
+fn a_square_boxs_spread_shadow_stays_square() {
+    let item = item(
+        "<div id=t></div>",
+        "body{margin:0}#t{margin:10px;width:20px;height:20px;box-shadow:0 0 0 10px red}",
+    );
+    let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
+    canvas.item(&item, BLACK, None);
+    assert_eq!(&canvas.pixels[0..3], &[255, 0, 0]);
+}
+
+/** An inline svg at a half-pixel offset paints with its snapped box: its last row is full. */
+#[test]
+fn an_inline_svg_moves_with_its_snapped_box() {
+    let item = item(
+        "<div style='height:0.5px'></div><svg id=t viewBox='0 0 10 10' width=10 height=10>\
+         <rect width=10 height=10 fill=green /></svg>",
+        "body{margin:0}svg{display:block}",
+    );
+    assert_eq!(item.y, 0.5);
+    let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
+    canvas.item(&item, BLACK, None);
+    let row = |y: usize| canvas.pixels[(y * canvas.width + 5) * 3];
+    assert_eq!((row(1), row(10)), (0, 0));
+}
+
 /** Whether the canvas holds any ink after a paint on white. */
 fn inked(canvas: &Canvas) -> bool {
     canvas.pixels.iter().any(|&channel| channel < u8::MAX)

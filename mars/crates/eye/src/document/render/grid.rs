@@ -633,6 +633,19 @@ fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
 /** Explicit tracks with any auto-fill group repeated as often as it fits `width`, the grid's
  * size in that axis (columns or rows). */
 fn expand(template: &GridTemplate, width: f64, gap: f64) -> Vec<Track> {
+    repeat_into(template, width, gap, f64::floor)
+}
+/** `expand` for an indefinite size with a `minimum`: the fewest repetitions that reach it
+ * (css-grid-2 7.2.3.2), or one without a minimum. */
+fn expand_at_least(template: &GridTemplate, minimum: Option<f64>, gap: f64) -> Vec<Track> {
+    match minimum {
+        Some(minimum) => repeat_into(template, minimum, gap, f64::ceil),
+        None => expand(template, 0.0, gap),
+    }
+}
+/** The explicit tracks with the auto-repeat group repeated `round(room / group)` times for a
+ * size of `width`, at least once and within the track bound. */
+fn repeat_into(template: &GridTemplate, width: f64, gap: f64, round: fn(f64) -> f64) -> Vec<Track> {
     let mut tracks = template.tracks.clone();
     if !template.repeat.is_empty() {
         let fixed = |track: &Track| {
@@ -645,7 +658,7 @@ fn expand(template: &GridTemplate, width: f64, gap: f64) -> Vec<Track> {
         let others = tracks.iter().map(fixed).sum::<f64>() + gap * tracks.len() as f64;
         let room = width - others + gap;
         let times = if group > 0.0 {
-            ((room / group).floor() as usize).max(1)
+            (round(room / group) as usize).max(1)
         } else {
             1
         };
@@ -658,6 +671,23 @@ fn expand(template: &GridTemplate, width: f64, gap: f64) -> Vec<Track> {
     }
     tracks.truncate(GRID_COLUMNS);
     tracks
+}
+/** The content-box minimum width an indefinitely sized grid repeats its columns to fill: its
+ * `min-width`, or its `min-height` through its `aspect-ratio`, whichever is larger. */
+fn repeat_minimum(node: &Node) -> Option<f64> {
+    let style = &node.style;
+    let own = style
+        .min_width
+        .map(|width| super::sizing::content_size(node, width, true));
+    let transferred = style.aspect_ratio.and_then(|ratio| {
+        let height = style.min_height?.resolve_size(None)?;
+        let height = super::sizing::content_size(node, height, false);
+        Some(height * ratio)
+    });
+    match (own, transferred) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
 }
 /** The expanded tracks an `auto-fit` group repeated into, of `expanded` explicit tracks. */
 fn fit_range(template: &GridTemplate, expanded: usize) -> std::ops::Range<usize> {
@@ -784,8 +814,9 @@ pub(super) fn intrinsic(
         };
     }
     let gap = style.column_gap;
-    // With no definite width an auto-repeat group repeats once (css-grid-2 7.2.3.2).
-    let mut columns = expand(&style.grid_columns, 0.0, gap);
+    // With no definite width an auto-repeat group repeats once, or as often as it takes to
+    // reach a minimum width (css-grid-2 7.2.3.2).
+    let mut columns = expand_at_least(&style.grid_columns, repeat_minimum(node), gap);
     let explicit_columns = columns.len();
     let rows = expand(&style.grid_rows, 0.0, style.row_gap).len();
     let mut placed = place(context, &kids, style, &mut columns, rows)?;

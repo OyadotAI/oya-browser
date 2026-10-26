@@ -39,6 +39,8 @@ pub(super) struct Breaks {
     pub loose: bool,
     /** Soft hyphens are break opportunities (`hyphens` other than `none`). */
     pub shy: bool,
+    /** `word-break: auto-phrase`: CJK text breaks between phrases only (`phrase`). */
+    pub phrase: bool,
 }
 
 /** The fullwidth exclamation and question marks, centered punctuation `line-break: loose`
@@ -65,7 +67,13 @@ pub(super) fn lines(
     let breakable = breaks.breakable;
     // ponytail: keep-all runs skip the wrap cache, whose key holds only `breakable`; key on the
     // whole `Breaks` if keep-all pages ever get long.
-    if breaks.keep_all || breaks.no_hang || breaks.cjk || breaks.loose || !breaks.shy || breaks.fill
+    if breaks.keep_all
+        || breaks.no_hang
+        || breaks.cjk
+        || breaks.loose
+        || !breaks.shy
+        || breaks.fill
+        || breaks.phrase
     {
         return wrap_words(text, width, face, breaks, context);
     }
@@ -198,6 +206,9 @@ fn word_parts(
             ..breaks
         };
         boundaries = break_offsets(word, normal);
+    }
+    if breaks.phrase {
+        return super::phrase::parts(word, &boundaries, (width, breaks), face, context);
     }
     let mut start = 0;
     let mut hint = 1;
@@ -341,6 +352,15 @@ fn search_prefix(
     Ok((fit, measured))
 }
 
+/** The pieces of `text` between its break opportunities, in order. */
+pub(super) fn segments(text: &str, breaks: Breaks) -> Vec<&str> {
+    let offsets = break_offsets(text, breaks);
+    offsets
+        .windows(2)
+        .map(|pair| &text[pair[0]..pair[1]])
+        .collect()
+}
+
 /** The last break opportunity strictly inside `text`, as a byte offset. */
 pub(super) fn last_break(text: &str, breaks: Breaks) -> Option<usize> {
     break_offsets(text, breaks)
@@ -380,6 +400,11 @@ pub(super) fn between(before: char, after: char, breaks: Breaks) -> bool {
 fn break_offsets(word: &str, breaks: Breaks) -> Vec<usize> {
     let breakable = breaks.breakable;
     let cjk = word.chars().any(|c| class(c) == Class::Ideographic);
+    // Thai, Lao, Khmer and Myanmar words meet where a dictionary says (UAX #14 class SA).
+    let dictionary = match word.chars().any(crate::platform::segment::dictionary) {
+        true => crate::platform::segment::word_boundaries(word),
+        false => Vec::new(),
+    };
     let chars = word.char_indices().collect::<Vec<_>>();
     let mut offsets = vec![0];
     let mut flags = 0;
@@ -387,27 +412,33 @@ fn break_offsets(word: &str, breaks: Breaks) -> Vec<usize> {
         let ((_, before), (offset, after)) = (pair[0], pair[1]);
         let previous = index.checked_sub(1).map(|i| chars[i].1);
         flags = if regional(before) { flags + 1 } else { 0 };
+        let kept_pair = (breaks.keep_all || breaks.phrase) && kept(before) && kept(after);
         let opportunity = if cjk {
-            ideographic_break(before, after) && !(breaks.keep_all && kept(before) && kept(after))
+            (ideographic_break(before, after) && !kept_pair)
+                || (breaks.phrase && super::phrase::boundary(before, after))
         } else {
             hyphen_break(previous, before, after)
         };
         let cluster = joins(before, after) || (regional(after) && flags % 2 == 1);
         // UAX #14 LB21: no break before a BA space separator (U+3000, U+1680, the en and em
         // spaces), which stays at the end of the line it ends.
-        let opportunity = (opportunity && !breaking_space(after))
+        let opportunity = dictionary.binary_search(&offset).is_ok()
+            || (opportunity && !breaking_space(after) && !glue(before) && !glue(after))
             || (breaks.cjk && CJK_HYPHENS.contains(&after) && ideographic(before))
             || (breaks.loose && loosened(after) && ideographic(before));
         // Under `break-spaces` a preserved space breaks only after itself, so word-break's
         // letter breaks never put one at the start of a line (CSS Text 3 section 5.2).
         let held_space = breaks.no_hang && breaks.fill && !breaks.anywhere && after == ' ';
         if before == '\u{200b}'
-            || (breaks.shy && before == super::hyphenate::SOFT_HYPHEN)
+            // Phrases decide the breaks under `auto-phrase`, so soft hyphens break only once a
+            // phrase too wide for its line falls back to `normal` (`phrase::relaxed`).
+            || (breaks.shy && !breaks.phrase && before == super::hyphenate::SOFT_HYPHEN)
             || (!cluster
                 && !held_space
                 && ((breakable && !punctuated(before, after, breaks))
                     || opportunity
-                    || breaking_space(before)))
+                    || breaking_space(before)
+                    || word_mark(before)))
         {
             offsets.push(offset);
         }
@@ -441,16 +472,31 @@ fn extends(c: char) -> bool {
         | 0xe0020..=0xe007f | 0xe0100..=0xe01ef)
 }
 /** `word-break: break-all` breaks between letters only: punctuation keeps UAX #14's rules, so
-no line starts with a closing mark or a solidus (LB13) and none ends with an opening mark or a
-prefix such as a backslash (LB14, LB24). `line-break: anywhere` and `overflow-wrap` breaks ignore
-this. */
+no line starts with a closing mark or a solidus (LB13), none ends with an opening mark or a
+prefix such as a backslash (LB14, LB24), and glue holds its neighbors (LB11, LB12).
+`line-break: anywhere` and `overflow-wrap` breaks ignore this. */
 fn punctuated(before: char, after: char, breaks: Breaks) -> bool {
     breaks.fill
         && !breaks.anywhere
         && (class(after) == Class::Close
             || class(before) == Class::Open
             || after == '/'
-            || before == '\\')
+            || before == '\\'
+            || glue(before)
+            || glue(after))
+}
+/** Visible word separators of class BA a line breaks after: the Tibetan tsheg and the Ethiopic
+wordspace, which end words the way a space does in scripts written without spaces. */
+fn word_mark(c: char) -> bool {
+    c == '\u{0f0b}' || c == '\u{1361}'
+}
+/** UAX #14 glue, word joiners and the zero width joiner (GL, WJ, ZWJ): no break on either side of them, between ideographs
+too (LB11, LB12). */
+fn glue(c: char) -> bool {
+    matches!(
+        c,
+        '\u{a0}' | '\u{202f}' | '\u{2007}' | '\u{2011}' | '\u{2060}' | '\u{feff}' | '\u{200d}'
+    )
 }
 /** A bidi control the line holds on to: an isolate (LRI, RLI, FSI, PDI) or a directional mark
 (LRM, RLM), class CM in UAX #14 and invisible, so a line never breaks beside one. */

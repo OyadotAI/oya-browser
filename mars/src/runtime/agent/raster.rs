@@ -260,7 +260,7 @@ impl Canvas {
                 item.width + 2.0 * spread,
                 item.height + 2.0 * spread,
             ];
-            let radii = corners.map(|corner| corner.map(|r| (r + spread).max(0.0)));
+            let radii = spread_radii(corners, [item.width, item.height], spread);
             self.shadow(
                 rect,
                 clip.as_ref(),
@@ -340,7 +340,12 @@ impl Canvas {
                         repeat: [false; 2],
                         gap: [0.0; 2],
                     };
-                    self.tile(area, clip.as_ref(), tiling, bitmap, &fade)
+                    // A clipped image follows its rounded content box; a visible one is unclipped.
+                    let corners = match item.overflow_visible {
+                        true => [[0.0; 2]; 4],
+                        false => content_radii(item, dest),
+                    };
+                    self.tile((area, corners), clip.as_ref(), tiling, bitmap, &fade)
                 }
                 None => self.fill(
                     bounds,
@@ -510,7 +515,7 @@ impl Canvas {
                 (padding[2] - 2.0 * spread).max(0.0),
                 (padding[3] - 2.0 * spread).max(0.0),
             ];
-            let radii = inner.map(|[r, _]| [(r - spread).max(0.0); 2]);
+            let radii = spread_radii(inner, [padding[2], padding[3]], -spread);
             self.shadow(
                 padding,
                 item.clip.as_ref(),
@@ -648,11 +653,12 @@ impl Canvas {
     }
     /**
      * One bitmap stretched to `tile` ([x, y, width, height]) and, per axis, repeated across the
-     * painting area `area`, sampled nearest-neighbor at each pixel center.
+     * painting area `area` with its corner radii (a background's rounded clip; zero for an
+     * image's square box), sampled nearest-neighbor at each pixel center.
      */
     fn tile(
         &mut self,
-        area: [f64; 4],
+        (area, corners): ([f64; 4], [[f64; 2]; 4]),
         clip: Option<&ClipRect>,
         tiling: Tiling,
         bitmap: &Bitmap,
@@ -674,7 +680,8 @@ impl Canvas {
         };
         self.shade(area, clip, |x, y| {
             let (u, v) = (along(x, tx, tw, 0), along(y, ty, th, 1));
-            ((0.0..1.0).contains(&u) && (0.0..1.0).contains(&v)).then(|| fade(bitmap.sample(u, v)))
+            let inside = (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v);
+            (inside && inside_rounded(x, y, area, corners)).then(|| fade(bitmap.sample(u, v)))
         });
     }
     /**
@@ -732,7 +739,8 @@ impl Canvas {
         // ponytail: a `border-area` image tiles over the whole border box; mask it by the ring
         // when a page draws images that way.
         let bounds = inset(border_box, item.background_clip);
-        self.tile(bounds, item.clip.as_ref(), tiling, bitmap, fade);
+        let corners = inset_radii(corner_radii(item), item.background_clip);
+        self.tile((bounds, corners), item.clip.as_ref(), tiling, bitmap, fade);
     }
     /** A picture's natural size, parsing each drawing's markup once per screenshot. */
     fn natural(&mut self, picture: &Picture) -> Natural {
@@ -972,7 +980,7 @@ impl Bitmap {
         let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
         let pixels = decoder.decode().ok()?;
         let info = decoder.info()?;
-        let rgba = match info.pixel_format {
+        let rgba: Vec<u8> = match info.pixel_format {
             jpeg_decoder::PixelFormat::RGB24 => pixels
                 .chunks_exact(3)
                 .flat_map(|p| [p[0], p[1], p[2], 255])
@@ -982,9 +990,14 @@ impl Bitmap {
             }
             _ => return None,
         };
+        // Shown upright, as `image-orientation: from-image` (the initial value) says.
+        let orientation = crate::runtime::exif::orientation(bytes);
+        let (width, height) = (u32::from(info.width), u32::from(info.height));
+        let (rgba, width, height) =
+            crate::runtime::exif::upright(&rgba, width, height, orientation);
         Some(Self {
-            width: u32::from(info.width),
-            height: u32::from(info.height),
+            width,
+            height,
             rgba,
         })
     }
@@ -1462,6 +1475,23 @@ fn inset([x, y, w, h]: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 
     ]
 }
 
+/** The corner radii of a replaced element's content box `dest`: its border radii reduced by
+ * the border and padding between, as Blink clips replaced content to the inner rounded rect. */
+fn content_radii(item: &DisplayItem, [x, y, w, h]: [f64; 4]) -> [[f64; 2]; 4] {
+    let insets = [
+        y - item.y,
+        item.x + item.width - x - w,
+        item.y + item.height - y - h,
+        x - item.x,
+    ];
+    inset_radii(corner_radii(item), insets.map(|side| side.max(0.0)))
+}
+
+/** A shadow shape's corner radii, of a box `size`, grown by `spread` (shrunk when negative). */
+fn spread_radii(radii: [[f64; 2]; 4], size: [f64; 2], spread: f64) -> [[f64; 2]; 4] {
+    radii.map(|corner| crate::document::spread_radius(corner, size, spread))
+}
+
 /** Corner radii `[rx, ry]` (top-left, top-right, bottom-right, bottom-left) reduced by the
 insets of the adjacent sides, as an inner border edge's are. */
 fn inset_radii(radii: [[f64; 2]; 4], [top, right, bottom, left]: [f64; 4]) -> [[f64; 2]; 4] {
@@ -1489,6 +1519,7 @@ fn snap(start: f64, length: f64) -> (f64, f64) {
  */
 fn snapped(item: &DisplayItem) -> DisplayItem {
     let mut item = item.clone();
+    let moved = [item.x.round() - item.x, item.y.round() - item.y];
     (item.x, item.width) = snap(item.x, item.width);
     (item.y, item.height) = snap(item.y, item.height);
     if let Some(clip) = &mut item.clip {
@@ -1498,6 +1529,21 @@ fn snapped(item: &DisplayItem) -> DisplayItem {
     if let Some([x, y, w, h]) = item.content_box {
         let ((x, w), (y, h)) = (snap(x, w), snap(y, h));
         item.content_box = Some([x, y, w, h]);
+    }
+    // An inline svg's paths move with its box, as Blink snaps the replaced box's paint offset;
+    // without it a rect at y = 50.5 left a half-covered row its snapped neighbors filled.
+    for path in &mut item.vector {
+        path.translate(moved[0], moved[1]);
+    }
+    // An image layer's own positioning area (fixed or local) moves with the box it paints in.
+    for layer in &mut item.backgrounds {
+        if let DisplayBackground::Image {
+            area: Some([x, y, ..]),
+            ..
+        } = layer
+        {
+            (*x, *y) = (*x + moved[0], *y + moved[1]);
+        }
     }
     item
 }

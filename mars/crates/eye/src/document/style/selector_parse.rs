@@ -433,6 +433,13 @@ impl<'a> Cursor<'a> {
     /** `[name]`, `[name op value]` with an optional `i` or `s` flag. */
     fn attribute(&mut self) -> Result<Simple, Unsupported> {
         self.spaces();
+        // `[|name]` (no namespace) and `[*|name]` (any): an HTML attribute has none, so both
+        // match as `[name]`; the name must follow the bar with no space between.
+        match self.rest() {
+            [b'|', next, ..] if *next != b'=' => self.index += 1,
+            [b'*', b'|', ..] => self.index += 2,
+            _ => {}
+        }
         let name = self.required_ident()?.to_ascii_lowercase();
         self.spaces();
         let operator = match self.rest() {
@@ -762,11 +769,7 @@ fn lang(source: &str) -> Option<Vec<String>> {
 }
 /** `odd`, `even`, `b`, `an`, `an+b` and `an-b`. */
 fn nth(source: &str) -> Option<(i64, i64)> {
-    let text: String = source
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect::<String>()
-        .to_ascii_lowercase();
+    let text = source.trim().to_ascii_lowercase();
     let bounded = |value: i64| (value.abs() <= i64::from(i32::MAX)).then_some(value);
     match text.as_str() {
         "odd" => return Some((2, 1)),
@@ -774,19 +777,35 @@ fn nth(source: &str) -> Option<(i64, i64)> {
         _ => {}
     }
     let Some((a, b)) = text.split_once('n') else {
-        return Some((0, bounded(text.parse().ok()?)?));
+        let b = unspaced(&text).then(|| text.parse().ok()).flatten();
+        return Some((0, bounded(b?)?));
     };
     let a = match a {
         "" | "+" => 1,
         "-" => -1,
-        a => bounded(a.parse().ok()?)?,
+        a if unspaced(a) => bounded(a.parse().ok()?)?,
+        _ => return None,
     };
-    let b = if b.is_empty() {
-        0
-    } else {
-        bounded(b.parse().ok()?)?
-    };
-    Some((a, b))
+    Some((a, bounded(nth_offset(b.trim_start())?)?))
+}
+/** Whether An+B text holds no whitespace: `3 n`, `+ n` and `+ 5` are invalid (css-syntax
+ * 3 section 6), so a rule using one is dropped. */
+fn unspaced(text: &str) -> bool {
+    !text.contains(char::is_whitespace)
+}
+/** The B of An+B after the `n`: nothing, or a sign then an unsigned integer, with whitespace
+ * allowed only around the sign (`n + 1`, `n +1`, `n- 1`, never `n + -1`). */
+fn nth_offset(text: &str) -> Option<i64> {
+    if text.is_empty() {
+        return Some(0);
+    }
+    let negative = text.starts_with('-');
+    let digits = text.strip_prefix(['+', '-'])?.trim_start();
+    if !digits.bytes().all(|b| b.is_ascii_digit()) || digits.is_empty() {
+        return None;
+    }
+    let value: i64 = digits.parse().ok()?;
+    Some(if negative { -value } else { value })
 }
 /** Known unsupported pseudo-classes are named; anything else is reported generically. */
 fn pseudo_name(name: &str) -> Unsupported {

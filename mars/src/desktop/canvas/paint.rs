@@ -46,13 +46,14 @@ impl Shape {
             y: self.y - amount,
             width: (self.width + amount * 2.0).max(0.0),
             height: (self.height + amount * 2.0).max(0.0),
-            radius: self
-                .radius
-                .map(|r| if r > 0.0 { (r + amount).max(0.0) } else { 0.0 }),
-            radius_y: self
-                .radius_y
-                .map(|r| if r > 0.0 { (r + amount).max(0.0) } else { 0.0 }),
+            radius: std::array::from_fn(|i| self.spread_corner(i, amount)[0]),
+            radius_y: std::array::from_fn(|i| self.spread_corner(i, amount)[1]),
         }
+    }
+    /// Corner `index` (`[rx, ry]`) grown by `amount`, as a spread shadow's (eye `spread_radius`).
+    fn spread_corner(&self, index: usize, amount: f64) -> [f64; 2] {
+        let corner = [self.radius[index], self.radius_y[index]];
+        crate::document::spread_radius(corner, [self.width, self.height], amount)
     }
     /// Moves the box.
     fn offset(&self, x: f64, y: f64) -> Self {

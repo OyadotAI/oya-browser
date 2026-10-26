@@ -192,6 +192,10 @@ impl<'a> Element<'a> {
 }
 /** Virtual wrappers participate in ancestry without acquiring native node identities. */
 pub(super) fn matches(tree: &Tree<'_>, node: &Node, selector: &Selector) -> EngineResult<bool> {
+    // A `#text` node is no element: it only inherits, so `*:not(:link)` gives it no background.
+    if node.tag == "#text" {
+        return Ok(false);
+    }
     complex(
         tree,
         Element::Node(node),

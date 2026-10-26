@@ -90,7 +90,7 @@ pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> 
             // is a `::after` mask over its color).
             // A `border-image` url comes next: its painter draws the bytes under this identity
             // only when the element has no mask or background image of its own.
-            let image = first(&node.style.backgrounds)
+            let image = first(super::layer_urls::keyed_layers(&node.style))
                 .or_else(|| super::border_image::url(&node.style))
                 .or_else(|| {
                     node.style.generated.iter().find_map(|generated| {

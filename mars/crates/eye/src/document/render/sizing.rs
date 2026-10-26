@@ -84,6 +84,8 @@ pub(super) struct LayoutContext<'a> {
     pub indefinite_item: Option<usize>,
     /** Out-of-flow boxes whose static position is their right edge (`mark_static_end`). */
     static_end: std::collections::BTreeSet<usize>,
+    /** Out-of-flow boxes whose static position is their horizontal center (`mark_static_center`). */
+    static_center: std::collections::BTreeSet<usize>,
     /** A `::first-letter` waiting for the first text of the block that set it: that block's
     identity and the letter's style (render/first_letter.rs). */
     pub first_letter: Option<(usize, Box<crate::document::ComputedStyle>)>,
@@ -123,6 +125,7 @@ impl<'a> LayoutContext<'a> {
             body_block: None,
             indefinite_item: None,
             static_end: std::collections::BTreeSet::new(),
+            static_center: std::collections::BTreeSet::new(),
             first_letter: None,
             first_line: None,
         };
@@ -230,6 +233,15 @@ impl<'a> LayoutContext<'a> {
     /** Whether `mark_static_end` marked this box. */
     pub fn static_end(&self, local: usize) -> bool {
         self.static_end.contains(&local)
+    }
+    /** Marks an out-of-flow box whose horizontal static position is a center point (a flex
+    container's centered sole item): its inset-modified containing block is centered there. */
+    pub fn mark_static_center(&mut self, local: usize) {
+        self.static_center.insert(local);
+    }
+    /** Whether `mark_static_center` marked this box. */
+    pub fn static_center(&self, local: usize) -> bool {
+        self.static_center.contains(&local)
     }
     /** Records a grid's latest track geometry; the final layout pass overwrites dry runs. */
     pub(super) fn record_grid_frame(&mut self, local: usize, frame: super::grid::abspos::Frame) {
@@ -356,6 +368,11 @@ impl<'a> LayoutContext<'a> {
         let mut size = text_intrinsic(self, node)?;
         let mut children = self.children(local);
         children.retain(|child| !flow::out_of_flow(child));
+        let indent = super::indent_intrinsic::indent(node, &children);
+        let own_first = size.min_content;
+        let mut first_min = None;
+        // The widest piece after the first one, which the indent does not widen.
+        let mut rest_min: f64 = 0.0;
         let mut sum = if node.style.display_flex && !node.text.trim().is_empty() {
             size
         } else {
@@ -367,6 +384,10 @@ impl<'a> LayoutContext<'a> {
             let contribution = intrinsic_contribution(node, child, value);
             let extra = intrinsic_extra(child);
             let minimum = contribution.min_content;
+            if first_min.is_some() {
+                rest_min = rest_min.max(minimum + extra);
+            }
+            first_min.get_or_insert(minimum + extra);
             // A table caption is as wide as its table, so only its min-content widens it
             // (Wikipedia thumbnails were as wide as their one-line caption).
             let caption = node.style.table_box == crate::document::style::TableBox::Table
@@ -416,8 +437,19 @@ impl<'a> LayoutContext<'a> {
             .iter()
             .all(|child| flow::inline_level(child) || floating(child))
         {
-            let line = self.longest_line(node, &children, &maxes, generated_max)?;
-            size.max_content = size.max_content.max(line);
+            let line = self.longest_line(node, &children, &maxes, generated_max + indent)?;
+            // An indent changes the first line, which `line` measured with every other line.
+            size.max_content = if indent != 0.0 {
+                line.max(0.0)
+            } else {
+                size.max_content.max(line)
+            };
+            let own = !node.text.trim().is_empty();
+            let (first, rest) = match own {
+                true => (Some(own_first), rest_min.max(first_min.unwrap_or(0.0))),
+                false => (first_min, rest_min),
+            };
+            size = super::indent_intrinsic::first_line(node, &children, (first, rest), size);
         } else {
             let line = self.longest_run(node, &children, &maxes, generated_max)?;
             size.max_content = size.max_content.max(line);
@@ -1021,23 +1053,22 @@ pub(super) fn text_intrinsic(
     let mut minimum: f64 = 0.0;
     let mut sum = 0.0;
     let mut hang = 0.0;
+    let breaks = super::text::min_content_breaks(context, node);
     for word in &words {
         let width =
             context.measure(word, face)? + super::text::spaces(word) * node.style.word_spacing;
         // Ideographic spaces ending a word hang at the end of the line it ends.
         hang = super::text::hanging(context, word, face)?;
-        minimum = minimum.max(widest_piece(context, node, word, face)? - hang);
+        minimum = minimum.max(widest_piece(context, node, (word, breaks), face)? - hang);
         sum += width;
-    }
-    if !words.is_empty() && super::text::breaks_for_min_content(context, node) {
-        minimum = widest_letter(context, &words, face)?;
     }
     sum -= hang;
     // Max-content is the words and spaces line layout places, not the whole run shaped at once:
     // kerning across a space makes the run narrower, so a box sized to it wrapped its own text
     // (Google's "AI Mode" chip broke onto two lines).
+    // One word is as wide as all of it, however finely it may break.
     let mut maximum = if words.len() <= 1 {
-        minimum
+        sum.max(minimum)
     } else {
         let gap = context.measure(" ", face)? + node.style.word_spacing;
         sum + gap * (words.len() - 1) as f64
@@ -1063,34 +1094,18 @@ pub(super) fn text_intrinsic(
     })
 }
 
-/** The widest piece of `word` that soft hyphens leave unbreakable, its hyphen included. */
+/** The widest piece of `word` its break opportunities leave unbreakable (a CJK character, a
+phrase, the text between soft hyphens with its hyphen), which is the word's min-content. */
 fn widest_piece(
     context: &mut LayoutContext<'_>,
     node: &Node,
-    word: &str,
+    (word, breaks): (&str, super::wrap::Breaks),
     face: crate::platform::Face,
 ) -> EngineResult<f64> {
     let mut widest: f64 = 0.0;
-    for piece in super::hyphenate::pieces(node, word) {
+    for piece in super::hyphenate::pieces(node, word, breaks) {
         let spacing = super::text::spaces(&piece) * node.style.word_spacing;
         widest = widest.max(context.measure(&piece, face)? + spacing);
-    }
-    Ok(widest)
-}
-/** The widest single scalar of `words`, the min-content of text that may break between any two
-letters (combining marks and joiners stay with their base, so they add to its width). */
-fn widest_letter(
-    context: &mut LayoutContext<'_>,
-    words: &[&str],
-    face: crate::platform::Face,
-) -> EngineResult<f64> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut widest: f64 = 0.0;
-    for c in words.iter().flat_map(|word| word.chars()) {
-        if seen.insert(c) {
-            let mut buffer = [0; 4];
-            widest = widest.max(context.measure(c.encode_utf8(&mut buffer), face)?);
-        }
     }
     Ok(widest)
 }

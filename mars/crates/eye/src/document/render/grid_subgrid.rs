@@ -325,6 +325,8 @@ pub(super) fn contributions(
     let kids = super::items_of(context, node, &generated);
     // The other axis keeps what the parent already offered (its columns, while sizing rows).
     let mut style = adopt(node).unwrap_or_else(|| node.style.clone());
+    // Grid lanes pass no line names on to an auto-placed subgrid.
+    let auto_placed = !names;
     let names = span_names(parent, names, axis, start, count);
     set_axis(&mut style, axis, vec![AUTO_TRACK; count], names, own);
     let mut columns = super::expand(&style.grid_columns, content, style.column_gap);
@@ -354,8 +356,16 @@ pub(super) fn contributions(
         min_content: extra,
         max_content: extra,
     };
+    // An auto-placed subgrid of grid lanes may land with any of its tracks on any lane, so
+    // each lane it spans takes the larger edge (csswg-drafts#10926).
+    let (first_edge, last_edge) = if auto_placed {
+        let larger = lead.max(trail);
+        (larger, larger)
+    } else {
+        (lead, trail)
+    };
     let mut out = if count > 1 {
-        vec![edge(start, lead), edge(start + count - 1, trail)]
+        vec![edge(start, first_edge), edge(start + count - 1, last_edge)]
     } else {
         vec![edge(start, lead + trail)]
     };

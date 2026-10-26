@@ -167,7 +167,7 @@ pub(super) fn svg(
             (start, start + 1),
             width + style.margin[1] + style.margin[3],
             (margin_box, margin_box),
-            style,
+            (style, Some(super::text::central_offset(context, node))),
             (style.margin[3], style.margin[1]),
         );
     }
@@ -464,15 +464,52 @@ impl VectorPath {
                 .ok_or_else(|| EngineError::limit("image work", IMAGE_WORK))?;
             Ok(())
         };
-        drawing(
+        let paths = drawing(
             &mut charge,
             &document,
             &svg,
             (x, y, width, height),
             "#000000",
         )
-        .unwrap_or_default()
+        .unwrap_or_default();
+        root_background(&svg, [x, y, width, height])
+            .into_iter()
+            .chain(paths)
+            .collect()
     }
+}
+
+/** The root `<svg>`'s inline `background` color as a path filling the image under its
+ * drawing, as Blink paints an SVG image's root background (a data-URL image whose only paint is
+ * `style='background: green'` drew nothing). Only a literal color counts. */
+// ponytail: inline style only; a `<style>` sheet's root background comes when a page needs it.
+fn root_background(svg: &Node, [x, y, width, height]: [f64; 4]) -> Option<VectorPath> {
+    let color = inline_style_prop(svg, "background-color")
+        .or_else(|| inline_style_prop(svg, "background"))
+        .filter(|color| crate::document::painter_rgba(color).is_some())?;
+    let corners = [
+        (x, y),
+        (x + width, y),
+        (x + width, y + height),
+        (x, y + height),
+    ];
+    let mut commands: Vec<PathCommand> = corners
+        .iter()
+        .map(|&(x, y)| PathCommand::Line { x, y })
+        .collect();
+    commands[0] = PathCommand::Move { x, y };
+    commands.push(PathCommand::Close);
+    Some(VectorPath {
+        commands,
+        fill: Some(color.to_string()),
+        stroke: None,
+        stroke_width: 0.0,
+        line_join: LineJoin::default(),
+        line_cap: LineCap::default(),
+        fill_rule: FillRule::default(),
+        fill_opacity: 1.0,
+        stroke_opacity: 1.0,
+    })
 }
 
 /** An SVG image without a `viewBox` scales its `width` by `height` canvas into the img box, as

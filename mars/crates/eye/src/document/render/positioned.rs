@@ -160,6 +160,13 @@ impl Axis {
         self.start + margin
     }
 }
+/** The inset-modified containing block's start and end offsets for a static position centered
+at `center` in a containing block `size` wide: the widest span centered there that fits
+(css-position-3 4.1, Blink's IMCB for a center static position; position-absolute-center-001). */
+fn centered_imcb(center: f64, size: f64) -> (f64, f64) {
+    let half = center.min(size - center).max(0.0);
+    (center - half, size - center - half)
+}
 /** An absolutely positioned `<svg>` with neither a `width` attribute nor a CSS width, between a
 set `left` and `right`: Blink fills the containing block from `left` and its margins and lets
 the over-constrained `right` go, rather than stretching between both insets (CSS2
@@ -223,6 +230,10 @@ pub(super) fn place_in(
     if context.static_end(node.local_id) && insets == (None, None) {
         (inline.start, inline.end) = (0.0, block.x + block.width - static_x);
     }
+    let centered = context.static_center(node.local_id) && insets == (None, None);
+    if centered {
+        (inline.start, inline.end) = centered_imcb(static_x - block.x, block.width);
+    }
     let vertical = Axis::new(
         block.height,
         (inset(style, 0, block.height), inset(style, 2, block.height)),
@@ -243,7 +254,10 @@ pub(super) fn place_in(
     };
     // A right-to-left line recorded this box's static position as its right edge: with both
     // horizontal insets auto, the box ends there (CSS 2.1 10.3.7).
-    let x = if context.static_end(node.local_id)
+    let x = if centered {
+        let (start, end) = (style.margin[3], style.margin[1]);
+        static_x - (start + width + end) / 2.0 + start
+    } else if context.static_end(node.local_id)
         && inset(style, 3, block.width).is_none()
         && inset(style, 1, block.width).is_none()
     {

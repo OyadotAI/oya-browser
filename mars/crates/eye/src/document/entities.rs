@@ -36,6 +36,7 @@ const NAMED: &[(&str, char)] = &[
     ("Lambda", 'Λ'),
     ("Mu", 'Μ'),
     ("NewLine", '\n'),
+    ("NoBreak", '\u{2060}'),
     ("Ntilde", 'Ñ'),
     ("Nu", 'Ν'),
     ("OElig", 'Œ'),
@@ -69,6 +70,7 @@ const NAMED: &[(&str, char)] = &[
     ("Xi", 'Ξ'),
     ("Yacute", 'Ý'),
     ("Yuml", 'Ÿ'),
+    ("ZeroWidthSpace", '\u{200b}'),
     ("Zeta", 'Ζ'),
     ("aacute", 'á'),
     ("acirc", 'â'),
@@ -318,7 +320,7 @@ const LEGACY: &[&str] = &[
 ];
 
 /** The longest named reference in the table, so a lookup never scans past it. */
-const LONGEST_NAME: usize = 8;
+const LONGEST_NAME: usize = 14;
 
 /** Windows-1252 meanings HTML gives numeric references in the C1 control range 0x80..=0x9F. */
 const C1: [char; 32] = [

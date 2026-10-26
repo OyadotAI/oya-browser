@@ -38,6 +38,20 @@ pub(super) fn image_urls(layers: &[BackgroundLayer]) -> impl Iterator<Item = &St
     })
 }
 
+/** The layers an element's image keys hold: its own background's when it has an image layer,
+ * else its `::first-letter` box's (which paints under the element's identity). Without the
+ * pseudo's, a first letter's background images were never fetched. */
+pub(super) fn keyed_layers(style: &ComputedStyle) -> &[BackgroundLayer] {
+    let own = &style.backgrounds;
+    if image_urls(own).next().is_some() {
+        return own;
+    }
+    style
+        .first_letter
+        .as_ref()
+        .map_or(own, |letter| &letter.backgrounds)
+}
+
 /** Each element's image layers after its first, and the canvas's, as (key, authored url). */
 pub(super) fn extra_layers(document: &Document) -> Vec<(usize, &String)> {
     let elements = document
@@ -45,7 +59,7 @@ pub(super) fn extra_layers(document: &Document) -> Vec<(usize, &String)> {
         .iter()
         .filter(|node| node.tag != "img" && !node.hidden() && node.style.mask.is_none())
         .flat_map(|node| {
-            image_urls(&node.style.backgrounds)
+            image_urls(keyed_layers(&node.style))
                 .enumerate()
                 .skip(1)
                 .map(move |(layer, url)| (layer_key(node.local_id, layer), url))

@@ -11,6 +11,10 @@ pub(super) fn inline(
     if node.style.inline_block {
         return atomic(context, node, flow, items);
     }
+    // `<wbr>` is a break opportunity: the next run never joins the text before it.
+    if node.tag == "wbr" {
+        flow.last = None;
+    }
     indent_first_line(context, node, flow, false);
     let index = items.len();
     let (y, frags) = (flow.y, flow.frags.len());
@@ -22,13 +26,21 @@ pub(super) fn inline(
         node.style.white_space,
         crate::document::WhiteSpace::Pre | crate::document::WhiteSpace::PreWrap
     );
-    let outside = !preserves && started(flow) && (flow.space == Some(true) || node.space_leading);
-    let before = if outside {
+    // A collapsible space the previous run ended with stays before preserved white space too:
+    // only a collapsible space after another one collapses (`X </span><pre-span> X` keeps both).
+    let outside = started(flow) && (flow.space == Some(true) || (!preserves && node.space_leading));
+    let mut before = if outside {
         context.measure(" ", super::sizing::face_for(&node.style, Some(" ")))?
             + node.style.word_spacing
     } else {
         0.0
     };
+    // Preserved text places itself at the cursor, so the pending space is taken here.
+    if preserves && outside {
+        flow.space = Some(false);
+        flow.cursor += before;
+        before = 0.0;
+    }
     flow.cursor += node.style.margin[3] + node.style.padding[3] + sides[3];
     let x = flow.left() + flow.cursor + before;
     if node.space_leading && !preserves {
@@ -185,6 +197,13 @@ pub(super) fn atomic(
         first_baseline(context, &items[start..])?
             .map(|baseline| baseline - flow.y)
             .unwrap_or(margin_box)
+    } else if style.central_baseline
+        && style.vertical_align == crate::document::style::VerticalAlign::Baseline
+        && last_central(&items[start..]).is_none()
+    {
+        // Vertical text: an inline-block with no line boxes centers on the line's central
+        // baseline; one with lines keeps its last line's baseline, which the line shares.
+        margin_box / 2.0 + central_offset(context, node)
     } else if style.overflow == crate::document::Overflow::Visible {
         last_baseline(context, &items[start..])?
             .map(|baseline| baseline - flow.y)
@@ -197,7 +216,7 @@ pub(super) fn atomic(
         (start, items.len()),
         outer,
         (ascent, margin_box),
-        style,
+        (style, None),
         margins,
     );
     Ok(())
@@ -216,13 +235,40 @@ fn wraps_before(context: &LayoutContext<'_>, node: &Node) -> bool {
             )
         })
 }
-/** The ascent that puts an atomic's center on the central baseline of vertical text: halfway
-between the em box's over and under edges, above the alphabetic baseline by half their
-difference (CSS Inline 3 `central`). */
-fn central_ascent(style: &crate::document::ComputedStyle, margin_box: f64) -> f64 {
+/** Runs of other fonts centering on the line's central baseline: off, since moving them broke
+ * 58 vertical abspos static-position tests; turn on once static positions follow. */
+const CENTER_RUNS: bool = false;
+/** How far a style's central baseline sits above its alphabetic one: halfway between the em
+box's over and under edges (CSS Inline 3 `central`). */
+fn central_lift(style: &crate::document::ComputedStyle) -> f64 {
     let (ascent, normal) = super::sizing::face_metrics(style);
     let descent = (normal - ascent).max(0.0);
-    margin_box / 2.0 + (ascent - descent) / 2.0
+    (ascent - descent) / 2.0
+}
+
+/** The central lift of the line a node sits on, its nearest block's: in vertical text every
+box centers on that line's central baseline, which the shared alphabetic baseline lies below
+by this much. */
+pub(super) fn central_offset(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let mut current = node.parent.and_then(|parent| context.node(parent).ok());
+    while let Some(parent) = current {
+        if !parent.style.inline || parent.style.inline_block {
+            return central_lift(&parent.style);
+        }
+        current = parent.parent.and_then(|up| context.node(up).ok());
+    }
+    central_lift(&node.style)
+}
+
+/** The middle of the last line box inside an atomic's items, in document coordinates. */
+fn last_central(items: &[DisplayItem]) -> Option<f64> {
+    items
+        .iter()
+        .flat_map(|item| {
+            let advance = item.line_height.unwrap_or(item.font_size);
+            item.lines.iter().map(move |line| line.y + advance / 2.0)
+        })
+        .reduce(f64::max)
 }
 /** Records an atomic fragment and advances the line past its margin box. */
 pub(super) fn place_atomic(
@@ -230,16 +276,19 @@ pub(super) fn place_atomic(
     (start, end): (usize, usize),
     outer: f64,
     (ascent, height): (f64, f64),
-    style: &crate::document::ComputedStyle,
+    (style, central): (&crate::document::ComputedStyle, Option<f64>),
     margins: (f64, f64),
 ) {
-    // Vertical text's central baseline: a baseline-aligned atomic centers on the line.
-    let ascent = if style.central_baseline
-        && style.vertical_align == crate::document::style::VerticalAlign::Baseline
-    {
-        central_ascent(style, height)
-    } else {
-        ascent
+    // Vertical text's central baseline: a baseline-aligned replaced box centers on the line's
+    // central baseline, `central` above the shared alphabetic one.
+    let ascent = match central {
+        Some(lift)
+            if style.central_baseline
+                && style.vertical_align == crate::document::style::VerticalAlign::Baseline =>
+        {
+            height / 2.0 + lift
+        }
+        _ => ascent,
     };
     flow.push(Frag {
         piece: Piece::Atomic { start, end },
@@ -299,6 +348,15 @@ fn opens_line(node: &Node, sides: &[f64; 4]) -> bool {
         .iter()
         .any(|&side| style.margin[side] != 0.0 || style.padding[side] != 0.0 || sides[side] != 0.0)
 }
+/** A text run's distance from its top to the shared alphabetic baseline; in vertical text the
+run instead centers on its line's central baseline, so it moves by the two lifts' difference. */
+fn run_ascent(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let ascent = super::sizing::text_ascent(&node.style);
+    match node.style.central_baseline && CENTER_RUNS {
+        true => ascent + central_offset(context, node) - central_lift(&node.style),
+        false => ascent,
+    }
+}
 /** A text fragment for the run at `line` of the item at `item`, with its effective vertical alignment. */
 pub(super) fn text_frag(
     context: &LayoutContext<'_>,
@@ -308,7 +366,7 @@ pub(super) fn text_frag(
 ) -> Frag {
     Frag {
         piece: Piece::Text { item, line },
-        ascent: super::sizing::text_ascent(&node.style),
+        ascent: run_ascent(context, node),
         height: super::sizing::advance(&node.style),
         align: effective_align(context, node),
         shift: inherited_shift(context, node),
@@ -830,9 +888,12 @@ fn words(
         .then(|| super::lookahead::following(context, node))
         .flatten();
     let last = css_words(source).count().saturating_sub(1);
+    let enters_nowrap = nowrap && wrapping_parent(context, node);
     for (number, word) in css_words(source).enumerate() {
         let room = flow.room() - flow.cursor - if spaced { space } else { 0.0 };
-        let mut chunks = filling(context, word, (limit, room), face, breaks, flow)?;
+        // A `nowrap` run never leaves part of a word on the line it starts.
+        let head_room = if nowrap { f64::INFINITY } else { room };
+        let mut chunks = filling(context, word, (limit, head_room), face, breaks, flow)?;
         if !spaced && !nowrap && started(flow) {
             unjoin(context, &mut chunks, (flow, room), face, breaks)?;
         }
@@ -863,7 +924,8 @@ fn words(
             let ends = chunk.text.chars().last();
             // The letters the next element joins to this word's end need the room too.
             let ahead = if index + 1 == count { extra } else { 0.0 };
-            if !nowrap
+            let wraps = !nowrap || (number == 0 && index == 0 && enters_nowrap);
+            if wraps
                 && started(flow)
                 && !only
                 && !joined
@@ -923,9 +985,11 @@ fn words(
     };
     Ok(())
 }
-/** A collapsed word's line pieces: under a filling break (`word-break: break-all`, `line-break:
-anywhere`) a word that overflows a started line first leaves its longest fitting head there, as
-Blink's LineBreaker does; otherwise the pieces of `limit` wide lines. */
+/** A collapsed word's line pieces: a word that overflows a started line first leaves its longest
+head that fits there, ending at one of its ordinary break opportunities (between CJK or Hangul
+characters, after a hyphen, or anywhere under `word-break: break-all` and `line-break:
+anywhere`), as Blink's LineBreaker does; `overflow-wrap` breaks are emergencies, taken only once
+the word stands on a line of its own. The rest are the pieces of `limit` wide lines. */
 fn filling(
     context: &mut LayoutContext<'_>,
     word: &str,
@@ -934,10 +998,15 @@ fn filling(
     breaks: super::wrap::Breaks,
     flow: &Flow,
 ) -> EngineResult<Vec<super::wrap::MeasuredText>> {
-    if breaks.fill
-        && started(flow)
-        && context.measure(word, face)? > room + FIT_SLACK
-        && let Some(head) = super::wrap::head(word, room, face, breaks, context)?
+    let ordinary = super::wrap::Breaks {
+        breakable: breaks.fill,
+        ..breaks
+    };
+    // Ideographic spaces ending the word hang, so they never make it overflow.
+    let ink = context.measure(word, face)? - hanging(context, word, face)?;
+    if started(flow)
+        && ink > room + FIT_SLACK
+        && let Some(head) = super::wrap::head(word, room, face, ordinary, context)?
     {
         let rest = &word[head.text.len()..];
         let mut chunks = vec![head];
@@ -951,6 +1020,7 @@ const FIT_SLACK: f64 = 1.0 / 64.0;
 /** How a text node's words may break, from `overflow-wrap`, `word-break` and `line-break`,
 each inherited from the nearest ancestor that declares it. */
 fn breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
+    let phrase = inherited(context, node, |style| style.word_break_auto_phrase);
     let anywhere = inherited(context, node, |style| style.line_break_anywhere);
     let fill = anywhere || inherited(context, node, |style| style.word_break_fill);
     super::wrap::Breaks {
@@ -959,6 +1029,7 @@ fn breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
         keep_all: inherited(context, node, |style| style.word_break_keep_all),
         anywhere,
         shy: !node.style.hyphens_none,
+        phrase,
         cjk: cjk_language(context, node),
         loose: inherited(context, node, |style| style.line_break_loose),
         no_hang: node.style.break_spaces
@@ -979,6 +1050,31 @@ fn autospace(node: &Node, flow: &Flow, text: &str, adjoining: bool) -> f64 {
     } else {
         0.0
     }
+}
+/** Whether `node`'s text opens a `nowrap` region inside wrapping content (`<nobr>`, or a nowrap
+span's first text): then the line may still break at the boundary before it, which belongs to
+the wrapping content, so the region moves to a new line whole. Each nowrap ancestor up to the
+wrapping one must start with it (nothing in flow before it but floats and positioned boxes). */
+fn wrapping_parent(context: &LayoutContext<'_>, node: &Node) -> bool {
+    let mut current = node;
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(parent) = current.parent.and_then(|id| context.node(id).ok()) else {
+            return false;
+        };
+        if parent.style.white_space != crate::document::WhiteSpace::Nowrap {
+            return true;
+        }
+        let first = context
+            .children(parent.local_id)
+            .into_iter()
+            .find(|c| !out_of_flow(c) && !super::sizing::floating(c));
+        let leads = first.is_some_and(|c| c.local_id == current.local_id);
+        if !leads || !parent.text.trim().is_empty() || !parent.style.inline {
+            return false;
+        }
+        current = parent;
+    }
+    false
 }
 /** Whether `node`'s content language (its nearest `lang` attribute) is Chinese or Japanese. */
 fn cjk_language(context: &LayoutContext<'_>, node: &Node) -> bool {
@@ -1007,6 +1103,14 @@ fn inherited(
         current = node.parent.and_then(|parent| context.node(parent).ok());
     }
     false
+}
+/** How `node`'s text may break for its min-content: as line layout breaks it, except that
+`overflow-wrap: break-word` breaks only to avoid overflow and so adds no opportunities. */
+pub(super) fn min_content_breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
+    super::wrap::Breaks {
+        breakable: breaks_for_min_content(context, node),
+        ..breaks(context, node)
+    }
 }
 /** Whether every letter boundary is a break opportunity min-content counts (CSS Text 3 section
 5.5): `word-break: break-all | break-word`, `line-break: anywhere` or `overflow-wrap: anywhere`,
@@ -1290,21 +1394,9 @@ fn cased<'a>(style: &crate::document::ComputedStyle, source: &'a str) -> std::bo
     use crate::document::TextTransform;
     match style.text_transform {
         TextTransform::None => source.into(),
-        TextTransform::Uppercase => source.to_uppercase().into(),
-        TextTransform::Lowercase => source.to_lowercase().into(),
-        TextTransform::Capitalize => {
-            let mut result = String::with_capacity(source.len());
-            let mut start = true;
-            for c in source.chars() {
-                if start && c.is_alphanumeric() {
-                    result.extend(c.to_uppercase());
-                } else {
-                    result.push(c);
-                }
-                start = c.is_whitespace();
-            }
-            result.into()
-        }
+        TextTransform::Uppercase => super::casing::upper(source, &style.lang).into(),
+        TextTransform::Lowercase => super::casing::lower(source, &style.lang).into(),
+        TextTransform::Capitalize => super::casing::capitalize(source, &style.lang).into(),
     }
 }
 /** Whether the current line already holds a fragment. Blink removes spaces at the start of a

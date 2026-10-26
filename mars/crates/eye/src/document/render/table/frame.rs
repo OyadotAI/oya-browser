@@ -50,14 +50,23 @@ pub(super) fn frame(
 }
 /** The table's width in `room`: an anonymous table's wrapping block keeps its own width, an
  * authored width sizes the box `box-sizing` says (a `<table>`'s border box, from the UA sheet)
- * and never below the grid's minimum, and an auto width shrinks to fit. */
+ * and never below the grid's minimum, and an auto width shrinks to fit (under a fixed
+ * `max-width`). */
 fn width(node: &Node, base: f64, room: f64, (minimum, maximum): (f64, f64)) -> f64 {
     if super::is_anonymous(node) {
         border_width(node, base, room, None)
     } else if node.style.width.is_some() {
         border_width(node, base, room, None).max(minimum)
     } else {
-        maximum.min(room).max(minimum)
+        // A fixed `max-width` caps the shrink-to-fit width too; the grid's minimum still wins.
+        let cap = node
+            .style
+            .max_width
+            .filter(|_| !node.style.percent_max_width);
+        maximum
+            .min(room)
+            .min(cap.unwrap_or(f64::INFINITY))
+            .max(minimum)
     }
 }
 /** How wide the table is in a band of some room, and its horizontal margins. */

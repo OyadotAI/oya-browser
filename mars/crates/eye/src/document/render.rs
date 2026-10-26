@@ -7,6 +7,7 @@ mod body;
 mod body_clip;
 mod border_image;
 mod canvas_layers;
+mod casing;
 mod clearance;
 mod control;
 pub(crate) mod degrade;
@@ -32,6 +33,7 @@ mod gradient_tile;
 mod grid;
 mod hyphenate;
 mod image;
+mod indent_intrinsic;
 mod initial_letter;
 mod inline_root;
 mod justify;
@@ -50,6 +52,7 @@ mod multicol_units;
 mod nine_piece;
 mod order;
 mod path;
+mod phrase;
 mod positioned;
 mod root_box;
 mod root_fit;
@@ -79,7 +82,7 @@ pub use display::{
 };
 /// Agent-visibility helpers for the app; the document facade exports them when the app wires them.
 #[allow(unused_imports)]
-pub use display::{agent_visible, painted_bounds, wheel_target};
+pub use display::{agent_visible, painted_bounds, spread_radius, wheel_target};
 pub use effects::ScrollOffsets;
 pub use frame::{embed_frame, frame_viewport};
 pub use nine_piece::{NinePiece, nine_pieces};
@@ -464,7 +467,8 @@ fn laid_out(
     upright_split::split(&mut items);
     table_parts(document, &mut items)?;
     effects(document, &mut items)?;
-    let (mut items, scrollers) = effects::stack(document, items, offsets)?;
+    let (mut items, scrollers) =
+        effects::stack(document, items, offsets, [context.width, context.height])?;
     fixed::anchor(document, &mut items, context);
     fixed::scroll_with_contents(document, &mut items, &scrollers);
     first_line::apply(document, &mut items);

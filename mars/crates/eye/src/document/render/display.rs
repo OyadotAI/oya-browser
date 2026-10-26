@@ -58,6 +58,27 @@ pub struct DisplayShadow {
     pub inset: bool,
 }
 
+/// A shadow shape's corner `[rx, ry]` of a `size` box grown by `spread` (shrunk when negative),
+/// per CSS Backgrounds 3 corner shaping as Blink's `ComputeOutsetAdjustedBorderRadius` does it:
+/// a square corner stays square, and a radius smaller than a positive spread grows by
+/// `spread * (1 - (1 - ratio)^3 * (1 - coverage^3))`, so a slightly rounded box does not cast a
+/// fully rounded shadow while a circle's stays a circle. Both painters share it.
+pub fn spread_radius(corner: [f64; 2], size: [f64; 2], spread: f64) -> [f64; 2] {
+    if corner[0] <= 0.0 || corner[1] <= 0.0 {
+        return [0.0; 2];
+    }
+    if spread <= 0.0 {
+        return corner.map(|r| (r + spread).max(0.0));
+    }
+    let coverage = 2.0 * (corner[0] / size[0]).min(corner[1] / size[1]);
+    corner.map(|r| {
+        if r > spread || coverage > 1.0 {
+            return r + spread;
+        }
+        r + spread * (1.0 - (1.0 - r / spread).powi(3) * (1.0 - coverage.powi(3)))
+    })
+}
+
 /// A gradient stop with its position resolved to 0..1 along the gradient line, nondecreasing.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]

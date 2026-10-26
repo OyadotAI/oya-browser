@@ -41,7 +41,24 @@ pub(super) fn static_position(
             cross_offset(parent, child, free_y),
         )
     };
+    if centered_x(parent, child, free_x) {
+        // The box centers on the line's middle; place_in centers its width there.
+        context.mark_static_center(child.local_id);
+        return Ok((origin.0 + inner.0 / 2.0, origin.1 + y));
+    }
     Ok((origin.0 + x, origin.1 + y))
+}
+
+/** Whether the container centers the child horizontally: `justify-content: center` in a row,
+`align-self: center` in a column, unless `safe` alignment falls back to the start for a child
+that overflows (`cross_offset`). */
+fn centered_x(parent: &Node, child: &Node, free_x: f64) -> bool {
+    if parent.style.flex_direction == FlexDirection::Column {
+        cross_offset(parent, child, free_x) == free_x / 2.0
+            && physical_align(parent, self_alignment(parent, child)) == AlignItems::Center
+    } else {
+        row_justify(parent) == JustifyContent::Center
+    }
 }
 
 /** The child's border-box size: its authored or shrink-to-fit width in the container's inner

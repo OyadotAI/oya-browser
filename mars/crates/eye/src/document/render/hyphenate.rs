@@ -53,20 +53,16 @@ pub(super) fn mark(
     Ok(())
 }
 
-/** The pieces of `word` min-content may break it into at soft hyphens, each but the last with
- * the hyphen it would show; the whole word when `node` does not hyphenate. */
-pub(super) fn pieces(node: &Node, word: &str) -> Vec<String> {
-    if node.style.hyphens_none || !word.contains(SOFT_HYPHEN) {
-        return vec![word.to_string()];
-    }
-    let parts: Vec<&str> = word.split(SOFT_HYPHEN).collect();
-    let last = parts.len() - 1;
-    parts
-        .iter()
-        .enumerate()
-        .map(|(index, part)| match index < last {
-            true => format!("{part}{}", hyphen(node)),
-            false => part.to_string(),
-        })
+/** The unbreakable pieces of `word` min-content measures: the text between its break
+ * opportunities under `breaks`, a piece ending at a soft hyphen with the hyphen it would show. */
+pub(super) fn pieces(node: &Node, word: &str, breaks: super::wrap::Breaks) -> Vec<String> {
+    super::wrap::segments(word, breaks)
+        .into_iter()
+        .map(
+            |piece| match piece.ends_with(SOFT_HYPHEN) && !node.style.hyphens_none {
+                true => format!("{piece}{}", hyphen(node)),
+                false => piece.to_string(),
+            },
+        )
         .collect()
 }

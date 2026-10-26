@@ -14,6 +14,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         align_last: parent.align_last.clone(),
         text_justify: parent.text_justify.clone(),
         text_autospace: parent.text_autospace,
+        lang: parent.lang.clone(),
         hyphens_none: parent.hyphens_none,
         hyphenate_character: parent.hyphenate_character.clone(),
         parent_rtl: Some(parent.rtl),

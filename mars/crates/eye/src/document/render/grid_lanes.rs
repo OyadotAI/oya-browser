@@ -534,10 +534,13 @@ fn stretchable_width(child: &Node) -> bool {
         && !["img", "canvas", "svg", "video"].contains(&child.tag.as_str())
 }
 
-/** Whether an item's stacking-axis alignment moves it within the space below it; `normal`
- * and `stretch` share a value here and stay at the start. */
-fn stacking_aligned(align: AlignItems) -> bool {
+/** Whether an item's stacking-axis alignment moves it within the space beside it: centered
+ * or end items, and under fill-reverse (which stacks from the end) start and baseline ones too;
+ * `normal` and `stretch` share a value here and stay put. Such items keep the openings their
+ * lanes leave around them. */
+fn stacking_aligned(align: AlignItems, reverse: bool) -> bool {
     matches!(align, AlignItems::Center | AlignItems::End)
+        || (reverse && matches!(align, AlignItems::Start | AlignItems::Baseline))
 }
 
 /** How far an item moves in the stacking axis within the free `space` below it (above it
@@ -602,9 +605,10 @@ pub(super) fn children(
     let mut running = Running::new(&widths, style, tolerance(style, inner.definite));
     let stacking = |child: &Node| child.style.align_self.unwrap_or(style.align_items);
     // Stretched items, like aligned ones, need the gaps left below them.
-    running.align = kids
-        .iter()
-        .any(|child| stacking_aligned(stacking(child)) || explicit_stretch(style, child));
+    running.align = kids.iter().any(|child| {
+        stacking_aligned(stacking(child), style.grid_lanes_fill_reverse)
+            || explicit_stretch(style, child)
+    });
     let mut plan = Vec::with_capacity(lanes.len());
     for (index, (child, start, span)) in lanes.into_iter().enumerate() {
         context.charge(1)?;
@@ -946,9 +950,10 @@ fn rows(
     let tops = super::offsets(inner.y + lead, &heights, row_gap);
     let mut running = Running::new(&heights, style, tolerance(style, Some(inner.width)));
     let stacking = |child: &Node| super::justify_of(style, child);
-    running.align = kids
-        .iter()
-        .any(|child| stacking_aligned(stacking(child)) || explicit_justify_stretch(style, child));
+    running.align = kids.iter().any(|child| {
+        stacking_aligned(stacking(child), style.grid_lanes_fill_reverse)
+            || explicit_justify_stretch(style, child)
+    });
     let mut plan = Vec::with_capacity(lanes.len());
     let mut auto = Vec::with_capacity(lanes.len());
     for (index, (child, start, span, width, height)) in lanes.into_iter().enumerate() {
