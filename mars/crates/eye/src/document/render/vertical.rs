@@ -147,10 +147,14 @@ pub(super) fn layout(
         true => 0.0,
         false => node.style.margin[0] + node.style.margin[2],
     };
-    let available = forced
+    let room = forced
         .and_then(|bounds| bounds.height)
-        .or(flow.definite.map(|height| (height - margins).max(0.0)))
-        .unwrap_or(context.viewport.1);
+        .or(flow.definite.map(|height| (height - margins).max(0.0)));
+    let available = room.unwrap_or(context.viewport.1);
+    // A flex or grid item measured before its area is known has an indefinite containing
+    // block, so its percentage height behaves as auto (css-grid-2 6.6; Blink resolves it once
+    // the area is sized).
+    let percent_auto = item && room.is_none();
     // CSS Writing Modes 7.3: an orthogonal box shrinks to fit its available space, the container's
     // definite height or else the viewport's; only the document's root fills.
     let fit = forced.is_none_or(|bounds| bounds.height.is_none())
@@ -164,9 +168,15 @@ pub(super) fn layout(
             width: match bounds.height {
                 Some(height) => height,
                 None => {
-                    logical(context, node, (available, Some(flow.width)), None, true)?
-                        .1
-                        .1
+                    logical(
+                        context,
+                        node,
+                        (available, Some(flow.width)),
+                        None,
+                        (true, percent_auto),
+                    )?
+                    .1
+                    .1
                 }
             },
             height: Some(bounds.width),
@@ -174,7 +184,7 @@ pub(super) fn layout(
         None => None,
     };
     let block = (available, Some(flow.width));
-    let (laid, size) = logical(context, node, block, logical_forced, fit)?;
+    let (laid, size) = logical(context, node, block, logical_forced, (fit, percent_auto))?;
     let (x, y) = match forced {
         Some(bounds) => (bounds.x, bounds.y),
         None if document_start(context, node) || is_document(context, node) => {
@@ -226,7 +236,30 @@ fn inset_both_axes(node: &Node) -> bool {
 after a layout in the space it would get. */
 pub(super) fn intrinsic_width(context: &mut LayoutContext<'_>, node: &Node) -> EngineResult<f64> {
     let available = context.viewport.1;
-    Ok(logical(context, node, (available, None), None, true)?.1.0)
+    let parent = node.parent.and_then(|parent| context.node(parent).ok());
+    let item = parent.is_some_and(|p| p.style.display_flex || p.style.display_grid);
+    Ok(
+        logical(context, node, (available, None), None, (true, item))?
+            .1
+            .0,
+    )
+}
+
+/** Turns the rotated root's percentage logical width (its physical height) and its
+ * percentage minimum and maximum into `auto`, for a measure against an indefinite size. */
+fn auto_percent_width(document: &mut Document, root: usize, fit: bool) {
+    let Some(node) = document.nodes.iter_mut().find(|node| node.local_id == root) else {
+        return;
+    };
+    let style = &mut node.style;
+    if style.percent_width {
+        (style.width, style.percent_width) = (None, false);
+        style.width_fit |= fit;
+    }
+    style.min_width_percent = None;
+    if style.percent_max_width {
+        (style.max_width, style.percent_max_width) = (None, false);
+    }
 }
 
 /** The subtree's logical items and its physical border-box size (width, height), laid out in
@@ -237,9 +270,12 @@ fn logical(
     node: &Node,
     (available, block): (f64, Option<f64>),
     forced: Option<BorderBox>,
-    fit: bool,
+    (fit, percent_auto): (bool, bool),
 ) -> EngineResult<(Vec<DisplayItem>, (f64, f64))> {
-    let rotated = rotated(context.document, node, fit);
+    let mut rotated = rotated(context.document, node, fit);
+    if percent_auto {
+        auto_percent_width(&mut rotated, node.local_id, fit);
+    }
     let mut inner = LayoutContext::new(&rotated)?;
     inner.viewport = (context.viewport.1, context.viewport.0);
     let root = inner.node(node.local_id)?;
@@ -356,6 +392,21 @@ fn rotated(document: &Document, root: &Node, fit: bool) -> Document {
     copy
 }
 
+/** The used glyph orientation of a node in a vertical subtree: `mixed` stands CJK upright and
+`upright` every character; sideways writing, `text-orientation: sideways` and a horizontal
+subtree turned back keep every glyph turned. */
+fn glyphs_upright(style: &ComputedStyle, undoing: bool) -> u8 {
+    use crate::platform::upright::{MIXED, TURNED, UPRIGHT};
+    if undoing || !style.vertical_writing || style.writing_sideways {
+        return TURNED;
+    }
+    match style.text_orientation {
+        0 => MIXED,
+        1 => UPRIGHT,
+        _ => TURNED,
+    }
+}
+
 /** One style with its physical axes turned into the subtree's logical ones. */
 fn rotate_style(style: &ComputedStyle, turn: Turn, undoing: bool) -> ComputedStyle {
     let (sides, corners) = (turn.sides(), turn.corners());
@@ -364,6 +415,7 @@ fn rotate_style(style: &ComputedStyle, turn: Turn, undoing: bool) -> ComputedSty
     out.vertical_writing = false;
     out.counter_rotate = 0;
     out.central_baseline = !undoing && !style.writing_sideways;
+    out.glyphs_upright = glyphs_upright(style, undoing);
     out.margin = pick(style.margin);
     out.margin_auto = sides.map(|side| style.margin_auto[side]);
     out.margin_percent = pick(style.margin_percent);

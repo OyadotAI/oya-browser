@@ -62,7 +62,10 @@ pub(super) fn paint_replaced_image(
     let dx = cx + ox_px + (cw - dw) * ox_pct / 100.0;
     let dy = cy + oy_px + (ch - dh) * oy_pct / 100.0;
     context.saveGraphicsState();
-    painter.clip_shape(&inner);
+    // `overflow: visible` lets the whole object rectangle paint past the content box.
+    if !item.overflow_visible {
+        painter.clip_shape(&inner);
+    }
     // The view is flipped; without respectFlipped AppKit draws bitmaps upside down.
     unsafe {
         image.drawInRect_fromRect_operation_fraction_respectFlipped_hints(

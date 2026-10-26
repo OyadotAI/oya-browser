@@ -63,6 +63,7 @@ mod table;
 mod text;
 mod text_chains;
 mod text_echo;
+mod upright_split;
 mod validation;
 pub mod vertical;
 mod wrap;
@@ -265,6 +266,10 @@ pub struct DisplayItem {
     /// layout measured them.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub autospace: bool,
+    /// Glyph orientation of a vertical item's runs (`platform::upright` codes): its upright
+    /// characters advance one em and paint standing, from a split in `vertical.rs`.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub upright: u8,
     /// Lines are underlined: links unless the author removed text decoration, or authored underline.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub underline: bool,
@@ -286,6 +291,10 @@ pub struct DisplayItem {
     /// Content box `[x, y, width, height]` of an `<img>` element when padding or border insets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_box: Option<[f64; 4]>,
+    /// A replaced element whose author set `overflow: visible`: its image paints its whole
+    /// object rectangle instead of being clipped to the content box (css-overflow overflow-img).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub overflow_visible: bool,
     /// A `url()` mask (an Image layer with resolved geometry): painters fill `background` only
     /// where the fetched mask image is opaque. Icon fonts' replacement, a colored box masked by an
     /// svg, otherwise paints as a solid square or not at all.
@@ -367,6 +376,10 @@ pub struct PaintLine {
     pub width: f64,
 }
 
+/** Whether a small code is zero, the default a display item leaves out. */
+fn is_zero_u8(value: &u8) -> bool {
+    *value == 0
+}
 /** Serde skips an unknown inline formatting root. */
 fn is_zero_identity(value: &usize) -> bool {
     *value == 0
@@ -448,6 +461,7 @@ fn laid_out(
         item.lines.clear();
         item.line_height = item.line_height.filter(|advance| *advance > 0.0);
     }
+    upright_split::split(&mut items);
     table_parts(document, &mut items)?;
     effects(document, &mut items)?;
     let (mut items, scrollers) = effects::stack(document, items, offsets)?;

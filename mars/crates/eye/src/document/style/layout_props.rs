@@ -119,6 +119,7 @@ pub(super) fn apply(
                 _ => return Err(unsupported()),
             }
         }
+        "margin-trim" => style.margin_trim = margin_trim(value)?,
         "max-lines" => {
             style.max_lines = match value {
                 "none" => 0,
@@ -948,3 +949,19 @@ const HEIGHT_FIT: [&str; 4] = [
     "max-content",
     "-webkit-fit-content",
 ];
+
+/** `margin-trim`'s block-axis edges: `block` both, `block-start` and `block-end` one each (in any
+ * combination with inline values, which trim nothing in block layout). */
+fn margin_trim(value: &str) -> EngineResult<[bool; 2]> {
+    let mut edges = [false; 2];
+    for token in value.split_whitespace() {
+        match token {
+            "none" | "inline" | "inline-start" | "inline-end" => {}
+            "block" => edges = [true, true],
+            "block-start" => edges[0] = true,
+            "block-end" => edges[1] = true,
+            _ => return Err(unsupported()),
+        }
+    }
+    Ok(edges)
+}

@@ -330,21 +330,18 @@ impl Canvas {
         if item.tag == "img" {
             let dest = item.content_box.unwrap_or(bounds);
             match image.and_then(Picture::raster) {
-                Some(bitmap) => self.tile(
-                    dest,
-                    clip.as_ref(),
-                    Tiling {
-                        tile: object_fit::object_rect(
-                            item,
-                            dest,
-                            (f64::from(bitmap.width), f64::from(bitmap.height)),
-                        ),
+                Some(bitmap) => {
+                    let natural = (f64::from(bitmap.width), f64::from(bitmap.height));
+                    let tile = object_fit::object_rect(item, dest, natural);
+                    // `overflow: visible` lets the whole object rectangle paint past the box.
+                    let area = if item.overflow_visible { tile } else { dest };
+                    let tiling = Tiling {
+                        tile,
                         repeat: [false; 2],
                         gap: [0.0; 2],
-                    },
-                    bitmap,
-                    &fade,
-                ),
+                    };
+                    self.tile(area, clip.as_ref(), tiling, bitmap, &fade)
+                }
                 None => self.fill(
                     bounds,
                     clip.map(|c| [c.x, c.y, c.width, c.height]),

@@ -51,6 +51,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         vertical_writing: parent.vertical_writing,
         writing_lr: parent.writing_lr,
         writing_sideways: parent.writing_sideways,
+        text_orientation: parent.text_orientation,
         text_box_edge: parent.text_box_edge,
         ..ComputedStyle::default()
     }
@@ -77,6 +78,7 @@ fn inherits(key: &str) -> bool {
             "color-scheme",
             "direction",
             "writing-mode",
+            "text-orientation",
             "list-style",
             "list-style-type",
             "border-spacing",
@@ -307,6 +309,7 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.writing_lr = source.writing_lr;
             style.writing_sideways = source.writing_sideways;
         }
+        "text-orientation" => style.text_orientation = source.text_orientation,
         "font-weight" => {
             style.font_weight = source.font_weight;
             style.bold = source.bold;

@@ -156,6 +156,7 @@ impl PageSelection {
                         spacing: item.letter_spacing,
                         italic: item.italic,
                         autospace: item.autospace,
+                        upright: crate::platform::upright::TURNED,
                     })
                     .collect(),
             ),

@@ -55,6 +55,16 @@ impl Flow {
     pub fn fits(&self, extent: f64) -> bool {
         self.cursor + extent <= self.room() + LINE_FIT_SLACK
     }
+    /** Starts an empty line past every left float a box `height` tall reaches, not only those at
+     * the line's top, by moving the line's start (floats-wrap-top-below-inline-001l: a lower,
+     * wider float the inline-block would overlap pushes it right). */
+    pub fn start_past_tall_floats(&mut self, height: f64) {
+        let (left, _) = self.room_at_height(self.y, height);
+        let shift = left - self.left();
+        if self.cursor == 0.0 && shift > 0.0 {
+            self.cursor = shift;
+        }
+    }
     /** Moves an empty line below floats until a box `width` wide and `height` tall fits beside
      * every float its height reaches, not only those at the line's top (an inline-block on a new
      * line that a lower float would overlap goes below it, floats-wrap-top-below-inline-002l). */

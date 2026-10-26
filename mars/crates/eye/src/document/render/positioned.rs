@@ -368,7 +368,17 @@ fn containing(
     };
     // ponytail: fixed boxes use the unscrolled viewport; follow scroll_y when scrolling is layered.
     let Some(ancestor) = containing_node(context, node)? else {
-        return Ok(viewport);
+        // A positioned body contains its absolute descendants; fixed ones only through a
+        // transform, which `positioned_body_block` cannot tell apart, so they keep the viewport.
+        let body = context
+            .body_block
+            .filter(|_| node.style.position != Position::Fixed);
+        return Ok(body.map_or(viewport, |[x, y, width, height]| Block {
+            x,
+            y,
+            width,
+            height,
+        }));
     };
     let Some(item) = items.iter().find(|item| item.local_id == ancestor.local_id) else {
         return Ok(viewport);

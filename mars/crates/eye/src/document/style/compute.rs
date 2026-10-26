@@ -12,7 +12,7 @@ use crate::{
 };
 /** Properties other values depend on, computed first in this order. The font properties come
  * first, as in Blink's high-priority set, so `ch` and `ic` below see the element's own face. */
-const FIRST: [&str; 7] = [
+const FIRST: [&str; 9] = [
     "font-family",
     "font-style",
     "font-size",
@@ -20,6 +20,10 @@ const FIRST: [&str; 7] = [
     "line-height",
     "color-scheme",
     "color",
+    // `ch` in upright vertical text measures the vertical advance, so the face it measures
+    // needs the writing mode and orientation first.
+    "writing-mode",
+    "text-orientation",
 ];
 /** Corner radii resolve after width so percentages can use it. */
 const LAST: [&str; 4] = [
@@ -89,7 +93,8 @@ impl Resolver<'_> {
                 // `lh` in every later property is this element's own line height.
                 super::values::set_own_line(Some(crate::document::render::line_advance(style)));
             }
-            if key == "font-weight" && measured {
+            // The last early property: the element's own face is now complete.
+            if key == "text-orientation" && measured {
                 super::values::set_font_face(Some(super::values::style_face(style)));
             }
             if key == "color-scheme" {
@@ -201,6 +206,9 @@ fn default_foreground(style: &mut ComputedStyle) {
     }
 }
 
+/** `text-orientation: upright`'s computed code. */
+const UPRIGHT_ORIENTATION: u8 = 1;
+
 /** Blink's StyleAdjuster for `writing-mode`: rows, row groups, columns and column groups take
 their parent's (the property does not apply to them, so a table's progression ignores theirs),
 and an inline in a different writing mode than its parent becomes an inline-block, the
@@ -219,6 +227,12 @@ fn writing_adjust(style: &mut ComputedStyle, parent: &ComputedStyle) {
         style.vertical_writing = parent.vertical_writing;
         style.writing_lr = parent.writing_lr;
         style.writing_sideways = parent.writing_sideways;
+    }
+    // CSS Writing Modes 5.1: `text-orientation: upright` makes the used direction ltr (it has
+    // no effect in the sideways modes).
+    let upright = style.vertical_writing && !style.writing_sideways;
+    if upright && style.text_orientation == UPRIGHT_ORIENTATION {
+        style.rtl = false;
     }
     let differs = (
         style.vertical_writing,

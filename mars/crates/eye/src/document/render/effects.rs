@@ -510,6 +510,16 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
     }
     matrix
 }
+/** The containing block a relatively positioned box resolves percentages against: its nearest
+ancestor that is no inline box, since a block inside an inline (position-relative-002) or an
+inline itself sits in the block around it. None for a top-level box (the body). */
+fn block_container<'a>(tree: &Tree<'a>, node: &Node) -> Option<&'a Node> {
+    let mut parent = node.parent.and_then(|local| tree.node(local).ok());
+    while let Some(inline) = parent.filter(|p| p.style.inline && !p.style.inline_block) {
+        parent = inline.parent.and_then(|local| tree.node(local).ok());
+    }
+    parent
+}
 /**
  * A relatively positioned box's offset, after Blink's ComputeRelativeOffset: insets resolve
  * against the parent's content box, and a percentage against an indefinite height (the parent's
@@ -519,7 +529,7 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
  */
 fn relative_offset(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> [f64; 2] {
     let style = &node.style;
-    let parent = node.parent.and_then(|local| tree.node(local).ok());
+    let parent = block_container(tree, node);
     let (width, height) = parent.map_or_else(
         || (None, body_height(tree.document)),
         |parent| containing_size(tree, items, parent),
@@ -1353,6 +1363,8 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
     item.radius = horizontal;
     item.radius_y = (vertical != horizontal).then_some(vertical);
     if item.tag == "img" || super::flow::frame(node) {
+        item.overflow_visible =
+            style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible;
         item.object_fit = style.object_fit;
         let [ox, oy] = style.object_position;
         item.object_position = [ox.px, ox.percent, oy.px, oy.percent];

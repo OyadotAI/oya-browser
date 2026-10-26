@@ -214,3 +214,47 @@ fn a_writing_mode_root_contains_its_floats() {
     );
     assert_eq!(item(&document, &display, "h").height, 40.0);
 }
+
+/** `text-orientation: upright` stands every character one em down the line, makes the used
+direction ltr, and measures `ch` by that em. */
+#[test]
+fn upright_text_advances_an_em_per_character() {
+    let (document, display) = laid(
+        "<div id=u dir=rtl>ab</div><div id=c></div>",
+        "div{writing-mode:vertical-rl;text-orientation:upright;font-size:20px;float:left}\
+         #c{height:2ch;width:1px}",
+    );
+    let u = item(&document, &display, "u");
+    let node = document.nodes.iter().find(|n| n.html_id == "u").unwrap();
+    assert!(!node.style.rtl, "upright text is laid out ltr");
+    assert_eq!(u.height, 40.0, "two upright characters, one em each");
+    assert_eq!(
+        item(&document, &display, "c").height,
+        40.0,
+        "ch is the vertical advance"
+    );
+}
+
+/** Under the default `mixed`, ideographs stand upright and paint unturned, while Latin turns. */
+#[test]
+fn mixed_stands_ideographs_upright() {
+    let (document, display) = laid(
+        "<div id=m>a\u{6f22}</div>",
+        "#m{writing-mode:vertical-rl;font-size:20px}",
+    );
+    let m = document.nodes.iter().find(|n| n.html_id == "m").unwrap();
+    let mine: Vec<_> = display
+        .items
+        .iter()
+        .filter(|i| i.local_id == m.local_id)
+        .collect();
+    let standing = mine
+        .iter()
+        .find(|i| i.writing == 0)
+        .expect("an unturned twin");
+    assert!(standing.lines.iter().any(|l| l.text == "\u{6f22}"));
+    assert!(
+        mine.iter()
+            .any(|i| i.writing != 0 && i.lines.iter().any(|l| l.text == "a"))
+    );
+}

@@ -179,6 +179,14 @@ fn text(
             style.writing_lr = matches!(value, "vertical-lr" | "sideways-lr");
             style.writing_sideways = value.starts_with("sideways");
         }
+        "text-orientation" | "-webkit-text-orientation" => {
+            style.text_orientation = match value {
+                "mixed" | "vertical-right" => 0,
+                "upright" => 1,
+                "sideways" | "sideways-right" => 2,
+                _ => return Err(unsupported()),
+            }
+        }
         "direction" => {
             style.rtl = match value {
                 "rtl" => true,

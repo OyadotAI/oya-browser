@@ -28,9 +28,14 @@ impl FlexItem {
 }
 
 /** A scroll container's automatic minimum size is zero (css-grid-2 6.6, Blink's
- * `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items never widen their tracks. */
+ * `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items never widen their tracks.
+ * `overflow: clip` makes no scroll container: a replaced element's UA clip keeps its minimum. */
 pub(super) fn scroll_container(node: &crate::document::Node) -> bool {
-    node.style.overflow != crate::document::style::Overflow::Visible
+    use crate::document::style::Overflow;
+    matches!(
+        node.style.overflow,
+        Overflow::Hidden | Overflow::Auto | Overflow::Scroll
+    )
 }
 /** Positive free space split equally over the line's auto margins; zero when there are none
 or the line overflows, where auto margins collapse to zero and alignment proceeds as usual. */

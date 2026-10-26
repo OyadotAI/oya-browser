@@ -101,6 +101,8 @@ pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
         _ => {}
     }
 }
+/** Replaced elements Chromium's html.css gives `overflow: clip`. */
+const CLIPPED_REPLACED: [&str; 6] = ["img", "video", "canvas", "iframe", "embed", "object"];
 /** UA declarations for one element, applied below every author declaration. */
 pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
     let tag = node.tag.as_str();
@@ -168,6 +170,11 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
     }
     if MONOSPACE.contains(&tag) {
         out.push(("font-family", "monospace"));
+    }
+    // html.css: replaced elements clip their content (`overflow: clip`), so an author's
+    // `overflow: visible` is what lets an `object-fit` image paint past its box (overflow-img).
+    if CLIPPED_REPLACED.contains(&tag) {
+        out.extend([("overflow-x", "clip"), ("overflow-y", "clip")]);
     }
     if tag == "pre" {
         out.push(("white-space", "pre"));

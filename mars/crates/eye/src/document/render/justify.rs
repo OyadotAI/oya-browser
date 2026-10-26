@@ -296,6 +296,7 @@ fn prefixes(
         spacing: item.letter_spacing,
         italic: item.italic,
         autospace: item.autospace,
+        upright: item.upright,
     };
     let mut starts = vec![(0, 0.0)];
     for &at in marks.iter().filter(|at| **at < run.text.len()) {

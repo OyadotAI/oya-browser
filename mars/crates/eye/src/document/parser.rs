@@ -425,7 +425,9 @@ impl<'a> Tree<'a> {
     }
     /** Wrapper markup has no extra display node. */
     fn consume(&mut self, mut token: Token) -> EngineResult<()> {
+        // Only HTML drops it: XML keeps every character (white-space-pre-001's leading line).
         if std::mem::take(&mut self.after_pre)
+            && !self.tokens.xml()
             && let Token::Text(text) = &mut token
             && text.starts_with('\n')
         {
@@ -738,7 +740,9 @@ impl<'a> Tree<'a> {
         let contexts: &[&str] = match tag {
             "td" | "th" => &["tr", "tbody", "thead", "tfoot", "table"],
             "tr" => &["tbody", "thead", "tfoot", "table"],
-            "tbody" | "thead" | "tfoot" | "caption" | "colgroup" | "col" => &["table"],
+            "tbody" | "thead" | "tfoot" | "caption" | "colgroup" => &["table"],
+            // A column inside an open column group stays in it ("in column group" mode).
+            "col" => &["colgroup", "table"],
             "table" if TABLE_CONTEXT.contains(&self.current()) => &["table"],
             _ => return,
         };

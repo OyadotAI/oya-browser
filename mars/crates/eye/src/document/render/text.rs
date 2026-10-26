@@ -165,6 +165,7 @@ pub(super) fn atomic(
         let tall =
             context.measure_height(node.local_id, width)? + style.margin[0] + style.margin[2];
         flow.fit_tall(outer, tall);
+        flow.start_past_tall_floats(tall);
     }
     let bounds = BorderBox {
         x: flow.left() + flow.cursor + margins.0,
@@ -414,6 +415,9 @@ pub(super) fn text(
         words(context, &source, node, flow, (item, &mut lines))?;
         return Ok(lines);
     }
+    if space != WhiteSpace::PreLine {
+        pending_space(context, node, flow)?;
+    }
     for (index, segment) in source.split('\n').enumerate() {
         if index > 0 {
             flow.line = flow.line.max(super::sizing::advance(&node.style));
@@ -426,6 +430,21 @@ pub(super) fn text(
         }
     }
     Ok(lines)
+}
+/** A collapsible space an earlier run ended with stays before preserved text: only a collapsible
+ * space removes a collapsible space before it, and a preserved one is not (white-space-processing
+ * -031's `X ` then `<pre> X` keeps both spaces). */
+fn pending_space(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+) -> EngineResult<()> {
+    if flow.space == Some(true) && started(flow) {
+        let face = super::sizing::face_for(&node.style, Some(" "));
+        flow.cursor += context.measure(" ", face)? + node.style.word_spacing;
+        flow.space = Some(false);
+    }
+    Ok(())
 }
 /** One piece of preserved text between break opportunities, after Blink's
  * InlineItemsBuilder: a word (with, under `break-spaces`, the first space after it, since a

@@ -366,7 +366,9 @@ pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face 
     } else {
         style.font_weight
     };
-    let web = super::select_font(&style.font_families, weight, style.font_style, None);
+    // CSS Fonts' first available font must cover the space; a face whose unicode-range leaves
+    // it out never sets `ex` or `ch` (ex-unit-004).
+    let web = super::select_font(&style.font_families, weight, style.font_style, Some(' '));
     crate::platform::Face {
         size: style.font_size,
         weight: web.map_or(weight, |(_, clamped)| clamped),
@@ -380,6 +382,14 @@ pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face 
         spacing: 0.0,
         italic: style.font_style != crate::document::FontStyle::Normal,
         autospace: false,
+        // Upright vertical text measures `ch` by the "0"'s vertical advance (CSS Values 6.1.1).
+        upright: match style.vertical_writing
+            && !style.writing_sideways
+            && style.text_orientation == 1
+        {
+            true => crate::platform::upright::UPRIGHT,
+            false => crate::platform::upright::TURNED,
+        },
     }
 }
 /** The current face's advance of `sample` per em, or None outside the cascade. */

@@ -809,11 +809,14 @@ fn place(
             heights: &heights,
             span: (x0 + spacing, total),
         };
-        let rect = [lefts[slot.column], tops[slot.row], span_width(slot), height];
+        // In a right-to-left table a spanning cell starts at its last column, the leftmost.
+        let last = (slot.column + slot.columns - 1).min(lefts.len() - 1);
+        let left = lefts[if grid.rtl { last } else { slot.column }];
+        let rect = [left, tops[slot.row], span_width(slot), height];
         parts::paint_under(grid, &geometry, slot, rect, items);
         let start = items.len();
         let bounds = BorderBox {
-            x: lefts[slot.column],
+            x: left,
             y: tops[slot.row],
             width: span_width(slot),
             height: Some(height),

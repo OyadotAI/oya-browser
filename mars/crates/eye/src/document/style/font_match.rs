@@ -72,6 +72,8 @@ const GENERIC: [&str; 12] = [
     "emoji",
 ];
 
+/** The text a box without any stands for when only its font's metrics are wanted. */
+const METRIC_SAMPLE: &str = "x";
 /// The files the document's visible text needs, in document order and within FONT_FILES: for
 /// each text node the first listed family that has faces, then per character the face nearest
 /// the node's style and weight among those covering it. A face whose `local()` font is
@@ -85,11 +87,15 @@ pub fn font_requests(document: &Document) -> Vec<FontRequest> {
         .map(|font| font.face)
         .collect();
     let mut wanted: Vec<usize> = Vec::new();
+    // A page whose lengths measure its fonts (`ex`, `ch`, `ic`, `cap`) needs them even on boxes
+    // without text (border-top-width-080's `1ex` border in an empty Ahem div).
+    let measured = document.formatting.font_metrics;
     for node in document.nodes.iter().filter(|node| !node.hidden()) {
-        let text = node.text.trim();
-        if text.is_empty() {
-            continue;
-        }
+        let text = match node.text.trim() {
+            "" if measured => METRIC_SAMPLE,
+            "" => continue,
+            text => text,
+        };
         let Some(family) = first_family(&node.style.font_families, faces.iter().map(|f| &f.family))
         else {
             continue;

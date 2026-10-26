@@ -96,7 +96,7 @@ fn excluded(node: &Node) -> bool {
  * css-sizing-4's automatic minimum (`min-width: auto` and visible overflow). */
 fn definite_widths(node: &Node, raw: IntrinsicWidths, width: f64) -> IntrinsicWidths {
     let style = &node.style;
-    if style.overflow != crate::document::Overflow::Visible {
+    if super::super::flex::scroll_container(node) {
         // ponytail: Blink's widths are the ratio width here too, but Eye's grid sizes auto
         // tracks from them where Blink's scroll-container item contributes zero
         // (grid-aspect-ratio-027); keep the content's until grid takes that minimum.

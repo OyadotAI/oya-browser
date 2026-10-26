@@ -252,3 +252,37 @@ fn definite_body_height_sets_the_document_height() {
     let display = render(&document, 800.0).unwrap();
     assert_eq!(display.height, 10000.0);
 }
+
+/** A `<col>` inside an open `<colgroup>` stays in it, as HTML's "in column group" mode keeps
+it; clearing back to the table closed the group and shifted its columns. */
+#[test]
+fn col_stays_inside_its_colgroup() {
+    let document = parse(
+        "<table><colgroup span=2></colgroup><colgroup><col id=c></colgroup>\
+         <tr><td></table>",
+    )
+    .unwrap();
+    let col = document.nodes.iter().find(|n| n.html_id == "c").unwrap();
+    let parent = col
+        .parent
+        .and_then(|p| document.nodes.iter().find(|n| n.local_id == p));
+    assert_eq!(parent.unwrap().tag, "colgroup");
+}
+
+/** In a right-to-left table a spanning cell starts at its last (leftmost) column, so it stays
+inside the table. */
+#[test]
+fn rtl_spanning_cell_stays_inside_its_table() {
+    let document = styled(
+        "<table id=t dir=rtl style='border-spacing:0'><tr><td id=s colspan=2 \
+         style='padding:0'></td></tr><tr><td style='width:10px;padding:0'></td>\
+         <td style='width:10px;padding:0'></td></tr></table>",
+    );
+    let display = render(&document, 800.0).unwrap();
+    let (tx, _, tw) = spot(&document, &display, "t");
+    let (sx, _, sw) = spot(&document, &display, "s");
+    assert!(
+        sx >= tx && sx + sw <= tx + tw + 0.01,
+        "{sx}+{sw} in {tx}+{tw}"
+    );
+}

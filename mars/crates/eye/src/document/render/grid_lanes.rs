@@ -492,6 +492,27 @@ pub(super) fn explicit_justify_stretch(
     }
 }
 
+/** Where content distribution (`align-content` for column lanes, `justify-content` for row
+ * lanes, with its `safe` flag) puts a stack `total` long in `extent`: its start and end
+ * offsets. `safe` packs an overflowing stack at its start, the end edge under fill-reverse;
+ * under `normal` a fill-reverse stack still ends at the container's end. */
+fn stack_block(
+    style: &crate::document::ComputedStyle,
+    (content, safe): (JustifyContent, bool),
+    (extent, total): (f64, f64),
+) -> (f64, f64) {
+    if content == JustifyContent::Stretch {
+        return (0.0, extent);
+    }
+    let (lead, _) = super::super::flex_layout::justification(content, extent - total, 1, false);
+    let lead = match (safe && extent < total, style.grid_lanes_fill_reverse) {
+        (true, true) => extent - total,
+        (true, false) => 0.0,
+        _ => lead,
+    };
+    (lead, lead + total)
+}
+
 /** Whether an item's size in an axis may stretch: it is `auto` there, with no aspect ratio, no
  * `auto` margin and no replaced content (css-align-3 `stretch`). */
 fn stretchable(child: &Node) -> bool {
@@ -633,24 +654,11 @@ pub(super) fn children(
     let extent = inner.definite.unwrap_or(total);
     // `align-content` places the whole stack in a taller container; under `normal` a
     // fill-reverse stack still starts from the container's end.
-    let normal = style.align_content == JustifyContent::Stretch;
-    let (lead, _) =
-        super::super::flex_layout::justification(style.align_content, extent - total, 1, false);
-    // `safe` packs an overflowing stack at its start instead: the end edge under fill-reverse.
-    let lead = if style.content_safe[0] && extent < total {
-        if style.grid_lanes_fill_reverse {
-            extent - total
-        } else {
-            0.0
-        }
-    } else {
-        lead
-    };
-    let (lead, end) = if normal {
-        (0.0, extent)
-    } else {
-        (lead, lead + total)
-    };
+    let (lead, end) = stack_block(
+        style,
+        (style.align_content, style.content_safe[0]),
+        (extent, total),
+    );
     for (index, (child, column, span, top, width, height)) in plan.into_iter().enumerate() {
         let space = running.alignment_space(index, column, span, extent, stack_gap);
         let shift = stacking_shift(stacking(child), space, style.grid_lanes_fill_reverse);
@@ -959,6 +967,9 @@ fn rows(
         .map(|&(child, row, span, _, width, height)| (child, Some(row), span, width, height))
         .collect::<Vec<_>>();
     let shims = lane_shims(context, (style, &defs), &landed, |lane| lane.1)?;
+    let total = (running.extent() - stack_gap).max(0.0);
+    let content = (style.justify_content, style.content_safe[1]);
+    let (lead, end) = stack_block(style, content, (inner.width, total));
     for (index, (child, row, span, left, width, height)) in plan.into_iter().enumerate() {
         // A row subgrid takes the rows it spans as its own (css-grid-3 subgrids), and their
         // line names unless it was auto-placed.
@@ -1000,10 +1011,10 @@ fn rows(
             };
         // fill-reverse stacks from the end edge, the item's margin box mirrored.
         let x = along
-            + if from_right {
-                inner.x + inner.width - left - width - margins[1]
-            } else {
-                inner.x + left + margins[3]
+            + match (from_right, style.rtl) {
+                (true, false) => inner.x + end - left - width - margins[1],
+                (true, true) => inner.x + inner.width - left - width - margins[1],
+                (false, _) => inner.x + lead + left + margins[3],
             };
         let mut target = Flow::new(x, y, width);
         target.definite = Some((area - margins[0] - margins[2]).max(0.0));

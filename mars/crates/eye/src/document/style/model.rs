@@ -309,6 +309,10 @@ pub struct ComputedStyle {
     /// floats (IANA's header grew around its floated logo and navigation in Chromium).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub flow_root: bool,
+    /// `margin-trim` in the block axis: [block-start, block-end]. A block container drops the
+    /// margins of children adjoining that edge of its content box.
+    #[serde(default, skip_serializing_if = "default")]
+    pub margin_trim: [bool; 2],
     /// The CSS table part `display` names; `None` for every other display.
     #[serde(skip_serializing_if = "default")]
     pub table_box: TableBox,
@@ -654,6 +658,13 @@ pub struct ComputedStyle {
     /// Inherited: `sideways-rl` or `sideways-lr`, whose dominant baseline stays alphabetic.
     #[serde(default, skip_serializing_if = "default")]
     pub writing_sideways: bool,
+    /// Inherited `text-orientation`: 0 `mixed`, 1 `upright`, 2 `sideways`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub text_orientation: u8,
+    /// Used glyph orientation inside a vertical subtree's rotated layout (`platform::upright`
+    /// codes); vertical.rs sets it on the rotated copy only, so measurement stands CJK upright.
+    #[serde(default, skip_serializing_if = "default")]
+    pub glyphs_upright: u8,
     /// `unicode-bidi` (not inherited): which explicit embedding, override or isolate the
     /// element's text takes (render/bidi.rs `controls`); 0 is `normal`.
     #[serde(default, skip_serializing_if = "default")]
@@ -859,6 +870,7 @@ impl Default for ComputedStyle {
             display_contents: false,
             table_box: TableBox::None,
             flow_root: false,
+            margin_trim: [false; 2],
             grid_columns: GridTemplate::default(),
             grid_rows: GridTemplate::default(),
             grid_auto_rows: GridTemplate::default(),
@@ -959,6 +971,8 @@ impl Default for ComputedStyle {
             vertical_writing: false,
             writing_lr: false,
             writing_sideways: false,
+            text_orientation: 0,
+            glyphs_upright: 0,
             unicode_bidi: 0,
             central_baseline: false,
             counter_rotate: 0,

@@ -15,6 +15,10 @@ pub(super) struct Flow {
     pub bottom: f64,
     /** The adjoining bottom (or parent top) margin already counted in `y`, which the next block collapses with. */
     pub collapsible: f64,
+    /** The most negative margin in `collapsible`'s strut, tagged with the `collapsible` it was
+     * recorded for: a strut adjoins its largest positive and most negative margins (CSS 2.1
+     * 8.3.1), which one sum loses. Any other `collapsible` (a reset) means its own sign. */
+    pub negative: (f64, f64),
     /** Fragments on the current line, aligned when it finishes. */
     pub frags: Vec<super::line::Frag>,
     /** Empty inline boxes on the current line: they add their line-height to a line that has
@@ -53,6 +57,9 @@ pub(super) struct Flow {
     pub resolved: Option<f64>,
     /** The border top `block_top` last computed, which `after_block` records on resolution. */
     last_top: std::cell::Cell<f64>,
+    /** `margin-trim: block-start` on this flow's container, until its first line or non-empty
+     * block: the children adjoining its start drop their margins. */
+    pub trim_start: bool,
     /** Floats placed while the margin strut was open, as (index in `floats`, item range, top
      * they were given); Blink positions them only once the BFC block offset resolves. */
     pub unpositioned: Vec<(usize, std::ops::Range<usize>, f64)>,
@@ -100,6 +107,7 @@ impl Flow {
             line: 0.0,
             bottom: y,
             collapsible: 0.0,
+            negative: (0.0, 0.0),
             frags: Vec::new(),
             phantoms: Vec::new(),
             statics: Vec::new(),
@@ -116,6 +124,7 @@ impl Flow {
             strut_open: false,
             resolved: None,
             last_top: std::cell::Cell::new(y),
+            trim_start: false,
             unpositioned: Vec::new(),
             adjoining: [false; 2],
             cleared_collapsing: false,
@@ -150,7 +159,8 @@ impl Flow {
     }
     /** The top of a block whose top margin collapses with the margin already counted above it. */
     pub fn block_top(&self, margin: f64) -> f64 {
-        let top = self.y - self.collapsible + collapse(self.collapsible, margin);
+        let margin = self.trimmed(margin);
+        let top = self.y - self.collapsible + join(self.strut(), margin).0;
         self.last_top.set(top);
         top
     }
@@ -160,11 +170,16 @@ impl Flow {
     }
     /** Advances past a block and remembers its bottom margin for collapsing with the next one. */
     pub fn after_block(&mut self, bottom: f64, margin: f64) {
+        self.after_block_strut(bottom, (margin, margin.min(0.0)));
+    }
+    /** As `after_block`, with the bottom strut as (total, most negative margin). */
+    pub fn after_block_strut(&mut self, bottom: f64, (margin, negative): (f64, f64)) {
+        self.trim_start = false;
         if std::mem::take(&mut self.strut_open) {
             self.resolved = Some(self.last_top.get());
         }
         self.y = bottom + margin;
-        self.collapsible = margin;
+        self.set_strut((margin, negative));
         self.bottom = self.bottom.max(self.y);
         self.cleared_collapsing = false;
     }
@@ -173,6 +188,7 @@ impl Flow {
         if self.cursor > 0.0 || self.line > 0.0 || !self.frags.is_empty() {
             // A line box resolves an open margin strut where it stands.
             self.strut_open = false;
+            self.trim_start = false;
             let aligned = super::line::finish(self);
             self.y += self.line.max(aligned);
             if let Some(tail) = &mut self.tail {
@@ -285,9 +301,34 @@ pub(super) fn ellipsis_owner(node: &Node) -> Option<usize> {
     let clips = node.style.overflow != crate::document::style::Overflow::Visible;
     (node.style.text_overflow_ellipsis && clips).then_some(node.local_id)
 }
-/** CSS 2.1 margin collapsing: the largest positive margin plus the most negative one. */
-pub(super) fn collapse(a: f64, b: f64) -> f64 {
-    a.max(b).max(0.0) + a.min(b).min(0.0)
+/** A margin strut `(total, most negative)` joined with one more margin: the largest positive
+ * margin plus the most negative one (CSS 2.1 8.3.1). abspos-022's 2, -4, 0, 14, -4 and 2px
+ * margins collapse to 10px, where pairwise sums gave 8. */
+pub(super) fn join((total, negative): (f64, f64), margin: f64) -> (f64, f64) {
+    let positive = (total - negative).max(0.0).max(margin);
+    let negative = negative.min(margin.min(0.0));
+    (positive + negative, negative)
+}
+impl Flow {
+    /** The open strut as (total, most negative margin). */
+    pub fn strut(&self) -> (f64, f64) {
+        let (tagged, negative) = self.negative;
+        if tagged == self.collapsible {
+            (self.collapsible, negative)
+        } else {
+            (self.collapsible, self.collapsible.min(0.0))
+        }
+    }
+    /** A child's margin as this flow's `margin-trim: block-start` leaves it: zero while the
+     * child still adjoins the container's start. */
+    pub fn trimmed(&self, margin: f64) -> f64 {
+        if self.trim_start { 0.0 } else { margin }
+    }
+    /** Records a strut as `collapsible` and its most negative margin. */
+    pub fn set_strut(&mut self, (total, negative): (f64, f64)) {
+        self.collapsible = total;
+        self.negative = (total, negative);
+    }
 }
 /** Items, document height, body decoration, and whether a bound cut layout short. */
 pub(super) type Laid = (
@@ -398,6 +439,7 @@ fn layout_once(
         .map_or(flow.bottom.max(flow.y), |height| y + height);
     flow.bottom = flow.bottom.max(flow.floats_bottom());
     let truncated = context.exhausted();
+    context.body_block = positioned_body_block(body, [x, y, width], content_end);
     let positioned = match super::positioned::place(
         &mut context,
         &mut items,
@@ -439,6 +481,24 @@ fn layout_once(
     let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
     let decoration = super::body::decoration(document, x, top, width, end);
     Ok((items, height, decoration, context.exhausted()))
+}
+/** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
+and ends at `end`; None for a static body, whose top-level absolute boxes use the viewport. */
+fn positioned_body_block(
+    body: &crate::document::ComputedStyle,
+    [x, y, width]: [f64; 3],
+    end: f64,
+) -> Option<[f64; 4]> {
+    if body.position == crate::document::Position::Static && body.transform.is_none() {
+        return None;
+    }
+    let [pt, pr, pb, pl] = body.padding;
+    Some([
+        x - pl,
+        y - pt,
+        width + pl + pr,
+        (end - y).max(0.0) + pt + pb,
+    ])
 }
 /** Where the body's border box starts (`side` 0) or ends (`side` 2) when the margin on that side
 collapses with its first or last in-flow child's (no border or padding between them, and an
@@ -532,8 +592,10 @@ pub(super) fn node_layout(
         // added it, so Google's "Day: <a inline-block>" ran together.
         // The white space is the parent's text, so it takes the parent's font: under
         // `font-size: 0` it has no width (table-vertical-align-baseline-009).
+        // A top-level box's white space is the body's.
         let parent = node.parent.and_then(|parent| context.node(parent).ok());
-        let style = parent.map_or(&node.style, |parent| &parent.style);
+        let body = &context.document.formatting.body.style;
+        let style = parent.map_or(body, |parent| &parent.style);
         let face = super::sizing::face_for(style, Some(" "));
         flow.cursor += context.measure(" ", face)?;
         flow.space = Some(false);
@@ -559,10 +621,30 @@ fn static_position(flow: &Flow, node: &Node, space: f64) -> (f64, f64) {
         // A block-level box starts at the content edge: floats shorten lines, not blocks
         // (CSS2 abspos-028).
         (false, true) => (flow.x, flow.y),
+        (false, false) if flow.cursor == 0.0 && flow.frags.is_empty() => {
+            (empty_line_start(flow, left, width), flow.y)
+        }
         (false, false) => (flow.left() + flow.cursor + space, flow.y),
         (true, true) if flow.cursor > 0.0 => (flow.x + flow.width, flow.y + flow.line),
         (true, true) => (flow.x + flow.width, flow.y),
+        (true, false) if flow.cursor == 0.0 && flow.frags.is_empty() => {
+            (empty_line_start(flow, left, width), flow.y)
+        }
         (true, false) => (left + width - flow.cursor - space, flow.y),
+    }
+}
+/** Where an inline-level box alone on a line starts: the line's start edge (its right one in a
+right-to-left block, where the box ends there) moved by its `text-align`, as the empty line is
+aligned in the room floats leave (inline-level-absolute-in-block-level-context-002, -008).
+Content that later joins the line moves it again in `line::place_statics`. */
+fn empty_line_start(flow: &Flow, left: f64, width: f64) -> f64 {
+    use super::line::Align;
+    match flow.align.last {
+        Align::Center => left + width / 2.0,
+        Align::Right => left + width,
+        Align::Left => left,
+        Align::Justify(_) if flow.rtl => left + width,
+        Align::Justify(_) => left,
     }
 }
 /** Forced flex border boxes bypass authored sizing, while ordinary flow preserves its cursor. */
@@ -592,7 +674,7 @@ fn dispatch(
         if flow.rtl {
             context.mark_static_end(node.local_id);
         }
-        if inline_level(node) && !flow.frags.is_empty() {
+        if inline_level(node) {
             flow.statics
                 .push((node.local_id, flow.frags.len(), flow.y, space));
         }
@@ -724,7 +806,7 @@ pub(super) fn block(
         flow.collapsible = 0.0;
         flow.placed_at(clear);
     }
-    let above = (flow.y - flow.collapsible, flow.collapsible);
+    let above = (flow.y - flow.collapsible, flow.strut());
     let mut y = forced
         .map(|bounds| bounds.y)
         .or(cleared)
@@ -811,12 +893,14 @@ pub(super) fn block(
     let through_top = collapses && style.padding[0] == 0.0 && sides[0] == 0.0;
     if through_top {
         // A first child's top margin collapses through a parent with no top padding or border.
-        inner.collapsible = y - flow.y + flow.collapsible;
+        let joined = join(flow.strut(), style.margin[0]);
+        inner.set_strut((y - flow.y + flow.collapsible, joined.1));
         inner.strut_open = true;
         if flow.strut_open {
             inner.adjoining = flow.adjoining;
         }
     }
+    inner.trim_start = style.margin_trim[0];
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
     if style.display_grid {
@@ -850,6 +934,9 @@ pub(super) fn block(
         super::first_line_layout::close(context, line);
     }
     inner.newline();
+    if style.margin_trim[1] {
+        trim_end(&mut inner);
+    }
     super::line::settle(context, &mut inner, items, index + 1)?;
     super::line::trim_end(&mut inner, items, style.text_box_trim[1]);
     super::line_clamp::clamp(context, node, items, index, &mut inner)?;
@@ -884,6 +971,7 @@ pub(super) fn block(
         && !inner.cleared_collapsing
         && inner.bottom <= inner.y;
     let trailing = if through { inner.collapsible } else { 0.0 };
+    let trailing_strut = if through { inner.strut() } else { (0.0, 0.0) };
     let natural =
         (inner.bottom - trailing - y + style.padding[2] + sides[2]).max(vertical_edges(node));
     let natural = super::sizing::contained_height(node, natural);
@@ -906,7 +994,11 @@ pub(super) fn block(
     let height = super::sizing::clamp_stretch(node, height, stretch);
     // Blink's FinishLayout: a block size other than the intrinsic one (min-height grew it, or
     // max-height cut it) separates the last child's bottom margin, which is then dropped.
-    let trailing = if height == natural { trailing } else { 0.0 };
+    let trailing_strut = if height == natural {
+        trailing_strut
+    } else {
+        (0.0, 0.0)
+    };
     items[index].height = height;
     if forced.is_none() {
         // Blink's UpdateTextBoxTrim: any in-flow block takes the first formatted line, and
@@ -931,24 +1023,42 @@ pub(super) fn block(
         flow.y = y + height;
         flow.collapsible = 0.0;
         flow.bottom = flow.bottom.max(flow.y);
-    } else if height == 0.0 {
-        // An empty block's own top and bottom margins collapse with the ones around it.
+    } else if height == 0.0 && !fresh {
+        // An empty block's own top and bottom margins collapse with the ones around it; a new
+        // formatting context's never collapse through it (CSS 2.1 8.3.1).
         // With clearance its border edge sits at the floats' bottom and the strut before the
         // clearance is separated: the margins restart at its own top margin edge (Blink's
         // ComputeInflowPosition for a self-collapsing cleared child).
         let (base, previous) = match cleared {
-            Some(clear) => (clear - style.margin[0], 0.0),
+            Some(clear) => (clear - style.margin[0], (0.0, 0.0)),
             None => above,
         };
-        let combined = collapse(collapse(previous, style.margin[0]), style.margin[2]);
-        flow.y = base + combined;
-        flow.collapsible = combined;
+        // Children whose margins collapsed through it already joined its top margin; else its
+        // own top and bottom margins join the strut before it.
+        let own = [flow.trimmed(style.margin[0]), flow.trimmed(style.margin[2])];
+        let combined = if through_top && through && cleared.is_none() && !style.margin_trim[1] {
+            join(trailing_strut, own[1])
+        } else {
+            join(join(previous, own[0]), own[1])
+        };
+        flow.y = base + combined.0;
+        flow.set_strut(combined);
         flow.bottom = flow.bottom.max(flow.y);
         flow.cleared_collapsing |= cleared.is_some();
     } else {
-        flow.after_block(y + height, collapse(style.margin[2], trailing));
+        flow.after_block_strut(y + height, join(trailing_strut, style.margin[2]));
     }
     Ok(())
+}
+/** `margin-trim: block-end`: the margins of the children adjoining the container's end are
+ * dropped, so its content ends at the last child's border edge (css-box-4). */
+fn trim_end(inner: &mut Flow) {
+    let (total, _) = inner.strut();
+    if total != 0.0 && inner.bottom == inner.y {
+        inner.y -= total;
+        inner.bottom = inner.y;
+    }
+    inner.set_strut((0.0, 0.0));
 }
 /** Blink's HandleNewFormattingContext abort: a formatting-context root with a top margin,
  * met while floats adjoin the open margin strut, is first tried with that margin collapsing
@@ -1194,6 +1304,7 @@ pub(super) fn box_item(
         letter_spacing: face.spacing,
         word_spacing: node.style.word_spacing,
         autospace: face.autospace,
+        upright: face.upright,
         underline: !node.style.text_decoration_none
             && (node.style.underline || (node.tag == "a" && node.href.is_some())),
         strikethrough: !node.style.text_decoration_none && node.style.strikethrough,
@@ -1201,6 +1312,7 @@ pub(super) fn box_item(
         object_fit: crate::document::style::ObjectFit::Fill,
         object_position: super::display::default_object_position(),
         content_box: None,
+        overflow_visible: false,
         mask: None,
         border_image: None,
         background_clip: background_insets(node, node.style.background_clip),

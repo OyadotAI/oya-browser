@@ -42,6 +42,7 @@ pub(super) fn face(item: &DisplayItem) -> Face {
         spacing: item.letter_spacing,
         italic: item.italic,
         autospace: item.autospace,
+        upright: crate::platform::upright::TURNED,
     }
 }
 

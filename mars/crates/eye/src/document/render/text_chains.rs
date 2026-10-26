@@ -186,6 +186,7 @@ fn face(item: &DisplayItem) -> Face {
         spacing: item.letter_spacing,
         italic: item.italic,
         autospace: item.autospace,
+        upright: item.upright,
     }
 }
 /** A run's key: its item's identity and its line's position. */

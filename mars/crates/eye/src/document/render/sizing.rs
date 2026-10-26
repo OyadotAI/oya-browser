@@ -75,6 +75,10 @@ pub(super) struct LayoutContext<'a> {
     /** The viewport (width, height): the initial containing block, whose height is the room
     an orthogonal (vertical) flow gets when its container's height is not definite. */
     pub viewport: (f64, f64),
+    /** The body's padding box `[x, y, width, height]` when the body is positioned: the
+    containing block of top-level absolute boxes instead of the viewport (CSS2 abspos-009). The
+    body is formatting data, not a node, so layout records it before placing them. */
+    pub body_block: Option<[f64; 4]>,
     /** The column flex item being placed whose flexed height is not definite (Blink's
     `IsInitialBlockSizeIndefinite`): its percentage-height children resolve as `auto`. */
     pub indefinite_item: Option<usize>,
@@ -116,6 +120,7 @@ impl<'a> LayoutContext<'a> {
             content_heights: BTreeMap::new(),
             inline_edges: BTreeMap::new(),
             viewport: (0.0, 0.0),
+            body_block: None,
             indefinite_item: None,
             static_end: std::collections::BTreeSet::new(),
             first_letter: None,
@@ -636,6 +641,7 @@ pub(super) fn face_for(style: &crate::document::ComputedStyle, text: Option<&str
         spacing: style.letter_spacing,
         italic: style.font_style != crate::document::FontStyle::Normal,
         autospace: style.text_autospace,
+        upright: style.glyphs_upright,
     }
 }
 /// Distinct faces whose native metrics are cached; the cache resets rather than grow past this.
