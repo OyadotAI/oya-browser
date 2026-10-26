@@ -306,3 +306,23 @@ fn source_change_after_adoption_still_rejects_the_old_backend_reply() {
     .unwrap();
     assert_eq!(console(&finished), ["3"]);
 }
+
+/** decode() resolves when the image loads and rejects with an EncodingError when it fails or
+has no source; one for a finished image settles at once. Image components wait on it. */
+#[test]
+fn decode_settles_with_the_image() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.src='/one.png';i.decode().then(()=>console.log('decoded',i.naturalWidth),e=>console.log('rejected',e.name));\
+         new Image().decode().catch(e=>console.log('no source',e.name));",
+    );
+    assert_eq!(console(&loaded), ["no source EncodingError"]);
+    let response = reply(&loaded, Some((4, 3)));
+    let finished = deliver(&sources, loaded.state, vec![response]);
+    assert_eq!(console(&finished), ["decoded 4"]);
+    let (sources, loaded) = load(
+        "const i=new Image();i.src='/bad.png';i.decode().catch(e=>console.log('failed',e.type||e.name));",
+    );
+    let response = reply(&loaded, None);
+    let failed = deliver(&sources, loaded.state, vec![response]);
+    assert_eq!(console(&failed), ["failed error"]);
+}

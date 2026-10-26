@@ -63,6 +63,56 @@ pub(super) fn install(b: &mut Builder, prototype: u32) {
     for name in ["complete", "naturalWidth", "naturalHeight"] {
         b.getter(prototype, name, get);
     }
+    b.method(prototype, "decode", 0, decode);
+}
+
+/** `img.decode()`: a promise that resolves once the image has loaded and rejects with an
+EncodingError when it has no source or fails. Image components (YouTube's thumbnails) wait on
+it before showing a picture, so without it they never showed one. */
+fn decode(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = dom::this_node(vm, &call)?;
+    if vm.page.tag(node) != "img" {
+        return Err(vm.type_error("Illegal invocation"));
+    }
+    let promise = vm.new_promise()?;
+    let (resolve, reject) = vm.resolving_functions(promise)?;
+    let state = vm.page.state.images.get(&node).cloned();
+    let settled = match &state {
+        _ if !has_source(&mut vm.page, node) => Some(false),
+        Some(state) if state.complete => Some(state.dimensions.is_some()),
+        _ => None,
+    };
+    match settled {
+        Some(true) => {
+            vm.call(JsValue::Object(resolve), JsValue::Undefined, Vec::new())?;
+        }
+        Some(false) => {
+            let error =
+                match vm.dom_exception("EncodingError", "The source image cannot be decoded.") {
+                    Thrown::Value(error) => error,
+                    fatal => return Err(fatal),
+                };
+            vm.call(JsValue::Object(reject), JsValue::Undefined, vec![error])?;
+        }
+        None => {
+            // Settled by the image's own load or error event, whichever comes first.
+            let add = vm.get(
+                &call.this,
+                &crate::v9::vm::heap::Key::from("addEventListener"),
+            )?;
+            for (event, settle) in [("load", resolve), ("error", reject)] {
+                let options = vm.new_object()?;
+                vm.put(options, "once", JsValue::Boolean(true))?;
+                let args = vec![
+                    JsValue::string(event)?,
+                    JsValue::Object(settle),
+                    JsValue::Object(options),
+                ];
+                vm.call(add.clone(), call.this.clone(), args)?;
+            }
+        }
+    }
+    Ok(JsValue::Object(promise))
 }
 
 /** Reflect the last admitted decode, or the specified HTML initial state before a request starts. */

@@ -878,8 +878,10 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.pinning = false;
 }
 
-/** Whether any count has reached half its bound, where an overestimate could fail a check that
-an exact count would pass. */
+/** Whether any count has reached three quarters of its bound. Counts are exact when a request
+starts (every one ends collected or recounted), so this only collects garbage before a script
+could run into a bound mid-request; at half, YouTube's 525,000 live properties of 1,048,576
+collected on every request. */
 fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
     [
         (counts.objects, limits.objects),
@@ -890,7 +892,7 @@ fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
         (counts.bindings, limits.bindings),
     ]
     .iter()
-    .any(|(count, limit)| count.saturating_mul(2) >= *limit)
+    .any(|(count, limit)| count.saturating_mul(4) >= limit.saturating_mul(3))
 }
 
 /** Collect, validate and package the request's outcome. */
