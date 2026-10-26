@@ -1394,12 +1394,14 @@
       ],
       "id": "v8-097",
       "size": 4,
-      "progress": "Unchanged original passes;11 new public elision rules and125 selected iterator/profiler/access/host controls pass. Elisions avoid only Get(value), preserving native next/index access, cleanup and saved instruction positions.",
+      "progress": "All four unchanged original cases pass in the full group probe. Eleven public elision rules and125 selected iterator/profiler/access/host controls pass; saved instruction positions and native index getters are preserved.",
       "validation": {
-        "report": "/private/tmp/mars-v9-elision-upstream-dev/results-mjsunit.json",
+        "report": "/private/tmp/mars-v9-group097-all-upstream-dev/results-mjsunit.json",
         "public_report": "/private/tmp/mars-v9-elisions-profiler-dev.log",
         "public_pass": 125,
-        "public_fail": 0
+        "public_fail": 0,
+        "pass": 4,
+        "fail": 0
       }
     },
     {
@@ -5109,7 +5111,12 @@
       "family": "collection_iterator_close",
       "batch": "iterator_protocol",
       "group": "v8-097",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at array_iterator            script 3 19:3\n    at                           script 3 6:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at array_iterator            script 3 19:3\n    at                           script 3 6:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-group097-all-upstream-dev/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-crbug-1360736.js": {
       "triage_partition": "last111",
@@ -5125,7 +5132,12 @@
       "family": "collection_iterator_close",
       "batch": "iterator_protocol",
       "group": "v8-097",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 20, column 16: Uncaught TypeError: Cannot read properties of undefined (reading 'next')."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 20, column 16: Uncaught TypeError: Cannot read properties of undefined (reading 'next').",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-group097-all-upstream-dev/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-crbug-1417495.js": {
       "triage_partition": "last111",
@@ -5310,7 +5322,12 @@
       "family": "collection_streaming_iteration",
       "batch": "iterator_protocol",
       "group": "v8-097",
-      "baseline_error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144."
+      "baseline_error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-group097-all-upstream-dev/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-crbug-808192.js": {
       "triage_partition": "last111",
@@ -5482,7 +5499,7 @@
       "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Failure: unreachable\n    at assertUnreachable         script 2 704:5\n    at Object.get value          script 3 10:9\n    at                           script 3 18:1.",
       "status": "verified",
       "validation": {
-        "report": "/private/tmp/mars-v9-elision-upstream-dev/results-mjsunit.json",
+        "report": "/private/tmp/mars-v9-group097-all-upstream-dev/results-mjsunit.json",
         "profile": "dev"
       }
     },
