@@ -498,3 +498,35 @@ fn dom_collections_are_iterable() {
         r#"{"classList":"a,b","entries":"[[0,\"a\"],[1,\"b\"]]","forEach":"0a,1b","children":2,"qsa":2,"byTag":2,"childNodes":2,"attributes":"class,data-x,style","style":"color","forms":0,"images":0}"#
     );
 }
+
+/** Element ids are not bounded like correlation ids: an empty id and one past 128 bytes parse,
+set from script, and leave the page running, as YouTube's do; the long one is still found. */
+#[test]
+fn empty_and_long_element_ids_are_accepted() {
+    let long = "x".repeat(300);
+    let source = format!(
+        "const d=document.createElement('div');document.body.append(d);d.id='';d.id='{long}';\
+         const e=document.createElement('p');e.setAttribute('id','');document.body.append(e);\
+         let r=[document.getElementById('{long}')===d,e.getAttribute('id'),d.id.length].join();"
+    );
+    assert_eq!(eval_extended(&source, "r"), "true,,300");
+}
+
+/** Run a script on the test page with the extended change log (scripts may set any attribute)
+and return a global, failing on any script failure. */
+fn eval_extended(source: &str, name: &str) -> String {
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.dom_level = mars_v9::DomLevel::Extended;
+    let execution = mars_v9::load_page(mars_v9::PageInput {
+        sources: &[source.to_string()],
+        document: common::page(),
+        storage: mars_v9::StorageState::default(),
+        host: &host,
+        environment: &environment,
+        modules: mars_v9::ModuleInput::NONE,
+    })
+    .expect("page loads");
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    common::global(&execution, name)
+}

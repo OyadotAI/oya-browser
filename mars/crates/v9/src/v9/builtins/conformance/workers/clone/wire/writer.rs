@@ -112,7 +112,7 @@ impl Writer<'_> {
     }
     /** Graph depth is independently bounded even if a malicious native caller bypassed the JS encoder. */
     fn atom(&mut self, atom: &Atom, depth: usize) -> Result<()> {
-        if depth > crate::constants::VM_CALL_DEPTH {
+        if depth > crate::constants::VM_NESTING_DEPTH {
             return Err(Failure::Limit);
         }
         match atom {

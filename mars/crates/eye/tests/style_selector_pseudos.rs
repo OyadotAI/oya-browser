@@ -144,3 +144,19 @@ fn popovers_are_hidden_until_opened() {
     );
     assert!(!hidden("<div id=t>plain</div>"));
 }
+
+/** Parsing keeps a page whose element has an empty or overlong id: the element gets an internal
+key, where refusing the id used to refuse the whole document. */
+#[test]
+fn empty_and_overlong_ids_parse() {
+    let long = "y".repeat(mars_core::constants::HTML_ID_BYTES + 1);
+    let document = parse(&format!(
+        "<div id=\"\">a</div><div id=\"{long}\">b</div><div id=t>c</div>"
+    ))
+    .unwrap();
+    let divs: Vec<_> = document.nodes.iter().filter(|n| n.tag == "div").collect();
+    assert_eq!(divs.len(), 3);
+    assert!(divs[0].html_id.starts_with('@'));
+    assert!(divs[1].html_id.starts_with('@'));
+    assert_eq!(divs[2].html_id, "t");
+}

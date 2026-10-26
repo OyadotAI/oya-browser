@@ -89,11 +89,11 @@ impl Vm<'_> {
             None => false,
         }
     }
-    /** The function a bound chain ends at, or None past VM_CALL_DEPTH hops (only forged state
+    /** The function a bound chain ends at, or None past VM_NESTING_DEPTH hops (only forged state
     holds a cycle; bind itself can only target an existing function). */
     fn unbound(&self, value: &JsValue) -> Option<JsValue> {
         let mut current = value.clone();
-        for _ in 0..=self.limits.frames {
+        for _ in 0..=crate::constants::VM_NESTING_DEPTH {
             match self.behavior(&current) {
                 Some(Behavior::Bound(target, ..)) => current = JsValue::Object(target),
                 _ => return Some(current),

@@ -216,7 +216,7 @@ impl ScriptDocument {
     fn validate_node(node: &ScriptNode, seen: &BTreeMap<usize, usize>) -> EngineResult<usize> {
         if node.local_id >= NODES
             || seen.contains_key(&node.local_id)
-            || node.html_id.len() > ID_BYTES
+            || node.html_id.len() > crate::constants::HTML_ID_BYTES
             || node
                 .parent
                 .is_some_and(|parent| !seen.contains_key(&parent))

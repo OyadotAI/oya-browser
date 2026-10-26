@@ -99,7 +99,7 @@ fn malformed_projection_identity_duplicates_parents_and_text_are_rejected() {
             1 => document.identity = "x".repeat(ID_BYTES + 1),
             2 => document.nodes[1].local_id = document.nodes[0].local_id,
             3 => document.nodes[0].parent = Some(1),
-            4 => document.nodes[1].html_id = "x".repeat(ID_BYTES + 1),
+            4 => document.nodes[1].html_id = "x".repeat(mars::constants::HTML_ID_BYTES + 1),
             _ => document.nodes[0].value = Some("x".repeat(TEXT_BYTES + 1)),
         }
         assert!(document.validate().is_err(), "case {case}");

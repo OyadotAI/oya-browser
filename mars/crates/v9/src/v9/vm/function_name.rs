@@ -89,9 +89,8 @@ impl Vm<'_> {
     }
     /** Actual string observation resolves logical wrapped boundaries under the existing call-depth bound. */
     pub(super) fn render_name_snapshot(&mut self, name: &FunctionName) -> Res<JsValue> {
-        let available = self
-            .limits
-            .frames
+        // V8 resolves a wrapped name by native recursion, so the chain gets the native bound.
+        let available = crate::constants::VM_NESTING_DEPTH
             .saturating_sub(self.frames.len() + self.native_depth);
         if name.wrapped as usize >= available && name.wrapped != 0 {
             return Err(self.range_error("Maximum call stack size exceeded"));

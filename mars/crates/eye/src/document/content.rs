@@ -1,7 +1,7 @@
 /** Static source text has independent byte bounds while native controls and writes stay small. */
 use super::{Document, Node, validate_text};
 use crate::{
-    constants::{DOCUMENT_DEPTH, ID_BYTES, NODES, STATIC_TEXT_NODE_BYTES, STATIC_TEXT_TOTAL_BYTES},
+    constants::{DOCUMENT_DEPTH, NODES, STATIC_TEXT_NODE_BYTES, STATIC_TEXT_TOTAL_BYTES},
     protocol::{EngineError, EngineResult},
 };
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ fn validate_structure(document: &Document) -> EngineResult<()> {
 /** Static text never relaxes initial field values, captions, metadata or decoded attributes. */
 fn validate_node(node: &Node) -> EngineResult<()> {
     validate_node_text(node, node.text.len())?;
-    if node.html_id.is_empty() || node.html_id.len() > ID_BYTES {
+    if node.html_id.is_empty() || node.html_id.len() > mars_core::constants::HTML_ID_BYTES {
         return Err(EngineError::invalid("Invalid document identifier."));
     }
     for value in [&node.value, &node.placeholder, &node.image_alt] {

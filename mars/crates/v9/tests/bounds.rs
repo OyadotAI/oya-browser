@@ -164,3 +164,23 @@ fn expression_and_statement_nesting_are_bounded_per_function() {
     );
     assert!(mars_v9::check(&split).is_ok());
 }
+
+/** Calls nest about as deep as in a browser, directly and through native callbacks, without
+overflowing V9's native stack: recursing through a native callback until the bound throws a
+catchable RangeError instead of crashing the engine. */
+#[test]
+fn deep_recursion_fits_the_call_stack() {
+    let depth = mars_v9::constants::VM_CALL_DEPTH - 100;
+    let source = format!(
+        "function d(n){{return n?1+d(n-1):0}}\
+         function m(n){{return n?[n].map(x=>m(x-1))[0]+1:0}}\
+         let over;try{{d({over})}}catch(e){{over=e instanceof RangeError}}\
+         let native;try{{m({over})}}catch(e){{native=e instanceof RangeError}}\
+         const r=[d({depth}),m(1000),over,native].join();",
+        over = mars_v9::constants::VM_CALL_DEPTH + 10,
+    );
+    assert_eq!(
+        common::eval(&source, "r"),
+        format!("{depth},1000,true,true")
+    );
+}

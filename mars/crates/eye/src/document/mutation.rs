@@ -164,7 +164,11 @@ fn derive(node: &mut Node, name: &str) {
     let value = node.attributes.get(name).cloned();
     let present = value.is_some();
     match name {
-        "id" => node.html_id = value.unwrap_or_else(|| format!("@{}", node.local_id)),
+        "id" => {
+            node.html_id = value
+                .filter(|id| !id.is_empty() && id.len() <= mars_core::constants::HTML_ID_BYTES)
+                .unwrap_or_else(|| format!("@{}", node.local_id));
+        }
         "href" if node.tag == "a" => {
             node.href = value.filter(|href| !super::markup::script_url(href))
         }

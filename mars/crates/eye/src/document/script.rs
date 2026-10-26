@@ -40,7 +40,12 @@ pub(super) fn project_node(first: &BTreeMap<&str, usize>, node: &Node) -> Script
         tag: node.tag.clone(),
         attributes,
         local_id: node.local_id,
-        html_id: node.attributes.get("id").cloned().unwrap_or_default(),
+        html_id: node
+            .attributes
+            .get("id")
+            .filter(|id| id.len() <= mars_core::constants::HTML_ID_BYTES)
+            .cloned()
+            .unwrap_or_default(),
         parent: node.parent,
         value: (["input", "textarea"].contains(&node.tag.as_str()) && !node.secret())
             .then(|| node.value.clone()),

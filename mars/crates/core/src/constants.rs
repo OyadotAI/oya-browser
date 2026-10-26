@@ -169,6 +169,11 @@ pub const JS_EVENT_RECORDS: usize = 64;
 pub const URL_BYTES: usize = 8 * 1024;
 /// Limits response correlation identifiers.
 pub const ID_BYTES: usize = 128;
+/// Bytes of an element's `id` that serve as its lookup key. Browsers bound ids only by memory;
+/// YouTube sets ids past ID_BYTES, and refusing them stopped every script on the page. An id that
+/// is empty or longer keeps its attribute but gets an internal key (`@<node>`), as an element
+/// without an id does.
+pub const HTML_ID_BYTES: usize = 4096;
 /// Absolute deadline for a complete HTTP exchange.
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(2);
 /// Covers child writes and reads, not just response reads; a second past SCRIPT_DEADLINE for
@@ -424,8 +429,13 @@ pub const LANGUAGE_TAG_BYTES: usize = 35;
 pub const SVG_PATH_SEGMENTS: usize = 1024;
 /** An SVG `use` may reference an element but never another `use`. */
 pub const SVG_USE_DEPTH: usize = 1;
-/// Bytecode frames one V9 request may nest; bundles recurse well past a few dozen levels.
-pub const VM_CALL_DEPTH: usize = 512;
+/// Bytecode frames one V9 request may nest, like a browser's call stack (Chrome's holds about ten
+/// thousand): YouTube's ad and result rendering recursed past 512 and its results never got
+/// their data. Frames live on V9's own stack; native recursion through them fits V9_STACK_BYTES.
+pub const VM_CALL_DEPTH: usize = 10_000;
+/// Nesting that recurses natively without a bytecode frame (bound-function chains, WebAssembly
+/// calls, structured-clone graphs), kept at the bound V8's native stack gives such chains.
+pub const VM_NESTING_DEPTH: usize = 512;
 /// Promise jobs and queued microtasks one page may hold at once.
 pub const VM_PENDING_JOBS: usize = 4096;
 /// Pending setTimeout, setInterval and requestAnimationFrame callbacks one page may hold;

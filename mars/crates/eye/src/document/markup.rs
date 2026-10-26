@@ -33,15 +33,15 @@ pub(super) fn node(
     if let Some(kind) = attributes.get_mut("type") {
         *kind = kind.to_ascii_lowercase();
     }
+    // An empty or overlong id keeps its attribute and gets the internal key, as in mutation.rs.
     let id = attributes
         .get("id")
+        .filter(|id| !id.is_empty() && id.len() <= mars_core::constants::HTML_ID_BYTES)
         .cloned()
         .unwrap_or_else(|| format!("@{local_id}"));
-    if id.is_empty()
-        || id.len() > ID_BYTES
-        || attributes
-            .get("onclick")
-            .is_some_and(|s| s.len() > SCRIPT_BYTES)
+    if attributes
+        .get("onclick")
+        .is_some_and(|s| s.len() > SCRIPT_BYTES)
     {
         return Err(syntax());
     }
