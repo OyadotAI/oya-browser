@@ -1,7 +1,7 @@
 /** Timers on the virtual clock: setTimeout, setInterval, requestAnimationFrame, queueMicrotask. */
 use super::Timer;
 use super::dom::native_name;
-use crate::constants::{ANIMATION_FRAME_MS, TIMER_MIN_DELAY_MS, VM_TIMERS};
+use crate::constants::{ANIMATION_FRAME_MS, TIMER_MIN_DELAY_MS, TIMER_SLICE, VM_TIMERS};
 use crate::protocol::EngineError;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::Job;
@@ -137,10 +137,12 @@ impl Vm<'_> {
                 _ => Some(due),
             })
     }
-    /** Run timers due by `now`, earliest first, up to `budget` callbacks; then set the clock to `now`. */
+    /** Run timers due by `now`, earliest first, up to `budget` callbacks or until TIMER_SLICE
+    has passed after the first; then set the clock to `now`. Timers left due run late, next. */
     pub fn run_due_timers(&mut self, now: f64, budget: usize) -> Res<usize> {
+        let started = std::time::Instant::now();
         let mut ran = 0;
-        while ran < budget {
+        while ran < budget && (ran == 0 || started.elapsed() < TIMER_SLICE) {
             let due = self
                 .page
                 .state

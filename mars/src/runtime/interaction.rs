@@ -212,6 +212,8 @@ impl Runtime {
         let step = self.script_step(&mut page, json!({"kind":"click","target":node.local_id}))?;
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
         let changed = self.settle_after_load(&mut page, deadline)? || step.changed;
+        // A click is input even when its effect comes later (a handler that only sets a timer).
+        page.scripting.wake();
         let result = if changed {
             self.finish_mutation(page)?
         } else {
@@ -370,9 +372,16 @@ impl Runtime {
         };
         self.navigate_submission(proposal)
     }
-    /** Expensive execution/layout occurs before the exact authority/commit boundary. */
+    /** Commit a change a person or agent made, and keep the page's timers awake for another
+    window, since they are interacting with it. */
     pub(super) fn finish_mutation(&mut self, mut page: Page) -> EngineResult<Value> {
         page.scripting.wake();
+        self.commit_mutation(page)
+    }
+    /** Expensive execution/layout occurs before the exact authority/commit boundary. Does not
+    wake the page: a background run that changed the document commits here, and waking would
+    keep a page that always mutates (YouTube) running scripts forever, starving input. */
+    pub(super) fn commit_mutation(&mut self, mut page: Page) -> EngineResult<Value> {
         page.revision = page
             .revision
             .checked_add(1)

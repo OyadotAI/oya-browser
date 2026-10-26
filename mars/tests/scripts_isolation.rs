@@ -62,8 +62,8 @@ fn a_throwing_script_stops_only_itself() {
     assert_eq!(text(&page, "a"), "one");
     assert_eq!(
         text(&page, "b"),
-        "b",
-        "the failing script's own change is rolled back"
+        "two",
+        "the failing script keeps what it did before it threw, as in browsers"
     );
     assert_eq!(text(&page, "c"), "three");
     assert_eq!(page["degraded"], json!(["scripts"]));

@@ -42,6 +42,8 @@ impl Runtime {
         let changed = self
             .settle_after_load(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
             || step.changed;
+        // A key press is input even when its effect comes later from a timer.
+        page.scripting.wake();
         let result = if changed {
             self.finish_mutation(page)?
         } else {

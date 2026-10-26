@@ -88,9 +88,9 @@ fn limits_are_not_catchable() {
     assert!(failure(&execution).unwrap().contains("V9 heap objects"));
 }
 
-/** A failed script rolls back alone; later scripts see only earlier successful ones. */
+/** A failed script keeps what it did before it threw, as in browsers, and later scripts run. */
 #[test]
-fn failing_scripts_roll_back_alone() {
+fn failing_scripts_keep_their_effects_and_later_scripts_run() {
     let sources = vec![
         "var a=1;".to_string(),
         "var b=2;throw 0;".to_string(),
@@ -107,7 +107,7 @@ fn failing_scripts_roll_back_alone() {
             .collect::<Vec<_>>(),
         [1]
     );
-    assert_eq!(common::global(&execution, "r"), "number,undefined");
+    assert_eq!(common::global(&execution, "r"), "number,number");
 }
 
 /** Saved state is validated: forged identities and oversized collections are refused. */

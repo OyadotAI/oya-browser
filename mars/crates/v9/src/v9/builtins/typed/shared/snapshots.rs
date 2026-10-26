@@ -47,6 +47,11 @@ fn canonical(heap: &Heap) -> EngineResult<BTreeMap<u64, SharedBuffer>> {
 pub(in crate::v9) fn initialize(vm: &mut Vm) -> EngineResult<()> {
     let agent = super::agent(vm);
     let snapshots = canonical(&vm.heap)?;
+    if snapshots.is_empty() {
+        // Nothing to reattach. The counts are already exact: `finish` leaves every state it
+        // builds collected or recounted, and a decoded heap recounts as it is read.
+        return Ok(());
+    }
     let mut stores = BTreeMap::new();
     for (id, snapshot) in snapshots {
         let buffer = if snapshot.restored() {

@@ -63,12 +63,17 @@ human and agent requests. Only the composition root chooses executables, fixture
 ownership and the optional capture directory.
 
 Fetch → parse → V9 load/event → document validate/apply → native display → wire budget validation
-→ authority recheck and atomic publication. Document and V9 operations are stateless over bounded
-values; each service keeps only content-addressed derivations of them that any request with the
-same content would recompute: V9 keeps compiled code by a SHA-256 of grammar, page offset and
-source text (CODE_CACHE_BYTES, least recently used first), and Eye keeps the parser state after a
-page's sheet list (the two most recent per thread), continuing it when a page's scripts append a
-sheet. Neither holds a page, a heap or anything a different text could reach. In the desktop, a
+→ authority recheck and atomic publication. Document operations are stateless over bounded
+values. Eye keeps only the parser state after a page's sheet list (the two most recent per
+thread), continuing it when a page's scripts append a sheet. V9 keeps compiled code by a SHA-256
+of grammar, page offset and source text (CODE_CACHE_BYTES, least recently used first), a page's
+classic sources and module input by digest, and each page's script state (heap, globals,
+platform state) by token, so a step sends a token instead of the heap (25 MB on YouTube). Per
+page it keeps only the committed state, the last step's base and that step's result, for at most
+RESIDENT_PAGES pages; the coordinator keeps the state's summary (listeners, detached nodes,
+images) and the token. A state V9 built itself skips re-validation; one decoded from a frame is
+always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
+coordinator reloads the page (a POST result is never replayed; its scripts stop). In the desktop, a
 navigation shows its parsed and styled page in the window before its scripts run (`window.inspect`
 reports it with `settling`); the committed page, history and the navigation's reply still wait
 for the scripts to settle, and a provisional page is never a candidate. Networking owns one expiring prepared connection. Transmission has its own authority

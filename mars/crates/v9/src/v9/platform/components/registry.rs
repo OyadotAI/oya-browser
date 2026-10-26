@@ -217,11 +217,10 @@ fn read_definition(
 fn upgrade_document(vm: &mut Vm, name: &str) -> Res<()> {
     let mut candidates = Vec::new();
     for node in vm.page.all_descendants(crate::v9::platform::HTML) {
-        let view = vm.page.view(node);
-        let matches = view.is_some_and(|view| {
-            view.tag == name || view.attributes.get("is").is_some_and(|is| is == name)
+        let matches = vm.page.with_element(node, |tag, attributes| {
+            tag == name || attributes.get("is").is_some_and(|is| is == name)
         });
-        if matches {
+        if matches == Some(true) {
             candidates.push(node);
         }
     }

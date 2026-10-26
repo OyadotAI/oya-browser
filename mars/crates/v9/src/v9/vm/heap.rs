@@ -311,9 +311,21 @@ pub(in crate::v9) struct Heap {
     shared_stores: FastMap<(u8, u64), usize>,
     /** Mutable shared graph bytes charged at the last native observation, independently of wrapper count. */
     shared_gc_units: FastMap<u64, usize>,
+    /** Objects and environments alive right after the last collection (0: never collected, as
+    for a state decoded from a frame); derived, never serialized. */
+    pub collected: usize,
 }
 
 impl Heap {
+    /** Whether the heap grew enough since its last collection to be worth collecting again:
+    GC_GROWTH_MIN entries, or a GC_GROWTH_DIVISOR-th of what was alive. Collecting after every
+    request of a large app (YouTube's half a million objects) costs a tenth of its time. */
+    pub fn grew_since_collection(&self) -> bool {
+        use crate::constants::{GC_GROWTH_DIVISOR, GC_GROWTH_MIN};
+        let live = self.objects.len() + self.envs.len();
+        self.collected == 0
+            || live > self.collected + GC_GROWTH_MIN.max(self.collected / GC_GROWTH_DIVISOR)
+    }
     /** Store a new object and count it. */
     pub fn insert(&mut self, object: Object) -> EngineResult<ObjectId> {
         let id = self.next_object;
@@ -713,6 +725,7 @@ impl<'de> Deserialize<'de> for Heap {
             counts: Counts::default(),
             shared_stores: FastMap::default(),
             shared_gc_units: FastMap::default(),
+            collected: 0,
         };
         heap.recount();
         Ok(heap)

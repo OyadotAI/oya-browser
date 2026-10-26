@@ -382,6 +382,71 @@ impl Code {
 }
 
 impl Code {
+    /** This code as compiled `delta` bytes further along the page. A script's code depends on
+    where it sits only through its page offsets (its site, span, positions and the sites its
+    closures and classes name), so moving them is the same code a fresh compile at the new
+    offset gives, without parsing again: YouTube's 10 MB bundle sits at a different offset on
+    every page, because the inline scripts before it differ. */
+    fn rebased(&self, delta: i64) -> Code {
+        let shift = |offset: u32| (i64::from(offset) + delta) as u32;
+        let site = |site: u32| (i64::from(site) + delta * i64::from(super::syntax::SITE_TAGS)) as u32;
+        Code {
+            site: site(self.site),
+            flags: self.flags,
+            strict: self.strict,
+            strict_ranges: self.strict_ranges.clone(),
+            name: self.name.clone(),
+            source: self
+                .source
+                .as_ref()
+                .map(|(text, base)| (text.clone(), (*base as i64 + delta) as usize)),
+            source_span: self.source_span.map(|(start, end)| (shift(start), shift(end))),
+            length: self.length,
+            ops: self
+                .ops
+                .iter()
+                .map(|op| match *op {
+                    Op::Closure(target) => Op::Closure(site(target)),
+                    Op::Class(target, derived) => Op::Class(site(target), derived),
+                    Op::ClassScope(offset) => Op::ClassScope(shift(offset)),
+                    other => other,
+                })
+                .collect(),
+            registers: self.registers,
+            env: self.env,
+            arguments: self.arguments.clone(),
+            strings: self
+                .strings
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    if self.privates.contains(&(index as u32)) {
+                        rebased_private(text, delta)
+                    } else {
+                        text.clone()
+                    }
+                })
+                .collect(),
+            privates: self.privates.clone(),
+            templates: self.templates.clone(),
+            positions: self
+                .positions
+                .iter()
+                .map(|(pc, pos)| {
+                    // A generated instruction has the default position, which stays put.
+                    let moved = *pos != Pos::default();
+                    (
+                        *pc,
+                        Pos {
+                            offset: if moved { shift(pos.offset) } else { pos.offset },
+                            ..*pos
+                        },
+                    )
+                })
+                .collect(),
+            caches: crate::v9::vm::shape::SiteCaches::new(self.strings.len()),
+        }
+    }
     /** Bytes this code holds, for the process cache's bound. */
     fn footprint(&self) -> usize {
         let strings = |strings: &[JsString]| strings.iter().map(|s| s.len() * 2).sum::<usize>();
@@ -429,12 +494,17 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
-        let key = cache::key(cache::Grammar::Script, offset, source);
+        let text = cache::text_key(cache::Grammar::Script, source);
+        let key = cache::at(&text, offset);
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
-                let unit = compile_script(&parse()?, Some((source, offset)))?;
+                let unit = match cache::elsewhere(&text) {
+                    Some((at, unit)) => Arc::new(unit.rebased(offset as i64 - at as i64)),
+                    None => compile_script(&parse()?, Some((source, offset)))?,
+                };
                 cache::put(key, unit.clone());
+                cache::remember(text, offset, key);
                 unit
             }
         };
@@ -948,5 +1018,100 @@ fn block_body(func: &Func) -> Option<&[Stmt]> {
     match &func.body {
         Body::Block(body) => Some(body),
         Body::Expr(_) => None,
+    }
+}
+
+/** A private name's key, `<class offset>:<name>`, for the class `delta` bytes further along. */
+fn rebased_private(key: &JsString, delta: i64) -> JsString {
+    let text = key.lossy();
+    match text.split_once(':') {
+        Some((offset, name)) if offset.parse::<i64>().is_ok() => {
+            let offset = offset.parse::<i64>().unwrap_or_default() + delta;
+            // Identifiers are whole code points, so the lossy text is exact.
+            JsString::from_units(format!("{offset}:{name}").encode_utf16().collect())
+                .unwrap_or_else(|_| key.clone())
+        }
+        _ => key.clone(),
+    }
+}
+
+#[cfg(test)]
+mod rebase_tests {
+    use super::{Code, compile_script};
+
+    /** Every field of `code` that a page can observe or the VM reads, as text to compare. */
+    pub(super) fn shape(code: &Code) -> String {
+        format!(
+            "{} {:?} {} {:?} {:?} {:?} {:?} {} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            code.site,
+            code.flags,
+            code.strict,
+            code.strict_ranges,
+            code.name,
+            code.source.as_ref().map(|(text, base)| (text.len(), *base)),
+            code.source_span,
+            code.length,
+            code.ops,
+            code.registers,
+            code.env,
+            code.arguments,
+            code.strings,
+            code.privates,
+            code.positions,
+        )
+    }
+
+    /** A script compiled at one offset and moved to another is exactly the script compiled
+    there: the cache may hand out the moved one instead of parsing again. */
+    #[test]
+    fn rebased_code_matches_a_fresh_compile_at_the_new_offset() {
+        let source = "var top=1;function outer(a,b){const f=(x)=>x+a;class K extends Array{#p=1;\
+            static s(){return 2}get g(){return this.#p}}return [f(b),new K().g,K.s()]}\
+            const o={m(){return `t${top}`},*gen(){yield 1},async am(){await 0}};\
+            label:for(let i=0;i<2;i++){try{throw new Error('e'+i)}catch(e){continue label}}\
+            outer(1,2);";
+        let compile = |offset: usize| {
+            let program = crate::v9::parse_at(source, offset, Some(0)).unwrap();
+            compile_script(&program, Some((source, offset))).unwrap()
+        };
+        let (early, late) = (compile(100), compile(5_000));
+        let moved = early.rebased(4_900);
+        let shapes = |unit: &super::cache::Unit| {
+            let mut all: Vec<String> = unit.codes.iter().map(|code| shape(code)).collect();
+            all.push(shape(&unit.entry));
+            all
+        };
+        assert_eq!(shapes(&moved), shapes(&late));
+        assert_ne!(shapes(&early), shapes(&late));
+    }
+}
+
+#[cfg(test)]
+mod rebase_real_page {
+    /** A real page's scripts (a JSON array of sources in MARS_REBASE_SOURCES, e.g. YouTube's
+    42 scripts) rebase to exactly what compiling them at the new offset gives. */
+    #[test]
+    #[ignore = "needs MARS_REBASE_SOURCES"]
+    fn real_page_scripts_rebase_exactly() {
+        let path = std::env::var("MARS_REBASE_SOURCES").expect("MARS_REBASE_SOURCES");
+        let sources: Vec<String> =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        for (index, source) in sources.iter().enumerate() {
+            let compile = |offset: usize| {
+                let program = crate::v9::parse_at(source, offset, Some(index)).ok()?;
+                super::compile_script(&program, Some((source, offset))).ok()
+            };
+            let (Some(early), Some(late)) = (compile(1_000), compile(777_777)) else {
+                continue;
+            };
+            let moved = early.rebased(776_777);
+            let shapes = |unit: &super::cache::Unit| {
+                let mut all: Vec<String> =
+                    unit.codes.iter().map(|code| super::rebase_tests::shape(code)).collect();
+                all.push(super::rebase_tests::shape(&unit.entry));
+                all
+            };
+            assert!(shapes(&moved) == shapes(&late), "script {index} differs");
+        }
     }
 }

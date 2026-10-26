@@ -382,9 +382,23 @@ struct PageCall {
     /** The page's module scripts, import maps and fetched modules; none for a classic page. */
     #[serde(default)]
     modules: v9::ModuleInput,
+    /** SHA-256 of `modules` (`modules_digest`); `modules` is then empty when this process
+    already holds them, so a page's fetched modules (2.75 MB on YouTube) cross the pipe once. */
+    #[serde(default)]
+    modules_digest: Option<String>,
     /** Committed engine state; absent only for the first load. */
     #[serde(default)]
     state: Option<v9::VmState>,
+    /** Keep the resulting state in this process and reply with its token and summary. */
+    #[serde(default)]
+    resident: bool,
+    /** The resident state this step starts from, instead of the state itself. */
+    #[serde(default)]
+    base: Option<u64>,
+    /** The page's committed state, kept beside the step's base so an aborted step can return
+    to it. */
+    #[serde(default)]
+    keep: Option<u64>,
     /** What to run against the state. */
     action: PageAction,
 }
@@ -437,7 +451,19 @@ struct DevtoolsCall {
     #[serde(default)]
     modules: v9::ModuleInput,
     #[serde(default)]
+    modules_digest: Option<String>,
+    #[serde(default)]
     state: Option<v9::VmState>,
+    /** Keep the resulting state in this process and reply with its token and summary. */
+    #[serde(default)]
+    resident: bool,
+    /** The resident state this step starts from, instead of the state itself. */
+    #[serde(default)]
+    base: Option<u64>,
+    /** The page's committed state, kept beside the step's base so an aborted step can return
+    to it. */
+    #[serde(default)]
+    keep: Option<u64>,
     request: v9::devtools::Request,
 }
 
@@ -451,6 +477,10 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         std::mem::take(&mut call.sources),
         call.sources_digest.take(),
     )?;
+    let modules = resident_modules(
+        std::mem::take(&mut call.modules),
+        call.modules_digest.take(),
+    )?;
     let host = v9::DocumentHost {
         languages: &call.languages,
         fragments: &document::DomFragments,
@@ -461,9 +491,17 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         storage: call.storage,
         host: &host,
         environment: &call.environment,
-        modules: &call.modules,
+        modules: &modules,
     };
-    v9::devtools::run(input, call.state, call.request)
+    let state = match call.state {
+        Some(state) => Some(state),
+        None => call.base.map(resident_state).transpose()?,
+    };
+    let mut outcome = v9::devtools::run(input, state, call.request)?;
+    if call.resident {
+        keep_resident(&mut outcome.execution, call.base, call.keep);
+    }
+    Ok(outcome)
 }
 
 /** Every lifecycle step runs in this process, under V9's own bounds and deadline. */
@@ -476,6 +514,10 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         std::mem::take(&mut call.sources),
         call.sources_digest.take(),
     )?;
+    let modules = resident_modules(
+        std::mem::take(&mut call.modules),
+        call.modules_digest.take(),
+    )?;
     let host = v9::DocumentHost {
         languages: &call.languages,
         fragments: &document::DomFragments,
@@ -486,14 +528,16 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         storage: call.storage,
         host: &host,
         environment: &call.environment,
-        modules: &call.modules,
+        modules: &modules,
     };
-    let state = || {
-        call.state
-            .clone()
-            .ok_or_else(|| EngineError::invalid("This V9 page step needs committed state."))
+    let state = || match (&call.state, call.base) {
+        (Some(state), _) => Ok(state.clone()),
+        (None, Some(token)) => resident_state(token),
+        (None, None) => Err(EngineError::invalid(
+            "This V9 page step needs committed state.",
+        )),
     };
-    match call.action {
+    let mut execution = match call.action {
         PageAction::Load => v9::load_page(input),
         PageAction::Event { event } => v9::page_event(input, state()?, event),
         PageAction::Click { target } => v9::click_page(input, state()?, target),
@@ -503,7 +547,135 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
         PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
         PageAction::Modules => v9::load_modules(input, state()?),
+    }?;
+    if call.resident {
+        keep_resident(&mut execution, call.base, call.keep);
     }
+    Ok(execution)
+}
+
+/// Pages whose states this process keeps between steps. Each keeps only its committed state,
+/// the last step's base and that step's result, so a 25 MB heap (YouTube) never crosses the
+/// pipe and memory stays bounded; a page past the limit gets `state_missing` on its next step.
+pub(super) const RESIDENT_PAGES: usize = 4;
+/// The error a step gets when its base names a state this process no longer holds (it was
+/// restarted, or dropped the page); the coordinator cannot resend it, so it reloads the page.
+pub(super) const STATE_MISSING: &str = "state_missing";
+
+/** One resident state, with a copy being made in the background for the step that next
+starts from it. A step runs on its own copy, because a retry or an abort returns to the
+original; copying YouTube's state takes as long as many steps run, so it happens while the
+coordinator applies the previous step instead of at the start of the next. */
+struct Resident {
+    /** The state itself, never changed. */
+    state: std::sync::Arc<v9::VmState>,
+    /** A copy for the next step, if one is being made. */
+    spare: Option<std::thread::JoinHandle<v9::VmState>>,
+}
+
+impl Resident {
+    /** Keep `state` and start copying it for the next step. */
+    fn new(state: v9::VmState) -> Self {
+        let state = std::sync::Arc::new(state);
+        let source = std::sync::Arc::clone(&state);
+        let spare = std::thread::Builder::new()
+            .name("oya-v9-copy".into())
+            .spawn(move || v9::VmState::clone(&source))
+            .ok();
+        Self { state, spare }
+    }
+    /** A copy to run a step on: the background one when it is there, else a fresh one. */
+    fn copy(&mut self) -> v9::VmState {
+        match self.spare.take().map(std::thread::JoinHandle::join) {
+            Some(Ok(copy)) => copy,
+            _ => v9::VmState::clone(&self.state),
+        }
+    }
+}
+
+/** Frees states off the request path: freeing YouTube's half a million objects is not free. */
+fn discard(states: Vec<(u64, Resident)>) {
+    if !states.is_empty() {
+        let _ = std::thread::Builder::new()
+            .name("oya-v9-free".into())
+            .spawn(move || drop(states));
+    }
+}
+
+/** One page's resident states, by token. */
+struct ResidentPage {
+    /** The document identity the states belong to (a token when the page has none yet). */
+    identity: String,
+    /** At most the committed state, the last base and its result. */
+    states: Vec<(u64, Resident)>,
+}
+
+thread_local! {
+    /** Most recently used page first. */
+    static PAGES: std::cell::RefCell<std::collections::VecDeque<ResidentPage>> = Default::default();
+    /** The next token; it starts at a random point, so a restarted process misses old tokens. */
+    static NEXT_TOKEN: std::cell::Cell<u64> = std::cell::Cell::new(token_seed());
+}
+
+/** A random starting token. */
+fn token_seed() -> u64 {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut bytes = [0_u8; 8];
+    let _ = SystemRandom::new().fill(&mut bytes);
+    u64::from_le_bytes(bytes)
+}
+
+/** A copy of the resident state `token` names, for a step to run on (a retry runs on the same
+base again, so the base itself stays untouched). */
+fn resident_state(token: u64) -> EngineResult<v9::VmState> {
+    PAGES
+        .with_borrow_mut(|pages| {
+            pages
+                .iter_mut()
+                .flat_map(|page| &mut page.states)
+                .find(|(held, _)| *held == token)
+                .map(|(_, resident)| resident.copy())
+        })
+        .ok_or_else(|| {
+            EngineError::new(
+                STATE_MISSING,
+                "The V9 service no longer holds this page's script state.",
+                "Reload the page.",
+            )
+        })
+}
+
+/** Keep the step's full state here under a new token and reply with its summary. */
+fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<u64>) {
+    let token = NEXT_TOKEN.get();
+    NEXT_TOKEN.set(token.wrapping_add(1));
+    let state = std::mem::take(&mut execution.state);
+    execution.state = state.summary();
+    execution.state_token = Some(token);
+    let identity = match state.identity() {
+        "" => token.to_string(),
+        identity => identity.to_string(),
+    };
+    PAGES.with_borrow_mut(|pages| {
+        let mut page = pages
+            .iter()
+            .position(|page| page.identity == identity)
+            .and_then(|index| pages.remove(index))
+            .unwrap_or(ResidentPage {
+                identity,
+                states: Vec::new(),
+            });
+        let (kept, dropped) = std::mem::take(&mut page.states)
+            .into_iter()
+            .partition(|(held, _)| Some(*held) == base || Some(*held) == keep);
+        page.states = kept;
+        discard(dropped);
+        page.states.push((token, Resident::new(state)));
+        pages.push_front(page);
+        for evicted in pages.split_off(RESIDENT_PAGES.min(pages.len())) {
+            discard(evicted.states);
+        }
+    });
 }
 
 /// Distinct source lists the V9 process keeps: the current page's and one more (a tab switch or
@@ -560,6 +732,65 @@ fn resident_sources(
         resident.truncate(RESIDENT_SOURCES);
         Ok(sources)
     })
+}
+
+thread_local! {
+    /** Module inputs, most recently used first, by digest; at most RESIDENT_SOURCES. */
+    static RESIDENT_MODULES: std::cell::RefCell<std::collections::VecDeque<(String, std::rc::Rc<v9::ModuleInput>)>> =
+        Default::default();
+}
+
+/**
+ * The step's module input: the one sent (checked against its digest, then kept), or the
+ * resident one the digest names (`sources_missing` when this process no longer holds it).
+ */
+fn resident_modules(
+    modules: v9::ModuleInput,
+    digest: Option<String>,
+) -> EngineResult<std::rc::Rc<v9::ModuleInput>> {
+    let Some(digest) = digest else {
+        return Ok(std::rc::Rc::new(modules));
+    };
+    RESIDENT_MODULES.with_borrow_mut(|resident| {
+        let position = resident.iter().position(|(key, _)| *key == digest);
+        if modules.entries.is_empty() && modules.sources.is_empty() {
+            let entry = position
+                .and_then(|index| resident.remove(index))
+                .ok_or_else(|| {
+                    EngineError::new(
+                        SOURCES_MISSING,
+                        "The V9 service does not hold this page's modules.",
+                        "Send the page's modules with the step.",
+                    )
+                })?;
+            let modules = std::rc::Rc::clone(&entry.1);
+            resident.push_front(entry);
+            return Ok(modules);
+        }
+        if modules_digest(&modules) != digest {
+            return Err(EngineError::invalid(
+                "The page's modules do not match their digest.",
+            ));
+        }
+        if let Some(index) = position {
+            resident.remove(index);
+        }
+        let modules = std::rc::Rc::new(modules);
+        resident.push_front((digest, std::rc::Rc::clone(&modules)));
+        resident.truncate(RESIDENT_SOURCES);
+        Ok(modules)
+    })
+}
+
+/// SHA-256 over a module input's encoding, as lowercase hex; the coordinator and this process
+/// encode the same value the same way, so equal digests mean equal inputs.
+pub(super) fn modules_digest(modules: &v9::ModuleInput) -> String {
+    let encoded = serde_json::to_vec(modules).unwrap_or_default();
+    ring::digest::digest(&ring::digest::SHA256, &encoded)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// SHA-256 over each source's length and bytes, in order, as lowercase hex.
@@ -730,7 +961,83 @@ fn serialize(value: impl serde::Serialize) -> EngineResult<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SOURCES_MISSING, resident_sources, sources_digest};
+    use super::{
+        RESIDENT_PAGES, SOURCES_MISSING, STATE_MISSING, keep_resident, modules_digest,
+        resident_modules, resident_sources, resident_state, sources_digest,
+    };
+    use crate::v9;
+    use serde_json::json;
+
+    /** A step's outcome whose state belongs to the page `identity`. */
+    fn execution(identity: &str) -> v9::Execution {
+        serde_json::from_value(json!({
+            "changes": [], "storage": {}, "state": {"page": {"identity": identity}}
+        }))
+        .unwrap()
+    }
+
+    /** Keep a step's outcome resident and return its token. */
+    fn kept(identity: &str, base: Option<u64>, keep: Option<u64>) -> u64 {
+        let mut execution = execution(identity);
+        keep_resident(&mut execution, base, keep);
+        execution.state_token.unwrap()
+    }
+
+    /** A step's state stays in the process under its token; the reply carries the token. */
+    #[test]
+    fn step_state_stays_resident_under_its_token() {
+        let token = kept("page", None, None);
+        assert_eq!(resident_state(token).unwrap().identity(), "page");
+        assert_eq!(resident_state(token + 1).unwrap_err().code, STATE_MISSING);
+    }
+
+    /** A page keeps only its committed state, the last step's base and that step's result, so
+    an abort can return to the committed state and a retry can rerun from the base. */
+    #[test]
+    fn page_keeps_only_committed_base_and_result() {
+        let committed = kept("page", None, None);
+        let first = kept("page", Some(committed), Some(committed));
+        let second = kept("page", Some(first), Some(committed));
+        assert!(resident_state(first).is_ok());
+        let third = kept("page", Some(second), Some(committed));
+        assert_eq!(resident_state(first).unwrap_err().code, STATE_MISSING);
+        for token in [committed, second, third] {
+            assert!(resident_state(token).is_ok());
+        }
+    }
+
+    /** Past RESIDENT_PAGES pages, the least recently used page's states are dropped. */
+    #[test]
+    fn resident_pages_are_bounded() {
+        let oldest = kept("page-0", None, None);
+        for page in 1..=RESIDENT_PAGES {
+            kept(&format!("page-{page}"), None, None);
+        }
+        assert_eq!(resident_state(oldest).unwrap_err().code, STATE_MISSING);
+    }
+
+    /** Modules cross once, are found by digest after, and cannot be planted under a wrong one. */
+    #[test]
+    fn resident_modules_are_content_addressed() {
+        let modules: v9::ModuleInput = serde_json::from_value(json!({
+            "sources": [{"url": "https://a.test/m.js", "source": "export const a = 1;"}]
+        }))
+        .unwrap();
+        let digest = modules_digest(&modules);
+        let missing = resident_modules(Default::default(), Some(digest.clone())).unwrap_err();
+        assert_eq!(missing.code, SOURCES_MISSING);
+        let forged: v9::ModuleInput = serde_json::from_value(json!({
+            "sources": [{"url": "https://a.test/m.js", "source": "evil()"}]
+        }))
+        .unwrap();
+        assert_ne!(
+            resident_modules(forged, Some(digest.clone())).unwrap_err().code,
+            SOURCES_MISSING
+        );
+        resident_modules(modules.clone(), Some(digest.clone())).unwrap();
+        let held = resident_modules(Default::default(), Some(digest)).unwrap();
+        assert_eq!(held.sources[0].source, modules.sources[0].source);
+    }
 
     /** Sources cross once, are found by digest after, and cannot be planted under a wrong one. */
     #[test]

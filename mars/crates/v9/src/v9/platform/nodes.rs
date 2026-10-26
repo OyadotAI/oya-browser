@@ -248,9 +248,37 @@ impl Page<'_> {
         }
         out
     }
+    /** Read a node's tag and attributes in place. `view` copies the node's attributes and
+    text; a tag check over every node (a custom element definition upgrading the document,
+    YouTube defines hundreds) made those copies 40% of the page's load. */
+    pub fn with_element<R>(
+        &mut self,
+        id: usize,
+        read: impl FnOnce(&str, &BTreeMap<String, String>) -> R,
+    ) -> Option<R> {
+        let root = match id {
+            HTML => "html",
+            HEAD => "head",
+            BODY => "body",
+            _ => "",
+        };
+        if !root.is_empty() {
+            let attributes = match self.state.virtual_attributes.get(&id) {
+                Some(written) => return Some(read(root, written)),
+                None => self.root_attributes(id),
+            };
+            return Some(read(root, &attributes));
+        }
+        if let Some(node) = self.state.detached.get(&id) {
+            return Some(read(&node.tag, &node.attributes));
+        }
+        let node = self.projected(id)?;
+        Some(read(&node.tag, &node.attributes))
+    }
     /** Tag of a node. */
     pub fn tag(&mut self, id: usize) -> String {
-        self.view(id).map(|view| view.tag).unwrap_or_default()
+        self.with_element(id, |tag, _| tag.to_string())
+            .unwrap_or_default()
     }
     /** Whether a node is an element (not text or comment). */
     pub fn is_element(&mut self, id: usize) -> bool {

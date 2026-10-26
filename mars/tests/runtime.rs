@@ -88,8 +88,9 @@ fn failed_navigation_retains_the_previous_document_atomically() {
         json!({"url":format!("{}/plain", fixture.url)}),
     )
     .unwrap();
-    // A failing script stops only itself and the page still commits with the others' effects.
-    for path in ["badscript", "atomic"] {
+    // A failing script stops only itself and the page still commits; what it did before it
+    // threw stays, as in browsers.
+    for (path, title) in [("badscript", "candidate"), ("atomic", "changed")] {
         let page = call(
             &mut runtime,
             "page.navigate",
@@ -97,10 +98,7 @@ fn failed_navigation_retains_the_previous_document_atomically() {
         )
         .unwrap();
         assert_eq!(page["degraded"], json!(["scripts"]));
-        assert_eq!(
-            page["nodes"][0]["text"], "candidate",
-            "{path} rolled back alone"
-        );
+        assert_eq!(page["nodes"][0]["text"], title, "{path}");
     }
     let original = call(
         &mut runtime,

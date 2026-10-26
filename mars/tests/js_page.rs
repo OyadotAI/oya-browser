@@ -627,3 +627,103 @@ fn script_linked_stylesheet_past_the_allowance_fails_closed() {
     let link = &found["matches"][0];
     assert_eq!(link["disabled"], true, "{found}");
 }
+
+/** The node id of the element whose HTML id is `html_id`. */
+fn node_by_html_id(page: &Value, html_id: &str) -> Value {
+    page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == html_id)
+        .unwrap()["node_id"]
+        .clone()
+}
+
+/** A page that changes itself in the background (YouTube) does not keep its own timers awake:
+otherwise it runs scripts forever and every click waits behind them. */
+#[test]
+fn background_change_does_not_extend_awake_window() {
+    let (_fixture, mut runtime, _page) = load(
+        "<p id=out>0</p><script>let n=0;setInterval(()=>{\
+         document.getElementById('out').textContent=String(++n)},50)</script>",
+        vec![],
+    );
+    let awake = runtime.script_awake_until().unwrap();
+    let mut published = false;
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        published |= runtime.run_page_scripts();
+    }
+    assert!(published);
+    assert_eq!(runtime.script_awake_until(), Some(awake));
+}
+
+/** A person's or agent's input keeps the page's timers running for another window. */
+#[test]
+fn input_extends_awake_window() {
+    let (_fixture, mut runtime, page) = load(
+        "<p id=out>initial</p><div id=go>go</div><script>document.getElementById('go')\
+         .addEventListener('click',()=>{setTimeout(()=>{\
+         document.getElementById('out').textContent='clicked'},1000)})</script>",
+        vec![],
+    );
+    let awake = runtime.script_awake_until().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    agent_call(
+        &mut runtime,
+        "page.click",
+        json!({"page_id":page["page_id"],"node_id":node_by_html_id(&page,"go"),
+               "expected_revision":page["revision"]}),
+    )
+    .unwrap();
+    assert!(runtime.script_awake_until().unwrap() > awake);
+}
+
+/** Input that changes nothing yet still keeps the page awake: an agent's evaluation that only
+sets a timer commits without a new revision, and that timer must still get to run. */
+#[test]
+fn quiet_input_extends_awake_window() {
+    let (_fixture, mut runtime, _page) = load("<p id=out>initial</p>", vec![]);
+    let awake = runtime.script_awake_until().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let result = agent_call(
+        &mut runtime,
+        "page.devtools",
+        json!({"request":{"kind":"evaluate","expression":"setTimeout(()=>{},1000);1"}}),
+    )
+    .unwrap();
+    assert_eq!(result["revision"], 1, "{result}");
+    assert!(runtime.script_awake_until().unwrap() > awake);
+}
+
+/** A background run asks whether input is waiting only after its first step, and stops there
+when it is: the page still progresses and commits, and the rest waits for the next run. */
+#[test]
+fn background_run_yields_to_waiting_input_after_one_step() {
+    let (_fixture, mut runtime, _page) = load(
+        "<p id=out>initial</p><script>setTimeout(()=>{\
+         document.getElementById('out').textContent='timer';\
+         fetch('/data.json').then(r=>r.json()).then(d=>{\
+         document.getElementById('out').textContent=d.message})},500)</script>",
+        vec![(
+            "/data.json",
+            reply("application/json", "", "{\"message\":\"fetched\"}"),
+        )],
+    );
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let mut asked = 0;
+    let published = runtime.run_page_scripts_yielding(&mut || {
+        asked += 1;
+        true
+    });
+    assert!(published);
+    assert_eq!(asked, 1);
+    let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert!(texts(&now).contains("timer"), "{now}");
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+    }
+    let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert!(texts(&now).contains("fetched"), "{now}");
+}

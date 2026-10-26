@@ -131,6 +131,10 @@ pub(in crate::v9::builtins::wasm) fn initialize(vm: &mut Vm) -> EngineResult<()>
             _ => None,
         })
         .collect::<Vec<_>>();
+    if roots.is_empty() {
+        // Nothing to restore, and the counts are already exact (see the typed initializer).
+        return Ok(());
+    }
     let mut canonical: BTreeMap<u64, SharedGcArena> = BTreeMap::new();
     // Keep every copied root live while independent root subgraphs merge into one local arena.
     let mut merged_roots = Vec::new();

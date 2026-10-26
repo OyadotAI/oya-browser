@@ -223,9 +223,17 @@ struct PageCall<'a> {
     storage: &'a crate::v9::StorageState,
     languages: &'a [String],
     environment: &'a PageEnvironment,
-    state: Option<&'a crate::v9::VmState>,
+    /** Always set: V9 keeps the step's state and replies with its token and summary. */
+    resident: bool,
+    /** The resident state the step starts from; none for a page's first load. */
+    base: Option<u64>,
+    /** The committed state of the same page, which V9 keeps beside `base` for an abort. */
+    keep: Option<u64>,
     #[serde(skip_serializing_if = "is_classic")]
     modules: &'a crate::v9::ModuleInput,
+    /** Digest of the page's modules; `modules` is left empty when V9 already holds them. */
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modules_digest: Option<&'a str>,
     action: &'a Value,
 }
 
@@ -305,6 +313,7 @@ impl Runtime {
         if execution.effects.stale_geometry
             && let Ok(geometry) = self.forced_geometry(page, &execution)
         {
+            super::supervisor::perf::record("script.retry", started, || kind.clone());
             // V9 steps are pure, so the first run is dropped whole and the second commits.
             environment.geometry = geometry;
             environment.laid_out_before = None;
@@ -335,6 +344,7 @@ impl Runtime {
         execution.state.validate_document(&after)?;
         let Execution {
             state,
+            state_token,
             storage,
             failed,
             effects,
@@ -368,6 +378,7 @@ impl Runtime {
             self.flush_inserted_images(page)?;
         }
         page.state = state;
+        page.state_token = state_token;
         page.storage_dirty |= storage != page.storage;
         page.storage = storage;
         let scripting = &mut page.scripting;
@@ -563,6 +574,15 @@ impl Runtime {
         Ok(added)
     }
 
+    /** The token of the committed state of `page`'s document, which V9 must keep while a
+    candidate's steps replace each other: an aborted candidate returns to it. */
+    pub(super) fn committed_token(&self, page: &Page) -> Option<u64> {
+        self.page
+            .as_ref()
+            .filter(|committed| committed.script_identity == page.script_identity)
+            .and_then(|committed| committed.state_token)
+    }
+
     /** One V9 page step over `projection`, sending the sources only when V9 does not hold them. */
     fn execute(
         &mut self,
@@ -577,6 +597,11 @@ impl Runtime {
         let resident = digest
             .as_ref()
             .is_some_and(|digest| self.v9_sources.contains(digest));
+        let input = &page.scripting.modules.input;
+        let modules_digest = (!is_classic(&input)).then(|| super::service::modules_digest(input));
+        let modules_resident = modules_digest
+            .as_ref()
+            .is_some_and(|digest| self.v9_sources.contains(digest));
         let languages = self.languages.clone();
         let mut call = PageCall {
             sources: if resident { &[] } else { &page.scripts },
@@ -585,18 +610,29 @@ impl Runtime {
             storage: &page.storage,
             languages: &languages,
             environment,
-            state: (!load).then_some(&page.state),
-            modules: &page.scripting.modules.input,
+            resident: true,
+            base: if load { None } else { page.state_token },
+            keep: self.committed_token(page),
+            modules: if modules_resident {
+                crate::v9::ModuleInput::NONE
+            } else {
+                input
+            },
+            modules_digest: modules_digest.as_deref(),
             action,
         };
         let execution = match self.call_typed("v9", "v9.page", &call, None) {
-            Err(error) if resident && error.code == super::service::SOURCES_MISSING => {
+            Err(error)
+                if (resident || modules_resident)
+                    && error.code == super::service::SOURCES_MISSING =>
+            {
                 call.sources = &page.scripts;
+                call.modules = input;
                 self.call_typed("v9", "v9.page", &call, None)
             }
             result => result,
         }?;
-        if let Some(digest) = digest {
+        for digest in digest.into_iter().chain(modules_digest) {
             self.note_v9_sources(digest);
         }
         Ok(execution)
@@ -675,9 +711,23 @@ impl Runtime {
         until: Instant,
         virtual_end: f64,
     ) -> EngineResult<bool> {
+        self.settle_scripts_yielding(page, until, virtual_end, &mut || false)
+    }
+
+    /// `settle_scripts` that also stops before any step after the first once `yield_now` says a
+    /// person or agent is waiting. One V9 step cannot be interrupted, so stopping between steps
+    /// is what bounds how long input waits behind a page's background scripts. The first step
+    /// always runs, so a page keeps making progress however often input arrives.
+    pub(super) fn settle_scripts_yielding(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+        virtual_end: f64,
+        yield_now: &mut dyn FnMut() -> bool,
+    ) -> EngineResult<bool> {
         let mut changed = false;
-        for _ in 0..SETTLE_STEPS {
-            if Instant::now() >= until || !page.scripting.loaded {
+        for step in 0..SETTLE_STEPS {
+            if Instant::now() >= until || !page.scripting.loaded || (step > 0 && yield_now()) {
                 break;
             }
             let action = if page.scripting.scroll_pending {
@@ -717,7 +767,7 @@ impl Runtime {
             };
             match self.script_step(page, action) {
                 Ok(step) => changed |= step.changed,
-                Err(error) if stops_navigation(&error) => return Err(error),
+                Err(error) if stops_navigation(&error) || lost_state(&error) => return Err(error),
                 Err(error) => {
                     stop_scripts(page, &error);
                     break;
@@ -813,6 +863,18 @@ impl Runtime {
     /// schedule, under whoever holds control of the tab now. Returns whether a new revision was
     /// published, so the window repaints.
     pub fn run_page_scripts(&mut self) -> bool {
+        self.run_page_scripts_yielding(&mut || false)
+    }
+
+    /// When the visible page's background timers stop unless something wakes them, so tests can
+    /// tell which events keep a page running.
+    pub fn script_awake_until(&self) -> Option<Instant> {
+        self.page.as_ref().map(|page| page.scripting.awake_until)
+    }
+
+    /// `run_page_scripts` that gives way between V9 steps once `yield_now` reports a waiting
+    /// command, so a person's click on a busy page (YouTube) waits for one step, not a whole run.
+    pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
         let now = Instant::now();
         let due = self.page.as_ref().is_some_and(|page| {
             page.scripting.pending()
@@ -826,13 +888,17 @@ impl Runtime {
             return false;
         };
         let previous = std::mem::replace(&mut self.permit, permit);
-        let published = self.tick(now).unwrap_or(false);
+        let published = match self.tick(now, yield_now) {
+            Ok(published) => published,
+            Err(error) if lost_state(&error) => self.reload_lost_page(&error),
+            Err(_) => false,
+        };
         self.permit = previous;
         published
     }
 
     /** One background run: settle, then commit (a new revision only when the document changed). */
-    fn tick(&mut self, now: Instant) -> EngineResult<bool> {
+    fn tick(&mut self, now: Instant, yield_now: &mut dyn FnMut() -> bool) -> EngineResult<bool> {
         let mut page = self.current()?.clone();
         let elapsed = now
             .saturating_duration_since(page.scripting.last_tick)
@@ -840,10 +906,10 @@ impl Runtime {
             * MS_PER_SECOND;
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
-        let changed = self.settle_scripts(&mut page, now + TICK_WALL, end)?;
+        let changed = self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?;
         page.scripting.tick_cost = now.elapsed();
         if changed {
-            self.finish_mutation(page)?;
+            self.commit_mutation(page)?;
             self.follow_script_navigation(0);
             return Ok(true);
         }
@@ -1049,6 +1115,29 @@ fn failed(id: u32, message: &str) -> HostResponse {
 fn stops_navigation(error: &EngineError) -> bool {
     error.service.is_some()
         || ["permission_denied", "control_denied"].contains(&error.code.as_str())
+}
+
+/** The V9 service no longer holds the page's script state (it restarted, or dropped the page
+for newer ones), which only reloading the page can rebuild. */
+fn lost_state(error: &EngineError) -> bool {
+    error.code == super::service::STATE_MISSING
+}
+
+impl Runtime {
+    /** Rebuild a page whose script state V9 lost by loading it again, as a browser reloads a
+    tab whose renderer died. A page a POST produced is never replayed: its scripts stop and it
+    stays as committed. Returns whether the window has something new to show. */
+    fn reload_lost_page(&mut self, error: &EngineError) -> bool {
+        let replayable = self.page.as_ref().is_some_and(|page| page.replayable);
+        if replayable && let Some(index) = self.history_cursor {
+            return self.revisit(index).is_ok();
+        }
+        let Ok(mut page) = self.current().cloned() else {
+            return false;
+        };
+        stop_scripts(&mut page, error);
+        self.commit_quietly(page).is_ok()
+    }
 }
 
 /** A refused step ends this page's script work; the page itself stays as committed. */

@@ -31,6 +31,19 @@ pub(super) struct Unit {
 }
 
 impl Unit {
+    /** The same unit as compiled `delta` bytes further along a page (see `Code::rebased`). */
+    pub fn rebased(&self, delta: i64) -> Self {
+        Self {
+            codes: self
+                .codes
+                .iter()
+                .map(|code| Arc::new(code.rebased(delta)))
+                .collect(),
+            entry: Arc::new(self.entry.rebased(delta)),
+            info: self.info.clone(),
+            bytes: self.bytes,
+        }
+    }
     /** A unit over freshly compiled codes. */
     pub fn new(
         mut codes: Vec<Code>,
@@ -69,6 +82,8 @@ struct Cache {
     /// Least recently used first.
     order: VecDeque<Key>,
     bytes: usize,
+    /// Where each source text was last compiled: its offset and the key of that unit there.
+    texts: HashMap<Key, (usize, Key)>,
 }
 
 /** The one cache of this process. */
@@ -95,6 +110,45 @@ pub(super) fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
     let mut key = Key::default();
     key.copy_from_slice(context.finish().as_ref());
     key
+}
+
+/** SHA-256 of `source` under `grammar`, wherever it sits on a page. */
+pub(super) fn text_key(grammar: Grammar, source: &str) -> Key {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(&[match grammar {
+        Grammar::Script => 0,
+        Grammar::Module => 1,
+    }]);
+    context.update(&(source.len() as u64).to_le_bytes());
+    context.update(source.as_bytes());
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
+/** The key of the text `text` names at page offset `offset`, hashing the text only once. */
+pub(super) fn at(text: &Key, offset: usize) -> Key {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(text);
+    context.update(&(offset as u64).to_le_bytes());
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
+/** The unit `text` compiled to at some other offset, and that offset, while it is cached. */
+pub(super) fn elsewhere(text: &Key) -> Option<(usize, Arc<Unit>)> {
+    let cache = cache();
+    let (offset, key) = cache.texts.get(text)?;
+    Some((*offset, cache.units.get(key)?.clone()))
+}
+
+/** Records that `text` was compiled at `offset` under `key`, for `elsewhere`. */
+pub(super) fn remember(text: Key, offset: usize, key: Key) {
+    let mut cache = cache();
+    cache.texts.insert(text, (offset, key));
+    let Cache { texts, units, .. } = &mut *cache;
+    texts.retain(|_, (_, key)| units.contains_key(key));
 }
 
 /** The key of direct eval `source` at `offset` in caller scopes `scopes`: the same text in other

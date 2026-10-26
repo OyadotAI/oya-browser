@@ -60,6 +60,9 @@ pub(super) struct Page {
     pub status: u16,
     /** Committed lexical cells and heap share the page generation and revision. */
     pub state: crate::v9::VmState,
+    /** Names the full script state the V9 service keeps for this page, so a step sends this
+    token instead of the heap (25 MB on YouTube); `state` is then only its summary. */
+    pub state_token: Option<u64>,
     /** Encoded image bytes remain page-owned and never cross the document service. */
     pub images: BTreeMap<usize, super::images::ImageAsset>,
     /** Documents the page's frames show, laid out into every display of the page. */

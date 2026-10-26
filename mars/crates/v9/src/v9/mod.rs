@@ -83,6 +83,11 @@ pub struct VmState {
     templates: vm::templates::Cache,
     #[serde(default, skip_serializing_if = "modules::ModuleState::is_empty")]
     modules: modules::ModuleState,
+    /** Set only on a state this process built and validated itself (`finish`), never on one
+    decoded from a frame, so a state kept resident in the service skips re-validating its
+    heap on the next step (about 170 ms on YouTube) while every state from outside is checked. */
+    #[serde(skip)]
+    verified: bool,
 }
 
 impl VmState {
@@ -94,6 +99,20 @@ impl VmState {
     pub fn from_globals(globals: Globals) -> Self {
         Self {
             globals,
+            ..Self::default()
+        }
+    }
+    /// The document identity this state's node references belong to.
+    pub fn identity(&self) -> &str {
+        &self.page.identity
+    }
+    /// The page-platform part alone, without the heap, globals or compiled templates: what the
+    /// app reads between steps (listeners, detached nodes, images) when the full state stays
+    /// resident in the V9 service. Sending a summary back as a step's state would lose the
+    /// page's heap, so the app never does.
+    pub fn summary(&self) -> Self {
+        Self {
+            page: self.page.clone(),
             ..Self::default()
         }
     }
@@ -176,6 +195,20 @@ impl VmState {
     }
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
+        self.validate_bounds(limits)?;
+        let bytes = serde_json::to_vec(self)
+            .map_err(|_| EngineError::invalid("Cannot encode V9 state."))?
+            .len();
+        if bytes > limits.state_bytes {
+            return Err(EngineError::limit("V9 state bytes", limits.state_bytes));
+        }
+        Ok(())
+    }
+    /// Every check but the encoded size, for a state this process just built: its object,
+    /// property, string and binding counts bound its memory, and measuring its size means
+    /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
+    /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
+    fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
@@ -268,12 +301,6 @@ impl VmState {
                 crate::constants::VM_TIMERS,
             ));
         }
-        let bytes = serde_json::to_vec(self)
-            .map_err(|_| EngineError::invalid("Cannot encode V9 state."))?
-            .len();
-        if bytes > limits.state_bytes {
-            return Err(EngineError::limit("V9 state bytes", limits.state_bytes));
-        }
         Ok(())
     }
 }
@@ -307,6 +334,10 @@ pub struct Execution {
     /// Scripts an isolated page load stopped and rolled back, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<ScriptFailure>,
+    /// Names the full state a V9 service kept for the next step, when it keeps states resident;
+    /// `state` is then only its summary (see `VmState::summary`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_token: Option<u64>,
     /// Requests, navigations, history, cookies, console output and the next timer.
     #[serde(default)]
     pub effects: HostEffects,
@@ -617,7 +648,10 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
-    state.validate(&limits)?;
+    let verified = state.verified;
+    if !verified {
+        state.validate(&limits)?;
+    }
     vm::validate_dynamic_sources(&state.dynamic)?;
     if let Some(document) = &document
         && state.page.initialized
@@ -662,7 +696,9 @@ fn session<'h>(
     }
     vm.dynamic = state.dynamic;
     vm.templates = state.templates;
-    vm.validate_graph()?;
+    if !verified {
+        vm.validate_graph()?;
+    }
     platform::images::validate_targets(&vm.page)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
@@ -842,6 +878,21 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.pinning = false;
 }
 
+/** Whether any count has reached half its bound, where an overestimate could fail a check that
+an exact count would pass. */
+fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
+    [
+        (counts.objects, limits.objects),
+        (counts.functions, limits.functions),
+        (counts.properties, limits.properties),
+        (counts.units, limits.units),
+        (counts.environments, limits.environments),
+        (counts.bindings, limits.bindings),
+    ]
+    .iter()
+    .any(|(count, limit)| count.saturating_mul(2) >= *limit)
+}
+
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
@@ -849,7 +900,16 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
-    vm.collect_snapshot().map_err(fatal)?;
+    // Counts only overestimate between collections, so a heap near any bound is collected
+    // (and counted exactly) before its bounds are checked.
+    if vm.heap.grew_since_collection() || near_bounds(&vm.heap.counts, &vm.limits) {
+        vm.collect_snapshot().map_err(fatal)?;
+    } else {
+        // Every state leaves exact counts, so the next request needs no recount to open it:
+        // counts only overestimate between recounts, and carried over they would reach a
+        // bound and force collections mid-script.
+        vm.heap.recount();
+    }
     let effects_timer = vm.next_timer();
     let script_requests: Vec<ScriptLoadRequest> = vm
         .page
@@ -886,8 +946,9 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         dynamic: vm.dynamic,
         templates: vm.templates,
         modules: std::mem::take(&mut vm.modules.state),
+        verified: true,
     };
-    state.validate(&vm.limits)?;
+    state.validate_bounds(&vm.limits)?;
     storage.validate()?;
     #[cfg(feature = "measure")]
     measure::record(&state);
@@ -898,6 +959,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         state,
         storage,
         failed: Vec::new(),
+        state_token: None,
         effects,
         module_requests,
         script_requests,
@@ -1038,7 +1100,9 @@ fn run_sources(
             });
             continue;
         }
-        let saved = snapshot(vm);
+        // As in browsers, a script that throws keeps what it did before the throw; only the
+        // error is reported, and later scripts still run. Restoring the page instead meant
+        // copying the whole VM before every script, over a third of YouTube's load.
         match run_one(vm, code, index) {
             Ok(()) => ran.push(index),
             Err(error) => {
@@ -1046,7 +1110,8 @@ fn run_sources(
                 if builtins::is_test_exit(&error) {
                     return Err(error);
                 }
-                restore(vm, saved);
+                // A script stopped at a bound left garbage over it; the next script starts clean.
+                vm.collect_now().map_err(fatal)?;
                 failed.push(ScriptFailure { index, error });
             }
         }
@@ -1116,7 +1181,8 @@ fn run_dynamic_imports(vm: &mut Vm) {
     }
 }
 
-/// Load a page's scripts like a browser: each failing script rolls back alone. Microtasks drain
+/// Load a page's scripts like a browser: a failing script is reported and later ones still run.
+/// Microtasks drain
 /// after every script; timers wait for `run_timers`; lifecycle events wait for `page_event`.
 pub fn load_page(input: PageInput<'_>) -> EngineResult<Execution> {
     on_v9_stack(|| load_isolated(input, None, Limits::default(), false))

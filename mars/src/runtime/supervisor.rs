@@ -916,7 +916,9 @@ impl Runtime {
     pub(super) fn note_v9_sources(&mut self, digest: String) {
         self.v9_sources.retain(|known| *known != digest);
         self.v9_sources.push_front(digest);
-        self.v9_sources.truncate(super::service::RESIDENT_SOURCES);
+        // Source and module digests share this list; V9 keeps RESIDENT_SOURCES of each.
+        self.v9_sources
+            .truncate(2 * super::service::RESIDENT_SOURCES);
     }
 
     /// Exposes owned process identities for native diagnostics, without transport handles.
@@ -1193,6 +1195,26 @@ pub mod perf {
         if let Some(folder) = std::env::var_os("MARS_PERF_DUMP") {
             let path = std::path::Path::new(&folder).join(format!("{sequence:06}-{op}.json"));
             let _ = std::fs::write(path, frame);
+        }
+    }
+
+    thread_local! {
+        /** When each named span began on this thread, for `since`. */
+        static MARKS: std::cell::RefCell<std::collections::HashMap<&'static str, Instant>> =
+            Default::default();
+    }
+
+    /** Starts the span `mark` now, when measurement is on. */
+    pub fn begin(mark: &'static str) {
+        if sink().is_some() {
+            MARKS.with_borrow_mut(|marks| marks.insert(mark, Instant::now()));
+        }
+    }
+
+    /** Records `event` as the milliseconds since the span `mark` began. */
+    pub fn since(mark: &'static str, event: &str) {
+        if let Some(start) = MARKS.with_borrow(|marks| marks.get(mark).copied()) {
+            record(event, start, String::new);
         }
     }
 

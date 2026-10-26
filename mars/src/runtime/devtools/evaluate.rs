@@ -39,7 +39,12 @@ struct DevtoolsCall<'a> {
     storage: &'a crate::v9::StorageState,
     languages: &'a [String],
     environment: &'a PageEnvironment,
-    state: Option<&'a crate::v9::VmState>,
+    /** Always set: V9 keeps the step's state and replies with its token and summary. */
+    resident: bool,
+    /** The resident state the step starts from; none for a page's first load. */
+    base: Option<u64>,
+    /** The committed state of the same page, which V9 keeps beside `base` for an abort. */
+    keep: Option<u64>,
     #[serde(skip_serializing_if = "classic")]
     modules: &'a crate::v9::ModuleInput,
     request: &'a Value,
@@ -97,6 +102,8 @@ impl Runtime {
             return Ok(result);
         }
         let navigation = page.scripting.navigation.is_some();
+        // An agent's evaluation is input even when the timers it set have not fired yet.
+        page.scripting.wake();
         let (page_id, revision) = if changed {
             let inspection = self.finish_mutation(page)?;
             (
@@ -143,7 +150,8 @@ impl Runtime {
         if !page.scripting.loaded {
             environment.metadata.clone_from(&page.document.metadata);
         }
-        let state = page.scripting.loaded.then_some(&page.state);
+        let base = page.scripting.loaded.then_some(page.state_token).flatten();
+        let keep = self.committed_token(page);
         let digest = (!page.scripts.is_empty())
             .then(|| super::super::service::sources_digest(&page.scripts));
         let resident = digest
@@ -157,7 +165,9 @@ impl Runtime {
             storage: &page.storage,
             languages: &languages,
             environment: &environment,
-            state,
+            resident: true,
+            base,
+            keep,
             modules: &page.scripting.modules.input,
             request,
         };
@@ -208,6 +218,7 @@ impl Runtime {
             self.flush_devtools_images(page, first_new)?;
         }
         page.state = execution.state;
+        page.state_token = execution.state_token;
         page.storage_dirty |= execution.storage != page.storage;
         page.storage = execution.storage;
         let scripting = &mut page.scripting;

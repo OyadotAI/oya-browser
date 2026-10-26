@@ -139,6 +139,14 @@ pub const OPERATIONS: usize = 400_000_000;
 /// Loading YouTube's 10.8 MB app bundle and the scripts around it takes over 1.5 s in an
 /// optimized build, so the guard allows what a real page load needs on this hardware.
 pub const SCRIPT_DEADLINE: Duration = Duration::from_millis(4000);
+/// Heap entries a page may add between end-of-request collections before one runs again.
+pub const GC_GROWTH_MIN: usize = 20_000;
+/// Or this fraction of the entries alive after the last collection, whichever is larger.
+pub const GC_GROWTH_DIVISOR: usize = 4;
+/// Real time one timer run may spend before it leaves the rest of its due callbacks for the
+/// next run, as a browser does on a busy main thread: a page with many timers (YouTube) would
+/// otherwise run all of them in one uninterruptible step while the person's click waits.
+pub const TIMER_SLICE: Duration = Duration::from_millis(50);
 /// The interpreter reads the clock once per this many operations, keeping the guard cheap.
 pub const SCRIPT_CLOCK_STRIDE: usize = 4096;
 /// Text and attribute bytes one V9 request may propose in DOM changes, so STATEMENTS changes of
@@ -229,7 +237,7 @@ pub const STATEMENT_DEPTH: usize = 128;
 /// UTF-16 code units of one JavaScript string or literal. Google's inline scripts carry
 /// literals past 2048 units; a whole script response body (VM_RESPONSE_BYTES) must fit too, and
 /// YouTube serializes its initial data (over 256K units) into one string while loading.
-pub const JS_STRING_UNITS: usize = JS_ENVIRONMENT_UNITS / 2;
+pub const JS_STRING_UNITS: usize = 1024 * 1024;
 /** A leading UTF-16 surrogate combines only with an immediately following trailing surrogate. */
 pub const UTF16_HIGH_SURROGATE_START: u16 = 0xd800;
 /** The inclusive upper bound prevents low surrogates from being treated as leading units. */
@@ -239,9 +247,11 @@ pub const UTF16_LOW_SURROGATE_START: u16 = 0xdc00;
 /** This inclusive endpoint retains all valid UTF-16 surrogate pairs without decoding them. */
 pub const UTF16_LOW_SURROGATE_END: u16 = 0xdfff;
 /// Live string units across the heap. Wikipedia's startup holds 48714 and five large libraries
-/// together 36868; YouTube's loaded app holds 723072, and this leaves room for two whole
-/// response bodies beside that.
-pub const JS_ENVIRONMENT_UNITS: usize = 2 * 1024 * 1024;
+/// together 36868; YouTube's loaded app holds 1.73 million distinct units. Counts overestimate
+/// between collections (every reference to a string counts), so a bound near a page's real
+/// size makes the collector run over and over mid-script: at 2M units YouTube spent more time
+/// collecting than running. 32 MB of text stays far below what a browser tab may hold.
+pub const JS_ENVIRONMENT_UNITS: usize = 16 * 1024 * 1024;
 /// Live objects. Google's main bundle and YouTube's app need far more than Wikipedia's 5204:
 /// YouTube holds 47869 once loaded and allocates as it renders, and LinkedIn's React app keeps
 /// more than 262144 alive while it hydrates (Chromium has no count bound at all, only memory).

@@ -240,6 +240,7 @@ impl Vm<'_> {
         self.sweep_realms(&marker.objects);
         self.page.sweep(&marker.objects);
         self.heap.recount();
+        self.heap.collected = self.heap.objects.len() + self.heap.envs.len();
         for id in cleanup {
             crate::v9::builtins::schedule_finalization(self, id)?;
         }

@@ -104,7 +104,7 @@ impl Runtime {
         self.load_request(WebRequest::get(&input.url), false, History::New)
     }
     /** Revisit never changes the cursor on a failed load or replay refusal. */
-    fn revisit(&mut self, index: usize) -> EngineResult<Value> {
+    pub(super) fn revisit(&mut self, index: usize) -> EngineResult<Value> {
         let entry = &self.history[index];
         if !entry.replayable {
             return Err(replay());
@@ -199,6 +199,7 @@ impl Runtime {
         self.ready_download = None;
         let is_post = request.method == Method::Post;
         let started = Instant::now();
+        perf::begin("navigation");
         let result = self.candidate(request, sensitive).and_then(|page| {
             perf::record("page.candidate", started, String::new);
             let started = Instant::now();
@@ -451,6 +452,7 @@ impl Runtime {
             replayable: acquired.method == Method::Get,
             status: acquired.response.status,
             state: Default::default(),
+            state_token: None,
             images,
             frames: std::sync::Arc::new(frames),
             display: None,
@@ -580,6 +582,8 @@ impl Runtime {
                 }
             }
         }
+        // Where a browser fires `load`: scripts ran, DOMContentLoaded and load handlers ran.
+        perf::since("navigation", "page.load_event");
         Ok(self.settle_after_load(page, deadline)? || changed)
     }
     /** What a new page's `document.referrer` says: the page it came from, origin only when the

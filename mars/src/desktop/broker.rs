@@ -436,8 +436,14 @@ fn worker(
         destination,
         rejected_edit: None,
     });
+    // A command that arrived while a background run was going; it runs next, ahead of the queue.
+    let mut stashed: Option<Command> = None;
     while !cancel.load(Ordering::Relaxed) {
-        match input.recv_timeout(POLL) {
+        let next = match stashed.take() {
+            Some(command) => Ok(command),
+            None => input.recv_timeout(POLL),
+        };
+        match next {
             Ok(command) => {
                 if execute(&mut runtime, command, &events).is_err() {
                     break;
@@ -450,7 +456,13 @@ fn worker(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Idle time runs the visible page's timers and requests; a change repaints.
-                if runtime.run_page_scripts()
+                let mut waiting = || {
+                    if stashed.is_none() {
+                        stashed = input.try_recv().ok();
+                    }
+                    stashed.is_some()
+                };
+                if runtime.run_page_scripts_yielding(&mut waiting)
                     && events
                         .try_send(Event::Update {
                             snapshot: Box::new(runtime.snapshot()),
