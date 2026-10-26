@@ -5,6 +5,8 @@ use super::realm::realm;
 use super::{Thrown, Vm};
 use crate::protocol::{EngineError, SourceLocation};
 use crate::v9::value::{JsString, JsValue, ObjectId};
+mod trace;
+pub(in crate::v9) use trace::{CALLSITE_KEY, FRAMES_KEY};
 
 /** Error constructors scripts can see. */
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +23,17 @@ pub(in crate::v9) enum ErrorKind {
 name nor forge it. */
 pub(in crate::v9) const TRACE_KEY: &str = "errorTrace";
 impl Vm<'_> {
+    /** Only the exact thrown unsupported value carries native-failure provenance into callback diagnostics. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn note_conformance_native_error(&mut self, value: &JsValue) {
+        if self.page.effects.conformance_native_error.is_none()
+            && let Some((id, error)) = &self.unsupported
+            && value.object() == Some(*id)
+        {
+            self.page.effects.conformance_native_error =
+                Some((error.code.clone(), error.message.clone()));
+        }
+    }
     /** A new error object of a kind with a message. */
     pub fn make_error(&mut self, kind: ErrorKind, message: &str) -> Result<ObjectId, EngineError> {
         let ids = &realm().ids;
@@ -54,6 +67,7 @@ impl Vm<'_> {
     }
     /** Keep the activations an error was made in, hidden on it, for its `stack` property. */
     pub fn record_trace(&mut self, id: ObjectId) -> Result<(), EngineError> {
+        self.record_structured_trace(id)?;
         let trace = self.throw_trace().join("\n");
         self.heap.put(
             id,
@@ -141,6 +155,12 @@ impl Vm<'_> {
             return locate(error.clone(), location);
         }
         let description = self.describe(&value);
+        #[cfg(feature = "conformance")]
+        let description = if description == "object" || self.is_conformance_assertion(&value) {
+            self.conformance_description(&value).unwrap_or(description)
+        } else {
+            description
+        };
         // One closing period, whether or not the JavaScript message brought its own.
         let description = description.strip_suffix('.').unwrap_or(&description);
         locate(
@@ -179,6 +199,47 @@ impl Vm<'_> {
             other => format!("{other:?}"),
         }
     }
+    /** The opt-in upstream runner may read a lazy assertion message after a terminal throw.
+    The test has already failed; getter failures retain the original failure and normal bounds
+    still apply. Production diagnostics never execute getters. */
+    #[cfg(feature = "conformance")]
+    /** File wrappers retain only assertion provenance, without retaining the original thrown graph. */
+    pub(in crate::v9) fn is_conformance_assertion(&mut self, value: &JsValue) -> bool {
+        value.object().is_some_and(|id| {
+            self.heap
+                .get(id)
+                .and_then(|o| o.props.get(&Key::private("conformance-file-assertion")))
+                .is_some()
+                || self.constructor_name(id).as_deref() == Some("MjsUnitAssertionError")
+        })
+    }
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn conformance_description(&mut self, value: &JsValue) -> Option<String> {
+        let JsValue::Object(id) = value else {
+            return None;
+        };
+        let JsValue::String(message) = self.get(value, &Key::from("message")).ok()? else {
+            return None;
+        };
+        let name = self
+            .constructor_name(*id)
+            .unwrap_or_else(|| "object".into());
+        let message: String = message.lossy().chars().take(MESSAGE_CHARS).collect();
+        let mut description = format!("{name}: {message}");
+        if name != "MjsUnitAssertionError" && self.is_conformance_assertion(value) {
+            description.push_str(" (caused by MjsUnitAssertionError)");
+        }
+        if name == "MjsUnitAssertionError" {
+            if let Some(stack) = self.peek_data(*id, "stack") {
+                let lines: Vec<_> = stack.lines().rev().take(DIAGNOSTIC_FRAMES).collect();
+                for line in lines.into_iter().rev() {
+                    description.push('\n');
+                    description.push_str(line);
+                }
+            }
+        }
+        Some(description)
+    }
     /** The `name` of the object's `constructor`, read without running getters. */
     fn constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
         let key = Key::from("constructor");
@@ -213,6 +274,10 @@ impl Vm<'_> {
 const MESSAGE_CHARS: usize = 300;
 /** Prototype depth searched for an error's name and message. */
 const PEEK_DEPTH: usize = 8;
+
+/** The final frames identify the upstream assertion caller without retaining an unbounded trace. */
+#[cfg(feature = "conformance")]
+const DIAGNOSTIC_FRAMES: usize = 3;
 
 /** Attach a location when the error has none. */
 pub(in crate::v9) fn locate(mut error: EngineError, location: SourceLocation) -> EngineError {

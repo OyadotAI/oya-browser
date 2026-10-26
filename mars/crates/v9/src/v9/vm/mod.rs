@@ -3,21 +3,33 @@
  * Every root is explicit, so collection can run between instructions and suspended generator and
  * async frames are plain data.
  */
+pub(in crate::v9) mod arguments;
+pub(in crate::v9) mod array_elements;
 pub(in crate::v9) mod asyncgen;
 pub(in crate::v9) mod bigint;
 pub(in crate::v9) mod call;
 pub(in crate::v9) mod convert;
 pub(in crate::v9) mod data;
+mod dynamic;
 pub(in crate::v9) mod error;
+pub(in crate::v9) mod function_name;
 pub(in crate::v9) mod gc;
 pub(in crate::v9) mod heap;
 pub(in crate::v9) mod iter;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) mod memory;
+pub(in crate::v9) mod private_elements;
 pub(in crate::v9) mod property;
 pub(in crate::v9) mod proxy;
 pub(in crate::v9) mod realm;
+pub(in crate::v9) mod realms;
 pub(in crate::v9) mod run;
 pub(in crate::v9) mod shape;
 pub(in crate::v9) mod validate;
+pub(in crate::v9) use dynamic::{
+    source_base as dynamic_source_base, validate_sources as validate_dynamic_sources,
+};
+pub(in crate::v9) mod weak;
 
 /** How far the object and function counts may overshoot their bounds between a full heap
 noticed outside native code and the collection at the next instruction: an eighth. */
@@ -69,6 +81,8 @@ impl Call<'_> {
 
 /** An executing activation. */
 pub(in crate::v9) struct Frame {
+    /** The function's creation context selects intrinsics and global bindings during execution. */
+    pub realm: u32,
     pub code: Arc<Code>,
     pub pc: usize,
     pub stack: Vec<JsValue>,
@@ -82,6 +96,8 @@ pub(in crate::v9) struct Frame {
     pub envs: u16,
     /** Returning from this frame returns from the current `run`. */
     pub boundary: bool,
+    /** A native callback entry conceals the native caller without changing return boundaries. */
+    pub caller_hidden: bool,
     /** A `new` call: an object return replaces `this`, anything else returns `this`. */
     pub construct: bool,
     /** How a resumed generator re-entered, for `yield*`. */
@@ -117,12 +133,15 @@ pub(in crate::v9) struct DynamicSource {
     pub source: String,
     /// The compiler-made caller context of direct eval code; None for ordinary dynamic code.
     pub context: Option<String>,
+    /// Explicit immutable offset after code collection leaves gaps in the source ledger.
+    pub base: Option<usize>,
 }
 
 /** The stored form: plain text for ordinary code (the older form too), a pair for direct eval. */
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 enum DynamicWire {
+    At(String, Option<String>, usize),
     Plain(String),
     Eval(String, String),
 }
@@ -131,13 +150,20 @@ impl From<DynamicWire> for DynamicSource {
     /** Either stored form. */
     fn from(wire: DynamicWire) -> Self {
         match wire {
+            DynamicWire::At(source, context, base) => Self {
+                source,
+                context,
+                base: Some(base),
+            },
             DynamicWire::Plain(source) => Self {
                 source,
                 context: None,
+                base: None,
             },
             DynamicWire::Eval(source, context) => Self {
                 source,
                 context: Some(context),
+                base: None,
             },
         }
     }
@@ -146,6 +172,10 @@ impl From<DynamicWire> for DynamicSource {
 impl serde::Serialize for DynamicSource {
     /** Plain text unless it carries a context. */
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if let Some(base) = self.base {
+            return DynamicWire::At(self.source.clone(), self.context.clone(), base)
+                .serialize(serializer);
+        }
         match &self.context {
             None => DynamicWire::Plain(self.source.clone()),
             Some(context) => DynamicWire::Eval(self.source.clone(), context.clone()),
@@ -201,14 +231,29 @@ impl Default for Limits {
 
 /** The virtual machine for one request. */
 pub(in crate::v9) struct Vm<'h> {
+    /** Current activation context; production builds keep the root context. */
+    pub active_realm: u32,
+    /** The conformance host's bounded saved contexts, without filesystem or browser authority. */
+    #[cfg(feature = "conformance")]
+    pub realms: realms::State,
+    /** d8's entered contexts are separate from the currently executing function's realm. */
+    #[cfg(feature = "conformance")]
+    pub realm_entries: Vec<u32>,
+    /** Actual host evaluation boundaries enrich captured JS stacks without creating fake code frames. */
+    #[cfg(feature = "conformance")]
+    pub trace_boundaries: Vec<(usize, ObjectId, JsValue, u32, &'static str)>,
     pub heap: Heap,
     /** Top-level let, const and class bindings. */
     pub globals: BTreeMap<String, Binding>,
     pub symbols: Symbols,
     pub registry: Registry,
     pub frames: Vec<Frame>,
+    /** A prepareStackTrace hook cannot recursively invoke another formatting hook in this VM. */
+    pub formatting_stack: bool,
     /** Values native code holds across calls back into scripts. */
     pub pins: Vec<JsValue>,
+    /** WeakRef targets observed in this task survive through its complete microtask checkpoint. */
+    pub kept_weak: FastMap<data::TableKey, JsValue>,
     /** True while native Rust code runs, so its allocations are pinned. */
     pub pinning: bool,
     /** A full heap noticed outside native code: the collector runs at the next instruction,
@@ -241,13 +286,24 @@ pub(in crate::v9) const GLOBAL: ObjectId = crate::constants::VM_GLOBAL_OBJECT_ID
 impl<'h> Vm<'h> {
     /** A VM over a heap, with the global object created if missing. */
     pub fn new(heap: Heap, page: Page<'h>, limits: Limits) -> Self {
+        #[cfg(feature = "conformance")]
+        realm::banks::select(0);
         let mut vm = Self {
+            active_realm: 0,
+            #[cfg(feature = "conformance")]
+            realms: realms::State::default(),
+            #[cfg(feature = "conformance")]
+            realm_entries: vec![0],
+            #[cfg(feature = "conformance")]
+            trace_boundaries: Vec::new(),
             heap,
             globals: BTreeMap::new(),
             symbols: Symbols::default(),
             registry: Registry::default(),
             frames: Vec::new(),
+            formatting_stack: false,
             pins: Vec::new(),
+            kept_weak: FastMap::default(),
             pinning: false,
             collect_due: false,
             native_depth: 0,
@@ -270,9 +326,23 @@ impl<'h> Vm<'h> {
             .any(|object| matches!(object.class, Class::Proxy(_)));
         if vm.heap.get(GLOBAL).is_none() {
             let proto = realm::realm().ids.window_prototype;
+            #[cfg(feature = "conformance")]
+            let proto = if vm.page.environment.conformance_d8 {
+                realm::realm().ids.object_prototype
+            } else {
+                proto
+            };
             vm.heap
                 .insert_at(GLOBAL, Object::new(Class::Plain, Some(proto)));
             vm.heap.next_object = vm.heap.next_object.max(GLOBAL + 1);
+            #[cfg(feature = "conformance")]
+            if vm.page.environment.conformance_d8 {
+                vm.seed_realm_global(GLOBAL, 0);
+            }
+            #[cfg(feature = "conformance")]
+            if !vm.page.environment.conformance_d8 {
+                crate::v9::builtins::expose_conformance_globals(&mut vm, GLOBAL, 0);
+            }
         }
         // %ThrowTypeError% is frozen from the start; the reflection builtins read
         // extensibility from the heap, so it lives there before any script can see it.
@@ -316,9 +386,21 @@ impl<'h> Vm<'h> {
     }
     /** An array with the given elements. */
     pub fn new_array(&mut self, elements: Vec<JsValue>) -> Res<ObjectId> {
-        if elements.len() > self.limits.array_length {
-            return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
+        let elements = array_elements::ArrayElements::from(elements);
+        if elements.resident_len() > self.limits.array_length {
+            return Err(
+                EngineError::limit("V9 resident array elements", self.limits.array_length).into(),
+            );
         }
+        let proto = realm::realm().ids.array_prototype;
+        self.alloc(Object::new(Class::Array(elements), Some(proto)))
+    }
+    /** Logical holes do not allocate elements or consume the resident element allowance. */
+    pub fn new_array_length(&mut self, length: usize) -> Res<ObjectId> {
+        if length > u32::MAX as usize {
+            return Err(self.range_error("Invalid array length"));
+        }
+        let elements = array_elements::ArrayElements::holes(length);
         let proto = realm::realm().ids.array_prototype;
         self.alloc(Object::new(Class::Array(elements), Some(proto)))
     }
@@ -330,6 +412,21 @@ impl<'h> Vm<'h> {
     }
     /** Charge work against the operation budget and the request deadline. */
     pub fn charge(&mut self, amount: usize) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        if self
+            .page
+            .environment
+            .conformance_worker_cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return Err(EngineError::new(
+                "conformance_worker_cancelled",
+                "Worker execution was cancelled.",
+                "The owning test host terminated this child isolate.",
+            )
+            .into());
+        }
         self.remaining = self.remaining.checked_sub(amount).ok_or_else(|| {
             Thrown::Fatal(EngineError::new(
                 "limit_exceeded",
@@ -341,6 +438,16 @@ impl<'h> Vm<'h> {
     }
     /** True once the request deadline has passed. */
     pub fn expired(&self) -> bool {
+        #[cfg(feature = "conformance")]
+        if self
+            .page
+            .environment
+            .conformance_worker_cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return true;
+        }
         self.deadline
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
@@ -355,7 +462,7 @@ impl<'h> Vm<'h> {
         self.check_heap_bounds()
     }
     /** After a collection, objects and functions must be back under their bounds. */
-    fn check_heap_bounds(&mut self) -> Res<()> {
+    pub(in crate::v9) fn check_heap_bounds(&mut self) -> Res<()> {
         let counts = self.heap.counts;
         if counts.functions >= self.limits.functions {
             return Err(EngineError::limit("V9 functions", self.limits.functions).into());
@@ -373,11 +480,11 @@ impl<'h> Vm<'h> {
         if counts.properties > limits.properties
             || counts.units > limits.units
             || counts.environments >= limits.environments
-            || counts.bindings + self.globals.len() > limits.bindings
+            || counts.bindings + self.global_binding_count() > limits.bindings
         {
             self.collect_now()?;
             let counts = self.heap.counts;
-            let bindings = counts.bindings + self.globals.len();
+            let bindings = counts.bindings + self.global_binding_count();
             for (count, limit, name) in [
                 (
                     counts.properties,

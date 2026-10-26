@@ -2,7 +2,7 @@
 use super::scan;
 use super::*;
 use crate::v9::syntax::{
-    Class, ExprKind, MemberKind, Pattern, PropKey, SITE_CONSTRUCTOR, SITE_TAGS, StmtKind, VarKind,
+    Class, ExprKind, MemberKind, Pattern, PropKey, SITE_CONSTRUCTOR, SITE_TAGS, StmtKind,
 };
 
 /** Method kinds for DefineMethod. */
@@ -23,8 +23,29 @@ impl Compiler {
     pub(super) fn compile_function(&mut self, func: &Func, self_name: bool) -> EngineResult<()> {
         let uses = scan::function_uses(func);
         // A module's bindings live in its environment, where other modules read them.
-        let env = uses.closure || self.module_body(func.site);
+        let mapped = uses.arguments && !func.strict && simple_parameters(func) && !func.flags.arrow;
+        let env = uses.closure || mapped || self.module_body(func.site);
+        let grammar = if func.flags.arrow {
+            self.functions.last().map_or(0, |state| state.eval_grammar)
+        } else {
+            let mut grammar = if self.module_body(func.site) {
+                0
+            } else {
+                crate::v9::syntax::EVAL_NEW_TARGET
+            };
+            if func.flags.method || func.flags.constructor || func.flags.fields {
+                grammar |= crate::v9::syntax::EVAL_SUPER_PROPERTY;
+            }
+            if func.flags.constructor && func.flags.derived {
+                grammar |= crate::v9::syntax::EVAL_SUPER_CALL;
+            }
+            if func.flags.fields {
+                grammar |= crate::v9::syntax::EVAL_NO_ARGUMENTS;
+            }
+            grammar
+        };
         self.begin_function(func.strict, func.flags);
+        self.f().eval_grammar = grammar;
         self.push_scope(env, true);
         self.at(func.pos);
         let result = self.function_body(func, uses, self_name);
@@ -66,6 +87,9 @@ impl Compiler {
                 self.declare(name, Declared::Var)?;
             }
         }
+        if uses.arguments && !func.strict && simple_parameters(func) && !func.flags.arrow {
+            self.map_parameters(&params);
+        }
         if uses.eval && !func.strict {
             // A sloppy direct eval's new vars live in this object, made on its first `var`.
             self.declare(&Name::from(super::eval::EXT), Declared::Hidden)?;
@@ -83,7 +107,7 @@ impl Compiler {
         if self_name
             && let Some(name) = &func.name
             && !params.contains(name)
-            && !vars.contains(name)
+            && (!vars.contains(name) || super::parameters::expressions(func))
         {
             self.declare(name, Declared::FunctionName)?;
             self.emit(Op::LoadCallee);
@@ -94,13 +118,14 @@ impl Compiler {
         if self.module_body(func.site) {
             self.module_imports(func.pos)?;
         }
+        let parameter_body = self.parameter_body(func, &params, &vars)?;
         for name in &vars {
             if !params.contains(name) {
                 self.declare(name, Declared::Var)?;
             }
         }
         for (name, kind) in scan::lexical_names(body, false) {
-            let declared = if kind == VarKind::Const {
+            let declared = if kind.immutable() {
                 Declared::Const
             } else {
                 Declared::Let
@@ -129,16 +154,19 @@ impl Compiler {
             self.emit(Op::RestArgs(0));
             self.emit(Op::SuperCallSpread);
             self.initialize(&Name::from("this"), func.pos)?;
+            self.emit(Op::InitializeDerivedFields);
             self.emit(Op::Pop);
         }
         match &func.body {
             Body::Block(body) => self.statements(body)?,
             Body::Expr(value) => {
                 self.expr(value)?;
+                self.leave_parameter_body(parameter_body);
                 self.emit(Op::Return);
                 return Ok(());
             }
         }
+        self.leave_parameter_body(parameter_body);
         self.emit(Op::Undefined);
         if func.flags.derived {
             self.load_this_raw()?;
@@ -147,6 +175,19 @@ impl Compiler {
             self.emit(Op::Return);
         }
         Ok(())
+    }
+    /** Retain only the last formal occurrence of each mapped parameter name. */
+    fn map_parameters(&mut self, params: &[Name]) {
+        let mut seen = std::collections::HashSet::new();
+        let mut slots = vec![None; params.len()];
+        for (index, name) in params.iter().enumerate().rev() {
+            if seen.insert(name)
+                && let Some((Place::Env(slot), _, _)) = self.resolve(name)
+            {
+                slots[index] = Some(slot);
+            }
+        }
+        self.f().arguments = Some(slots);
     }
     /** `this`, `arguments`, `new.target` and the home object as ordinary bindings. */
     fn hidden_bindings(
@@ -222,6 +263,10 @@ impl Compiler {
     }
     /** A class: heritage, constructor, methods, the name binding and static initializers. */
     pub(super) fn class(&mut self, class: &Class) -> EngineResult<()> {
+        self.class_named(class, None)
+    }
+    /** A computed field's anonymous class receives its captured name before static initialization. */
+    fn class_named(&mut self, class: &Class, name: Option<Slot>) -> EngineResult<()> {
         self.at(class.pos);
         let mark = self.f().registers;
         let named = class.name.clone();
@@ -234,9 +279,26 @@ impl Compiler {
         if let Some(name) = &named {
             self.declare(name, Declared::ClassInner)?;
         }
+        // Heritage is evaluated before this class extends the lexical private environment.
+        if let Some(superclass) = &class.superclass {
+            self.expr(superclass)?;
+        }
         self.classes
             .push((class.pos.offset, class.privates.clone()));
-        let result = self.class_body(class);
+        for key in super::class_fields::keys(class) {
+            self.declare(&super::class_fields::binding(key), Declared::Hidden)?;
+        }
+        for member in &class.members {
+            if let MemberKind::AutoAccessor(backing) = &member.kind
+                && matches!(member.key, PropKey::Computed(_))
+            {
+                self.declare(
+                    &super::class_fields::auto_binding(backing),
+                    Declared::Hidden,
+                )?;
+            }
+        }
+        let result = self.class_body(class, name);
         self.classes.pop();
         let scope = self.scopes.pop().expect("class scope");
         self.f().ops[push] = Op::PushEnv(scope.slots);
@@ -246,12 +308,9 @@ impl Compiler {
         result
     }
     /** Everything between the class's own scope push and pop; leaves the constructor. */
-    fn class_body(&mut self, class: &Class) -> EngineResult<()> {
+    fn class_body(&mut self, class: &Class, name: Option<Slot>) -> EngineResult<()> {
         let constructor = self.temp()?;
         let prototype = self.temp()?;
-        if let Some(superclass) = &class.superclass {
-            self.expr(superclass)?;
-        }
         match &class.fields {
             Some(fields) => self.closure(fields, false)?,
             None => {
@@ -267,17 +326,51 @@ impl Compiler {
         self.emit(Op::Pop);
         self.emit(Op::SetReg(constructor));
         self.emit(Op::Pop);
-        for member in &class.members {
+        if let Some(name) = name {
+            self.emit(Op::GetReg(constructor));
+            self.emit(Op::GetReg(name));
+            self.emit(Op::InferFunctionName);
+            self.emit(Op::Pop);
+        }
+        for element in super::class_fields::elements(class) {
+            let member = match element {
+                super::class_fields::Element::Method(member) => member,
+                super::class_fields::Element::Field(key) => {
+                    self.expr(key)?;
+                    self.emit(Op::ToPropertyKey);
+                    self.initialize(&super::class_fields::binding(key), key.pos)?;
+                    self.emit(Op::Pop);
+                    continue;
+                }
+            };
             self.at(member.pos);
             self.emit(Op::GetReg(if member.is_static {
                 constructor
             } else {
                 prototype
             }));
+            if let MemberKind::AutoAccessor(backing_name) = &member.kind {
+                let backing = self.private_name(backing_name)?;
+                match &member.key {
+                    PropKey::Computed(key) => {
+                        self.expr(key)?;
+                        self.emit(Op::ToPropertyKey);
+                        self.initialize(&super::class_fields::auto_binding(backing_name), key.pos)?;
+                        self.emit(Op::AutoAccessorComputed(backing));
+                    }
+                    key => {
+                        let key = self.key_index(key)?;
+                        self.emit(Op::AutoAccessor(key, backing));
+                    }
+                }
+                self.emit(Op::Pop);
+                continue;
+            }
             let (func, kind) = match &member.kind {
                 MemberKind::Method(func) => (func, METHOD),
                 MemberKind::Getter(func) => (func, GETTER),
                 MemberKind::Setter(func) => (func, SETTER),
+                MemberKind::AutoAccessor(_) => unreachable!("handled accessor pair"),
             };
             match &member.key {
                 PropKey::Computed(key) => {
@@ -302,6 +395,7 @@ impl Compiler {
         if let Some(statics) = &class.statics {
             self.closure(statics, false)?;
             self.emit(Op::GetReg(constructor));
+            self.emit(Op::SetInitializerHome);
             self.emit(Op::Call(0));
             self.emit(Op::Pop);
         }
@@ -310,22 +404,58 @@ impl Compiler {
     }
     /** A class field definition inside a synthesized initializer. */
     pub(super) fn field(&mut self, key: &PropKey, value: Option<&Expr>) -> EngineResult<()> {
+        let mark = self.f().registers;
         self.load_this()?;
         match key {
             PropKey::Computed(key) => {
-                self.expr(key)?;
-                self.emit(Op::ToPropertyKey);
-                self.field_value(value)?;
+                self.load_name(&super::class_fields::binding(key), key.pos)?;
+                let name = self.temp()?;
+                self.emit(Op::SetReg(name));
+                self.field_value_named(value, name)?;
                 self.emit(Op::DefineFieldComputed);
             }
             key => {
                 let index = self.key_index(key)?;
-                self.field_value(value)?;
+                let auto_name = match key {
+                    PropKey::Private(backing) if backing.starts_with("%accessor") => {
+                        Some(super::class_fields::auto_binding(backing))
+                    }
+                    _ => None,
+                };
+                if let Some(auto_name) = auto_name.filter(|name| self.resolve(name).is_some()) {
+                    let name = self.temp()?;
+                    self.load_name(&auto_name, value.map_or(Pos::default(), |value| value.pos))?;
+                    self.emit(Op::SetReg(name));
+                    self.emit(Op::Pop);
+                    self.field_value_named(value, name)?;
+                } else {
+                    self.field_value(value)?;
+                }
                 self.emit(Op::DefineField(index));
             }
         }
         self.emit(Op::Pop);
+        self.release(mark);
         Ok(())
+    }
+    /** Only anonymous definitions undergo named evaluation; previously created function values keep their own names. */
+    pub(super) fn field_value_named(
+        &mut self,
+        value: Option<&Expr>,
+        name: Slot,
+    ) -> EngineResult<()> {
+        match value.map(|value| &value.kind) {
+            Some(ExprKind::Class(class)) if class.name.is_none() => {
+                self.class_named(class, Some(name))
+            }
+            Some(ExprKind::Function(function)) if function.name.is_none() => {
+                self.field_value(value)?;
+                self.emit(Op::GetReg(name));
+                self.emit(Op::InferFunctionName);
+                Ok(())
+            }
+            _ => self.field_value(value),
+        }
     }
     /** A field's initial value. */
     fn field_value(&mut self, value: Option<&Expr>) -> EngineResult<()> {
@@ -424,7 +554,10 @@ impl Compiler {
     fn assign_static(&mut self, name: &Name) -> EngineResult<()> {
         let index = self.name(name)?;
         match self.resolve(name) {
-            Some((_, Declared::Const | Declared::Import, _)) => {
+            Some((_, Declared::Const | Declared::ClassInner | Declared::Import, _)) => {
+                // PutValue checks initialization before rejecting an immutable binding.
+                self.load_static(name)?;
+                self.emit(Op::Pop);
                 self.emit(Op::ThrowConst(index));
             }
             Some((_, Declared::FunctionName, _)) => {
@@ -612,6 +745,6 @@ fn has_strict_directive(func: &Func) -> bool {
 fn checked(declared: Declared) -> bool {
     matches!(
         declared,
-        Declared::Let | Declared::Const | Declared::ClassInner
+        Declared::Let | Declared::Const | Declared::ClassInner | Declared::Import
     )
 }

@@ -9,7 +9,6 @@
  * V8's context extension), which every name lookup that crosses that function checks first.
  */
 use super::*;
-use crate::v9::syntax::VarKind;
 
 /** The hidden binding holding a sloppy function's eval-var object. */
 pub(super) const EXT: &str = "%ext";
@@ -28,10 +27,14 @@ pub(super) type Check = (Slot, Slot, bool);
 
 /** The caller's scopes as the eval code sees them. */
 pub(super) struct Context {
-    strict: bool,
+    /// The caller's mode participates in parsing before any compiler lowering happens.
+    pub(super) strict: bool,
     /// The call sits in a sloppy function's parameter list.
     params: bool,
+    pub(super) grammar: u8,
     scopes: Vec<Scope>,
+    /// Private environments retain lexical class sites and declaration sets, outermost first.
+    classes: Vec<(u32, Vec<Name>)>,
 }
 
 /** The one-letter code of each declaration kind in the context text. */
@@ -48,16 +51,69 @@ const KINDS: [(Declared, char); 7] = [
 /** Parse the context text `eval_context` made; it travels beside the eval source, never in it. */
 pub(super) fn context(text: &str) -> Option<Context> {
     let (strict, scopes) = text.split_once('|')?;
+    let grammar = if strict.len() == 1 {
+        0
+    } else {
+        strict.get(1..)?.parse::<u8>().ok()?
+    };
+    if grammar > 15 {
+        return None;
+    }
+    let (scopes, private) = scopes.split_once('|').unwrap_or((scopes, ""));
+    let classes = private
+        .split(';')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut fields = part.split(',');
+            let site = fields.next()?.parse::<u32>().ok()?;
+            let names = fields
+                .map(|name| {
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(Name::from(name))
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?;
+            if names.is_empty() {
+                None
+            } else {
+                Some((site, names))
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
     let scopes = scopes
         .split(';')
         .filter(|scope| !scope.is_empty())
         .map(parse_scope)
         .collect::<Option<Vec<_>>>()?;
     Some(Context {
-        strict: strict == "s",
-        params: strict == "p",
+        strict: strict.starts_with('s'),
+        params: strict.starts_with('p'),
+        grammar,
         scopes,
+        classes,
     })
+}
+
+impl Context {
+    /** Parsing checks declaration visibility, while lowering retains which lexical class owns each spelling. */
+    pub(super) fn private_names(&self) -> Vec<Name> {
+        self.classes
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect()
+    }
+}
+/** Actual callers must have every recorded private environment on their lexical chain. */
+pub(in crate::v9) fn private_sites(text: &str) -> Option<Vec<u32>> {
+    Some(
+        context(text)?
+            .classes
+            .into_iter()
+            .map(|(site, _)| site)
+            .collect(),
+    )
 }
 
 /** Slots each environment scope of a context needs, innermost first, so the VM can check them
@@ -113,6 +169,11 @@ impl Compiler {
             (false, true) => "p|",
             (false, false) => "n|",
         });
+        if state.eval_grammar != 0 {
+            text.pop();
+            text.push_str(&state.eval_grammar.to_string());
+            text.push('|');
+        }
         for scope in &self.scopes {
             if scope.global {
                 text.push_str("g;");
@@ -133,6 +194,20 @@ impl Compiler {
             }
             text.push(';');
         }
+        if self.classes.iter().any(|(_, names)| !names.is_empty()) {
+            text.push('|');
+            for (site, names) in &self.classes {
+                if names.is_empty() {
+                    continue;
+                }
+                text.push_str(&site.to_string());
+                for name in names {
+                    text.push(',');
+                    text.push_str(name);
+                }
+                text.push(';');
+            }
+        }
         text
     }
     /** The function being emitted, read-only. */
@@ -152,7 +227,8 @@ impl Compiler {
         let mut checks = Vec::new();
         let mut hops: Slot = 0;
         for scope in self.scopes.iter().rev() {
-            if scope.index.contains_key(name) {
+            let binding = scope.index.get(name).map(|&at| &scope.bindings[at]);
+            if binding.is_some_and(|binding| binding.declared != Declared::FunctionName) {
                 break;
             }
             for (hidden, with) in [(EXT, false), (WITH, true)] {
@@ -166,6 +242,9 @@ impl Compiler {
                 {
                     checks.push((hops, *slot, with));
                 }
+            }
+            if binding.is_some() {
+                break;
             }
             if scope.env {
                 hops += 1;
@@ -242,15 +321,17 @@ impl Compiler {
         self.patch_all(done);
         Ok(())
     }
-    /** `delete name` checks each `with` object holding the name first; jumps land at the end. */
+    /** `delete name` checks dynamic eval and `with` bindings first; jumps land at the end. */
     pub(super) fn delete_checks(&mut self, name: &Name) -> EngineResult<Vec<usize>> {
         let mut jumps = Vec::new();
         for (hops, slot, with) in self.ext_checks(name) {
-            if with {
-                let index = self.name(name)?;
-                self.emit(Op::DeleteWith(index, hops, slot));
-                jumps.push(self.emit(Op::JumpIfTrue(0)));
-            }
+            let index = self.name(name)?;
+            self.emit(if with {
+                Op::DeleteWith(index, hops, slot)
+            } else {
+                Op::DeleteExt(index, hops, slot)
+            });
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
         }
         Ok(jumps)
     }
@@ -276,7 +357,9 @@ impl Compiler {
         let strict = program.strict || context.strict;
         let params = context.params;
         self.begin_function(strict, FuncFlags::default());
+        self.f().eval_grammar = context.grammar;
         self.scopes.extend(context.scopes);
+        self.classes = context.classes;
         let base = self.scopes.len();
         self.f().scope_base = base;
         self.at(program.pos);
@@ -319,7 +402,7 @@ impl Compiler {
             }
         }
         for (name, kind) in scan::lexical_names(body, false) {
-            let declared = if kind == VarKind::Const {
+            let declared = if kind.immutable() {
                 Declared::Const
             } else {
                 Declared::Let
@@ -416,7 +499,11 @@ impl Compiler {
                 None => {
                     self.emit(Op::DeclareVar(index, true));
                 }
-                Some(at) if !self.scopes[at].index.contains_key(name) => {
+                Some(at)
+                    if self.scopes[at].index.get(name).is_none_or(|&slot| {
+                        self.scopes[at].bindings[slot].declared == Declared::FunctionName
+                    }) =>
+                {
                     let (hops, slot) = self.ext_slot(at);
                     self.emit(Op::DeclareExt(index, hops, slot));
                 }
@@ -444,9 +531,13 @@ impl Compiler {
         };
         let hops = self.hops_to(at);
         let scope = &self.scopes[at];
-        match scope.index.get(name).map(|&i| scope.bindings[i].place) {
-            Some(Place::Env(slot)) => {
-                self.emit(Op::SetEnv(hops, slot));
+        match scope.index.get(name).map(|&i| &scope.bindings[i]) {
+            Some(Binding {
+                place: Place::Env(slot),
+                declared,
+                ..
+            }) if *declared != Declared::FunctionName => {
+                self.emit(Op::SetEnv(hops, *slot));
             }
             _ => {
                 let (hops, slot) = self.ext_slot(at);

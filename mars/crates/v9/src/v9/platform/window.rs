@@ -7,7 +7,7 @@ use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::realm;
-use crate::v9::vm::{Call, GLOBAL, Res, Vm};
+use crate::v9::vm::{Call, Res, Vm};
 
 /** The setter of a [Replaceable] window attribute: the assigned value becomes an own data
 property of the global object, shadowing the attribute from then on. */
@@ -15,7 +15,7 @@ pub(in crate::v9) fn replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
     let key = crate::v9::vm::heap::Key::from(name);
     vm.define(
-        GLOBAL,
+        vm.global_object(),
         key,
         crate::v9::vm::property::Descriptor {
             value: Some(call.arg(0)),
@@ -28,12 +28,23 @@ pub(in crate::v9) fn replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/** A browsing context's mutable name is a string, shared by global var and property access. */
+pub(in crate::v9) fn set_name(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let value = JsValue::String(vm.to_string(&call.arg(0))?);
+    vm.define(
+        vm.global_object(),
+        crate::v9::vm::heap::Key::from("name"),
+        crate::v9::vm::property::Descriptor::data(value),
+    )?;
+    Ok(JsValue::Undefined)
+}
+
 /** Window getters by registered name. */
 pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
         "window" | "self" | "globalThis" | "frames" | "top" | "parent" | "defaultView" => {
-            JsValue::Object(GLOBAL)
+            JsValue::Object(vm.global_object())
         }
         "document" => JsValue::Object(realm().ids.document),
         "location" => JsValue::Object(realm().ids.location),
@@ -596,7 +607,7 @@ pub(in crate::v9) fn window_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                             .unwrap_or_default(),
                     )?,
                 )?;
-                vm.put(id, "source", JsValue::Object(GLOBAL))?;
+                vm.put(id, "source", JsValue::Object(vm.global_object()))?;
                 let dispatcher = JsValue::Object(realm().ids.fields_dummy);
                 let _ = dispatcher;
                 super::events::dispatch(vm, super::Target::Window, id)?;

@@ -9,7 +9,29 @@
 mod import_map;
 mod link;
 
-pub(in crate::v9) use link::{Outcome, advance_dynamic, discover, refuse_dynamic, run_entry};
+pub(in crate::v9) use link::{Outcome, discover, refuse_dynamic, run_entry};
+
+/** Delivered source is shared, while each waiting context instantiates its own real module records. */
+pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
+    link::advance_dynamic(vm)?;
+    #[cfg(feature = "conformance")]
+    {
+        let banks: Vec<_> = vm
+            .realms
+            .contexts
+            .iter()
+            .enumerate()
+            .filter(|(bank, context)| {
+                *bank != vm.active_realm as usize && !context.modules.waiting.is_empty()
+            })
+            .map(|(bank, _)| bank as u32)
+            .collect();
+        for bank in banks {
+            vm.with_realm(bank, link::advance_dynamic)?;
+        }
+    }
+    vm.check_module_bounds()
+}
 
 use super::compile::{Code, ModuleInfo};
 use super::syntax;
@@ -126,7 +148,7 @@ impl ModuleState {
         self.records.is_empty() && self.cursor.is_none() && self.waiting.is_empty()
     }
     /** Structural bounds of untrusted committed state. */
-    fn validate(&self, sources: usize) -> EngineResult<()> {
+    pub(in crate::v9) fn validate(&self, sources: usize) -> EngineResult<()> {
         if self.records.len() > MODULES || self.waiting.len() > MODULES {
             return Err(EngineError::limit("V9 module records", MODULES));
         }
@@ -283,6 +305,10 @@ impl Modules {
             urls: vm.page.environment.scripts.clone(),
             ..Modules::default()
         };
+        #[cfg(feature = "conformance")]
+        {
+            modules.map.d8 = vm.page.environment.conformance_d8;
+        }
         for entry in &input.entries {
             modules.entries.insert(entry.index, entry.clone());
         }
@@ -510,6 +536,7 @@ fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompi
             .and_then(|mut tokens| {
                 for token in &mut tokens {
                     token.location.byte_offset += offset;
+                    token.end += offset;
                 }
                 syntax::parse_module(tokens)
             })
@@ -546,7 +573,7 @@ pub(in crate::v9) fn dynamic_import(
         Ok(url) => String::from(url),
         Err(message) => return link::reject_type_error(vm, promise, &message),
     };
-    if vm.modules.state.waiting.len() >= MODULES {
+    if vm.module_counts().1 >= MODULES {
         return link::reject_type_error(vm, promise, "Too many module imports are waiting.");
     }
     vm.modules.state.waiting.push(Waiting {

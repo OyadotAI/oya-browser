@@ -187,6 +187,17 @@ pub(in crate::v9) struct Env {
 /** One heap object. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::v9) struct Object {
+    /** Nursery collections promote survivors after a bounded number of actual young sweeps. */
+    #[serde(rename = "a", default, skip_serializing_if = "young_age")]
+    pub age: u8,
+    /** Object creation context owns its intrinsics and keeps detached realm references valid. */
+    #[cfg(feature = "conformance")]
+    #[serde(rename = "r", default, skip_serializing_if = "realm_zero")]
+    pub realm: u32,
+    /** Foreign global property tables use the existing aggregate binding quota. */
+    #[cfg(feature = "conformance")]
+    #[serde(rename = "g", default, skip_serializing_if = "is_false")]
+    pub global: bool,
     #[serde(rename = "c")]
     pub class: Class,
     #[serde(rename = "p", default, skip_serializing_if = "Option::is_none")]
@@ -195,6 +206,17 @@ pub(in crate::v9) struct Object {
     pub props: Props,
     #[serde(rename = "x", default = "yes", skip_serializing_if = "is_true")]
     pub extensible: bool,
+}
+
+/** Root-owned objects retain the old compact wire form. */
+#[cfg(feature = "conformance")]
+fn realm_zero(realm: &u32) -> bool {
+    *realm == 0
+}
+/** Ordinary objects do not carry global binding-table metadata. */
+#[cfg(feature = "conformance")]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /** Serde default for extensibility. */
@@ -207,10 +229,20 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
+/** Newly allocated objects keep the previous compact serialized shape. */
+fn young_age(age: &u8) -> bool {
+    *age == 0
+}
+
 impl Object {
     /** A new ordinary object. */
     pub fn new(class: Class, proto: Option<ObjectId>) -> Self {
         Self {
+            age: 0,
+            #[cfg(feature = "conformance")]
+            realm: super::realm::banks::current(),
+            #[cfg(feature = "conformance")]
+            global: false,
             class,
             proto,
             props: Props::default(),
@@ -239,6 +271,10 @@ global vars and functions (an object environment record), and an eval-var object
 sloppy direct eval declared. Without this a single `var a,b,...` or repeated eval could declare
 bindings past VM_BINDINGS, bounded only by the much larger property budget. */
 fn holds_bindings(id: ObjectId, object: &Object) -> bool {
+    #[cfg(feature = "conformance")]
+    if object.global {
+        return true;
+    }
     id == crate::constants::VM_GLOBAL_OBJECT_ID || matches!(object.class, Class::EvalVars)
 }
 
@@ -271,6 +307,10 @@ pub(in crate::v9) struct Heap {
     pub next_object: ObjectId,
     pub next_env: EnvId,
     pub counts: Counts,
+    /** Wrapper aliases charge native shared allocation once; this derived cache is never serialized. */
+    shared_stores: FastMap<(u8, u64), usize>,
+    /** Mutable shared graph bytes charged at the last native observation, independently of wrapper count. */
+    shared_gc_units: FastMap<u64, usize>,
 }
 
 impl Heap {
@@ -298,6 +338,7 @@ impl Heap {
     /** Add or remove an object's contribution to the counts. */
     fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
         let bindings = binding_props(id, object);
+        let units = self.counted_units(object, add);
         let (objects, functions) = if object.function().is_some() {
             (0, 1)
         } else {
@@ -308,14 +349,53 @@ impl Heap {
             counts.objects += objects;
             counts.functions += functions;
             counts.properties += object.property_count();
-            counts.units += object.units();
+            counts.units += units;
             counts.bindings += bindings;
         } else {
             counts.objects = counts.objects.saturating_sub(objects);
             counts.functions = counts.functions.saturating_sub(functions);
             counts.properties = counts.properties.saturating_sub(object.property_count());
-            counts.units = counts.units.saturating_sub(object.units());
+            counts.units = counts.units.saturating_sub(units);
             counts.bindings = counts.bindings.saturating_sub(bindings);
+        }
+    }
+    /** Strong wrapper counts track backing allocation without multiplying it for fixed Wasm windows. */
+    fn counted_units(&mut self, object: &Object, add: bool) -> usize {
+        let (identity, units) = match &object.class {
+            Class::SharedArrayBuffer(buffer) => {
+                ((0, buffer.identity()), buffer.allocated().div_ceil(2))
+            }
+            Class::WasmShared(value) => {
+                ((1, value.arena().identity()), value.allocated().div_ceil(2))
+            }
+            _ => return object.units(),
+        };
+        let references = self.shared_stores.entry(identity).or_default();
+        let charged = if add {
+            *references += 1;
+            *references == 1
+        } else {
+            *references = references.saturating_sub(1);
+            *references == 0
+        };
+        let units = if charged && identity.0 == 1 {
+            if add {
+                self.shared_gc_units.insert(identity.1, units);
+                units
+            } else {
+                self.shared_gc_units.remove(&identity.1).unwrap_or(units)
+            }
+        } else {
+            units
+        };
+        object.props.units() + if charged { units } else { 0 }
+    }
+    /** Observe concurrent graph growth once per arena without rescanning every ordinary heap object. */
+    pub fn refresh_shared_gc(&mut self, arena: &super::data::SharedGcArena) {
+        if let Some(previous) = self.shared_gc_units.get_mut(&arena.identity()) {
+            let current = arena.allocated().div_ceil(2);
+            self.counts.units = self.counts.units.saturating_sub(*previous) + current;
+            *previous = current;
         }
     }
     /** A new environment record. */
@@ -408,6 +488,8 @@ impl Heap {
     counts between collections count every reference and so only ever overestimate. */
     pub fn recount(&mut self) {
         let mut counts = Counts::default();
+        self.shared_stores.clear();
+        self.shared_gc_units.clear();
         for (id, object) in &self.objects {
             counts.bindings += binding_props(*id, object);
             if object.function().is_some() {
@@ -422,6 +504,27 @@ impl Heap {
                 Class::RegExp(data) => data.source.len(),
                 // Buffer bytes count against the same budget, two bytes per UTF-16 unit.
                 Class::ArrayBuffer(bytes) => bytes.0.len().div_ceil(2),
+                Class::SharedArrayBuffer(bytes) => {
+                    let count = self.shared_stores.entry((0, bytes.identity())).or_default();
+                    *count += 1;
+                    if *count == 1 {
+                        bytes.allocated().div_ceil(2)
+                    } else {
+                        0
+                    }
+                }
+                Class::WasmShared(root) => {
+                    let identity = root.arena().identity();
+                    let count = self.shared_stores.entry((1, identity)).or_default();
+                    *count += 1;
+                    if *count == 1 {
+                        let units = root.allocated().div_ceil(2);
+                        self.shared_gc_units.insert(identity, units);
+                        units
+                    } else {
+                        0
+                    }
+                }
                 _ => 0,
             };
         }
@@ -433,10 +536,15 @@ impl Heap {
     /** Units of the distinct string contents held in properties, internal data and slots. */
     fn distinct_units<'a>(&'a self) -> usize {
         let mut distinct: FastSet<&'a [u16]> = FastSet::default();
-        let mut text = |value: &'a JsValue| {
-            if let JsValue::String(string) = value {
+        let mut bigints: FastSet<&'a [u32]> = FastSet::default();
+        let mut text = |value: &'a JsValue| match value {
+            JsValue::String(string) => {
                 distinct.insert(string.as_units());
             }
+            JsValue::BigIntWide(integer) => {
+                bigints.insert(integer.words());
+            }
+            _ => {}
         };
         for object in self.objects.values() {
             for (_, prop) in object.props.iter() {
@@ -450,7 +558,14 @@ impl Heap {
             .values()
             .flat_map(|env| &env.slots)
             .for_each(&mut text);
-        distinct.iter().map(|units| units.len()).sum()
+        drop(text);
+        for object in self.objects.values() {
+            if let Class::BigIntWide(integer) = &object.class {
+                bigints.insert(integer.words());
+            }
+        }
+        distinct.iter().map(|units| units.len()).sum::<usize>()
+            + bigints.iter().map(|words| words.len() * 2).sum::<usize>()
     }
 }
 
@@ -596,6 +711,8 @@ impl<'de> Deserialize<'de> for Heap {
             next_object,
             next_env,
             counts: Counts::default(),
+            shared_stores: FastMap::default(),
+            shared_gc_units: FastMap::default(),
         };
         heap.recount();
         Ok(heap)

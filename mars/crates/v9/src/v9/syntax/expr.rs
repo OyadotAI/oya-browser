@@ -41,8 +41,12 @@ impl Parser {
         };
         self.next();
         let pattern = if operator == AssignOp::Assign {
-            self.pattern_of(target)?
+            self.legacy_target(target)?
         } else {
+            if matches!(operator, AssignOp::Logical(_)) && matches!(target.kind, ExprKind::Call(..))
+            {
+                return Err(self.error_at(pos, "Invalid left-hand side in assignment"));
+            }
             self.simple_target(target)?
         };
         let mut value = self.assignment(no_in)?;
@@ -227,6 +231,9 @@ impl Parser {
             }
             self.next();
             let operand = self.unary()?;
+            if self.at("**") {
+                return Err(self.unexpected());
+            }
             return self.node(ExprKind::Await(Box::new(operand)), pos);
         }
         self.postfix()
@@ -297,7 +304,11 @@ impl Parser {
         self.next();
         if self.eat(".") {
             let name = self.property_name()?;
-            if &*name != "target" || !self.context.function {
+            if &*name != "target"
+                || !self.context.function
+                    && !self.context.static_block
+                    && !self.context.eval_new_target
+            {
                 return Err(self.error_at(pos, "new.target expression is not allowed here"));
             }
             return self.node(ExprKind::NewTarget, pos);
@@ -397,7 +408,7 @@ impl Parser {
                             self.error_at(self.pos(), "Invalid tagged template on optional chain")
                         );
                     }
-                    let (quasis, raws, expressions) = self.template_parts()?;
+                    let (quasis, raws, expressions) = self.template_parts(true)?;
                     base = self.node(
                         ExprKind::Tagged(Box::new(base), quasis, raws, expressions),
                         pos,
@@ -442,6 +453,7 @@ impl Parser {
     fn primary(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         let token = self.peek().clone();
+        self.strict_literal(&token)?;
         let kind = match token.kind {
             Kind::Number(value) => {
                 self.next();
@@ -459,22 +471,34 @@ impl Parser {
                 self.next();
                 ExprKind::BigInt(value)
             }
+            Kind::BigIntWide(digits) => {
+                self.next();
+                ExprKind::BigIntWide(Name::from(digits.as_str()))
+            }
             Kind::Regex { pattern, flags } => {
                 self.next();
                 ExprKind::Regex(Name::from(pattern.as_str()), Name::from(flags.as_str()))
             }
             Kind::Template { head: true, .. } => {
-                let (quasis, _, expressions) = self.template_parts()?;
+                let (quasis, _, expressions) = self.template_parts(false)?;
                 ExprKind::Template(quasis, expressions)
             }
             Kind::Symbol('(') => {
                 self.next();
                 let value = self.expression(false)?;
                 self.expect(")")?;
+                if matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_)) {
+                    self.parenthesized_patterns.insert(value.pos.offset);
+                }
                 return Ok(value);
             }
             Kind::Symbol('[') => return self.array_literal(),
             Kind::Symbol('{') => return self.object_literal(),
+            Kind::Spread => {
+                self.next();
+                self.assignment(false)?;
+                return Err(self.error_at(pos, "Unexpected token '...'"));
+            }
             // An escaped name is never a keyword, so it takes the identifier arm.
             Kind::Name(name) => match if token.escaped { "" } else { name.as_str() } {
                 "this" => {
@@ -523,16 +547,24 @@ impl Parser {
     #[allow(clippy::type_complexity)]
     fn template_parts(
         &mut self,
+        tagged: bool,
     ) -> EngineResult<(Vec<Option<JsString>>, Vec<JsString>, Vec<Expr>)> {
         let mut quasis = Vec::new();
         let mut raws = Vec::new();
         let mut expressions = Vec::new();
         let Kind::Template {
-            cooked, raw, tail, ..
+            cooked,
+            raw,
+            tail,
+            invalid,
+            ..
         } = self.next().kind
         else {
             return Err(self.unexpected());
         };
+        if invalid && !tagged {
+            return Err(self.error_at(self.pos(), "Invalid escape sequence in template literal"));
+        }
         quasis.push(cooked);
         raws.push(raw);
         let mut tail = tail;
@@ -544,7 +576,12 @@ impl Parser {
                     raw,
                     head: false,
                     tail: last,
+                    invalid,
                 } => {
+                    if invalid && !tagged {
+                        return Err(self
+                            .error_at(self.pos(), "Invalid escape sequence in template literal"));
+                    }
                     quasis.push(cooked);
                     raws.push(raw);
                     tail = last;
@@ -666,6 +703,7 @@ impl Parser {
     /** An identifier, string, number, computed or private property key. */
     pub(super) fn property_key(&mut self) -> EngineResult<PropKey> {
         let token = self.next();
+        self.strict_literal(&token)?;
         Ok(match token.kind {
             Kind::Name(name) => PropKey::Name(Name::from(name.as_str())),
             Kind::String(value) => PropKey::Name(Name::from(
@@ -677,6 +715,10 @@ impl Parser {
             Kind::Number(value) => PropKey::Name(Name::from(
                 crate::v9::value::number_to_string(value).as_str(),
             )),
+            Kind::BigInt(value) => PropKey::Name(Name::from(value.to_string())),
+            Kind::BigIntWide(digits) => {
+                PropKey::Name(Name::from(crate::v9::value::bigint_property_key(&digits)?))
+            }
             Kind::Private(name) => PropKey::Private(Name::from(name.as_str())),
             Kind::Symbol('[') => {
                 let key = self.assignment(false)?;
@@ -692,6 +734,11 @@ impl Parser {
     /** Turn a parsed expression into an assignment or binding pattern (the cover grammar). */
     pub(super) fn pattern_of(&mut self, value: Expr) -> EngineResult<Pattern> {
         let pos = value.pos;
+        if self.parenthesized_patterns.contains(&pos.offset)
+            && matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_))
+        {
+            return Err(self.error_at(pos, "Invalid destructuring assignment target"));
+        }
         match value.kind {
             ExprKind::Ident(name) => {
                 self.check_assignable(&name, pos)?;
@@ -761,8 +808,31 @@ impl Parser {
             _ => Err(self.error_at(pos, "Invalid left-hand side in assignment")),
         }
     }
+    /** Web-compatible call targets are rewritten to call[throw ReferenceError], as in V8. */
+    pub(super) fn legacy_target(&mut self, value: Expr) -> EngineResult<Pattern> {
+        if matches!(value.kind, ExprKind::Call(_, _, false)) {
+            let pos = value.pos;
+            let error = self.node(
+                ExprKind::InvalidReference("Invalid left-hand side in assignment"),
+                pos,
+            )?;
+            let member = self.node(
+                ExprKind::Member(
+                    Box::new(value),
+                    MemberProp::Computed(Box::new(error)),
+                    false,
+                ),
+                pos,
+            )?;
+            return Ok(Pattern::Expr(Box::new(member)));
+        }
+        self.pattern_of(value)
+    }
     /** Compound assignment and updates need a plain name or member target. */
     fn simple_target(&mut self, value: Expr) -> EngineResult<Pattern> {
+        if matches!(value.kind, ExprKind::Call(_, _, false)) {
+            return self.legacy_target(value);
+        }
         let pos = value.pos;
         match value.kind {
             ExprKind::Ident(name) => {

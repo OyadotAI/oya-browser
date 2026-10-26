@@ -1,4 +1,4 @@
-/** BigInt as real pages use it (Google's Closure int64 helpers), bounded to 128 bits. */
+/** BigInt as real pages use it (Google's Closure int64 helpers), bounded by retained-value quotas. */
 mod common;
 use common::{eval, failure, load};
 
@@ -25,10 +25,10 @@ fn mixing_types_throws_type_errors() {
     );
 }
 
-/** Results past 128 bits and bad conversions are catchable RangeErrors and SyntaxErrors. */
+/** Oversized results and bad conversions are catchable RangeErrors and SyntaxErrors. */
 #[test]
 fn bounds_and_bad_conversions_throw_catchably() {
-    let source = "const r=[()=>2n**200n,()=>1n<<127n,()=>1n/0n,()=>BigInt(1.5),()=>BigInt('x')].map(f=>{try{f();return 'ok'}catch(e){return e.name}}).join();";
+    let source = "const r=[()=>2n**(2n**64n),()=>1n<<(1n<<64n),()=>1n/0n,()=>BigInt(1.5),()=>BigInt('x')].map(f=>{try{f();return 'ok'}catch(e){return e.name}}).join();";
     assert_eq!(
         eval(source, "r"),
         "RangeError,RangeError,RangeError,RangeError,SyntaxError"

@@ -60,6 +60,7 @@ impl Compiler {
             .collect();
         params.push(Pattern::Ident(Name::from(META), pos));
         let body = Func {
+            source_span: std::cell::RefCell::new(None),
             site,
             name: None,
             display: RefCell::new(Name::from("")),

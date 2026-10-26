@@ -9,7 +9,7 @@ the native stack and abort the process. */
 use super::*;
 
 /** O.[[GetPrototypeOf]](). */
-pub(super) fn get_prototype_of(vm: &mut Vm, id: ObjectId) -> Res<Option<ObjectId>> {
+pub(in crate::v9) fn get_prototype_of(vm: &mut Vm, id: ObjectId) -> Res<Option<ObjectId>> {
     let Some(proxy) = vm.proxy_of(id) else {
         return Ok(vm.proto_of(id));
     };
@@ -36,7 +36,11 @@ pub(super) fn get_prototype_of(vm: &mut Vm, id: ObjectId) -> Res<Option<ObjectId
 }
 
 /** O.[[SetPrototypeOf]](V). */
-pub(super) fn set_prototype_of(vm: &mut Vm, id: ObjectId, proto: Option<ObjectId>) -> Res<bool> {
+pub(in crate::v9) fn set_prototype_of(
+    vm: &mut Vm,
+    id: ObjectId,
+    proto: Option<ObjectId>,
+) -> Res<bool> {
     let Some(proxy) = vm.proxy_of(id) else {
         return vm.set_proto(id, proto);
     };
@@ -61,7 +65,7 @@ pub(super) fn set_prototype_of(vm: &mut Vm, id: ObjectId, proto: Option<ObjectId
 }
 
 /** IsExtensible(O). */
-pub(super) fn is_extensible(vm: &mut Vm, id: ObjectId) -> Res<bool> {
+pub(in crate::v9) fn is_extensible(vm: &mut Vm, id: ObjectId) -> Res<bool> {
     let Some(proxy) = vm.proxy_of(id) else {
         return Ok(vm.heap.get(id).is_none_or(|object| object.extensible));
     };

@@ -4,7 +4,6 @@
  * Functions, symbols, DOM nodes and other host objects throw DataCloneError, as in a browser.
  */
 use super::*;
-use crate::v9::vm::GLOBAL;
 use crate::v9::vm::data::Class;
 
 /** structuredClone on the global object. */
@@ -48,14 +47,28 @@ fn clone(
     if vm.is_callable(value) {
         return Err(uncloneable(vm, "A function"));
     }
+    if super::is_raw_json(vm, value) {
+        return Err(uncloneable(vm, "A raw JSON object"));
+    }
+    #[cfg(feature = "conformance")]
+    if super::conformance_host_object(vm, value) {
+        return Err(uncloneable(vm, "A native test object"));
+    }
     let class = vm.heap.get(id).map(|object| object.class.clone());
     let copy = match &class {
         Some(Class::Array(_)) => JsValue::Object(vm.new_array(Vec::new())?),
         Some(Class::Plain | Class::Error) => JsValue::Object(vm.new_object()?),
+        Some(Class::SharedArrayBuffer(buffer)) => {
+            JsValue::Object(super::import_shared_buffer(vm, buffer.clone())?)
+        }
+        Some(Class::WasmShared(root)) => super::wasm::restore_shared_gc(vm, &root.clone())?,
         Some(Class::Boolean(flag)) => JsValue::Object(vm.to_object(&JsValue::Boolean(*flag))?),
         Some(Class::Number(number)) => JsValue::Object(vm.to_object(&JsValue::Number(*number))?),
         Some(Class::String(text)) => JsValue::Object(vm.to_object(&JsValue::String(text.clone()))?),
         Some(Class::BigInt(big)) => JsValue::Object(vm.to_object(&JsValue::BigInt(*big))?),
+        Some(Class::BigIntWide(big)) => {
+            JsValue::Object(vm.to_object(&JsValue::BigIntWide(big.clone()))?)
+        }
         Some(Class::Date(_) | Class::RegExp(_)) => {
             let constructor = vm.get(value, &key("constructor"))?;
             let copy = vm.construct(constructor, vec![value.clone()], None)?;
@@ -111,7 +124,7 @@ fn clone_table(
 ) -> Res<JsValue> {
     let set = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Set(_)));
     let name = if set { "Set" } else { "Map" };
-    let constructor = vm.get(&JsValue::Object(GLOBAL), &key(name))?;
+    let constructor = vm.get(&JsValue::Object(vm.global_object()), &key(name))?;
     let copy = vm.construct(constructor, Vec::new(), None)?;
     memo.push((id, copy.clone()));
     vm.pin(copy.clone());

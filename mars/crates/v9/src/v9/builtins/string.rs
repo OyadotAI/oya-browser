@@ -6,6 +6,8 @@ use crate::v9::vm::data::{Class, IterState};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::{NativeFn, realm, symbol};
 
+mod normalization;
+
 /** String and String.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
@@ -15,7 +17,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(ctor, "fromCharCode", 1, from_char_code);
     b.method(ctor, "fromCodePoint", 1, from_code_point);
     b.method(ctor, "raw", 1, raw);
-    let methods: [(&'static str, u32, NativeFn); 50] = [
+    let methods: [(&'static str, u32, NativeFn); 48] = [
         ("at", 1, at),
         ("charAt", 1, char_at),
         ("charCodeAt", 1, char_code_at),
@@ -28,7 +30,7 @@ pub(super) fn install(b: &mut Builder) {
         ("localeCompare", 1, locale_compare),
         ("match", 1, match_method),
         ("matchAll", 1, match_all),
-        ("normalize", 0, value_of),
+        ("normalize", 0, normalization::normalize),
         ("padEnd", 1, pad_end),
         ("padStart", 1, pad_start),
         ("repeat", 1, repeat),
@@ -49,8 +51,6 @@ pub(super) fn install(b: &mut Builder) {
         ("trim", 0, trim),
         ("trimStart", 0, trim_start),
         ("trimEnd", 0, trim_end),
-        ("trimLeft", 0, trim_start),
-        ("trimRight", 0, trim_end),
         ("isWellFormed", 0, is_well_formed),
         ("toWellFormed", 0, to_well_formed),
         ("anchor", 1, |vm, call| {
@@ -78,9 +78,24 @@ pub(super) fn install(b: &mut Builder) {
         ("sup", 0, |vm, call| create_html(vm, &call, "sup", None)),
     ];
     for (name, length, function) in methods {
-        b.method(proto, name, length, function);
+        let method = b.method(proto, name, length, function);
+        if let Some(alias) = trim_alias(name) {
+            b.value(
+                proto,
+                alias,
+                JsValue::Object(method),
+                crate::v9::vm::heap::HIDDEN_ATTRS,
+            );
+        }
     }
     b.symbol_method(proto, symbol::ITERATOR, "[Symbol.iterator]", 0, iterator);
+}
+
+/** Annex B trimming aliases share their canonical function, including its name and identity. */
+fn trim_alias(name: &str) -> Option<&'static str> {
+    [("trimStart", "trimLeft"), ("trimEnd", "trimRight")]
+        .into_iter()
+        .find_map(|(canonical, alias)| (name == canonical).then_some(alias))
 }
 
 /** `String(value)` and `new String(value)`. */
@@ -106,19 +121,16 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The receiver as a string (RequireObjectCoercible + ToString). */
 fn this_string(vm: &mut Vm, call: &Call) -> Res<JsString> {
-    match &call.this {
-        JsValue::String(text) => Ok(text.clone()),
-        JsValue::Undefined | JsValue::Null => {
-            Err(vm.type_error("String.prototype method called on null or undefined"))
-        }
-        JsValue::Object(id) => {
-            if let Some(Class::String(text)) = vm.heap.get(*id).map(|o| &o.class) {
-                return Ok(text.clone());
-            }
-            vm.to_string(&call.this)
-        }
-        other => vm.to_string(other),
+    require_receiver(vm, call)?;
+    vm.to_string(&call.this)
+}
+
+/** Reject nullish receivers before looking up a pattern hook, without coercing other values. */
+fn require_receiver(vm: &mut Vm, call: &Call) -> Res<()> {
+    if call.this.nullish() {
+        return Err(vm.type_error("String.prototype method called on null or undefined"));
     }
+    Ok(())
 }
 
 /** A string from units, under the length bound. */
@@ -238,9 +250,7 @@ fn concat(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Reject RegExp arguments where the spec requires a string. */
 fn not_regexp(vm: &mut Vm, value: &JsValue, method: &str) -> Res<JsString> {
-    if let JsValue::Object(id) = value
-        && matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::RegExp(_)))
-    {
+    if super::regexp::is_regexp(vm, value)? {
         return Err(vm.type_error(&format!(
             "First argument to String.prototype.{method} must not be a regular expression"
         )));
@@ -264,9 +274,11 @@ pub(in crate::v9) fn find(haystack: &[u16], needle: &[u16], from: usize) -> Opti
 fn ends_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let needle = not_regexp(vm, &call.arg(0), "endsWith")?;
-    let end = vm
-        .relative_index(&call.arg(1), text.len(), text.len())?
-        .min(text.len());
+    let end = if call.arg(1) == JsValue::Undefined {
+        text.len()
+    } else {
+        vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize
+    };
     let units = &text.as_units()[..end];
     Ok(JsValue::Boolean(units.ends_with(needle.as_units())))
 }
@@ -328,13 +340,14 @@ fn locale_compare(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Delegate to a pattern's symbol method, else build a RegExp from it. */
 fn delegate(vm: &mut Vm, call: &Call, symbol: u32, flags: &str) -> Res<Option<JsValue>> {
+    require_receiver(vm, call)?;
     let pattern = call.arg(0);
-    if !pattern.nullish() && matches!(pattern, JsValue::Object(_)) {
-        let method = vm.get(&pattern, &Key::Sym(symbol))?;
-        if vm.is_callable(&method) {
-            let text = JsValue::String(this_string(vm, call)?);
-            let mut args = vec![text];
-            args.extend(call.args.iter().skip(1).cloned());
+    if matches!(pattern, JsValue::Object(_)) {
+        if let Some(method) = vm.get_method(&pattern, &Key::Sym(symbol))? {
+            let mut args = vec![call.this.clone()];
+            if symbol == symbol::REPLACE || symbol == symbol::SPLIT {
+                args.push(call.arg(1));
+            }
             return vm.call(method, pattern, args).map(Some);
         }
     }
@@ -342,16 +355,29 @@ fn delegate(vm: &mut Vm, call: &Call, symbol: u32, flags: &str) -> Res<Option<Js
         return Ok(None);
     }
     let text = this_string(vm, call)?;
-    let source = if pattern == JsValue::Undefined {
-        JsString::from_utf8("(?:)")?
+    let flags = if flags == "-" {
+        JsValue::Undefined
     } else {
-        vm.to_string(&pattern)?
+        JsValue::String(JsString::from_utf8(flags)?)
     };
-    let flags = if flags == "-" { "" } else { flags };
-    let regexp = vm.new_regexp(source, flags)?;
-    let method = vm.get(&JsValue::Object(regexp), &Key::Sym(symbol))?;
-    vm.call(method, JsValue::Object(regexp), vec![JsValue::String(text)])
+    let regexp = super::regexp::create(vm, pattern, flags)?;
+    let method = vm.get(&regexp, &Key::Sym(symbol))?;
+    vm.call(method, regexp, vec![JsValue::String(text)])
         .map(Some)
+}
+
+/** Global-only string methods inspect public flags after IsRegExp and before their hooks. */
+fn require_global_pattern(vm: &mut Vm, call: &Call, method: &str) -> Res<()> {
+    require_receiver(vm, call)?;
+    let pattern = call.arg(0);
+    if !super::regexp::is_regexp(vm, &pattern)? {
+        return Ok(());
+    }
+    let flags = vm.get(&pattern, &key("flags"))?;
+    if flags.nullish() || !vm.to_string(&flags)?.as_units().contains(&u16::from(b'g')) {
+        return Err(vm.type_error(&format!("{method} requires a global RegExp")));
+    }
+    Ok(())
 }
 
 /** String.prototype.match. */
@@ -361,14 +387,7 @@ fn match_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** String.prototype.matchAll. */
 fn match_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if let JsValue::Object(id) = call.arg(0)
-        && let Some(Class::RegExp(data)) = vm.heap.get(id).map(|o| &o.class)
-        && !data.flags.contains('g')
-    {
-        return Err(
-            vm.type_error("String.prototype.matchAll called with a non-global RegExp argument")
-        );
-    }
+    require_global_pattern(vm, &call, "String.prototype.matchAll")?;
     Ok(delegate(vm, &call, symbol::MATCH_ALL, "g")?.unwrap_or(JsValue::Null))
 }
 
@@ -504,12 +523,7 @@ fn replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** String.prototype.replaceAll. */
 fn replace_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if let JsValue::Object(id) = call.arg(0)
-        && let Some(Class::RegExp(data)) = vm.heap.get(id).map(|o| &o.class)
-        && !data.flags.contains('g')
-    {
-        return Err(vm.type_error("replaceAll must be called with a global RegExp"));
-    }
+    require_global_pattern(vm, &call, "String.prototype.replaceAll")?;
     if let Some(result) = delegate(vm, &call, symbol::REPLACE, "")? {
         return Ok(result);
     }

@@ -5,6 +5,27 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::{NativeFn, realm};
 
+mod format;
+
+/** Number exposes the same parser function identities as the corresponding global functions. */
+pub(super) fn install_parser(b: &mut Builder, name: &'static str, function: ObjectId) {
+    let ctor = b
+        .globals
+        .iter()
+        .find_map(|(name, value)| match (*name, value) {
+            ("Number", JsValue::Object(id)) => Some(*id),
+            _ => None,
+        });
+    if let Some(ctor) = ctor {
+        b.value(
+            ctor,
+            name,
+            JsValue::Object(function),
+            crate::v9::vm::heap::HIDDEN_ATTRS,
+        );
+    }
+}
+
 /** Number, Number.prototype, Boolean and Boolean.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
@@ -59,6 +80,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         match vm.to_numeric(&call.arg(0))? {
             JsValue::BigInt(big) => big as f64,
+            JsValue::BigIntWide(big) => big.to_f64(),
             numeric => vm.to_number(&numeric)?,
         }
     };
@@ -125,17 +147,8 @@ fn digits(vm: &mut Vm, call: &Call, low: f64, high: f64, name: &str) -> Res<usiz
 
 /** Fixed notation with JavaScript's round-half-up on exact ties. */
 pub(in crate::v9) fn fixed(value: f64, fraction: usize) -> String {
-    let scale = 10f64.powi(fraction as i32);
-    let scaled = value.abs() * scale;
-    if scaled.fract() == 0.5 && scaled < TIE_EXACT {
-        let rounded = (scaled.ceil() / scale) * value.signum();
-        return format!("{rounded:.fraction$}");
-    }
-    format!("{value:.fraction$}")
+    format::fixed(value, fraction)
 }
-
-/** Below this magnitude a scaled half is exactly representable. */
-const TIE_EXACT: f64 = 4_503_599_627_370_496.0;
 
 /** Number.prototype.toFixed. */
 fn to_fixed(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -145,16 +158,6 @@ fn to_fixed(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return text(vm, &number_to_string(value));
     }
     let mut result = fixed(value, fraction);
-    if result.starts_with("-")
-        && result
-            .trim_start_matches('-')
-            .chars()
-            .all(|c| c == '0' || c == '.')
-        && value > -0.5 * 10f64.powi(-(fraction as i32))
-        && value != 0.0
-    {
-        result = result.trim_start_matches('-').to_string();
-    }
     if value == 0.0 {
         result = result.trim_start_matches('-').to_string();
     }

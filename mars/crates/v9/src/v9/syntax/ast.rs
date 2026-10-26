@@ -100,6 +100,20 @@ pub(in crate::v9) enum VarKind {
     Var,
     Let,
     Const,
+    /** A synchronous immutable binding registered for lexical disposal. */
+    Using,
+    /** An immutable binding registered for awaited lexical disposal. */
+    AwaitUsing,
+}
+impl VarKind {
+    /** Resource bindings have the same assignment and dead-zone rules as const bindings. */
+    pub(in crate::v9) fn immutable(self) -> bool {
+        matches!(self, Self::Const | Self::Using | Self::AwaitUsing)
+    }
+    /** Only resource declarations capture and later invoke disposal methods. */
+    pub(in crate::v9) fn resource(self) -> bool {
+        matches!(self, Self::Using | Self::AwaitUsing)
+    }
 }
 
 /** One `name = value` item of a declaration. */
@@ -268,8 +282,12 @@ pub(in crate::v9) enum ExprKind {
     String(JsString),
     /** A literal the scanner could not hold (BigInt, an overlong string); evaluating it fails. */
     Opaque(&'static str),
+    /** Legacy call assignment targets evaluate the call then throw before accessing a property. */
+    InvalidReference(&'static str),
     /** A BigInt literal. */
     BigInt(i128),
+    /** Wide literal digits are compiled into exact bounded runtime integers. */
+    BigIntWide(Name),
     Template(Vec<Option<JsString>>, Vec<Expr>),
     /** Tag, cooked chunks, raw chunks, substitutions. */
     Tagged(Box<Expr>, Vec<Option<JsString>>, Vec<JsString>, Vec<Expr>),
@@ -387,6 +405,8 @@ pub(in crate::v9) struct Func {
     pub strict: bool,
     /// Where the literal starts.
     pub pos: Pos,
+    /// Exact source boundaries, including class bodies for their constructor function.
+    pub source_span: std::cell::RefCell<Option<(u32, u32)>>,
     /// Count of parameters before the first default or rest, as `length` reports.
     pub length: u32,
 }
@@ -396,6 +416,8 @@ pub(in crate::v9) enum MemberKind {
     Method(Rc<Func>),
     Getter(Rc<Func>),
     Setter(Rc<Func>),
+    /** A real accessor pair uses this hidden private field for its per-instance storage. */
+    AutoAccessor(Name),
 }
 
 /** One class element. */
@@ -421,3 +443,12 @@ pub(in crate::v9) struct Class {
     pub privates: Vec<Name>,
     pub pos: Pos,
 }
+
+/** Eval inherits SuperProperty grammar from methods and lexical arrows. */
+pub(in crate::v9) const EVAL_SUPER_PROPERTY: u8 = 1;
+/** Eval inherits SuperCall grammar only from derived constructors and their lexical arrows. */
+pub(in crate::v9) const EVAL_SUPER_CALL: u8 = 2;
+/** Eval may reference new.target without admitting a ReturnStatement. */
+pub(in crate::v9) const EVAL_NEW_TARGET: u8 = 4;
+/** Class initialization code forbids arguments, including within direct eval. */
+pub(in crate::v9) const EVAL_NO_ARGUMENTS: u8 = 8;

@@ -23,19 +23,54 @@ pub(in crate::v9) fn parse(tokens: Vec<Token>) -> EngineResult<Program> {
     Parser::new(tokens, false).program()
 }
 
+/** Direct eval inherits its caller's strict grammar, including nested function bodies. */
+pub(in crate::v9) fn parse_strict(tokens: Vec<Token>) -> EngineResult<Program> {
+    Parser::new(tokens, true).program()
+}
+
+/** Direct eval inherits only the caller's private declarations; source text cannot inject this context. */
+pub(in crate::v9) fn parse_eval(
+    tokens: Vec<Token>,
+    strict: bool,
+    private_names: &[Name],
+    grammar: u8,
+) -> EngineResult<Program> {
+    let mut parser = Parser::new(tokens, strict);
+    parser.context.method = grammar & EVAL_SUPER_PROPERTY != 0;
+    parser.context.derived = grammar & EVAL_SUPER_CALL != 0;
+    parser.context.eval_new_target = grammar & EVAL_NEW_TARGET != 0;
+    parser.context.no_arguments = grammar & EVAL_NO_ARGUMENTS != 0;
+    if !private_names.is_empty() {
+        parser.privates.push(PrivateScope {
+            declared: private_names
+                .iter()
+                .cloned()
+                .map(|name| (name, PrivateKind::Other))
+                .collect(),
+            used: Vec::new(),
+        });
+    }
+    parser.program()
+}
+
 /** Parse one module: strict, with import and export declarations and top-level `await`. */
 pub(in crate::v9) fn parse_module(tokens: Vec<Token>) -> EngineResult<Program> {
     let mut parser = Parser::new(tokens, true);
     parser.module = Some(Box::default());
     parser.context.asynchronous = true;
+    parser.context.using_allowed = true;
     parser.program()
 }
 
 /** What the enclosing function allows, saved and restored around nested functions. */
 #[derive(Clone, Copy, Default)]
 struct Context {
+    /// Lexical resource declarations require a block, function, loop or module scope.
+    using_allowed: bool,
     /// `return` is legal.
     function: bool,
+    /// Direct eval inherits new.target syntax without permitting return.
+    eval_new_target: bool,
     /// `yield` is an operator.
     generator: bool,
     /// `await` is an operator.
@@ -62,6 +97,8 @@ pub(in crate::v9) struct Parser {
     position: usize,
     /// Index of the matching `)` for each `(`, so arrow heads are found without backtracking.
     closers: Vec<u32>,
+    /// Parenthesized object/array nodes cannot later become assignment patterns.
+    parenthesized_patterns: std::collections::BTreeSet<u32>,
     strict: bool,
     context: Context,
     /// Live recursion, bounded by SYNTAX_DEPTH so no input can exhaust the stack.
@@ -116,6 +153,16 @@ struct Levels {
 const NO_CLOSER: u32 = u32::MAX;
 
 impl Parser {
+    /** Decoded token values cannot erase Annex B's strict-mode lexical early errors. */
+    fn strict_literal(&self, token: &Token) -> EngineResult<()> {
+        if self.strict && token.legacy {
+            return Err(errors::syntax(
+                token.location,
+                "Octal literals and legacy escapes are not allowed in strict mode",
+            ));
+        }
+        Ok(())
+    }
     /** Matching parentheses are found once, in one bounded pass. */
     fn new(tokens: Vec<Token>, strict: bool) -> Self {
         let mut closers = vec![NO_CLOSER; tokens.len()];
@@ -135,6 +182,7 @@ impl Parser {
             tokens,
             position: 0,
             closers,
+            parenthesized_patterns: std::collections::BTreeSet::new(),
             strict,
             context: Context::default(),
             depth: 0,
@@ -155,6 +203,9 @@ impl Parser {
         let body = self.statement_list(true)?;
         if !matches!(self.peek().kind, Kind::End) {
             return Err(self.unexpected());
+        }
+        if !self.privates.is_empty() {
+            self.close_privates()?;
         }
         let module = self.module.take();
         if let Some(module) = &module {
@@ -224,6 +275,10 @@ impl Parser {
             self.position += 1;
         }
         token
+    }
+    /** Exclusive end of the last consumed token, without following trivia. */
+    fn consumed_end(&self) -> u32 {
+        self.tokens[self.position.saturating_sub(1)].end as u32
     }
     /** Position of the current token. */
     fn pos(&self) -> Pos {

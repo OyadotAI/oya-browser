@@ -1,8 +1,11 @@
-/** Date over the page's virtual clock; local time uses the host's fixed timezone offset. */
+mod legacy;
+/** Date over the page virtual clock and validated host timezone transitions or a fixed offset. */
+mod timezone;
 use super::*;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::{NativeFn, realm, symbol};
+pub(in crate::v9) use timezone::validate as validate_timezone;
 
 /** Milliseconds per day. */
 const DAY: f64 = 86_400_000.0;
@@ -151,8 +154,8 @@ pub(in crate::v9) fn now_ms(vm: &Vm) -> f64 {
 }
 
 /** The local timezone offset in milliseconds (UTC plus this is local). */
-pub(super) fn local_offset(vm: &Vm) -> f64 {
-    vm.page.environment.timezone_offset_minutes * MINUTE
+pub(super) fn local_offset(vm: &Vm, time: f64) -> f64 {
+    timezone::offset(&vm.page.environment, time)
 }
 
 /** Days since the epoch for a civil date (proleptic Gregorian). */
@@ -272,7 +275,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => {
             let local = components(vm, &call)?;
-            local - local_offset(vm)
+            timezone::utc(&vm.page.environment, local)
         }
     };
     let proto = vm.prototype_for(target, realm().ids.date_prototype)?;
@@ -315,17 +318,23 @@ fn utc(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Parse ISO, RFC 2822 and common English date strings. */
 fn parse_date(vm: &Vm, text: &str) -> f64 {
-    let text = text.trim();
+    let text = text.trim_matches(crate::v9::source::whitespace);
+    if text.starts_with("-000000") {
+        return f64::NAN;
+    }
     if let Some(time) = parse_iso(text) {
         return match time {
             (time, true) => time,
-            (time, false) => time - local_offset(vm),
+            (time, false) => timezone::utc(&vm.page.environment, time),
         };
     }
-    parse_english(text).map_or(
-        f64::NAN,
-        |(time, utc)| if utc { time } else { time - local_offset(vm) },
-    )
+    legacy::parse(text).map_or(f64::NAN, |(time, utc)| {
+        if utc {
+            time
+        } else {
+            timezone::utc(&vm.page.environment, time)
+        }
+    })
 }
 
 /** `YYYY-MM-DDTHH:mm:ss.sssZ` and its shorter forms; date-only forms are UTC. */
@@ -356,6 +365,9 @@ fn parse_iso(text: &str) -> Option<(f64, bool)> {
             index += 3;
         }
     }
+    if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
+        return None;
+    }
     if index == bytes.len() {
         return Some((make_date(year, month - 1.0, day, 0.0, 0.0, 0.0, 0.0), true));
     }
@@ -379,10 +391,23 @@ fn parse_iso(text: &str) -> Option<(f64, bool)> {
             while bytes.get(end).is_some_and(u8::is_ascii_digit) {
                 end += 1;
             }
-            let fraction: f64 = format!("0.{}", text.get(start..end)?).parse().ok()?;
-            millis = (fraction * 1000.0).floor();
+            if end == start {
+                return None;
+            }
+            let digits = (end - start).min(3);
+            let value = bytes[start..start + digits]
+                .iter()
+                .fold(0u32, |value, digit| value * 10 + u32::from(*digit - b'0'));
+            millis = f64::from(value * 10u32.pow((3 - digits) as u32));
             index = end;
         }
+    }
+    if hours > 24.0
+        || minutes > 59.0
+        || seconds > 59.0
+        || hours == 24.0 && (minutes != 0.0 || seconds != 0.0 || millis != 0.0)
+    {
+        return None;
     }
     let base = make_date(year, month - 1.0, day, hours, minutes, seconds, millis);
     match bytes.get(index) {
@@ -395,99 +420,16 @@ fn parse_iso(text: &str) -> Option<(f64, bool)> {
             } else {
                 index + 3
             };
-            let offset_minutes = number(minute_start..minute_start + 2).unwrap_or(0.0);
+            let offset_minutes = number(minute_start..minute_start + 2)?;
+            if offset_hours > 23.0 || offset_minutes > 59.0 || minute_start + 2 != bytes.len() {
+                return None;
+            }
             let offset = (offset_hours * HOUR + offset_minutes * MINUTE)
                 * if *sign == b'+' { 1.0 } else { -1.0 };
             Some((base - offset, true))
         }
         _ => None,
     }
-}
-
-/** "Tue, 01 Jan 2020 10:00:00 GMT", "January 1, 2020 10:00", "1 Jan 2020" and similar. */
-fn parse_english(text: &str) -> Option<(f64, bool)> {
-    let mut year = None;
-    let mut month = None;
-    let mut day = None;
-    let mut time = (0.0, 0.0, 0.0);
-    let mut utc = false;
-    let mut offset = 0.0;
-    for word in text
-        .split(|c: char| c.is_whitespace() || c == ',')
-        .filter(|w| !w.is_empty())
-    {
-        let lower = word.to_ascii_lowercase();
-        if let Some(index) = MONTHS
-            .iter()
-            .position(|m| lower.starts_with(&m.to_ascii_lowercase()))
-        {
-            month = Some(index as f64);
-        } else if lower == "gmt" || lower == "utc" || lower == "z" {
-            utc = true;
-        } else if (lower.starts_with("gmt")
-            || lower.starts_with("utc")
-            || lower.starts_with('+')
-            || lower.starts_with('-'))
-            && lower.len() >= 5
-        {
-            let digits = lower.trim_start_matches("gmt").trim_start_matches("utc");
-            let sign = if digits.starts_with('-') { -1.0 } else { 1.0 };
-            let digits = digits.trim_start_matches(['+', '-']).replace(':', "");
-            let value: f64 = digits.parse().ok()?;
-            offset = sign * ((value / 100.0).floor() * HOUR + (value % 100.0) * MINUTE);
-            utc = true;
-        } else if word.contains(':') {
-            let pieces: Vec<f64> = word.split(':').filter_map(|p| p.parse().ok()).collect();
-            time = (
-                *pieces.first()?,
-                pieces.get(1).copied().unwrap_or(0.0),
-                pieces.get(2).copied().unwrap_or(0.0),
-            );
-        } else if let Ok(number) = word.parse::<f64>() {
-            if number > 31.0 || day.is_some() {
-                year = Some(number);
-            } else {
-                day = Some(number);
-            }
-        } else if DAYS
-            .iter()
-            .any(|d| lower.starts_with(&d.to_ascii_lowercase()))
-        {
-        } else if lower == "pm" && time.0 < 12.0 {
-            time.0 += 12.0;
-        } else if lower == "am" {
-            if time.0 == 12.0 {
-                time.0 = 0.0;
-            }
-        } else if word.contains('/') {
-            let pieces: Vec<f64> = word.split('/').filter_map(|p| p.parse().ok()).collect();
-            if pieces.len() == 3 {
-                month = Some(pieces[0] - 1.0);
-                day = Some(pieces[1]);
-                year = Some(pieces[2]);
-            }
-        } else {
-            return None;
-        }
-    }
-    let year = year?;
-    let year = if (0.0..50.0).contains(&year) {
-        year + 2000.0
-    } else if (50.0..100.0).contains(&year) {
-        year + 1900.0
-    } else {
-        year
-    };
-    let time = make_date(
-        year,
-        month?,
-        day.unwrap_or(1.0),
-        time.0,
-        time.1,
-        time.2,
-        0.0,
-    ) - offset;
-    Some((time, utc))
 }
 
 /** The time value a receiver holds. */
@@ -535,7 +477,11 @@ fn field(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
     if time.is_nan() {
         return Ok(JsValue::Number(f64::NAN));
     }
-    let time = if local { time + local_offset(vm) } else { time };
+    let time = if local {
+        time + local_offset(vm, time)
+    } else {
+        time
+    };
     let p = parts(time);
     Ok(JsValue::Number(match which {
         Field::Year => p.year,
@@ -551,10 +497,8 @@ fn field(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
 
 /** getTimezoneOffset: minutes UTC is ahead of local. */
 fn timezone_offset(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    this_time(vm, &call)?;
-    Ok(JsValue::Number(
-        -vm.page.environment.timezone_offset_minutes + 0.0,
-    ))
+    let time = this_time(vm, &call)?;
+    Ok(JsValue::Number(-local_offset(vm, time) / MINUTE + 0.0))
 }
 
 /** setTime. */
@@ -567,7 +511,7 @@ fn set_time(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** The field setters: the field and the ones after it come from the arguments. */
 fn set(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
     let time = this_time(vm, &call)?;
-    let offset = if local { local_offset(vm) } else { 0.0 };
+    let offset = if local { local_offset(vm, time) } else { 0.0 };
     let base = if time.is_nan() && matches!(which, Field::Year) {
         0.0
     } else {
@@ -603,7 +547,15 @@ fn set(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
     let local_time = make_date(
         fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6],
     );
-    store(vm, &call, local_time - offset)
+    store(
+        vm,
+        &call,
+        if local {
+            timezone::utc(&vm.page.environment, local_time)
+        } else {
+            local_time
+        },
+    )
 }
 
 /** The ISO form, used by toISOString and toJSON. */
@@ -649,11 +601,13 @@ fn to_json(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** The zone suffix such as `GMT+0100 (Coordinated Universal Time)`. */
-fn zone(vm: &Vm) -> String {
-    let minutes = vm.page.environment.timezone_offset_minutes;
+fn zone(vm: &Vm, time: f64) -> String {
+    let minutes = local_offset(vm, time) / MINUTE;
     let sign = if minutes < 0.0 { '-' } else { '+' };
     let minutes = minutes.abs() as i64;
-    let name = if minutes == 0 {
+    let name = if let Some(name) = timezone::display_name(&vm.page.environment, time) {
+        name.to_string()
+    } else if minutes == 0 {
         "Coordinated Universal Time".to_string()
     } else {
         "Local Time".to_string()
@@ -682,8 +636,8 @@ fn format_local(vm: &Vm, time: f64) -> String {
     if time.is_nan() {
         return "Invalid Date".into();
     }
-    let p = parts(time + local_offset(vm));
-    format!("{} {} {}", date_part(&p), time_part(&p), zone(vm))
+    let p = parts(time + local_offset(vm, time));
+    format!("{} {} {}", date_part(&p), time_part(&p), zone(vm, time))
 }
 
 /** Date.prototype.toString. */
@@ -699,7 +653,7 @@ fn to_date_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if time.is_nan() {
         return text(vm, "Invalid Date");
     }
-    let p = parts(time + local_offset(vm));
+    let p = parts(time + local_offset(vm, time));
     text(vm, &date_part(&p))
 }
 
@@ -709,8 +663,8 @@ fn to_time_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if time.is_nan() {
         return text(vm, "Invalid Date");
     }
-    let p = parts(time + local_offset(vm));
-    let zone = zone(vm);
+    let p = parts(time + local_offset(vm, time));
+    let zone = zone(vm, time);
     text(vm, &format!("{} {zone}", time_part(&p)))
 }
 
@@ -739,7 +693,7 @@ fn locale(vm: &Vm, time: f64, date: bool, clock: bool) -> String {
     if time.is_nan() {
         return "Invalid Date".into();
     }
-    let p = parts(time + local_offset(vm));
+    let p = parts(time + local_offset(vm, time));
     let day = format!("{}/{}/{}", p.month as i64 + 1, p.date as i64, p.year as i64);
     let hour = p.hours as i64 % 12;
     let clock_text = format!(

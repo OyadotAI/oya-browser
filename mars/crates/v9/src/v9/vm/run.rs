@@ -6,10 +6,11 @@ use super::data::{Class, Function, FunctionKind, Handler};
 use super::heap::{CONFIGURABLE, ENUMERABLE, Key, Object, Prop, Slot, WRITABLE};
 use super::property::Descriptor;
 use super::realm::realm;
-use super::{Exit, GLOBAL, Res, Resume, Thrown, Vm};
+use super::{Exit, Res, Resume, Thrown, Vm};
 use crate::constants::SCRIPT_CLOCK_STRIDE;
 use crate::protocol::EngineError;
 use crate::v9::binding::{Binding, BindingKind};
+use crate::v9::builtins;
 use crate::v9::compile::Op;
 use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
@@ -182,6 +183,7 @@ impl Vm<'_> {
     /** Execute instructions until an exit or an exception. */
     fn execute(&mut self) -> Res<Exit> {
         loop {
+            self.select_frame_realm()?;
             self.remaining = match self.remaining.checked_sub(1) {
                 Some(remaining) => remaining,
                 None => return Err(self.charge(1).expect_err("budget exhausted")),
@@ -294,10 +296,17 @@ impl Vm<'_> {
             Op::Number(value) => self.push(JsValue::Number(value)),
             Op::BigInt(index) => {
                 let text = self.constant(index).lossy();
-                let value = text.parse().map_err(|_| {
-                    crate::protocol::EngineError::invalid("Invalid V9 BigInt literal.")
-                })?;
-                self.push(JsValue::BigInt(value));
+                self.charge(crate::v9::value::BigInteger::parse_work(&text))?;
+                let value =
+                    crate::v9::value::BigInteger::parse(&text).map_err(|error| match error {
+                        crate::v9::value::BigIntParseError::Limit => {
+                            self.range_error("Maximum BigInt size exceeded")
+                        }
+                        crate::v9::value::BigIntParseError::Syntax => {
+                            EngineError::invalid("Invalid V9 BigInt literal.").into()
+                        }
+                    })?;
+                self.push(JsValue::bigint(value));
             }
             Op::String(index) => {
                 let value = self.constant(index);
@@ -437,7 +446,7 @@ impl Vm<'_> {
                 let deleted = if self.globals.contains_key(&text) {
                     false
                 } else {
-                    self.delete(GLOBAL, &Key::Str(name))?
+                    self.delete(self.global_object(), &Key::Str(name))?
                 };
                 self.push(JsValue::Boolean(deleted));
             }
@@ -445,11 +454,18 @@ impl Vm<'_> {
                 let name = self.constant(name);
                 self.no_global_lexical(&name)?;
                 let key = Key::Str(name);
-                // Platform globals live on the window prototype in V9 (own properties in a
-                // browser), so a redeclaration that finds one anywhere keeps its value.
-                if !self.has_property(GLOBAL, &key)? {
+                // Window's intrinsic properties are represented on its immediate prototype.
+                // Ordinary inherited properties do not satisfy CreateGlobalVarBinding.
+                let window = realm().ids.window_prototype;
+                let platform = self.proto_of(self.global_object()) == Some(window)
+                    && realm()
+                        .object(window)
+                        .is_some_and(|definition| definition.get(&key).is_some())
+                    && self.own(window, &key)?.is_some();
+                let inherited = self.own(self.global_object(), &key)?.is_some() || platform;
+                if !inherited {
                     self.define(
-                        GLOBAL,
+                        self.global_object(),
                         key,
                         Descriptor {
                             value: Some(JsValue::Undefined),
@@ -464,10 +480,18 @@ impl Vm<'_> {
             Op::DeclareFunction(name, deletable) => {
                 let name = self.constant(name);
                 self.no_global_lexical(&name)?;
+                if matches!(name.lossy().as_str(), "undefined" | "NaN" | "Infinity") {
+                    let message = "Identifier has already been declared";
+                    return Err(if deletable {
+                        self.type_error(message)
+                    } else {
+                        self.syntax_error(message)
+                    });
+                }
                 let value = self.pop();
                 let key = Key::Str(name);
                 if !self.define(
-                    GLOBAL,
+                    self.global_object(),
                     key.clone(),
                     Descriptor {
                         value: Some(value.clone()),
@@ -477,13 +501,14 @@ impl Vm<'_> {
                         ..Descriptor::default()
                     },
                 )? {
-                    self.write_own(GLOBAL, key, value)?;
+                    self.write_own(self.global_object(), key, value)?;
                 }
             }
             Op::DirectEval(count, context) => return self.direct_eval(count, context),
             Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,
             Op::SetExt(name, hops, slot) => self.set_ext(name, hops, slot)?,
             Op::DeclareExt(name, hops, slot) => self.declare_ext(name, hops, slot)?,
+            Op::DeleteExt(name, hops, slot) => self.delete_ext(name, hops, slot)?,
             Op::GetWith(name, hops, slot, call) => self.get_with(name, hops, slot, call)?,
             Op::SetWith(name, hops, slot) => self.set_with(name, hops, slot)?,
             Op::DeleteWith(name, hops, slot) => self.delete_with(name, hops, slot)?,
@@ -501,7 +526,7 @@ impl Vm<'_> {
                 let text = name.lossy();
                 let shadowed = self
                     .heap
-                    .get(GLOBAL)
+                    .get(self.global_object())
                     .and_then(|object| object.props.get(&Key::Str(name.clone())))
                     .is_some_and(|prop| prop.attrs & CONFIGURABLE == 0);
                 // Non-configurable globals (undefined, NaN, Infinity) and the unforgeable
@@ -535,6 +560,10 @@ impl Vm<'_> {
                     self.heap.adjust(0, units as isize);
                 }
             }
+            Op::ThrowReference(message) => {
+                let message = self.constant(message).lossy();
+                return Err(self.reference_error(&message));
+            }
             Op::ThrowConst(_) => return Err(self.type_error("Assignment to constant variable.")),
             Op::LoadThis => {
                 let value = self.frame().this.clone();
@@ -562,7 +591,7 @@ impl Vm<'_> {
                 let id = self.arguments_object(&args)?;
                 self.push(JsValue::Object(id));
             }
-            Op::GlobalThis => self.push(JsValue::Object(GLOBAL)),
+            Op::GlobalThis => self.push(JsValue::Object(self.global_object())),
             Op::NewObject => {
                 let id = self.new_object()?;
                 self.push(JsValue::Object(id));
@@ -618,6 +647,58 @@ impl Vm<'_> {
                 let key = self.to_key(&key)?;
                 self.define_method(&object, key, function, kind, enumerable)?;
                 self.drop_n(2);
+            }
+            Op::AutoAccessor(public, backing) => {
+                let home = self.peek(0);
+                let public = self.constant_key(public);
+                let backing = self.constant_key(backing);
+                self.define_auto_accessor(&home, public, backing)?;
+            }
+            Op::AutoAccessorComputed(backing) => {
+                let home = self.peek(1);
+                let public_value = self.peek(0);
+                let public = self.to_key(&public_value)?;
+                let backing = self.constant_key(backing);
+                self.define_auto_accessor(&home, public, backing)?;
+                self.pop();
+            }
+            Op::InferFunctionName => {
+                let key_value = self.peek(0);
+                let key = self.to_key(&key_value)?;
+                let name = builtins::inferred_function_name(self, &key)?;
+                let function = self
+                    .peek(1)
+                    .object()
+                    .ok_or_else(|| EngineError::invalid("Invalid named field initializer."))?;
+                self.set_name_snapshot(
+                    function,
+                    super::data::FunctionName::flat(JsValue::String(name)),
+                )?;
+                self.pop();
+            }
+            Op::SetInitializerHome => {
+                let home = self.peek(0).object();
+                let function = self
+                    .peek(1)
+                    .object()
+                    .ok_or_else(|| EngineError::invalid("Invalid class initializer."))?;
+                if let Some(Class::Function(data)) =
+                    self.heap.get_mut(function).map(|object| &mut object.class)
+                {
+                    data.home = home;
+                }
+            }
+            Op::InitializeDerivedFields => {
+                let (callee, receiver) = self
+                    .frames
+                    .iter()
+                    .rev()
+                    .find(|frame| frame.code.flags.derived && frame.construct)
+                    .map(|frame| (frame.callee.clone(), frame.this.clone()))
+                    .ok_or_else(|| {
+                        EngineError::invalid("Missing derived constructor initialization.")
+                    })?;
+                self.run_fields(&callee, &receiver)?;
             }
             Op::CopyData => {
                 let source = self.peek(0);
@@ -732,7 +813,11 @@ impl Vm<'_> {
                         "Cannot use 'in' operator to search for a key in a non-object",
                     ));
                 };
-                let result = self.has_property(id, &key)?;
+                self.guard_realm_global(id)?;
+                let result = self
+                    .heap
+                    .get(id)
+                    .is_some_and(|object| object.props.get(&key).is_some());
                 self.pop();
                 self.push(JsValue::Boolean(result));
             }
@@ -967,8 +1052,8 @@ impl Vm<'_> {
                 let numeric = self.to_numeric(&value)?;
                 self.pop();
                 match numeric {
-                    JsValue::BigInt(big) if op != Op::ToNumeric => {
-                        let result = self.bigint_unary(op, big)?;
+                    value if value.is_bigint() && op != Op::ToNumeric => {
+                        let result = self.bigint_unary(op, &value)?;
                         self.push(result);
                     }
                     other => {
@@ -1088,6 +1173,49 @@ impl Vm<'_> {
             }
             Op::Normal(slot) => self.frame().regs[slot as usize] = JsValue::Number(NORMAL),
             Op::EndFinally(slot) => return self.end_finally(slot),
+            Op::ResourceCreate => {
+                let stack = builtins::disposal_create(self)?;
+                self.push(stack);
+            }
+            Op::ResourceAdd(slot, asynchronous) => {
+                let stack = self.frame().regs[slot as usize].clone();
+                let value = self
+                    .frame()
+                    .stack
+                    .last()
+                    .cloned()
+                    .expect("resource initialization value");
+                builtins::disposal_add(self, stack, value, asynchronous)?;
+            }
+            Op::ResourceDispose(slot, completion) => {
+                let stack = self.frame().regs[slot as usize].clone();
+                if self.frame().regs[completion as usize] == JsValue::Number(THROW) {
+                    let error = self.frame().regs[completion as usize + 1].clone();
+                    builtins::disposal_error(self, stack.clone(), error)?;
+                }
+                let result = builtins::disposal_dispose(self, stack, false)?;
+                self.push(result);
+            }
+            Op::ResourceBegin(slot, completion) => {
+                let stack = self.frame().regs[slot as usize].clone();
+                if self.frame().regs[completion as usize] == JsValue::Number(THROW) {
+                    let error = self.frame().regs[completion as usize + 1].clone();
+                    builtins::disposal_error(self, stack.clone(), error)?;
+                }
+                builtins::disposal_begin(self, stack)?;
+            }
+            Op::ResourceStep(slot, awaited, done) => {
+                let stack = self.frame().regs[slot as usize].clone();
+                match builtins::disposal_step(self, stack)? {
+                    Some(value) => self.frame().regs[awaited as usize] = value,
+                    None => self.frame().pc = done as usize,
+                }
+            }
+            Op::ResourceRejected(slot) => {
+                let stack = self.frame().regs[slot as usize].clone();
+                let error = self.pop();
+                builtins::disposal_rejected(self, stack, error)?;
+            }
             Op::Arg(index) => {
                 let value = self
                     .frame()
@@ -1160,6 +1288,21 @@ impl Vm<'_> {
                     self.iter_close(id)?;
                 }
                 self.pop();
+            }
+            Op::IterCloseCheck(completion, next, done) => {
+                let kind = self.frame().regs[completion as usize].clone();
+                let target = self.frame().regs[completion as usize + 1].clone();
+                if kind == JsValue::Number(NORMAL)
+                    || kind == JsValue::Number(JUMP) && target == JsValue::Number(f64::from(next))
+                {
+                    self.frame().pc = done as usize;
+                }
+            }
+            Op::IterCloseError(completion) => {
+                let error = self.pop();
+                if self.frame().regs[completion as usize] != JsValue::Number(THROW) {
+                    return Err(Thrown::Value(error));
+                }
             }
             Op::ForIn => {
                 let value = self.peek(0);
@@ -1272,12 +1415,16 @@ impl Vm<'_> {
         if let Some(Prop {
             slot: Slot::Data(value),
             ..
-        }) = self.own(GLOBAL, &key)?
+        }) = self.own(self.global_object(), &key)?
         {
             return Ok(value);
         }
-        if self.has_property(GLOBAL, &key)? {
-            return self.get_from(GLOBAL, &key, &JsValue::Object(GLOBAL));
+        if self.has_property(self.global_object(), &key)? {
+            return self.get_from(
+                self.global_object(),
+                &key,
+                &JsValue::Object(self.global_object()),
+            );
         }
         let text = name.lossy();
         if let Some(element) = crate::v9::platform::named_element(self, &text)? {
@@ -1315,10 +1462,10 @@ impl Vm<'_> {
         let text = name.lossy();
         let key = Key::Str(name.clone());
         let strict = self.frames.last().is_some_and(|frame| frame.code.strict);
-        if strict && !self.has_property(GLOBAL, &key)? {
+        if strict && !self.has_property(self.global_object(), &key)? {
             return Err(self.reference_error(&format!("{text} is not defined")));
         }
-        self.set(&JsValue::Object(GLOBAL), key, value, strict)
+        self.set(&JsValue::Object(self.global_object()), key, value, strict)
     }
     /** Start a call from an instruction; `consumed` stack values are dropped once it starts. */
     fn call_op(
@@ -1450,6 +1597,9 @@ impl Vm<'_> {
     read; a miss on an ordinary object looks the key up once, caches an own data property under
     the object's shape, and walks on from the prototype when the key is absent. */
     fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
+        if let JsValue::Object(id) = base {
+            self.guard_realm_global(*id)?;
+        }
         if let Some(value) = self.load_hit(site, base) {
             return Ok(value);
         }
@@ -1500,6 +1650,9 @@ impl Vm<'_> {
     writable data property of an ordinary object (attributes live in the slot, so a frozen or
     read-only property, a setter, or a new key always takes the full [[Set]]). */
     fn store_named(&mut self, site: u32, base: &JsValue, value: &JsValue) -> Res<()> {
+        if let JsValue::Object(id) = base {
+            self.guard_realm_global(*id)?;
+        }
         if self.store_cached(site, base, value, None) {
             return Ok(());
         }
@@ -1583,7 +1736,7 @@ impl Vm<'_> {
             return false;
         }
         let index = *index as usize;
-        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index <= elements.len() && index < self.limits.array_length);
+        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index < u32::MAX as usize && (elements.resident_len() < self.limits.array_length || elements.get(index).is_some_and(|value| *value != JsValue::Hole)));
         if fits {
             self.array_store(*id, index, value.clone());
         }
@@ -1594,12 +1747,17 @@ impl Vm<'_> {
         let JsValue::Object(id) = array else {
             return Ok(());
         };
-        let length = match self.heap.get(*id).map(|object| &object.class) {
-            Some(Class::Array(elements)) => elements.len(),
+        let (length, resident) = match self.heap.get(*id).map(|object| &object.class) {
+            Some(Class::Array(elements)) => (elements.len(), elements.resident_len()),
             _ => return Ok(()),
         };
-        if length >= self.limits.array_length {
-            return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
+        if length >= u32::MAX as usize {
+            return Err(self.range_error("Invalid array length"));
+        }
+        if value != JsValue::Hole && resident >= self.limits.array_length {
+            return Err(
+                EngineError::limit("V9 resident array elements", self.limits.array_length).into(),
+            );
         }
         self.array_store(*id, length, value);
         Ok(())
@@ -1611,6 +1769,9 @@ impl Vm<'_> {
             .and_then(|id| self.heap.get(id))
             .map(|object| &object.class)
         {
+            Some(Class::Array(elements)) if elements.len() > self.limits.array_length => {
+                Err(EngineError::limit("V9 call arguments", self.limits.array_length).into())
+            }
             Some(Class::Array(elements)) => Ok(elements
                 .iter()
                 .map(|value| {
@@ -1629,11 +1790,28 @@ impl Vm<'_> {
         let JsValue::Object(id) = object else {
             return Ok(());
         };
+        if key.hidden() {
+            return self.add_private_field(*id, key, value);
+        }
         if !self.define(*id, key.clone(), Descriptor::data(value))? {
-            return Err(self.type_error(&format!(
-                "Cannot define property {}",
-                super::property::key_text(&key)
-            )));
+            let name = super::property::key_text(&key);
+            let mut target = *id;
+            for _ in 0..self.limits.frames {
+                match self.proxy_of(target).and_then(|proxy| proxy.target) {
+                    Some(next) => target = next,
+                    None => break,
+                }
+            }
+            let message = if self
+                .heap
+                .get(target)
+                .is_some_and(|object| !object.extensible)
+            {
+                format!("Cannot define property {name}, object is not extensible")
+            } else {
+                format!("Cannot redefine property: {name}")
+            };
+            return Err(self.type_error(&message));
         }
         Ok(())
     }
@@ -1673,8 +1851,23 @@ impl Vm<'_> {
                 ..Descriptor::default()
             },
         };
-        self.define(*id, key, desc)?;
+        if key.hidden() {
+            self.define_private_method(*id, key, desc)?;
+        } else {
+            self.define(*id, key, desc)?;
+        }
         Ok(())
+    }
+    /** Auto-accessor functions share a captured private backing key and retain ordinary accessor descriptors. */
+    fn define_auto_accessor(&mut self, home: &JsValue, public: Key, backing: Key) -> Res<()> {
+        let roots = self.pins.len();
+        let result = (|| {
+            let (getter, setter) = builtins::create_auto_accessors(self, &public, backing)?;
+            self.define_method(home, public.clone(), JsValue::Object(getter), 1, false)?;
+            self.define_method(home, public, JsValue::Object(setter), 2, false)
+        })();
+        self.pins.truncate(roots);
+        result
     }
     /** Copy enumerable own properties (object spread, rest). */
     pub fn copy_data(&mut self, target: &JsValue, source: &JsValue, excluded: &[Key]) -> Res<()> {
@@ -1703,35 +1896,6 @@ impl Vm<'_> {
             self.define(*target, key, Descriptor::data(value))?;
         }
         Ok(())
-    }
-    /** PrivateElementFind for `obj.#x` (spec 7.3.27, V8's LoadIC private-name miss): a private
-    name the object never received throws a TypeError instead of reading undefined or creating
-    it, and a private method (kept on the class prototype here) cannot be assigned. */
-    fn private_brand(&mut self, object: &JsValue, key: &Key, write: bool) -> Res<()> {
-        let JsValue::Object(start) = object else {
-            return Err(self.type_error("Cannot access a private member of a non-object"));
-        };
-        let mut current = *start;
-        for _ in 0..super::property::CHAIN_STEPS {
-            if let Some(prop) = self.own(current, key)? {
-                let method = current != *start && matches!(prop.slot, Slot::Data(_));
-                let getter_only = matches!(prop.slot, Slot::Accessor(_, None));
-                if write && (method || getter_only) {
-                    return Err(self.type_error("Private method is not writable"));
-                }
-                if !write && matches!(prop.slot, Slot::Accessor(None, _)) {
-                    return Err(self.type_error("'#' was defined without a getter"));
-                }
-                return Ok(());
-            }
-            match self.proto_of(current) {
-                Some(proto) => current = proto,
-                None => break,
-            }
-        }
-        Err(self.type_error(
-            "Cannot read or write a private member of an object whose class did not declare it",
-        ))
     }
     /** `delete` on any value. */
     fn delete_value(&mut self, object: &JsValue, key: &Key) -> Res<bool> {
@@ -1781,7 +1945,6 @@ impl Vm<'_> {
         };
         let this = self.construct(JsValue::Object(parent), args, Some(new_target))?;
         self.frames[index].this = this.clone();
-        self.run_fields(&callee, &this)?;
         Ok(this)
     }
     /** Build a class constructor and prototype from the stack. */
@@ -1958,5 +2121,6 @@ fn cacheable(class: &Class) -> bool {
             | Class::Array(_)
             | Class::String(_)
             | Class::View(_)
+            | Class::MappedArguments(_)
     )
 }

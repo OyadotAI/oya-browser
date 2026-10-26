@@ -217,6 +217,15 @@ fn reject_abrupt(vm: &mut Vm, cap: &Capability, result: Res<JsValue>) -> Res<JsV
 /** Promise.all, allSettled, any and race: the shared prologue and the iterator-close rule. */
 fn combinator(vm: &mut Vm, call: Call, kind: Combinator) -> Res<JsValue> {
     let c = call.this.clone();
+    if !matches!(c, JsValue::Object(_)) {
+        let name = match kind {
+            Combinator::All => "all",
+            Combinator::AllSettled => "allSettled",
+            Combinator::Any => "any",
+            Combinator::Race => "race",
+        };
+        return Err(vm.type_error(&format!("Promise.{name} called on non-object")));
+    }
     let cap = new_capability(vm, &c)?;
     vm.pin(cap.promise.clone());
     let resolve = vm.get(&c, &key("resolve"));
@@ -470,7 +479,7 @@ fn then(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let c = species_constructor(vm, &call.this)?;
     let (fulfilled, rejected) = (handler(vm, call.arg(0)), handler(vm, call.arg(1)));
     if c == intrinsic() {
-        let target = vm.new_promise()?;
+        let target = vm.new_promise_parent(Some(promise))?;
         vm.perform_then(
             promise,
             ReactionHandler::Function(fulfilled),
@@ -488,6 +497,14 @@ fn then(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::Boolean(reject),
         ];
         let closure = vm.native_closure(natives().reaction, slots)?;
+        #[cfg(feature = "conformance")]
+        if vm.page.environment.conformance_async_hooks && is_promise(vm, &cap.promise) {
+            vm.heap.put(
+                closure,
+                Key::private("async-hook-resource"),
+                crate::v9::vm::heap::Prop::data(cap.promise.clone()),
+            );
+        }
         Ok(ReactionHandler::Function(JsValue::Object(closure)))
     };
     let on_fulfilled = wrap(vm, fulfilled, false)?;

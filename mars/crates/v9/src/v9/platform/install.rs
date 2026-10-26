@@ -913,6 +913,13 @@ fn singletons(b: &mut Builder) {
     );
     b.global("console", console);
     let performance = b.object(Some(b.ids.event_target_prototype));
+    #[cfg(feature = "conformance")]
+    b.method(
+        performance,
+        "measureMemory",
+        0,
+        crate::v9::builtins::measure_memory,
+    );
     methods(
         b,
         performance,
@@ -999,7 +1006,12 @@ fn global_object(b: &mut Builder) {
     ] {
         b.accessor(proto, name, Some(window::window_get), Some(window::replace));
     }
-    b.accessor(proto, "name", Some(window::window_get), Some(noop));
+    b.accessor(
+        proto,
+        "name",
+        Some(window::window_get),
+        Some(window::set_name),
+    );
     for (name, value) in [
         ("NaN", JsValue::Number(f64::NAN)),
         ("Infinity", JsValue::Number(f64::INFINITY)),

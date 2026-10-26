@@ -1,15 +1,9 @@
-/**
- * BigInt arithmetic, bounded to 128 bits. Every result that leaves the i128 range throws a
- * catchable RangeError rather than growing without bound, mixing a BigInt with a Number throws a
- * TypeError as in JavaScript, and conversions accept the literal forms (decimal, 0x, 0o, 0b).
- */
+/** Exact BigInt operators normalize arbitrary-width results while retaining bounded work and memory. */
 use super::convert::Hint;
 use super::{Res, Vm};
 use crate::v9::compile::Op;
-use crate::v9::value::JsValue;
-
-/** Bits in V9's BigInt representation. */
-const BITS: u32 = i128::BITS;
+use crate::v9::value::{BigInteger, JsValue};
+use std::cmp::Ordering;
 
 /** StringToBigInt: trimmed decimal (with sign) or a 0x/0o/0b literal; empty text is 0n. */
 pub(in crate::v9) fn parse_bigint(text: &str) -> Option<i128> {
@@ -39,114 +33,106 @@ fn parse_decimal(text: &str) -> Option<i128> {
     text.parse().ok()
 }
 
-/** The text of a BigInt in `radix` (2..=36). */
-pub(in crate::v9) fn bigint_to_radix(value: i128, radix: u32) -> String {
-    if radix == 10 {
-        return value.to_string();
-    }
-    let mut magnitude = value.unsigned_abs();
-    let mut digits = Vec::new();
-    loop {
-        let digit = (magnitude % u128::from(radix)) as u32;
-        digits.push(char::from_digit(digit, radix).unwrap_or('0'));
-        magnitude /= u128::from(radix);
-        if magnitude == 0 {
-            break;
-        }
-    }
-    if value < 0 {
-        digits.push('-');
-    }
-    digits.iter().rev().collect()
-}
-
-/** BigInt.asUintN: the value modulo 2^bits, or None when that does not fit 128 bits. */
-pub(in crate::v9) fn as_uint_n(bits: u64, value: i128) -> Option<i128> {
-    if bits >= u64::from(BITS - 1) {
-        return (value >= 0).then_some(value);
-    }
-    Some(value.rem_euclid(1i128 << bits))
-}
-
-/** BigInt.asIntN: the value wrapped into a signed `bits`-bit integer (sign-extended). */
-pub(in crate::v9) fn as_int_n(bits: u64, value: i128) -> i128 {
-    match bits {
-        0 => 0,
-        bits if bits >= u64::from(BITS) => value,
-        bits => {
-            let shift = BITS - bits as u32;
-            value.wrapping_shl(shift) >> shift
-        }
-    }
-}
-
-#[allow(clippy::wrong_self_convention)]
 impl Vm<'_> {
-    /** The RangeError a result past V9's BigInt bound throws. */
+    /** Valid arithmetic that exceeds the retained-value budget raises the standard catchable size error. */
     fn too_big(&mut self) -> super::Thrown {
         self.range_error("Maximum BigInt size exceeded")
     }
-    /** A binary operator with at least one BigInt operand (after ToPrimitive). */
+    /** Both BigInt representations participate in one exact mathematical operator domain. */
     pub fn bigint_binary(&mut self, op: Op, left: &JsValue, right: &JsValue) -> Res<JsValue> {
-        let (JsValue::BigInt(a), JsValue::BigInt(b)) = (left, right) else {
+        let (Some(a), Some(b)) = (left.bigint_value(), right.bigint_value()) else {
             return Err(
                 self.type_error("Cannot mix BigInt and other types, use explicit conversions")
             );
         };
-        let (a, b) = (*a, *b);
-        let value = match op {
-            Op::Add => a.checked_add(b),
-            Op::Sub => a.checked_sub(b),
-            Op::Mul => a.checked_mul(b),
-            Op::Div | Op::Mod if b == 0 => return Err(self.range_error("Division by zero")),
-            Op::Div => a.checked_div(b),
-            Op::Mod => a.checked_rem(b),
-            Op::Exp if b < 0 => return Err(self.range_error("Exponent must be non-negative")),
-            Op::Exp => u32::try_from(b).ok().and_then(|b| a.checked_pow(b)),
-            Op::BitAnd => Some(a & b),
-            Op::BitOr => Some(a | b),
-            Op::BitXor => Some(a ^ b),
-            Op::Shl => shift_left(a, b),
-            Op::Shr => shift_left(a, b.checked_neg().unwrap_or(i128::MAX)),
+        if matches!(op, Op::Div | Op::Mod) && b.is_zero() {
+            return Err(self.range_error("Division by zero"));
+        }
+        if op == Op::Exp && b.negative() {
+            return Err(self.range_error("Exponent must be non-negative"));
+        }
+        let linear = a.words().len().saturating_add(b.words().len()).max(1);
+        let work = match op {
+            Op::Mul => a.product_work(&b).saturating_add(linear),
+            Op::Div | Op::Mod if b.power_of_two().is_none() => a
+                .words()
+                .len()
+                .saturating_mul(b.words().len())
+                .saturating_add(linear),
+            Op::Exp if a.power_of_two().is_none() && a.bit_len() > 1 => {
+                let bits = b
+                    .to_usize()
+                    .and_then(|exponent| a.bit_len().checked_mul(exponent))
+                    .unwrap_or(usize::MAX);
+                let words = bits.div_ceil(u32::BITS as usize);
+                words.saturating_mul(words).saturating_add(linear)
+            }
+            _ => linear,
+        };
+        // Oversized powers fail as RangeError before work accounting tries to represent an impossible result.
+        if op == Op::Exp
+            && a.bit_len() > 1
+            && b.to_usize().is_none_or(|exponent| {
+                (a.bit_len() - 1)
+                    .checked_mul(exponent)
+                    .is_none_or(|bits| bits >= crate::v9::value::BIGINT_MAX_BITS)
+            })
+        {
+            return Err(self.too_big());
+        }
+        self.charge(work)?;
+        let result = match op {
+            Op::Add => a.add(&b),
+            Op::Sub => a.subtract(&b),
+            Op::Mul => a.multiply(&b),
+            Op::Div => a.divide(&b).map(|pair| pair.0),
+            Op::Mod => a.divide(&b).map(|pair| pair.1),
+            Op::Exp => a.power(&b),
+            Op::BitAnd => a.bitwise(&b, |a, b| a & b),
+            Op::BitOr => a.bitwise(&b, |a, b| a | b),
+            Op::BitXor => a.bitwise(&b, |a, b| a ^ b),
+            Op::Shl | Op::Shr => shift(&a, &b, op == Op::Shl),
             _ => {
                 return Err(self.type_error("BigInts have no unsigned right shift, use >> instead"));
             }
         };
-        value.map(JsValue::BigInt).ok_or_else(|| self.too_big())
+        result.map(JsValue::bigint).ok_or_else(|| self.too_big())
     }
-    /** `left < right` when either primitive is a BigInt; None when a NaN or bad text is involved. */
+    /** Relational comparison never converts an integer operand to a rounded Number. */
     pub fn bigint_less_than(&mut self, left: &JsValue, right: &JsValue) -> Res<Option<bool>> {
-        let order = |a: &JsValue, b: &JsValue| -> Option<std::cmp::Ordering> {
-            match (a, b) {
-                (JsValue::BigInt(a), JsValue::BigInt(b)) => Some(a.cmp(b)),
-                (JsValue::BigInt(a), JsValue::String(text)) => {
-                    parse_bigint(&text.lossy()).map(|b| a.cmp(&b))
-                }
-                (JsValue::String(text), JsValue::BigInt(b)) => {
-                    parse_bigint(&text.lossy()).map(|a| a.cmp(b))
-                }
-                _ => None,
+        if let (Some(left), Some(right)) = (left.bigint_value(), right.bigint_value()) {
+            return Ok(Some(left < right));
+        }
+        if let JsValue::String(text) = left {
+            return Ok(BigInteger::parse(&text.lossy())
+                .ok()
+                .zip(right.bigint_value())
+                .map(|(a, b)| a < b));
+        }
+        if let JsValue::String(text) = right {
+            return Ok(left
+                .bigint_value()
+                .zip(BigInteger::parse(&text.lossy()).ok())
+                .map(|(a, b)| a < b));
+        }
+        let (big, other, flipped) = match left.bigint_value() {
+            Some(big) => (big, right, false),
+            None => match right.bigint_value() {
+                Some(big) => (big, left, true),
+                None => return Ok(None),
+            },
+        };
+        let number = self.to_number(other)?;
+        let order = compare_number(&big, number);
+        Ok(order.map(|order| {
+            if flipped {
+                order.is_gt()
+            } else {
+                order.is_lt()
             }
-        };
-        if let Some(ordering) = order(left, right) {
-            return Ok(Some(ordering.is_lt()));
-        }
-        if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
-            return Ok(None);
-        }
-        let (big, number, flipped) = match (left, right) {
-            (JsValue::BigInt(big), other) => (*big, self.to_number(other)?, false),
-            (other, JsValue::BigInt(big)) => (*big, self.to_number(other)?, true),
-            _ => return Ok(None),
-        };
-        if number.is_nan() {
-            return Ok(None);
-        }
-        let big = big as f64;
-        Ok(Some(if flipped { number < big } else { big < number }))
+        }))
     }
-    /** Both operands of an arithmetic or bitwise operator as Numbers, or, when either is a
-    BigInt, the operator's BigInt result (Err holds that value, not an error). */
+    /** ToNumeric applies authored primitive conversion once before choosing Number or BigInt arithmetic. */
     pub fn numeric_pair(
         &mut self,
         op: Op,
@@ -160,36 +146,65 @@ impl Vm<'_> {
             (left, right) => self.bigint_binary(op, &left, &right).map(Err),
         }
     }
-    /** ToNumeric: a BigInt stays one, anything else becomes a Number. */
+    /** Primitive integers retain their exact storage form. */
     pub fn to_numeric(&mut self, value: &JsValue) -> Res<JsValue> {
         let primitive = self.to_primitive(value, Hint::Number)?;
-        if matches!(primitive, JsValue::BigInt(_)) {
+        if primitive.is_bigint() {
             return Ok(primitive);
         }
         Ok(JsValue::Number(self.to_number(&primitive)?))
     }
-    /** Unary minus, `~`, `++` and `--` on a BigInt. */
-    pub fn bigint_unary(&mut self, op: Op, value: i128) -> Res<JsValue> {
+    /** Unary operators share the same exact normalization and retained-value bounds as binary arithmetic. */
+    pub fn bigint_unary(&mut self, op: Op, value: &JsValue) -> Res<JsValue> {
+        let value = value
+            .bigint_value()
+            .ok_or_else(|| self.type_error("BigInt operand expected"))?;
+        self.charge(value.words().len().max(1))?;
         let result = match op {
-            Op::Neg => value.checked_neg(),
-            Op::BitNot => Some(!value),
-            Op::Inc => value.checked_add(1),
-            _ => value.checked_sub(1),
+            Op::Neg => Some(value.negated()),
+            Op::BitNot => value.complement(),
+            Op::Inc => value.add(&BigInteger::from_i128(1)),
+            _ => value.subtract(&BigInteger::from_i128(1)),
         };
-        result.map(JsValue::BigInt).ok_or_else(|| self.too_big())
+        result.map(JsValue::bigint).ok_or_else(|| self.too_big())
     }
 }
-
-/** `a << b` for any signed shift count; negative counts shift right with sign fill. */
-fn shift_left(a: i128, b: i128) -> Option<i128> {
-    if b < 0 {
-        let count = b.unsigned_abs().min(u128::from(BITS - 1)) as u32;
-        return Some(a >> count);
+/** Negative counts reverse shift direction; a huge arithmetic right shift saturates to the sign. */
+fn shift(value: &BigInteger, count: &BigInteger, left: bool) -> Option<BigInteger> {
+    let left = left != count.negative();
+    let count = if count.negative() {
+        count.negated()
+    } else {
+        count.clone()
+    };
+    match count.to_usize() {
+        Some(count) if left => value.shift_left(count),
+        Some(count) => Some(value.shift_right(count)),
+        None if !left => Some(BigInteger::from_i128(if value.negative() { -1 } else { 0 })),
+        None if value.is_zero() => Some(BigInteger::zero()),
+        _ => None,
     }
-    if a == 0 {
-        return Some(0);
+}
+/** Integral and fractional Numbers compare against the exact integer part before considering a fractional tail. */
+fn compare_number(big: &BigInteger, number: f64) -> Option<Ordering> {
+    if number.is_nan() {
+        return None;
     }
-    let count = u32::try_from(b).ok().filter(|count| *count < BITS)?;
-    let shifted = a.checked_shl(count)?;
-    (shifted >> count == a).then_some(shifted)
+    if number == f64::INFINITY {
+        return Some(Ordering::Less);
+    }
+    if number == f64::NEG_INFINITY {
+        return Some(Ordering::Greater);
+    }
+    let truncated = BigInteger::from_f64(number.trunc())?;
+    let order = big.cmp(&truncated);
+    Some(if order == Ordering::Equal && number.fract() != 0.0 {
+        if number > 0.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }
+    } else {
+        order
+    })
 }

@@ -48,6 +48,7 @@ pub(in crate::v9) fn inspect(vm: &mut Vm, value: &JsValue, depth: usize) -> Stri
         JsValue::String(text) => format!("'{}'", text.lossy()),
         JsValue::Number(number) => number_to_string(*number),
         JsValue::BigInt(value) => format!("{value}n"),
+        JsValue::BigIntWide(value) => format!("{}n", value.diagnostic()),
         JsValue::Boolean(flag) => flag.to_string(),
         JsValue::Null => "null".into(),
         JsValue::Undefined | JsValue::Hole => "undefined".into(),

@@ -3,6 +3,10 @@ use super::*;
 use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{NativeFn, Static, string, symbol};
 
+mod exact_sum;
+mod stable;
+mod sum;
+
 /** The Math namespace. */
 pub(super) fn install(b: &mut Builder) {
     let math = b.object(Some(b.ids.object_prototype));
@@ -56,6 +60,7 @@ pub(super) fn install(b: &mut Builder) {
     for (name, function) in unary {
         b.method(math, name, 1, function);
     }
+    b.method(math, "f16round", 1, f16round);
     b.method(math, "tanh", 1, tanh);
     b.method(math, "trunc", 1, trunc);
     b.method(math, "atan2", 2, atan2);
@@ -65,6 +70,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(math, "min", 2, min);
     b.method(math, "hypot", 2, hypot);
     b.method(math, "random", 0, random);
+    b.method(math, "sumPrecise", 1, sum::sum_precise);
 }
 
 /** Define a unary Math function over f64. */
@@ -88,7 +94,7 @@ unary! {
     asin => f64::asin;
     asinh => f64::asinh;
     atan => f64::atan;
-    atanh => f64::atanh;
+    atanh => stable::atanh;
     cbrt => f64::cbrt;
     ceil => f64::ceil;
     cos => f64::cos;
@@ -101,7 +107,7 @@ unary! {
     log1p => f64::ln_1p;
     log10 => f64::log10;
     log2 => f64::log2;
-    round => |x| if x.is_finite() && x.fract() != 0.0 { (x + 0.5).floor() } else { x };
+    round => stable::round;
     sign => |x| if x.is_nan() || x == 0.0 { x } else { x.signum() };
     sin => f64::sin;
     sinh => f64::sinh;
@@ -163,20 +169,14 @@ fn min(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Number(result))
 }
 
-/** Math.hypot. */
+/** Scaled compensated summation avoids overflow and underflow while preserving conversion order. */
 fn hypot(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let mut sum = 0.0;
-    let mut infinite = false;
-    for value in call.args {
-        let number = vm.to_number(value)?;
-        infinite |= number.is_infinite();
-        sum += number * number;
-    }
-    Ok(JsValue::Number(if infinite {
-        f64::INFINITY
-    } else {
-        sum.sqrt()
-    }))
+    let numbers = call
+        .args
+        .iter()
+        .map(|value| vm.to_number(value))
+        .collect::<Res<Vec<_>>>()?;
+    Ok(JsValue::Number(stable::hypot(&numbers)))
 }
 
 /** Math.random: xorshift64* over state the page serializes, seeded by the host. */
@@ -201,3 +201,11 @@ const RANDOM_MULTIPLIER: u64 = 0x2545_f491_4f6c_dd1d;
 const RANDOM_SHIFT: u32 = 11;
 /** 2^53. */
 const RANDOM_SCALE: f64 = 9_007_199_254_740_992.0;
+
+/** Round directly from binary64 to binary16, avoiding a second rounding through binary32. */
+fn f16round(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let number = arg_number(vm, &call, 0)?;
+    Ok(JsValue::Number(crate::v9::value::decode_f16(
+        crate::v9::value::encode_f16(number),
+    )))
+}

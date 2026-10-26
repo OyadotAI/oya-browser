@@ -5,6 +5,36 @@ Rust port of V8, Blink or Chromium networking.
 The replacement target remains the behavior of the current Oya browser. An
 implemented subset is not evidence of full browser compatibility.
 
+## V8 conformance repairs (2026-10-25)
+
+The upstream `test/mjsunit` checkout at the pinned V8 revision is executed without
+editing test bodies or assertions. V9's optional conformance host preserves
+separate Script parsing, declared fixtures and timer/microtask delivery. Missing
+capabilities and resource-limit failures remain failures, and exclusions retain
+their own counts. These are compatibility measurements, not a claim of V8 parity.
+
+`crates/v9/src/v9/value/number/radix.rs` adapts the complete
+`DoubleToRadixStringView` routine from pinned `src/numbers/conversions.cc`, using
+Rust vectors instead of a shared character buffer. It retains the next-double
+rounding interval, fractional carry and zero filling for unrepresented integer
+digits. Rust supplies `next_up` and native binary64 arithmetic; no V8 runtime or
+dependency is embedded. The corresponding source notice is retained in
+`THIRD_PARTY_NOTICES.md`.
+
+The fixed-decimal formatter uses Rust's exact decimal conversion and detects true
+binary midpoints from the significand and exponent before correcting ties to
+round upward in magnitude. Multiplying by a decimal scale first could manufacture
+an apparent midpoint, so that double rounding is avoided. The reviewed string
+protocol source is pinned `src/builtins/string-match-search.tq`,
+`string-startswith.tq` and `string-endswith.tq`: the Rust helpers preserve
+RequireObjectCoercible, IsRegExp, GetMethod and original receiver order.
+The fallback also follows `RegExpCreate` in pinned `src/builtins/regexp.tq`,
+initializing directly rather than entering the constructor and repeating an
+observable IsRegExp lookup. The pinned `MaybeCallFunctionAtSymbol` helper in
+`src/builtins/builtins-string-gen.cc` only dispatches pattern hooks on objects;
+primitive arguments do not consult inherited hooks. The unchanged mjsunit
+`es6/pattern-brand-check.js` and `regress/regress-1092896.js` pin those distinctions.
+
 ## Pinned references
 
 ### Native MCP adapter
@@ -614,3 +644,71 @@ limited to the supported classic-script grammar above. Unpaired
 surrogates survive in VM state, but the current UTF-8 document boundary refuses
 them explicitly. Full V8 semantics, broader DOM/CSS, media, profiles, Oya
 workflow integration and production platform protections remain open.
+
+
+## V9 unchanged mjsunit execution (October 2026)
+
+The opt-in runner executes sources from the pinned V8 checkout at
+`fedd021b538607860f9c56e5c193ad8dcd4f2bb1` without editing upstream tests.
+Its existing directory and native-syntax exclusions remain separately reported;
+`CONF_REQUIRE_PASS=1` rejects any executed failure. Sources retain their own
+strict directives, declared fixture order, and real asynchronous assertions.
+The shell host uses ordinary globals and inert, checkout-confined fixture text.
+Realm and ShadowRealm use separate intrinsic banks and module instances;
+termination stops the actual source/task pipeline. These host operations are
+absent from production builds.
+
+The current engine extends the earlier historical subsets above with mapped
+arguments, instance private brands, descriptor and proxy invariants, sparse
+resident array elements, species constructors, exact binary summation, Set
+algebra, source-preserving functions, UTF-16-safe Unicode normalization,
+binary16 storage, resizable/transferable buffers, precise weak edges and
+deferred finalization, iterator helpers and joint iteration, Uint8Array codecs,
+streaming grouping and typed-array construction. Resource regions use the
+existing finally completion machinery and await individual disposal results;
+they preserve abrupt completions and construct genuine SuppressedError chains.
+Regex property escapes use complete ICU4X 2.3.0 Unicode data rather than
+approximate character predicates. New regression tests live in `crates/v9/tests`; they do
+not replace the unchanged upstream assertions. Object and resident-data limits,
+operation deadlines and state validation remain enforced.
+
+The owned WebAssembly implementation validates and executes its own binary
+format and heap records. Scalar, SIMD, recursive GC references, exceptions and
+atomic instructions on unshared memory have public-boundary regression tests.
+Compile-time string imports operate on real UTF-16/UTF-8 data. Unsupported
+instructions and host capabilities still produce failures. No external JS or
+Wasm VM is used to obtain a pass. Selected-domain results are not full V8,
+Test262, browser or WebAssembly conformance claims.
+
+
+The expanded implementation includes signed limb BigInts with bounded allocation,
+parameter/body environment separation, eval extension deletion, captured class
+field keys, auto-accessors, and collection of unreachable dynamic source units.
+Saved code retains immutable source offsets and validates nonoverlapping ranges
+before recompilation. Date parsing follows the pinned V8 legacy token/composer
+rules; time-zone transitions and POSIX recurrence rules are validated inert host
+input, while the native VM itself has no zoneinfo filesystem access.
+
+RegExp matching uses backward evaluation for lookbehind, whole-code-point Unicode
+backreferences and leading-anchor search bounds. Simple fold data comes from
+regex-syntax 0.8.11's generated Unicode 16.0 table, supplemented by the mutually
+inverse single-scalar case pairs from Rust 1.94.0's Unicode 17.0 data. The Unicode
+[CaseFolding 17.0 source](https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt)
+distinguishes common/simple mappings from expanding and Turkic mappings; the
+matcher uses single-scalar equivalence. Notices are retained separately.
+Buffer-boundary assertions require the explicit `regexp_buffer_boundaries`
+environment setting; the runner forwards the source's actual proposal flag.
+
+The shell serializer uses V8's actual value-serialization tags and varints rather
+than a JSON envelope, with bounds and graph validation before materialization.
+Promise hooks observe actual lifecycle and job execution. WebAssembly suspension
+retains owned, typed interpreter frames and resumes through genuine Promise
+reactions without replaying imports or draining jobs synchronously. Unsupported
+capabilities remain explicit.
+
+This inventory deliberately keeps the original exclusions unchanged. It also
+contains upstream tests with conflicting configuration assumptions: the pinned
+`mjsunit.status` marks `bugs/*` as expected FAIL, marks the no-i18n RegExp case FAIL
+when i18n is enabled, and skips `regress/wasm/regress-1254675` when SIMD is
+available. These failures are reported in the fixed inventory; V9 must not adopt
+obsolete semantics or reject valid SIMD to manufacture a passing assertion.

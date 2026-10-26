@@ -15,6 +15,9 @@ const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
 pub(super) fn install(b: &mut Builder, iterator: ObjectId) {
     let ctor = b.constructor("Iterator", 0, construct, iterator, None);
     b.global("Iterator", ctor);
+    super::from::install(b, ctor);
+    super::prototype::install(b, iterator, ctor);
+    super::lazy::install_static(b, ctor);
     b.method(iterator, "includes", 1, includes);
     b.method(iterator, "join", 1, join);
 }
@@ -39,17 +42,25 @@ fn receiver(vm: &mut Vm, call: &Call, name: &str) -> Res<JsValue> {
 }
 
 /** IteratorClose(O, throw error): call `return` if present, then rethrow the original error. */
-fn close_with(vm: &mut Vm, object: &JsValue, error: Thrown) -> Thrown {
-    if let Ok(method) = vm.get(object, &Key::from("return"))
-        && vm.is_callable(&method)
-    {
-        let _ = vm.call(method, object.clone(), Vec::new());
+pub(super) fn close_with(vm: &mut Vm, object: &JsValue, error: Thrown) -> Thrown {
+    if matches!(error, Thrown::Fatal(_)) {
+        return error;
+    }
+    let cleanup = vm.get(object, &Key::from("return")).and_then(|method| {
+        if method.nullish() {
+            Ok(JsValue::Undefined)
+        } else {
+            vm.call(method, object.clone(), Vec::new())
+        }
+    });
+    if let Err(Thrown::Fatal(fatal)) = cleanup {
+        return Thrown::Fatal(fatal);
     }
     error
 }
 
 /** GetIteratorDirect: an iterator record over the receiver and its `next`, read once. */
-fn direct(vm: &mut Vm, object: &JsValue) -> Res<ObjectId> {
+pub(super) fn direct(vm: &mut Vm, object: &JsValue) -> Res<ObjectId> {
     let next = vm.get(object, &Key::from("next"))?;
     vm.new_iterator(IterState::Record {
         iterator: object.clone(),

@@ -2,6 +2,18 @@
 use super::super::value::{JsString, JsValue, ObjectId};
 use super::heap::{EnvId, FastMap, Key};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+mod weak;
+pub(in crate::v9) use weak::{FinalizationCell, FinalizationData};
+mod shared;
+mod shared_gc;
+pub(in crate::v9) use shared_gc::{SharedGc, SharedGcArena, SharedGcRecord, SharedGcValue};
+mod function_name;
+pub(in crate::v9) use function_name::{BOUND_PREFIX, FunctionName};
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use shared::WeakSharedBytes;
+pub(in crate::v9) use shared::{AsyncWait, SharedBytes, WaitResult};
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use shared_gc::WeakSharedGcArena;
 
 /** Numbers that may be NaN or infinite, serialized through the value codec. */
 mod num {
@@ -40,8 +52,8 @@ mod big {
 #[serde(rename_all = "snake_case")]
 pub(in crate::v9) enum Class {
     Plain,
-    /** Dense elements; `Hole` marks missing ones. */
-    Array(Vec<JsValue>),
+    /** Logical uint32 length with a dense prefix and sparse resident elements. */
+    Array(super::array_elements::ArrayElements),
     Function(Box<Function>),
     Error,
     Boolean(bool),
@@ -50,14 +62,22 @@ pub(in crate::v9) enum Class {
     Symbol(u32),
     /** A BigInt wrapper object (Object(1n)). */
     BigInt(#[serde(with = "big")] i128),
+    /** Boxed arbitrary-width integers share the primitive's immutable backing. */
+    BigIntWide(crate::v9::value::BigInteger),
     Date(#[serde(with = "num")] f64),
     RegExp(Box<RegExpData>),
     Map(Box<Table>),
     Set(Box<Table>),
     WeakMap(Box<Table>),
     WeakSet(Box<Table>),
+    /** A weak target; None after a collection discovers that it is unreachable. */
+    WeakRef(Option<JsValue>),
+    /** Holdings and callback are strong; targets and unregister tokens are weak. */
+    FinalizationRegistry(Box<FinalizationData>),
     Promise(Box<PromiseData>),
     Arguments,
+    /** Sloppy simple parameters remain live aliases after their activation returns. */
+    MappedArguments(Box<ArgumentsData>),
     Generator(Box<GeneratorData>),
     Async(Box<AsyncData>),
     /** An async generator object: its body and its queue of next/throw/return requests. */
@@ -66,6 +86,10 @@ pub(in crate::v9) enum Class {
     Host(Box<HostData>),
     /** An ArrayBuffer's bytes. */
     ArrayBuffer(Bytes),
+    /** A distinct SAB wrapper owns synchronized, natively shareable backing storage. */
+    SharedArrayBuffer(SharedBytes),
+    /** Opaque shared graph root; its graph contains no isolate-local object identities. */
+    WasmShared(SharedGc),
     /** A typed array or DataView over an ArrayBuffer. */
     View(Box<ViewData>),
     /** A Proxy; both fields are None once revoked. */
@@ -77,11 +101,33 @@ pub(in crate::v9) enum Class {
     EvalVars,
 }
 
+/** A simple sloppy arguments object's index-to-parameter aliases, validated against its code. */
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(in crate::v9) struct ArgumentsData {
+    /** The function whose compiler supplied the parameter slots. */
+    pub site: u32,
+    /** The activation retained by these aliases. */
+    pub env: EnvId,
+    /** Missing entries are duplicates, absent actual arguments or detached descriptors. */
+    pub slots: Vec<Option<u16>>,
+}
+
 /** A Proxy's target and handler. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::v9) struct ProxyData {
     pub target: Option<ObjectId>,
     pub handler: Option<ObjectId>,
+    /** Revocation removes authority, while the creation-time [[Call]] internal method remains. */
+    #[serde(default, skip_serializing_if = "omit_capability")]
+    pub callable: Option<bool>,
+    /** Constructor identity also survives revocation; old live snapshots derive it from target. */
+    #[serde(default, skip_serializing_if = "omit_capability")]
+    pub constructible: Option<bool>,
+}
+
+/** False capabilities derive from live targets after restore; only true survives revocation. */
+fn omit_capability(value: &Option<bool>) -> bool {
+    *value != Some(true)
 }
 
 /** Raw ArrayBuffer bytes; hex text on the wire so committed state stays compact. */
@@ -127,6 +173,8 @@ pub(in crate::v9) enum ElementKind {
     Float64,
     BigInt64,
     BigUint64,
+    /** IEEE binary16 floating-point elements share raw bytes with DataView and Wasm memory. */
+    Float16,
     /** A DataView: bytes read and written by explicit typed accessors. */
     DataView,
 }
@@ -138,27 +186,41 @@ pub(in crate::v9) struct ViewData {
     pub buffer: ObjectId,
     pub offset: usize,
     pub length: usize,
+    /** Omitted lengths over resizable buffers track subsequent byte-length changes. */
+    #[serde(default)]
+    pub tracking: bool,
+    /** Computed by view access; invalidity is never trusted as serialized input. */
+    #[serde(skip)]
+    pub invalid: bool,
 }
 
 impl Class {
     /** Elements and entries count toward the property budget. */
     pub fn element_count(&self) -> usize {
         match self {
-            Class::Array(elements) => elements
-                .iter()
-                .filter(|value| **value != JsValue::Hole)
-                .count(),
+            Class::Array(elements) => elements.resident_len(),
             Class::Map(table)
             | Class::Set(table)
             | Class::WeakMap(table)
             | Class::WeakSet(table) => table.live,
+            Class::FinalizationRegistry(data) => data.cells.len(),
             _ => 0,
         }
     }
     /** Every string value held inside internal data, so a recount can see shared contents. */
     pub fn strings<'a>(&'a self, visit: &mut dyn FnMut(&'a JsValue)) {
         match self {
-            Class::Array(elements) => elements.iter().for_each(visit),
+            Class::Function(function) => {
+                if let Some(name) = &function.name {
+                    visit(&name.tail);
+                }
+            }
+            Class::Array(elements) => elements.resident_values().for_each(visit),
+            Class::FinalizationRegistry(data) => {
+                for cell in &data.cells {
+                    visit(&cell.holdings);
+                }
+            }
             Class::Map(table)
             | Class::Set(table)
             | Class::WeakMap(table)
@@ -174,8 +236,18 @@ impl Class {
     /** String units held inside internal data. */
     pub fn units(&self) -> usize {
         match self {
-            Class::Array(elements) => elements.iter().map(JsValue::string_units).sum(),
+            Class::Function(function) => function
+                .name
+                .as_ref()
+                .map_or(0, |name| name.tail.string_units()),
+            Class::Array(elements) => elements.resident_values().map(JsValue::string_units).sum(),
             Class::String(text) => text.len(),
+            Class::BigIntWide(value) => value.units(),
+            Class::FinalizationRegistry(data) => data
+                .cells
+                .iter()
+                .map(|cell| cell.holdings.string_units())
+                .sum(),
             Class::Map(table)
             | Class::Set(table)
             | Class::WeakMap(table)
@@ -187,6 +259,8 @@ impl Class {
                 .sum(),
             Class::RegExp(data) => data.source.len(),
             Class::ArrayBuffer(bytes) => bytes.0.len().div_ceil(2),
+            Class::SharedArrayBuffer(bytes) => bytes.allocated().div_ceil(2),
+            Class::WasmShared(value) => value.allocated().div_ceil(2),
             _ => 0,
         }
     }
@@ -203,6 +277,9 @@ pub(in crate::v9) struct Function {
     /** A class constructor's instance field initializer. */
     #[serde(rename = "i", default, skip_serializing_if = "Option::is_none")]
     pub fields: Option<ObjectId>,
+    /** Immutable name metadata stays compact until an actual property value observation. */
+    #[serde(rename = "n", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<FunctionName>,
 }
 
 /** Closures name source code; natives name a builtin; bound functions wrap a target. */
@@ -242,6 +319,7 @@ pub(in crate::v9) enum TableKey {
     Symbol(u32),
     /** BigInts are keyed by value, as SameValueZero compares them. */
     BigInt(i128),
+    BigIntWide(crate::v9::value::BigInteger),
 }
 
 impl TableKey {
@@ -260,6 +338,9 @@ impl TableKey {
             }),
             JsValue::String(text) => Self::String(text.clone()),
             JsValue::BigInt(value) => Self::BigInt(*value),
+            JsValue::BigIntWide(value) => value
+                .to_i128()
+                .map_or_else(|| Self::BigIntWide(value.clone()), Self::BigInt),
             JsValue::Object(id) => Self::Object(*id),
             JsValue::Symbol(id) => Self::Symbol(*id),
         }

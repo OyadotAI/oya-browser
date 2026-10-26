@@ -759,7 +759,11 @@ pub(in crate::v9) fn format_date(vm: &Vm, time: f64, options: &BTreeMap<String, 
     let utc = options
         .get("timeZone")
         .is_some_and(|zone| zone.eq_ignore_ascii_case("UTC"));
-    let p = parts(if utc { time } else { time + local_offset(vm) });
+    let p = parts(if utc {
+        time
+    } else {
+        time + local_offset(vm, time)
+    });
     let get = |name: &str| options.get(name).map(String::as_str);
     let date_style = get("dateStyle");
     let time_style = get("timeStyle");

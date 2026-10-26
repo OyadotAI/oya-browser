@@ -4,12 +4,17 @@
  * identified by its source site, so serialized state never carries executable code.
  */
 mod cache;
+mod class_fields;
 mod eval;
-pub(in crate::v9) use eval::env_sizes;
+pub(in crate::v9) use eval::{env_sizes, private_sites as eval_private_sites};
+mod catch_bindings;
 mod expr;
 mod function;
+mod iteration;
 mod module;
+mod parameters;
 mod pattern;
+mod resources;
 mod scan;
 mod stmt;
 
@@ -86,6 +91,8 @@ pub(in crate::v9) enum Op {
     SetExt(u32, Slot, Slot),
     /** Create a sloppy eval's var in the eval-var object (undefined) unless it is there. */
     DeclareExt(u32, Slot, Slot),
+    /** Delete an existing sloppy eval binding, pushing result and a found flag. */
+    DeleteExt(u32, Slot, Slot),
     /** Look a name up in the `with` object in env slot (hops, slot), honoring
     Symbol.unscopables: pushes the value (and the object as `this` when the flag says the
     name is called) and true when the object holds it, else false. */
@@ -98,6 +105,8 @@ pub(in crate::v9) enum Op {
     ToObject,
     /** Throw a SyntaxError with this message, for eval's runtime declaration conflicts. */
     ThrowSyntax(u32),
+    /** A legacy invalid call reference raises only if evaluation reaches this instruction. */
+    ThrowReference(u32),
     /** Top-level `let`/`const`/`class`: create the dead-zone global binding; flag is const. */
     DeclareLexical(u32, bool),
     /** Initialize a top-level lexical binding with the value on the stack (popped). */
@@ -125,6 +134,16 @@ pub(in crate::v9) enum Op {
     DefineMethod(u32, u8, bool),
     /** obj key function -> obj */
     DefineMethodComputed(u8, bool),
+    /** Define a class accessor pair backed by the specified private key; the home remains on stack. */
+    AutoAccessor(u32, u32),
+    /** A computed public key is consumed once while the home remains on stack. */
+    AutoAccessorComputed(u32),
+    /** function key -> function, capturing a computed field's named evaluation before its body executes. */
+    InferFunctionName,
+    /** function home -> function home, assigning the initializer's lexical home before invocation. */
+    SetInitializerHome,
+    /** Derived instance elements initialize only after the lexical this binding has been assigned. */
+    InitializeDerivedFields,
     /** obj source -> obj */
     CopyData,
     /** source key1..keyN -> rest */
@@ -219,6 +238,18 @@ pub(in crate::v9) enum Op {
     Normal(Slot),
     /** Resume the completion a finally block's registers hold. */
     EndFinally(Slot),
+    /** Create a private lexical disposal stack, with no authored global lookup. */
+    ResourceCreate,
+    /** Register the stack top for eager disposal-method capture and leave the original value. */
+    ResourceAdd(Slot, bool),
+    /** Dispose a synchronous region using its pending finally completion registers. */
+    ResourceDispose(Slot, Slot),
+    /** Begin an async disposal region without adding an extra promise or job boundary. */
+    ResourceBegin(Slot, Slot),
+    /** Store one awaited disposal result or jump when the region has finished. */
+    ResourceStep(Slot, Slot, u32),
+    /** Fold a rejected disposal await into the region's pending suppressed-error chain. */
+    ResourceRejected(Slot),
     /** Push argument `n`, or undefined. */
     Arg(Slot),
     /** Push an array of the arguments from `n` on. */
@@ -235,6 +266,10 @@ pub(in crate::v9) enum Op {
     IterRest,
     /** iter -> (closes it unless already done) */
     IterClose,
+    /** Skip closure on normal iteration or continue to this same loop. */
+    IterCloseCheck(Slot, u32, u32),
+    /** A caught close error yields to an already pending body throw. */
+    IterCloseError(Slot),
     ForIn,
     /** iter -> iter key, or jump with iter when done. */
     ForInNext(u32),
@@ -277,14 +312,20 @@ pub(in crate::v9) struct Code {
     pub strict: bool,
     /// Observable function name.
     pub name: JsString,
+    /// Exact source is shared by all functions compiled from one source unit.
+    pub source: Option<(Arc<str>, usize)>,
+    /// Absolute byte boundaries of this function or class literal.
+    pub source_span: Option<(u32, u32)>,
     /// Observable function length.
     pub length: u32,
     /// The instructions.
     pub ops: Vec<Op>,
     /// Register count.
     pub registers: Slot,
-    /// Slots in the function-scope environment, which exists only when closures can see it.
+    /// Slots in the function-scope environment, retained by closures or mapped arguments.
     pub env: Option<Slot>,
+    /// Simple sloppy parameters share these environment slots with their arguments indices.
+    pub arguments: Option<Vec<Option<Slot>>>,
     /// Strings and names the instructions reference.
     pub strings: Vec<JsString>,
     /// Indexes into `strings` that name private keys (class `#names`). Only the compiler adds
@@ -299,6 +340,12 @@ pub(in crate::v9) struct Code {
 }
 
 impl Code {
+    /** Preserve comments and whitespace without interpreting the function's public name. */
+    pub fn original_source(&self) -> Option<&str> {
+        let (source, base) = self.source.as_ref()?;
+        let (start, end) = self.source_span?;
+        source.get((start as usize).checked_sub(*base)?..(end as usize).checked_sub(*base)?)
+    }
     /** The source position of an instruction, for diagnostics. */
     pub fn position(&self, pc: usize) -> Pos {
         let index = self
@@ -323,6 +370,10 @@ impl Code {
             .sum::<usize>();
         std::mem::size_of::<Self>()
             + self.ops.len() * std::mem::size_of::<Op>()
+            + self
+                .arguments
+                .as_ref()
+                .map_or(0, |slots| slots.len() * std::mem::size_of::<Option<Slot>>())
             + strings(&self.strings)
             + templates
             + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
@@ -339,7 +390,7 @@ pub(in crate::v9) struct Registry {
 impl Registry {
     /** Compile a script and its nested functions; returns the script's top-level code. */
     pub fn add(&mut self, program: &Program) -> EngineResult<Arc<Code>> {
-        let unit = compile_script(program)?;
+        let unit = compile_script(program, None)?;
         self.adopt(&unit)?;
         Ok(unit.entry.clone())
     }
@@ -358,7 +409,7 @@ impl Registry {
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
-                let unit = compile_script(&parse()?)?;
+                let unit = compile_script(&parse()?, Some((source, offset)))?;
                 cache::put(key, unit.clone());
                 unit
             }
@@ -376,7 +427,7 @@ impl Registry {
         source: &str,
         offset: usize,
         context: &str,
-        parse: impl FnOnce() -> EngineResult<Program>,
+        parse: impl FnOnce(bool, &[Name], u8) -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
         let scopes = eval::context(context)
             .ok_or_else(|| EngineError::invalid("Malformed V9 eval context."))?;
@@ -384,7 +435,11 @@ impl Registry {
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
-                let unit = compile_eval(&parse()?, scopes)?;
+                let unit = compile_eval(
+                    &parse(scopes.strict, &scopes.private_names(), scopes.grammar)?,
+                    scopes,
+                    (source, offset),
+                )?;
                 cache::put(key, unit.clone());
                 unit
             }
@@ -407,7 +462,7 @@ impl Registry {
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
-                let unit = compile_module(parse()?)?;
+                let unit = compile_module(parse()?, (source, offset))?;
                 cache::put(key, unit.clone());
                 unit
             }
@@ -440,21 +495,38 @@ impl Registry {
 }
 
 /** Compile a classic script and its nested functions into one shareable unit. */
-fn compile_script(program: &Program) -> EngineResult<Arc<cache::Unit>> {
+fn compile_script(
+    program: &Program,
+    source: Option<(&str, usize)>,
+) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
     let script = compiler.script(program)?;
-    Ok(Arc::new(cache::Unit::new(compiler.done, script, None)))
+    Ok(Arc::new(cache::Unit::new(
+        compiler.done,
+        script,
+        None,
+        source,
+    )))
 }
 
 /** Compile direct eval code in its caller's scopes. */
-fn compile_eval(program: &Program, context: eval::Context) -> EngineResult<Arc<cache::Unit>> {
+fn compile_eval(
+    program: &Program,
+    context: eval::Context,
+    source: (&str, usize),
+) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
     let script = compiler.eval_script(program, context)?;
-    Ok(Arc::new(cache::Unit::new(compiler.done, script, None)))
+    Ok(Arc::new(cache::Unit::new(
+        compiler.done,
+        script,
+        None,
+        Some(source),
+    )))
 }
 
 /** Compile a module and its nested functions into one shareable unit with its link facts. */
-fn compile_module(program: Program) -> EngineResult<Arc<cache::Unit>> {
+fn compile_module(program: Program, source: (&str, usize)) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
     let (site, info) = compiler.module(program)?;
     let position = compiler
@@ -463,7 +535,12 @@ fn compile_module(program: Program) -> EngineResult<Arc<cache::Unit>> {
         .position(|code| code.site == site)
         .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
     let body = compiler.done.remove(position);
-    Ok(Arc::new(cache::Unit::new(compiler.done, body, Some(info))))
+    Ok(Arc::new(cache::Unit::new(
+        compiler.done,
+        body,
+        Some(info),
+        Some(source),
+    )))
 }
 
 /** Where a binding lives. */
@@ -554,6 +631,8 @@ struct FnState {
     envs: u16,
     /// Active exception handlers.
     handlers: u16,
+    /// Lexical disposal stacks active in this function, independent of nested function compilation.
+    resources: Vec<Slot>,
     targets: Vec<Target>,
     /// Labels waiting for the next loop or statement.
     pending_labels: Vec<Name>,
@@ -570,12 +649,16 @@ struct FnState {
     chains: Vec<expr::Chain>,
     /// Compiling the parameter list, where a sloppy direct eval may not declare `arguments`.
     in_params: bool,
+    /// Direct eval grammar follows this function's actual lexical receiver environment.
+    eval_grammar: u8,
     /// Sloppy eval code: its var scope among the caller's scopes (None for the global scope),
     /// where Annex B block functions store their value.
     eval_vars: Option<Option<usize>>,
     /// Parameter names (and `arguments` when the function has its own arguments object): an
     /// Annex B block function of such a name never updates the function-level binding (B.3.2.1).
     annex_skip: Vec<Name>,
+    /// The last occurrence of each simple sloppy parameter is its mapped arguments index.
+    arguments: Option<Vec<Option<Slot>>>,
 }
 
 /** The compiler: a stack of functions over one shared scope stack. */
@@ -777,10 +860,13 @@ impl Compiler {
             flags,
             strict,
             name,
+            source: None,
+            source_span: func.and_then(|func| *func.source_span.borrow()),
             length,
             ops: state.ops,
             registers: state.max_registers,
             env,
+            arguments: state.arguments,
             caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),

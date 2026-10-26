@@ -9,10 +9,9 @@ use crate::v9::vm::realm::{realm, symbol};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/** The %RegExp% constructor and the builtin exec, recorded at install so SpeciesConstructor and
-RegExpExec can tell the intrinsic from a script's replacement. The realm is built once per process,
-so the identities are the same in every VM. */
-static REGEXP_CTOR: AtomicU32 = AtomicU32::new(0);
+mod legacy;
+
+/** The builtin exec dispatch index is shared by immutable realm templates. */
 static BUILTIN_EXEC: AtomicU32 = AtomicU32::new(0);
 
 /** RegExp and RegExp.prototype. */
@@ -20,8 +19,8 @@ pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
     b.ids.regexp_prototype = proto;
     let ctor = b.constructor("RegExp", 2, construct, proto, None);
-    REGEXP_CTOR.store(ctor, Ordering::Relaxed);
     b.global("RegExp", ctor);
+    legacy::install(b, ctor);
     let species = b.function("get [Symbol.species]", 0, species);
     b.put(
         ctor,
@@ -82,7 +81,28 @@ const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
 
 /** The %RegExp% intrinsic as a value. */
 fn regexp_ctor() -> JsValue {
-    JsValue::Object(REGEXP_CTOR.load(Ordering::Relaxed))
+    let definition = realm()
+        .object(realm().ids.regexp_prototype)
+        .expect("RegExp prototype exists");
+    match &definition
+        .get(&key("constructor"))
+        .expect("RegExp constructor exists")
+        .1
+    {
+        Static::Value(value) => value.clone(),
+        _ => unreachable!("intrinsic constructor is a data property"),
+    }
+}
+
+/** The builtin exec has a distinct identity in each realm but the same dispatcher. */
+fn builtin_exec() -> JsValue {
+    let index = crate::v9::vm::realm::native_index(BUILTIN_EXEC.load(Ordering::Relaxed));
+    JsValue::Object(realm().native_identity(index))
+}
+
+/** RegExpCreate initializes directly, without the constructor's observable IsRegExp lookup. */
+pub(super) fn create(vm: &mut Vm, pattern: JsValue, flags: JsValue) -> Res<JsValue> {
+    initialize(vm, &pattern, &flags, realm().ids.regexp_prototype).map(JsValue::Object)
 }
 
 /** ToLength, which lastIndex and every index read back from a match go through. */
@@ -129,7 +149,12 @@ impl Vm<'_> {
         if let Some(program) = self.regexps.get(&cache_key) {
             return Ok(program.clone());
         }
-        let program = regexp::compile(source.as_units(), flags).map_err(|error| {
+        let program = regexp::compile(
+            source.as_units(),
+            flags,
+            self.page.environment.regexp_buffer_boundaries,
+        )
+        .map_err(|error| {
             let message = format!(
                 "Invalid regular expression: /{}/{flags}: {}",
                 source.lossy(),
@@ -179,6 +204,9 @@ impl Vm<'_> {
             return Ok(None);
         }
         let result = self.run_regexp(&program, text, start as usize)?;
+        if let Some(captures) = &result {
+            self.record_legacy_match(text, captures)?;
+        }
         if uses_last {
             let next = match &result {
                 Some(captures) => captures[0].map_or(0, |(_, end)| end),
@@ -257,7 +285,7 @@ impl Vm<'_> {
     must be a real RegExp. */
     pub fn regexp_exec(&mut self, regexp: &JsValue, text: &JsString) -> Res<JsValue> {
         let exec = self.get(regexp, &key("exec"))?;
-        let builtin = exec == JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed));
+        let builtin = exec == builtin_exec();
         if !builtin && self.is_callable(&exec) {
             let result = self.call(exec, regexp.clone(), vec![JsValue::String(text.clone())])?;
             if !matches!(result, JsValue::Object(_) | JsValue::Null) {
@@ -356,7 +384,17 @@ pub(in crate::v9) fn is_regexp(vm: &mut Vm, value: &JsValue) -> Res<bool> {
 fn object_this(vm: &mut Vm, call: &Call, method: &str) -> Res<JsValue> {
     match &call.this {
         JsValue::Object(_) => Ok(call.this.clone()),
-        _ => Err(vm.type_error(&format!("{method} called on a non-object"))),
+        _ => {
+            let receiver = match &call.this {
+                JsValue::Symbol(id) => format!("Symbol({})", super::symbol_text(vm, *id)),
+                other => vm.to_string(other)?.lossy(),
+            };
+            let method = method.replace("[Symbol.", ".@@");
+            let method = method.trim_end_matches(']');
+            Err(vm.type_error(&format!(
+                "Method {method} called on incompatible receiver {receiver}"
+            )))
+        }
     }
 }
 
@@ -474,7 +512,7 @@ fn test(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
     if let Ok((id, _)) = vm.regexp_data(&rx) {
         let exec = vm.get(&rx, &key("exec"))?;
-        if exec == JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed)) {
+        if exec == builtin_exec() {
             return Ok(JsValue::Boolean(vm.regexp_exec_raw(id, &text)?.is_some()));
         }
     }
@@ -843,7 +881,7 @@ fn fast_splitter(
         return Ok(None);
     }
     let exec = vm.get(splitter, &key("exec"))?;
-    if exec != JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed)) {
+    if exec != builtin_exec() {
         return Ok(None);
     }
     let (_, data) = vm.regexp_data(splitter)?;

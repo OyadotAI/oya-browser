@@ -527,6 +527,8 @@ dependencies = [
 name = "mars-v9"
 version = "0.1.0"
 dependencies = [
+ "icu_normalizer",
+ "icu_properties",
  "idna",
  "mars-core",
  "ring",
