@@ -247,6 +247,20 @@ impl Vm<'_> {
         }
         Some(description)
     }
+    /** What a value is, for a message that names it (`NodeList`, `undefined`, `number`), read
+    without running page code. */
+    pub(in crate::v9) fn kind_name(&mut self, value: &JsValue) -> String {
+        match value {
+            JsValue::Object(id) => self
+                .constructor_name(*id)
+                .unwrap_or_else(|| "object".into()),
+            JsValue::Undefined => "undefined".into(),
+            JsValue::Null => "null".into(),
+            JsValue::String(_) => "string".into(),
+            JsValue::Boolean(_) => "boolean".into(),
+            _ => "value".into(),
+        }
+    }
     /** The `name` of the object's `constructor`, read without running getters. */
     fn constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
         let key = Key::from("constructor");

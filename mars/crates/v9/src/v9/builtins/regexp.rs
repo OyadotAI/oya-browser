@@ -177,7 +177,9 @@ impl Vm<'_> {
         }
         Err(self.type_error("RegExp method called on incompatible receiver"))
     }
-    /** Run the engine; a step overrun is an engine limit. */
+    /** Run the engine. A step or depth overrun throws a catchable RangeError, as V8 does when a
+    match runs out of stack: the page can catch it, and an uncaught one fails only the task that
+    ran it, where an engine limit used to stop every script on the page. */
     fn run_regexp(
         &mut self,
         program: &regexp::Program,
@@ -186,7 +188,7 @@ impl Vm<'_> {
     ) -> Res<Option<Captures>> {
         self.charge(text.len().saturating_sub(start) / crate::constants::JS_STRING_SCAN_UNITS + 1)?;
         regexp::exec(program, text.as_units(), start).map_err(|MatchError::Limit| {
-            EngineError::limit("regular expression steps", crate::constants::REGEXP_STEPS).into()
+            self.range_error("Maximum regular expression steps exceeded")
         })
     }
     /** RegExpBuiltinExec: lastIndex is always read through ToLength (it is observable), but only

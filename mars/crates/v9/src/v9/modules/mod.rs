@@ -388,7 +388,16 @@ impl Modules {
         {
             return match self.urls.get(index).filter(|url| !url.is_empty()) {
                 Some(url) => url.clone(),
-                None => format!("script {}", index + 1),
+                // An inline script is named by its document's address, as in Chrome's stacks
+                // and console; a page without a web address keeps a numbered name.
+                None => match &self.document {
+                    Some(document) => {
+                        let mut document = document.clone();
+                        document.set_fragment(None);
+                        document.to_string()
+                    }
+                    None => format!("script {}", index + 1),
+                },
             };
         }
         self.ranges

@@ -233,9 +233,10 @@ fn listener_errors_are_reported_not_fatal() {
     )
     .unwrap();
     let lines = console(&done);
-    // The location names the script, since a page runs many: "(script 1 line 1, column N)".
+    // The location names the script; an inline one by its document's address, as in Chrome.
     assert!(
-        lines[0].starts_with("Uncaught Error: bad (script 1 line 1, column"),
+        lines[0]
+            .starts_with("Uncaught Error: bad (https://example.com/app/page?x=1 line 1, column"),
         "{}",
         lines[0]
     );

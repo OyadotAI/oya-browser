@@ -3,7 +3,9 @@
  * leniencies browsers apply) and a backtracking matcher over UTF-16 code units. Every match is
  * bounded by REGEXP_STEPS, so catastrophic patterns fail as a limit instead of hanging the page.
  */
-use crate::constants::{REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS};
+use crate::constants::{
+    REGEXP_DEPTH, REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS, REGEXP_STEPS_PER_UNIT,
+};
 mod case;
 mod case_data;
 mod modifiers;
@@ -885,6 +887,11 @@ struct Matcher<'a> {
     input: &'a [u16],
     captures: Captures,
     steps: usize,
+    /** Steps this search may take: REGEXP_STEPS, or REGEXP_STEPS_PER_UNIT per input unit. */
+    budget: usize,
+    /** Nested node calls now on the native stack: matching recurses once per repetition, so a
+    greedy loop over long text would overflow the stack before running out of steps. */
+    depth: usize,
     exceeded: bool,
     /** Lookbehind evaluates atoms and alternatives from right to left. */
     backward: bool,
@@ -967,12 +974,19 @@ impl<'a> Matcher<'a> {
     /** Match one node, then the continuation. */
     fn node(&mut self, node: &Node, position: usize, next: Next<'_, 'a>) -> bool {
         self.steps += 1;
-        if self.steps > REGEXP_STEPS {
+        if self.steps > self.budget || self.depth >= REGEXP_DEPTH {
             self.exceeded = true;
         }
         if self.exceeded {
             return false;
         }
+        self.depth += 1;
+        let matched = self.node_body(node, position, next);
+        self.depth -= 1;
+        matched
+    }
+    /** `node` once its bounds hold. */
+    fn node_body(&mut self, node: &Node, position: usize, next: Next<'_, 'a>) -> bool {
         match node {
             Node::Empty => next(self, position),
             Node::Char(expected) => match self.atom(position) {
@@ -1198,6 +1212,10 @@ pub(super) fn exec(
     start: usize,
 ) -> Result<Option<Captures>, MatchError> {
     let mut steps = 0;
+    // Every start position of an unanchored search costs steps, so a fixed budget failed plain
+    // scans of long text (YouTube's megabyte page data) and stopped the page's scripts. The
+    // budget grows with the input; catastrophic backtracking on short text still trips it.
+    let budget = REGEXP_STEPS.max(input.len().saturating_mul(REGEXP_STEPS_PER_UNIT));
     let last = if program.sticky {
         start
     } else if anchored(&program.root, Modes::from_program(program)) {
@@ -1221,6 +1239,8 @@ pub(super) fn exec(
             input,
             captures: vec![None; program.groups + 1],
             steps,
+            budget,
+            depth: 0,
             exceeded: false,
             backward: false,
         };

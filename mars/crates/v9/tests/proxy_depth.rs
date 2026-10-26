@@ -3,8 +3,14 @@ chain whose traps recurse natively meets the call-depth bound as a RangeError. *
 mod common;
 use std::sync::Mutex;
 
-/// Proxies in each chain: far past any native stack if every hop were a native call.
-const CHAIN: usize = 1_000_000;
+/// Proxies in each chain: far past any native stack if every hop were a native call. A debug
+/// build's frames are several times larger, so a quarter of the chain overflows it just as
+/// surely, and building a million proxies there would spend the whole script deadline.
+const CHAIN: usize = if cfg!(debug_assertions) {
+    250_000
+} else {
+    1_000_000
+};
 
 /// Building a million proxies takes a good part of the script deadline, so the tests run one at
 /// a time instead of competing for the CPU and timing out.

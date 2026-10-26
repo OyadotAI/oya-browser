@@ -94,11 +94,10 @@ fn comments_numeric_literals_and_separators_preserve_token_boundaries() {
     }
     assert_eq!(evaluate("2**10"), "1024");
     execute("let n=1n;").unwrap();
+    // Past 128 bits a BigInt widens to limbs rather than being refused.
     assert_eq!(
-        execute("let n=1000000000000000000000000000000000000000n;")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
+        evaluate("String(1000000000000000000000000000000000000000n+1n)"),
+        "1000000000000000000000000000000000000001"
     );
 }
 /** JavaScript identity escapes and UTF-16 pairs replace the prototype's invented escape restrictions. */

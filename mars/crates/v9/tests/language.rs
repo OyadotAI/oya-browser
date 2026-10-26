@@ -143,12 +143,41 @@ fn regular_expressions_run_on_the_owned_engine() {
     );
 }
 
-/** Catastrophic backtracking stops at the step bound instead of hanging. */
+/** Catastrophic backtracking stops at the step bound instead of hanging, as a RangeError. */
 #[test]
 fn regular_expression_steps_are_bounded() {
     let execution = common::load("const r=/^(a+)+$/.test('a'.repeat(40)+'b');");
     let message = common::failure(&execution).expect("bounded failure");
-    assert!(message.contains("regular expression steps"), "{message}");
+    assert!(
+        message.contains("RangeError: Maximum regular expression steps"),
+        "{message}"
+    );
+    // Catchable, so one slow pattern never stops the page's other scripts.
+    let caught = common::load("let r;try{/^(a+)+$/.test('a'.repeat(40)+'b')}catch(e){r=e.name}");
+    assert_eq!(common::global(&caught, "r"), "RangeError");
+}
+
+/** A plain search over text longer than the fixed step bound finishes: the bound grows with the
+input, as YouTube's scans of its megabyte page data need. */
+#[test]
+fn long_text_searches_are_not_cut_off() {
+    let execution = common::load(
+        "const t='x'.repeat(1000000);const r=[t.search(/y/),/^x/.test(t),t.replace(/q/g,'')===t].join();",
+    );
+    assert_eq!(common::failure(&execution), None);
+    assert_eq!(common::global(&execution, "r"), "-1,true,true");
+}
+
+/** A greedy loop over long text recurses once per repetition; it fails as a bounded limit
+instead of overflowing the native stack. */
+#[test]
+fn deep_matches_are_bounded_not_a_crash() {
+    let execution = common::load("const r=/x+$/.test('x'.repeat(1000000));");
+    let message = common::failure(&execution).expect("bounded failure");
+    assert!(
+        message.contains("RangeError: Maximum regular expression steps"),
+        "{message}"
+    );
 }
 
 /** Map, Set, WeakMap and iteration order. */

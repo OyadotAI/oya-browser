@@ -31,7 +31,10 @@ impl Vm<'_> {
     pub fn get_iterator(&mut self, value: &JsValue) -> Res<ObjectId> {
         let method = self.get(value, &Key::Sym(symbol::ITERATOR))?;
         if !self.is_callable(&method) {
-            return Err(self.type_error("object is not iterable"));
+            // Name what was iterated, as V8's message does: a host collection a page expects
+            // to be iterable shows up by name.
+            let what = self.kind_name(value);
+            return Err(self.type_error(&format!("{what} is not iterable")));
         }
         self.iterator_from_method(value, method)
     }

@@ -156,7 +156,8 @@ fn const_headers_require_an_initializer() {
         "script_syntax_error"
     );
 }
-/** for-of, for-in, bare-target heads and several header declarators run as JavaScript; for await needs an async function. */
+/** for-of, for-in, bare-target heads and several header declarators run as JavaScript; for await
+outside an async function is a syntax error, as in the spec. */
 #[test]
 fn other_header_families_follow_javascript() {
     assert_eq!(
@@ -168,7 +169,7 @@ fn other_header_families_follow_javascript() {
     );
     assert_eq!(
         execute("for await(x of [1]){}").unwrap_err().code,
-        "unsupported_feature"
+        "script_syntax_error"
     );
     assert_eq!(
         execute("for(1=2;false;);").unwrap_err().code,

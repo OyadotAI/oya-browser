@@ -29,15 +29,17 @@ fn repeated_references_to_one_string_share_its_units() {
     );
 }
 
-/** Canonical indices outside the engine's array budget cannot masquerade as named properties. */
+/** Canonical indices past the resident-element budget are sparse array elements, as in
+JavaScript: they set the length and never become named properties. */
 #[test]
-fn out_of_budget_canonical_array_indices_are_rejected() {
-    for key in [VM_ARRAY_LENGTH.to_string(), (u32::MAX - 1).to_string()] {
+fn out_of_budget_canonical_array_indices_are_sparse_elements() {
+    for key in [VM_ARRAY_LENGTH, u32::MAX as usize - 1] {
         assert_eq!(
-            execute(&format!("const a=[];a['{key}']=1;"))
-                .unwrap_err()
-                .code,
-            "limit_exceeded"
+            result(
+                &format!("const a=[];a['{key}']=1;"),
+                &format!("a.length+' '+a[{key}]")
+            ),
+            format!("{} 1", key + 1)
         );
     }
     assert_eq!(

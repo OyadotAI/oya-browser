@@ -329,16 +329,22 @@ fn handlers_and_native_dom_writes_accept_ordinary_operators() {
     );
 }
 
-/** Invalid assignment targets are parse errors; logical, exponent and shift compounds are ordinary operators. */
+/** Invalid assignment targets are parse errors, except a call in sloppy code, which fails when
+it runs (the web-compatible rule Chrome follows); logical, exponent and shift compounds are
+ordinary operators. */
 #[test]
 fn invalid_reference_targets_fail_and_every_compound_operator_runs() {
-    for source in ["1=2;", "const f=()=>1;f()++;", "var a=1,b=2;(true?a:b)+=1;"] {
+    for source in ["1=2;", "var a=1,b=2;(true?a:b)+=1;"] {
         assert_eq!(
             execute(source).unwrap_err().code,
             "script_syntax_error",
             "{source}"
         );
     }
+    assert_eq!(
+        execute("const f=()=>1;f()++;").unwrap_err().code,
+        "script_execution_error"
+    );
     assert_eq!(
         result(
             "var a=3;a**=2;var b=0;b&&=2;var c=0;c||=2;var d=null;d??=2;var e=1;e<<=2;",

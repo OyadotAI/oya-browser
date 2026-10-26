@@ -15,7 +15,11 @@ fn spread_results_admit_the_array_length_boundary_then_refuse_growth() {
         format!("const a=[];a.length={VM_ARRAY_LENGTH};try{{const b=[...a,1];}}catch(error){{}}");
     let error = execute(&source).unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("array length"), "{}", error.message);
+    assert!(
+        error.message.contains("array elements"),
+        "{}",
+        error.message
+    );
     assert_eq!(error.phase.as_deref(), Some("execute"));
 }
 

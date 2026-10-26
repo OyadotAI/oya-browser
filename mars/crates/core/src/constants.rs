@@ -448,6 +448,13 @@ pub const VM_CONSOLE_BYTES: usize = 1024;
 pub const VM_SYMBOLS: usize = 1024;
 /// Backtracking steps one regular expression match may take before it fails as a limit.
 pub const REGEXP_STEPS: usize = 1_000_000;
+/// Backtracking steps a match may take per UTF-16 unit of its input, past REGEXP_STEPS: a search
+/// over long text visits every position, and the script deadline still bounds the whole run.
+pub const REGEXP_STEPS_PER_UNIT: usize = 64;
+/// Nested matcher calls one match may make. The matcher recurses once per repetition, so a
+/// greedy loop over long text fails at this depth as a limit instead of overflowing
+/// V9_STACK_BYTES (an unoptimized build's frames are the largest).
+pub const REGEXP_DEPTH: usize = 50_000;
 /// Nodes in one compiled regular expression.
 pub const REGEXP_NODES: usize = 16_384;
 /// Capture groups in one regular expression.

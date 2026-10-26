@@ -17,10 +17,16 @@ fn style(declarations: &str) -> ComputedStyle {
 #[test]
 fn flex_defaults_are_explicit_and_preserve_legacy_styles() {
     let computed = style("");
-    // An element under the body records its left-to-right parent; every other field is default.
+    // An element under the body records its left-to-right parent, and its borders keep CSS's
+    // initial specified width (medium, 3px: what `border-width: inherit` passes on) and color
+    // (currentColor); every other field is default.
     assert_eq!(computed.parent_rtl, Some(false));
+    assert_eq!(computed.border_specified, [3.0; 4]);
+    assert_eq!(computed.border_current, [true; 4]);
     let unparented = ComputedStyle {
         parent_rtl: None,
+        border_specified: [0.0; 4],
+        border_current: [false; 4],
         ..computed.clone()
     };
     assert_eq!(unparented, ComputedStyle::default());

@@ -227,7 +227,11 @@ fn error_stack_names_the_frames() {
          let r = ''; try { outer() } catch (e) { r = e.stack.split('\\n').map(l => l.trim().split(' (')[0]).join('|') }",
         "r",
     );
-    assert_eq!(r, "Error: boom|at inner|at outer|at <anonymous>");
+    // Top-level code is named by the inline script's document, as in Chrome.
+    assert_eq!(
+        r,
+        "Error: boom|at inner|at outer|at https://example.com/app/page?x=1:2:28"
+    );
 }
 
 /** Committed state crosses the pipe as JSON text; two Map keys a lossy float parser would read

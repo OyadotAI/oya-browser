@@ -27,11 +27,15 @@ pub(in crate::v9) struct FastHasher(u64);
 
 /** The multiplier from the Fx hash family. */
 const FAST_SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+/** Bits the final hash rotates by, moving the multiply's strong high bits down. */
+const FINISH_ROTATION: u32 = 26;
 
 impl Hasher for FastHasher {
-    /** The final hash. */
+    /** The final hash, rotated: the multiply leaves the low bits weak, and hashbrown picks
+    buckets by the low bits, so keys like `$0`..`$zzz` (a page's many globals) collided in long
+    probe chains. rustc-hash 2 finishes the same way. */
     fn finish(&self) -> u64 {
-        self.0
+        self.0.rotate_left(FINISH_ROTATION)
     }
     /** Mix bytes eight at a time. */
     fn write(&mut self, bytes: &[u8]) {

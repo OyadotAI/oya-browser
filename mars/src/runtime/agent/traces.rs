@@ -33,7 +33,9 @@ impl Runtime {
             logged
                 .iter()
                 .skip(skip)
-                .map(|entry| json!({"level":entry.level,"source":"page","text":cap(&entry.text)})),
+                // V9 already bounds each logged text (VM_CONSOLE_BYTES); a shorter cap here
+                // would cut an error's location and stack, the part that explains it.
+                .map(|entry| json!({"level":entry.level,"source":"page","text":entry.text})),
         );
         Ok(
             json!({"page_id":page.id(),"revision":page.revision,"entries":entries,"degraded":page.degraded,"page_console":"available","page_dropped":page.scripting.console_dropped + skip}),
