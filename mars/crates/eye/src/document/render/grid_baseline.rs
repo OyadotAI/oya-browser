@@ -8,12 +8,16 @@ use super::tracks;
 use crate::document::{AlignItems, ComputedStyle};
 
 /** Whether an item takes part in its row's baseline sharing group: `align-self` (or the
- * grid's `align-items`) is `baseline`, neither block margin is `auto`, and the item is
- * parallel to the grid (an orthogonal item has no baseline in the row axis) and no row subgrid,
- * which fills its rows. */
+ * grid's `align-items`) is `baseline`, neither block margin is `auto`, and it is no row
+ * subgrid, which fills its rows. A vertical item in a horizontal grid joins with the baseline
+ * its content box would give its font (`orthogonal_ascent`); a horizontal item that a vertical
+ * grid's rotated layout turned back (`counter_rotate`) has none in this axis.
+ * ponytail: the turned-back case keeps start alignment; Chromium groups it by the opposite
+ * edge (grid-self-baseline-vertical-*). */
 pub(super) fn aligned(container: &ComputedStyle, node: &Node) -> bool {
     node.style.align_self.unwrap_or(container.align_items) == AlignItems::Baseline
-        && node.style.vertical_writing == container.vertical_writing
+        && (node.style.vertical_writing == container.vertical_writing
+            || node.style.counter_rotate == 0)
         && !super::subgrid::inherits(node, 0)
         && !node.style.margin_auto[0]
         && !node.style.margin_auto[2]
@@ -49,19 +53,28 @@ fn ascent(
 ) -> EngineResult<Option<f64>> {
     let node = item.node;
     let top = node.style.margin[0];
-    let baseline = if node.style.vertical_writing {
-        None
-    } else {
-        super::super::flex_layout::first_baseline(context, node, width)?
-    };
+    let cyclic = percent_height(node) && !fixed_rows(item, rows);
+    if node.style.vertical_writing {
+        return Ok((!cyclic).then(|| top + orthogonal_ascent(&node.style)));
+    }
+    let baseline = { super::super::flex_layout::first_baseline(context, node, width)? };
     if let Some(baseline) = baseline {
         return Ok(Some(top + baseline));
     }
-    if percent_height(node) && !fixed_rows(item, rows) {
+    if cyclic {
         return Ok(None);
     }
     let height = super::super::flex_layout::item_height(context, node, width)?;
     Ok(Some(top + height))
+}
+
+/** A vertical item's baseline in a horizontal row from its border-box top: its top border and
+ * padding plus its font's ascent, as Chromium aligns orthogonal grid items
+ * (grid-self-baseline-horiz-*). */
+fn orthogonal_ascent(style: &ComputedStyle) -> f64 {
+    super::super::sizing::border_sides(style)[0]
+        + style.padding[0]
+        + super::super::sizing::text_ascent(style)
 }
 
 /** Every placed item's baseline shim, zero for items that do not align by baseline; `natural`

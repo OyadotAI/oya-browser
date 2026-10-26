@@ -655,6 +655,10 @@ pub struct ComputedStyle {
     /// intrinsic size the box takes, or the `fit-content(<length-percentage>)` limit.
     #[serde(default, skip_serializing_if = "default")]
     pub size_keywords: [SizeKeyword; 3],
+    /// The `calc-size()` sum of `width`, `min-width`, `max-width`, `height`, `min-height` and
+    /// `max-height`, in that order (style/calc_size.rs); None maps the basis size unchanged.
+    #[serde(default, skip_serializing_if = "default")]
+    pub calc_size: [Option<super::CalcSize>; 6],
     /// Inherited: `writing-mode` is vertical, so `width` sizes the block axis. A box whose
     /// parent is horizontal roots a vertical subtree, laid out in render/vertical.rs.
     #[serde(default, skip_serializing_if = "default")]
@@ -978,6 +982,7 @@ impl Default for ComputedStyle {
             height_bounds_fit: [false; 2],
             height_stretch: [false; 3],
             size_keywords: [SizeKeyword::None; 3],
+            calc_size: [None; 6],
             vertical_writing: false,
             writing_lr: false,
             writing_sideways: false,

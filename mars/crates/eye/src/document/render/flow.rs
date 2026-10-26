@@ -902,7 +902,11 @@ pub(super) fn block(
     // A flex container is its own formatting context, so no margin collapses through it.
     let collapses = forced.is_none() && !fresh;
     let through_top = collapses && style.padding[0] == 0.0 && sides[0] == 0.0;
-    if through_top {
+    if through_top && cleared.is_some() {
+        // Clearance fixed this box's border edge; its children's adjoining top margins are
+        // spent there and leave its first child at its content top.
+        inner.set_strut(super::clearance::adjoining_strut(context, node));
+    } else if through_top {
         // A first child's top margin collapses through a parent with no top padding or border.
         let joined = join(flow.strut(), style.margin[0]);
         inner.set_strut((y - flow.y + flow.collapsible, joined.1));
@@ -951,7 +955,10 @@ pub(super) fn block(
     super::line::settle(context, &mut inner, items, index + 1)?;
     super::line::trim_end(&mut inner, items, style.text_box_trim[1]);
     super::line_clamp::clamp(context, node, items, index, &mut inner)?;
-    if through_top && let Some(top) = inner.resolved {
+    if through_top
+        && cleared.is_none()
+        && let Some(top) = inner.resolved
+    {
         // The collapsed margins resolved at the first child's border edge, which is where this
         // box's border edge sits too (Blink resolves both at one BFC block offset).
         position_floats(&mut inner, items, top - y);
@@ -991,14 +998,17 @@ pub(super) fn block(
     let cell =
         forced.is_none_or(|bounds| bounds.height.is_none()) && super::table::is_cell_box(node);
     let specified = specified.map(|height| {
-        if cell || grows {
+        if cell {
             height.max(natural)
+        } else if grows {
+            height.max(calc_size_through(style, MIN_HEIGHT, natural))
         } else {
             height
         }
     });
     context.record_content_height(node.local_id, natural);
-    let height = clamp_height(node, specified.unwrap_or(natural), flow.definite);
+    let automatic = calc_size_through(style, HEIGHT, natural);
+    let height = clamp_height(node, specified.unwrap_or(automatic), flow.definite);
     // A box with an aspect ratio has the height the ratio gives it as its content height.
     let intrinsic = aspect_height(node, width, flow.definite).unwrap_or(natural);
     let height = super::sizing::clamp_content_bounds(node, height, intrinsic, flow.definite);
@@ -1176,6 +1186,7 @@ fn aspect_height(node: &Node, width: f64, definite: Option<f64>) -> Option<f64> 
     } else {
         (width - horizontal_edges(node)).max(0.0) / ratio + vertical_edges(node)
     };
+    let height = calc_size_through(&node.style, HEIGHT, height);
     Some(clamp_height(node, height, definite))
 }
 /** Whether `aspect-ratio` sizes the border box: under `box-sizing: border-box`, unless the
@@ -1209,10 +1220,12 @@ fn aspect_width(
     let automatic = super::sizing::min_width_auto(style)
         && style.overflow == crate::document::Overflow::Visible;
     let minimum = if automatic {
-        context.intrinsic_widths(node.local_id)?.min_content
+        let content = context.intrinsic_widths(node.local_id)?.min_content;
+        calc_size_through(style, MIN_WIDTH, content)
     } else {
         0.0
     };
+    let content = calc_size_through(style, WIDTH, content);
     Ok(Some(content.max(minimum).max(0.0)))
 }
 /** min-height and max-height bound the border-box height; min wins over max. */
@@ -1328,6 +1341,8 @@ pub(super) fn box_item(
         border_image: None,
         background_clip: background_insets(node, node.style.background_clip),
         background_border_area: node.style.background_clip == BackgroundBox::BorderArea,
+        background_rect: None,
+        slice_cut: [false; 2],
         bare: false,
         text_deferred: false,
         text_echo: false,
@@ -1339,6 +1354,7 @@ pub(super) fn box_item(
     }
 }
 use crate::document::style::BackgroundBox;
+use crate::document::style::{HEIGHT, MIN_HEIGHT, MIN_WIDTH, WIDTH, calc_size_through};
 /** A background box as insets from the border box: none for the border box (and the border
 area, which paints within it), the border widths for the padding box, and the padding too for
 the content box. */

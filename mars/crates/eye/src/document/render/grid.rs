@@ -8,6 +8,8 @@ use crate::document::{AlignItems, JustifyContent};
 pub(super) mod abspos;
 #[path = "grid_baseline.rs"]
 pub(super) mod baseline;
+#[path = "grid_column_baseline.rs"]
+pub(super) mod column_baseline;
 #[path = "grid_lanes.rs"]
 mod lanes;
 #[path = "grid_placement.rs"]
@@ -153,7 +155,7 @@ pub(super) fn children(
                 context,
                 item.node,
                 span_width(item),
-                justify_of(style, item.node),
+                sizing_justify(style, item.node),
             )?
         };
         let margins = item.node.style.margin;
@@ -174,6 +176,7 @@ pub(super) fn children(
         }
     }
     let shims = baseline::shims(context, style, &placed, &natural, &row_defs)?;
+    let column_shims = column_baseline::shims(style, &placed, &natural);
     for (at, index) in own {
         let contribution = &mut row_items[at];
         contribution.minimum += shims[index];
@@ -209,7 +212,8 @@ pub(super) fn children(
     for item in &placed {
         subgrid::offer(style, true, item, 0, &heights, row_gap);
     }
-    for ((item, (width, height)), shim) in placed.iter().zip(natural).zip(shims) {
+    let shifts = natural.into_iter().zip(shims).zip(column_shims);
+    for (item, (((width, height), shim), column_shim)) in placed.iter().zip(shifts) {
         context.charge(1)?;
         let area_width = span_width(item);
         let area_height = span(&heights, item.row, item.rows, row_gap);
@@ -222,7 +226,8 @@ pub(super) fn children(
             + margins[3]
             + super::flex::auto_cross_offset(auto[3], auto[1], free_x).unwrap_or_else(|| {
                 inline_offset(offset(justify_of(style, item.node), free_x), free_x, rtl)
-            });
+            })
+            + column_shim;
         let align = node_style.align_self.unwrap_or(style.align_items);
         let auto_y =
             super::flex::auto_cross_offset(auto[0], auto[2], (area_height - height).max(0.0));
@@ -491,6 +496,17 @@ fn justify_of(container: &crate::document::ComputedStyle, node: &Node) -> AlignI
         None => (container.justify_items, container.align_side[2]),
     };
     sided(align, side, container.rtl, node.style.rtl)
+}
+/** The inline alignment an item's width is sized by: its own, except that `baseline` an
+ * item takes no part in sizes it as `normal` does (stretched). */
+pub(super) fn sizing_justify(
+    container: &crate::document::ComputedStyle,
+    node: &Node,
+) -> AlignItems {
+    match justify_of(container, node) {
+        AlignItems::Baseline if !column_baseline::aligned(container, node) => AlignItems::Stretch,
+        other => other,
+    }
 }
 /** A start or end position whose keyword was `left`, `right`, `self-start` or `self-end`,
  * turned into the container's start or end: `left` is the end under rtl, and an item's own

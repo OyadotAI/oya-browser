@@ -254,12 +254,16 @@ impl Canvas {
                 continue;
             };
             let spread = shadow.spread;
-            let rect = [
-                item.x + shadow.x - spread,
-                item.y + shadow.y - spread,
-                item.width + 2.0 * spread,
-                item.height + 2.0 * spread,
-            ];
+            let rect = crate::document::sliced_shadow(
+                [
+                    item.x + shadow.x - spread,
+                    item.y + shadow.y - spread,
+                    item.width + 2.0 * spread,
+                    item.height + 2.0 * spread,
+                ],
+                [item.x, item.width],
+                item.slice_cut,
+            );
             let radii = spread_radii(corners, [item.width, item.height], spread);
             self.shadow(
                 rect,
@@ -270,22 +274,7 @@ impl Canvas {
                 color,
             );
         }
-        // `background-clip`: the painting area, or the border's ring for `border-area`.
-        let area = inset(bounds, item.background_clip);
-        let area_corners = inset_radii(corners, item.background_clip);
-        let ring = if item.border > 0.0 {
-            [item.border; 4]
-        } else {
-            item.border_widths
-        };
-        let (inner, inner_corners) = (inset(bounds, ring), inset_radii(corners, ring));
-        let painted = |x: f64, y: f64| {
-            if item.background_border_area {
-                inside_rounded(x, y, bounds, corners) && !inside_rounded(x, y, inner, inner_corners)
-            } else {
-                inside_rounded(x, y, area, area_corners)
-            }
-        };
+        let painted = painting_area(item);
         if let Some(color) = item.background.as_deref().and_then(painter_rgba) {
             let color = fade(color);
             self.shade(bounds, clip.as_ref(), |x, y| painted(x, y).then_some(color));
@@ -345,7 +334,8 @@ impl Canvas {
                         true => [[0.0; 2]; 4],
                         false => content_radii(item, dest),
                     };
-                    self.tile((area, corners), clip.as_ref(), tiling, bitmap, &fade)
+                    let inside = |x, y| inside_rounded(x, y, area, corners);
+                    self.tile((area, &inside), clip.as_ref(), tiling, bitmap, &fade)
                 }
                 None => self.fill(
                     bounds,
@@ -658,7 +648,7 @@ impl Canvas {
      */
     fn tile(
         &mut self,
-        (area, corners): ([f64; 4], [[f64; 2]; 4]),
+        (area, inside): ([f64; 4], &dyn Fn(f64, f64) -> bool),
         clip: Option<&ClipRect>,
         tiling: Tiling,
         bitmap: &Bitmap,
@@ -680,8 +670,8 @@ impl Canvas {
         };
         self.shade(area, clip, |x, y| {
             let (u, v) = (along(x, tx, tw, 0), along(y, ty, th, 1));
-            let inside = (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v);
-            (inside && inside_rounded(x, y, area, corners)).then(|| fade(bitmap.sample(u, v)))
+            let within = (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v);
+            (within && inside(x, y)).then(|| fade(bitmap.sample(u, v)))
         });
     }
     /**
@@ -736,11 +726,9 @@ impl Canvas {
             }
         };
         let tiling = Tiling::place(origin, (w, h), *position, *repeat, *space);
-        // ponytail: a `border-area` image tiles over the whole border box; mask it by the ring
-        // when a page draws images that way.
         let bounds = inset(border_box, item.background_clip);
-        let corners = inset_radii(corner_radii(item), item.background_clip);
-        self.tile((bounds, corners), item.clip.as_ref(), tiling, bitmap, fade);
+        let inside = painting_area(item);
+        self.tile((bounds, &inside), item.clip.as_ref(), tiling, bitmap, fade);
     }
     /** A picture's natural size, parsing each drawing's markup once per screenshot. */
     fn natural(&mut self, picture: &Picture) -> Natural {
@@ -1475,6 +1463,36 @@ fn inset([x, y, w, h]: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 
     ]
 }
 
+/** Whether a pixel center is in the item's background painting area: its rounded
+ * `background-clip` box and `background_rect`, or for `border-area` the border's ring. The
+ * color, gradients and image layers all paint through it. */
+fn painting_area(item: &DisplayItem) -> impl Fn(f64, f64) -> bool + '_ {
+    let bounds = [item.x, item.y, item.width, item.height];
+    let corners = corner_radii(item);
+    let (area, area_corners) = (
+        inset(bounds, item.background_clip),
+        inset_radii(corners, item.background_clip),
+    );
+    let ring = if item.border > 0.0 {
+        [item.border; 4]
+    } else {
+        item.border_widths
+    };
+    let (inner, inner_corners) = (inset(bounds, ring), inset_radii(corners, ring));
+    move |x, y| {
+        if item.background_border_area {
+            return inside_rounded(x, y, bounds, corners)
+                && !inside_rounded(x, y, inner, inner_corners);
+        }
+        inside_rounded(x, y, area, area_corners) && inside_rect(x, y, item.background_rect)
+    }
+}
+
+/** Whether the pixel center (`x`, `y`) is inside `rect` (`background_rect`); None clips nothing. */
+fn inside_rect(x: f64, y: f64, rect: Option<[f64; 4]>) -> bool {
+    rect.is_none_or(|[rx, ry, rw, rh]| (rx..rx + rw).contains(&x) && (ry..ry + rh).contains(&y))
+}
+
 /** The corner radii of a replaced element's content box `dest`: its border radii reduced by
  * the border and padding between, as Blink clips replaced content to the inner rounded rect. */
 fn content_radii(item: &DisplayItem, [x, y, w, h]: [f64; 4]) -> [[f64; 2]; 4] {
@@ -1534,6 +1552,9 @@ fn snapped(item: &DisplayItem) -> DisplayItem {
     // without it a rect at y = 50.5 left a half-covered row its snapped neighbors filled.
     for path in &mut item.vector {
         path.translate(moved[0], moved[1]);
+    }
+    if let Some([x, y, ..]) = &mut item.background_rect {
+        (*x, *y) = (*x + moved[0], *y + moved[1]);
     }
     // An image layer's own positioning area (fixed or local) moves with the box it paints in.
     for layer in &mut item.backgrounds {

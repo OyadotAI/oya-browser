@@ -208,11 +208,14 @@ impl ComputedStyle {
         let template = |t: &super::GridTemplate| {
             t.tracks.len() + t.repeat.len() <= super::constants::GRID_TRACKS
                 && t.exprs.len() <= super::constants::GRID_TRACKS
-                && t.repeat_at <= t.tracks.len()
+                && t.repeat_at <= t.tracks.len().max(usize::from(t.subgrid_lines))
+                && usize::from(t.subgrid_fill) <= super::constants::GRID_TRACKS
                 && t.repeat_names.len() <= super::constants::GRID_TRACKS
-                && t.repeat_names
-                    .iter()
-                    .all(|(_, line)| *line >= 1 && usize::from(*line) <= t.repeat.len() + 1)
+                && t.repeat_names.iter().all(|(_, line)| {
+                    // A subgrid's auto-fill names number its lists, a track group's its lines.
+                    let group = t.repeat.len().max(usize::from(t.subgrid_fill));
+                    *line >= 1 && usize::from(*line) <= group + 1
+                })
                 && t.tracks
                     .iter()
                     .chain(&t.repeat)

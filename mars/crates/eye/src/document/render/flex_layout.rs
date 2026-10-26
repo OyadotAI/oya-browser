@@ -1,4 +1,3 @@
-/** Flexible child placement shares intrinsic measurements, exact border boxes and one work budget. */
 use super::{
     DisplayItem,
     flex::{self, FlexItem},
@@ -9,6 +8,8 @@ use super::{
         specified_content,
     },
 };
+/** Flexible child placement shares intrinsic measurements, exact border boxes and one work budget. */
+use crate::document::style::{HEIGHT, MIN_WIDTH};
 use crate::{
     constants::LAYOUT_EXTENT,
     document::{AlignItems, FlexBasis, FlexDirection, FlexWrap, JustifyContent, Node},
@@ -61,7 +62,11 @@ pub(super) fn children(
             &children,
             flow,
             output,
-            definite_height.map_or(ColumnExtent::AtLeast(min_height), ColumnExtent::Definite),
+            match (definite_height, node.style.calc_size[HEIGHT]) {
+                (Some(height), _) => ColumnExtent::Definite(height),
+                (None, Some(calc)) => ColumnExtent::Mapped(min_height, calc),
+                (None, None) => ColumnExtent::AtLeast(min_height),
+            },
         )?;
     } else {
         row(
@@ -194,20 +199,27 @@ fn row_item(
         FlexBasis::Percent(value) => content_size(node, inner * value / 100.0, true),
     };
     let max = super::sizing::max_width(node, Some(inner));
+    let automatic =
+        |size: f64| crate::document::style::calc_size_through(&node.style, MIN_WIDTH, size);
     let minimum = match super::sizing::min_width(node, Some(inner)) {
         Some(value) => value,
         // A scroll container's automatic minimum is zero (Flexbox 4.5; Blink's
         // `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items shrink below content.
         None if flex::scroll_container(node) => 0.0,
         // A replaced item's content size ignores its authored width (its height through the ratio).
-        None if super::flow::replaced_image(node) => transferred
-            .unwrap_or_else(|| super::sizing::replaced_suggestion(node, cross))
-            .min(specified.unwrap_or(LAYOUT_EXTENT))
-            .min(max),
-        None => intrinsic
-            .min_content
-            .min(specified.unwrap_or(LAYOUT_EXTENT))
-            .min(max),
+        None if super::flow::replaced_image(node) => automatic(
+            transferred
+                .unwrap_or_else(|| super::sizing::replaced_suggestion(node, cross))
+                .min(specified.unwrap_or(LAYOUT_EXTENT))
+                .min(max),
+        ),
+        // A `calc-size()` min-width maps the automatic minimum (CSS Values 5).
+        None => automatic(
+            intrinsic
+                .min_content
+                .min(specified.unwrap_or(LAYOUT_EXTENT))
+                .min(max),
+        ),
     };
     // A table is never narrower than its min-content width, whatever its `width`, `max-width`
     // or flexing say (Blink sizes table boxes no smaller than their minimum inline size).

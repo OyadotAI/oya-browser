@@ -1,5 +1,6 @@
 /** Operating-system text primitives supply shaping, never document or navigation semantics. */
 pub mod autospace;
+pub mod ignorable;
 pub mod segment;
 #[cfg(target_os = "macos")]
 mod text;
@@ -42,8 +43,9 @@ pub struct Face {
     pub spacing: f64,
     /// Italic or oblique posture.
     pub italic: bool,
-    /// CSS `text-autospace`: an eighth of an em between ideographs and letters or digits.
-    pub autospace: bool,
+    /// CSS `text-autospace` (`autospace::OFF`, `NORMAL` or `CHINESE`): an eighth of an em
+    /// between ideographs and letters or digits, and in Chinese around ASCII punctuation too.
+    pub autospace: u8,
     /// Glyph orientation down a vertical line (`upright::TURNED`, `MIXED` or `UPRIGHT`): an
     /// upright character advances one em instead of its width.
     pub upright: u8,
@@ -57,7 +59,7 @@ impl Face {
             family: Family::System,
             spacing: 0.0,
             italic: false,
-            autospace: false,
+            autospace: autospace::OFF,
             upright: upright::TURNED,
         }
     }

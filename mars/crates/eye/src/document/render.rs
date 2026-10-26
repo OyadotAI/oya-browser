@@ -67,6 +67,7 @@ mod table;
 mod text;
 mod text_chains;
 mod text_echo;
+mod textarea_align;
 mod upright_split;
 mod validation;
 pub mod vertical;
@@ -83,7 +84,7 @@ pub use display::{
 };
 /// Agent-visibility helpers for the app; the document facade exports them when the app wires them.
 #[allow(unused_imports)]
-pub use display::{agent_visible, painted_bounds, spread_radius, wheel_target};
+pub use display::{agent_visible, painted_bounds, sliced_shadow, spread_radius, wheel_target};
 pub use effects::ScrollOffsets;
 pub use frame::{embed_frame, frame_viewport};
 pub use nine_piece::{NinePiece, nine_pieces};
@@ -268,8 +269,8 @@ pub struct DisplayItem {
     pub word_spacing: f64,
     /// CSS `text-autospace` shaped the runs: painters space ideograph-alpha boundaries as
     /// layout measured them.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub autospace: bool,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub autospace: u8,
     /// Glyph orientation of a vertical item's runs (`platform::upright` codes): its upright
     /// characters advance one em and paint standing, from a split in `vertical.rs`.
     #[serde(default, skip_serializing_if = "is_zero_u8")]
@@ -315,6 +316,16 @@ pub struct DisplayItem {
     /// `background-clip: border-area`: backgrounds paint only under the border's ring.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub background_border_area: bool,
+    /// A rectangle `[x, y, width, height]` in document points the color and every layer are
+    /// also clipped to, inside the rounded `background-clip` area: a scrolled `local`
+    /// background's `content-box` clip, the scrolled contents' content box within the rounded
+    /// padding box. None adds no clip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_rect: Option<[f64; 4]>,
+    /// An inline box fragment's left and right sides that a line break cut (`box-decoration-
+    /// break: slice`): its outer shadows run on to those edges (`sliced_shadow`).
+    #[serde(default, skip_serializing_if = "display::is_flush")]
+    pub slice_cut: [bool; 2],
     /// A box kept only for its extent (a captioned table's wrapper, a table row or row group,
     /// which floats, offsets and lookups read) whose decoration other items paint: cell-clipped
     /// copies under each cell, or the table's grid box. Effects never decorate it.

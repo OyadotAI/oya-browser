@@ -59,7 +59,7 @@ pub(super) fn scroll_with_contents(
         let own = |item: &&mut DisplayItem| item.local_id == area.local_id;
         for item in items.iter_mut().filter(own) {
             position_images(item, scrolled);
-            item.background_clip = clip.unwrap_or(item.background_clip);
+            clip_scrolled(item, clip, super::sizing::border_sides(style));
         }
     }
 }
@@ -97,6 +97,24 @@ fn scrolled_clip(area: &ScrollArea, style: &ComputedStyle) -> Option<[f64; 4]> {
         })),
         _ => Some(border),
     }
+}
+
+/** Clips a local background to the rounded padding box (`padding` insets) and, when the clip
+ * `insets` reach further in (a `content-box` clip), to their rectangle as well, so the padding
+ * box's corners still round it. None keeps the item's own clip. */
+fn clip_scrolled(item: &mut DisplayItem, insets: Option<[f64; 4]>, padding: [f64; 4]) {
+    let Some([top, right, bottom, left]) = insets else {
+        return;
+    };
+    item.background_clip = padding;
+    item.background_rect = ([top, right, bottom, left] != padding).then(|| {
+        [
+            item.x + left,
+            item.y + top,
+            (item.width - left - right).max(0.0),
+            (item.height - top - bottom).max(0.0),
+        ]
+    });
 }
 
 /** Gives every image layer of `item` the positioning area `area`. */

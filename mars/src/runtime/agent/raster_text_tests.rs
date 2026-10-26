@@ -89,6 +89,39 @@ fn a_gradient_tile_paints_only_its_tile() {
     assert!(!red(25, 25));
 }
 
+/** A `background_rect` clips the color inside the painting area; a sliced fragment's shadow
+ * runs on to its cut right edge. */
+#[test]
+fn background_rect_and_sliced_shadow_clip_paint() {
+    let mut item = item(
+        "<div id=t></div>",
+        "body{margin:0}#t{width:40px;height:40px;background:green}",
+    );
+    item.background_rect = Some([0.0, 0.0, 20.0, 40.0]);
+    let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
+    canvas.item(&item, BLACK, None);
+    let green =
+        |canvas: &Canvas, x: usize, y: usize| canvas.pixels[(y * canvas.width + x) * 3] == 0;
+    assert!(green(&canvas, 10, 10) && !green(&canvas, 30, 10));
+    let mut shadowed = item.clone();
+    shadowed.background_rect = None;
+    shadowed.slice_cut = [false, true];
+    shadowed.shadows = vec![crate::document::DisplayShadow {
+        x: 10.0,
+        y: 0.0,
+        blur: 0.0,
+        spread: 0.0,
+        color: "red".into(),
+        inset: false,
+    }];
+    let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
+    canvas.item(&shadowed, BLACK, None);
+    assert_eq!(
+        &canvas.pixels[(10 * canvas.width + 45) * 3..][..3],
+        &[255, 255, 255]
+    );
+}
+
 /** A spread shadow of a square box keeps square corners: its corner pixel is shadow. */
 #[test]
 fn a_square_boxs_spread_shadow_stays_square() {

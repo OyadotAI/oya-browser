@@ -6,6 +6,28 @@
  */
 /// The space inserted at each boundary, as a share of the font size (CSS Text 4: 1/8 em).
 const SHARE: f64 = 0.125;
+/// `text-autospace: no-autospace`, or upright glyphs, which are never spaced.
+pub const OFF: u8 = 0;
+/// `text-autospace: normal`.
+pub const NORMAL: u8 = 1;
+/// `normal` in Chinese text, where UTR #59's conditional characters (ASCII punctuation and
+/// symbols) count as narrow and are spaced from ideographs too.
+pub const CHINESE: u8 = 2;
+
+/** The mode for text whose `text-autospace` is `on` (and not set upright), in `lang`. */
+pub fn mode(on: bool, lang: &str) -> u8 {
+    let chinese = lang == "zh" || lang.starts_with("zh-");
+    match (on, chinese) {
+        (false, _) => OFF,
+        (true, false) => NORMAL,
+        (true, true) => CHINESE,
+    }
+}
+
+/** UTR #59's conditional characters, narrow only in Chinese: ASCII punctuation and symbols. */
+fn conditional(c: char) -> bool {
+    c.is_ascii_punctuation()
+}
 
 /** Whether `c` is an ideograph for autospacing: Han, Hiragana, Katakana and Bopomofo letters
  * (punctuation such as U+3002 and U+30FB is not). */
@@ -19,7 +41,8 @@ pub fn ideograph(c: char) -> bool {
 
 /** Whether `c` is a combining mark, which belongs to the letter before it. */
 fn mark(c: char) -> bool {
-    matches!(c as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff
+    matches!(c as u32, 0x0300..=0x036f | 0x0591..=0x05c7 | 0x0610..=0x061a | 0x064b..=0x065f
+        | 0x0670 | 0x06d6..=0x06ed | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff
         | 0xfe00..=0xfe0f | 0xfe20..=0xfe2f | 0xe0100..=0xe01ef)
 }
 
@@ -37,21 +60,25 @@ pub fn space(size: f64) -> f64 {
     size * SHARE
 }
 
-/** Whether autospace separates `before` from `after`. */
-pub fn boundary(before: char, after: char) -> bool {
-    (ideograph(before) && alpha(after)) || (alpha(before) && ideograph(after))
+/** Whether autospace separates `before` from `after` under `mode` (never when `OFF`). */
+pub fn spaced(before: char, after: char, mode: u8) -> bool {
+    if mode == OFF {
+        return false;
+    }
+    let narrow = |c: char| alpha(c) || (mode == CHINESE && conditional(c));
+    (ideograph(before) && narrow(after)) || (narrow(before) && ideograph(after))
 }
 
 /** The UTF-16 ranges (start, length) of the scalars that take the extra space after them, and
  * the space in points for a face of `size`: the last scalar of each cluster before an
  * ideograph-alpha or ideograph-numeric boundary. */
-pub fn gaps(text: &str, size: f64) -> (Vec<(usize, usize)>, f64) {
+pub fn gaps(text: &str, size: f64, mode: u8) -> (Vec<(usize, usize)>, f64) {
     let mut out = Vec::new();
     let (mut base, mut unit, mut previous) = (None::<char>, 0, None::<(usize, usize)>);
     for c in text.chars() {
         if !mark(c) {
             if let (Some(b), Some(at)) = (base, previous)
-                && boundary(b, c)
+                && spaced(b, c, mode)
             {
                 out.push(at);
             }
@@ -70,14 +97,20 @@ mod tests {
     /** Space goes after the ideograph before a Latin letter and after the letter before one. */
     #[test]
     fn spaces_ideograph_alpha_boundaries() {
-        assert_eq!(gaps("国国XX国", 40.0), (vec![(1, 1), (3, 1)], 5.0));
+        assert_eq!(
+            gaps("国国XX国", 40.0, super::NORMAL),
+            (vec![(1, 1), (3, 1)], 5.0)
+        );
     }
 
     /** Punctuation is not an ideograph, and a mark stays with its letter. */
     #[test]
     fn skips_punctuation_and_follows_marks() {
-        assert_eq!(gaps("国。XX", 8.0).0, Vec::<(usize, usize)>::new());
-        assert_eq!(gaps("e\u{301}国", 8.0).0, vec![(1, 1)]);
-        assert_eq!(gaps("\u{20000}X", 8.0).0, vec![(0, 2)]);
+        assert_eq!(
+            gaps("国。XX", 8.0, super::NORMAL).0,
+            Vec::<(usize, usize)>::new()
+        );
+        assert_eq!(gaps("e\u{301}国", 8.0, super::NORMAL).0, vec![(1, 1)]);
+        assert_eq!(gaps("\u{20000}X", 8.0, super::NORMAL).0, vec![(0, 2)]);
     }
 }

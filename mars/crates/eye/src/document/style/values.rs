@@ -392,7 +392,7 @@ fn face_for(style: &super::ComputedStyle, sample: char) -> crate::platform::Face
         },
         spacing: 0.0,
         italic: style.font_style != crate::document::FontStyle::Normal,
-        autospace: false,
+        autospace: crate::platform::autospace::OFF,
         // Upright vertical text measures `ch` by the "0"'s vertical advance (CSS Values 6.1.1).
         upright: match style.vertical_writing
             && !style.writing_sideways

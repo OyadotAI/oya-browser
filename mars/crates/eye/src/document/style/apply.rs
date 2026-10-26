@@ -25,6 +25,15 @@ pub(super) fn apply(
     } else {
         lower.as_str()
     };
+    let sized;
+    let value = match super::calc_size::KEYS.iter().position(|name| *name == key) {
+        Some(index) => {
+            let font = style.font_size;
+            sized = super::calc_size::split(style, index, value, (font, context))?;
+            sized.as_str()
+        }
+        None => value,
+    };
     // Animation longhands are consumed by the cascade's resting-frame step, never computed.
     if super::animation::LONGHANDS.contains(&key) {
         return Ok(true);

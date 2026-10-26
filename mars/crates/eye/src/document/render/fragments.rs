@@ -255,6 +255,18 @@ fn nearest(rects: &[Rect], run: &Rect) -> usize {
         .min_by(|a, b| distance(&rects[*a]).total_cmp(&distance(&rects[*b])))
         .unwrap_or(0)
 }
+/** Squares the corners on a fragment's cut sides: under `box-decoration-break: slice` the
+ * radii round the whole box's ends, not every line's. */
+pub(super) fn square_cut_corners(piece: &mut DisplayItem) {
+    for (cut, corners) in [(piece.slice_cut[0], [0, 3]), (piece.slice_cut[1], [1, 2])] {
+        for corner in corners.into_iter().filter(|_| cut) {
+            piece.radius[corner] = 0.0;
+            if let Some(vertical) = &mut piece.radius_y {
+                vertical[corner] = 0.0;
+            }
+        }
+    }
+}
 /** The fragment on line `at`, without runs yet: its rect grown by the edges it keeps. */
 fn piece(node: &Node, item: &DisplayItem, rects: &[Rect], at: usize) -> DisplayItem {
     let (start, end) = if node.style.rtl { (1, 3) } else { (3, 1) };
@@ -271,6 +283,7 @@ fn piece(node: &Node, item: &DisplayItem, rects: &[Rect], at: usize) -> DisplayI
         if !keeps {
             cut[side] = piece.border_widths[side] + node.style.padding[side];
             piece.border_widths[side] = 0.0;
+            piece.slice_cut[usize::from(side == 1)] = true;
         }
     }
     piece.x = left + cut[3];

@@ -1,6 +1,7 @@
-/** Shared sizing caches and work limits keep intrinsic, dry-run and final layout bounded. */
 use super::validation::bounded;
 use super::{DisplayItem, flow};
+/** Shared sizing caches and work limits keep intrinsic, dry-run and final layout bounded. */
+use crate::document::style::{MIN_WIDTH, WIDTH, calc_size_through};
 use crate::{
     constants::{LAYOUT_EXTENT, LAYOUT_MEASURES, LAYOUT_WORK},
     document::{BoxSizing, Document, FlexDirection, FlexWrap, Node, style::SizeKeyword},
@@ -552,10 +553,24 @@ impl<'a> LayoutContext<'a> {
         let space = self.measure(" ", face_for(&node.style, Some(" ")))?;
         // Collapsible spaces between adjacent runs count once per boundary, whichever side
         // holds them (`<a>new</a> | <a>past</a>` has two).
-        let leading =
-            |child: &Node| child.text.starts_with(char::is_whitespace) || child.space_leading;
+        // Preserved white space is measured with its own text, so it adds no boundary space.
+        let collapsible = |child: &Node| {
+            !matches!(
+                child.style.white_space,
+                crate::document::WhiteSpace::Pre
+                    | crate::document::WhiteSpace::PreWrap
+                    | crate::document::WhiteSpace::PreLine
+            )
+        };
+        let leading = |child: &Node| {
+            collapsible(child)
+                && (child.text.starts_with(char::is_whitespace) || child.space_leading)
+        };
         let trailing = |child: &Node| {
-            child.space_after || (child.tag == "#text" && child.text.ends_with(char::is_whitespace))
+            child.space_after
+                || (collapsible(child)
+                    && child.tag == "#text"
+                    && child.text.ends_with(char::is_whitespace))
         };
         let mut boundaries = children
             .windows(2)
@@ -632,7 +647,7 @@ const LAYOUT_RESERVE: usize = crate::constants::NODES * 8;
 /** Native measurements left to finish placed content after a bound ran out. */
 const MEASURE_RESERVE: usize = 256;
 /** Cache identity of a face: size and spacing bits, weight, family and posture. */
-type FaceKey = (u64, u16, Family, u64, bool, bool);
+type FaceKey = (u64, u16, Family, u64, bool, u8);
 /** Floats key by their bits so identical faces share cached shaping. */
 fn face_key(face: Face) -> FaceKey {
     (
@@ -672,7 +687,10 @@ pub(super) fn face_for(style: &crate::document::ComputedStyle, text: Option<&str
         },
         spacing: style.letter_spacing,
         italic: style.font_style != crate::document::FontStyle::Normal,
-        autospace: style.text_autospace,
+        autospace: crate::platform::autospace::mode(
+            style.text_autospace && style.glyphs_upright != crate::platform::upright::UPRIGHT,
+            &style.lang,
+        ),
         upright: style.glyphs_upright,
     }
 }
@@ -1232,7 +1250,9 @@ pub(super) fn intrinsic_contribution(
         let maximum = keyword(max, Bound::Max)
             .unwrap_or_else(|| max_width(child, None))
             .max(minimum);
-        preferred.unwrap_or(fit).max(minimum).min(maximum)
+        // A `calc-size()` width maps the size its basis gives (CSS Values 5).
+        let preferred = calc_size_through(&child.style, WIDTH, preferred.unwrap_or(fit));
+        preferred.max(minimum).min(maximum)
     };
     let mut contribution = IntrinsicWidths {
         min_content: side(raw.min_content),
@@ -1277,8 +1297,9 @@ fn ratio_contribution(node: &Node, raw: IntrinsicWidths) -> Option<f64> {
         (height - vertical_edges(node)).max(0.0) * ratio
     };
     let automatic = min_width_auto(&node.style);
+    let width = calc_size_through(&node.style, WIDTH, width);
     Some(if automatic {
-        width.max(raw.min_content)
+        width.max(calc_size_through(&node.style, MIN_WIDTH, raw.min_content))
     } else {
         width
     })

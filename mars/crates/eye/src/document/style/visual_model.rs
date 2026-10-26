@@ -516,12 +516,42 @@ pub struct GridTemplate {
     /// span follows (css-grid-2 9.1: one less than the lists).
     #[serde(default, skip_serializing_if = "is_zero_u16")]
     pub subgrid_lines: u16,
+    /// The `[...]` lists in a subgrid's `repeat(auto-fill, ...)` group, whose names are
+    /// `repeat_names` and which repeats at `repeat_at` as often as the subgrid's lines allow
+    /// (`subgrid_names`); zero without one. Not counted in `subgrid_lines`.
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub subgrid_fill: u16,
 }
 /// Whether a count is zero, for skipping it when serializing.
 fn is_zero_u16(value: &u16) -> bool {
     *value == 0
 }
 impl GridTemplate {
+    /// A subgrid's own line names for `lines` lines: its auto-fill group of name lists repeated
+    /// as many whole times as fit beside its other lists (css-grid-2 9.2), the lists after the
+    /// group moved past the repetitions.
+    pub fn subgrid_names(&self, lines: u16) -> Vec<(String, u16)> {
+        let fill = self.subgrid_fill;
+        if fill == 0 {
+            return self.names.clone();
+        }
+        let at = self.repeat_at as u16;
+        let times = lines.saturating_sub(self.subgrid_lines) / fill;
+        let mut names = self
+            .names
+            .iter()
+            .map(|(name, line)| {
+                let shift = if *line > at { times * fill } else { 0 };
+                (name.clone(), line + shift)
+            })
+            .collect::<Vec<_>>();
+        for time in 0..times {
+            for (name, offset) in &self.repeat_names {
+                names.push((name.clone(), at + time * fill + offset));
+            }
+        }
+        names
+    }
     /// The line names of the grid once its auto-repeat group is repeated into `explicit` tracks:
     /// the group's names once per repetition, and the names after it moved past them
     /// (css-grid-2 7.2.3.2). Without a group these are `names`.

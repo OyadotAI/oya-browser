@@ -409,6 +409,8 @@ fn auto_repeat_valid(template: &GridTemplate) -> bool {
 fn subgrid(rest: &str) -> EngineResult<GridTemplate> {
     let mut lists: Vec<Vec<&str>> = Vec::new();
     let mut auto_fill = false;
+    // The auto-fill group, kept apart: layout repeats it to fill the subgrid's lines.
+    let mut fill: (usize, Vec<Vec<&str>>) = (0, Vec::new());
     for token in split_tracks(rest) {
         if let Some(inner) = token
             .strip_prefix("repeat(")
@@ -420,10 +422,10 @@ fn subgrid(rest: &str) -> EngineResult<GridTemplate> {
             };
             let group = name_lists(body)?;
             let count = count.trim();
-            let times = if count == "auto-fill" && !auto_fill {
-                // ponytail: an auto-fill group of names repeats once; Blink fills the span.
+            let times = if count == "auto-fill" && !auto_fill && !group.is_empty() {
                 auto_fill = true;
-                1
+                fill = (lists.len(), group);
+                continue;
             } else {
                 let times = number(count)?;
                 if times < 1.0 || times.fract() != 0.0 {
@@ -444,8 +446,17 @@ fn subgrid(rest: &str) -> EngineResult<GridTemplate> {
     let mut template = GridTemplate {
         subgrid: true,
         subgrid_lines: u16::try_from(lists.len()).map_err(|_| unsupported())?,
+        subgrid_fill: u16::try_from(fill.1.len()).map_err(|_| unsupported())?,
+        repeat_at: fill.0,
         ..GridTemplate::default()
     };
+    for (index, list) in fill.1.iter().enumerate() {
+        for name in list {
+            template
+                .repeat_names
+                .push(((*name).to_owned(), index as u16 + 1));
+        }
+    }
     for (index, list) in lists.iter().enumerate() {
         for name in list {
             template.names.push(((*name).to_owned(), index as u16 + 1));
@@ -764,6 +775,7 @@ fn justify_items(value: &str) -> EngineResult<AlignItems> {
         "center" => AlignItems::Center,
         "end" | "flex-end" | "self-end" | "right" => AlignItems::End,
         "stretch" | "normal" | "legacy" => AlignItems::Stretch,
+        "baseline" | "first baseline" => AlignItems::Baseline,
         _ => return Err(unsupported()),
     })
 }

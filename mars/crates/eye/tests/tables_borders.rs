@@ -144,3 +144,42 @@ fn start_border_gets_a_line_before_a_block() {
     assert!(pieces[0].y < first(&document, &display, "d").y);
     assert_eq!(pieces[0].border_widths[3], 3.0);
 }
+
+/** The cell's band items: bare boxes with one border side each, in paint order. */
+fn bands<'a>(document: &Document, display: &'a DisplayList, id: &str) -> Vec<&'a DisplayItem> {
+    all(document, display, id)
+        .into_iter()
+        .filter(|item| {
+            item.border_widths
+                .iter()
+                .filter(|width| **width > 0.0)
+                .count()
+                == 1
+        })
+        .collect()
+}
+
+/** A collapsed cell paints each edge whole, as a square band centered on its grid line, and a
+joint goes to the cell before it: the first column's top band starts at the table's outer edge,
+the next cell's after the shared joint (border-conflict-element-001d). */
+#[test]
+fn collapsed_edges_are_whole_bands_and_joints_go_to_the_first_cell() {
+    let (document, display) = layout(
+        "<table style='border-collapse:collapse'><tr>\
+         <td id=a style='border:4px solid green;padding:0;width:10px;height:10px'></td>\
+         <td id=b style='border:4px solid blue;padding:0;width:10px;height:10px'></td></tr></table>",
+    );
+    let top = |id: &str| {
+        let bands = bands(&document, &display, id);
+        (*bands
+            .iter()
+            .find(|item| item.border_widths[0] > 0.0)
+            .unwrap())
+        .clone()
+    };
+    let (a, b) = (top("a"), top("b"));
+    assert_eq!((a.border_widths[0], a.height), (4.0, 4.0));
+    assert_eq!(a.x, 0.0);
+    assert_eq!(b.x, a.x + a.width);
+    assert_eq!(bands(&document, &display, "a").len(), 4);
+}

@@ -532,6 +532,7 @@ impl Canvas {
             .get(&item.local_id)
             .map(|asset| asset.bytes.as_slice());
         let image = painted.image(item.local_id, bytes);
+        painter.clip_background(&area, item);
         if let Some(color) = item.background.as_deref().and_then(literal_color) {
             if item.mask.is_some() {
                 // The fetched bytes under a masked item's identity are its mask image.
@@ -553,6 +554,7 @@ impl Canvas {
             let keyed = background::keyed_images(item, &bytes, painted);
             background::paint(item, image.as_deref(), &keyed, alpha);
         }
+        painter.unclip();
         painter.inset_shadows(&shape, item, alpha);
         let default_border = || {
             literal_color(item.border_color.as_deref().unwrap_or("gray"))

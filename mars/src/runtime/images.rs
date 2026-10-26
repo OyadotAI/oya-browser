@@ -570,6 +570,7 @@ fn range_feature(feature: &str, viewport: f64) -> Option<bool> {
 }
 
 /** What one image request produced. */
+#[derive(Clone)]
 pub(super) enum Fetched {
     /// Encoded bitmap bytes for AppKit's decoder, with their pixel size.
     Raster(ImageAsset, (u32, u32)),
@@ -665,6 +666,10 @@ pub(super) struct Budget {
     requests: usize,
     bytes: usize,
     decoded: u64,
+    /// Images already fetched on this page by address: a repeated address reuses its result
+    /// instead of spending another request (CSS2 tables' references draw 130 swatches from four
+    /// files, and their sixty-fifth showed as alt text).
+    fetched: std::collections::HashMap<String, Fetched>,
 }
 impl Budget {
     /// Background or legacy image work may add assets between lifecycle batches; never undercount them.
@@ -696,7 +701,20 @@ impl Budget {
             requests: images.len(),
             bytes: images.values().map(|asset| asset.bytes.len()).sum(),
             decoded: images.values().map(|asset| asset.decoded).sum(),
+            fetched: std::collections::HashMap::new(),
         }
+    }
+    /// An image this page already fetched from `source`, reused without another request: Some
+    /// with the image (or None when its bytes no longer fit the byte budgets, which still count
+    /// every copy), or None when the address is new.
+    pub(super) fn reused(&mut self, source: &str) -> Option<Option<Fetched>> {
+        let seen = self.fetched.get(source.trim())?.clone();
+        Some(self.admit(&seen).then_some(seen))
+    }
+    /// Remembers what `source` fetched, for `reused`.
+    pub(super) fn remember(&mut self, source: &str, fetched: &Fetched) {
+        self.fetched
+            .insert(source.trim().to_owned(), fetched.clone());
     }
     /// Whether no request is left to make.
     pub(super) fn exhausted(&self) -> bool {
@@ -965,6 +983,9 @@ impl super::supervisor::Runtime {
         budget: &mut Budget,
         notes: &mut Vec<String>,
     ) -> EngineResult<Option<Fetched>> {
+        if let Some(seen) = budget.reused(source) {
+            return Ok(seen);
+        }
         if !budget.request() {
             notes.push(format!(
                 "Images after the first {IMAGE_COUNT} show their alt text."
@@ -983,7 +1004,10 @@ impl super::supervisor::Runtime {
             return Err(EngineError::navigation_timeout());
         }
         match fetched {
-            Ok(fetched) if budget.admit(&fetched) => Ok(Some(fetched)),
+            Ok(fetched) if budget.admit(&fetched) => {
+                budget.remember(source, &fetched);
+                Ok(Some(fetched))
+            }
             Ok(_) => {
                 notes.push("Images past the page image budget show their alt text.".into());
                 Ok(None)
@@ -1574,6 +1598,19 @@ mod tests {
         assert!(data_url("data:image/png;base64,!!!").is_err());
     }
 
+    /** A repeated address reuses its image without a request, so a page drawing many copies of
+     * a few files is not cut off at IMAGE_COUNT elements (border-conflict-element-001d-ref). */
+    #[test]
+    fn repeated_addresses_reuse_their_image() {
+        let mut budget = Budget::default();
+        let gif = data_url("data:image/gif;base64,R0lGODlhAQABAAAAACw=").unwrap();
+        assert!(budget.reused("swatch.png").is_none());
+        budget.remember("swatch.png", &gif);
+        let copies =
+            (0..IMAGE_COUNT * 2).filter(|_| matches!(budget.reused(" swatch.png"), Some(Some(_))));
+        assert_eq!(copies.count(), IMAGE_COUNT * 2);
+        assert!(!budget.exhausted());
+    }
     /** A srcset choice lays out at CSS size, and the page budget refuses past its bounds. */
     #[test]
     fn density_scales_size_and_budget_bounds_the_page() {

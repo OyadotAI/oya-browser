@@ -31,8 +31,8 @@ fn scrolled(markup: &str, sheet: &str, offset: [f64; 2]) -> (DisplayList, usize)
     )
 }
 
-/** A scrolled `local` box clips its background to the padding box, and a `content-box` clip to
- * the scrolled contents' content box within it. */
+/** A scrolled `local` box clips its background to the padding box, and a `content-box` clip
+ * also to the scrolled contents' content box within it. */
 #[test]
 fn local_background_clips_with_the_scrolled_contents() {
     let markup = "<div id=s><div style='height:500px'></div></div>";
@@ -49,10 +49,14 @@ fn local_background_clips_with_the_scrolled_contents() {
             .iter()
             .find(|item| item.local_id == local)
             .unwrap();
-        item.background_clip
+        (item.background_clip, item.background_rect)
     };
-    assert_eq!(clip("border-box"), [10.0; 4]);
-    assert_eq!(clip("content-box"), [35.0, 50.0, 10.0, 50.0]);
+    assert_eq!(clip("border-box"), ([10.0; 4], None));
+    // The content-box clip is the padding box plus the scrolled content box's rectangle.
+    assert_eq!(
+        clip("content-box"),
+        ([10.0; 4], Some([50.0, 35.0, 200.0, 255.0]))
+    );
 }
 
 /** The faces each case's page asks for, by `@font-face` family. */

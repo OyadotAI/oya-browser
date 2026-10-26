@@ -107,6 +107,9 @@ pub(super) fn keyword(style: &mut ComputedStyle, parent: &ComputedStyle, key: &s
  * `visibility`, which never un-hides an inherited hidden subtree, keep their current value.
  */
 fn copy(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
+    if let Some(index) = super::calc_size::KEYS.iter().position(|name| *name == key) {
+        style.calc_size[index] = source.calc_size[index];
+    }
     if sided(style, source, key)
         || corner(style, source, key)
         || copy_box(style, source, key)

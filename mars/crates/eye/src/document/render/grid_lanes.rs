@@ -628,11 +628,15 @@ pub(super) fn children(
             &widths,
             gap + between,
         );
-        let justify = super::justify_of(style, child);
         let width = if super::replaced_stretch(style, child, 1) {
             (probe_area - child.style.margin[1] - child.style.margin[3]).max(0.0)
         } else {
-            super::item_width(context, child, probe_area, justify)?
+            super::item_width(
+                context,
+                child,
+                probe_area,
+                super::sizing_justify(style, child),
+            )?
         };
         let height = super::super::flex_layout::item_height(context, child, width)?;
         // Margins never move the running position backwards (Blink clamps the contribution).
@@ -663,6 +667,12 @@ pub(super) fn children(
         (style.align_content, style.content_safe[0]),
         (extent, total),
     );
+    // Items of one lane line up their synthesized column baselines, as in a grid column.
+    let natural = plan
+        .iter()
+        .map(|&(.., width, height)| (width, height))
+        .collect::<Vec<_>>();
+    let column_shims = super::column_baseline::shims(style, &placed, &natural);
     for (index, (child, column, span, top, width, height)) in plan.into_iter().enumerate() {
         let space = running.alignment_space(index, column, span, extent, stack_gap);
         let shift = stacking_shift(stacking(child), space, style.grid_lanes_fill_reverse);
@@ -683,7 +693,8 @@ pub(super) fn children(
         let x = lefts[first]
             + margins[3]
             + super::super::flex::auto_cross_offset(auto[3], auto[1], free)
-                .unwrap_or_else(|| super::inline_offset(super::offset(justify, free), free, rtl));
+                .unwrap_or_else(|| super::inline_offset(super::offset(justify, free), free, rtl))
+            + column_shims[index];
         // fill-reverse stacks from the end edge, the item's margin box mirrored.
         let y = shift
             + if style.grid_lanes_fill_reverse {

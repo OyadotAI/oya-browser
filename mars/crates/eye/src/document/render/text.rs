@@ -451,9 +451,13 @@ pub(super) fn text(
 ) -> EngineResult<Vec<PaintLine>> {
     use crate::document::WhiteSpace;
     context.charge(source.chars().count())?;
+    // A run continues a word when the line's last letter abuts it, with no space pending.
+    let word_start = !flow.last.is_some_and(char::is_alphanumeric)
+        || flow.space == Some(true)
+        || node.space_leading;
     let mut source = super::bidi::controls(
         &bidi_owner(context, node).style,
-        transformed(&node.style, source),
+        transformed_from(&node.style, source, word_start),
     );
     let space = node.style.white_space;
     // A carriage return lays out as a space, as it does where white space collapses
@@ -1040,12 +1044,13 @@ fn breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
  * line so far and a letter or digit starting this run (or the reverse) when nothing separates
  * them, as shaping inside one run adds it (`platform::autospace`). */
 fn autospace(node: &Node, flow: &Flow, text: &str, adjoining: bool) -> f64 {
+    let mode = super::sizing::face_for(&node.style, Some(text)).autospace;
     let first = text.chars().next();
     let meets = flow
         .last
         .zip(first)
-        .is_some_and(|(last, first)| crate::platform::autospace::boundary(last, first));
-    if adjoining && started(flow) && node.style.text_autospace && meets {
+        .is_some_and(|(last, first)| crate::platform::autospace::spaced(last, first, mode));
+    if adjoining && started(flow) && meets {
         crate::platform::autospace::space(node.style.font_size)
     } else {
         0.0
@@ -1142,7 +1147,16 @@ pub(super) fn transformed<'a>(
     style: &crate::document::ComputedStyle,
     source: &'a str,
 ) -> std::borrow::Cow<'a, str> {
-    let cased = cased(style, source);
+    transformed_from(style, source, true)
+}
+/** As `transformed`, where `word_start` says whether the text starts a word: `capitalize` leaves
+ * a run that continues a word lowercase (text-transform-cap-002's `T<span>his`). */
+pub(super) fn transformed_from<'a>(
+    style: &crate::document::ComputedStyle,
+    source: &'a str,
+    word_start: bool,
+) -> std::borrow::Cow<'a, str> {
+    let cased = cased(style, source, word_start);
     let cased = widened(style, cased);
     if !cased.chars().any(hidden_control) {
         return cased;
@@ -1390,12 +1404,24 @@ fn hidden_control(c: char) -> bool {
     c.is_control() && !css_space(c)
 }
 /** The text-transform case mapping. */
-fn cased<'a>(style: &crate::document::ComputedStyle, source: &'a str) -> std::borrow::Cow<'a, str> {
+fn cased<'a>(
+    style: &crate::document::ComputedStyle,
+    source: &'a str,
+    word_start: bool,
+) -> std::borrow::Cow<'a, str> {
     use crate::document::TextTransform;
     match style.text_transform {
         TextTransform::None => source.into(),
         TextTransform::Uppercase => super::casing::upper(source, &style.lang).into(),
         TextTransform::Lowercase => super::casing::lower(source, &style.lang).into(),
+        // A run that continues an earlier element's word keeps that word's letters as they are.
+        TextTransform::Capitalize if !word_start => {
+            let cut = source
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(source.len());
+            let rest = super::casing::capitalize(&source[cut..], &style.lang);
+            format!("{}{rest}", &source[..cut]).into()
+        }
         TextTransform::Capitalize => super::casing::capitalize(source, &style.lang).into(),
     }
 }

@@ -1425,6 +1425,7 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
     let [horizontal, vertical] = radii(style, item.width, item.height);
     item.radius = horizontal;
     item.radius_y = (vertical != horizontal).then_some(vertical);
+    super::fragments::square_cut_corners(item);
     if item.tag == "img" || super::flow::frame(node) {
         item.overflow_visible =
             style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible;

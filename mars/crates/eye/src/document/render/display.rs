@@ -207,8 +207,17 @@ impl GradientTile {
 }
 /// Gradient tiles a painter draws one by one at most; past it the rest of the box goes unpainted.
 pub const GRADIENT_TILES: usize = 4096;
+/** An outer shadow's rectangle `[x, y, width, height]` for a sliced inline fragment at
+ * `[x, width]` whose left or right side is cut (`slice_cut`): under `box-decoration-break:
+ * slice` the shadow is the whole box's, so on a cut side it runs on to the fragment's edge
+ * instead of ending offset there (css-break-3 5.4). Both painters share it. */
+pub fn sliced_shadow(rect: [f64; 4], [x, width]: [f64; 2], cut: [bool; 2]) -> [f64; 4] {
+    let left = if cut[0] { x } else { rect[0] };
+    let right = if cut[1] { x + width } else { rect[0] + rect[2] };
+    [left, rect[1], (right - left).max(0.0), rect[3]]
+}
 /** Neither axis set: the default `space` and `round`, left out of serialized items. */
-fn is_flush(axes: &[bool; 2]) -> bool {
+pub(super) fn is_flush(axes: &[bool; 2]) -> bool {
     !axes[0] && !axes[1]
 }
 /// A background image's used size rule, resolved against the box except where the image's own size decides.

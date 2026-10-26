@@ -22,13 +22,16 @@ pub(super) enum ColumnExtent {
     Definite(f64),
     /// Content-sized, but never below this minimum.
     AtLeast(f64),
+    /// Content-sized through a `calc-size()` height's sum, never below this minimum. The lines
+    /// still break as for an indefinite height (Flexbox 9.2's available main size).
+    Mapped(f64, crate::document::style::CalcSize),
 }
 impl ColumnExtent {
     /** The height percentages resolve against, when there is one. */
     fn definite(self) -> Option<f64> {
         match self {
             Self::Definite(height) => Some(height),
-            Self::AtLeast(_) => None,
+            Self::AtLeast(_) | Self::Mapped(..) => None,
         }
     }
     /** The extent the items are placed into, given their summed intrinsic outer sizes. */
@@ -36,6 +39,7 @@ impl ColumnExtent {
         match self {
             Self::Definite(height) => height,
             Self::AtLeast(minimum) => intrinsic.max(minimum),
+            Self::Mapped(minimum, calc) => calc.apply(intrinsic).max(minimum),
         }
     }
 }
@@ -133,9 +137,15 @@ pub(super) fn item(
     let automatic = if flex::scroll_container(child) {
         0.0
     } else {
-        natural_content
+        // A `calc-size()` min-height maps the automatic minimum (CSS Values 5).
+        let content = natural_content
             .min(specified.unwrap_or(LAYOUT_EXTENT))
-            .min(max)
+            .min(max);
+        crate::document::style::calc_size_through(
+            &child.style,
+            crate::document::style::MIN_HEIGHT,
+            content,
+        )
     };
     let minimum = bound(child.style.min_height).unwrap_or(automatic);
     let maximum = max.max(minimum);

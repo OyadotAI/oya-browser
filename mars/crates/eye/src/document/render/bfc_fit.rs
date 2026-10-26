@@ -24,7 +24,10 @@ pub(super) fn refit(
         && style.height.is_none()
         && style.margin[1] == 0.0
         && style.margin[3] == 0.0
-        && !flow.floats.is_empty();
+        && !flow.floats.is_empty()
+        // A generated box's stand-in shares its element's id, so measuring it would lay out the
+        // element again, and its ::after again, without end (a clearfix `display: table`).
+        && !super::generated::is_generated(node);
     if !adjusts {
         return Ok(placed);
     }

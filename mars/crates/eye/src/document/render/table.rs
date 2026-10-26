@@ -5,6 +5,7 @@ use crate::document::style::{TableBox, VerticalAlign};
 
 mod anonymous;
 mod collapse;
+mod collapsed_paint;
 mod columns;
 mod frame;
 mod parts;
@@ -851,10 +852,10 @@ fn place(
                 super::line::translate(item, 0.0, offset);
             }
         }
-        if grid.collapsed
-            && let Some(edges) = collapsed_edges(slot.cell, start, items)
-        {
-            items.push(edges);
+        if grid.collapsed {
+            let leading = (slot.column == 0, grid.rtl);
+            let edges = collapsed_paint::edges(slot.cell, leading, start, items);
+            items.extend(edges);
         }
     }
     Ok(y)
@@ -867,38 +868,6 @@ fn part_box(node: &Node, x: f64, y: f64, width: f64, height: f64) -> DisplayItem
     item.border = 0.0;
     item.border_widths = [0.0; 4];
     item
-}
-/**
- * A collapsed cell's borders as Blink's CollapsedBorderPainter draws them: each edge at its whole
- * width, centered on the grid line, rather than the half the cell's box holds for layout. The
- * cell's own box keeps its background and drops its half borders; the edges paint over it as one
- * more item of the cell (a 36px orange border painted 18px wide made a fixed table's cell 36px
- * narrower than its reference).
- *
- * ponytail: each cell paints all four of its edges in their winners' colors, so a shared edge
- * paints twice and an overlap goes to the later cell in paint (DOM) order; Blink paints each
- * edge once in grid order, which row-group-order.html (a thead after a tbody) shows.
- */
-fn collapsed_edges(cell: &Node, start: usize, items: &mut [DisplayItem]) -> Option<DisplayItem> {
-    let own = items.get_mut(start)?;
-    let half = super::sizing::border_sides(&cell.style);
-    if own.local_id != cell.local_id || half.iter().all(|width| *width <= 0.0) {
-        return None;
-    }
-    own.border_widths = [0.0; 4];
-    let mut edges = own.clone();
-    edges.background = None;
-    edges.backgrounds = Vec::new();
-    edges.shadows = Vec::new();
-    edges.lines = Vec::new();
-    edges.vector = Vec::new();
-    edges.validation = Vec::new();
-    edges.x -= half[3];
-    edges.y -= half[0];
-    edges.width += half[1] + half[3];
-    edges.height += half[0] + half[2];
-    edges.border_widths = half.map(|width| super::sizing::snap_border(width * 2.0));
-    Some(edges)
 }
 /** Blink's RowBaselineTabulator: the tallest ascent and descent of a row's baseline-aligned
  * cells (a row-spanning cell adds its ascent only). */

@@ -60,6 +60,13 @@ pub(super) fn clamp(
     }
     let kept = &lines[count - 1];
     let cut = kept.iter().map(|run| run.bottom).fold(f64::MIN, f64::max);
+    if style.max_lines == 0
+        && let Some(end) = box_clamp(context, node, items, index, cut)
+    {
+        hide_after(context, items, index, end);
+        inner.bottom = enclosing_end(context, node, items, kept, end);
+        return Ok(());
+    }
     // A block after the clamp line clamps even when it holds no lines.
     let Some(next) = lines.get(count).map(|line| line[0].top).or_else(|| {
         let mut after = items[index + 1..].iter();
@@ -380,25 +387,64 @@ fn kept_margin(parent: &Node, child: &Node) -> f64 {
 /** How many line boxes fit in the box's authored height or max-height, the clamp point of
 `line-clamp: auto`; all of them when neither bounds it. */
 fn fitting(node: &Node, item: &DisplayItem, lines: &[Vec<Run>]) -> usize {
+    let Some(limit) = auto_limit(node, item) else {
+        return lines.len();
+    };
+    lines
+        .iter()
+        .take_while(|line| line.iter().all(|run| run.bottom <= limit))
+        .count()
+}
+
+/** Where `line-clamp: auto`'s room ends: the content edge its authored height or max-height
+puts, in document coordinates; None when neither bounds it. */
+fn auto_limit(node: &Node, item: &DisplayItem) -> Option<f64> {
     let style = &node.style;
     let bound = style
         .height
         .or(style.max_height)
-        .and_then(|extent| extent.resolve_size(None));
-    let Some(bound) = bound else {
-        return lines.len();
-    };
+        .and_then(|extent| extent.resolve_size(None))?;
     let edges = super::sizing::border_sides(style)[0] + style.padding[0];
     let content = if style.box_sizing == crate::document::BoxSizing::BorderBox {
         (bound - super::flow::vertical_edges(node)).max(0.0)
     } else {
         bound
     };
-    let limit = item.y + edges + content + super::line::LINE_EPSILON;
-    lines
+    Some(item.y + edges + content + super::line::LINE_EPSILON)
+}
+
+/** `line-clamp: auto` can clamp between two independent formatting contexts: the bottom of the
+lowest new-formatting-context box below the last fitting line (`cut`) that still fits the
+room, when content follows it. The clamp point is then no line, so it gets no ellipsis. */
+fn box_clamp(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    items: &[DisplayItem],
+    index: usize,
+    cut: f64,
+) -> Option<f64> {
+    let limit = auto_limit(node, &items[index])?;
+    let fits = |item: &&DisplayItem| {
+        let child = context.node(item.local_id).ok();
+        let fresh = child.is_some_and(|child| {
+            // Floats make formatting contexts too, but are no clamp points.
+            let float = child.style.float != crate::document::style::Float::None;
+            super::flow::new_context(child)
+                && !child.style.inline
+                && !float
+                && !super::flow::out_of_flow(child)
+        });
+        fresh && item.y >= cut - SAME_LINE && item.y + item.height <= limit
+    };
+    let end = items[index + 1..]
         .iter()
-        .take_while(|line| line.iter().all(|run| run.bottom <= limit))
-        .count()
+        .filter(fits)
+        .map(|item| item.y + item.height)
+        .fold(f64::MIN, f64::max);
+    let after = items[index + 1..].iter().any(|item| {
+        item.y >= end - SAME_LINE && (block_after(context, item, end) || !item.lines.is_empty())
+    });
+    (end > cut + SAME_LINE && after).then_some(end)
 }
 
 /** The text runs of the clamp container's own formatting context, in item order. */

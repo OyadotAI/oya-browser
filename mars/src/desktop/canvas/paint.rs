@@ -238,6 +238,41 @@ impl Painter {
         self.path(shape);
         CGContext::fill_path(self.cg());
     }
+    /// Saves the state and clips what follows to an item's background painting area: the
+    /// rounded `background-clip` shape `area` (unless `border-area` paints the ring) and its
+    /// `background_rect`, as the raster painter clips the color, gradients and image layers.
+    /// Without it image layers spilled past rounded corners and `content-box` clips.
+    pub fn clip_background(&self, area: &Shape, item: &DisplayItem) {
+        CGContext::save_g_state(self.cg());
+        if item.background_border_area {
+            // The border's ring: inside the border box, outside the padding box.
+            let shape = Shape::of(item);
+            self.clip_shape(&shape);
+            let ring = if item.border > 0.0 {
+                [item.border; 4]
+            } else {
+                item.border_widths
+            };
+            self.outside(&shape.inset_sides(ring));
+        } else {
+            self.clip_shape(area);
+        }
+        if let Some([x, y, width, height]) = item.background_rect {
+            let (radius, radius_y) = ([0.0; 4], [0.0; 4]);
+            self.clip_shape(&Shape {
+                x,
+                y,
+                width,
+                height,
+                radius,
+                radius_y,
+            });
+        }
+    }
+    /// Restores the state `clip_background` saved.
+    pub fn unclip(&self) {
+        CGContext::restore_g_state(self.cg());
+    }
     /// Intersects the current clipping region with a rounded shape.
     pub fn clip_shape(&self, shape: &Shape) {
         self.path(shape);
@@ -287,7 +322,13 @@ impl Painter {
             CGContext::save_g_state(self.cg());
             self.outside(shape);
             self.shadowed(shadow.blur, &color);
-            let cast = shape.outset(shadow.spread).offset(shadow.x, shadow.y);
+            let mut cast = shape.outset(shadow.spread).offset(shadow.x, shadow.y);
+            let [x, _, width, _] = crate::document::sliced_shadow(
+                [cast.x, cast.y, cast.width, cast.height],
+                [shape.x, shape.width],
+                item.slice_cut,
+            );
+            (cast.x, cast.width) = (x, width);
             self.fill(&cast, &color);
             CGContext::restore_g_state(self.cg());
         }

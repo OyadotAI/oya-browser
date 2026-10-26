@@ -168,3 +168,42 @@ fn stand_in_cell_margins_resolve_percentages_against_zero() {
     );
     assert_eq!(first(&document, &display, "t").width, 100.0);
 }
+
+/** Clearance is measured against the margins that collapse through the cleared block's top, a
+child's negative one included, and that child's margin stays inside the block
+(clear-on-parent-with-margins). */
+#[test]
+fn clearance_counts_a_childs_negative_margin() {
+    let (document, display) = layout(
+        "<div style='width:200px;height:200px'>\
+         <div style='float:left;width:200px;height:100px'></div>\
+         <div style='clear:left;margin-top:100px'>\
+         <div id=c style='height:100px;margin-top:-1000px'></div></div></div>",
+    );
+    assert_eq!(first(&document, &display, "c").y, 100.0);
+}
+
+/** A block's positive text-indent widens its max-content by the indent and its min-content to
+the first word past the indent (text-indent-intrinsic-001). */
+#[test]
+fn text_indent_widens_intrinsic_widths() {
+    let (document, display) = layout(
+        "<div id=a style='float:left;font:20px Ahem'>X</div><br style='clear:left'>\
+         <div id=b style='float:left;font:20px Ahem;text-indent:60px'>X</div>",
+    );
+    let width = |id: &str| first(&document, &display, id).width;
+    assert_eq!(width("b"), width("a") + 60.0);
+}
+
+/** `capitalize` leaves a word that an earlier element began alone: only a letter after a space
+or a non-letter starts a word (text-transform-capitalize-033). */
+#[test]
+fn capitalize_continues_a_word_across_elements() {
+    let (document, display) =
+        layout("<p style='text-transform:capitalize'>ab<span id=s>cd</span> ef</p>");
+    let text: String = all(&document, &display, "s")
+        .iter()
+        .flat_map(|item| item.lines.iter().map(|line| line.text.clone()))
+        .collect();
+    assert_eq!(text, "cd");
+}

@@ -30,10 +30,14 @@ fn a_collapsed_edge_paints_at_its_whole_width() {
          width:50px;height:50px;padding:0'></td></tr></table>",
         "c",
     );
-    let edges = cell.last().unwrap();
-    assert_eq!(edges.border_widths, [10.0; 4], "{:?}", edges.border_widths);
+    // Each edge paints as its own band (render/table/collapsed_paint.rs): the top one is a
+    // 10px band, the cell's box itself paints no border.
     assert!(cell[0].border_widths.iter().all(|w| *w == 0.0));
-    assert_eq!(edges.width - cell[0].width, 10.0);
+    let top = cell
+        .iter()
+        .find(|item| item.border_widths[0] > 0.0)
+        .unwrap();
+    assert_eq!((top.border_widths[0], top.height), (10.0, 10.0));
 }
 
 /** On a tie in width the stronger style wins the edge and paints in its own color. */

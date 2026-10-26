@@ -240,8 +240,8 @@ fn set_axis(
     inherited: Vec<(String, u16)>,
     gap: f64,
 ) {
-    let own = template(style, axis).names.clone();
     let count = tracks.len() as u16 + 1;
+    let own = template(style, axis).subgrid_names(count);
     let mut names = inherited;
     // The subgrid's own names past its last line are ignored.
     names.extend(own.into_iter().filter(|(_, line)| *line <= count));

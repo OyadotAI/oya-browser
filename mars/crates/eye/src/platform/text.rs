@@ -257,10 +257,44 @@ fn run(text: &str, face: Face, color: &NSColor, rtl: Option<bool>) -> Retained<N
             Some(&attributes),
         )
     };
-    if face.autospace {
+    let run = unspaced(run, text, face);
+    if face.autospace != super::autospace::OFF {
         return autospaced(run, text, face);
     }
     run
+}
+
+/// Whether the attributed run holds exactly `text`'s UTF-16 units, so ranges computed from
+/// `text` address it. Foundation drops a leading byte order mark (U+FEFF) when it builds the
+/// string, and a range past its end raises an exception that would abort the process.
+fn same_units(run: &NSAttributedString, text: &str) -> bool {
+    run.length() == text.encode_utf16().count()
+}
+
+/// A run whose zero-width controls (joiners, bidi marks and the like) take no letter spacing,
+/// as Blink's ShapeResultSpacing skips them; otherwise each added a gap of its own.
+fn unspaced(
+    run: Retained<NSAttributedString>,
+    text: &str,
+    face: Face,
+) -> Retained<NSAttributedString> {
+    let ranges = super::ignorable::ranges(text);
+    if face.spacing == 0.0 || ranges.is_empty() || !same_units(&run, text) {
+        return run;
+    }
+    let bare = NSMutableAttributedString::initWithAttributedString(
+        NSMutableAttributedString::alloc(),
+        &run,
+    );
+    let none = NSNumber::new_f64(0.0);
+    for (start, length) in ranges {
+        // SAFETY: Apple's kern key paired with its documented NSNumber value, on one scalar's
+        // range inside the string.
+        unsafe {
+            bare.addAttribute_value_range(NSKernAttributeName, &none, NSRange::new(start, length))
+        };
+    }
+    Retained::into_super(bare)
 }
 
 /// A run with `text-autospace`'s eighth of an em after each scalar before an ideograph-alpha
@@ -270,8 +304,8 @@ fn autospaced(
     text: &str,
     face: Face,
 ) -> Retained<NSAttributedString> {
-    let (at, gap) = super::autospace::gaps(text, face.size);
-    if at.is_empty() {
+    let (at, gap) = super::autospace::gaps(text, face.size, face.autospace);
+    if at.is_empty() || !same_units(&run, text) {
         return run;
     }
     let spaced = NSMutableAttributedString::initWithAttributedString(
@@ -304,7 +338,7 @@ pub fn spaced(
     word: f64,
 ) -> Retained<NSAttributedString> {
     let base = styled(text, face, color, rtl);
-    if word == 0.0 {
+    if word == 0.0 || !same_units(&base, text) {
         return base;
     }
     let run = NSMutableAttributedString::initWithAttributedString(
