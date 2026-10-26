@@ -4,6 +4,10 @@
  * bounded by REGEXP_STEPS, so catastrophic patterns fail as a limit instead of hanging the page.
  */
 use crate::constants::{REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS};
+mod case;
+mod case_data;
+mod unicode;
+use unicode::property_ranges;
 
 /** A compiled pattern. */
 #[derive(Debug)]
@@ -31,6 +35,9 @@ enum Node {
     Class(Vec<(u32, u32)>, bool),
     Start,
     End,
+    /** Proposal assertions depend only on buffer boundaries, regardless of multiline mode. */
+    BufferStart,
+    BufferEnd(bool),
     Boundary(bool),
     Group(Box<Node>, Option<usize>),
     Look(Box<Node>, bool, bool),
@@ -57,7 +64,11 @@ pub(super) enum MatchError {
 pub(super) type Captures = Vec<Option<(usize, usize)>>;
 
 /** Parse a pattern with flags. */
-pub(super) fn compile(pattern: &[u16], flags: &str) -> Result<Program, PatternError> {
+pub(super) fn compile(
+    pattern: &[u16],
+    flags: &str,
+    buffer_boundaries: bool,
+) -> Result<Program, PatternError> {
     let mut program = Program {
         root: Node::Empty,
         groups: 0,
@@ -99,6 +110,8 @@ pub(super) fn compile(pattern: &[u16], flags: &str) -> Result<Program, PatternEr
         names: Vec::new(),
         nodes: 0,
         unicode: program.unicode,
+        ignore_case: program.ignore_case,
+        buffer_boundaries,
         depth: 0,
     };
     parser.count_groups();
@@ -122,6 +135,8 @@ struct PatternParser<'a> {
     names: Vec<(String, usize)>,
     nodes: usize,
     unicode: bool,
+    ignore_case: bool,
+    buffer_boundaries: bool,
     depth: usize,
 }
 
@@ -243,6 +258,19 @@ impl PatternParser<'_> {
             Some('$') => {
                 self.position += 1;
                 return Ok(Node::End);
+            }
+            Some('\\')
+                if self.unicode
+                    && self.buffer_boundaries
+                    && matches!(self.units.get(self.position + 1), Some(0x41 | 0x5a | 0x7a)) =>
+            {
+                let assertion = self.units[self.position + 1];
+                self.position += 2;
+                return Ok(if assertion == 0x41 {
+                    Node::BufferStart
+                } else {
+                    Node::BufferEnd(assertion == 0x5a)
+                });
             }
             Some('\\') if matches!(self.units.get(self.position + 1), Some(0x62 | 0x42)) => {
                 self.position += 2;
@@ -660,22 +688,30 @@ impl PatternParser<'_> {
         }
         Some(value)
     }
-    /** `\p{...}`: general categories approximated with Rust's character predicates. */
+    /** Property escapes validate their closing delimiter and complement sets before Unicode case closure. */
     fn property(&mut self, negated: bool) -> Result<Node, PatternError> {
         if !self.eat('{') {
             return Err(PatternError("Invalid property name".into()));
         }
         let mut name = String::new();
+        let mut closed = false;
         while let Some(c) = self.peek_char() {
             self.position += 1;
             if c == '}' {
+                closed = true;
                 break;
             }
             name.push(c);
         }
+        if !closed {
+            return Err(PatternError("Invalid property name".into()));
+        }
         let ranges = property_ranges(&name)
             .ok_or_else(|| PatternError(format!("Invalid property name {name}")))?;
-        Ok(Node::Class(ranges, negated))
+        Ok(Node::Class(
+            if negated { invert(&ranges) } else { ranges },
+            false,
+        ))
     }
     /** `[...]` */
     fn class(&mut self) -> Result<Node, PatternError> {
@@ -747,6 +783,11 @@ impl PatternParser<'_> {
         let c = self.peek_char().unwrap_or('\\');
         if let Some(Node::Class(set, negated)) = class_escape(c) {
             self.position += 1;
+            let set = if self.unicode && self.ignore_case {
+                case::closed_ranges(&set)
+            } else {
+                set
+            };
             return Ok(ClassAtom::Set(if negated { invert(&set) } else { set }));
         }
         if c == 'b' {
@@ -829,143 +870,6 @@ fn invert(set: &[(u32, u32)]) -> Vec<(u32, u32)> {
 /** The largest code point. */
 const MAX_CODE_POINT: u32 = 0x10ffff;
 
-/** Approximate Unicode property sets for common names, built from Rust predicates on the BMP. */
-fn property_ranges(name: &str) -> Option<Vec<(u32, u32)>> {
-    let name = name
-        .strip_prefix("General_Category=")
-        .or_else(|| name.strip_prefix("gc="))
-        .unwrap_or(name);
-    let name = name
-        .strip_prefix("Script=")
-        .or_else(|| name.strip_prefix("sc="))
-        .unwrap_or(name);
-    if let Some(ranges) = exact_category(name) {
-        return Some(ranges.to_vec());
-    }
-    let predicate: fn(char) -> bool = match name {
-        "L" | "Letter" | "Alphabetic" | "Alpha" => char::is_alphabetic,
-        "Lu" | "Uppercase_Letter" | "Uppercase" => char::is_uppercase,
-        "Ll" | "Lowercase_Letter" | "Lowercase" => char::is_lowercase,
-        "N" | "Number" | "Nd" | "Decimal_Number" => char::is_numeric,
-        "White_Space" | "space" => char::is_whitespace,
-        "P" | "Punctuation" => |c: char| {
-            c.is_ascii_punctuation()
-                || ('\u{2010}'..='\u{2027}').contains(&c)
-                || ('\u{3000}'..='\u{303f}').contains(&c)
-        },
-        "Emoji" | "Extended_Pictographic" | "Emoji_Presentation" => |c: char| {
-            ('\u{1f000}'..='\u{1faff}').contains(&c) || ('\u{2600}'..='\u{27bf}').contains(&c)
-        },
-        "Han" => |c: char| {
-            ('\u{4e00}'..='\u{9fff}').contains(&c) || ('\u{3400}'..='\u{4dbf}').contains(&c)
-        },
-        "Latin" => |c: char| c.is_ascii_alphabetic() || ('\u{c0}'..='\u{24f}').contains(&c),
-        "Cyrillic" => |c: char| ('\u{400}'..='\u{4ff}').contains(&c),
-        "Greek" => |c: char| ('\u{370}'..='\u{3ff}').contains(&c),
-        "Arabic" => |c: char| ('\u{600}'..='\u{6ff}').contains(&c),
-        "ASCII" => |c: char| c.is_ascii(),
-        "Any" => |_| true,
-        _ => return None,
-    };
-    let mut ranges = Vec::new();
-    let mut start: Option<u32> = None;
-    for code in 0..=PROPERTY_SCAN_END {
-        let matches = char::from_u32(code).is_some_and(predicate);
-        match (matches, start) {
-            (true, None) => start = Some(code),
-            (false, Some(low)) => {
-                ranges.push((low, code - 1));
-                start = None;
-            }
-            _ => {}
-        }
-    }
-    if let Some(low) = start {
-        ranges.push((low, PROPERTY_SCAN_END));
-    }
-    Some(ranges)
-}
-
-/** Space_Separator, exactly as the Unicode Character Database lists it (UnicodeData.txt, Zs). */
-const SPACE_SEPARATOR: &[(u32, u32)] = &[
-    (0x20, 0x20),
-    (0xa0, 0xa0),
-    (0x1680, 0x1680),
-    (0x2000, 0x200a),
-    (0x202f, 0x202f),
-    (0x205f, 0x205f),
-    (0x3000, 0x3000),
-];
-/** Line_Separator (Zl). */
-const LINE_SEPARATOR: &[(u32, u32)] = &[(0x2028, 0x2028)];
-/** Paragraph_Separator (Zp). */
-const PARAGRAPH_SEPARATOR: &[(u32, u32)] = &[(0x2029, 0x2029)];
-/** Separator (Z): Zs, Zl and Zp. */
-const SEPARATOR: &[(u32, u32)] = &[
-    (0x20, 0x20),
-    (0xa0, 0xa0),
-    (0x1680, 0x1680),
-    (0x2000, 0x200a),
-    (0x2028, 0x2029),
-    (0x202f, 0x202f),
-    (0x205f, 0x205f),
-    (0x3000, 0x3000),
-];
-/** Control (Cc): the C0 and C1 controls and DEL. */
-const CONTROL: &[(u32, u32)] = &[(0x0, 0x1f), (0x7f, 0x9f)];
-/** Mark (M): the combining-mark blocks and the marks of the common scripts. */
-// ponytail: the main mark runs only, not every scattered mark in UnicodeData.txt; generate the
-// full Mn/Mc/Me table from the UCD if a page tests marks in rarer scripts.
-const MARK: &[(u32, u32)] = &[
-    (0x300, 0x36f),
-    (0x483, 0x489),
-    (0x591, 0x5bd),
-    (0x5bf, 0x5bf),
-    (0x5c1, 0x5c2),
-    (0x5c4, 0x5c5),
-    (0x5c7, 0x5c7),
-    (0x610, 0x61a),
-    (0x64b, 0x65f),
-    (0x670, 0x670),
-    (0x6d6, 0x6dc),
-    (0x6df, 0x6e4),
-    (0x6e7, 0x6e8),
-    (0x6ea, 0x6ed),
-    (0x900, 0x903),
-    (0x93a, 0x93c),
-    (0x93e, 0x94f),
-    (0x951, 0x957),
-    (0x962, 0x963),
-    (0xe31, 0xe31),
-    (0xe34, 0xe3a),
-    (0xe47, 0xe4e),
-    (0x1ab0, 0x1aff),
-    (0x1dc0, 0x1dff),
-    (0x20d0, 0x20f0),
-    (0x302a, 0x302f),
-    (0x3099, 0x309a),
-    (0xfe00, 0xfe0f),
-    (0xfe20, 0xfe2f),
-];
-
-/** General categories small enough to list exactly, as V8's ICU tables give them. LinkedIn's
- * whitespace trimmer is `/[\t\n\u000B\f\r\u001C-\u001F\p{Zs}\p{Zl}\p{Zp}]/gu`, and the
- * SyntaxError for `Zs` stopped its app modules. */
-fn exact_category(name: &str) -> Option<&'static [(u32, u32)]> {
-    Some(match name {
-        "Zs" | "Space_Separator" => SPACE_SEPARATOR,
-        "Zl" | "Line_Separator" => LINE_SEPARATOR,
-        "Zp" | "Paragraph_Separator" => PARAGRAPH_SEPARATOR,
-        "Z" | "Separator" => SEPARATOR,
-        "Cc" | "Control" | "cntrl" => CONTROL,
-        "M" | "Mark" | "Combining_Mark" => MARK,
-        _ => return None,
-    })
-}
-
-/** Property sets are computed over the first planes, where page text lives. */
-const PROPERTY_SCAN_END: u32 = 0x2ffff;
-
 /** The matcher state for one attempt. */
 struct Matcher<'a> {
     program: &'a Program,
@@ -973,6 +877,8 @@ struct Matcher<'a> {
     captures: Captures,
     steps: usize,
     exceeded: bool,
+    /** Lookbehind evaluates atoms and alternatives from right to left. */
+    backward: bool,
 }
 
 /** A quantifier's operands, borrowed from its node for the matching recursion. */
@@ -1005,21 +911,48 @@ impl<'a> Matcher<'a> {
         }
         Some((u32::from(unit), 1))
     }
+    /** Backward atoms decode complete pairs ending at the current position rather than probing forward candidate starts. */
+    fn atom(&self, position: usize) -> Option<(u32, usize)> {
+        if !self.backward {
+            return self
+                .point(position)
+                .map(|(point, width)| (point, position + width));
+        }
+        let previous = position.checked_sub(1)?;
+        let unit = *self.input.get(previous)?;
+        if self.program.unicode
+            && (0xdc00..=0xdfff).contains(&unit)
+            && previous > 0
+            && (0xd800..=0xdbff).contains(&self.input[previous - 1])
+        {
+            let high = u32::from(self.input[previous - 1]);
+            return Some((
+                0x10000 + ((high - 0xd800) << 10) + u32::from(unit) - 0xdc00,
+                previous - 1,
+            ));
+        }
+        Some((u32::from(unit), previous))
+    }
     /** Case-folded comparison. */
     fn same(&self, a: u32, b: u32) -> bool {
-        a == b || self.program.ignore_case && fold(a) == fold(b)
+        a == b || self.program.ignore_case && case::same(a, b, self.program.unicode)
     }
     /** Whether a set contains a point. */
     fn in_set(&self, ranges: &[(u32, u32)], point: u32) -> bool {
         let contains = |p: u32| ranges.iter().any(|(low, high)| (*low..=*high).contains(&p));
         contains(point)
-            || self.program.ignore_case && (contains(fold(point)) || contains(upper(point)))
+            || self.program.ignore_case
+                && case::equivalents(point, self.program.unicode).any(contains)
     }
     /** Whether a word character sits at a position. */
     fn word_at(&self, position: usize) -> bool {
         self.input.get(position).is_some_and(|unit| {
-            WORD.iter()
-                .any(|(low, high)| (*low..=*high).contains(&u32::from(*unit)))
+            let point = u32::from(*unit);
+            let contains = |p| WORD.iter().any(|(low, high)| (*low..=*high).contains(&p));
+            contains(point)
+                || self.program.unicode
+                    && self.program.ignore_case
+                    && case::equivalents(point, true).any(contains)
         })
     }
     /** Match one node, then the continuation. */
@@ -1033,20 +966,18 @@ impl<'a> Matcher<'a> {
         }
         match node {
             Node::Empty => next(self, position),
-            Node::Char(expected) => match self.point(position) {
-                Some((point, size)) if self.same(point, *expected) => next(self, position + size),
+            Node::Char(expected) => match self.atom(position) {
+                Some((point, end)) if self.same(point, *expected) => next(self, end),
                 _ => false,
             },
-            Node::Any => match self.point(position) {
-                Some((point, size)) if self.program.dot_all || !line_terminator(point) => {
-                    next(self, position + size)
+            Node::Any => match self.atom(position) {
+                Some((point, end)) if self.program.dot_all || !line_terminator(point) => {
+                    next(self, end)
                 }
                 _ => false,
             },
-            Node::Class(ranges, negated) => match self.point(position) {
-                Some((point, size)) if self.in_set(ranges, point) != *negated => {
-                    next(self, position + size)
-                }
+            Node::Class(ranges, negated) => match self.atom(position) {
+                Some((point, end)) if self.in_set(ranges, point) != *negated => next(self, end),
                 _ => false,
             },
             Node::Start => {
@@ -1060,6 +991,12 @@ impl<'a> Matcher<'a> {
                     || self.program.multiline && line_terminator(u32::from(self.input[position])))
                     && next(self, position)
             }
+            Node::BufferStart => position == 0 && next(self, position),
+            Node::BufferEnd(optional_terminator) => {
+                (position == self.input.len()
+                    || *optional_terminator && trailing_terminator(self.input, position))
+                    && next(self, position)
+            }
             Node::Boundary(expected) => {
                 let before = position > 0 && self.word_at(position - 1);
                 let after = self.word_at(position);
@@ -1070,7 +1007,7 @@ impl<'a> Matcher<'a> {
                 let index = *index;
                 self.node(inner, position, &mut |matcher: &mut Matcher<'a>, end| {
                     let saved = matcher.captures[index];
-                    matcher.captures[index] = Some((position, end));
+                    matcher.captures[index] = Some((position.min(end), position.max(end)));
                     if next(matcher, end) {
                         return true;
                     }
@@ -1119,7 +1056,12 @@ impl<'a> Matcher<'a> {
     }
     /** Match nodes in order. */
     fn sequence(&mut self, nodes: &[Node], position: usize, next: Next<'_, 'a>) -> bool {
-        match nodes.split_first() {
+        let part = if self.backward {
+            nodes.split_last()
+        } else {
+            nodes.split_first()
+        };
+        match part {
             None => next(self, position),
             Some((first, rest)) => {
                 self.node(first, position, &mut |matcher: &mut Matcher<'a>, end| {
@@ -1183,13 +1125,10 @@ impl<'a> Matcher<'a> {
         next: Next<'_, 'a>,
     ) -> bool {
         let saved = self.captures.clone();
-        let matched = if ahead {
-            self.node(inner, position, &mut |_, _| true)
-        } else {
-            (0..=position)
-                .rev()
-                .any(|start| self.node(inner, start, &mut |_, end| end == position))
-        };
+        let direction = self.backward;
+        self.backward = !ahead;
+        let matched = self.node(inner, position, &mut |_, _| true);
+        self.backward = direction;
         if negative {
             self.captures = saved;
             return !matched && next(self, position);
@@ -1206,17 +1145,40 @@ impl<'a> Matcher<'a> {
             return next(self, position);
         };
         let length = end - start;
-        if position + length > self.input.len() {
+        let Some(target) = (if self.backward {
+            position.checked_sub(length)
+        } else {
+            Some(position)
+        }) else {
+            return false;
+        };
+        if target + length > self.input.len()
+            || self.program.unicode
+                && (inside_pair(self.input, target) || inside_pair(self.input, target + length))
+        {
             return false;
         }
-        for offset in 0..length {
-            let a = u32::from(self.input[start + offset]);
-            let b = u32::from(self.input[position + offset]);
-            if !self.same(a, b) {
+        let mut offset = 0;
+        while offset < length {
+            let Some((a, width)) = self.point(start + offset) else {
+                return false;
+            };
+            let Some((b, other_width)) = self.point(target + offset) else {
+                return false;
+            };
+            if width != other_width || offset + width > length || !self.same(a, b) {
                 return false;
             }
+            offset += width;
         }
-        next(self, position + length)
+        next(
+            self,
+            if self.backward {
+                target
+            } else {
+                target + length
+            },
+        )
     }
 }
 
@@ -1227,8 +1189,22 @@ pub(super) fn exec(
     start: usize,
 ) -> Result<Option<Captures>, MatchError> {
     let mut steps = 0;
-    let last = if program.sticky { start } else { input.len() };
+    let last = if program.sticky {
+        start
+    } else if !program.multiline && anchored(&program.root) {
+        0
+    } else {
+        input.len()
+    };
     let mut position = start;
+    if program.unicode
+        && position > 0
+        && position < input.len()
+        && (0xdc00..=0xdfff).contains(&input[position])
+        && (0xd800..=0xdbff).contains(&input[position - 1])
+    {
+        position -= 1;
+    }
     while position <= last && position <= input.len() {
         let mut matcher = Matcher {
             program,
@@ -1236,6 +1212,7 @@ pub(super) fn exec(
             captures: vec![None; program.groups + 1],
             steps,
             exceeded: false,
+            backward: false,
         };
         let mut end = None;
         let found = matcher.node(&program.root, position, &mut |_, finish| {
@@ -1268,31 +1245,30 @@ fn line_terminator(point: u32) -> bool {
     matches!(point, 0x0a | 0x0d | 0x2028 | 0x2029)
 }
 
-/** Simple case folding to lowercase. */
-fn fold(point: u32) -> u32 {
-    match char::from_u32(point) {
-        Some(c) if c.is_ascii() => c.to_ascii_lowercase() as u32,
-        Some(c) => {
-            let mut lower = c.to_lowercase();
-            match (lower.next(), lower.next()) {
-                (Some(single), None) => single as u32,
-                _ => point,
-            }
-        }
-        None => point,
+/** Anchors in groups, positive lookahead and every alternative restrict a non-multiline search to offset zero. */
+fn anchored(node: &Node) -> bool {
+    match node {
+        Node::Start | Node::BufferStart => true,
+        Node::Group(inner, _) | Node::Look(inner, true, false) => anchored(inner),
+        Node::Alt(nodes) => !nodes.is_empty() && nodes.iter().all(anchored),
+        Node::Concat(nodes) => nodes.first().is_some_and(anchored),
+        _ => false,
     }
 }
 
-/** Simple uppercase mapping. */
-fn upper(point: u32) -> u32 {
-    match char::from_u32(point) {
-        Some(c) => {
-            let mut upper = c.to_uppercase();
-            match (upper.next(), upper.next()) {
-                (Some(single), None) => single as u32,
-                _ => point,
-            }
-        }
-        None => point,
-    }
+/** A Unicode matcher never begins or ends a consumed atom between paired UTF-16 surrogates. */
+fn inside_pair(input: &[u16], position: usize) -> bool {
+    position > 0
+        && position < input.len()
+        && (0xd800..=0xdbff).contains(&input[position - 1])
+        && (0xdc00..=0xdfff).contains(&input[position])
+}
+
+/** The optional final terminator can be a single ECMAScript line terminator or a CRLF pair. */
+fn trailing_terminator(input: &[u16], position: usize) -> bool {
+    input.get(position..).is_some_and(|tail| match tail {
+        [unit] => line_terminator(u32::from(*unit)),
+        [0x0d, 0x0a] => true,
+        _ => false,
+    })
 }

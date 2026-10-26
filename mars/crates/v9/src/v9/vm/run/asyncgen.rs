@@ -75,8 +75,7 @@ impl Vm<'_> {
         if matches!(result, JsValue::Object(_)) {
             return Ok(());
         }
-        let text = self.callee_text(result);
-        Err(self.type_error(&format!("Iterator result {text} is not an object")))
+        Err(self.iterator_result_error(result))
     }
     /** The iterator and next method of the iterator record on top of the stack. */
     fn top_record(&mut self) -> Res<(JsValue, JsValue)> {
@@ -125,7 +124,7 @@ impl Vm<'_> {
     sync iterator. The AsyncFromSyncIterator holds the sync record as its own iterator state. */
     pub(in crate::v9) fn get_async_iterator(&mut self, value: &JsValue) -> Res<ObjectId> {
         let Some((iterator, next)) = self.async_iterator_parts(value)? else {
-            return Err(self.type_error("object is not async iterable"));
+            return Err(self.async_iterable_error(value));
         };
         self.iterator_record(iterator, next, realm().ids.iterator_prototype)
     }

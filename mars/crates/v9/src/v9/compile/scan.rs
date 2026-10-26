@@ -1,6 +1,6 @@
 /** Read-only syntax-tree walks the compiler uses to place bindings before emitting code. */
 use super::super::syntax::*;
-use super::super::vm::heap::FastSet;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 /** What a function body (including nested arrows) refers to. */
@@ -126,8 +126,7 @@ impl Walker {
                 self.expr(object);
                 self.stmt(body);
             }
-            StmtKind::Field(key, value) => {
-                self.key(key);
+            StmtKind::Field(_, value) => {
                 if let Some(value) = value {
                     self.expr(value);
                 }
@@ -159,6 +158,9 @@ impl Walker {
         }
         for member in &class.members {
             self.key(&member.key);
+        }
+        for key in super::class_fields::keys(class) {
+            self.expr(key);
         }
     }
     /** Computed keys are expressions. */
@@ -320,8 +322,10 @@ impl Walker {
             ExprKind::ImportMeta
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
+            | ExprKind::BigIntWide(_)
             | ExprKind::String(_)
             | ExprKind::Opaque(_)
+            | ExprKind::InvalidReference(_)
             | ExprKind::Regex(..)
             | ExprKind::Null
             | ExprKind::Bool(_) => {}
@@ -414,6 +418,8 @@ fn var_names_in(
             StmtKind::Function(func) => {
                 if !top
                     && !strict
+                    && !func.flags.generator
+                    && !func.flags.asynchronous
                     && let Some(name) = &func.name
                     && !blocked[..mark].contains(name)
                 {
@@ -557,7 +563,7 @@ pub(super) fn lexical_names(body: &[Stmt], functions_too: bool) -> Vec<(Name, Va
             stmt = inner;
         }
         match &stmt.kind {
-            StmtKind::Var(kind @ (VarKind::Let | VarKind::Const), list) => {
+            StmtKind::Var(kind, list) if *kind != VarKind::Var => {
                 for declarator in list {
                     let mut names = Vec::new();
                     bound_names(&declarator.target, &mut names);
@@ -613,8 +619,8 @@ pub(super) fn conflict(body: &[Stmt], strict: bool, top: bool, outer: &[Name]) -
     // Strict scanning leaves out Annex B block functions, which never conflict.
     var_names(body, true, true, &mut vars);
     // Hashed, as a minified bundle declares thousands of names in one scope.
-    let taken: FastSet<&Name> = functions.iter().chain(&vars).chain(outer).collect();
-    let mut seen = FastSet::default();
+    let taken: HashSet<&Name> = functions.iter().chain(&vars).chain(outer).collect();
+    let mut seen = HashSet::new();
     for (name, _) in &lexical {
         if taken.contains(name) || !seen.insert(name) {
             return Some(name.clone());
@@ -628,8 +634,8 @@ pub(super) fn conflict(body: &[Stmt], strict: bool, top: bool, outer: &[Name]) -
 
 /** The first block function that repeats a `var`, or in strict code another block function. */
 fn function_conflict(functions: &[Name], vars: &[Name], strict: bool) -> Option<Name> {
-    let vars: FastSet<&Name> = vars.iter().collect();
-    let mut seen = FastSet::default();
+    let vars: HashSet<&Name> = vars.iter().collect();
+    let mut seen = HashSet::new();
     functions
         .iter()
         .find(|name| vars.contains(name) || strict && !seen.insert(*name))
@@ -641,4 +647,14 @@ pub(super) fn stmt_var_names(stmt: &Stmt) -> Vec<Name> {
     let mut out = Vec::new();
     var_names_stmt(stmt, true, &mut Vec::new(), &mut out);
     out
+}
+
+/** Binding defaults and computed keys can themselves create closures that retain the binding environment. */
+pub(super) fn pattern_has_closure(pattern: &Pattern) -> bool {
+    let mut walker = Walker {
+        uses: Uses::default(),
+        into_arrows: false,
+    };
+    walker.pattern(pattern);
+    walker.uses.closure
 }

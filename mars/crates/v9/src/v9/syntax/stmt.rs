@@ -35,6 +35,18 @@ impl Parser {
         if self.module_item() {
             return self.module_declaration();
         }
+        if let Some(kind) = self.resource_declaration(false) {
+            if !list_item || !self.context.using_allowed {
+                return Err(self.error_at(
+                    self.pos(),
+                    "Resource declaration is not allowed in this context",
+                ));
+            }
+            self.resource_keyword(kind)?;
+            let list = self.declarations(kind, false)?;
+            self.semicolon()?;
+            return Ok(StmtKind::Var(kind, list));
+        }
         // An escaped name is never a keyword, so it takes the identifier arm.
         match if self.peek().escaped {
             ""
@@ -165,13 +177,58 @@ impl Parser {
             _ => self.expression_statement(),
         }
     }
+    /** Contextual using starts a declaration only before an identifier without intervening line breaks. */
+    fn resource_declaration(&self, for_head: bool) -> Option<VarKind> {
+        let asynchronous = self.at_name("await")
+            && matches!(&self.peek_at(1).kind, Kind::Name(n) if n == "using")
+            && !self.peek_at(1).escaped
+            && !self.peek_at(1).line_terminator_before;
+        let offset = usize::from(asynchronous) + 1;
+        if !asynchronous && !self.at_name("using") {
+            return None;
+        }
+        let token = self.peek_at(offset);
+        let Kind::Name(name) = &token.kind else {
+            return None;
+        };
+        if reserved(name, self.strict) && name != "let" {
+            return None;
+        }
+        if token.line_terminator_before
+            || for_head
+                && !asynchronous
+                && name == "of"
+                && !matches!(self.peek_at(offset + 1).kind, Kind::Symbol('='))
+        {
+            return None;
+        }
+        Some(if asynchronous {
+            VarKind::AwaitUsing
+        } else {
+            VarKind::Using
+        })
+    }
+    /** Awaited resource declarations use the enclosing async context rather than treating await as an identifier. */
+    fn resource_keyword(&mut self, kind: VarKind) -> EngineResult<()> {
+        if kind == VarKind::AwaitUsing {
+            if !self.context.asynchronous || self.context.parameters {
+                return Err(self.error_at(
+                    self.pos(),
+                    "await using is only valid in async functions and modules",
+                ));
+            }
+            self.expect_name("await")?;
+        }
+        self.expect_name("using")
+    }
     /** `let` starts a declaration only before a binding name or pattern. */
     fn let_declaration(&self) -> bool {
         match &self.peek_at(1).kind {
             Kind::Symbol('[' | '{') => true,
             Kind::Name(name) => {
-                !(self.peek_at(1).line_terminator_before
-                    && ["in", "instanceof", "of"].contains(&name.as_str()))
+                !["in", "instanceof"].contains(&name.as_str())
+                    && !(self.peek_at(1).line_terminator_before
+                        && ["in", "instanceof", "of"].contains(&name.as_str()))
             }
             _ => false,
         }
@@ -179,7 +236,9 @@ impl Parser {
     /** `{ ... }` */
     pub(super) fn block(&mut self) -> EngineResult<Vec<Stmt>> {
         self.expect("{")?;
+        let allowed = std::mem::replace(&mut self.context.using_allowed, true);
         let body = self.statement_list(false)?;
+        self.context.using_allowed = allowed;
         self.expect("}")?;
         self.check_redeclarations(&body)?;
         Ok(body)
@@ -269,6 +328,11 @@ impl Parser {
         loop {
             let pos = self.pos();
             let target = self.binding_target()?;
+            if kind.resource() && !matches!(target, Pattern::Ident(..)) {
+                return Err(
+                    self.error_at(pos, "Resource declarations require a binding identifier")
+                );
+            }
             if kind != VarKind::Var {
                 bound_names(&target, &mut names);
                 let duplicate = names
@@ -289,7 +353,7 @@ impl Parser {
                 }
                 Some(value)
             } else {
-                if !for_head && (kind == VarKind::Const || !matches!(target, Pattern::Ident(..))) {
+                if !for_head && (kind.immutable() || !matches!(target, Pattern::Ident(..))) {
                     return Err(self.error_at(
                         self.pos(),
                         "Missing initializer in destructuring or const declaration",
@@ -335,17 +399,30 @@ impl Parser {
     fn for_statement(&mut self) -> EngineResult<StmtKind> {
         self.next();
         let is_await = self.eat_name("await");
+        if is_await && !self.context.asynchronous {
+            return Err(self.error_at(
+                self.pos(),
+                "for await is only valid in async functions and modules",
+            ));
+        }
         self.expect("(")?;
         let init = if self.at(";") {
             None
         } else if self.at_name("var")
             || self.at_name("const")
             || self.at_name("let") && self.let_declaration()
+            || self.resource_declaration(true).is_some()
         {
-            let kind = match self.next().kind {
-                Kind::Name(name) if name == "var" => VarKind::Var,
-                Kind::Name(name) if name == "let" => VarKind::Let,
-                _ => VarKind::Const,
+            let resource = self.resource_declaration(true);
+            let kind = if let Some(kind) = resource {
+                self.resource_keyword(kind)?;
+                kind
+            } else {
+                match self.next().kind {
+                    Kind::Name(name) if name == "var" => VarKind::Var,
+                    Kind::Name(name) if name == "let" => VarKind::Let,
+                    _ => VarKind::Const,
+                }
             };
             let list = self.declarations(kind, true)?;
             if list.len() == 1 && (self.at_name("in") || self.at_name("of")) {
@@ -392,7 +469,7 @@ impl Parser {
             // ordinary declaration rule.
             if list.iter().any(|declarator| {
                 declarator.init.is_none()
-                    && (kind == VarKind::Const || !matches!(declarator.target, Pattern::Ident(..)))
+                    && (kind.immutable() || !matches!(declarator.target, Pattern::Ident(..)))
             }) {
                 return Err(self.error_at(
                     self.pos(),
@@ -412,11 +489,14 @@ impl Parser {
                 if matches!(value.kind, ExprKind::Assign(..)) {
                     return Err(self.error_at(value.pos, "Invalid left-hand side in for-in loop"));
                 }
-                let target = self.pattern_of(value)?;
+                let target = self.legacy_target(value)?;
                 return self.for_each(ForHead::Target(target), is_await);
             }
             Some(ForInit::Expr(value))
         };
+        if is_await {
+            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+        }
         self.expect(";")?;
         let test = if self.at(";") {
             None
@@ -441,6 +521,15 @@ impl Parser {
     /** The rest of a for-in or for-of loop after its head. */
     fn for_each(&mut self, head: ForHead, is_await: bool) -> EngineResult<StmtKind> {
         let of = self.at_name("of");
+        if is_await && !of {
+            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+        }
+        if !of && matches!(head, ForHead::Declare(kind, _) if kind.resource()) {
+            return Err(self.error_at(
+                self.pos(),
+                "Resource declarations are not allowed in for-in loops",
+            ));
+        }
         self.next();
         let right = if of {
             self.assignment(false)?
@@ -496,7 +585,7 @@ impl Parser {
         if self.labels.iter().any(|(label, _)| *label == name) {
             return Err(self.error_at(pos, &format!("Label '{name}' has already been declared")));
         }
-        let is_loop = matches!(&self.peek().kind, Kind::Name(n) if ["for", "while", "do"].contains(&n.as_str()));
+        let is_loop = self.labeled_loop();
         self.labels.push((name.clone(), is_loop));
         // A labelled function is sloppy Annex B grammar, and only where a declaration may stand.
         let body = if self.at_name("function") {
@@ -515,6 +604,18 @@ impl Parser {
         };
         self.labels.pop();
         Ok(StmtKind::Labeled(name, Box::new(body?)))
+    }
+    /** Direct chains share the loop's continue target; a block, conditional or function stops that chain. */
+    fn labeled_loop(&self) -> bool {
+        let mut offset = 0;
+        while matches!(self.peek_at(offset).kind, Kind::Name(_))
+            && matches!(self.peek_at(offset + 1).kind, Kind::Symbol(':'))
+        {
+            offset += 2;
+        }
+        let token = self.peek_at(offset);
+        !token.escaped
+            && matches!(&token.kind, Kind::Name(name) if matches!(name.as_str(), "for" | "while" | "do"))
     }
     /** `try {} catch (e) {} finally {}` */
     fn try_statement(&mut self) -> EngineResult<StmtKind> {
@@ -551,6 +652,7 @@ impl Parser {
         self.expect("{")?;
         let saved = self.context;
         self.context.breakable = true;
+        self.context.using_allowed = false;
         let mut cases = Vec::new();
         let mut seen_default = false;
         while !self.eat("}") {

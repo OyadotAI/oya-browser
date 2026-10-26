@@ -1,4 +1,3 @@
-use super::bigint::parse_bigint;
 /** Type conversions and operators: ToPrimitive, ToNumber, ToString, equality and comparison. */
 use super::data::Class;
 use super::heap::{Key, Object};
@@ -62,7 +61,7 @@ impl Vm<'_> {
             JsValue::Symbol(_) => {
                 return Err(self.type_error("Cannot convert a Symbol value to a number"));
             }
-            JsValue::BigInt(_) => {
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => {
                 return Err(self.type_error("Cannot convert a BigInt value to a number"));
             }
             JsValue::Object(_) => {
@@ -80,6 +79,10 @@ impl Vm<'_> {
             JsValue::Boolean(false) => JsString::from_utf8("false")?,
             JsValue::Null => JsString::from_utf8("null")?,
             JsValue::BigInt(value) => JsString::from_utf8(&value.to_string())?,
+            JsValue::BigIntWide(value) => {
+                self.charge(value.format_work(10))?;
+                JsString::from_utf8(&value.to_string())?
+            }
             JsValue::Undefined | JsValue::Hole => JsString::from_utf8("undefined")?,
             JsValue::Symbol(_) => {
                 return Err(self.type_error("Cannot convert a Symbol value to a string"));
@@ -124,6 +127,7 @@ impl Vm<'_> {
             JsValue::String(text) => (Class::String(text.clone()), ids.string_prototype),
             JsValue::Symbol(id) => (Class::Symbol(*id), ids.symbol_prototype),
             JsValue::BigInt(value) => (Class::BigInt(*value), ids.bigint_prototype),
+            JsValue::BigIntWide(value) => (Class::BigIntWide(value.clone()), ids.bigint_prototype),
         };
         self.alloc(Object::new(class, Some(proto)))
     }
@@ -154,7 +158,7 @@ impl Vm<'_> {
             JsValue::Number(_) => "number",
             JsValue::String(_) => "string",
             JsValue::Symbol(_) => "symbol",
-            JsValue::BigInt(_) => "bigint",
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => "bigint",
             JsValue::Object(id) if crate::v9::value::is_html_dda(*id) => "undefined",
             JsValue::Object(_) => {
                 if self.is_callable(value) {
@@ -178,7 +182,18 @@ impl Vm<'_> {
                 crate::v9::value::bigint_equals_number(*big, *number)
             }
             (BigInt(big), String(text)) | (String(text), BigInt(big)) => {
-                parse_bigint(&text.lossy()) == Some(*big)
+                crate::v9::value::BigInteger::parse(&text.lossy())
+                    .ok()
+                    .and_then(|value| value.to_i128())
+                    == Some(*big)
+            }
+            (BigIntWide(big), String(text)) | (String(text), BigIntWide(big)) => {
+                crate::v9::value::BigInteger::parse(&text.lossy())
+                    .ok()
+                    .is_some_and(|value| value == *big)
+            }
+            (BigIntWide(big), Number(number)) | (Number(number), BigIntWide(big)) => {
+                crate::v9::value::BigInteger::from_f64(*number).is_some_and(|value| value == *big)
             }
             (Number(_), String(_)) | (String(_), Number(_)) => {
                 let left = self.to_number(left)?;
@@ -224,7 +239,7 @@ impl Vm<'_> {
         if let (JsValue::String(left), JsValue::String(right)) = (&left, &right) {
             return Ok(Some(left.as_units() < right.as_units()));
         }
-        if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
+        if left.is_bigint() || right.is_bigint() {
             return self.bigint_less_than(&left, &right);
         }
         let left = self.to_number(&left)?;
@@ -249,7 +264,7 @@ impl Vm<'_> {
             let right = self.to_string(&right)?;
             return Ok(JsValue::String(left.concat(&right)?));
         }
-        if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
+        if left.is_bigint() || right.is_bigint() {
             return self.bigint_binary(super::super::compile::Op::Add, &left, &right);
         }
         Ok(JsValue::Number(
@@ -270,27 +285,6 @@ impl Vm<'_> {
             return Err(self.type_error("Right-hand side of 'instanceof' is not callable"));
         }
         self.ordinary_has_instance(constructor, value)
-    }
-    /** OrdinaryHasInstance. */
-    pub fn ordinary_has_instance(&mut self, constructor: &JsValue, value: &JsValue) -> Res<bool> {
-        if let Some(target) = self.bound_target(constructor) {
-            return self.instance_of(value, &JsValue::Object(target));
-        }
-        let &JsValue::Object(mut id) = value else {
-            return Ok(false);
-        };
-        let prototype = self.get(constructor, &Key::from("prototype"))?;
-        let JsValue::Object(prototype) = prototype else {
-            return Err(self.type_error("Function has non-object prototype in instanceof check"));
-        };
-        for _ in 0..super::property::CHAIN_STEPS {
-            match self.proto_of(id) {
-                Some(proto) if proto == prototype => return Ok(true),
-                Some(proto) => id = proto,
-                None => return Ok(false),
-            }
-        }
-        Ok(false)
     }
 }
 

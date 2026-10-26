@@ -8,6 +8,10 @@ use crate::v9::vm::{Call, Res, Vm};
 /** Every console method; the registered name picks the level. */
 pub(in crate::v9) fn console(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 {
+        return crate::v9::builtins::conformance_console(vm, call, name);
+    }
     let level = match name {
         "error" | "assert" => "error",
         "warn" => "warn",
@@ -48,6 +52,7 @@ pub(in crate::v9) fn inspect(vm: &mut Vm, value: &JsValue, depth: usize) -> Stri
         JsValue::String(text) => format!("'{}'", text.lossy()),
         JsValue::Number(number) => number_to_string(*number),
         JsValue::BigInt(value) => format!("{value}n"),
+        JsValue::BigIntWide(value) => format!("{}n", value.diagnostic()),
         JsValue::Boolean(flag) => flag.to_string(),
         JsValue::Null => "null".into(),
         JsValue::Undefined | JsValue::Hole => "undefined".into(),

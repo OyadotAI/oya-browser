@@ -7,13 +7,18 @@ use super::super::value::{JsString, JsValue, ObjectId};
 use super::heap::{FastMap, HIDDEN_ATTRS, INTRINSIC_BASE, Key, NATIVE_BASE};
 use super::{Call, Res, Vm};
 use std::sync::OnceLock;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) mod banks;
 
 /** A builtin function body. */
 pub(in crate::v9) type NativeFn = fn(&mut Vm, Call) -> Res<JsValue>;
 
 /** One builtin function. */
+#[derive(Clone)]
 pub(in crate::v9) struct NativeDef {
     pub name: &'static str,
+    /** Display metadata is separate from the stable native dispatch key. */
+    pub display_name: Option<String>,
     pub length: u32,
     pub function: NativeFn,
     /** Callable with `new`. */
@@ -61,7 +66,11 @@ pub(in crate::v9) mod symbol {
     pub const SPLIT: u32 = 11;
     pub const MATCH_ALL: u32 = 12;
     /** Count of well-known symbols. */
-    pub const WELL_KNOWN: u32 = 13;
+    /** Resource cleanup method identity, shared across intrinsic banks. */
+    pub const DISPOSE: u32 = 13;
+    /** Asynchronous cleanup method identity. */
+    pub const ASYNC_DISPOSE: u32 = 14;
+    pub const WELL_KNOWN: u32 = 15;
     /** Their descriptions, in identity order. */
     pub const NAMES: [&str; WELL_KNOWN as usize] = [
         "Symbol.iterator",
@@ -77,6 +86,8 @@ pub(in crate::v9) mod symbol {
         "Symbol.search",
         "Symbol.split",
         "Symbol.matchAll",
+        "Symbol.dispose",
+        "Symbol.asyncDispose",
     ];
 }
 
@@ -86,12 +97,18 @@ pub(in crate::v9) struct Ids {
     pub object_prototype: ObjectId,
     pub function_prototype: ObjectId,
     pub array_prototype: ObjectId,
+    /** Canonical Array constructor for cross-realm ArraySpeciesCreate, immune to property edits. */
+    pub array: ObjectId,
     pub string_prototype: ObjectId,
     pub number_prototype: ObjectId,
     pub boolean_prototype: ObjectId,
     pub symbol_prototype: ObjectId,
     pub bigint_prototype: ObjectId,
     pub error_prototype: ObjectId,
+    /** Canonical Error constructor, unaffected by script mutation of prototype.constructor. */
+    pub error: ObjectId,
+    /** Structured V8 CallSite instances share their creation context's native prototype. */
+    pub call_site_prototype: ObjectId,
     pub type_error_prototype: ObjectId,
     pub range_error_prototype: ObjectId,
     pub reference_error_prototype: ObjectId,
@@ -149,6 +166,9 @@ pub(in crate::v9) struct Ids {
     pub location: ObjectId,
     pub fields_dummy: ObjectId,
     pub array_buffer_prototype: ObjectId,
+    /** SAB has its own brand, prototype and constructor in each intrinsic bank. */
+    pub shared_array_buffer_prototype: ObjectId,
+    pub shared_array_buffer: ObjectId,
     pub abort_signal_prototype: ObjectId,
     pub idle_deadline_prototype: ObjectId,
     pub range_prototype: ObjectId,
@@ -157,7 +177,7 @@ pub(in crate::v9) struct Ids {
     pub request_prototype: ObjectId,
     pub selection_prototype: ObjectId,
     /** Each typed array kind's prototype, in `ElementKind` order (DataView last). */
-    pub view_prototypes: [ObjectId; 12],
+    pub view_prototypes: [ObjectId; 13],
 }
 
 /** Every intrinsic, built once. */
@@ -165,26 +185,77 @@ pub(in crate::v9) struct Realm {
     pub objects: Vec<IntrinsicDef>,
     pub natives: Vec<NativeDef>,
     pub ids: Ids,
+    /** A virtual identity bank, zero for the production intrinsic realm. */
+    pub bank: u32,
+    /** The language globals are installed before browser interfaces and remain ordinary shell properties. */
+    #[cfg(feature = "conformance")]
+    pub shell_globals: Vec<(&'static str, JsValue)>,
 }
 
 impl Realm {
+    /** A local native dispatcher has a distinct observable identity in every context. */
+    pub fn native_identity(&self, index: u32) -> ObjectId {
+        NATIVE_BASE + self.bank * bank_stride() + index
+    }
     /** The intrinsic object with this identity. */
     pub fn object(&self, id: ObjectId) -> Option<&IntrinsicDef> {
-        id.checked_sub(INTRINSIC_BASE)
+        id.checked_sub(INTRINSIC_BASE + self.bank * bank_stride())
             .filter(|_| id < NATIVE_BASE)
             .and_then(|index| self.objects.get(index as usize))
     }
     /** The native function with this identity. */
     pub fn native(&self, id: ObjectId) -> Option<&NativeDef> {
-        id.checked_sub(NATIVE_BASE)
+        id.checked_sub(NATIVE_BASE + self.bank * bank_stride())
             .and_then(|index| self.natives.get(index as usize))
     }
 }
 
 /** The process-wide realm. */
 pub(in crate::v9) fn realm() -> &'static Realm {
+    #[cfg(feature = "conformance")]
+    {
+        return banks::bank(banks::current());
+    }
+    #[cfg(not(feature = "conformance"))]
+    root_realm()
+}
+/** The root definitions are the immutable template for independently identified contexts. */
+fn root_realm() -> &'static Realm {
     static REALM: OnceLock<Realm> = OnceLock::new();
     REALM.get_or_init(build)
+}
+
+/** Production builds retain their original single-bank identity space. */
+fn bank_stride() -> u32 {
+    #[cfg(feature = "conformance")]
+    {
+        return banks::BANK_STRIDE;
+    }
+    #[cfg(not(feature = "conformance"))]
+    0
+}
+/** Resolve an intrinsic in its owning context rather than the currently executing one. */
+pub(in crate::v9) fn realm_for(id: ObjectId) -> &'static Realm {
+    #[cfg(feature = "conformance")]
+    {
+        return banks::bank(banks::owner(id));
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = id;
+        realm()
+    }
+}
+/** The local dispatcher index is stable across banks. */
+pub(in crate::v9) fn native_index(id: ObjectId) -> u32 {
+    #[cfg(feature = "conformance")]
+    {
+        return banks::native_index(id);
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        id - NATIVE_BASE
+    }
 }
 
 /** Builds the realm with a small fluent API. */
@@ -211,6 +282,7 @@ impl Builder {
     pub fn function(&mut self, name: &'static str, length: u32, function: NativeFn) -> ObjectId {
         self.natives.push(NativeDef {
             name,
+            display_name: None,
             length,
             function,
             constructor: false,
@@ -234,6 +306,7 @@ impl Builder {
         let id = self.object(Some(proto));
         self.natives.push(NativeDef {
             name,
+            display_name: None,
             length,
             function,
             constructor: true,
@@ -264,6 +337,17 @@ impl Builder {
         }
         def.index.insert(key.clone(), def.props.len());
         def.props.push((key, value, attrs));
+    }
+    /** Optional intrinsic properties can be absent without exposing a placeholder through reflection. */
+    pub fn remove(&mut self, target: ObjectId, name: &str) {
+        let object = self.def(target);
+        object.props.retain(|(key, ..)| *key != Key::from(name));
+        object.index = object
+            .props
+            .iter()
+            .enumerate()
+            .map(|(index, (key, ..))| (key.clone(), index))
+            .collect();
     }
     /** A data property. */
     pub fn value(&mut self, target: ObjectId, name: &str, value: JsValue, attrs: u8) {
@@ -328,14 +412,27 @@ impl Builder {
         getter: Option<NativeFn>,
         setter: Option<NativeFn>,
     ) {
-        let get = getter.map(|function| self.function(name, 0, function));
-        let set = setter.map(|function| self.function(name, 1, function));
+        let get = getter.map(|function| self.accessor_function(name, 0, "get", function));
+        let set = setter.map(|function| self.accessor_function(name, 1, "set", function));
         self.put(
             target,
             Key::from(name),
             Static::Accessor(get, set),
             super::heap::CONFIGURABLE,
         );
+    }
+    /** Display labels retain the accessor prefix without changing existing dispatch names or leaking static strings. */
+    fn accessor_function(
+        &mut self,
+        name: &'static str,
+        length: u32,
+        prefix: &str,
+        function: NativeFn,
+    ) -> ObjectId {
+        let id = self.function(name, length, function);
+        self.natives.last_mut().expect("new native").display_name =
+            Some(format!("{prefix} {name}"));
+        id
     }
     /** Expose a value as a global binding. */
     pub fn global(&mut self, name: &'static str, value: ObjectId) {
@@ -361,11 +458,16 @@ fn build() -> Realm {
         globals: Vec::new(),
     };
     super::super::builtins::install(&mut builder);
+    #[cfg(feature = "conformance")]
+    let shell_globals = builder.globals.clone();
     super::super::platform::install(&mut builder);
     super::super::modules::install(&mut builder);
     Realm {
         objects: builder.objects,
         natives: builder.natives,
         ids: builder.ids,
+        bank: 0,
+        #[cfg(feature = "conformance")]
+        shell_globals,
     }
 }

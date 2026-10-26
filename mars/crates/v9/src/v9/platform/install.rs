@@ -554,6 +554,9 @@ fn event_types(b: &mut Builder) {
         "TransitionEvent",
     ] {
         let sub = b.object(Some(proto));
+        if name == "KeyboardEvent" {
+            events::keyboard_prototype(sub);
+        }
         if name == "CustomEvent" {
             b.ids.custom_event_prototype = sub;
             // Only CustomEvent reads `detail`; a plain Event takes it as an own property, as
@@ -913,6 +916,13 @@ fn singletons(b: &mut Builder) {
     );
     b.global("console", console);
     let performance = b.object(Some(b.ids.event_target_prototype));
+    #[cfg(feature = "conformance")]
+    b.method(
+        performance,
+        "measureMemory",
+        0,
+        crate::v9::builtins::measure_memory,
+    );
     methods(
         b,
         performance,
@@ -999,7 +1009,12 @@ fn global_object(b: &mut Builder) {
     ] {
         b.accessor(proto, name, Some(window::window_get), Some(window::replace));
     }
-    b.accessor(proto, "name", Some(window::window_get), Some(noop));
+    b.accessor(
+        proto,
+        "name",
+        Some(window::window_get),
+        Some(window::set_name),
+    );
     for (name, value) in [
         ("NaN", JsValue::Number(f64::NAN)),
         ("Infinity", JsValue::Number(f64::INFINITY)),
@@ -1149,6 +1164,7 @@ fn global_object(b: &mut Builder) {
             crate::constants::ANIMATION_FRAME_MS * IDLE_FRAMES,
         ))
     });
+    super::animations::install(b);
     super::channel::install(b);
     super::dom_parser::install(b);
     super::frames::install(b);

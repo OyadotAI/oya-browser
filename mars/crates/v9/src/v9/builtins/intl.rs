@@ -14,6 +14,7 @@ use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
 use std::collections::BTreeMap;
 
+mod date_receiver;
 mod decimal;
 mod display_names;
 mod locale;
@@ -131,7 +132,16 @@ pub(super) fn install(b: &mut Builder) {
             "compare",
             "segment",
         ] {
-            b.method(proto, name, 1, method);
+            b.method(
+                proto,
+                name,
+                1,
+                if kind == "DateTimeFormat" {
+                    date_receiver::method
+                } else {
+                    method
+                },
+            );
         }
         to_string_tag(
             b,
@@ -759,7 +769,11 @@ pub(in crate::v9) fn format_date(vm: &Vm, time: f64, options: &BTreeMap<String, 
     let utc = options
         .get("timeZone")
         .is_some_and(|zone| zone.eq_ignore_ascii_case("UTC"));
-    let p = parts(if utc { time } else { time + local_offset(vm) });
+    let p = parts(if utc {
+        time
+    } else {
+        time + local_offset(vm, time)
+    });
     let get = |name: &str| options.get(name).map(String::as_str);
     let date_style = get("dateStyle");
     let time_style = get("timeStyle");

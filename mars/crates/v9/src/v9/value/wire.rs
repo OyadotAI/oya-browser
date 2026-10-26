@@ -40,6 +40,10 @@ impl Serialize for JsValue {
             Self::Object(id) => single(serializer, "o", id),
             Self::Symbol(id) => single(serializer, "y", id),
             Self::BigInt(value) => single(serializer, "b", &value.to_string()),
+            Self::BigIntWide(value) => match value.to_i128() {
+                Some(inline) => single(serializer, "b", &inline.to_string()),
+                None => single(serializer, "B", value),
+            },
             Self::Hole => single(serializer, "h", &0u8),
         }
     }
@@ -128,6 +132,13 @@ impl<'de> Visitor<'de> for ValueVisitor {
                     .parse()
                     .map_err(|_| A::Error::custom("invalid bigint"))?,
             ),
+            "B" => {
+                let value = map.next_value::<super::BigInteger>()?;
+                if value.to_i128().is_some() {
+                    return Err(A::Error::custom("wide BigInt must not fit inline"));
+                }
+                JsValue::BigIntWide(value)
+            }
             "h" => {
                 map.next_value::<u8>()?;
                 JsValue::Hole

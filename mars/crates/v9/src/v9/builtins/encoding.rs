@@ -73,14 +73,8 @@ fn encode(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn encode_into(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = vm.to_string(&call.arg(0))?.lossy();
     let target = call.arg(1);
-    let room = super::typed::fill_uint8(vm, &target, &[])
-        .map(|_| vm.length_of(&target))
-        .transpose()?
-        .ok_or_else(|| {
-            vm.type_error(
-                "Failed to execute 'encodeInto' on 'TextEncoder': parameter 2 is not a Uint8Array.",
-            )
-        })?;
+    super::typed::fill_uint8(vm, &target, &[])?;
+    let room = vm.length_of(&target)?;
     let (mut read, mut written) = (0usize, 0usize);
     for character in text.chars() {
         if written + character.len_utf8() > room {
@@ -89,7 +83,7 @@ fn encode_into(vm: &mut Vm, call: Call) -> Res<JsValue> {
         written += character.len_utf8();
         read += character.len_utf16();
     }
-    super::typed::fill_uint8(vm, &target, &text.as_bytes()[..written]);
+    super::typed::fill_uint8(vm, &target, &text.as_bytes()[..written])?;
     let result = vm.new_object()?;
     vm.put(result, "read", JsValue::Number(read as f64))?;
     vm.put(result, "written", JsValue::Number(written as f64))?;

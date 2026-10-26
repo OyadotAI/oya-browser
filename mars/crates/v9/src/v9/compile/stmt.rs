@@ -26,10 +26,10 @@ impl Compiler {
         for (name, kind, pos) in lexical_declarations(body) {
             self.at(pos);
             let index = self.name(&name)?;
-            self.emit(Op::DeclareLexical(index, kind == VarKind::Const));
+            self.emit(Op::DeclareLexical(index, kind.immutable()));
             self.declare(
                 &name,
-                if kind == VarKind::Const {
+                if kind.immutable() {
                     Declared::Const
                 } else {
                     Declared::Let
@@ -67,6 +67,13 @@ impl Compiler {
     }
     /** Statements in order. */
     pub(super) fn statements(&mut self, body: &[Stmt]) -> EngineResult<()> {
+        if let Some(asynchronous) = super::resources::resource_kind(body) {
+            return self.resource_scope(asynchronous, |this| this.statements_plain(body));
+        }
+        self.statements_plain(body)
+    }
+    /** Lower a list inside an already installed resource region, if it has any resources. */
+    fn statements_plain(&mut self, body: &[Stmt]) -> EngineResult<()> {
         for stmt in body {
             self.stmt(stmt)?;
         }
@@ -102,6 +109,8 @@ impl Compiler {
             StmtKind::Function(func) => {
                 // Hoisted; sloppy block functions also update the function-level var (Annex B).
                 if !self.f().strict
+                    && !func.flags.generator
+                    && !func.flags.asynchronous
                     && let Some(name) = &func.name
                     && self.scopes.last().is_some_and(|scope| !scope.boundary)
                     && !self.f().annex_skip.contains(name)
@@ -137,14 +146,31 @@ impl Compiler {
                 test,
                 update,
                 body,
-            } => self.for_loop(
-                stmt,
-                init.as_ref(),
-                test.as_ref(),
-                update.as_ref(),
-                body,
-                labels,
-            )?,
+            } => {
+                if let Some(ForInit::Declare(kind, _)) = init
+                    && kind.resource()
+                {
+                    self.resource_scope(*kind == VarKind::AwaitUsing, |this| {
+                        this.for_loop(
+                            stmt,
+                            init.as_ref(),
+                            test.as_ref(),
+                            update.as_ref(),
+                            body,
+                            labels,
+                        )
+                    })?;
+                } else {
+                    self.for_loop(
+                        stmt,
+                        init.as_ref(),
+                        test.as_ref(),
+                        update.as_ref(),
+                        body,
+                        labels,
+                    )?;
+                }
+            }
             StmtKind::ForIn(head, right, body) => {
                 self.for_each(stmt, head, right, body, Each::In, labels)?
             }
@@ -284,7 +310,7 @@ impl Compiler {
             None
         };
         for (name, kind) in lexical {
-            let declared = if kind == VarKind::Const {
+            let declared = if kind.immutable() {
                 Declared::Const
             } else {
                 Declared::Let
@@ -297,6 +323,9 @@ impl Compiler {
         }
         for func in scan::function_declarations(body) {
             let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
             self.closure(&func, false)?;
             self.initialize(&name, func.pos)?;
             self.emit(Op::Pop);
@@ -322,6 +351,7 @@ impl Compiler {
             match &declarator.init {
                 Some(init) => {
                     self.expr(init)?;
+                    self.resource_add(kind);
                     self.bind_pattern(&declarator.target, kind != VarKind::Var)?;
                     self.emit(Op::Pop);
                 }
@@ -426,9 +456,10 @@ impl Compiler {
         labels: Vec<Name>,
     ) -> EngineResult<()> {
         let lexical = match init {
-            Some(ForInit::Declare(kind @ (VarKind::Let | VarKind::Const), list)) => {
-                Some((*kind, list))
-            }
+            Some(ForInit::Declare(
+                kind @ (VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing),
+                list,
+            )) => Some((*kind, list)),
             _ => None,
         };
         let mut scope = None;
@@ -451,7 +482,7 @@ impl Compiler {
                 let mut names = Vec::new();
                 scan::bound_names(&declarator.target, &mut names);
                 for name in names {
-                    let declared = if kind == VarKind::Const {
+                    let declared = if kind.immutable() {
                         Declared::Const
                     } else {
                         Declared::Let
@@ -522,7 +553,8 @@ impl Compiler {
         let of = kind != Each::In;
         let mark = self.f().registers;
         let iterator = self.temp()?;
-        self.expr(right)?;
+        let iteration_value = self.temp()?;
+        self.iteration_rhs(head, right, scan::stmt_has_closure(stmt))?;
         self.emit(match kind {
             Each::In => Op::ForIn,
             Each::Of => Op::GetIterator,
@@ -543,10 +575,22 @@ impl Compiler {
                 self.emit(Op::AsyncIterValue(0))
             }
         };
+        self.emit(Op::SetReg(iteration_value));
+        self.emit(Op::Pop);
         // Each iteration gets fresh lexical bindings.
-        let lexical = matches!(head, ForHead::Declare(VarKind::Let | VarKind::Const, _));
+        let lexical = matches!(
+            head,
+            ForHead::Declare(
+                VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing,
+                _
+            )
+        );
         let mut scope = None;
-        if let ForHead::Declare(kind @ (VarKind::Let | VarKind::Const), pattern) = head {
+        if let ForHead::Declare(
+            kind @ (VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing),
+            pattern,
+        ) = head
+        {
             let env = scan::stmt_has_closure(stmt);
             let inner = self.f().registers;
             self.push_scope(env, false);
@@ -558,23 +602,46 @@ impl Compiler {
             scan::bound_names(pattern, &mut names);
             head_conflict(stmt, &names, body)?;
             for name in names {
-                self.declare(
+                let place = self.declare(
                     &name,
-                    if *kind == VarKind::Const {
+                    if kind.immutable() {
                         Declared::Const
                     } else {
                         Declared::Let
                     },
                 )?;
+                self.emit(Op::Hole);
+                self.set_place(place, 0);
+                self.emit(Op::Pop);
             }
             scope = Some((inner, env, push));
         }
-        match head {
-            ForHead::Declare(_, pattern) => self.bind_pattern(pattern, lexical)?,
-            ForHead::Target(pattern) => self.assign_pattern(pattern)?,
+        let iteration = |this: &mut Self| -> EngineResult<()> {
+            this.emit(Op::GetReg(iteration_value));
+            match head {
+                ForHead::Declare(kind, pattern) => {
+                    this.resource_add(*kind);
+                    this.bind_pattern(pattern, lexical)?;
+                }
+                ForHead::Target(pattern) => this.assign_pattern(pattern)?,
+            }
+            this.emit(Op::Pop);
+            this.stmt(body)
+        };
+        let cleanup = |this: &mut Self| -> EngineResult<()> {
+            if let ForHead::Declare(kind, _) = head
+                && kind.resource()
+            {
+                this.resource_scope(*kind == VarKind::AwaitUsing, iteration)
+            } else {
+                iteration(this)
+            }
+        };
+        if of {
+            self.iterator_scope(iterator, start as u32, kind == Each::AwaitOf, cleanup)?;
+        } else {
+            cleanup(self)?;
         }
-        self.emit(Op::Pop);
-        self.stmt(body)?;
         if let Some((inner, env, push)) = scope {
             let block = self.scopes.pop().expect("loop scope");
             if env {
@@ -587,28 +654,8 @@ impl Compiler {
             self.release(inner);
         }
         self.emit(Op::Jump(start as u32));
-        // Breaks close the iterator; exhaustion has already consumed it.
-        let target = self.f().targets.pop().expect("loop target");
-        for index in target.continues {
-            self.patch_to(index, start as u32);
-        }
-        let breaks = target.breaks;
-        let done = self.emit(Op::Jump(0));
-        for index in breaks {
-            self.patch(index);
-        }
-        if kind == Each::AwaitOf {
-            // AsyncIteratorClose: await what return() gives back; it must be an object.
-            self.emit(Op::GetReg(iterator));
-            let skip = self.emit(Op::AsyncIterClose(0));
-            self.emit(Op::Await);
-            self.emit(Op::AsyncCloseCheck);
-            self.patch(skip);
-        } else if of {
-            self.emit(Op::GetReg(iterator));
-            self.emit(Op::IterClose);
-        }
-        self.patch(done);
+        // Each abrupt iteration closes before leaving; exhaustion and local continue bypass closure.
+        self.pop_target(start as u32);
         self.patch(exit);
         self.release(mark);
         Ok(())
@@ -676,7 +723,7 @@ impl Compiler {
             usize::MAX
         };
         for (name, kind) in lexical {
-            let declared = if kind == VarKind::Const {
+            let declared = if kind.immutable() {
                 Declared::Const
             } else {
                 Declared::Let
@@ -689,6 +736,9 @@ impl Compiler {
         }
         for func in functions {
             let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
             self.closure(&func, false)?;
             self.initialize(&name, func.pos)?;
             self.emit(Op::Pop);
@@ -777,7 +827,8 @@ impl Compiler {
         };
         let mut names = Vec::new();
         scan::bound_names(param, &mut names);
-        let env = scan::has_closure(body);
+        super::catch_bindings::validate(param, &names, body)?;
+        let env = scan::has_closure(body) || scan::pattern_has_closure(param);
         let mark = self.f().registers;
         self.push_scope(env, false);
         let push = env.then(|| {
@@ -790,7 +841,10 @@ impl Compiler {
             Declared::Let
         };
         for name in &names {
-            self.declare(name, declared)?;
+            let place = self.declare(name, declared)?;
+            self.emit(Op::Hole);
+            self.set_place(place, 0);
+            self.emit(Op::Pop);
         }
         self.bind_pattern(param, true)?;
         self.emit(Op::Pop);
@@ -807,7 +861,10 @@ impl Compiler {
 }
 
 /** Loops take their labels directly so `continue label` reaches them. */
-fn is_loop(stmt: &Stmt) -> bool {
+fn is_loop(mut stmt: &Stmt) -> bool {
+    while let StmtKind::Labeled(_, body) = &stmt.kind {
+        stmt = body;
+    }
     matches!(
         stmt.kind,
         StmtKind::For { .. }

@@ -1,5 +1,9 @@
 /** V8 scanner-guided bounded lexical rules; upstream mapping and notices live beside this crate. */
+mod identifier;
+mod legacy;
 mod number;
+mod regexp;
+mod source_url;
 use super::{
     errors, literals,
     operator::{AssignmentOperator, Operator, UpdateOperator},
@@ -10,19 +14,25 @@ use crate::{
     constants::{SCRIPT_BYTES, TOKENS},
     protocol::{EngineError, EngineResult, SourceLocation},
 };
+use identifier::{identifier_continue, identifier_start};
 use number::number;
+pub(in crate::v9) use source_url::source_url;
 
 /** Tokens retain locations independently of the value or identifier they carry. */
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Token {
     pub kind: Kind,
     pub location: SourceLocation,
+    /** Exclusive byte end keeps comments and exact function source observable. */
+    pub end: usize,
     /// Decoded equality cannot make an escaped string a strict-mode directive.
     pub exact_strict: bool,
     /** Trivia before this token, rather than lines inside its predecessor, controls restricted grammar. */
     pub line_terminator_before: bool,
     /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
     pub escaped: bool,
+    /// Annex B numeric spellings and string escapes are legal only outside strict code.
+    pub legacy: bool,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
@@ -43,6 +53,8 @@ pub(super) enum Kind {
     Opaque(&'static str),
     /** A BigInt literal within V9's 128-bit bound. */
     BigInt(i128),
+    /** Wide literal digits stay exact for property names; runtime values retain their bound. */
+    BigIntWide(String),
     /** Operators that V9 parses for syntax but does not evaluate, such as `**` or `>>>`. */
     Punct(&'static str),
     /** `#name` class member names. */
@@ -53,6 +65,8 @@ pub(super) enum Kind {
         cooked: Option<JsString>,
         /** The chunk's source text, for String.raw and tag functions. */
         raw: JsString,
+        /** Invalid escapes are early errors only when no tag receives this chunk. */
+        invalid: bool,
         head: bool,
         tail: bool,
     },
@@ -94,9 +108,11 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
             tokens.push(Token {
                 kind: Kind::End,
                 location: source.location(),
+                end: source.location().byte_offset,
                 exact_strict: false,
                 line_terminator_before,
                 escaped: false,
+                legacy: false,
             });
             break;
         }
@@ -118,12 +134,15 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         })?;
         let consumed = text.len() - source.rest().len();
         let escaped = matches!(kind, Kind::Name(_)) && text[..consumed].contains('\\');
+        let legacy = legacy::literal(&text[..consumed], &kind);
         tokens.push(Token {
             kind,
             location,
+            end: source.location().byte_offset,
             exact_strict,
             line_terminator_before,
             escaped,
+            legacy,
         });
     }
     Ok(tokens)
@@ -142,7 +161,7 @@ fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> En
             braces.pop();
         }
         let before = source.rest();
-        let (cooked, tail) = literals::template(source, start)?;
+        let (cooked, tail, invalid) = literals::template(source, start)?;
         let consumed = &before[..before.len() - source.rest().len()];
         let text = consumed
             .strip_suffix(if tail { "`" } else { "${" })
@@ -155,6 +174,7 @@ fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> En
         return Ok(Kind::Template {
             cooked,
             raw,
+            invalid,
             head,
             tail,
         });
@@ -206,6 +226,7 @@ fn regex_allowed(previous: Option<&Kind>) -> bool {
         Some(
             Kind::Number(_)
             | Kind::BigInt(_)
+            | Kind::BigIntWide(_)
             | Kind::String(_)
             | Kind::Opaque(_)
             | Kind::Private(_)
@@ -361,12 +382,24 @@ fn identifier(source: &mut Source<'_>, start: SourceLocation) -> EngineResult<St
                     return Err(errors::syntax(start, "invalid identifier escape"));
                 }
                 let value = literals::unicode(source, start)?;
-                name.push(
-                    char::from_u32(value)
-                        .ok_or_else(|| errors::syntax(start, "invalid identifier escape"))?,
-                );
+                let character = char::from_u32(value)
+                    .ok_or_else(|| errors::syntax(start, "invalid identifier escape"))?;
+                if !(if name.is_empty() {
+                    identifier_start(character)
+                } else {
+                    identifier_continue(character)
+                }) {
+                    return Err(errors::syntax(start, "invalid identifier escape"));
+                }
+                name.push(character);
             }
-            Some(c) if identifier_start(c) || c.is_ascii_digit() => {
+            Some(c)
+                if if name.is_empty() {
+                    identifier_start(c)
+                } else {
+                    identifier_continue(c)
+                } =>
+            {
                 source.next();
                 name.push(c);
             }
@@ -399,14 +432,7 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
             Some(']') => class = false,
             Some('/') if !class => {
                 let pattern = body[..body.len() - before.len()].to_string();
-                let flags_start = source.rest();
-                while source
-                    .peek()
-                    .is_some_and(|c| identifier_start(c) || c.is_ascii_digit())
-                {
-                    source.next();
-                }
-                let flags = flags_start[..flags_start.len() - source.rest().len()].to_string();
+                let flags = regexp::flags(source, start)?;
                 return Ok(Kind::Regex { pattern, flags });
             }
             Some(_) => {}
@@ -426,11 +452,4 @@ fn mutation_token(source: &str) -> Option<(&'static str, Kind)> {
     ]
     .into_iter()
     .find(|(spelling, _)| source.starts_with(spelling))
-}
-/** Non-ASCII letters and marks count as identifier characters; non-ASCII space never reaches here. */
-fn identifier_start(character: char) -> bool {
-    character.is_ascii_alphabetic()
-        || character == '_'
-        || character == '$'
-        || !character.is_ascii() && !character.is_control() && !whitespace(character)
 }

@@ -96,8 +96,9 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
 }
 
 /** Rewrite node identities after the document adopted script-created nodes. */
-pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) {
+pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
+        super::images::adopt(&mut vm.page, *old, *new)?;
         if let Some(wrapper) = vm.page.state.wrappers.remove(old) {
             if let Some(Class::Host(data)) =
                 vm.heap.get_mut(wrapper).map(|object| &mut object.class)
@@ -117,6 +118,7 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) {
             }
         }
     }
+    Ok(())
 }
 
 /** A static node list object. */
@@ -706,6 +708,11 @@ const BLOCK_TAGS: [&str; 31] = [
 /** A computed value: the inline declaration, else the last style pass's `position`, else the CSS
 initial or UA default. */
 pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) -> String {
+    if property == "opacity"
+        && let Some(value) = super::animations::opacity(vm, node)
+    {
+        return value.to_string();
+    }
     if let Some((_, value)) = style_map(vm, node)
         .into_iter()
         .find(|(name, _)| name == property)
@@ -1512,7 +1519,7 @@ pub(in crate::v9) fn insert(
             .page
             .insert(parent, node, reference)
             .map_err(|error| dom_error(vm, error))?;
-        adopt(vm, &mapping);
+        adopt(vm, &mapping)?;
         added.push(
             mapping
                 .iter()
@@ -2253,6 +2260,7 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             })?;
             Ok(JsValue::Boolean(selector::matches(
                 &mut vm.page,
+                &vm.heap,
                 node,
                 &list,
                 Some(node),
@@ -2267,7 +2275,7 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             candidates.extend(vm.page.ancestors(node));
             let found = candidates
                 .into_iter()
-                .find(|id| selector::matches(&mut vm.page, *id, &list, Some(node)));
+                .find(|id| selector::matches(&mut vm.page, &vm.heap, *id, &list, Some(node)));
             wrap_option(vm, found)
         }
         "remove" => {
@@ -2335,7 +2343,9 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         | "releasePointerCapture"
         | "select" => Ok(JsValue::Undefined),
         "click" => {
-            super::events::fire(vm, super::Target::Node(node), "click", true, true)?;
+            if super::events::fire(vm, super::Target::Node(node), "click", true, true)? {
+                super::interfaces::popover::activate(vm, node)?;
+            }
             Ok(JsValue::Undefined)
         }
         "checkValidity" | "reportValidity" => Ok(JsValue::Boolean(true)),
@@ -2346,7 +2356,6 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "submit" | "requestSubmit" | "reset" => {
             Err(vm.unsupported_error("form submission from script"))
         }
-        // Element.animate stays absent so Web Animations polyfills install their own.
         "attachShadow" => components::attach_shadow(vm, node, &call.arg(0)),
         "requestFullscreen" => Err(vm.unsupported_error(native_name(&call))),
         _ => Ok(JsValue::Undefined),
@@ -2522,15 +2531,17 @@ pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
             .map_or(0, |document| document.nodes.len()),
     )?;
     if all {
-        let found = search(vm, node, |page, id| {
-            selector::matches(page, id, &list, scope)
-        });
+        let candidates = search(vm, node, |_, _| true);
+        let found = candidates
+            .into_iter()
+            .filter(|id| selector::matches(&mut vm.page, &vm.heap, *id, &list, scope))
+            .collect();
         return node_list(vm, found);
     }
     let candidates = search(vm, node, |_, _| true);
     let found = candidates
         .into_iter()
-        .find(|id| selector::matches(&mut vm.page, *id, &list, scope));
+        .find(|id| selector::matches(&mut vm.page, &vm.heap, *id, &list, scope));
     wrap_option(vm, found)
 }
 

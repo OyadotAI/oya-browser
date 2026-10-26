@@ -5,6 +5,27 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::{NativeFn, realm};
 
+mod format;
+
+/** Number exposes the same parser function identities as the corresponding global functions. */
+pub(super) fn install_parser(b: &mut Builder, name: &'static str, function: ObjectId) {
+    let ctor = b
+        .globals
+        .iter()
+        .find_map(|(name, value)| match (*name, value) {
+            ("Number", JsValue::Object(id)) => Some(*id),
+            _ => None,
+        });
+    if let Some(ctor) = ctor {
+        b.value(
+            ctor,
+            name,
+            JsValue::Object(function),
+            crate::v9::vm::heap::HIDDEN_ATTRS,
+        );
+    }
+}
+
 /** Number, Number.prototype, Boolean and Boolean.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
@@ -59,6 +80,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         match vm.to_numeric(&call.arg(0))? {
             JsValue::BigInt(big) => big as f64,
+            JsValue::BigIntWide(big) => big.to_f64(),
             numeric => vm.to_number(&numeric)?,
         }
     };
@@ -115,6 +137,11 @@ fn this_number(vm: &mut Vm, call: &Call) -> Res<f64> {
 /** A fraction-digit or precision argument in a range. */
 fn digits(vm: &mut Vm, call: &Call, low: f64, high: f64, name: &str) -> Res<usize> {
     let value = vm.to_integer(&call.arg(0))?;
+    digit_range(vm, value, low, high, name)
+}
+
+/** Nonfinite exponential and precision receivers still convert their digit argument before bypassing its range check. */
+fn digit_range(vm: &mut Vm, value: f64, low: f64, high: f64, name: &str) -> Res<usize> {
     if !(low..=high).contains(&value) {
         return Err(vm.range_error(&format!(
             "{name}() argument must be between {low} and {high}"
@@ -125,17 +152,8 @@ fn digits(vm: &mut Vm, call: &Call, low: f64, high: f64, name: &str) -> Res<usiz
 
 /** Fixed notation with JavaScript's round-half-up on exact ties. */
 pub(in crate::v9) fn fixed(value: f64, fraction: usize) -> String {
-    let scale = 10f64.powi(fraction as i32);
-    let scaled = value.abs() * scale;
-    if scaled.fract() == 0.5 && scaled < TIE_EXACT {
-        let rounded = (scaled.ceil() / scale) * value.signum();
-        return format!("{rounded:.fraction$}");
-    }
-    format!("{value:.fraction$}")
+    format::fixed(value, fraction)
 }
-
-/** Below this magnitude a scaled half is exactly representable. */
-const TIE_EXACT: f64 = 4_503_599_627_370_496.0;
 
 /** Number.prototype.toFixed. */
 fn to_fixed(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -145,16 +163,6 @@ fn to_fixed(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return text(vm, &number_to_string(value));
     }
     let mut result = fixed(value, fraction);
-    if result.starts_with("-")
-        && result
-            .trim_start_matches('-')
-            .chars()
-            .all(|c| c == '0' || c == '.')
-        && value > -0.5 * 10f64.powi(-(fraction as i32))
-        && value != 0.0
-    {
-        result = result.trim_start_matches('-').to_string();
-    }
     if value == 0.0 {
         result = result.trim_start_matches('-').to_string();
     }
@@ -175,13 +183,14 @@ fn exponent_text(rust: &str) -> String {
 /** Number.prototype.toExponential. */
 fn to_exponential(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = this_number(vm, &call)?;
+    let fraction = vm.to_integer(&call.arg(0))?;
     if !value.is_finite() {
         return text(vm, &number_to_string(value));
     }
     let rust = if call.arg(0) == JsValue::Undefined {
         format!("{value:e}")
     } else {
-        let fraction = digits(vm, &call, 0.0, 100.0, "toExponential")?;
+        let fraction = digit_range(vm, fraction, 0.0, 100.0, "toExponential")?;
         format!("{value:.fraction$e}")
     };
     text(vm, &exponent_text(&rust))
@@ -190,10 +199,14 @@ fn to_exponential(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Number.prototype.toPrecision. */
 fn to_precision(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = this_number(vm, &call)?;
-    if call.arg(0) == JsValue::Undefined || !value.is_finite() {
+    if call.arg(0) == JsValue::Undefined {
         return text(vm, &number_to_string(value));
     }
-    let precision = digits(vm, &call, 1.0, 100.0, "toPrecision")?;
+    let precision = vm.to_integer(&call.arg(0))?;
+    if !value.is_finite() {
+        return text(vm, &number_to_string(value));
+    }
+    let precision = digit_range(vm, precision, 1.0, 100.0, "toPrecision")?;
     if value == 0.0 {
         let zeros = if precision > 1 {
             format!("0.{}", "0".repeat(precision - 1))

@@ -4,8 +4,8 @@ use super::data::{
     SavedFrame,
 };
 use super::heap::{HIDDEN_ATTRS, INTRINSIC_BASE, Key, NATIVE_BASE, Object, Prop, Slot};
-use super::realm::realm;
-use super::{Call, Exit, Frame, GLOBAL, Res, Resume, Thrown, Vm};
+use super::realm::{native_index, realm, realm_for};
+use super::{Call, Exit, Frame, Res, Resume, Thrown, Vm};
 use crate::protocol::EngineError;
 use crate::v9::value::{JsValue, ObjectId};
 
@@ -34,10 +34,12 @@ impl Vm<'_> {
         };
         if let Some(object) = self.heap.get(*id) {
             if let Class::Proxy(proxy) = &object.class {
-                // A proxy is callable when its target is; once revoked it no longer is.
-                let target = proxy.target?;
-                return (target != *id && self.unproxied_callable(target))
-                    .then_some(Behavior::Proxy(*id));
+                let callable = proxy.callable.unwrap_or_else(|| {
+                    proxy
+                        .target
+                        .is_some_and(|target| target != *id && self.unproxied_callable(target))
+                });
+                return callable.then_some(Behavior::Proxy(*id));
             }
             return match &object.function()?.kind {
                 FunctionKind::Closure { site, env } => Some(Behavior::Closure(*site, *env)),
@@ -48,12 +50,12 @@ impl Vm<'_> {
             };
         }
         if *id >= NATIVE_BASE {
-            return realm()
+            return realm_for(*id)
                 .native(*id)
-                .map(|_| Behavior::Native(*id - NATIVE_BASE));
+                .map(|_| Behavior::Native(native_index(*id)));
         }
         if *id >= INTRINSIC_BASE {
-            return realm().object(*id)?.call.map(Behavior::Native);
+            return realm_for(*id).object(*id)?.call.map(Behavior::Native);
         }
         None
     }
@@ -74,12 +76,13 @@ impl Vm<'_> {
                         && !flags.fields
             }),
             Some(Behavior::Native(index)) => realm().natives[index as usize].constructor,
-            Some(Behavior::Proxy(id)) => self
-                .proxy_of(id)
-                .and_then(|proxy| proxy.target)
-                .is_some_and(|target| {
-                    target != id && self.is_constructor(&JsValue::Object(target))
-                }),
+            Some(Behavior::Proxy(id)) => self.proxy_of(id).is_some_and(|proxy| {
+                proxy.constructible.unwrap_or_else(|| {
+                    proxy.target.is_some_and(|target| {
+                        target != id && self.is_constructor(&JsValue::Object(target))
+                    })
+                })
+            }),
             Some(Behavior::Bound(..)) => self
                 .unbound(value)
                 .is_some_and(|target| self.is_constructor(&target)),
@@ -107,9 +110,34 @@ impl Vm<'_> {
     }
     /** Call a function from native code and wait for its result. */
     pub fn call(&mut self, function: JsValue, this: JsValue, args: Vec<JsValue>) -> Res<JsValue> {
+        self.call_visible(function, this, args, true)
+    }
+    /** call/apply forwarding preserves the script caller, while still returning at this boundary. */
+    pub fn forward_call(
+        &mut self,
+        function: JsValue,
+        this: JsValue,
+        args: Vec<JsValue>,
+    ) -> Res<JsValue> {
+        self.call_visible(function, this, args, false)
+    }
+    /** Native callbacks stop legacy caller reflection; transparent forwarders do not. */
+    fn call_visible(
+        &mut self,
+        function: JsValue,
+        this: JsValue,
+        args: Vec<JsValue>,
+        hidden: bool,
+    ) -> Res<JsValue> {
+        let position = self.frames.len();
         match self.invoke(function, this, args, None, true)? {
             Invoked::Value(value) => Ok(value),
-            Invoked::Frame => self.run_nested(),
+            Invoked::Frame => {
+                if let Some(frame) = self.frames.get_mut(position) {
+                    frame.caller_hidden = hidden;
+                }
+                self.run_nested()
+            }
         }
     }
     /** `new` from native code. */
@@ -127,14 +155,16 @@ impl Vm<'_> {
     }
     /** Run the frame just pushed as a boundary until it returns. */
     fn run_nested(&mut self) -> Res<JsValue> {
+        let previous_realm = self.active_realm;
         let pinning = std::mem::replace(&mut self.pinning, false);
         self.native_depth += 1;
         let result = self.run();
         self.native_depth -= 1;
         self.pinning = pinning;
+        self.select_realm(previous_realm)?;
         match result? {
             Exit::Return(value) => Ok(value),
-            Exit::Yield(_) | Exit::Await(_) => Err(EngineError::invalid(
+            Exit::Yield(_) | Exit::YieldRaw(_) | Exit::Await(_) => Err(EngineError::invalid(
                 "V9 suspended outside a generator or async function.",
             )
             .into()),
@@ -178,7 +208,10 @@ impl Vm<'_> {
                 result
             }
             Behavior::Closure(site, env) => {
-                self.call_closure(function, site, env, this, args, construct, boundary)
+                let bank = self.object_realm(function.object().expect("function"));
+                self.with_realm(bank, |vm| {
+                    vm.call_closure(function, site, env, this, args, construct, boundary)
+                })
             }
             Behavior::Proxy(id) => {
                 let proxy = self.proxy_of(id).expect("proxy behavior");
@@ -194,9 +227,12 @@ impl Vm<'_> {
         let mut current = target;
         for _ in 0..self.limits.frames {
             match self.heap.get(current).map(|object| &object.class) {
-                Some(Class::Proxy(proxy)) => match proxy.target {
-                    Some(next) => current = next,
-                    None => return false,
+                Some(Class::Proxy(proxy)) => match proxy.callable {
+                    Some(callable) => return callable,
+                    None => match proxy.target {
+                        Some(next) => current = next,
+                        None => return false,
+                    },
                 },
                 _ => return self.is_callable(&JsValue::Object(current)),
             }
@@ -240,12 +276,29 @@ impl Vm<'_> {
         args: &[JsValue],
         new_target: Option<JsValue>,
     ) -> Res<JsValue> {
+        let bank = self.object_realm(callee);
+        self.with_realm(bank, |vm| {
+            vm.native_in_realm(index, callee, this, args, new_target)
+        })
+    }
+    /** A native body resolves constructors and prototypes from its own creation context. */
+    fn native_in_realm(
+        &mut self,
+        index: u32,
+        callee: ObjectId,
+        this: JsValue,
+        args: &[JsValue],
+        new_target: Option<JsValue>,
+    ) -> Res<JsValue> {
         self.charge(1)?;
         if self.frames.len() + self.native_depth >= self.limits.frames {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         let def = &realm().natives[index as usize];
         let mark = self.pins.len();
+        // A timer removes its callback from the queue before entering this native; the callee
+        // and its captured values remain roots even when the native itself requests collection.
+        self.pins.push(JsValue::Object(callee));
         // The receiver and arguments live only in this native's Rust locals once the caller's
         // stack drops them, so they are pinned beside what the native allocates.
         self.pins.push(this.clone());
@@ -301,7 +354,7 @@ impl Vm<'_> {
                 JsValue::Object(self.alloc(Object::new(Class::Plain, Some(proto)))?)
             }
         } else if !code.strict && this.nullish() {
-            JsValue::Object(GLOBAL)
+            JsValue::Object(self.global_object())
         } else if !code.strict && !matches!(this, JsValue::Object(_)) {
             // OrdinaryCallBindThis: sloppy functions see a primitive receiver boxed.
             JsValue::Object(self.to_object(&this)?)
@@ -316,6 +369,7 @@ impl Vm<'_> {
             None => env,
         };
         let frame = Frame {
+            realm: self.active_realm,
             pc: 0,
             stack: Vec::new(),
             regs: vec![JsValue::Undefined; code.registers as usize],
@@ -327,6 +381,7 @@ impl Vm<'_> {
             handlers: Vec::new(),
             envs: 0,
             boundary: boundary || flags.asynchronous && !flags.generator,
+            caller_hidden: boundary,
             construct: construct.is_some(),
             resume: Resume::Next,
             code,
@@ -342,6 +397,7 @@ impl Vm<'_> {
     }
     /** Install a class's instance fields on a new object. */
     pub fn run_fields(&mut self, function: &JsValue, this: &JsValue) -> Res<()> {
+        self.install_private_methods(function, this)?;
         let fields = function
             .object()
             .and_then(|id| self.heap.get(id))
@@ -356,7 +412,7 @@ impl Vm<'_> {
     pub fn prototype_for(&mut self, new_target: &JsValue, fallback: ObjectId) -> Res<ObjectId> {
         match self.get(new_target, &Key::from("prototype"))? {
             JsValue::Object(proto) => Ok(proto),
-            _ => Ok(fallback),
+            _ => self.constructor_fallback(new_target, fallback),
         }
     }
     /** Create a closure over an environment. */
@@ -384,6 +440,7 @@ impl Vm<'_> {
                 kind: FunctionKind::Closure { site, env },
                 home,
                 fields: None,
+                name: None,
             })),
             Some(proto),
         ))
@@ -395,6 +452,7 @@ impl Vm<'_> {
                 kind: FunctionKind::Native { id: index, slots },
                 home: None,
                 fields: None,
+                name: None,
             })),
             Some(realm().ids.function_prototype),
         ))
@@ -414,13 +472,13 @@ impl Vm<'_> {
     /** An arguments object over a frame's arguments. */
     pub fn arguments_object(&mut self, args: &[JsValue]) -> Res<ObjectId> {
         let id = self.arguments_list(args)?;
-        // CreateUnmappedArgumentsObject (strict code) guards `callee` with %ThrowTypeError%;
-        // CreateMappedArgumentsObject (sloppy code) exposes the running function.
+        // Strict or non-simple parameters guard `callee` with %ThrowTypeError%; simple
+        // sloppy parameters expose the running function through their mapped arguments.
         let frame = self.frames.last();
-        let strict = frame.is_some_and(|frame| frame.code.strict);
+        let unmapped = frame.is_none_or(|frame| frame.code.arguments.is_none());
         let callee = frame.map_or(JsValue::Undefined, |frame| frame.callee.clone());
         let thrower = realm().ids.throw_type_error;
-        let prop = if strict {
+        let prop = if unmapped {
             Prop {
                 slot: Slot::Accessor(Some(thrower), Some(thrower)),
                 attrs: 0,
@@ -432,10 +490,11 @@ impl Vm<'_> {
             }
         };
         self.heap.put(id, Key::from("callee"), prop);
+        self.map_arguments(id, args.len());
         Ok(id)
     }
     /** The indexed elements, `length` and iterator every arguments object carries. */
-    fn arguments_list(&mut self, args: &[JsValue]) -> Res<ObjectId> {
+    pub(super) fn arguments_list(&mut self, args: &[JsValue]) -> Res<ObjectId> {
         let id = self.alloc(Object::new(
             Class::Arguments,
             Some(realm().ids.object_prototype),
@@ -474,7 +533,7 @@ impl Vm<'_> {
             JsValue::Number(_) => "a number".into(),
             JsValue::Boolean(_) => "a boolean".into(),
             JsValue::Symbol(_) => "a symbol".into(),
-            JsValue::BigInt(_) => "a bigint".into(),
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => "a bigint".into(),
             JsValue::Object(_) => "an object".into(),
         }
     }
@@ -495,6 +554,14 @@ impl Vm<'_> {
     }
     /** Run (or resume) an async frame; on await, park it in `holder` and subscribe to the value. */
     pub fn drive_async(&mut self, holder: ObjectId, resume: Option<(Resume, JsValue)>) -> Res<()> {
+        let bank = self.object_realm(holder);
+        self.async_drivers.push(holder);
+        let result = self.with_realm(bank, |vm| vm.drive_async_in(holder, resume));
+        self.async_drivers.pop();
+        result
+    }
+    /** Module continuations have no function callee; their real async holder owns the execution realm. */
+    fn drive_async_in(&mut self, holder: ObjectId, resume: Option<(Resume, JsValue)>) -> Res<()> {
         if let (Some(Class::AsyncGenerator(_)), Some((mode, value))) = (
             self.heap.get(holder).map(|object| &object.class),
             resume.clone(),
@@ -516,12 +583,13 @@ impl Vm<'_> {
             self.restore_frame(frame, true)?;
             self.resume_with(mode, value)?;
         }
+        let previous_realm = self.active_realm;
         let pinning = std::mem::replace(&mut self.pinning, false);
         self.native_depth += 1;
         let result = self.run();
         self.native_depth -= 1;
         self.pinning = pinning;
-        match result {
+        let result = match result {
             Ok(Exit::Return(value)) => self.resolve_promise(promise, value),
             Ok(Exit::Await(value)) => {
                 let frame = self.suspended.take();
@@ -543,12 +611,14 @@ impl Vm<'_> {
                     Err(fatal) => Err(fatal),
                 }
             }
-            Ok(Exit::Yield(_)) => {
+            Ok(Exit::Yield(_) | Exit::YieldRaw(_)) => {
                 Err(EngineError::invalid("V9 yield in an async function.").into())
             }
             Err(Thrown::Value(error)) => self.settle(promise, PromiseState::Rejected(error)),
             Err(fatal) => Err(fatal),
-        }
+        };
+        self.select_realm(previous_realm)?;
+        result
     }
     /** Save the top frame (just exited by Yield or Await). */
     pub fn save_frame(&mut self, frame: Frame) -> SavedFrame {
@@ -580,6 +650,10 @@ impl Vm<'_> {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         self.frames.push(Frame {
+            realm: saved
+                .callee
+                .object()
+                .map_or(self.active_realm, |id| self.object_realm(id)),
             code,
             pc: saved.pc as usize,
             stack: saved.stack,
@@ -592,6 +666,7 @@ impl Vm<'_> {
             handlers: saved.handlers,
             envs: saved.envs,
             boundary,
+            caller_hidden: boundary,
             construct: false,
             resume: Resume::Next,
         });
@@ -608,13 +683,13 @@ impl Vm<'_> {
             Some(proto),
         ))
     }
-    /** Resume a generator: next, throw or return. Returns the iterator result value and done. */
+    /** Resume a generator: next, throw or return. Preserve raw delegated results until the builtin boundary. */
     pub fn resume_generator(
         &mut self,
         generator: ObjectId,
         mode: Resume,
         value: JsValue,
-    ) -> Res<(JsValue, bool)> {
+    ) -> Res<Exit> {
         let (state, frame) = match self.heap.get_mut(generator).map(|object| &mut object.class) {
             Some(Class::Generator(data)) => (data.state, data.frame.take()),
             _ => return Err(self.type_error("next method called on incompatible receiver")),
@@ -626,49 +701,55 @@ impl Vm<'_> {
             }
             GeneratorState::Done => {
                 return match mode {
-                    Resume::Next => Ok((JsValue::Undefined, true)),
-                    Resume::Return => Ok((value, true)),
+                    Resume::Next => Ok(Exit::Return(JsValue::Undefined)),
+                    Resume::Return => Ok(Exit::Return(value)),
                     Resume::Throw => Err(Thrown::Value(value)),
                 };
             }
             GeneratorState::Start if mode != Resume::Next => {
                 self.set_generator(generator, GeneratorState::Done, None);
                 return match mode {
-                    Resume::Return => Ok((value, true)),
+                    Resume::Return => Ok(Exit::Return(value)),
                     _ => Err(Thrown::Value(value)),
                 };
             }
             _ => {}
         }
         let Some(frame) = frame else {
-            return Ok((JsValue::Undefined, true));
+            return Ok(Exit::Return(JsValue::Undefined));
         };
         self.set_generator(generator, GeneratorState::Running, None);
-        self.restore_frame(frame, true)?;
+        if let Err(error) = self.restore_frame(frame, true) {
+            self.set_generator(generator, GeneratorState::Done, None);
+            return Err(error);
+        }
         if state == GeneratorState::Yielded {
             self.resume_with(mode, value)?;
         }
+        let previous_realm = self.active_realm;
         let pinning = std::mem::replace(&mut self.pinning, false);
         self.native_depth += 1;
         let result = self.run();
         self.native_depth -= 1;
         self.pinning = pinning;
-        match result {
-            Ok(Exit::Yield(value)) => {
+        let result = match result {
+            Ok(exit @ (Exit::Yield(_) | Exit::YieldRaw(_))) => {
                 let frame = self.suspended.take();
                 self.set_generator(generator, GeneratorState::Yielded, frame);
-                Ok((value, false))
+                Ok(exit)
             }
             Ok(Exit::Return(value)) => {
                 self.set_generator(generator, GeneratorState::Done, None);
-                Ok((value, true))
+                Ok(Exit::Return(value))
             }
             Ok(Exit::Await(_)) => Err(EngineError::invalid("V9 await in a generator.").into()),
             Err(error) => {
                 self.set_generator(generator, GeneratorState::Done, None);
                 Err(error)
             }
-        }
+        };
+        self.select_realm(previous_realm)?;
+        result
     }
     /** Update a generator's state and frame. */
     fn set_generator(

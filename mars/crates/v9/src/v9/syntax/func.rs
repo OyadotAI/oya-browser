@@ -13,6 +13,7 @@ impl Parser {
         declaration: bool,
     ) -> EngineResult<Rc<Func>> {
         let generator = self.eat("*");
+        let source_available = self.pos().offset.saturating_sub(pos.offset) <= u32::from(u16::MAX);
         let name = if self.at("(") {
             if declaration {
                 return Err(self.unexpected());
@@ -36,7 +37,12 @@ impl Parser {
             ..FuncFlags::default()
         };
         let display = name.clone().unwrap_or_else(|| Name::from(""));
-        self.function_tail(pos, site(pos, SITE_SOURCE), name, display, flags)
+        let function = self.function_tail(pos, site(pos, SITE_SOURCE), name, display, flags)?;
+        // The compact prefix offset follows V8's source-availability boundary.
+        if !source_available {
+            *function.source_span.borrow_mut() = None;
+        }
+        Ok(function)
     }
     /** An object or class method, getter or setter after its key. */
     pub(super) fn method(
@@ -94,6 +100,7 @@ impl Parser {
         self.nest(pos)?;
         let saved = (self.context, self.strict, std::mem::take(&mut self.labels));
         self.context = Context {
+            using_allowed: true,
             function: true,
             generator: flags.generator,
             asynchronous: flags.asynchronous,
@@ -110,7 +117,15 @@ impl Parser {
         self.labels = saved.2;
         self.unnest();
         let (params, rest, body) = result?;
+        if strict
+            && name
+                .as_ref()
+                .is_some_and(|name| matches!(&**name, "eval" | "arguments") || reserved(name, true))
+        {
+            return Err(self.error_at(pos, "Unexpected function name in strict mode"));
+        }
         Ok(Rc::new(Func {
+            source_span: RefCell::new(Some((pos.offset, self.consumed_end()))),
             site,
             name,
             display: RefCell::new(display),
@@ -179,12 +194,8 @@ impl Parser {
         }
         let simple = rest.is_none() && params.iter().all(|p| matches!(p, Pattern::Ident(..)));
         let strict_names = self.strict || unique || !simple;
-        if strict_names
-            && names
-                .iter()
-                .enumerate()
-                .any(|(i, name)| names[..i].contains(name))
-        {
+        let mut seen = std::collections::HashSet::new();
+        if strict_names && names.iter().any(|name| !seen.insert(name)) {
             return Err(self.error_at(pos, "Duplicate parameter name not allowed in this context"));
         }
         Ok(())
@@ -204,25 +215,24 @@ impl Parser {
         while !self.eat(")") {
             if self.eat("...") {
                 rest = Some(self.binding_target()?);
+                self.check_parameter_count(params.len() + 1)?;
                 self.expect(")")?;
                 break;
             }
             params.push(self.binding_element()?);
-            if params.len() > crate::constants::FUNCTION_PARAMETERS {
-                return Err(errors::located(
-                    EngineError::limit(
-                        "V9 function parameters",
-                        crate::constants::FUNCTION_PARAMETERS,
-                    ),
-                    self.peek().location,
-                    "parse",
-                ));
-            }
+            self.check_parameter_count(params.len())?;
             if !self.at(")") {
                 self.expect(",")?;
             }
         }
         Ok((params, rest))
+    }
+    /** Native arity includes rest parameters independently of the observable function length. */
+    fn check_parameter_count(&self, count: usize) -> EngineResult<()> {
+        if count > crate::constants::FUNCTION_PARAMETERS {
+            return Err(self.error_at(self.pos(), "Too many parameters in function definition"));
+        }
+        Ok(())
     }
     /** An arrow function; `simple` means a single unparenthesized parameter. */
     pub(super) fn arrow_function(
@@ -236,7 +246,9 @@ impl Parser {
         let outer = self.context;
         let saved = (self.context, self.strict, std::mem::take(&mut self.labels));
         self.context = Context {
+            using_allowed: true,
             function: true,
+            eval_new_target: false,
             generator: false,
             asynchronous: is_async,
             breakable: false,
@@ -255,6 +267,7 @@ impl Parser {
         self.unnest();
         let (params, rest, body) = result?;
         let func = Rc::new(Func {
+            source_span: RefCell::new(Some((pos.offset, self.consumed_end()))),
             site: site(pos, SITE_SOURCE),
             name: None,
             display: RefCell::new(Name::from("")),
@@ -418,6 +431,7 @@ impl Parser {
                 func
             }
             None => Rc::new(Func {
+                source_span: RefCell::new(None),
                 site: site(pos, SITE_CONSTRUCTOR),
                 name: None,
                 display: RefCell::new(display),
@@ -435,6 +449,7 @@ impl Parser {
                 length: 0,
             }),
         };
+        *constructor.source_span.borrow_mut() = Some((pos.offset, self.consumed_end()));
         Ok(Rc::new(Class {
             name,
             superclass,
@@ -491,13 +506,31 @@ impl Parser {
             self.next();
             if self.at("{") {
                 let body = self.static_block(pos)?;
-                statics.push(Stmt {
-                    kind: StmtKind::Block(body),
-                    pos,
-                });
+                if let Some(mut function) = initializer(pos, SITE_SOURCE, body) {
+                    // Each static block owns its vars while retaining lexical this and super.
+                    Rc::get_mut(&mut function)
+                        .expect("new static block")
+                        .flags
+                        .arrow = true;
+                    let callee = self.node(ExprKind::Function(function), pos)?;
+                    let call =
+                        self.node(ExprKind::Call(Box::new(callee), Vec::new(), false), pos)?;
+                    statics.push(Stmt {
+                        kind: StmtKind::Expr(call),
+                        pos,
+                    });
+                }
                 return Ok(());
             }
         }
+        let auto_accessor = self.at_name("accessor")
+            && !self.peek_at(1).line_terminator_before
+            && !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '=' | ';' | '}'));
+        if auto_accessor {
+            self.next();
+            return self.auto_accessor_member(pos, is_static, members, fields, statics);
+        }
+        let method_pos = self.pos();
         let is_async = self.at_name("async")
             && !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '=' | ';' | '}'))
             && !self.peek_at(1).line_terminator_before;
@@ -548,7 +581,7 @@ impl Parser {
                 *constructor = Some(func);
                 return Ok(());
             }
-            let func = self.method(pos, &key, is_async, generator, accessor)?;
+            let func = self.method(method_pos, &key, is_async, generator, accessor)?;
             let kind = match accessor {
                 Some(true) => MemberKind::Getter(func),
                 Some(false) => MemberKind::Setter(func),
@@ -566,7 +599,13 @@ impl Parser {
             return Err(self.unexpected());
         }
         let value = if self.eat("=") {
-            Some(self.field_initializer()?)
+            let mut value = self.field_initializer()?;
+            match &key {
+                PropKey::Name(name) => infer_name(&mut value, name),
+                PropKey::Private(name) => infer_name(&mut value, &format!("#{name}")),
+                PropKey::Computed(_) => {}
+            }
+            Some(value)
         } else {
             None
         };
@@ -582,10 +621,58 @@ impl Parser {
         }
         Ok(())
     }
+    /** Auto-accessors declare a private backing field and an independently placed real accessor pair. */
+    fn auto_accessor_member(
+        &mut self,
+        pos: Pos,
+        is_static: bool,
+        members: &mut Vec<ClassMember>,
+        fields: &mut Vec<Stmt>,
+        statics: &mut Vec<Stmt>,
+    ) -> EngineResult<()> {
+        let key = self.property_key()?;
+        if let Some(reason) = class_key_error(&key, is_static, false, true) {
+            return Err(self.error_at(pos, reason));
+        }
+        if let PropKey::Private(name) = &key {
+            self.declare_private(name, PrivateKind::Other, pos)?;
+        }
+        let backing = Name::from(format!("%accessor{}", pos.offset).as_str());
+        self.declare_private(&backing, PrivateKind::Other, pos)?;
+        let value = if self.eat("=") {
+            let mut value = self.field_initializer()?;
+            match &key {
+                PropKey::Name(name) => infer_name(&mut value, name),
+                PropKey::Private(name) => infer_name(&mut value, &format!("#{name}")),
+                PropKey::Computed(_) => {}
+            }
+            Some(value)
+        } else {
+            None
+        };
+        self.semicolon()?;
+        members.push(ClassMember {
+            key,
+            is_static,
+            kind: MemberKind::AutoAccessor(backing.clone()),
+            pos,
+        });
+        let field = Stmt {
+            kind: StmtKind::Field(PropKey::Private(backing), value),
+            pos,
+        };
+        if is_static {
+            statics.push(field);
+        } else {
+            fields.push(field);
+        }
+        Ok(())
+    }
     /** A field initializer sees `this` and `super.x` but not `arguments`, `await` or `yield`. */
     fn field_initializer(&mut self) -> EngineResult<Expr> {
         let saved = self.context;
         self.context = Context {
+            using_allowed: true,
             function: true,
             method: true,
             no_arguments: true,
@@ -690,6 +777,7 @@ fn initializer(pos: Pos, tag: u32, body: Vec<Stmt>) -> Option<Rc<Func>> {
         return None;
     }
     Some(Rc::new(Func {
+        source_span: RefCell::new(None),
         site: site(pos, tag),
         name: None,
         display: RefCell::new(Name::from("")),

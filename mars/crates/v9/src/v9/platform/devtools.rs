@@ -316,7 +316,7 @@ fn query_selector(vm: &mut Vm, node: usize, selector: &str, all: bool) -> Engine
     };
     let mut found = Vec::new();
     for candidate in candidates {
-        if super::selector::matches(&mut vm.page, candidate, &list, root) {
+        if super::selector::matches(&mut vm.page, &vm.heap, candidate, &list, root) {
             found.push(candidate);
             if !all {
                 break;
@@ -534,8 +534,8 @@ fn resolve_argument(vm: &mut Vm, argument: &CallArgument) -> EngineResult<JsValu
             "-0" => Ok(JsValue::Number(-0.0)),
             other => other
                 .strip_suffix('n')
-                .and_then(|digits| digits.parse::<i128>().ok())
-                .map(JsValue::BigInt)
+                .and_then(|digits| crate::v9::value::BigInteger::parse(digits).ok())
+                .map(JsValue::bigint)
                 .ok_or_else(|| {
                     EngineError::invalid("Couldn't parse value object in call argument")
                 }),
@@ -738,9 +738,10 @@ fn release(vm: &mut Vm, handle: u32) -> EngineResult<()> {
     let table = handles(vm)?;
     if let Some(index) = (handle as usize).checked_sub(1)
         && let Some(Class::Array(elements)) = vm.heap.get_mut(table).map(|object| &mut object.class)
-        && let Some(slot) = elements.get_mut(index)
     {
-        *slot = JsValue::Hole;
+        if index < elements.len() {
+            elements.set(index, JsValue::Hole);
+        }
     }
     Ok(())
 }
@@ -775,6 +776,10 @@ fn mirror(vm: &mut Vm, value: &JsValue, options: &Options) -> EngineResult<Value
         JsValue::String(text) => json!({"type":"string","value":text.lossy()}),
         JsValue::Number(number) => number_mirror(*number),
         JsValue::BigInt(big) => {
+            json!({"type":"bigint","unserializableValue":format!("{big}n"),"description":format!("{big}n")})
+        }
+        JsValue::BigIntWide(big) => {
+            vm.charge(big.format_work(10)).map_err(fatal)?;
             json!({"type":"bigint","unserializableValue":format!("{big}n"),"description":format!("{big}n")})
         }
         JsValue::Symbol(id) => {
@@ -930,7 +935,8 @@ fn classify(vm: &mut Vm, id: ObjectId) -> (&'static str, Option<&'static str>, S
             | Class::Number(_)
             | Class::String(_)
             | Class::Symbol(_)
-            | Class::BigInt(_),
+            | Class::BigInt(_)
+            | Class::BigIntWide(_),
         ) => ("object", None, name.clone(), name),
         _ if id == GLOBAL => ("object", None, "Window".into(), "Window".into()),
         _ => ("object", None, name.clone(), name),
@@ -1071,6 +1077,7 @@ fn property_preview(vm: &mut Vm, name: &str, value: &JsValue) -> Value {
         JsValue::Number(number) => ("number", None, number_to_string(*number)),
         JsValue::String(string) => ("string", None, string.lossy()),
         JsValue::BigInt(big) => ("bigint", None, format!("{big}n")),
+        JsValue::BigIntWide(big) => ("bigint", None, format!("{}n", big.diagnostic())),
         JsValue::Symbol(id) => (
             "symbol",
             None,
@@ -1119,7 +1126,9 @@ fn to_json(vm: &mut Vm, value: &JsValue, depth: usize, budget: &mut usize) -> Re
         JsValue::Boolean(flag) => Value::Bool(*flag),
         JsValue::Number(number) => json_number(*number),
         JsValue::String(text) => Value::String(text.lossy()),
-        JsValue::BigInt(_) => return Err(vm.type_error("BigInt value can't be returned by value")),
+        JsValue::BigInt(_) | JsValue::BigIntWide(_) => {
+            return Err(vm.type_error("BigInt value can't be returned by value"));
+        }
         JsValue::Object(id) => object_to_json(vm, *id, depth, budget)?,
     })
 }
@@ -1132,6 +1141,9 @@ fn object_to_json(vm: &mut Vm, id: ObjectId, depth: usize, budget: &mut usize) -
     let class = vm.heap.get(id).map(|object| object.class.clone());
     match class {
         Some(Class::Array(elements)) => {
+            if elements.len() > *budget {
+                return Err(vm.type_error("Array exceeds the result serialization budget"));
+            }
             let mut items = Vec::with_capacity(elements.len());
             for element in elements {
                 items.push(to_json(vm, &element, depth + 1, budget)?);

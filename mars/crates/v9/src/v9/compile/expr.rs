@@ -22,11 +22,19 @@ impl Compiler {
                 let index = self.name(feature)?;
                 self.emit(Op::Unsupported(index));
             }
+            ExprKind::InvalidReference(message) => {
+                let index = self.name(message)?;
+                self.emit(Op::ThrowReference(index));
+            }
             ExprKind::BigInt(value) => {
                 let index = self.name(&value.to_string())?;
                 self.emit(Op::BigInt(index));
             }
             ExprKind::Template(quasis, values) => self.template(quasis, values)?,
+            ExprKind::BigIntWide(digits) => {
+                let index = self.name(digits)?;
+                self.emit(Op::BigInt(index));
+            }
             ExprKind::Tagged(tag, quasis, raws, values) => {
                 self.tagged(tag, quasis, raws, values)?
             }
@@ -236,6 +244,31 @@ impl Compiler {
         }
         Ok(())
     }
+    /** Parentheses end short-circuit propagation while retaining a successful member's reference receiver. */
+    fn chain_reference(&mut self, inner: &Expr) -> EngineResult<()> {
+        let ExprKind::Member(object, prop, optional) = &inner.kind else {
+            unreachable!("member reference")
+        };
+        self.f().chains.push(Chain::default());
+        self.member_object(object, *optional)?;
+        self.emit(Op::Dup);
+        self.member_get_from(prop, matches!(object.kind, ExprKind::Super))?;
+        let chain = self.f().chains.pop().expect("reference chain");
+        let end = self.emit(Op::Jump(0));
+        if !chain.tramps.is_empty() {
+            for tramp in chain.tramps {
+                self.patch(tramp);
+            }
+            self.emit(Op::Swap);
+            self.emit(Op::Pop);
+        }
+        for exit in chain.exits {
+            self.patch(exit);
+        }
+        self.emit(Op::Undefined);
+        self.patch(end);
+        Ok(())
+    }
     /** Calls: method calls pass their object as `this`; optional calls short-circuit. */
     fn call(
         &mut self,
@@ -254,6 +287,10 @@ impl Compiler {
                 self.emit(Op::Dup);
                 self.at(callee.pos);
                 self.member_get_from(prop, is_super)?;
+                method = true;
+            }
+            ExprKind::Chain(inner) if matches!(inner.kind, ExprKind::Member(..)) => {
+                self.chain_reference(inner)?;
                 method = true;
             }
             ExprKind::Super => {
@@ -324,6 +361,7 @@ impl Compiler {
         if self.resolve("this").is_some() {
             self.initialize(&Name::from("this"), pos)?;
         }
+        self.emit(Op::InitializeDerivedFields);
         Ok(())
     }
     /** A plain list element's value. */
@@ -371,6 +409,7 @@ impl Compiler {
     }
     /** Object literals. */
     fn object(&mut self, props: &[PropDef]) -> EngineResult<()> {
+        self.check_literal_prototypes(props)?;
         self.emit(Op::NewObject);
         for prop in props {
             match prop {
@@ -379,15 +418,25 @@ impl Compiler {
                     self.emit(Op::SetProtoLiteral);
                 }
                 PropDef::Value(PropKey::Computed(key), value) => {
+                    let mark = self.f().registers;
+                    let name = self.temp()?;
                     self.expr(key)?;
                     self.emit(Op::ToPropertyKey);
-                    self.expr(value)?;
+                    self.emit(Op::SetReg(name));
+                    self.field_value_named(Some(value), name)?;
                     self.emit(Op::DefineFieldComputed);
+                    self.release(mark);
                 }
                 PropDef::Value(key, value) => {
+                    let mark = self.f().registers;
+                    let name = self.temp()?;
                     let index = self.key_index(key)?;
-                    self.expr(value)?;
+                    self.emit(Op::String(index));
+                    self.emit(Op::SetReg(name));
+                    self.emit(Op::Pop);
+                    self.field_value_named(Some(value), name)?;
                     self.emit(Op::DefineField(index));
+                    self.release(mark);
                 }
                 PropDef::Shorthand(name, pos) | PropDef::ShorthandDefault(name, pos, _) => {
                     let index = self.name(name)?;
@@ -401,6 +450,24 @@ impl Compiler {
                     self.expr(value)?;
                     self.emit(Op::CopyData);
                 }
+            }
+        }
+        Ok(())
+    }
+    /** Duplicate prototype setters are early errors only in literals, never cover patterns. */
+    fn check_literal_prototypes(&self, props: &[PropDef]) -> EngineResult<()> {
+        let mut seen = false;
+        for prop in props {
+            if let PropDef::Value(PropKey::Name(name), value) = prop
+                && &**name == "__proto__"
+            {
+                if seen {
+                    return Err(self.error(
+                        value.pos,
+                        "Duplicate __proto__ fields are not allowed in object literals",
+                    ));
+                }
+                seen = true;
             }
         }
         Ok(())
@@ -454,6 +521,10 @@ impl Compiler {
         values: &[Expr],
     ) -> EngineResult<()> {
         match &tag.kind {
+            ExprKind::Chain(inner) if matches!(inner.kind, ExprKind::Member(..)) => {
+                self.chain_reference(inner)?;
+                self.emit(Op::Swap);
+            }
             ExprKind::Member(object, prop, _) => {
                 self.expr(object)?;
                 self.emit(Op::Dup);
@@ -552,9 +623,20 @@ impl Compiler {
                 self.f().chains.push(Chain::default());
                 self.delete(inner)?;
                 let chain = self.f().chains.pop().expect("chain");
-                for exit in chain.exits.into_iter().chain(chain.tramps) {
+                let end = self.emit(Op::Jump(0));
+                if !chain.tramps.is_empty() {
+                    for tramp in chain.tramps {
+                        self.patch(tramp);
+                    }
+                    self.emit(Op::Swap);
+                    self.emit(Op::Pop);
+                }
+                for exit in chain.exits {
                     self.patch(exit);
                 }
+                self.emit(Op::Pop);
+                self.emit(Op::True);
+                self.patch(end);
             }
             ExprKind::Ident(name) => {
                 let with = self.delete_checks(name)?;
@@ -590,12 +672,14 @@ impl Compiler {
                     self.emit(Op::Pop);
                 }
             }
-            ExprKind::Member(object, prop, _) if !matches!(object.kind, ExprKind::Super) => {
+            ExprKind::Member(object, prop, _) if matches!(object.kind, ExprKind::Super) => {
+                return self.super_update(prop, increment, prefix, target.pos);
+            }
+            ExprKind::Member(object, prop, _) => {
                 self.expr(object)?;
                 match prop {
                     MemberProp::Computed(key) => {
-                        self.expr(key)?;
-                        self.emit(Op::ToPropertyKey);
+                        self.element_key(key)?;
                         self.emit(Op::Dup2);
                         self.emit(Op::GetElem);
                         self.emit(Op::ToNumeric);
@@ -690,7 +774,9 @@ impl Compiler {
         match prop {
             MemberProp::Computed(key) => {
                 self.expr(key)?;
-                self.emit(Op::ToPropertyKey);
+                if is_super {
+                    self.emit(Op::ToPropertyKey);
+                }
                 value(self)?;
                 self.at(member.pos);
                 self.emit(if is_super {
@@ -719,7 +805,7 @@ impl Compiler {
         Ok(())
     }
     /** Push the home object of the method `super` refers to. */
-    fn load_home(&mut self) -> EngineResult<()> {
+    pub(super) fn load_home(&mut self) -> EngineResult<()> {
         if self.resolve("%home").is_some() {
             self.load_name(&Name::from("%home"), Pos::default())
         } else {
@@ -740,8 +826,7 @@ impl Compiler {
         self.expr(object)?;
         match prop {
             MemberProp::Computed(key) => {
-                self.expr(key)?;
-                self.emit(Op::ToPropertyKey);
+                self.element_key(key)?;
                 self.emit(Op::Dup2);
                 self.emit(Op::GetElem);
                 self.expr(value)?;
@@ -782,8 +867,7 @@ impl Compiler {
         self.emit(Op::SetReg(holder));
         match prop {
             MemberProp::Computed(expr) => {
-                self.expr(expr)?;
-                self.emit(Op::ToPropertyKey);
+                self.element_key(expr)?;
                 self.emit(Op::SetReg(key));
                 self.emit(Op::GetElem);
             }

@@ -8,7 +8,7 @@
 use super::data::{Class, FunctionKind, SavedFrame};
 use super::gc::Marker;
 use super::heap::{INTRINSIC_BASE, Key, NATIVE_BASE};
-use super::realm::realm;
+use super::realm::realm_for;
 use super::{GLOBAL, Vm};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::binding::BindingKind;
@@ -26,6 +26,24 @@ impl Vm<'_> {
     /** Lexical globals are exactly ones the page's scripts declare, with the declared kind and
     a value (a committed declaration always initialized). A script that failed declares none. */
     pub fn validate_globals(&self, scripts: &[&Code]) -> EngineResult<()> {
+        self.validate_global_bindings(&self.globals, scripts)?;
+        #[cfg(feature = "conformance")]
+        for bank in 1..self.realms.contexts.len() {
+            let scripts = self
+                .realm_codes(bank as u32)
+                .into_iter()
+                .map(|code| &**code)
+                .collect::<Vec<_>>();
+            self.validate_global_bindings(&self.realms.contexts[bank].globals, &scripts)?;
+        }
+        Ok(())
+    }
+    /** Every context's lexical globals are checked against its own freshly compiled Scripts. */
+    fn validate_global_bindings(
+        &self,
+        globals: &crate::v9::binding::Globals,
+        scripts: &[&Code],
+    ) -> EngineResult<()> {
         let mut declared = std::collections::HashMap::new();
         for code in scripts {
             for op in &code.ops {
@@ -39,7 +57,7 @@ impl Vm<'_> {
                 }
             }
         }
-        let valid = self.globals.iter().all(|(name, binding)| {
+        let valid = globals.iter().all(|(name, binding)| {
             binding.value.is_some() && declared.get(name) == Some(&binding.kind)
         });
         if valid {
@@ -50,6 +68,11 @@ impl Vm<'_> {
     }
     /** Check the restored graph against the heap and the freshly compiled code. */
     pub fn validate_graph(&self) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        crate::v9::builtins::validate_profile(self)?;
+        #[cfg(feature = "conformance")]
+        crate::v9::platform::random::validate(self)?;
+        crate::v9::platform::animations::validate(self)?;
         let marker = self.mark_everything();
         if !marker.objects.iter().all(|id| self.resolves(*id))
             || !marker.envs.iter().all(|id| self.heap.envs.contains_key(id))
@@ -58,12 +81,15 @@ impl Vm<'_> {
         }
         self.validate_environments()?;
         self.validate_objects()?;
+        self.validate_weak()?;
+        self.validate_template_cache()?;
         self.validate_counters()
     }
     /** Every edge from every record and root, reachable or not. */
     fn mark_everything(&self) -> Marker {
         let mut marker = Marker::default();
         marker.object(GLOBAL);
+        self.realm_roots(&mut marker);
         for id in self.heap.objects.keys() {
             marker.object(*id);
         }
@@ -95,9 +121,11 @@ impl Vm<'_> {
     }
     /** An object identity names a heap record, a realm intrinsic or a native function. */
     fn resolves(&self, id: ObjectId) -> bool {
-        self.heap.get(id).is_some()
-            || (INTRINSIC_BASE..NATIVE_BASE).contains(&id) && realm().object(id).is_some()
-            || id >= NATIVE_BASE && realm().native(id).is_some()
+        self.realm_identity_valid(id)
+            && (self.heap.get(id).is_some()
+                || (INTRINSIC_BASE..NATIVE_BASE).contains(&id)
+                    && realm_for(id).object(id).is_some()
+                || id >= NATIVE_BASE && realm_for(id).native(id).is_some())
     }
     /** Parent chains end: a chain longer than the number of records is a cycle. */
     fn validate_environments(&self) -> EngineResult<()> {
@@ -120,10 +148,56 @@ impl Vm<'_> {
     fn validate_objects(&self) -> EngineResult<()> {
         let functions = self.heap.objects.len();
         for (id, object) in &self.heap.objects {
+            #[cfg(feature = "conformance")]
+            if !crate::v9::builtins::validate_native_test_object(self, *id) {
+                return Err(forged("native test-object brand"));
+            }
+            if !crate::v9::builtins::valid_immutable_brand(self, *id) {
+                return Err(forged("immutable buffer brand"));
+            }
             match &object.class {
+                Class::BigIntWide(value) if value.to_i128().is_some() => {
+                    return Err(forged("noncanonical boxed BigInt"));
+                }
+                Class::MappedArguments(data) => {
+                    let code = self
+                        .registry
+                        .get(data.site)
+                        .ok_or_else(|| forged("arguments code"))?;
+                    let slots = code
+                        .arguments
+                        .as_ref()
+                        .ok_or_else(|| forged("arguments mode"))?;
+                    let env = self
+                        .heap
+                        .env(data.env)
+                        .ok_or_else(|| forged("arguments environment"))?;
+                    if data.slots.len() > slots.len()
+                        || code.env.map(usize::from) != Some(env.slots.len())
+                    {
+                        return Err(forged("arguments parameter map"));
+                    }
+                    for (index, slot) in data.slots.iter().enumerate() {
+                        if let Some(slot) = slot {
+                            let prop = object.props.get(&Key::from(&index.to_string()));
+                            if slots[index] != Some(*slot)
+                                || usize::from(*slot) >= env.slots.len()
+                                || !prop.is_some_and(|p| {
+                                    p.attrs & super::heap::WRITABLE != 0
+                                        && p.slot == super::heap::Slot::Data(JsValue::Undefined)
+                                })
+                            {
+                                return Err(forged("arguments parameter cell"));
+                            }
+                        }
+                    }
+                }
                 // A property-list element (an attributed or accessor element, V8's dictionary
                 // elements) must sit over a hole inside the length; a value in both places, or
                 // a stored `length`, is forged.
+                Class::Array(elements) if elements.resident_len() > self.limits.array_length => {
+                    return Err(forged("array resident elements"));
+                }
                 Class::Array(elements)
                     if object.props.iter().any(|(key, _)| {
                         *key == Key::from("length")
@@ -136,6 +210,15 @@ impl Vm<'_> {
                 {
                     return Err(forged("array property map"));
                 }
+                Class::Function(function)
+                    if function.name.as_ref().is_some_and(|name| {
+                        !name.valid(self.heap.counts.functions)
+                            || object.props.get(&Key::from("name")).is_some()
+                            || self.virtual_deleted(*id, &Key::from("name"))
+                    }) =>
+                {
+                    return Err(forged("function name snapshot"));
+                }
                 Class::Function(function) => match &function.kind {
                     FunctionKind::Closure { site, .. } if self.registry.get(*site).is_none() => {
                         return Err(forged("closure code site"));
@@ -145,17 +228,16 @@ impl Vm<'_> {
                     }
                     _ => {}
                 },
-                Class::View(view)
-                    if !matches!(
-                        self.heap.get(view.buffer).map(|buffer| &buffer.class),
-                        Some(Class::ArrayBuffer(_))
-                    ) =>
-                {
+                Class::ArrayBuffer(_) if !crate::v9::builtins::valid_buffer(self, *id) => {
+                    return Err(forged("buffer internal slots"));
+                }
+                Class::View(_) if !crate::v9::builtins::valid_typed_view(self, *id) => {
                     return Err(forged("view buffer"));
                 }
                 Class::Proxy(proxy)
                     if proxy.target.is_some() != proxy.handler.is_some()
-                        || !self.proxy_chain_ends(*id, functions) =>
+                        || !self.proxy_chain_ends(*id, functions)
+                        || !self.proxy_flags_valid(proxy) =>
                 {
                     return Err(forged("proxy chain"));
                 }
@@ -193,6 +275,22 @@ impl Vm<'_> {
             }
         }
         false
+    }
+    /** Saved creation-time internal methods must agree with a live target's actual capabilities. */
+    fn proxy_flags_valid(&self, proxy: &super::data::ProxyData) -> bool {
+        if proxy.constructible == Some(true) && proxy.callable == Some(false) {
+            return false;
+        }
+        let Some(target) = proxy.target else {
+            return true;
+        };
+        let target = JsValue::Object(target);
+        proxy
+            .callable
+            .is_none_or(|callable| callable == self.is_callable(&target))
+            && proxy
+                .constructible
+                .is_none_or(|constructor| constructor == self.is_constructor(&target))
     }
     /** A proxy's target chain reaches a non-proxy (or a revoked proxy) within `records` hops. */
     fn proxy_chain_ends(&self, id: ObjectId, records: usize) -> bool {

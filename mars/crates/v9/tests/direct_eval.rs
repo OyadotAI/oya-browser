@@ -53,3 +53,50 @@ fn parameter_eval_cannot_declare_arguments() {
         "SyntaxError,2"
     );
 }
+
+/** Indirect strict eval has private var and function bindings instead of changing the global. */
+#[test]
+fn indirect_strict_eval_keeps_declarations_private() {
+    let source = "var value=1;const evil=eval;\
+        const closure=evil('\"use strict\";var value=2;function local(){return value}local');\
+        const r=[value,closure(),typeof local].join();";
+    assert_eq!(eval(source, "r"), "1,2,undefined");
+}
+
+/** Eval lexicals are private in either mode, while sloppy global vars remain deletable. */
+#[test]
+fn indirect_eval_lexicals_do_not_escape() {
+    let source = "const evil=eval;evil('let lexical=1;const immutable=2;var removable=3');\
+        const r=[typeof lexical,typeof immutable,removable,delete globalThis.removable].join();";
+    assert_eq!(eval(source, "r"), "undefined,undefined,3,true");
+}
+
+/** A closure created by strict indirect eval retains its private bindings through state transport. */
+#[test]
+fn indirect_eval_closures_survive_state_transport() {
+    let sources = vec![
+        "const evil=eval;const closure=evil('\"use strict\";var value=7;()=>++value');\
+        document.getElementById('go').addEventListener('click',()=>console.log(closure()));"
+            .to_string(),
+    ];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty());
+    let clicked = mars_v9::click_page(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        3,
+    )
+    .unwrap();
+    assert_eq!(common::console(&clicked), ["8"]);
+}
+
+/** A strict caller's direct eval rejects restricted identifiers and delete grammar immediately. */
+#[test]
+fn direct_eval_inherits_strict_early_errors() {
+    let source = "function f(){'use strict';const out=[];\
+        for(const code of ['var eval','var yield','delete missing','function g(eval){}']){\
+        try{eval(code);out.push(false)}catch(e){out.push(e instanceof SyntaxError)}}return out.join()}const r=f();";
+    assert_eq!(eval(source, "r"), "true,true,true,true");
+}

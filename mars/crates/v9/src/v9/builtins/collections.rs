@@ -4,6 +4,12 @@ use crate::v9::vm::data::{Class, IterKind, IterState, Table};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
 
+mod construct;
+mod set_algebra;
+mod set_predicates;
+mod set_record;
+mod set_storage;
+
 /** Which collection a constructor or method serves. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -69,6 +75,7 @@ pub(super) fn install(b: &mut Builder) {
 
     let set = b.object(Some(object_prototype));
     b.ids.set_prototype = set;
+    set_algebra::install(b, set);
     let ctor = b.constructor(
         "Set",
         0,
@@ -193,25 +200,7 @@ fn construct(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     if source.nullish() {
         return Ok(JsValue::Object(id));
     }
-    let adder = vm.get(
-        &JsValue::Object(id),
-        &key(if matches!(kind, Kind::Map | Kind::WeakMap) {
-            "set"
-        } else {
-            "add"
-        }),
-    )?;
-    for item in vm.iterate_to_vec(&source)? {
-        let args = if matches!(kind, Kind::Map | Kind::WeakMap) {
-            if !matches!(item, JsValue::Object(_)) {
-                return Err(vm.type_error("Iterator value is not an entry object"));
-            }
-            vec![vm.get(&item, &key("0"))?, vm.get(&item, &key("1"))?]
-        } else {
-            vec![item]
-        };
-        vm.call(adder.clone(), JsValue::Object(id), args)?;
-    }
+    construct::populate(vm, id, kind, source)?;
     Ok(JsValue::Object(id))
 }
 
@@ -247,10 +236,12 @@ fn incompatible(vm: &mut Vm) -> crate::v9::vm::Thrown {
 
 /** Weak collections take only objects as keys. */
 fn check_weak(vm: &mut Vm, kind: Kind, value: &JsValue) -> Res<()> {
-    if matches!(kind, Kind::WeakMap | Kind::WeakSet)
-        && !matches!(value, JsValue::Object(_) | JsValue::Symbol(_))
-    {
-        return Err(vm.type_error("Invalid value used as weak collection key"));
+    if matches!(kind, Kind::WeakMap | Kind::WeakSet) && !vm.can_hold_weakly(value) {
+        return Err(vm.type_error(if matches!(kind, Kind::WeakSet) {
+            "Invalid value used in weak set"
+        } else {
+            "Invalid value used as weak map key"
+        }));
     }
     Ok(())
 }
@@ -368,33 +359,5 @@ fn iterate(vm: &mut Vm, call: Call, want: Kind, kind: IterKind) -> Res<JsValue> 
 
 /** Map.groupBy. */
 fn group_by(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let callback = call.arg(1);
-    let map = vm.alloc(Object::new(
-        Class::Map(Box::default()),
-        Some(realm().ids.map_prototype),
-    ))?;
-    for (index, item) in vm.iterate_to_vec(&call.arg(0))?.into_iter().enumerate() {
-        let group = vm.call(
-            callback.clone(),
-            JsValue::Undefined,
-            vec![item.clone(), JsValue::Number(index as f64)],
-        )?;
-        let existing = match vm.heap.get(map).map(|o| &o.class) {
-            Some(Class::Map(table)) => table.get(&group).cloned(),
-            _ => None,
-        };
-        let list = match existing {
-            Some(list) => list,
-            None => {
-                let list = JsValue::Object(vm.new_array(Vec::new())?);
-                if let Some(Class::Map(table)) = vm.heap.get_mut(map).map(|o| &mut o.class) {
-                    table.set(group, list.clone());
-                }
-                vm.heap.adjust(1, 0);
-                list
-            }
-        };
-        vm.array_append(&list, item)?;
-    }
-    Ok(JsValue::Object(map))
+    super::grouping::group(vm, call, false)
 }

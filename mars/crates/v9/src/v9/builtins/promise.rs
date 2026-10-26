@@ -1,11 +1,13 @@
 /** Promise, its reaction jobs, and the microtask queue every request drains. */
 use super::*;
+mod forwarding;
 use crate::protocol::EngineError;
 use crate::v9::vm::Resume;
 use crate::v9::vm::Thrown;
 use crate::v9::vm::data::{Class, Job, PromiseData, PromiseState, Reaction, ReactionHandler};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{Static, realm, string, symbol};
+pub(in crate::v9) use forwarding::{forwarding_promise, resolving_promise};
 
 /** Native slots for the resolving functions and combinators. */
 struct Natives {
@@ -44,16 +46,31 @@ pub(super) fn install(b: &mut Builder) {
 }
 
 impl Vm<'_> {
-    /** A new pending promise. */
+    /** A new pending promise has no parent unless a genuine reaction creates it. */
     pub fn new_promise(&mut self) -> Res<ObjectId> {
-        self.alloc(Object::new(
+        self.new_promise_parent(None)
+    }
+    /** Hook parent metadata is attached before any author callback sees the actual pending Promise. */
+    pub fn new_promise_parent(&mut self, parent: Option<ObjectId>) -> Res<ObjectId> {
+        let promise = self.alloc(Object::new(
             Class::Promise(Box::new(PromiseData {
                 state: PromiseState::Pending,
                 reactions: Vec::new(),
                 handled: false,
             })),
             Some(realm().ids.promise_prototype),
-        ))
+        ))?;
+        #[cfg(feature = "conformance")]
+        {
+            let mark = self.pins.len();
+            self.pins.push(JsValue::Object(promise));
+            let result = super::async_hook_init(self, promise, parent);
+            self.pins.truncate(mark);
+            result?;
+        }
+        #[cfg(not(feature = "conformance"))]
+        let _ = parent;
+        Ok(promise)
     }
     /** Queue a microtask. */
     pub fn enqueue(&mut self, job: Job) -> Res<()> {
@@ -65,6 +82,24 @@ impl Vm<'_> {
     }
     /** Settle a pending promise and schedule its reactions. */
     pub fn settle(&mut self, promise: ObjectId, state: PromiseState) -> Res<()> {
+        let mark = self.pins.len();
+        self.pins.push(JsValue::Object(promise));
+        if let PromiseState::Fulfilled(value) | PromiseState::Rejected(value) = &state {
+            self.pins.push(value.clone());
+        }
+        let result = (|| -> Res<()> {
+            #[cfg(feature = "conformance")]
+            if matches!(self.heap.get(promise).map(|object|&object.class),Some(Class::Promise(data))if matches!(data.state,PromiseState::Pending))
+            {
+                super::async_hook_resolve(self, promise)?;
+            }
+            self.settle_inner(promise, state)
+        })();
+        self.pins.truncate(mark);
+        result
+    }
+    /** State transitions happen only after the real resolve hook, so hook-added reactions join the same settlement. */
+    fn settle_inner(&mut self, promise: ObjectId, state: PromiseState) -> Res<()> {
         let (reactions, handled) = match self.heap.get_mut(promise).map(|o| &mut o.class) {
             Some(Class::Promise(data)) if matches!(data.state, PromiseState::Pending) => {
                 data.state = state.clone();
@@ -93,6 +128,19 @@ impl Vm<'_> {
     }
     /** Resolve a promise with a value, adopting thenables. */
     pub fn resolve_promise(&mut self, promise: ObjectId, value: JsValue) -> Res<()> {
+        let mark = self.pins.len();
+        self.pins.push(JsValue::Object(promise));
+        self.pins.push(value.clone());
+        let result = (|| -> Res<()> {
+            #[cfg(feature = "conformance")]
+            super::async_hook_resolve(self, promise)?;
+            self.resolve_promise_inner(promise, value)
+        })();
+        self.pins.truncate(mark);
+        result
+    }
+    /** PromiseResolve keeps thenable access and adoption on the original language path. */
+    fn resolve_promise_inner(&mut self, promise: ObjectId, value: JsValue) -> Res<()> {
         if value == JsValue::Object(promise) {
             let error = self.type_error("Chaining cycle detected for promise");
             let Thrown::Value(error) = error else {
@@ -182,11 +230,19 @@ impl Vm<'_> {
     }
     /** Suspend an async function on a promise. */
     pub fn await_promise(&mut self, promise: ObjectId, holder: ObjectId) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        let target = if self.page.environment.conformance_async_hooks {
+            Some(self.new_promise_parent(Some(promise))?)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "conformance"))]
+        let target = None;
         self.perform_then(
             promise,
             ReactionHandler::Resume(holder),
             ReactionHandler::Resume(holder),
-            None,
+            target,
         )
     }
     /** Run queued microtasks until the queue is empty. */
@@ -202,13 +258,16 @@ impl Vm<'_> {
             let Some(job) = self.jobs.pop_front() else {
                 break;
             };
-            match self.run_job(job) {
+            match self.run_rooted_job(job) {
                 Ok(()) => {}
                 Err(Thrown::Value(error)) => self.report_error(&error),
                 Err(fatal) => return Err(fatal),
             }
         }
         self.report_unhandled();
+        if self.frames.is_empty() {
+            self.clear_kept_objects();
+        }
         Ok(())
     }
     /** Log rejections nothing handled by the end of a drain. */
@@ -222,10 +281,73 @@ impl Vm<'_> {
                 },
                 _ => continue,
             };
+            #[cfg(feature = "conformance")]
+            {
+                self.note_conformance_native_error(&reason);
+                if self.page.environment.conformance_ignore_unhandled_promises
+                    && self.page.effects.conformance_native_error.is_none()
+                {
+                    continue;
+                }
+                self.page.effects.conformance_rejection = true;
+            }
             let text = self.describe(&reason);
+            #[cfg(feature = "conformance")]
+            let text = self.conformance_description(&reason).unwrap_or(text);
+            #[cfg(feature = "conformance")]
+            if self.page.effects.conformance_error.is_none() {
+                self.page.effects.conformance_error = Some(format!("Uncaught (in promise) {text}"));
+            }
             self.page
                 .console("error", format!("Uncaught (in promise) {text}"));
         }
+    }
+    /** A popped job's resource, callback and argument remain roots while hooks or handlers can collect. */
+    fn run_rooted_job(&mut self, job: Job) -> Res<()> {
+        let mark = self.pins.len();
+        match &job {
+            Job::Callback(function) => self.pins.push(function.clone()),
+            Job::Thenable {
+                promise,
+                thenable,
+                then,
+            } => self
+                .pins
+                .extend([JsValue::Object(*promise), thenable.clone(), then.clone()]),
+            Job::Reaction { reaction, argument } => {
+                self.pins.push(argument.clone());
+                if let Some(target) = reaction.target {
+                    self.pins.push(JsValue::Object(target));
+                }
+                match &reaction.handler {
+                    ReactionHandler::Function(handler) => self.pins.push(handler.clone()),
+                    ReactionHandler::Resume(holder) => self.pins.push(JsValue::Object(*holder)),
+                }
+            }
+        }
+        #[cfg(feature = "conformance")]
+        let resource = super::async_hook_resource(self, &job);
+        let result = (|| -> Res<()> {
+            #[cfg(feature = "conformance")]
+            if let Some(resource) = resource {
+                if let Err(error) = super::async_hook_before(self, resource) {
+                    super::async_hook_unwind(self)?;
+                    return Err(error);
+                }
+            }
+            let result = self.run_job(job);
+            #[cfg(feature = "conformance")]
+            if let Some(resource) = resource {
+                if matches!(result, Err(Thrown::Fatal(_))) {
+                    super::async_hook_unwind(self)?;
+                } else {
+                    super::async_hook_after(self, resource)?;
+                }
+            }
+            result
+        })();
+        self.pins.truncate(mark);
+        result
     }
     /** One microtask. */
     fn run_job(&mut self, job: Job) -> Res<()> {
@@ -240,12 +362,16 @@ impl Vm<'_> {
                 then,
             } => {
                 let (resolve, reject) = self.resolving_functions(promise)?;
-                if let Err(Thrown::Value(error)) = self.call(
+                match self.call(
                     then,
                     thenable,
                     vec![JsValue::Object(resolve), JsValue::Object(reject)],
                 ) {
-                    self.call(JsValue::Object(reject), JsValue::Undefined, vec![error])?;
+                    Ok(_) => {}
+                    Err(Thrown::Value(error)) => {
+                        self.call(JsValue::Object(reject), JsValue::Undefined, vec![error])?;
+                    }
+                    Err(fatal) => return Err(fatal),
                 }
                 Ok(())
             }
@@ -256,7 +382,11 @@ impl Vm<'_> {
                     } else {
                         Resume::Next
                     };
-                    self.drive_async(holder, Some((mode, argument)))
+                    self.drive_async(holder, Some((mode, argument)))?;
+                    if let Some(target) = reaction.target {
+                        self.resolve_promise(target, JsValue::Undefined)?;
+                    }
+                    Ok(())
                 }
                 ReactionHandler::Function(handler) => {
                     let outcome = if self.is_callable(&handler) {

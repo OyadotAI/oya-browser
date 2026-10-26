@@ -20,7 +20,15 @@ assert_eq!(execution.state.globals()["count"].value, Some(JsValue::Number(3.0)))
 
 Scripts are scanned, parsed into a syntax tree for the full classic-script grammar, and compiled to stack bytecode on every request. Code is identified by its page byte offset, so committed state never carries executable code: closures name a code site, and the state is validated against freshly compiled sources. Frames are explicit data, so generators and async functions suspend into the heap and resume in a later request (an `await fetch(...)` continues when the app delivers the response).
 
-Language support covers ES2023 classic scripts: classes with fields, private members, accessors and static blocks; destructuring, spread and rest; generators and `yield*`; async functions and `await`; promises with a microtask queue; labels, `switch`, `try`/`catch`/`finally`; optional chaining, nullish coalescing and logical assignment; tagged templates. The library includes Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Math, JSON, Date, RegExp, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Promise, Proxy, Reflect, ArrayBuffer, the eleven typed array kinds, DataView, structuredClone, TextEncoder/TextDecoder and the Error types. BigInts are bounded to 128 bits: a result past that throws a catchable RangeError. A WeakRef holds its target strongly and finalization callbacks never run, both behaviours the specification allows. ArrayBuffer bytes count against `JS_ENVIRONMENT_UNITS` (two bytes per unit) and one buffer holds at most twice `JS_STRING_UNITS` bytes. `eval` and `new Function` compile with V9's own parser (dynamic sources are kept in state, bounded by `VM_DYNAMIC_SOURCES`). Not supported: modules, `with`, async generators and `for await`, SharedArrayBuffer and Atomics, Intl. Absent APIs are `undefined`, so libraries that feature-detect take their fallbacks; a feature V9 parses but cannot run throws a catchable `TypeError` and is listed in `Execution::effects.unsupported`.
+Language support includes classic and module scripts: classes with fields, private members, accessors and static blocks; destructuring, spread and rest; generators and `yield*`; async functions, async generators, `await` and `for await`; promises with a microtask queue; labels, `switch`, `try`/`catch`/`finally`; optional chaining, nullish coalescing and logical assignment; `using` and `await using` with reverse cleanup and suppressed errors; tagged templates. The library includes Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Math, JSON, Date, RegExp, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Promise, Proxy, Reflect, ArrayBuffer, the twelve typed array kinds, including Float16Array, DataView, structuredClone, TextEncoder/TextDecoder and the Error types. BigInts use immutable signed limbs beyond the inline 128-bit representation; arithmetic, division, shifts, bitwise operations and radix conversion retain the existing work and storage limits. Weak references use precise weak-edge tracing and per-checkpoint kept targets. Finalization registries retain holdings and schedule cleanup tasks after collection; unregister tokens stay weak. ArrayBuffer bytes count against `JS_ENVIRONMENT_UNITS` (two bytes per unit) and one buffer holds at most twice `JS_STRING_UNITS` bytes. `eval` and `new Function` compile with V9's own parser (live source units are kept in state, bounded by `VM_DYNAMIC_SOURCES`; collection reclaims unreachable dynamic code while retaining closures and suspended frames). Some V8 language features and host APIs remain unimplemented; executed conformance failures remain visible. Absent APIs are `undefined`, so libraries that feature-detect take their fallbacks; a feature V9 parses but cannot run throws a catchable `TypeError` and is listed in `Execution::effects.unsupported`.
+
+Arrays store logical length separately from resident values, so large gaps do not allocate every hole. Array species constructors and Set algebra preserve callback order. String normalization uses ICU4X scalar algorithms while preserving lone UTF-16 surrogates. `Math.sumPrecise` accumulates binary inputs exactly before rounding once. Function source keeps the original grammar and trivia.
+
+ArrayBuffer supports actual resizing, transfer and detachment. Fixed and length-tracking typed-array and DataView bounds follow the backing allocation, including shrink and regrowth. Buffer and resident-element limits remain enforced.
+
+Iterator helpers support lazy transformations, eager consumers, concatenation and joint iteration with captured padding and reverse cleanup. Native disposal stacks and iterator disposal methods retain captured resources through suspension and saved-state restoration. Unicode regex property escapes use exact, case-sensitive ICU4X category, binary-property, script and script-extension data across the entire code-point range. Unicode regex matching uses simple case equivalence, complete surrogate-pair positions and backwards lookbehind captures; buffer-boundary assertions are an explicit environment opt-in. Uint8Array codecs support hexadecimal and base64 conversion, including partial writes and strict final-chunk validation. Array, ArrayBuffer and typed-array result creation observes actual constructors and species with live storage checks.
+
+WebAssembly uses V9-owned binary validation and execution, including scalar instructions, SIMD, GC references, custom descriptor identity and prototypes, prototype configuration, exception tags, memory64 and synchronized shared memory with real atomic wait/notify. Shared GC records use an owned arena with cross-worker root handles, synchronized atomic fields, cycle collection and validated inert snapshots. Modules retain validated bytes and inert heap records across requests. JSPI suspends imported Promises into typed heap-owned call and control frames and resumes through real Promise jobs, including loops, conditional paths and direct/reference/indirect calls. Suspension through exception handlers, Wasm continuation effects and other unimplemented instructions still fail explicitly. The opt-in d8 host compiles promised byte sources through actual Promise jobs and enforces original module-size flags only as a lower limit on the existing byte ceiling.
 
 Regular expressions run on V9's own backtracking engine (`regexp.rs`), bounded by `REGEXP_STEPS`, `REGEXP_NODES` and `REGEXP_GROUPS`.
 
@@ -55,4 +63,54 @@ With `DomLevel::Legacy` (the default, and what the existing `*_document_scripts*
 
 `check`, `execute`, `load`, `load_scripts*`, `event*`, `load_document_scripts*` and `click_document_scripts*` keep their signatures and run on the same engine. Run `cargo run -p mars-v9 --example check -- FILES` to parse files, `--run FILES` to load them as one page, and `cargo run -p mars-v9 --features measure --example js -- [--scale N] FILES` or `--example page -- [--scale N] [--extended] [--click TAG] FILES` to measure real scripts.
 
-See [Mars's supported features](../../README.md), [upstream research](../../UPSTREAM.md) and [third-party notices](../../THIRD_PARTY_NOTICES.md). V9's dependencies are Mars Core's shared contracts plus the pinned serde, serde_json, ryu-js, url and ring crates already in the workspace. This package is an unpublished path dependency with no API stability guarantee.
+See [Mars's supported features](../../README.md), [upstream research](../../UPSTREAM.md) and [third-party notices](../../THIRD_PARTY_NOTICES.md). V9's dependencies are Mars Core's shared contracts plus the pinned serde, serde_json, ryu-js, ICU4X Unicode data, url and ring crates already in the workspace. This package is an unpublished path dependency with no API stability guarantee.
+
+## Upstream conformance runs
+
+Run V8's unchanged `test/mjsunit` sources from the Mars workspace:
+
+```sh
+CONF_OUT=/tmp/mars-v9-mjsunit CONF_REQUIRE_PASS=1 cargo test --release --offline \
+  -p mars-v9 --features conformance --test test262_runner -- \
+  --ignored --nocapture --exact mjsunit
+```
+
+`MJSUNIT_ROOT` selects the checkout (default `~/Dev/upstream/v8/test/mjsunit`),
+and `MJSUNIT` optionally selects comma-separated path prefixes. Without a filter,
+the runner retains its existing exclusions for V8 native syntax and the d8,
+Wasm, shared-memory, sandbox and tools directories. Report skipped cases separately;
+they do not count as passes. `CONF_REQUIRE_PASS=1` makes any executed failure fail
+the command after writing the complete JSON report.
+
+The opt-in `conformance` feature supplies test-host `d8.file.execute/read`, `load`
+and binary `readbuffer` over host-provided fixtures, synchronous and scheduled major/minor collection,
+and uncatchable host termination. The runner opts into ordinary shell globals,
+so browser properties such as `Window.top` do not interfere with test bindings.
+Realm and ShadowRealm contexts use separate intrinsics, globals and module state;
+callable wrapping and structured Error stacks retain their ownership boundaries.
+Workers use explicitly scoped Rust threads and isolated V9 heaps. Typed message
+graphs preserve cycles and sharing; transferred buffers detach, and shared buffers
+retain synchronized native backing stores. Session teardown cancels and joins
+child isolates. `performance.measureMemory` schedules real collection and reports
+conservative resident-data estimates for permitted contexts. It counts live object
+headers, property/binding storage, captured values and deduplicated backing data;
+process code/shape caches, allocator bookkeeping and RSS are excluded.
+File execution reports original ordinary exceptions and throws a new Error wrapper,
+matching d8; native failures and termination retain their severity. The runner
+preserves each source as a separate global Script, honors `// Files`, `// NO HARNESS`
+and native `--bundle` Script/module containers, and delivers actual module fixtures, timers and microtasks
+before scoring. Fixture reads stay beneath the upstream checkout, including
+through symlinks. These test-host APIs are absent from default builds. Missing
+capabilities remain executed failures; the runner does not emulate success.
+Declared `TZ` metadata supplies bounded system TZif transitions and future rules;
+on macOS, the test host obtains localized zone names from the system ICU4C library.
+
+
+Validation snapshot, 2026-10-25, against V8 revision
+`fedd021b538607860f9c56e5c193ad8dcd4f2bb1`: the isolated V9 commit candidate
+passed 1,014 default-build Rust tests and 1,205 conformance-feature Rust tests,
+with five existing ignored tests in each configuration. The unfiltered mjsunit
+run passed 3,411 of 3,742 executed cases (91.15%); 331 cases failed and the
+original 5,345 exclusions remained separate. The strict upstream gate failed as
+required. Full V8 compatibility is unfinished; implementation gaps, resource
+bounds and incompatible upstream configuration expectations remain visible.

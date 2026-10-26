@@ -193,6 +193,18 @@ impl Runtime {
                 ));
             }
         };
+        if key == "Escape" {
+            if !input.modifiers.is_empty() {
+                return Err(EngineError::unsupported(
+                    "Modified Escape presses are not implemented.",
+                ));
+            }
+            return self.press_escape(
+                &input.page_id,
+                input.expected_revision,
+                input.node_id.as_deref(),
+            );
+        }
         if let Some(y) = self.scroll_key(&key) {
             return self.scroll_to(&input.page_id, input.expected_revision, y);
         }

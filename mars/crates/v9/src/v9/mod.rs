@@ -7,6 +7,8 @@ mod binding;
 mod builtins;
 mod compile;
 mod errors;
+mod keyboard;
+pub use keyboard::{KeyboardKey, keyboard_page};
 mod lexer;
 mod literals;
 mod modules;
@@ -17,16 +19,23 @@ mod source;
 mod syntax;
 mod value;
 mod vm;
+#[cfg(feature = "conformance")]
+mod worker_runtime;
+#[cfg(feature = "conformance")]
+pub use worker_runtime::{ConformanceWorkerHost, ConformanceWorkerSession};
 
 pub use binding::{Binding, BindingKind, Globals};
 pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource};
+#[cfg(feature = "conformance")]
+pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
-    ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
-    NavigationRequest, PageEnvironment, SimpleFragmentParser,
+    AnimationTarget, ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
+    ImageAdoption, ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
+    SimpleFragmentParser,
 };
-pub use value::{CodePointCursor, JsString, JsValue};
+pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
     LANGUAGE_TAG_BYTES, NAVIGATOR_LANGUAGES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_DEADLINE,
@@ -54,6 +63,10 @@ const HANDLER_OFFSET: usize = 512 * 1024 * 1024;
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VmState {
+    /** Conformance contexts retain distinct globals and intrinsic ownership across requests. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    realms: vm::realms::State,
     #[serde(default)]
     globals: Globals,
     #[serde(default)]
@@ -66,6 +79,8 @@ pub struct VmState {
     page: platform::PageState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dynamic: Vec<vm::DynamicSource>,
+    #[serde(default, skip_serializing_if = "vm::templates::Cache::is_empty")]
+    templates: vm::templates::Cache,
     #[serde(default, skip_serializing_if = "modules::ModuleState::is_empty")]
     modules: modules::ModuleState,
 }
@@ -144,6 +159,9 @@ impl VmState {
         ) {
             return Err(EngineError::invalid("Invalid V9 listener target."));
         }
+        if self.page.images.keys().any(|node| !known(node)) {
+            return Err(EngineError::invalid("Invalid V9 image target."));
+        }
         for node in self.page.wrappers.keys() {
             let known = projected.contains(node)
                 || self.page.detached.contains_key(node)
@@ -158,6 +176,36 @@ impl VmState {
     }
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
+        platform::images::validate(&self.page.images)?;
+        builtins::validate_shared(&self.heap)?;
+        builtins::validate_shared_gc(&self.heap)?;
+        #[cfg(feature = "conformance")]
+        self.realms.validate(&self.heap, &self.dynamic)?;
+        #[cfg(feature = "conformance")]
+        if self.modules.records.len()
+            + self
+                .realms
+                .contexts
+                .iter()
+                .map(|context| context.modules.records.len())
+                .sum::<usize>()
+            > crate::constants::MODULES
+            || self.modules.waiting.len()
+                + self
+                    .realms
+                    .contexts
+                    .iter()
+                    .map(|context| context.modules.waiting.len())
+                    .sum::<usize>()
+                > crate::constants::MODULES
+        {
+            return Err(EngineError::limit(
+                "V9 module records",
+                crate::constants::MODULES,
+            ));
+        }
         let counts = self.heap.counts;
         // Global lexical strings live outside the heap yet are retained environment text too.
         let global_units: usize = self
@@ -165,6 +213,14 @@ impl VmState {
             .values()
             .map(|binding| binding.value.as_ref().map_or(0, JsValue::string_units))
             .sum();
+        let global_bindings = self.globals.len();
+        #[cfg(feature = "conformance")]
+        let global_units = global_units + self.page.cpu_profile.units();
+        #[cfg(feature = "conformance")]
+        let (global_units, global_bindings) = (
+            global_units + self.realms.units(),
+            global_bindings + self.realms.bindings(),
+        );
         for (count, limit, name) in [
             (counts.objects, limits.objects + 2, "V9 heap objects"),
             (counts.functions, limits.functions, "V9 functions"),
@@ -180,7 +236,7 @@ impl VmState {
             ),
             (counts.environments, limits.environments, "V9 environments"),
             (
-                counts.bindings + self.globals.len(),
+                counts.bindings + global_bindings,
                 limits.bindings,
                 "V9 bindings",
             ),
@@ -204,6 +260,7 @@ impl VmState {
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len() > limits.jobs
             || self.dynamic.len() > crate::constants::VM_DYNAMIC_SOURCES
+            || self.templates.len() > limits.objects
             || self.symbols.descriptions.len() > crate::constants::VM_SYMBOLS
         {
             return Err(EngineError::limit(
@@ -413,6 +470,18 @@ pub(in crate::v9) fn parse_at(
     offset: usize,
     index: Option<usize>,
 ) -> EngineResult<syntax::Program> {
+    parse_with_mode(source, offset, index, false, &[], 0)
+}
+
+/** A direct eval's inherited grammar never comes from rewriting the script source. */
+fn parse_with_mode(
+    source: &str,
+    offset: usize,
+    index: Option<usize>,
+    strict: bool,
+    private_names: &[syntax::Name],
+    grammar: u8,
+) -> EngineResult<syntax::Program> {
     let mut tokens = lexer::tokenize(source).map_err(|mut error| {
         if let Some(location) = error.location.as_deref_mut() {
             location.byte_offset += offset;
@@ -422,8 +491,16 @@ pub(in crate::v9) fn parse_at(
     })?;
     for token in &mut tokens {
         token.location.byte_offset += offset;
+        token.end += offset;
     }
-    syntax::parse(tokens).map_err(|mut error| {
+    let result = if !private_names.is_empty() || grammar != 0 {
+        syntax::parse_eval(tokens, strict, private_names, grammar)
+    } else if strict {
+        syntax::parse_strict(tokens)
+    } else {
+        syntax::parse(tokens)
+    };
+    result.map_err(|mut error| {
         if let Some(location) = error.location.as_deref_mut() {
             location.script_index = index.map(|index| index + 1);
         }
@@ -448,17 +525,22 @@ pub(in crate::v9) fn compile_dynamic(
         return Ok(code.clone());
     }
     match context {
-        Some(context) => registry.eval(source, base, context, || on_parse(source, base)),
-        None => registry.script(source, base, || on_parse(source, base)),
+        Some(context) => registry.eval(source, base, context, |strict, private_names, grammar| {
+            if source.len() > SCRIPT_BYTES {
+                return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
+            }
+            parse_with_mode(source, base, None, strict, private_names, grammar)
+        }),
+        None => registry.script(source, base, || on_parse(source, base, false)),
     }
 }
 
 /** Parse dynamic or handler source. */
-fn on_parse(source: &str, base: usize) -> EngineResult<syntax::Program> {
+fn on_parse(source: &str, base: usize, strict: bool) -> EngineResult<syntax::Program> {
     if source.len() > SCRIPT_BYTES {
         return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
     }
-    parse_at(source, base, None)
+    parse_with_mode(source, base, None, strict, &[], 0)
 }
 
 /** Parse one classic script without running it, the way a page load would read it. */
@@ -530,9 +612,13 @@ fn session<'h>(
         document.validate()?;
     }
     storage.validate()?;
+    builtins::validate_timezone(environment)?;
+    #[cfg(feature = "conformance")]
+    builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
     state.validate(&limits)?;
+    vm::validate_dynamic_sources(&state.dynamic)?;
     if let Some(document) = &document
         && state.page.initialized
         && state.page.identity != document.identity
@@ -553,6 +639,12 @@ fn session<'h>(
         storage,
     );
     let mut vm = Vm::new(state.heap, page, limits);
+    builtins::initialize_shared(&mut vm)?;
+    builtins::initialize_shared_gc(&mut vm)?;
+    #[cfg(feature = "conformance")]
+    {
+        vm.realms = state.realms;
+    }
     vm.globals = state.globals;
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
@@ -560,7 +652,7 @@ fn session<'h>(
     modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
     let compiled = compile_sources(&mut vm, sources, isolated)?;
     for (index, source) in state.dynamic.iter().enumerate() {
-        let base = builtins::dynamic_base(&state.dynamic[..index]);
+        let base = vm::dynamic_source_base(&state.dynamic, index);
         compile_dynamic(
             &mut vm.registry,
             &source.source,
@@ -569,13 +661,17 @@ fn session<'h>(
         )?;
     }
     vm.dynamic = state.dynamic;
+    vm.templates = state.templates;
     vm.validate_graph()?;
+    platform::images::validate_targets(&vm.page)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),
         Compiled::Each(codes) => codes.iter().flatten().map(|code| &**code).collect(),
     };
     scripts.extend(loaded.iter().map(|code| &**code));
+    #[cfg(feature = "conformance")]
+    scripts.extend(vm.realm_codes(0).into_iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
     vm.deadline = Some(std::time::Instant::now() + SCRIPT_DEADLINE);
     Ok((vm, compiled))
@@ -657,7 +753,10 @@ fn run_one(vm: &mut Vm, code: Arc<Code>, index: usize) -> EngineResult<()> {
 
 /** Everything a failed script could change, restored on rollback. */
 struct Snapshot {
+    #[cfg(feature = "conformance")]
+    realms: vm::realms::State,
     heap: Heap,
+    kept_weak: vm::heap::FastMap<vm::data::TableKey, JsValue>,
     globals: Globals,
     symbols: Symbols,
     jobs: std::collections::VecDeque<Job>,
@@ -668,6 +767,7 @@ struct Snapshot {
     script_changes: Vec<ScriptChange>,
     effects: HostEffects,
     dynamic: Vec<vm::DynamicSource>,
+    templates: vm::templates::Cache,
     modules: modules::ModuleState,
     next_id: usize,
     change_bytes: usize,
@@ -677,7 +777,10 @@ struct Snapshot {
 /** Take a snapshot between scripts. */
 fn snapshot(vm: &Vm) -> Snapshot {
     Snapshot {
+        #[cfg(feature = "conformance")]
+        realms: vm.realms.clone(),
         heap: vm.heap.clone(),
+        kept_weak: vm.kept_weak.clone(),
         globals: vm.globals.clone(),
         symbols: vm.symbols.clone(),
         jobs: vm.jobs.clone(),
@@ -688,6 +791,7 @@ fn snapshot(vm: &Vm) -> Snapshot {
         script_changes: vm.page.script_changes.clone(),
         effects: vm.page.effects.clone(),
         dynamic: vm.dynamic.clone(),
+        templates: vm.templates.clone(),
         modules: vm.modules.state.clone(),
         next_id: vm.page.next_id,
         change_bytes: vm.page.change_bytes,
@@ -697,7 +801,12 @@ fn snapshot(vm: &Vm) -> Snapshot {
 
 /** Restore a snapshot after a failed script. */
 fn restore(vm: &mut Vm, saved: Snapshot) {
+    #[cfg(feature = "conformance")]
+    {
+        vm.realms = saved.realms;
+    }
     vm.heap = saved.heap;
+    vm.kept_weak = saved.kept_weak;
     vm.globals = saved.globals;
     vm.symbols = saved.symbols;
     vm.jobs = saved.jobs;
@@ -707,11 +816,14 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.changes = saved.changes;
     vm.page.script_changes = saved.script_changes;
     vm.page.effects.requests = saved.effects.requests;
+    vm.page.effects.image_requests = saved.effects.image_requests;
+    vm.page.effects.image_adoptions = saved.effects.image_adoptions;
     vm.page.effects.navigation = saved.effects.navigation;
     vm.page.effects.history = saved.effects.history;
     vm.page.effects.cookies = saved.effects.cookies;
     vm.page.effects.title = saved.effects.title;
     vm.dynamic = saved.dynamic;
+    vm.templates = saved.templates;
     vm.modules.state = saved.modules;
     vm.page.next_id = saved.next_id;
     vm.page.change_bytes = saved.change_bytes;
@@ -725,9 +837,12 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
 
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
+    vm.select_realm(0).map_err(fatal)?;
+    platform::images::requests(&mut vm)?;
+    vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
-    vm.collect_now().map_err(fatal)?;
+    vm.collect_snapshot().map_err(fatal)?;
     let effects_timer = vm.next_timer();
     let script_requests: Vec<ScriptLoadRequest> = vm
         .page
@@ -754,12 +869,15 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     effects.next_timer_ms = effects_timer;
     let module_requests = std::mem::take(&mut vm.modules.requests);
     let state = VmState {
+        #[cfg(feature = "conformance")]
+        realms: vm.realms,
         globals: vm.globals,
         heap: vm.heap,
         symbols: vm.symbols,
         jobs: vm.jobs.into(),
         page,
         dynamic: vm.dynamic,
+        templates: vm.templates,
         modules: std::mem::take(&mut vm.modules.state),
     };
     state.validate(&vm.limits)?;
@@ -917,6 +1035,10 @@ fn run_sources(
         match run_one(vm, code, index) {
             Ok(()) => ran.push(index),
             Err(error) => {
+                #[cfg(feature = "conformance")]
+                if builtins::is_test_exit(&error) {
+                    return Err(error);
+                }
                 restore(vm, saved);
                 failed.push(ScriptFailure { index, error });
             }
@@ -1201,6 +1323,19 @@ pub fn resume_requests(
     })
 }
 
+/// Deliver actual host image fetch/decode outcomes in a later task, ignoring stale source generations.
+pub fn resume_images(
+    input: PageInput<'_>,
+    state: VmState,
+    responses: Vec<ImageResponse>,
+) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        platform::images::deliver(&mut vm, responses)?;
+        finish(vm)
+    })
+}
+
 /** The default environment for entry points that predate PageEnvironment. */
 fn default_environment() -> PageEnvironment {
     PageEnvironment::default()
@@ -1481,26 +1616,30 @@ impl Vm<'_> {
     pub(in crate::v9) fn run_script(&mut self, code: Arc<Code>) -> Result<JsValue, Thrown> {
         let regs = vec![JsValue::Undefined; code.registers as usize];
         self.frames.push(vm::Frame {
+            realm: self.active_realm,
             code,
             pc: 0,
             stack: Vec::new(),
             regs,
             env: None,
-            this: JsValue::Object(vm::GLOBAL),
+            this: JsValue::Object(self.global_object()),
             callee: JsValue::Undefined,
             args: Vec::new(),
             new_target: JsValue::Undefined,
             handlers: Vec::new(),
             envs: 0,
             boundary: true,
+            caller_hidden: false,
             construct: false,
             resume: vm::Resume::Next,
         });
+        let previous_realm = self.active_realm;
         let pinning = std::mem::replace(&mut self.pinning, false);
         self.native_depth += 1;
         let result = self.run();
         self.native_depth -= 1;
         self.pinning = pinning;
+        self.select_realm(previous_realm)?;
         match result? {
             vm::Exit::Return(value) => Ok(value),
             _ => Err(EngineError::invalid("V9 script suspended at the top level.").into()),

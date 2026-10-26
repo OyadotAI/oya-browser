@@ -91,7 +91,7 @@ impl Compiler {
         let op = match target.key {
             TargetKey::Computed(slot) => {
                 self.emit(Op::GetReg(slot));
-                self.emit(Op::ToPropertyKey);
+                self.emit(Op::ToElementKey);
                 Op::SetElem
             }
             TargetKey::Name(index) => Op::SetProp(index),
@@ -226,13 +226,36 @@ impl Compiler {
         self.emit(Op::GetIterator);
         self.emit(Op::SetReg(iterator));
         self.emit(Op::Pop);
+        let closeable = self.temp()?;
+        self.pattern_closeable(closeable, true);
+        self.pattern_iterator_scope(iterator, closeable, |this| {
+            this.array_pattern_items(items, rest, iterator, closeable, store)
+        })?;
+        self.release(mark);
+        Ok(())
+    }
+    /** Steps cannot request cleanup until their next/done/value observations have succeeded. */
+    fn array_pattern_items(
+        &mut self,
+        items: &[Option<Pattern>],
+        rest: Option<&Pattern>,
+        iterator: Slot,
+        closeable: Slot,
+        store: Store,
+    ) -> EngineResult<()> {
         for item in items {
             let target = match item {
                 Some(item) => self.early_target(item)?,
                 None => None,
             };
+            self.pattern_closeable(closeable, false);
             self.emit(Op::GetReg(iterator));
-            self.emit(Op::IterStep);
+            self.emit(if item.is_some() {
+                Op::IterStep
+            } else {
+                Op::IterSkip
+            });
+            self.pattern_closeable(closeable, true);
             if let Some(item) = item {
                 self.pattern_into(item, store, target)?;
             }
@@ -240,15 +263,18 @@ impl Compiler {
         }
         if let Some(rest) = rest {
             let target = self.early_target(rest)?;
+            self.pattern_closeable(closeable, false);
             self.emit(Op::GetReg(iterator));
             self.emit(Op::IterRest);
             self.pattern_into(rest, store, target)?;
             self.emit(Op::Pop);
-        } else {
-            self.emit(Op::GetReg(iterator));
-            self.emit(Op::IterClose);
         }
-        self.release(mark);
         Ok(())
+    }
+    /** A successful step reopens binding cleanup; rest consumption remains exhausted. */
+    fn pattern_closeable(&mut self, slot: Slot, closeable: bool) {
+        self.emit(if closeable { Op::True } else { Op::False });
+        self.emit(Op::SetReg(slot));
+        self.emit(Op::Pop);
     }
 }

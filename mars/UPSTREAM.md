@@ -5,6 +5,104 @@ Rust port of V8, Blink or Chromium networking.
 The replacement target remains the behavior of the current Oya browser. An
 implemented subset is not evidence of full browser compatibility.
 
+## V8 conformance repairs (2026-10-25)
+
+The upstream `test/mjsunit` checkout at the pinned V8 revision is executed without
+editing test bodies or assertions. V9's optional conformance host preserves
+separate Script parsing, declared fixtures and timer/microtask delivery. Missing
+capabilities and resource-limit failures remain failures, and exclusions retain
+their own counts. These are compatibility measurements, not a claim of V8 parity.
+
+The checkpoint at `583ce4c0` has 3,411 passes and 331 raw failures, with the
+original 5,345 exclusions. `crates/v9/conformance/failure-groups.json` assigns
+each of those failures to exactly one group of at most eight cases. It preserves
+the original failure and distinguishes source diagnosis from a verified repair.
+The first four groups repair iterator protocols, Annex B block functions, class
+evaluation and function names. Their 13 original failures pass unchanged.
+
+The property-reference group repairs failed strict `super` writes, primitive
+string own-property precedence and computed-reference coercion order. Three more
+original failures pass. Two raw V8 expectations remain incompatible with current
+Test262 revision `d53ebc8b1931d9f1541e43d59650776e4b766248`: its `with` tests
+require separate HasBinding and GetBindingValue checks, and compound assignments
+coerce their property key once. All five unchanged Test262 cases cited in the
+ledger pass. Those two V8 cases remain failures; no assertions or exclusions were
+changed to hide them.
+
+Subsequent verified groups preserve proxy `for...in` traps and deferred descriptor
+filtering, enforce parser and dynamic-function grammar boundaries, cache genuinely
+frozen template objects by realm and parse site with conditional GC ownership,
+and repair typed-array integrity and `includes` receiver/witness rules. Together,
+the completed groups repair 24 original V8 failures. This targeted result is
+separate from the whole-suite scoreboard and its resource-limit failures.
+
+The exact pushed checkpoint `e64334a2` records 3,443 passes and 299 raw failures,
+with the same 5,345 exclusions. Thirty-five baseline failures pass in that run;
+three additional cases hit time limits and remain counted. Every additional
+failure is a timing failure. Newer working-tree repairs have separate targeted
+proofs and are not included in this full-inventory score. Compiler string and scope-name indices avoid structured hash collisions while
+preserving pool order, binding slots, source IDs and existing limits.
+
+The next isolated V9 batch records 3,474 passes and 268 raw failures, with the
+same 5,345 exclusions. Eighty-two of the original baseline failures pass in that
+inventory. Additional failures include timing limits, unsupported CPU profiling,
+and an incomplete native API stack entry; all remain visible. The batch includes
+immutable buffers, streaming collection construction, actual async/native/Wasm
+stack metadata, class-expression strictness and native shell test fixtures.
+These results exclude the unrelated Eye, Core and Intl working-tree changes.
+
+`crates/v9/src/v9/value/number/radix.rs` adapts the complete
+`DoubleToRadixStringView` routine from pinned `src/numbers/conversions.cc`, using
+Rust vectors instead of a shared character buffer. It retains the next-double
+rounding interval, fractional carry and zero filling for unrepresented integer
+digits. Rust supplies `next_up` and native binary64 arithmetic; no V8 runtime or
+dependency is embedded. The corresponding source notice is retained in
+`THIRD_PARTY_NOTICES.md`.
+
+The fixed-decimal formatter uses Rust's exact decimal conversion and detects true
+binary midpoints from the significand and exponent before correcting ties to
+round upward in magnitude. Multiplying by a decimal scale first could manufacture
+an apparent midpoint, so that double rounding is avoided. The reviewed string
+protocol source is pinned `src/builtins/string-match-search.tq`,
+`string-startswith.tq` and `string-endswith.tq`: the Rust helpers preserve
+RequireObjectCoercible, IsRegExp, GetMethod and original receiver order.
+The fallback also follows `RegExpCreate` in pinned `src/builtins/regexp.tq`,
+initializing directly rather than entering the constructor and repeating an
+observable IsRegExp lookup. The pinned `MaybeCallFunctionAtSymbol` helper in
+`src/builtins/builtins-string-gen.cc` only dispatches pattern hooks on objects;
+primitive arguments do not consult inherited hooks. The unchanged mjsunit
+`es6/pattern-brand-check.js` and `regress/regress-1092896.js` pin those distinctions.
+
+## Native DOM completion work (2026-10-25)
+
+Image requests and their source generations cross the V9 boundary as inert data.
+The coordinator uses its governed resource path and bounded decoder, then delivers
+matching load/error tasks. A stale or duplicate response cannot dispatch a second
+event. Detached images and hidden decoded assets retain the existing resource
+budgets. Inline handlers in inserted markup retain their existing inert contract;
+programmatically registered image handlers receive real completion events. This
+does not claim complete HTML image selection or fractional-density parity.
+
+Web Animations currently supports finite, linear, two-endpoint numeric opacity
+effects. Native page-clock tasks drive readiness, completion, cancellation and
+Promise jobs. Samples form a separate effective style layer for native Eye paint;
+they never rewrite authored inline style. Live queries respect document and shadow
+tree boundaries. Other effect properties, unsupported composition and custom
+timelines fail explicitly. CSS transitions and full Web Animations compatibility
+remain outside this implemented subset.
+
+Popover type changes use the existing native show/hide state, event coalescing and
+reentrancy checks. `:popover-open` queries read that state. Trusted Escape input
+passes through the ordinary page/revision/ownership admission, dispatches real
+keyboard events and honors keydown cancellation before its default close action.
+The local WPT vendor adapter calls this native input path; it does not complete
+input promises by hiding an element in script. DOM timeout results are recorded
+separately in `crates/v9/conformance/dom-timeout-groups.json` and do not alter V8
+scores. The unchanged image-load reftest and popover change-type test pass,
+including real native Escape delivery. The animation waiter completes, while its
+reference pixels still differ. This is not a claim that every popover or animation
+WPT assertion passes.
+
 ## Pinned references
 
 ### Native MCP adapter
@@ -614,3 +712,79 @@ limited to the supported classic-script grammar above. Unpaired
 surrogates survive in VM state, but the current UTF-8 document boundary refuses
 them explicitly. Full V8 semantics, broader DOM/CSS, media, profiles, Oya
 workflow integration and production platform protections remain open.
+
+
+## V9 unchanged mjsunit execution (October 2026)
+
+The opt-in runner executes sources from the pinned V8 checkout at
+`fedd021b538607860f9c56e5c193ad8dcd4f2bb1` without editing upstream tests.
+Its existing directory and native-syntax exclusions remain separately reported;
+`CONF_REQUIRE_PASS=1` rejects any executed failure. Sources retain their own
+strict directives, declared fixture order, and real asynchronous assertions.
+The shell host uses ordinary globals and inert, checkout-confined fixture text.
+Realm and ShadowRealm use separate intrinsic banks and module instances;
+termination stops the actual source/task pipeline. These host operations are
+absent from production builds.
+
+The current engine extends the earlier historical subsets above with mapped
+arguments, instance private brands, descriptor and proxy invariants, sparse
+resident array elements, species constructors, exact binary summation, Set
+algebra, source-preserving functions, UTF-16-safe Unicode normalization,
+binary16 storage, resizable/transferable buffers, precise weak edges and
+deferred finalization, iterator helpers and joint iteration, Uint8Array codecs,
+streaming grouping and typed-array construction. Resource regions use the
+existing finally completion machinery and await individual disposal results;
+they preserve abrupt completions and construct genuine SuppressedError chains.
+Regex property escapes use complete ICU4X 2.3.0 Unicode data rather than
+approximate character predicates. New regression tests live in `crates/v9/tests`; they do
+not replace the unchanged upstream assertions. Object and resident-data limits,
+operation deadlines and state validation remain enforced.
+
+The owned WebAssembly implementation validates and executes its own binary
+format and heap records. Scalar, SIMD, recursive GC references, exceptions and
+atomic instructions on unshared memory have public-boundary regression tests.
+Compile-time string imports operate on real UTF-16/UTF-8 data. Unsupported
+instructions and host capabilities still produce failures. No external JS or
+Wasm VM is used to obtain a pass. Selected-domain results are not full V8,
+Test262, browser or WebAssembly conformance claims.
+
+
+The expanded implementation includes signed limb BigInts with bounded allocation,
+parameter/body environment separation, eval extension deletion, captured class
+field keys, auto-accessors, and collection of unreachable dynamic source units.
+Saved code retains immutable source offsets and validates nonoverlapping ranges
+before recompilation. Date parsing follows the pinned V8 legacy token/composer
+rules; time-zone transitions and POSIX recurrence rules are validated inert host
+input, while the native VM itself has no zoneinfo filesystem access.
+
+RegExp matching uses backward evaluation for lookbehind, whole-code-point Unicode
+backreferences and leading-anchor search bounds. Simple fold data comes from
+regex-syntax 0.8.11's generated Unicode 16.0 table, supplemented by the mutually
+inverse single-scalar case pairs from Rust 1.94.0's Unicode 17.0 data. The Unicode
+[CaseFolding 17.0 source](https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt)
+distinguishes common/simple mappings from expanding and Turkic mappings; the
+matcher uses single-scalar equivalence. Notices are retained separately.
+Buffer-boundary assertions require the explicit `regexp_buffer_boundaries`
+environment setting; the runner forwards the source's actual proposal flag.
+
+The shell serializer uses V8's actual value-serialization tags and varints rather
+than a JSON envelope, with bounds and graph validation before materialization.
+Promise hooks observe actual lifecycle and job execution. WebAssembly suspension
+retains owned, typed interpreter frames and resumes through genuine Promise
+reactions without replaying imports or draining jobs synchronously. Unsupported
+capabilities remain explicit.
+
+This inventory deliberately keeps the original exclusions unchanged. It also
+contains upstream tests with conflicting configuration assumptions: the pinned
+`mjsunit.status` marks `bugs/*` as expected FAIL, marks the no-i18n RegExp case FAIL
+when i18n is enabled, and skips `regress/wasm/regress-1254675` when SIMD is
+available. These failures are reported in the fixed inventory; V9 must not adopt
+obsolete semantics or reject valid SIMD to manufacture a passing assertion.
+
+The following isolated profiler/admission batch records 3,476 passes and 266 raw
+failures with unchanged exclusions. Its nine targeted profiler and print-stack
+cases pass in release. Profiling records real stack samples at monotonic timed
+safepoints, exports bounded actual profiles through the governed test host, and
+preserves callback exceptions and fatal budgets. Dynamic constructors apply the
+pinned entered-context access policy before argument conversion; the legacy
+undefined-return expectation remains a raw conflict. Capacity limits are unchanged.

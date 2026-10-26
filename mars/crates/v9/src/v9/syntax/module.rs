@@ -139,7 +139,7 @@ impl Parser {
         let statement = self.statement(true)?;
         let mut names = Vec::new();
         match &statement.kind {
-            StmtKind::Var(_, declarators) => {
+            StmtKind::Var(kind, declarators) if !kind.resource() => {
                 for declarator in declarators {
                     pattern_names(&declarator.target, &mut names);
                 }

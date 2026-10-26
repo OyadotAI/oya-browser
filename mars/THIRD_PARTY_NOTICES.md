@@ -79,6 +79,16 @@ code-point boundaries; it does not port iterator objects, generated code, optimi
 or cleanup machinery, or import their conformance suites.
 Adapted `test/mjsunit/number-tostring.js` cases: Copyright 2008 the V8 project
 authors. All rights reserved.
+The radix-formatting helper in `crates/v9/src/v9/value/number/radix.rs` adapts
+`DoubleToRadixStringView` from `src/numbers/conversions.cc` at the same pinned
+revision: Copyright 2011 the V8 project authors. All rights reserved. The
+BSD-style redistribution terms below apply to this adaptation as well.
+The additionally reviewed string protocol routines are
+`src/builtins/string-match-search.tq` (Copyright 2021),
+`src/builtins/string-startswith.tq` (Copyright 2018), and
+`src/builtins/string-endswith.tq` (Copyright 2019), the V8 project authors.
+All rights reserved. Their conversion and protocol order guides V9's owned
+string helpers under the same BSD-style terms.
 
 The applicable redistribution terms from that revision's `LICENSE` follow:
 
@@ -279,3 +289,89 @@ SDK dependency; its dependency notices remain with that installed package.
 bindings to macOS Security.framework for the default desktop cookie profile.
 They are licensed MIT OR Apache-2.0; their license texts ship with Cargo
 dependencies.
+
+## ICU4X Unicode data
+
+V9 uses pinned ICU4X `icu_normalizer` and `icu_properties` 2.3.0 for
+Unicode normalization and exact regular-expression property sets. The crates
+were already workspace dependencies through IDNA. Their Unicode-3.0 notice
+also applies to the linked compiled Unicode data:
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 2020-2024 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+SPDX-License-Identifier: Unicode-3.0
+
+—
+
+Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
+ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
+
+## Unicode simple case-folding data (regex-syntax 0.8.11)
+
+`crates/v9/src/v9/regexp/case_data.rs` adapts the Unicode 16.0 generated simple case-folding table from regex-syntax 0.8.11. The Unicode 17.0 supplement consists of mutually inverse single-scalar lowercase/uppercase pairs from Rust 1.94.0 (whose `char::UNICODE_VERSION` is 17.0.0). Special folds retain the complete generated table. The table is used as data by V9's own matcher; no foreign regular-expression engine is used.
+
+```text
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```

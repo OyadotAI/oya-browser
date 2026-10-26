@@ -4,6 +4,8 @@
  * the document is the app's inert projection, network calls and navigations are recorded for the
  * app to perform, and time is a virtual clock the app advances.
  */
+pub(in crate::v9) mod animations;
+pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 mod channel;
 pub(in crate::v9) mod components;
@@ -18,10 +20,15 @@ mod form_data;
 mod form_submit;
 mod frames;
 pub(in crate::v9) mod html;
+pub(in crate::v9) mod images;
 mod install;
 mod interfaces;
+mod keyboard;
+pub(in crate::v9) use keyboard::press_key;
 mod net;
 mod nodes;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) mod random;
 mod range;
 pub(in crate::v9) mod scripts;
 mod selector;
@@ -33,10 +40,12 @@ mod window;
 
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
+pub use images::{ImageAdoption, ImageRequest, ImageResponse};
 
 pub(in crate::v9) use install::install;
 pub(in crate::v9) use net::XhrState;
 pub(in crate::v9) use nodes::{BODY, HEAD, HTML};
+pub(in crate::v9) use timers::schedule as schedule_task;
 
 impl Page<'_> {
     /** Give every page script a head `<script>` element (once per page), after the page's
@@ -157,6 +166,8 @@ pub enum DomLevel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageEnvironment {
+    /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
+    pub regexp_buffer_boundaries: bool,
     /// The document URL; `location` reports it.
     pub url: String,
     /// `document.referrer`.
@@ -181,8 +192,22 @@ pub struct PageEnvironment {
     pub time_origin_ms: f64,
     /// Local time minus UTC in minutes, for Date's local-time methods.
     pub timezone_offset_minutes: f64,
+    /// Offset before the first supplied timezone transition, in seconds including historical LMT precision.
+    pub timezone_initial_offset_seconds: Option<i32>,
+    /// Strictly increasing UTC epoch milliseconds and the offset in seconds effective from each instant.
+    pub timezone_transitions: Vec<(f64, i32)>,
+    /// A TZif POSIX footer supplies recurring transitions after the final explicit timestamp.
+    pub timezone_posix_rule: Option<String>,
+    /// Standard and daylight long display names supplied by the host locale's timezone data.
+    pub timezone_display_names: Option<(String, String)>,
+    /// Daylight flags aligned with explicit timezone transitions; empty when the host supplies no names.
+    pub timezone_daylight: Vec<bool>,
+    /// Daylight status before the first explicit timezone transition.
+    pub timezone_initial_daylight: bool,
     /// Seed for Math.random and crypto.randomUUID on a new page.
     pub random_seed: u64,
+    /// Refuse eval and dynamic Function compilation while retaining normal host Script loading.
+    pub disallow_code_generation_from_strings: bool,
     /// `navigator.onLine`.
     pub online: bool,
     /// `document.title` at load.
@@ -225,6 +250,83 @@ pub struct PageEnvironment {
     /// Pages branch on it (GitHub sizes its fixed header only when the wrapper computes to
     /// `fixed`), so the inline-only fallback of `static` hides layout from them.
     pub positions: BTreeMap<usize, String>,
+    /// Upstream test fixtures, supplied as inert text only in the opt-in conformance build.
+    /// The engine cannot read files; d8.file only sees exactly this host-owned registry.
+    #[cfg(feature = "conformance")]
+    pub conformance_sources: BTreeMap<String, String>,
+    /// Exact fixture bytes are inert host input; binary reads do not grant engine filesystem access.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_files: BTreeMap<String, Vec<u8>>,
+    /// Run with an ordinary d8 shell global instead of browser Window accessors.
+    /// This opt-in host choice keeps browser pages unchanged in conformance builds.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_d8: bool,
+    /// The actual unsafe-constructor shell flag bypasses dynamic Function security-token checks.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_allow_unsafe_function_constructor: bool,
+    /// The actual shell flag supplies a native extension name; absence never exposes a CPU marker global.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_cpu_trace_name: Option<String>,
+    /// A shell seed selects its native per-context Math.random stream; zero requests system entropy.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_random_seed: Option<i32>,
+    /// Real cooperative CPU samples use the requested native interval, in microseconds.
+    #[cfg(feature = "conformance")]
+    #[serde(default = "default_cpu_profile_interval")]
+    pub conformance_cpu_profiler_interval_us: u64,
+    /// Enable d8 Promise lifecycle hooks only when actual test metadata requested that extension.
+    #[cfg(feature = "conformance")]
+    pub conformance_async_hooks: bool,
+    /** Actual V8 metadata may disable async stack enrichment; physical captured frames are unaffected. */
+    #[cfg(feature = "conformance")]
+    pub conformance_async_stack_traces: bool,
+    /// The actual experimental shell flag exposes real embedder API activations; ordinary pages keep them hidden.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_experimental_stack_trace_frames: bool,
+    /// Preserve V8's default-true builtin-subclassing switch as actual opt-in test metadata.
+    #[cfg(feature = "conformance")]
+    pub conformance_builtin_subclassing: bool,
+    /// Original shell flags select the staged Iterator.includes extension.
+    #[cfg(feature = "conformance")]
+    pub conformance_iterator_includes: bool,
+    /// Join exposure is independent from includes, matching the native staging switches.
+    #[cfg(feature = "conformance")]
+    pub conformance_iterator_join: bool,
+    /// Expose native test callbacks only when original d8 flags requested the FastCAPI helper.
+    #[cfg(feature = "conformance")]
+    pub conformance_expose_fast_api: bool,
+    /// Native test helpers honor explicitly requested fuzzing behavior without pretending optimized calls occurred.
+    #[cfg(feature = "conformance")]
+    pub conformance_fuzzing: bool,
+    /// D8's explicit host flag suppresses ordinary unhandled-rejection process failures.
+    #[cfg(feature = "conformance")]
+    pub conformance_ignore_unhandled_promises: bool,
+    /// An explicit shell flag may lower the existing Wasm input byte ceiling, never raise it.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_max_module_bytes: Option<usize>,
+    /// Original shell metadata may lower native table capacity without raising the array budget.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_max_table_entries: Option<usize>,
+    /// Native worker authority is scoped by the embedding test and is never serialized into page facts.
+    #[cfg(feature = "conformance")]
+    #[serde(skip)]
+    pub conformance_workers: Option<std::sync::Arc<crate::v9::ConformanceWorkerHost>>,
+    /// Only worker environments name an endpoint; parent script cancellation stays independent.
+    #[cfg(feature = "conformance")]
+    #[serde(skip)]
+    pub conformance_worker_id: Option<u64>,
+    /// A child observes its own native cancellation flag without taking a broker lock per instruction.
+    #[cfg(feature = "conformance")]
+    #[serde(skip)]
+    pub conformance_worker_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// One painted box the app's layout gave a node, in document coordinates.
@@ -243,6 +345,7 @@ impl Default for PageEnvironment {
     /** A blank desktop page. */
     fn default() -> Self {
         Self {
+            regexp_buffer_boundaries: false,
             url: "about:blank".into(),
             referrer: String::new(),
             user_agent: DEFAULT_USER_AGENT.into(),
@@ -255,7 +358,14 @@ impl Default for PageEnvironment {
             screen_height: DEFAULT_SCREEN_HEIGHT,
             time_origin_ms: 0.0,
             timezone_offset_minutes: 0.0,
+            timezone_initial_offset_seconds: None,
+            timezone_transitions: Vec::new(),
+            timezone_posix_rule: None,
+            timezone_display_names: None,
+            timezone_daylight: Vec::new(),
+            timezone_initial_daylight: false,
             random_seed: 0,
+            disallow_code_generation_from_strings: false,
             online: true,
             title: String::new(),
             dom_level: DomLevel::Legacy,
@@ -269,6 +379,48 @@ impl Default for PageEnvironment {
             scroll_y: 0.0,
             laid_out_before: None,
             positions: BTreeMap::new(),
+            #[cfg(feature = "conformance")]
+            conformance_sources: BTreeMap::new(),
+            #[cfg(feature = "conformance")]
+            conformance_files: BTreeMap::new(),
+            #[cfg(feature = "conformance")]
+            conformance_d8: false,
+            #[cfg(feature = "conformance")]
+            conformance_allow_unsafe_function_constructor: false,
+            #[cfg(feature = "conformance")]
+            conformance_cpu_trace_name: None,
+            #[cfg(feature = "conformance")]
+            conformance_random_seed: None,
+            #[cfg(feature = "conformance")]
+            conformance_cpu_profiler_interval_us: default_cpu_profile_interval(),
+            #[cfg(feature = "conformance")]
+            conformance_async_hooks: false,
+            #[cfg(feature = "conformance")]
+            conformance_async_stack_traces: true,
+            #[cfg(feature = "conformance")]
+            conformance_experimental_stack_trace_frames: false,
+            #[cfg(feature = "conformance")]
+            conformance_builtin_subclassing: true,
+            #[cfg(feature = "conformance")]
+            conformance_iterator_includes: false,
+            #[cfg(feature = "conformance")]
+            conformance_iterator_join: false,
+            #[cfg(feature = "conformance")]
+            conformance_expose_fast_api: false,
+            #[cfg(feature = "conformance")]
+            conformance_fuzzing: false,
+            #[cfg(feature = "conformance")]
+            conformance_ignore_unhandled_promises: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_max_module_bytes: None,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_max_table_entries: None,
+            #[cfg(feature = "conformance")]
+            conformance_workers: None,
+            #[cfg(feature = "conformance")]
+            conformance_worker_id: None,
+            #[cfg(feature = "conformance")]
+            conformance_worker_cancel: None,
         }
     }
 }
@@ -341,6 +493,17 @@ pub struct ConsoleEntry {
     pub text: String,
 }
 
+/// An actual native CPU marker invocation, paired with the owning host's current VM clock.
+#[cfg(feature = "conformance")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuTraceMark {
+    /// The exact accepted unsigned marker, independently of the architecture-specific instruction encoding.
+    pub marker: u32,
+    /// Milliseconds elapsed on the real host-supplied VM clock.
+    pub time_ms: f64,
+}
+
 /// A navigation a script asked for; V9 never performs it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -369,6 +532,14 @@ pub struct HistoryRecord {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostEffects {
+    /// Existing image identity associations move with real DOM adoption, without changing source generation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub image_adoptions: Vec<ImageAdoption>,
+    /// Complete native opacity animation layer; omission restores the authored cascade.
+    pub opacity_effects: Vec<OpacityEffect>,
+    /// Source-generation requests; only actual host decoding may answer them with `resume_images`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub image_requests: Vec<ImageRequest>,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
     /// The last navigation request, if any.
@@ -381,6 +552,27 @@ pub struct HostEffects {
     pub console: Vec<ConsoleEntry>,
     /// Console entries dropped past the bound.
     pub console_dropped: usize,
+    /// Actual CPU markers share the console diagnostic entry allowance and never represent sampled profiler data.
+    #[cfg(feature = "conformance")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conformance_trace_marks: Vec<CpuTraceMark>,
+    /// Calls still execute their native marker instruction when bounded host records must be dropped.
+    #[cfg(feature = "conformance")]
+    pub conformance_trace_marks_dropped: usize,
+    /// Completed actual CPU profile JSON; only the owning test host chooses a confined artifact path.
+    #[cfg(feature = "conformance")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conformance_cpu_profiles: Vec<String>,
+    /// The first actual uncaught callback or rejection, distinct from script console output.
+    /// Only the opt-in upstream host uses this to score asynchronous tests honestly.
+    #[cfg(feature = "conformance")]
+    pub conformance_error: Option<String>,
+    /// Original native failure code and message, preserved independently of lazy diagnostic getters.
+    #[cfg(feature = "conformance")]
+    pub conformance_native_error: Option<(String, String)>,
+    /// D8 counts terminal unhandled rejections across child isolates when deciding its process result.
+    #[cfg(feature = "conformance")]
+    pub conformance_rejection: bool,
     /// Virtual time of the next pending timer or animation frame, if any.
     pub next_timer_ms: Option<f64>,
     /// Unsupported APIs scripts reached (and may have caught), first occurrence each.
@@ -482,18 +674,35 @@ pub(in crate::v9) struct ScriptLoad {
     pub done: bool,
 }
 
+/** Pinned d8's CPU profiler default is one real-time sample interval per millisecond. */
+#[cfg(feature = "conformance")]
+const fn default_cpu_profile_interval() -> u64 { 1_000 }
+
 /** Page state that survives between requests, inside VmState. */
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** The isolate's real unnamed session and callback survive requests without native thread handles. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "crate::v9::builtins::ProfileState::is_empty")]
+    pub cpu_profile: crate::v9::builtins::ProfileState,
+    /** Inert source generations and actual image decode results; no additional heap roots. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub images: BTreeMap<usize, images::State>,
     pub identity: String,
     /** Virtual milliseconds since the time origin; performance.now(). */
     pub clock: f64,
     /** Date.now() at clock zero. */
     pub epoch: f64,
     pub random: u64,
+    /** Only explicit shell seed requests create bounded per-realm xorshift128+ state. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub math_random: BTreeMap<u32, random::State>,
     pub timers: Vec<Timer>,
     pub next_timer: u32,
+    /// Active and filling animations retain their actual effect and Promise graphs.
+    pub active_animations: Vec<ObjectId>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
     pub listeners: Vec<Listener>,
@@ -625,7 +834,10 @@ impl<'h> Page<'h> {
     }
     /** Record a console line within the bounds. */
     pub fn console(&mut self, level: &str, text: String) {
-        if self.effects.console.len() >= VM_CONSOLE_ENTRIES {
+        let used = self.effects.console.len();
+        #[cfg(feature = "conformance")]
+        let used = used + self.effects.conformance_trace_marks.len();
+        if used >= VM_CONSOLE_ENTRIES {
             self.effects.console_dropped += 1;
             return;
         }
@@ -656,6 +868,21 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        #[cfg(feature = "conformance")]
+        if let Some(listener) = self.state.cpu_profile.listener {
+            out.push(JsValue::Object(listener));
+        }
+        #[cfg(feature = "conformance")]
+        if let Some(context) = self.state.cpu_profile.context {
+            out.push(JsValue::Object(context));
+        }
+        out.extend(
+            self.state
+                .active_animations
+                .iter()
+                .copied()
+                .map(JsValue::Object),
+        );
         for timer in &self.state.timers {
             out.push(timer.callback.clone());
             out.extend(timer.args.iter().cloned());
@@ -682,6 +909,7 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        self.state.active_animations.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
     }
@@ -699,7 +927,15 @@ pub(in crate::v9) fn timeout() -> EngineError {
 impl Vm<'_> {
     /** Report an uncaught error from a callback (timer, listener, job) to the console. */
     pub fn report_error(&mut self, error: &JsValue) {
+        #[cfg(feature = "conformance")]
+        self.note_conformance_native_error(error);
         let text = self.describe(error);
+        #[cfg(feature = "conformance")]
+        let text = self.conformance_description(error).unwrap_or(text);
+        #[cfg(feature = "conformance")]
+        if self.page.effects.conformance_error.is_none() {
+            self.page.effects.conformance_error = Some(format!("Uncaught {text}"));
+        }
         let place = self
             .page
             .throw_location
@@ -743,6 +979,10 @@ impl Vm<'_> {
 /** The interface name `Object.prototype.toString` reports for a host object, as browsers do. */
 pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> {
     if id == GLOBAL {
+        #[cfg(feature = "conformance")]
+        if vm.page.environment.conformance_d8 {
+            return Some("global".into());
+        }
         return Some("Window".into());
     }
     if dom::node_of(vm, &JsValue::Object(id)) == Some(dom::DOCUMENT) {

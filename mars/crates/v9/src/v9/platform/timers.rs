@@ -26,6 +26,11 @@ pub(in crate::v9) fn timer(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     "Failed to execute 'queueMicrotask': parameter 1 is not of type 'Function'.",
                 ));
             }
+            #[cfg(feature = "conformance")]
+            if vm.page.environment.conformance_d8 {
+                crate::v9::builtins::enqueue_shell_microtask(vm, callback)?;
+                return Ok(JsValue::Undefined);
+            }
             vm.enqueue(Job::Callback(callback))?;
             return Ok(JsValue::Undefined);
         }

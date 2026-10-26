@@ -4,13 +4,28 @@ use crate::protocol::EngineError;
 use crate::v9::vm::data::{Class, IterKind, IterState};
 use crate::v9::vm::realm::{NativeFn, symbol};
 
+mod concat;
+mod copy;
+mod create;
+mod flatten;
 mod from_async;
+mod join_sparse;
+mod sort_sparse;
+mod species;
+mod unscopables;
 
 /** Array and Array.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
     b.ids.array_prototype = proto;
+    b.value(
+        proto,
+        "length",
+        JsValue::Number(0.0),
+        crate::v9::vm::heap::WRITABLE,
+    );
     let ctor = b.constructor("Array", 1, construct, proto, None);
+    b.ids.array = ctor;
     b.global("Array", ctor);
     b.method(ctor, "isArray", 1, is_array);
     b.method(ctor, "of", 0, of);
@@ -48,7 +63,7 @@ pub(super) fn install(b: &mut Builder) {
         ("some", 1, some),
         ("sort", 1, sort),
         ("splice", 2, splice),
-        ("toLocaleString", 0, join_default),
+        ("toLocaleString", 0, to_locale_string),
         ("toReversed", 0, to_reversed),
         ("toSorted", 1, to_sorted),
         ("toSpliced", 2, to_spliced),
@@ -82,6 +97,7 @@ pub(super) fn install(b: &mut Builder) {
         crate::v9::vm::realm::Static::Value(JsValue::Object(values)),
         crate::v9::vm::heap::HIDDEN_ATTRS,
     );
+    unscopables::install(b, proto);
 }
 
 /** Array.prototype methods typed arrays reuse: generic, and length-preserving. */
@@ -113,18 +129,14 @@ fn unsupported_group(vm: &mut Vm, _: Call) -> Res<JsValue> {
 
 /** `Array(n)` and `Array(a, b, ...)`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let elements = if let [JsValue::Number(length)] = call.args {
+    let id = if let [JsValue::Number(length)] = call.args {
         if *length < 0.0 || length.fract() != 0.0 || *length > f64::from(u32::MAX) {
             return Err(vm.range_error("Invalid array length"));
         }
-        if *length as usize > vm.limits.array_length {
-            return Err(EngineError::limit("V9 array length", vm.limits.array_length).into());
-        }
-        vec![JsValue::Hole; *length as usize]
+        vm.new_array_length(*length as usize)?
     } else {
-        call.args.to_vec()
+        vm.new_array(call.args.to_vec())?
     };
-    let id = vm.new_array(elements)?;
     if let Some(target) = &call.new_target {
         let proto = vm.prototype_for(target, crate::v9::vm::realm::realm().ids.array_prototype)?;
         vm.set_proto(id, Some(proto))?;
@@ -132,55 +144,61 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Object(id))
 }
 
-/** Whether a value is an Array. */
+/** Whether a value has direct array storage, for storage optimizations without proxy traps. */
 pub(in crate::v9) fn is_array_value(vm: &Vm, value: &JsValue) -> bool {
     matches!(value, JsValue::Object(id) if matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::Array(_))))
 }
 
 /** Array.isArray. */
 fn is_array(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    Ok(JsValue::Boolean(is_array_value(vm, &call.arg(0))))
+    is_array_checked(vm, &call.arg(0)).map(JsValue::Boolean)
+}
+
+/** IsArray follows proxy targets without calling traps; a revoked proxy is a TypeError. Each
+hop consumes work so a forged cycle cannot loop forever or exhaust the native stack. */
+pub(in crate::v9) fn is_array_checked(vm: &mut Vm, value: &JsValue) -> Res<bool> {
+    is_array_for(vm, value, "IsArray")
+}
+
+/** The calling operation supplies diagnostics while target traversal preserves identical IsArray semantics. */
+pub(in crate::v9) fn is_array_for(vm: &mut Vm, value: &JsValue, operation: &str) -> Res<bool> {
+    let mut value = value.clone();
+    let mut depth = 0;
+    loop {
+        let JsValue::Object(id) = value else {
+            return Ok(false);
+        };
+        if is_array_value(vm, &value) || id == vm.object_intrinsics(id).ids.array_prototype {
+            return Ok(true);
+        }
+        match vm.heap.get(id).map(|object| &object.class) {
+            Some(Class::Array(_)) => return Ok(true),
+            Some(Class::Proxy(proxy)) => {
+                if depth >= vm.limits.frames {
+                    return Err(vm.range_error("Maximum call stack size exceeded"));
+                }
+                depth += 1;
+                let Some(target) = proxy.target else {
+                    return Err(vm.type_error(&format!(
+                        "Cannot perform '{operation}' on a proxy that has been revoked"
+                    )));
+                };
+                value = JsValue::Object(target);
+                vm.charge(1)?;
+            }
+            _ => return Ok(false),
+        }
+    }
 }
 
 /** Array.of. */
 fn of(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    Ok(JsValue::Object(vm.new_array(call.args.to_vec())?))
+    create::of(vm, call)
 }
 
-/** Array.from(iterable or array-like, mapFn, thisArg). */
+/** Array.from observes each source step and mapper before requesting the following value. */
 fn from(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let source = call.arg(0);
-    let mapper = call.arg(1);
-    let this_arg = call.arg(2);
-    if source.nullish() {
-        return Err(vm.type_error("Array.from requires an array-like object"));
-    }
-    let iterable = !vm.get(&source, &Key::Sym(symbol::ITERATOR))?.nullish();
-    let items = if iterable {
-        vm.iterate_to_vec(&source)?
-    } else {
-        let length = vm.length_of(&source)?;
-        check_length(vm, length)?;
-        let mut items = Vec::with_capacity(length);
-        for index in 0..length {
-            items.push(get_index(vm, &source, index)?);
-        }
-        items
-    };
-    let result = vm.new_array(Vec::new())?;
-    for (index, item) in items.into_iter().enumerate() {
-        let value = if mapper.nullish() {
-            item
-        } else {
-            vm.call(
-                mapper.clone(),
-                this_arg.clone(),
-                vec![item, JsValue::Number(index as f64)],
-            )?
-        };
-        vm.array_append(&JsValue::Object(result), value)?;
-    }
-    Ok(JsValue::Object(result))
+    create::from(vm, call)
 }
 
 /** Refuse lengths beyond the array bound before allocating. */
@@ -285,49 +303,12 @@ fn spreadable(vm: &mut Vm, value: &JsValue) -> Res<bool> {
     if flag != JsValue::Undefined {
         return Ok(flag.truthy());
     }
-    Ok(is_array_value(vm, value))
+    is_array_checked(vm, value)
 }
 
 /** Array.prototype.concat. */
 fn concat(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let id = this_object(vm, &call, "Array.prototype.concat")?;
-    let result = vm.new_array(Vec::new())?;
-    let mut items = vec![JsValue::Object(id)];
-    items.extend(call.args.iter().cloned());
-    let mut out = Vec::new();
-    for item in items {
-        if spreadable(vm, &item)? {
-            let length = vm.length_of(&item)?;
-            check_length(vm, out.len() + length)?;
-            for index in 0..length {
-                out.push(if has_index(vm, &item, index)? {
-                    get_index(vm, &item, index)?
-                } else {
-                    JsValue::Hole
-                });
-            }
-        } else {
-            check_length(vm, out.len() + 1)?;
-            out.push(item);
-        }
-    }
-    replace_elements(vm, result, out);
-    Ok(JsValue::Object(result))
-}
-
-/** Replace a fresh array's elements, keeping counts. */
-fn replace_elements(vm: &mut Vm, id: ObjectId, elements: Vec<JsValue>) {
-    let count = elements
-        .iter()
-        .filter(|value| **value != JsValue::Hole)
-        .count() as isize;
-    let units = elements.iter().map(JsValue::string_units).sum::<usize>() as isize;
-    if let Some(object) = vm.heap.get_mut(id)
-        && let Class::Array(current) = &mut object.class
-    {
-        *current = elements;
-        vm.heap.adjust(count, units);
-    }
+    concat::run(vm, call)
 }
 
 /** Array.prototype.copyWithin. */
@@ -337,20 +318,20 @@ fn copy_within(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let start = vm.relative_index(&call.arg(1), length, 0)?;
     let end = vm.relative_index(&call.arg(2), length, length)?;
     let count = end.saturating_sub(start).min(length - target);
-    let values: Vec<(bool, JsValue)> = (start..start + count)
-        .map(|index| {
-            Ok((
-                has_index(vm, &object, index)?,
-                get_index(vm, &object, index)?,
-            ))
-        })
-        .collect::<Res<_>>()?;
-    for (offset, (present, value)) in values.into_iter().enumerate() {
-        if present {
+    let backwards = start < target && target < start + count;
+    for offset in 0..count {
+        let offset = if backwards {
+            count - offset - 1
+        } else {
+            offset
+        };
+        if has_index(vm, &object, start + offset)? {
+            let value = get_index(vm, &object, start + offset)?;
             set_index(vm, &object, target + offset, value)?;
         } else {
             delete_index(vm, &object, target + offset)?;
         }
+        vm.charge(1)?;
     }
     Ok(object)
 }
@@ -400,15 +381,14 @@ fn walk(vm: &mut Vm, call: Call, name: &str, mode: Walk, reverse: bool) -> Res<J
     let function = callback(vm, &call, name)?;
     let this_arg = call.arg(1);
     let result = match mode {
-        Walk::Map => {
-            check_length(vm, length)?;
-            Some(vm.new_array(vec![JsValue::Hole; length])?)
-        }
-        Walk::Filter => Some(vm.new_array(Vec::new())?),
+        Walk::Map => Some(species::create(vm, &object, length)?),
+        Walk::Filter => Some(species::create(vm, &object, 0)?),
         _ => None,
     };
     let skips_holes = !matches!(mode, Walk::Find | Walk::FindIndex);
+    let mut filtered = 0;
     for step in 0..length {
+        vm.charge(1)?;
         let index = if reverse { length - 1 - step } else { step };
         if skips_holes && !has_index(vm, &object, index)? {
             continue;
@@ -422,9 +402,10 @@ fn walk(vm: &mut Vm, call: Call, name: &str, mode: Walk, reverse: bool) -> Res<J
         match mode {
             Walk::Every if !outcome.truthy() => return Ok(JsValue::Boolean(false)),
             Walk::Some if outcome.truthy() => return Ok(JsValue::Boolean(true)),
-            Walk::Map => vm.array_store(result.expect("map result"), index, outcome),
+            Walk::Map => species::define(vm, result.expect("map result"), index, outcome)?,
             Walk::Filter if outcome.truthy() => {
-                vm.array_append(&JsValue::Object(result.expect("filter result")), value)?
+                species::define(vm, result.expect("filter result"), filtered, value)?;
+                filtered += 1;
             }
             Walk::Find if outcome.truthy() => return Ok(value),
             Walk::FindIndex if outcome.truthy() => return Ok(JsValue::Number(index as f64)),
@@ -454,7 +435,9 @@ fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Array.prototype.map. */
 fn map(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    walk(vm, call, "Array.prototype.map", Walk::Map, false)
+    vm.with_builtin_activation(call.callee, call.this.clone(), |vm| {
+        walk(vm, call, "Array.prototype.map", Walk::Map, false)
+    })
 }
 /** Array.prototype.filter. */
 fn filter(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -500,68 +483,22 @@ fn fill(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(object)
 }
 
-/** Flatten into `out` down to `depth`. */
-fn flatten(vm: &mut Vm, source: &JsValue, depth: f64, out: &mut Vec<JsValue>) -> Res<()> {
-    let length = vm.length_of(source)?;
-    for index in 0..length {
-        if !has_index(vm, source, index)? {
-            continue;
-        }
-        let value = get_index(vm, source, index)?;
-        if depth >= 1.0 && is_array_value(vm, &value) {
-            flatten(vm, &value, depth - 1.0, out)?;
-        } else {
-            check_length(vm, out.len() + 1)?;
-            out.push(value);
-        }
-    }
-    Ok(())
-}
-
-/** Array.prototype.flat. */
+/** Array.prototype.flat preserves species construction and source read order. */
 fn flat(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let id = this_object(vm, &call, "Array.prototype.flat")?;
-    let depth = if call.arg(0) == JsValue::Undefined {
-        1.0
-    } else {
-        vm.to_integer(&call.arg(0))?
-    };
-    let mut out = Vec::new();
-    flatten(
-        vm,
-        &JsValue::Object(id),
-        depth.min(MAX_FLAT_DEPTH),
-        &mut out,
-    )?;
-    Ok(JsValue::Object(vm.new_array(out)?))
+    flatten::flat(vm, call)
 }
 
-/** flat() recursion depth, bounded below the syntax depth. */
-const MAX_FLAT_DEPTH: f64 = 64.0;
-
-/** Array.prototype.flatMap. */
+/** Array.prototype.flatMap flattens each mapped item before visiting the next input. */
 fn flat_map(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let mapped = walk(
-        vm,
-        Call {
-            this: call.this.clone(),
-            args: call.args,
-            new_target: None,
-            callee: call.callee,
-        },
-        "Array.prototype.flatMap",
-        Walk::Map,
-        false,
-    )?;
-    vm.pin(mapped.clone());
-    let mut out = Vec::new();
-    flatten(vm, &mapped, 1.0, &mut out)?;
-    Ok(JsValue::Object(vm.new_array(out)?))
+    flatten::flat_map(vm, call)
 }
 
 /** Array.prototype.includes (SameValueZero, holes read as undefined). */
 fn includes(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.includes")?;
+    if length == 0 {
+        return Ok(JsValue::Boolean(false));
+    }
     let start = vm.relative_index(&call.arg(1), length, 0)?;
     let target = call.arg(0);
     for index in start..length {
@@ -575,6 +512,9 @@ fn includes(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Array.prototype.indexOf (strict equality, skipping holes). */
 fn index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.indexOf")?;
+    if length == 0 {
+        return Ok(JsValue::Number(-1.0));
+    }
     let start = vm.relative_index(&call.arg(1), length, 0)?;
     let target = call.arg(0);
     for index in start..length {
@@ -622,6 +562,11 @@ pub(in crate::v9) fn join_values(
     length: usize,
     separator: &JsString,
 ) -> Res<JsString> {
+    if separator.is_empty()
+        && let Some(text) = join_sparse::empty(vm, object, length)?
+    {
+        return Ok(text);
+    }
     let mut units: Vec<u16> = Vec::new();
     for index in 0..length {
         if index > 0 {
@@ -656,17 +601,47 @@ fn join(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::String(result?))
 }
 
-/** toLocaleString joins with commas. */
-fn join_default(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    join(
-        vm,
-        Call {
-            this: call.this.clone(),
-            args: &[],
-            new_target: None,
-            callee: call.callee,
-        },
-    )
+/** Locale conversion invokes each present element's locale method, with shared cycle cleanup. */
+fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (object, length) = receiver(vm, &call, "Array.prototype.toLocaleString")?;
+    if vm.page.joining.contains(&object) {
+        return Ok(JsValue::String(JsString::empty()));
+    }
+    vm.page.joining.push(object.clone());
+    let result = locale_elements(vm, &object, length, &call);
+    vm.page.joining.pop();
+    result
+}
+
+/** Locale element calls preserve their receivers and run in increasing index order. */
+fn locale_elements(vm: &mut Vm, object: &JsValue, length: usize, call: &Call) -> Res<JsValue> {
+    let mut units = Vec::new();
+    for index in 0..length {
+        if index > 0 {
+            units.push(u16::from(b','));
+        }
+        let value = get_index(vm, object, index)?;
+        if !value.nullish() {
+            let method = vm.get(&value, &key("toLocaleString"))?;
+            if !vm.is_callable(&method) {
+                let message = match method {
+                    JsValue::Number(number) => format!(
+                        "number {} is not a function",
+                        crate::v9::value::number_to_string(number)
+                    ),
+                    _ => "toLocaleString is not a function".into(),
+                };
+                return Err(vm.type_error(&message));
+            }
+            let result = vm.call(method, value, vec![call.arg(0), call.arg(1)])?;
+            units.extend_from_slice(vm.to_string(&result)?.as_units());
+        }
+        if units.len() > crate::constants::JS_STRING_UNITS {
+            return Err(vm.range_error("Invalid string length"));
+        }
+        vm.charge(1)?;
+    }
+    Ok(JsValue::String(JsString::from_units(units)?))
 }
 
 /** Array.prototype.toString. */
@@ -696,11 +671,8 @@ fn pop(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Array.prototype.push. */
 fn push(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.push")?;
-    if is_array_value(vm, &object) {
-        for value in call.args {
-            vm.array_append(&object, value.clone())?;
-        }
-        return Ok(JsValue::Number((length + call.args.len()) as f64));
+    if call.args.len() > crate::constants::VM_MAX_SAFE_LENGTH as usize - length {
+        return Err(vm.type_error("Array.prototype.push exceeds the maximum safe length"));
     }
     for (offset, value) in call.args.iter().enumerate() {
         set_index(vm, &object, length + offset, value.clone())?;
@@ -764,39 +736,23 @@ fn reduce_right(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The elements of an array-like as a vector with holes. */
 fn snapshot(vm: &mut Vm, object: &JsValue, length: usize) -> Res<Vec<JsValue>> {
-    check_length(vm, length)?;
-    let mut out = Vec::with_capacity(length);
+    let mut out = Vec::new();
     for index in 0..length {
-        out.push(if has_index(vm, object, index)? {
+        vm.charge(1)?;
+        let value = if has_index(vm, object, index)? {
             get_index(vm, object, index)?
         } else {
             JsValue::Hole
-        });
+        };
+        check_length(vm, out.len() + 1)?;
+        vm.pin(value.clone());
+        out.push(value);
     }
     Ok(out)
 }
 
 /** Write a vector back into an array-like, deleting holes. */
-fn write_back(vm: &mut Vm, object: &JsValue, values: Vec<JsValue>, old_length: usize) -> Res<()> {
-    let length = values.len();
-    if let JsValue::Object(id) = object
-        && is_array_value(vm, object)
-        && vm.heap.get(*id).is_some_and(|o| o.props.is_empty())
-    {
-        if let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class) {
-            let count = elements
-                .iter()
-                .filter(|value| **value != JsValue::Hole)
-                .count() as isize;
-            let units = elements.iter().map(JsValue::string_units).sum::<usize>() as isize;
-            vm.heap.adjust(-count, -units);
-        }
-        if let Some(Class::Array(elements)) = vm.heap.get_mut(*id).map(|o| &mut o.class) {
-            *elements = Vec::new();
-        }
-        replace_elements(vm, *id, values);
-        return Ok(());
-    }
+fn write_back(vm: &mut Vm, object: &JsValue, values: Vec<JsValue>, _old_length: usize) -> Res<()> {
     for (index, value) in values.into_iter().enumerate() {
         if value == JsValue::Hole {
             delete_index(vm, object, index)?;
@@ -804,24 +760,13 @@ fn write_back(vm: &mut Vm, object: &JsValue, values: Vec<JsValue>, old_length: u
             set_index(vm, object, index, value)?;
         }
     }
-    for index in length..old_length {
-        delete_index(vm, object, index)?;
-    }
-    set_length(vm, object, length)
+    Ok(())
 }
 
 /** Array.prototype.reverse. */
 fn reverse(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.reverse")?;
-    let dense = matches!(&object, JsValue::Object(id) if is_array_value(vm, &object)
-        && vm.heap.get(*id).is_some_and(|o| o.props.is_empty()));
-    if !dense {
-        return reverse_generic(vm, object, length);
-    }
-    let mut values = snapshot(vm, &object, length)?;
-    values.reverse();
-    write_back(vm, &object, values, length)?;
-    Ok(object)
+    reverse_generic(vm, object, length)
 }
 
 /** Array.prototype.reverse's spec loop (23.1.3.26) for anything but a plain dense array: each
@@ -861,24 +806,29 @@ fn shift(vm: &mut Vm, call: Call) -> Res<JsValue> {
         set_length(vm, &object, 0)?;
         return Ok(JsValue::Undefined);
     }
-    let mut values = snapshot(vm, &object, length)?;
-    let first = values.remove(0);
-    write_back(vm, &object, values, length)?;
-    Ok(if first == JsValue::Hole {
-        JsValue::Undefined
-    } else {
-        first
-    })
+    let first = get_index(vm, &object, 0)?;
+    for index in 1..length {
+        move_index(vm, &object, index, index - 1)?;
+    }
+    delete_index(vm, &object, length - 1)?;
+    set_length(vm, &object, length - 1)?;
+    Ok(first)
 }
 
 /** Array.prototype.unshift. */
 fn unshift(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.unshift")?;
-    let mut values = snapshot(vm, &object, length)?;
-    check_length(vm, length + call.args.len())?;
-    values.splice(0..0, call.args.iter().cloned());
-    let new_length = values.len();
-    write_back(vm, &object, values, length)?;
+    let count = call.args.len();
+    let new_length = safe_growth(vm, length, count)?;
+    if count > 0 {
+        for index in (0..length).rev() {
+            move_index(vm, &object, index, index + count)?;
+        }
+        for (index, value) in call.args.iter().enumerate() {
+            set_index(vm, &object, index, value.clone())?;
+        }
+    }
+    set_length(vm, &object, new_length)?;
     Ok(JsValue::Number(new_length as f64))
 }
 
@@ -887,15 +837,18 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.slice")?;
     let start = vm.relative_index(&call.arg(0), length, 0)?;
     let end = vm.relative_index(&call.arg(1), length, length)?;
-    let mut out = Vec::with_capacity(end.saturating_sub(start));
-    for index in start..end.max(start) {
-        out.push(if has_index(vm, &object, index)? {
-            get_index(vm, &object, index)?
-        } else {
-            JsValue::Hole
-        });
+    let result = species::create(vm, &object, end.saturating_sub(start))?;
+    if !concat::slice_range(vm, result, &object, start, end)? {
+        for index in start..end.max(start) {
+            vm.charge(1)?;
+            if has_index(vm, &object, index)? {
+                let value = get_index(vm, &object, index)?;
+                species::define(vm, result, index - start, value)?;
+            }
+        }
     }
-    Ok(JsValue::Object(vm.new_array(out)?))
+    set_length(vm, &JsValue::Object(result), end.saturating_sub(start))?;
+    Ok(JsValue::Object(result))
 }
 
 /** The default sort order: undefined last, then by string value. */
@@ -983,30 +936,29 @@ fn sorted(vm: &mut Vm, comparator: &JsValue, values: Vec<JsValue>) -> Res<Vec<Js
     Ok(out)
 }
 
+/** Invalid comparator diagnostics inspect primitive values without invoking an author's conversion. */
+pub(super) fn sort_comparator(vm: &mut Vm, comparator: &JsValue) -> Res<()> {
+    if *comparator == JsValue::Undefined || vm.is_callable(comparator) {
+        return Ok(());
+    }
+    let value = match comparator {
+        JsValue::Object(_) => "object".into(),
+        JsValue::Symbol(_) => "Symbol()".into(),
+        _ => vm.to_string(comparator)?.lossy(),
+    };
+    Err(vm.type_error(&format!(
+        "The comparison function must be either a function or undefined: {value}"
+    )))
+}
+
 /** Array.prototype.sort. */
 fn sort(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (object, length) = receiver(vm, &call, "Array.prototype.sort")?;
-    let values = snapshot(vm, &object, length)?;
-    let values = sorted(vm, &call.arg(0), values)?;
-    write_back(vm, &object, values, length)?;
-    Ok(object)
+    sort_sparse::run(vm, call)
 }
 
 /** Array.prototype.toSorted. */
 fn to_sorted(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (object, length) = receiver(vm, &call, "Array.prototype.toSorted")?;
-    let values: Vec<JsValue> = snapshot(vm, &object, length)?
-        .into_iter()
-        .map(|value| {
-            if value == JsValue::Hole {
-                JsValue::Undefined
-            } else {
-                value
-            }
-        })
-        .collect();
-    let values = sorted(vm, &call.arg(0), values)?;
-    Ok(JsValue::Object(vm.new_array(values)?))
+    copy::to_sorted(vm, call)
 }
 
 /** Splice arguments: start, delete count, inserted items. */
@@ -1024,71 +976,92 @@ fn splice_parts(vm: &mut Vm, call: &Call, length: usize) -> Res<(usize, usize, V
 fn splice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.splice")?;
     let (start, count, items) = splice_parts(vm, &call, length)?;
-    let mut values = snapshot(vm, &object, length)?;
-    check_length(vm, length - count + items.len())?;
-    let removed: Vec<JsValue> = values.splice(start..start + count, items).collect();
-    write_back(vm, &object, values, length)?;
-    Ok(JsValue::Object(vm.new_array(removed)?))
+    let new_length = safe_growth(vm, length - count, items.len())?;
+    let removed = species::create(vm, &object, count)?;
+    for index in 0..count {
+        if has_index(vm, &object, start + index)? {
+            let value = get_index(vm, &object, start + index)?;
+            species::define(vm, removed, index, value)?;
+        }
+    }
+    set_length(vm, &JsValue::Object(removed), count)?;
+    splice_tail(vm, &object, length, start, count, items.len())?;
+    for (offset, value) in items.into_iter().enumerate() {
+        set_index(vm, &object, start + offset, value)?;
+    }
+    set_length(vm, &object, new_length)?;
+    Ok(JsValue::Object(removed))
+}
+
+/** Moving an absent source deletes its destination instead of creating an undefined property. */
+fn move_index(vm: &mut Vm, object: &JsValue, source: usize, target: usize) -> Res<()> {
+    vm.charge(1)?;
+    if has_index(vm, object, source)? {
+        let value = get_index(vm, object, source)?;
+        vm.pin(value.clone());
+        set_index(vm, object, target, value)
+    } else {
+        delete_index(vm, object, target)
+    }
+}
+
+/** Generic array lengths are safe integers even when they exceed actual array storage limits. */
+fn safe_growth(vm: &mut Vm, length: usize, count: usize) -> Res<usize> {
+    let max = crate::constants::VM_MAX_SAFE_LENGTH as usize;
+    if count > max.saturating_sub(length) {
+        return Err(vm.type_error("Array operation exceeds the maximum safe length"));
+    }
+    Ok(length + count)
+}
+
+/** Splice shifts only the affected suffix, in the direction that preserves overlapping reads. */
+fn splice_tail(
+    vm: &mut Vm,
+    object: &JsValue,
+    length: usize,
+    start: usize,
+    removed: usize,
+    inserted: usize,
+) -> Res<()> {
+    if inserted < removed {
+        for index in start..length - removed {
+            move_index(vm, object, index + removed, index + inserted)?;
+        }
+        for index in (length - removed + inserted..length).rev() {
+            delete_index(vm, object, index)?;
+        }
+    } else if inserted > removed {
+        for index in (start..length - removed).rev() {
+            move_index(vm, object, index + removed, index + inserted)?;
+        }
+    }
+    Ok(())
 }
 
 /** Array.prototype.toSpliced. */
 fn to_spliced(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (object, length) = receiver(vm, &call, "Array.prototype.toSpliced")?;
-    let (start, count, items) = splice_parts(vm, &call, length)?;
-    let mut values: Vec<JsValue> = snapshot(vm, &object, length)?
-        .into_iter()
-        .map(|value| {
-            if value == JsValue::Hole {
-                JsValue::Undefined
-            } else {
-                value
-            }
-        })
-        .collect();
-    check_length(vm, length - count + items.len())?;
-    values.splice(start..start + count, items);
-    Ok(JsValue::Object(vm.new_array(values)?))
+    copy::to_spliced(vm, call)
 }
 
 /** Array.prototype.toReversed. */
 fn to_reversed(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (object, length) = receiver(vm, &call, "Array.prototype.toReversed")?;
-    let mut values: Vec<JsValue> = snapshot(vm, &object, length)?
-        .into_iter()
-        .map(|value| {
-            if value == JsValue::Hole {
-                JsValue::Undefined
-            } else {
-                value
-            }
-        })
-        .collect();
-    values.reverse();
-    Ok(JsValue::Object(vm.new_array(values)?))
+    copy::to_reversed(vm, call)
 }
 
 /** Array.prototype.with. */
 fn with(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (object, length) = receiver(vm, &call, "Array.prototype.with")?;
-    let relative = vm.to_integer(&call.arg(0))?;
-    let index = if relative < 0.0 {
-        length as f64 + relative
-    } else {
-        relative
-    };
-    if index < 0.0 || index >= length as f64 {
-        return Err(vm.range_error("Invalid index"));
+    copy::with(vm, call)
+}
+
+/** The opt-in shell can disable Array subclass selection through its actual builtin-subclassing flag. */
+fn builtin_subclassing(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        vm.page.environment.conformance_builtin_subclassing
     }
-    let mut values: Vec<JsValue> = snapshot(vm, &object, length)?
-        .into_iter()
-        .map(|value| {
-            if value == JsValue::Hole {
-                JsValue::Undefined
-            } else {
-                value
-            }
-        })
-        .collect();
-    values[index as usize] = call.arg(1);
-    Ok(JsValue::Object(vm.new_array(values)?))
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
 }

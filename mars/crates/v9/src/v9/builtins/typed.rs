@@ -1,5 +1,5 @@
 /**
- * ArrayBuffer, the eleven typed array kinds and DataView. Elements are little-endian bytes in the
+ * ArrayBuffer, the twelve typed array kinds and DataView. Elements are little-endian bytes in the
  * buffer object; reads and writes go through the integer-indexed hooks property access calls, so
  * views over one buffer share their bytes. Buffer bytes count against the string budget (two bytes
  * per UTF-16 unit) and one buffer holds at most BUFFER_BYTES.
@@ -10,11 +10,42 @@ use crate::v9::vm::data::{Bytes, Class, ElementKind, ViewData};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
 
+mod buffer_state;
+mod immutable;
+mod resizable;
+mod shared;
+mod storage;
+mod transfer;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use buffer_state::{buffer_detachable, detached as buffer_detached};
+pub(in crate::v9) use buffer_state::{
+    detach as detach_buffer, detached as buffer_state_detached, immutable as buffer_immutable,
+    make_immutable as make_buffer_immutable, maximum as buffer_maximum, protect_buffer,
+    set_maximum as set_buffer_maximum, valid as valid_buffer, valid_immutable_brand, valid_view,
+};
+pub(in crate::v9) use shared::{
+    import_shared_buffer, initialize as initialize_shared, notify_shared,
+    validate as validate_shared,
+};
+use storage::{read_range, storage_len, write_range};
+mod codec;
+mod copy;
+mod indexed;
+mod integrity;
+pub(super) use integrity::{can_prevent_extensions, integrity_status, restrict_named_properties};
+mod search;
+mod species;
+mod static_create;
+pub(in crate::v9) use indexed::{
+    define as define_integer, index as integer_index, keys_length, numeric_index,
+    set as set_integer,
+};
+
 /** Most bytes one ArrayBuffer holds: the size of the longest string V9 allows. */
 const BUFFER_BYTES: usize = 2 * crate::constants::JS_STRING_UNITS;
 
 /** Typed array kinds, constructor names and element sizes, in `ElementKind` order. */
-const KINDS: [(ElementKind, &str, usize); 11] = [
+const KINDS: [(ElementKind, &str, usize); 12] = [
     (ElementKind::Int8, "Int8Array", 1),
     (ElementKind::Uint8, "Uint8Array", 1),
     (ElementKind::Uint8Clamped, "Uint8ClampedArray", 1),
@@ -26,6 +57,7 @@ const KINDS: [(ElementKind, &str, usize); 11] = [
     (ElementKind::Float64, "Float64Array", 8),
     (ElementKind::BigInt64, "BigInt64Array", 8),
     (ElementKind::BigUint64, "BigUint64Array", 8),
+    (ElementKind::Float16, "Float16Array", 2),
 ];
 
 /** Bytes per element; a DataView addresses single bytes. */
@@ -38,12 +70,15 @@ pub(in crate::v9) fn element_size(kind: ElementKind) -> usize {
 
 /** Install ArrayBuffer, %TypedArray%.prototype, every kind and DataView. */
 pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, NativeFn)]) {
+    shared::install(b);
     let buffer = b.object(Some(b.ids.object_prototype));
     b.ids.array_buffer_prototype = buffer;
     let ctor = b.constructor("ArrayBuffer", 1, construct_buffer, buffer, None);
     b.global("ArrayBuffer", ctor);
     b.method(ctor, "isView", 1, is_view);
     b.builtin_accessor(buffer, "byteLength", Some(buffer_length), None);
+    resizable::install(b, buffer);
+    immutable::install(b, buffer);
     b.method(buffer, "slice", 2, buffer_slice);
     tag(b, buffer, "ArrayBuffer");
     species_getter(b, ctor);
@@ -52,7 +87,12 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         b.builtin_accessor(typed, name, Some(view_get), None);
     }
     for (name, length, function) in array_methods {
-        let method = b.method(typed, name, *length, *function);
+        let function = if matches!(*name, "fill" | "copyWithin" | "reverse") {
+            immutable::mutator as NativeFn
+        } else {
+            *function
+        };
+        let method = b.method(typed, name, *length, function);
         if *name == "values" {
             b.put(
                 typed,
@@ -62,6 +102,7 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
             );
         }
     }
+    b.method(typed, "includes", 1, search::includes);
     let methods: [(&'static str, u32, NativeFn); 9] = [
         ("toReversed", 0, typed_to_reversed),
         ("toSorted", 1, typed_to_sorted),
@@ -78,6 +119,8 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
     }
     let base = b.constructor("TypedArray", 0, abstract_typed, typed, None);
     species_getter(b, base);
+    b.method(base, "from", 1, static_create::from);
+    b.method(base, "of", 0, static_create::of);
     let tag_getter = b.function("get [Symbol.toStringTag]", 0, typed_tag);
     b.put(
         typed,
@@ -91,8 +134,9 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         let ctor = b.constructor(name, 3, construct_typed, proto, Some(base));
         b.value(ctor, "BYTES_PER_ELEMENT", JsValue::Number(*size as f64), 0);
         b.value(proto, "BYTES_PER_ELEMENT", JsValue::Number(*size as f64), 0);
-        b.method(ctor, "from", 1, typed_from);
-        b.method(ctor, "of", 0, typed_of);
+        if KINDS[index].0 == ElementKind::Uint8 {
+            codec::install(b, ctor, proto);
+        }
         b.global(name, ctor);
     }
     data_view(b);
@@ -151,6 +195,7 @@ fn data_view(b: &mut Builder) {
         "getUint16",
         "getInt32",
         "getUint32",
+        "getFloat16",
         "getFloat32",
         "getFloat64",
         "getBigInt64",
@@ -165,6 +210,7 @@ fn data_view(b: &mut Builder) {
         "setUint16",
         "setInt32",
         "setUint32",
+        "setFloat16",
         "setFloat32",
         "setFloat64",
         "setBigInt64",
@@ -215,7 +261,22 @@ fn construct_buffer(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if length > BUFFER_BYTES {
         return Err(vm.range_error("Array buffer allocation failed"));
     }
-    Ok(JsValue::Object(new_buffer(vm, vec![0; length])?))
+    let maximum = buffer_state::options(vm, &call.arg(1))?;
+    if maximum.is_some_and(|maximum| maximum < length) {
+        return Err(vm.range_error("ArrayBuffer maximum byte length is smaller than its length"));
+    }
+    let prototype = vm.prototype_for(
+        call.new_target.as_ref().expect("checked new.target"),
+        realm().ids.array_buffer_prototype,
+    )?;
+    let buffer = new_buffer(vm, vec![0; length])?;
+    if let Some(object) = vm.heap.get_mut(buffer) {
+        object.proto = Some(prototype);
+    }
+    if let Some(maximum) = maximum {
+        buffer_state::set_maximum(vm, buffer, maximum);
+    }
+    Ok(JsValue::Object(buffer))
 }
 
 /** ArrayBuffer.isView. */
@@ -254,20 +315,13 @@ fn buffer_length(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** ArrayBuffer.prototype.slice(begin, end). */
 fn buffer_slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let id = this_buffer(vm, &call)?;
-    let length = buffer_bytes(vm, id).map_or(0, Vec::len);
-    let start = vm.relative_index(&call.arg(0), length, 0)?;
-    let end = vm.relative_index(&call.arg(1), length, length)?.max(start);
-    let bytes = buffer_bytes(vm, id)
-        .map(|bytes| bytes[start..end].to_vec())
-        .unwrap_or_default();
-    Ok(JsValue::Object(new_buffer(vm, bytes)?))
+    species::buffer_slice(vm, call)
 }
 
 /** The view data of an object. */
 pub(in crate::v9) fn view_of(vm: &Vm, id: ObjectId) -> Option<ViewData> {
     match vm.heap.get(id).map(|object| &object.class) {
-        Some(Class::View(view)) => Some((**view).clone()),
+        Some(Class::View(view)) => Some(buffer_state::effective(vm, (**view).clone())),
         _ => None,
     }
 }
@@ -279,7 +333,15 @@ fn this_typed(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ViewData)> {
         .object()
         .and_then(|id| view_of(vm, id).map(|view| (id, view)))
         .filter(|(_, view)| view.kind != ElementKind::DataView);
-    found.ok_or_else(|| vm.type_error("this is not a typed array."))
+    let Some((id, view)) = found else {
+        return Err(vm.type_error("this is not a typed array."));
+    };
+    if view.invalid {
+        return Err(
+            vm.type_error("Cannot perform operation on a detached or out-of-bounds typed array")
+        );
+    }
+    Ok((id, view))
 }
 
 /** length, byteLength, byteOffset and buffer of a view. */
@@ -287,11 +349,18 @@ fn view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(view) = call.this.object().and_then(|id| view_of(vm, id)) else {
         return Err(vm.type_error("Receiver is not a typed array or DataView"));
     };
+    if view.invalid && view.kind == ElementKind::DataView && callee_name(&call) != "buffer" {
+        return Err(vm.type_error("DataView is detached or out of bounds"));
+    }
     let size = element_size(view.kind);
     Ok(match callee_name(&call) {
         "length" => JsValue::Number(view.length as f64),
         "byteLength" => JsValue::Number((view.length * size) as f64),
-        "byteOffset" => JsValue::Number(view.offset as f64),
+        "byteOffset" => JsValue::Number(if view.invalid {
+            0.0
+        } else {
+            view.offset as f64
+        }),
         _ => JsValue::Object(view.buffer),
     })
 }
@@ -315,6 +384,8 @@ fn new_view(
         buffer,
         offset,
         length,
+        tracking: false,
+        invalid: false,
     };
     vm.pin(JsValue::Object(buffer));
     vm.alloc(Object::new(Class::View(Box::new(data)), Some(proto)))
@@ -377,7 +448,7 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Some(proto),
         )?));
     };
-    if let Some(bytes) = buffer_bytes(vm, source).map(Vec::len) {
+    if let Some(bytes) = storage_len(vm, source) {
         let offset = to_index(vm, &call.arg(1), "typed array offset")?;
         if offset % size != 0 || offset > bytes {
             return Err(vm.range_error(&format!(
@@ -385,7 +456,9 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
             )));
         }
         let length = match call.arg(2) {
-            JsValue::Undefined if (bytes - offset) % size != 0 => {
+            JsValue::Undefined
+                if buffer_state::maximum(vm, source).is_none() && (bytes - offset) % size != 0 =>
+            {
                 return Err(vm.range_error(&format!(
                     "byte length of {name} should be a multiple of {size}"
                 )));
@@ -396,14 +469,24 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
         if offset + length * size > bytes {
             return Err(vm.range_error(&format!("Invalid typed array length: {length}")));
         }
-        return Ok(JsValue::Object(new_view(
-            vm,
-            kind,
-            source,
-            offset,
-            length,
-            Some(proto),
-        )?));
+        if buffer_state::detached(vm, source) {
+            return Err(vm.type_error("Cannot construct a view of a detached ArrayBuffer"));
+        }
+        let current = storage_len(vm, source).unwrap_or(0);
+        let tracking = matches!(call.arg(2), JsValue::Undefined)
+            && buffer_state::maximum(vm, source).is_some();
+        if offset > current || !tracking && offset + length * size > current {
+            return Err(vm.range_error("Invalid typed array length"));
+        }
+        let view = new_view(vm, kind, source, offset, length, Some(proto))?;
+        if matches!(call.arg(2), JsValue::Undefined) && buffer_state::maximum(vm, source).is_some()
+        {
+            buffer_state::tracking(vm, view);
+        }
+        return Ok(JsValue::Object(view));
+    }
+    if let Some(view) = view_of(vm, source).filter(|view| view.kind != ElementKind::DataView) {
+        return copy::from_view(vm, kind, view, proto);
     }
     let values = elements_of(vm, &first)?;
     Ok(JsValue::Object(typed_from_values(
@@ -433,68 +516,17 @@ fn elements_of(vm: &mut Vm, source: &JsValue) -> Res<Vec<JsValue>> {
     Ok(out)
 }
 
-/** The kind a typed array constructor (the receiver of from/of) makes. */
-fn kind_of_constructor(vm: &mut Vm, constructor: &JsValue) -> Res<(ElementKind, ObjectId)> {
-    let proto = vm.get(constructor, &key("prototype"))?;
-    let found = realm()
-        .ids
-        .view_prototypes
-        .iter()
-        .take(KINDS.len())
-        .position(|each| proto == JsValue::Object(*each));
-    match (found, proto) {
-        (Some(index), JsValue::Object(proto)) => Ok((KINDS[index].0, proto)),
-        _ => Err(vm.type_error("this is not a typed array constructor")),
-    }
-}
-
-/** Uint8Array.from(source, mapFn, thisArg). */
-fn typed_from(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (kind, proto) = kind_of_constructor(vm, &call.this)?;
-    let mut values = elements_of(vm, &call.arg(0))?;
-    let mapper = call.arg(1);
-    if !mapper.nullish() {
-        for (index, value) in values.iter_mut().enumerate() {
-            *value = vm.call(
-                mapper.clone(),
-                call.arg(2),
-                vec![value.clone(), JsValue::Number(index as f64)],
-            )?;
-            vm.pin(value.clone());
-        }
-    }
-    Ok(JsValue::Object(typed_from_values(
-        vm,
-        kind,
-        &values,
-        Some(proto),
-    )?))
-}
-
-/** Uint8Array.of(...values). */
-fn typed_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (kind, proto) = kind_of_constructor(vm, &call.this)?;
-    Ok(JsValue::Object(typed_from_values(
-        vm,
-        kind,
-        call.args,
-        Some(proto),
-    )?))
-}
-
 /** Element `index` of a typed array, or None past its length (or for a forged, short buffer). */
 pub(in crate::v9) fn load(vm: &Vm, id: ObjectId, index: usize) -> Option<JsValue> {
-    let view = match vm.heap.get(id).map(|object| &object.class) {
-        Some(Class::View(view)) if view.kind != ElementKind::DataView => view,
-        _ => return None,
-    };
+    let view =
+        view_of(vm, id).filter(|view| view.kind != ElementKind::DataView && !view.invalid)?;
     if index >= view.length {
         return None;
     }
     let size = element_size(view.kind);
     let start = view.offset.checked_add(index * size)?;
-    let bytes = buffer_bytes(vm, view.buffer)?.get(start..start + size)?;
-    Some(decode(view.kind, bytes, true))
+    let bytes = read_range(vm, view.buffer, start, size)?;
+    Some(decode(view.kind, &bytes, true))
 }
 
 /** Decode one element from `bytes` (little-endian unless `little` is false). */
@@ -517,6 +549,9 @@ fn decode(kind: ElementKind, bytes: &[u8], little: bool) -> JsValue {
         ]))),
         ElementKind::Uint32 => number(f64::from(u32::from_le_bytes([
             raw[0], raw[1], raw[2], raw[3],
+        ]))),
+        ElementKind::Float16 => number(crate::v9::value::decode_f16(u16::from_le_bytes([
+            raw[0], raw[1],
         ]))),
         ElementKind::Float32 => number(f64::from(f32::from_le_bytes([
             raw[0], raw[1], raw[2], raw[3],
@@ -543,6 +578,7 @@ fn encode(vm: &mut Vm, kind: ElementKind, value: &JsValue) -> Res<Vec<u8>> {
             (to_int32(number) as u16).to_le_bytes().to_vec()
         }
         ElementKind::Int32 | ElementKind::Uint32 => to_uint32(number).to_le_bytes().to_vec(),
+        ElementKind::Float16 => crate::v9::value::encode_f16(number).to_le_bytes().to_vec(),
         ElementKind::Float32 => (number as f32).to_le_bytes().to_vec(),
         _ => number.to_le_bytes().to_vec(),
     })
@@ -572,6 +608,7 @@ pub(in crate::v9) fn store(vm: &mut Vm, id: ObjectId, index: usize, value: &JsVa
         return Ok(());
     };
     let encoded = encode(vm, view.kind, value)?;
+    immutable::writable(vm, view.buffer)?;
     write_bytes(vm, &view, index * element_size(view.kind), &encoded);
     Ok(())
 }
@@ -583,12 +620,7 @@ fn write_bytes(vm: &mut Vm, view: &ViewData, at: usize, bytes: &[u8]) {
         return;
     }
     let start = view.offset + at;
-    if let Some(Class::ArrayBuffer(buffer)) =
-        vm.heap.get_mut(view.buffer).map(|object| &mut object.class)
-        && let Some(target) = buffer.0.get_mut(start..start + bytes.len())
-    {
-        target.copy_from_slice(bytes);
-    }
+    write_range(vm, view.buffer, start, bytes);
 }
 
 /** Every element of a typed array, in order. */
@@ -600,14 +632,28 @@ fn values_of(vm: &Vm, id: ObjectId, length: usize) -> Vec<JsValue> {
 
 /** %TypedArray%.prototype.set(source, offset). */
 fn typed_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
+    let (id, view) = immutable::typed(vm, &call)?;
     let offset = to_index(vm, &call.arg(1), "offset")?;
     let source = call.arg(0);
     let values = match source
         .object()
         .and_then(|other| view_of(vm, other).map(|v| (other, v)))
     {
-        Some((other, other_view)) => values_of(vm, other, other_view.length),
+        Some((other, other_view)) if other_view.kind != ElementKind::DataView => {
+            if other_view.invalid {
+                return Err(
+                    vm.type_error("Cannot set from a detached or out-of-bounds typed array")
+                );
+            }
+            let big = |kind| matches!(kind, ElementKind::BigInt64 | ElementKind::BigUint64);
+            if big(view.kind) != big(other_view.kind) {
+                return Err(
+                    vm.type_error("Cannot mix BigInt and other types, use explicit conversions")
+                );
+            }
+            values_of(vm, other, other_view.length)
+        }
+        Some(_) => elements_of(vm, &source)?,
         None => elements_of(vm, &source)?,
     };
     if offset + values.len() > view.length {
@@ -677,37 +723,12 @@ fn typed_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** %TypedArray%.prototype.subarray(begin, end): a view sharing this one's bytes. */
 fn subarray(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
-    let start = vm.relative_index(&call.arg(0), view.length, 0)?;
-    let end = vm
-        .relative_index(&call.arg(1), view.length, view.length)?
-        .max(start);
-    let proto = vm.proto_of(id);
-    let offset = view.offset + start * element_size(view.kind);
-    Ok(JsValue::Object(new_view(
-        vm,
-        view.kind,
-        view.buffer,
-        offset,
-        end - start,
-        proto,
-    )?))
+    species::subarray(vm, call)
 }
 
 /** %TypedArray%.prototype.slice(begin, end): a copy. */
 fn typed_slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
-    let start = vm.relative_index(&call.arg(0), view.length, 0)?;
-    let end = vm
-        .relative_index(&call.arg(1), view.length, view.length)?
-        .max(start);
-    let values: Vec<JsValue> = (start..end)
-        .filter_map(|index| load(vm, id, index))
-        .collect();
-    let proto = vm.proto_of(id);
-    Ok(JsValue::Object(typed_from_values(
-        vm, view.kind, &values, proto,
-    )?))
+    species::slice(vm, call)
 }
 
 /** Apply `callback(value, index, array)` to each element. */
@@ -741,37 +762,21 @@ fn each_result(
 
 /** %TypedArray%.prototype.map: the same kind, holding the callback's results. */
 fn typed_map(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
-    let results: Vec<JsValue> = each_result(vm, &call, id, view.length)?
-        .into_iter()
-        .map(|(_, result)| result)
-        .collect();
-    let proto = vm.proto_of(id);
-    Ok(JsValue::Object(typed_from_values(
-        vm, view.kind, &results, proto,
-    )?))
+    species::map(vm, call)
 }
 
 /** %TypedArray%.prototype.filter: the same kind, holding the kept elements. */
 fn typed_filter(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
-    let kept: Vec<JsValue> = each_result(vm, &call, id, view.length)?
-        .into_iter()
-        .filter(|(_, keep)| keep.truthy())
-        .map(|(value, _)| value)
-        .collect();
-    let proto = vm.proto_of(id);
-    Ok(JsValue::Object(typed_from_values(
-        vm, view.kind, &kept, proto,
-    )?))
+    species::filter(vm, call)
 }
 
 /** %TypedArray%.prototype.sort: numeric order by default, else the comparator's. */
 fn typed_sort(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (id, view) = this_typed(vm, &call)?;
-    let mut values = values_of(vm, id, view.length);
     let comparator = call.arg(0);
-    if comparator.nullish() {
+    super::array::sort_comparator(vm, &comparator)?;
+    let (id, view) = immutable::typed(vm, &call)?;
+    let mut values = values_of(vm, id, view.length);
+    if comparator == JsValue::Undefined {
         values.sort_by(|a, b| match (a, b) {
             (JsValue::Number(a), JsValue::Number(b)) => a.total_cmp(b),
             (JsValue::BigInt(a), JsValue::BigInt(b)) => a.cmp(b),
@@ -787,7 +792,8 @@ fn typed_sort(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     JsValue::Undefined,
                     vec![values[at - 1].clone(), values[at].clone()],
                 )?;
-                if vm.to_number(&order)? <= 0.0 {
+                let order = vm.to_number(&order)?;
+                if order.is_nan() || order <= 0.0 {
                     break;
                 }
                 values.swap(at - 1, at);
@@ -809,7 +815,7 @@ fn construct_data_view(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some((buffer, bytes)) = call
         .arg(0)
         .object()
-        .and_then(|id| buffer_bytes(vm, id).map(|b| (id, b.len())))
+        .and_then(|id| storage_len(vm, id).map(|length| (id, length)))
     else {
         return Err(vm.type_error("First argument to DataView constructor must be an ArrayBuffer"));
     };
@@ -825,14 +831,21 @@ fn construct_data_view(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.range_error("Invalid DataView length"));
     }
     let proto = vm.prototype_for(&target, realm().ids.view_prototypes[KINDS.len()])?;
-    Ok(JsValue::Object(new_view(
+    if buffer_state::detached(vm, buffer) {
+        return Err(vm.type_error("Cannot construct a DataView of a detached ArrayBuffer"));
+    }
+    let view = new_view(
         vm,
         ElementKind::DataView,
         buffer,
         offset,
         length,
         Some(proto),
-    )?))
+    )?;
+    if matches!(call.arg(2), JsValue::Undefined) && buffer_state::maximum(vm, buffer).is_some() {
+        buffer_state::tracking(vm, view);
+    }
+    Ok(JsValue::Object(view))
 }
 
 /** The element kind a DataView accessor name (getInt16, setFloat64...) addresses. */
@@ -844,47 +857,59 @@ fn accessor_kind(name: &str) -> ElementKind {
         .map_or(ElementKind::Uint8, |(each, ..)| *each)
 }
 
-/** The receiver DataView, the addressed kind and the checked byte position. */
-fn data_view_target(vm: &mut Vm, call: &Call) -> Res<(ViewData, ElementKind, usize)> {
-    let Some(view) = call
-        .this
+/** DataView methods require an own native brand before evaluating offset or value coercions. */
+fn data_view_brand(vm: &mut Vm, call: &Call) -> Res<ViewData> {
+    call.this
         .object()
         .and_then(|id| view_of(vm, id))
         .filter(|view| view.kind == ElementKind::DataView)
-    else {
-        return Err(vm.type_error("Receiver is not a DataView"));
-    };
-    let kind = accessor_kind(callee_name(call));
-    let at = to_index(vm, &call.arg(0), "DataView offset")?;
+        .ok_or_else(|| {
+            let method = callee_name(call);
+            let receiver = match &call.this {
+                JsValue::String(text) => text.lossy(),
+                other => vm.callee_text(other),
+            };
+            vm.type_error(&format!(
+                "Method DataView.prototype.{method} called on incompatible receiver {receiver}"
+            ))
+        })
+}
+
+/** A fresh witness follows every coercion, so detached and out-of-bounds buffers reject before access. */
+fn data_view_witness(vm: &mut Vm, call: &Call, kind: ElementKind, at: usize) -> Res<ViewData> {
+    let view = data_view_brand(vm, call)?;
+    if view.invalid {
+        return Err(vm.type_error("DataView is detached or out of bounds"));
+    }
     if at + element_size(kind) > view.length {
         return Err(vm.range_error("Offset is outside the bounds of the DataView"));
     }
-    Ok((view, kind, at))
+    Ok(view)
 }
 
-/** DataView.prototype.getInt8 ... getBigUint64(byteOffset, littleEndian). */
+/** DataView getters convert the offset before taking their live buffer witness. */
 fn data_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (view, kind, at) = data_view_target(vm, &call)?;
-    let little = call.arg(1).truthy();
-    let start = view.offset + at;
-    let size = element_size(kind);
-    let bytes = buffer_bytes(vm, view.buffer)
-        .and_then(|bytes| bytes.get(start..start + size))
-        .map(<[u8]>::to_vec);
-    match bytes {
-        Some(bytes) => Ok(decode(kind, &bytes, little)),
-        None => Err(vm.range_error("Offset is outside the bounds of the DataView")),
-    }
+    data_view_brand(vm, &call)?;
+    let kind = accessor_kind(callee_name(&call));
+    let at = to_index(vm, &call.arg(0), "DataView offset")?;
+    let view = data_view_witness(vm, &call, kind, at)?;
+    let bytes = read_range(vm, view.buffer, view.offset + at, element_size(kind))
+        .ok_or_else(|| vm.range_error("Offset is outside the bounds of the DataView"))?;
+    Ok(decode(kind, &bytes, call.arg(1).truthy()))
 }
 
-/** DataView.prototype.setInt8 ... setBigUint64(byteOffset, value, littleEndian). */
+/** DataView setters convert the value before checking bounds, even if it resizes or detaches the buffer. */
 fn data_view_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (view, kind, at) = data_view_target(vm, &call)?;
+    let initial = data_view_brand(vm, &call)?;
+    immutable::writable(vm, initial.buffer)?;
+    let kind = accessor_kind(callee_name(&call));
+    let at = to_index(vm, &call.arg(0), "DataView offset")?;
     let mut bytes = encode(vm, kind, &call.arg(1))?;
     bytes.truncate(element_size(kind));
     if !call.arg(2).truthy() {
         bytes.reverse();
     }
+    let view = data_view_witness(vm, &call, kind, at)?;
     write_bytes(vm, &view, at, &bytes);
     Ok(JsValue::Undefined)
 }
@@ -905,12 +930,16 @@ pub(in crate::v9) fn random_values(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .filter(|view| {
             !matches!(
                 view.kind,
-                ElementKind::Float32 | ElementKind::Float64 | ElementKind::DataView
+                ElementKind::Float16
+                    | ElementKind::Float32
+                    | ElementKind::Float64
+                    | ElementKind::DataView
             )
         });
     let Some(view) = view else {
         return Err(vm.type_error("Failed to execute 'getRandomValues' on 'Crypto': parameter 1 is not an integer typed array."));
     };
+    immutable::writable(vm, view.buffer)?;
     let length = view.length * element_size(view.kind);
     if length > RANDOM_BYTES {
         return Err(vm.dom_exception("QuotaExceededError", "Failed to execute 'getRandomValues' on 'Crypto': the requested length exceeds 65536 bytes."));
@@ -937,23 +966,23 @@ pub(in crate::v9) fn new_uint8(vm: &mut Vm, bytes: Vec<u8>) -> Res<ObjectId> {
 /** The bytes a BufferSource (ArrayBuffer, typed array or DataView) covers. */
 pub(in crate::v9) fn source_bytes(vm: &Vm, value: &JsValue) -> Option<Vec<u8>> {
     let id = value.object()?;
-    if let Some(bytes) = buffer_bytes(vm, id) {
-        return Some(bytes.clone());
+    if let Some(length) = storage_len(vm, id) {
+        return read_range(vm, id, 0, length);
     }
     let view = view_of(vm, id)?;
     let length = view.length * element_size(view.kind);
-    buffer_bytes(vm, view.buffer)?
-        .get(view.offset..view.offset + length)
-        .map(<[u8]>::to_vec)
+    read_range(vm, view.buffer, view.offset, length)
 }
 
 /** Write `bytes` at the start of a Uint8Array, as far as they fit; returns how many fit. */
-pub(in crate::v9) fn fill_uint8(vm: &mut Vm, value: &JsValue, bytes: &[u8]) -> Option<usize> {
-    let view = value.object().and_then(|id| view_of(vm, id))?;
-    if !matches!(view.kind, ElementKind::Uint8 | ElementKind::Uint8Clamped) {
-        return None;
-    }
+pub(in crate::v9) fn fill_uint8(vm: &mut Vm, value: &JsValue, bytes: &[u8]) -> Res<usize> {
+    let view = value
+        .object()
+        .and_then(|id| view_of(vm, id))
+        .filter(|view| view.kind == ElementKind::Uint8 && !view.invalid)
+        .ok_or_else(|| vm.type_error("TextEncoder destination is not an attached Uint8Array"))?;
+    immutable::writable(vm, view.buffer)?;
     let count = bytes.len().min(view.length);
     write_bytes(vm, &view, 0, &bytes[..count]);
-    Some(count)
+    Ok(count)
 }

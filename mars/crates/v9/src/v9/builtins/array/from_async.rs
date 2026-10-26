@@ -100,7 +100,7 @@ fn start(vm: &mut Vm, call: &Call, promise: ObjectId) -> Res<()> {
 
 /** `Construct(C, «len»)` when `this` is a constructor, else ArrayCreate(len). */
 fn create_target(vm: &mut Vm, ctor: JsValue, length: Option<usize>) -> Res<JsValue> {
-    let target = if vm.is_constructor(&ctor) {
+    let target = if builtin_subclassing(vm) && vm.is_constructor(&ctor) {
         let args = length
             .map(|n| JsValue::Number(n as f64))
             .into_iter()
@@ -111,8 +111,7 @@ fn create_target(vm: &mut Vm, ctor: JsValue, length: Option<usize>) -> Res<JsVal
         if length as f64 > f64::from(u32::MAX) {
             return Err(vm.range_error("Invalid array length"));
         }
-        check_length(vm, length)?;
-        JsValue::Object(vm.new_array(vec![JsValue::Hole; length])?)
+        JsValue::Object(vm.new_array_length(length)?)
     };
     vm.pin(target.clone());
     Ok(target)

@@ -9,7 +9,29 @@
 mod import_map;
 mod link;
 
-pub(in crate::v9) use link::{Outcome, advance_dynamic, discover, refuse_dynamic, run_entry};
+pub(in crate::v9) use link::{Outcome, discover, refuse_dynamic, run_entry};
+
+/** Delivered source is shared, while each waiting context instantiates its own real module records. */
+pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
+    link::advance_dynamic(vm)?;
+    #[cfg(feature = "conformance")]
+    {
+        let banks: Vec<_> = vm
+            .realms
+            .contexts
+            .iter()
+            .enumerate()
+            .filter(|(bank, context)| {
+                *bank != vm.active_realm as usize && !context.modules.waiting.is_empty()
+            })
+            .map(|(bank, _)| bank as u32)
+            .collect();
+        for bank in banks {
+            vm.with_realm(bank, link::advance_dynamic)?;
+        }
+    }
+    vm.check_module_bounds()
+}
 
 use super::compile::{Code, ModuleInfo};
 use super::syntax;
@@ -126,7 +148,7 @@ impl ModuleState {
         self.records.is_empty() && self.cursor.is_none() && self.waiting.is_empty()
     }
     /** Structural bounds of untrusted committed state. */
-    fn validate(&self, sources: usize) -> EngineResult<()> {
+    pub(in crate::v9) fn validate(&self, sources: usize) -> EngineResult<()> {
         if self.records.len() > MODULES || self.waiting.len() > MODULES {
             return Err(EngineError::limit("V9 module records", MODULES));
         }
@@ -283,6 +305,10 @@ impl Modules {
             urls: vm.page.environment.scripts.clone(),
             ..Modules::default()
         };
+        #[cfg(feature = "conformance")]
+        {
+            modules.map.d8 = vm.page.environment.conformance_d8;
+        }
         for entry in &input.entries {
             modules.entries.insert(entry.index, entry.clone());
         }
@@ -392,9 +418,24 @@ impl Modules {
             .requests
             .get(request)
             .ok_or("Invalid module request.")?;
-        self.map
-            .resolve(specifier, &compiled.base)
-            .map(String::from)
+        self.resolve_key(specifier, &compiled.base)
+    }
+    /** Native shell data specifiers are literal source identities; browser URLs still use normal import maps. */
+    fn resolve_key(&self, specifier: &str, base: &Url) -> Result<String, String> {
+        #[cfg(feature = "conformance")]
+        if self.map.d8 {
+            let raw = specifier.split('\0').next().unwrap_or_default();
+            if raw.starts_with("data:text/javascript,") {
+                return Ok(raw.into());
+            }
+            if raw
+                .split_once(':')
+                .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("data"))
+            {
+                return Err("d8 only supports literal data:text/javascript, modules.".into());
+            }
+        }
+        self.map.resolve(specifier, base).map(String::from)
     }
     /** Ask the app for a module; false once MODULES would be passed. */
     fn request(&mut self, url: &str) -> bool {
@@ -510,6 +551,7 @@ fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompi
             .and_then(|mut tokens| {
                 for token in &mut tokens {
                     token.location.byte_offset += offset;
+                    token.end += offset;
                 }
                 syntax::parse_module(tokens)
             })
@@ -539,14 +581,14 @@ pub(in crate::v9) fn dynamic_import(
     };
     let (_, base) = vm.modules.referrer(site);
     let resolved = match base {
-        Some(base) => vm.modules.map.resolve(&text, &base),
+        Some(base) => vm.modules.resolve_key(&text, &base),
         None => Err("Failed to resolve module specifier: the page has no base URL.".into()),
     };
     let key = match resolved {
         Ok(url) => String::from(url),
         Err(message) => return link::reject_type_error(vm, promise, &message),
     };
-    if vm.modules.state.waiting.len() >= MODULES {
+    if vm.module_counts().1 >= MODULES {
         return link::reject_type_error(vm, promise, "Too many module imports are waiting.");
     }
     vm.modules.state.waiting.push(Waiting {
@@ -598,7 +640,7 @@ fn meta_resolve(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .get(&key)
         .map(|module| module.base.clone());
     let resolved = match base {
-        Some(base) => vm.modules.map.resolve(&specifier, &base),
+        Some(base) => vm.modules.resolve_key(&specifier, &base),
         None => Err("Module is not loaded.".into()),
     };
     match resolved {

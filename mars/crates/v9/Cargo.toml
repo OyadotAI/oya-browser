@@ -15,10 +15,17 @@ ryu-js = "=1.0.3"
 url = "=2.5.8"
 # Already in the workspace through url; UTS #46 for the URL host parser.
 idna = "=1.1.0"
+# Already in the workspace through idna; scalar Unicode normalization for String.normalize.
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
+# Already in the workspace through idna; exact Unicode property data for regular expressions.
+icu_properties = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
 
 [features]
+# Upstream test hosts only: supplies inert fixture sources without filesystem authority.
+# The browser service never enables the d8 compatibility host.
+conformance = []
 # Measurement builds only: exposes `measure::load_page_scaled`, which multiplies V9's heap bounds
 # so the check example can report what real scripts would need. The service never enables it.
 measure = []

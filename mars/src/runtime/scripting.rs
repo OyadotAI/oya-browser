@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+mod image_loading;
+
 /// Virtual milliseconds of timers and animation frames a page runs before it first commits, so
 /// `setTimeout(0)` and requestAnimationFrame rendering is part of the first paint.
 const SETTLE_VIRTUAL_MS: f64 = 200.0;
@@ -61,6 +63,12 @@ const SECONDS_PER_MINUTE: f64 = 60.0;
 /// What the coordinator keeps for a page's scripts between V9 requests.
 #[derive(Clone)]
 pub(super) struct Scripting {
+    /// Complete sampled animation paint effects, separate from authored document styles.
+    pub opacity_effects: Vec<crate::v9::OpacityEffect>,
+    /// Actual image requests and retained decode admission for this page alone.
+    pub image_loading: image_loading::Loading,
+    /// Load stays pending across bounded slices while its image cohort still has work.
+    pub load_pending: bool,
     /// Whether V9 has loaded this page (its state is then committed engine state).
     pub loaded: bool,
     /// Facts the page sees; the per-request fields are refreshed before each call.
@@ -158,6 +166,9 @@ impl Default for Scripting {
     fn default() -> Self {
         let now = Instant::now();
         Self {
+            image_loading: image_loading::Loading::default(),
+            load_pending: false,
+            opacity_effects: Vec::new(),
             loaded: false,
             environment: PageEnvironment::default(),
             clock_ms: 0.0,
@@ -188,7 +199,11 @@ impl Scripting {
     /** Whether the page has script work waiting. */
     fn pending(&self) -> bool {
         self.loaded
-            && (self.scroll_pending || self.next_timer_ms.is_some() || !self.requests.is_empty())
+            && (self.scroll_pending
+                || self.next_timer_ms.is_some()
+                || !self.requests.is_empty()
+                || !self.image_loading.pending.is_empty()
+                || self.load_pending)
     }
 }
 
@@ -259,6 +274,9 @@ impl Runtime {
     /// replay and the structure check all succeed; effects are recorded for the caller to act on.
     pub(super) fn script_step(&mut self, page: &mut Page, action: Value) -> EngineResult<Step> {
         let load = action["kind"] == "load";
+        if load {
+            self.initialize_image_loading(page);
+        }
         let started = Instant::now();
         let kind = action["kind"].as_str().unwrap_or_default().to_string();
         if !page.storage_dirty {
@@ -321,6 +339,8 @@ impl Runtime {
             ..
         } = execution;
         self.commit_document_cookies(&page.url, &effects.cookies)?;
+        changed |= page.scripting.opacity_effects != effects.opacity_effects;
+        page.scripting.opacity_effects = effects.opacity_effects;
         if let Some(applied) = applied {
             let before = page.document.styles.len();
             page.resolved_stylesheets
@@ -328,12 +348,16 @@ impl Runtime {
             page.document = applied;
             page.styled = false;
         }
+        super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
         changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
         let pending = PendingImages::of(first_new, &changes, &script_changes);
         page.scripting.pending_images = Some(match page.scripting.pending_images.take() {
             Some(earlier) => earlier.merge(pending),
             None => pending,
         });
+        self.adopt_image_associations(page, effects.image_adoptions, &state)?;
+        page.scripting.image_loading.queue(effects.image_requests)?;
+        self.discard_removed_image_sources(page);
         if !page.scripting.loading {
             self.flush_inserted_images(page)?;
         }
@@ -423,6 +447,7 @@ impl Runtime {
             self.render_context,
         )?;
         page.styled = true;
+        self.refresh_image_visibility(page);
         let restyled: std::collections::BTreeSet<usize> =
             crate::document::background_urls(&page.document, &page.url)
                 .into_iter()
@@ -444,15 +469,23 @@ impl Runtime {
         let left = crate::constants::IMAGE_COUNT.saturating_sub(page.images.len());
         self.prefetched.clear();
         let loaded = self
-            .prefetch_images(&page.document, &page.url, deadline, &wanted, left)
+            .prefetch_images_skipping(
+                &page.document,
+                &page.url,
+                deadline,
+                &wanted,
+                left,
+                &page.scripting.image_loading.managed,
+            )
             .and_then(|()| {
-                self.load_images(
+                self.load_images_skipping(
                     &mut page.document,
                     &base,
                     deadline,
                     &mut budget,
                     &wanted,
                     &mut notes,
+                    &page.scripting.image_loading.managed,
                 )
             });
         self.prefetched.clear();
@@ -464,12 +497,15 @@ impl Runtime {
                 BTreeMap::new()
             }
         };
-        for node in page
-            .document
-            .nodes
-            .iter()
-            .filter(|node| node.tag == "img" && wanted(node))
-        {
+        for node in page.document.nodes.iter().filter(|node| {
+            node.tag == "img"
+                && wanted(node)
+                && !page
+                    .scripting
+                    .image_loading
+                    .managed
+                    .contains(&node.local_id)
+        }) {
             page.images.remove(&node.local_id);
         }
         page.images.extend(images);
@@ -570,7 +606,11 @@ impl Runtime {
         let mut sheets = page.resolved_stylesheets.clone();
         sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
         let styled = self.styled(&applied, &sheets, self.render_context)?;
-        let display = self.render(&styled)?;
+        let display = self.render_effects(
+            &styled,
+            &page.element_scroll,
+            &execution.effects.opacity_effects,
+        )?;
         Ok(boxes(&display))
     }
 
@@ -610,6 +650,21 @@ impl Runtime {
             let action = if page.scripting.scroll_pending {
                 page.scripting.scroll_pending = false;
                 json!({"kind":"event","event":"scroll"})
+            } else if !page.scripting.image_loading.pending.is_empty() {
+                let responses = self.perform_image_requests(page, until)?;
+                if responses.iter().any(|response| {
+                    page.document
+                        .nodes
+                        .iter()
+                        .any(|node| node.local_id == response.request.node)
+                }) {
+                    self.prepare_display(page)?;
+                    changed = true;
+                }
+                json!({"kind":"images","responses":responses})
+            } else if page.scripting.load_pending {
+                page.scripting.load_pending = false;
+                json!({"kind":"event","event":"load"})
             } else if !page.scripting.requests.is_empty() {
                 let requests = std::mem::take(&mut page.scripting.requests);
                 let responses = self.perform_requests(page, requests, until)?;
