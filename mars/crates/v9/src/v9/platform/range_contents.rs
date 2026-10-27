@@ -153,6 +153,7 @@ fn sub_range(vm: &mut Vm, start: Boundary, end: Boundary) -> Res<RangeData> {
         start_offset: start.1,
         end: dom::wrap(vm, end.0)?,
         end_offset: end.1,
+        is_static: false,
     })
 }
 

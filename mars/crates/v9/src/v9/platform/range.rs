@@ -39,6 +39,7 @@ fn collapsed_data() -> RangeData {
         start_offset: 0,
         end: document,
         end_offset: 0,
+        is_static: false,
     }
 }
 
@@ -73,6 +74,7 @@ pub(in crate::v9) fn construct_static_range(vm: &mut Vm, call: Call) -> Res<JsVa
         start_offset,
         end,
         end_offset,
+        is_static: true,
     };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Range(Box::new(data)))),
@@ -99,12 +101,21 @@ fn static_point(
     Ok((node, number.max(0.0) as usize))
 }
 
-/** The data behind a Range, or an Illegal invocation error. */
-pub(super) fn range_data(vm: &mut Vm, value: &JsValue) -> Res<RangeData> {
+/** The data behind a Range or StaticRange, or an Illegal invocation error. */
+pub(super) fn any_range_data(vm: &mut Vm, value: &JsValue) -> Res<RangeData> {
     match host_data(vm, value) {
         Some(HostData::Range(data)) => Ok(*data),
         _ => Err(vm.type_error("Illegal invocation")),
     }
+}
+
+/** The data behind a Range, refusing a StaticRange: its methods exist only on Range. */
+pub(super) fn range_data(vm: &mut Vm, value: &JsValue) -> Res<RangeData> {
+    let data = any_range_data(vm, value)?;
+    if data.is_static {
+        return Err(vm.type_error("Illegal invocation"));
+    }
+    Ok(data)
 }
 
 /** Store a Range's data back. */
@@ -312,7 +323,7 @@ pub(super) fn common_ancestor(vm: &mut Vm, data: &RangeData) -> usize {
 
 /** Range accessors. */
 pub(in crate::v9) fn range_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let data = range_data(vm, &call.this)?;
+    let data = any_range_data(vm, &call.this)?;
     Ok(match dom::native_name(&call) {
         "startContainer" => data.start,
         "startOffset" => JsValue::Number(data.start_offset as f64),

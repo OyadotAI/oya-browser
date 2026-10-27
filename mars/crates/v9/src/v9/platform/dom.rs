@@ -1263,6 +1263,12 @@ pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 pub(super) fn split_text_node(vm: &mut Vm, node: usize, offset: usize) -> Res<usize> {
     let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
     let length = units.len();
+    if offset > length {
+        return Err(vm.dom_exception(
+            "IndexSizeError",
+            "Failed to execute 'splitText' on 'Text': The offset is larger than the Text node's length.",
+        ));
+    }
     let rest = String::from_utf16_lossy(&units[offset..]);
     let created = vm
         .page

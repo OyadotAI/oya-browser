@@ -698,6 +698,9 @@ pub(in crate::v9) struct RangeData {
     pub start_offset: usize,
     pub end: JsValue,
     pub end_offset: usize,
+    /** A StaticRange: readable through its own accessors, never a Range's methods. */
+    #[serde(default)]
+    pub is_static: bool,
 }
 
 /** A dispatched or script-created event. */
