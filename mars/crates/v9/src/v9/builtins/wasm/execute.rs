@@ -240,6 +240,9 @@ impl Activation<'_> {
             signature.results.len()
         });
         loop {
+            if op == 3 {
+                crate::v9::builtins::loop_stack_check(vm)?;
+            }
             let flow = match self.sequence(vm, code) {
                 Ok(flow) => flow,
                 Err(error) => {

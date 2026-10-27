@@ -306,8 +306,9 @@ pub(in crate::v9) struct Counts {
 /** The heap of one page. */
 #[derive(Clone, Debug, Default)]
 pub(in crate::v9) struct Heap {
-    pub objects: FastMap<ObjectId, Object>,
-    pub envs: FastMap<EnvId, Env>,
+    /** Persistent, so a step's working copy of the heap shares every object it does not write. */
+    pub objects: super::trie::Trie<Object>,
+    pub envs: super::trie::Trie<Env>,
     pub next_object: ObjectId,
     pub next_env: EnvId,
     pub counts: Counts,
@@ -318,6 +319,20 @@ pub(in crate::v9) struct Heap {
     /** Objects and environments alive right after the last collection (0: never collected, as
     for a state decoded from a frame); derived, never serialized. */
     pub collected: usize,
+    /** The objects a snapshot check must see (shared buffers, shared Wasm roots, atomics poll
+    callbacks), kept as objects come and go so the end-of-request checks visit them alone
+    instead of walking every object; derived, never serialized. */
+    shared: FastSet<ObjectId>,
+}
+
+/** Whether an object belongs in the shared index. */
+fn shared_candidate(object: &Object) -> bool {
+    match &object.class {
+        Class::SharedArrayBuffer(_) | Class::WasmShared(_) => true,
+        _ => object
+            .function()
+            .is_some_and(|function| crate::v9::builtins::is_shared_poll(&function.kind)),
+    }
 }
 
 impl Heap {
@@ -351,8 +366,23 @@ impl Heap {
             self.count_object(id, &old, false);
         }
     }
-    /** Add or remove an object's contribution to the counts. */
+    /** The indexed shared objects, in no order. */
+    pub fn shared_objects(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.shared.iter().copied()
+    }
+    /** Drop swept objects from the shared index. */
+    pub fn retain_shared(&mut self, live: &FastSet<ObjectId>) {
+        self.shared.retain(|id| live.contains(id));
+    }
+    /** Add or remove an object's contribution to the counts and the shared index. */
     fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
+        if shared_candidate(object) {
+            if add {
+                self.shared.insert(id);
+            } else {
+                self.shared.remove(&id);
+            }
+        }
         let bindings = binding_props(id, object);
         let units = self.counted_units(object, add);
         let (objects, functions) = if object.function().is_some() {
@@ -506,7 +536,11 @@ impl Heap {
         let mut counts = Counts::default();
         self.shared_stores.clear();
         self.shared_gc_units.clear();
+        self.shared.clear();
         for (id, object) in &self.objects {
+            if shared_candidate(object) {
+                self.shared.insert(*id);
+            }
             counts.bindings += binding_props(*id, object);
             if object.function().is_some() {
                 counts.functions += 1;
@@ -730,6 +764,7 @@ impl<'de> Deserialize<'de> for Heap {
             shared_stores: FastMap::default(),
             shared_gc_units: FastMap::default(),
             collected: 0,
+            shared: FastSet::default(),
         };
         heap.recount();
         Ok(heap)

@@ -30,6 +30,7 @@ fn load(files: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
     let request = |input: &ModuleInput, state: Option<mars_v9::VmState>| -> Execution {
         let page_input = PageInput {
             sources: &sources,
+            source_keys: &[],
             document: page(),
             storage: StorageState::default(),
             host: &host,

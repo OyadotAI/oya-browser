@@ -3,10 +3,11 @@ offset, and the clock read from the page's virtual time. */
 use super::duration::{self, Dur, UNIT_NS};
 use super::iso::{self, NS_DAY, NS_MAX};
 use super::plain;
+use super::zone;
 use super::*;
 
 /** A new Instant, or the RangeError outside the representable range. */
-fn new_instant(vm: &mut Vm, target: Option<&JsValue>, ns: i128) -> Res<JsValue> {
+pub(super) fn new_instant(vm: &mut Vm, target: Option<&JsValue>, ns: i128) -> Res<JsValue> {
     if ns.abs() > NS_MAX {
         return Err(vm.range_error("instant outside the supported range"));
     }
@@ -148,16 +149,39 @@ fn round(vm: &mut Vm, call: Call) -> Res<JsValue> {
     new_instant(vm, None, iso::round_by(t.v[0], inc, &mode))
 }
 
-/** ToTemporalTimeZoneIdentifier for UTC and fixed offsets: the canonical id and its offset. */
-pub(super) fn time_zone(vm: &mut Vm, value: &JsValue) -> Res<(String, i128)> {
+/** ToTemporalTimeZoneIdentifier: the canonical id and the offset in force at epoch nanoseconds `ns`. */
+pub(super) fn time_zone(vm: &mut Vm, value: &JsValue, ns: i128) -> Res<(String, i128)> {
     if let Some(t) = slots(vm, value).filter(|t| t.kind == Kind::Zoned) {
-        return Ok((t.tz.clone(), t.v[1]));
+        return Ok(named(&t.tz, ns).unwrap_or((t.tz.clone(), t.v[1])));
     }
     let JsValue::String(text) = value else {
         return Err(vm.type_error("time zone must be a string"));
     };
     let s = text.lossy();
-    zone_id(&s).ok_or_else(|| vm.range_error(&format!("unsupported time zone {s}")))
+    named(&s, ns)
+        .or_else(|| zone_id(&s))
+        .ok_or_else(|| vm.range_error(&format!("unsupported time zone {s}")))
+}
+
+/** A shipped IANA zone's canonical id and its offset at `ns`; None for anything that is not a shipped zone. */
+fn named(s: &str, ns: i128) -> Option<(String, i128)> {
+    let zone = zone::lookup(s)?;
+    Some((zone.id().to_string(), zone.offset_ns(ns)))
+}
+
+/** Instant.prototype.toZonedDateTimeISO: the same instant, read in a zone's rules at that instant. */
+fn to_zoned(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let t = this_t(vm, &call, Kind::Instant)?;
+    let (id, offset) = time_zone(vm, &call.arg(0), t.v[0])?;
+    make(
+        vm,
+        None,
+        T {
+            kind: Kind::Zoned,
+            v: vec![t.v[0], offset],
+            tz: id,
+        },
+    )
 }
 
 /** A time zone string: UTC, an offset, or an ISO string carrying one. */
@@ -197,7 +221,7 @@ fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let zone = if matches!(tz, JsValue::Undefined) {
         None
     } else {
-        Some(time_zone(vm, &tz)?)
+        Some(time_zone(vm, &tz, t.v[0])?)
     };
     let ns = iso::round_by(t.v[0], p.increment, &p.mode);
     if ns.abs() > NS_MAX {
@@ -251,11 +275,12 @@ fn now_zone(_vm: &mut Vm, _call: Call) -> Res<JsValue> {
 
 /** The current local date-time in an optional zone. */
 fn now_local(vm: &mut Vm, call: &Call) -> Res<((i64, i64, i64), [i64; 6])> {
+    let ns = now_ns(vm);
     let offset = match call.arg(0) {
         JsValue::Undefined => 0,
-        v => time_zone(vm, &v)?.1,
+        v => time_zone(vm, &v, ns)?.1,
     };
-    Ok(parts(now_ns(vm) + offset))
+    Ok(parts(ns + offset))
 }
 
 /** Temporal.Now.plainDateTimeISO. */
@@ -298,6 +323,7 @@ pub(super) fn install(b: &mut Builder, ns: ObjectId, protos: &mut [ObjectId; 8])
             ("round", 1, round),
             ("equals", 1, equals),
             ("toString", 0, to_string),
+            ("toZonedDateTimeISO", 1, to_zoned),
             ("toLocaleString", 0, to_json),
             ("toJSON", 0, to_json),
         ],

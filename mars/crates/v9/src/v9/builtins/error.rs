@@ -236,8 +236,21 @@ fn make(vm: &mut Vm, call: &Call, message: JsValue, options: JsValue) -> Res<Obj
 /** `Error(message, options)` with or without `new`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = make(vm, &call, call.arg(0), call.arg(1))?;
-    vm.record_trace(id)?;
+    record_constructed(vm, &call, id)?;
     Ok(JsValue::Object(id))
+}
+
+/** Records the trace of a constructed error; a subclass's own frames above its constructor are hidden, as V8 does. */
+fn record_constructed(vm: &mut Vm, call: &Call, id: ObjectId) -> Res<()> {
+    vm.record_trace(id)?;
+    if let Some(target) = call
+        .new_target
+        .as_ref()
+        .filter(|target| target.object() != Some(call.callee))
+    {
+        trace::skip_constructor(vm, id, target);
+    }
+    Ok(())
 }
 
 /** `AggregateError(errors, message, options)`. */
@@ -256,7 +269,7 @@ fn aggregate(vm: &mut Vm, call: Call) -> Res<JsValue> {
             ..Descriptor::default()
         },
     )?;
-    vm.record_trace(id)?;
+    record_constructed(vm, &call, id)?;
     Ok(JsValue::Object(id))
 }
 

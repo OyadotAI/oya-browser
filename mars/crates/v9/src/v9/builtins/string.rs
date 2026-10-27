@@ -46,8 +46,8 @@ pub(super) fn install(b: &mut Builder) {
         ("substr", 2, substr),
         ("toLowerCase", 0, to_lower),
         ("toUpperCase", 0, to_upper),
-        ("toLocaleLowerCase", 0, to_lower),
-        ("toLocaleUpperCase", 0, to_upper),
+        ("toLocaleLowerCase", 0, to_locale_lower),
+        ("toLocaleUpperCase", 0, to_locale_upper),
         ("toString", 0, value_of),
         ("valueOf", 0, value_of),
         ("trim", 0, trim),
@@ -626,9 +626,13 @@ fn substr(vm: &mut Vm, call: Call) -> Res<JsValue> {
     units(text.as_units()[start..start + count].to_vec())
 }
 
-/** Case mapping over code points; unpaired surrogates stay. */
-fn map_case(vm: &mut Vm, call: &Call, upper: bool) -> Res<JsValue> {
+/** Case mapping over code points; unpaired surrogates stay. Locale variants also validate their locales argument. */
+fn map_case(vm: &mut Vm, call: &Call, upper: bool, locale: bool) -> Res<JsValue> {
     let text = this_string(vm, call)?;
+    if locale {
+        // ECMA-402 requires the locales list to canonicalize (and throw on bad tags) even though casing is not localized.
+        crate::v9::builtins::intl::canonical_list(vm, &call.arg(0))?;
+    }
     if text.as_units().iter().all(|unit| *unit < 0x80) {
         let out: Vec<u16> = text
             .as_units()
@@ -663,11 +667,19 @@ fn map_case(vm: &mut Vm, call: &Call, upper: bool) -> Res<JsValue> {
 
 /** String.prototype.toLowerCase. */
 fn to_lower(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    map_case(vm, &call, false)
+    map_case(vm, &call, false, false)
 }
 /** String.prototype.toUpperCase. */
 fn to_upper(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    map_case(vm, &call, true)
+    map_case(vm, &call, true, false)
+}
+/** String.prototype.toLocaleLowerCase, which canonicalizes its locales argument first. */
+fn to_locale_lower(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    map_case(vm, &call, false, true)
+}
+/** String.prototype.toLocaleUpperCase, which canonicalizes its locales argument first. */
+fn to_locale_upper(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    map_case(vm, &call, true, true)
 }
 
 /** String.prototype.toString and valueOf. */

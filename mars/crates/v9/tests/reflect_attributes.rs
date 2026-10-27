@@ -10,6 +10,7 @@ fn eval(source: &str, name: &str) -> String {
     environment.dom_level = DomLevel::Extended;
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
+        source_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

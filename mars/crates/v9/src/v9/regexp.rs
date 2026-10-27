@@ -9,6 +9,7 @@ use crate::constants::{
 };
 mod case;
 mod case_data;
+mod class_set;
 mod modifiers;
 mod unicode;
 use modifiers::Modes;
@@ -56,9 +57,32 @@ enum Node {
     Repeat(Box<Node>, u32, Option<u32>, bool, (usize, usize)),
 }
 
+/** Properties of strings (v mode) need emoji sequence data that V9 does not carry yet. */
+pub(super) const STRING_PROPERTIES: [&str; 7] = [
+    "Basic_Emoji",
+    "Emoji_Keycap_Sequence",
+    "RGI_Emoji",
+    "RGI_Emoji_Flag_Sequence",
+    "RGI_Emoji_Modifier_Sequence",
+    "RGI_Emoji_Tag_Sequence",
+    "RGI_Emoji_ZWJ_Sequence",
+];
+/** The message for a property of strings V9 cannot match yet; a literal carrying one still parses, and fails when it runs. */
+pub(super) const UNSUPPORTED_STRING_PROPERTY: &str = "Unsupported property of strings";
+
+/** The message for a pattern over a size or nesting bound V9 enforces; ECMAScript has no such early error, so a literal carrying one still parses. */
+pub(super) const ENGINE_LIMIT: &str = "Regular expression exceeds an engine limit";
+
 /** A pattern or flag error, reported to scripts as a SyntaxError. */
 #[derive(Debug)]
 pub(super) struct PatternError(pub String);
+
+impl PatternError {
+    /** True when the error is V9's own gap (an unsupported construct or a size bound), not an ECMAScript early error; parse-time checks defer these to the runtime. */
+    pub(super) fn is_engine_gap(&self) -> bool {
+        self.0.starts_with(UNSUPPORTED_STRING_PROPERTY) || self.0.starts_with(ENGINE_LIMIT)
+    }
+}
 
 /** Why a match stopped without a result. */
 #[derive(Debug)]
@@ -88,13 +112,15 @@ pub(super) fn compile(
         sticky: false,
         indices: false,
     };
+    let mut unicode_sets = false;
     for flag in flags.chars() {
         let slot = match flag {
             'g' => &mut program.global,
             'i' => &mut program.ignore_case,
             'm' => &mut program.multiline,
             's' => &mut program.dot_all,
-            'u' | 'v' => &mut program.unicode,
+            'u' => &mut program.unicode,
+            'v' => &mut unicode_sets,
             'y' => &mut program.sticky,
             'd' => &mut program.indices,
             _ => {
@@ -110,6 +136,15 @@ pub(super) fn compile(
         }
         *slot = true;
     }
+    if unicode_sets {
+        // The v flag implies unicode matching, and it cannot be combined with u.
+        if program.unicode {
+            return Err(PatternError(format!(
+                "Invalid regular expression flags '{flags}'"
+            )));
+        }
+        program.unicode = true;
+    }
     let mut parser = PatternParser {
         units: pattern,
         position: 0,
@@ -117,6 +152,7 @@ pub(super) fn compile(
         names: Vec::new(),
         nodes: 0,
         unicode: program.unicode,
+        unicode_sets,
         modes: Modes::from_program(&program),
         buffer_boundaries,
         depth: 0,
@@ -142,6 +178,8 @@ struct PatternParser<'a> {
     names: Vec<(String, usize)>,
     nodes: usize,
     unicode: bool,
+    /** The v flag: classes use set notation with operators and strings. */
+    unicode_sets: bool,
     modes: Modes,
     buffer_boundaries: bool,
     depth: usize,
@@ -192,7 +230,7 @@ impl PatternParser<'_> {
     fn count(&mut self) -> Result<(), PatternError> {
         self.nodes += 1;
         if self.nodes > REGEXP_NODES {
-            return Err(PatternError("Regular expression too large".into()));
+            return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
         }
         Ok(())
     }
@@ -224,7 +262,7 @@ impl PatternParser<'_> {
     fn disjunction(&mut self) -> Result<Node, PatternError> {
         self.depth += 1;
         if self.depth > PATTERN_DEPTH {
-            return Err(PatternError("Regular expression too deeply nested".into()));
+            return Err(PatternError(format!("{ENGINE_LIMIT}: too deeply nested")));
         }
         let mut alternatives = vec![self.alternative()?];
         while self.eat('|') {
@@ -409,7 +447,9 @@ impl PatternParser<'_> {
                 let name = self.group_name()?;
                 self.groups += 1;
                 if self.groups > REGEXP_GROUPS {
-                    return Err(PatternError("Too many capture groups".into()));
+                    return Err(PatternError(format!(
+                        "{ENGINE_LIMIT}: too many capture groups"
+                    )));
                 }
                 let index = self.groups;
                 if self.names.iter().any(|(existing, _)| *existing == name) {
@@ -426,7 +466,9 @@ impl PatternParser<'_> {
         }
         self.groups += 1;
         if self.groups > REGEXP_GROUPS {
-            return Err(PatternError("Too many capture groups".into()));
+            return Err(PatternError(format!(
+                "{ENGINE_LIMIT}: too many capture groups"
+            )));
         }
         let index = self.groups;
         let inner = self.disjunction()?;
@@ -716,16 +758,33 @@ impl PatternParser<'_> {
         if !closed {
             return Err(PatternError("Invalid property name".into()));
         }
-        let ranges = property_ranges(&name)
-            .ok_or_else(|| PatternError(format!("Invalid property name {name}")))?;
-        Ok(Node::Class(
-            if negated { invert(&ranges) } else { ranges },
-            false,
-        ))
+        let ranges = match property_ranges(&name) {
+            Some(ranges) => ranges,
+            None if STRING_PROPERTIES.contains(&name.as_str()) => {
+                return Err(PatternError(format!(
+                    "{UNSUPPORTED_STRING_PROPERTY} {name}"
+                )));
+            }
+            None => return Err(PatternError(format!("Invalid property name {name}"))),
+        };
+        Ok(Node::Class(self.complemented(ranges, negated), false))
+    }
+    /** Under v and i a negated property is the complement of its case closure, so \P{ASCII} excludes K and its Kelvin-sign equivalent alike. */
+    fn complemented(&self, ranges: Vec<(u32, u32)>, negated: bool) -> Vec<(u32, u32)> {
+        if !negated {
+            ranges
+        } else if self.unicode_sets && self.modes.ignore_case {
+            invert(&case::closed_ranges(&ranges))
+        } else {
+            invert(&ranges)
+        }
     }
     /** `[...]` */
     fn class(&mut self) -> Result<Node, PatternError> {
         self.position += 1;
+        if self.unicode_sets {
+            return self.class_set_class();
+        }
         let negated = self.eat('^');
         let mut ranges = Vec::new();
         loop {

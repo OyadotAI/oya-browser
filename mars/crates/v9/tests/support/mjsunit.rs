@@ -212,6 +212,8 @@ impl Scripts {
                 && boolean_flag_default(&self.metadata_source, "turbo-fast-api-calls", true)
                 && !boolean_flag(&self.metadata_source, "correctness-fuzzer-suppressions"),
             conformance_async_hooks: boolean_flag(&self.metadata_source, "expose-async-hooks"),
+            conformance_inspector: boolean_flag(&self.metadata_source, "enable-inspector"),
+            conformance_harmony_struct: boolean_flag(&self.metadata_source, "harmony-struct"),
             conformance_experimental_stack_trace_frames: boolean_flag(
                 &self.metadata_source,
                 "experimental-stack-trace-frames",
@@ -248,6 +250,13 @@ impl Scripts {
                 &self.metadata_source,
                 "--wasm-max-table-size",
             )?,
+            conformance_expose_statistics: boolean_flag(&self.metadata_source, "expose-statistics"),
+            conformance_expose_trigger_failure: boolean_flag(
+                &self.metadata_source,
+                "expose-trigger-failure",
+            ),
+            conformance_enable_tracing: boolean_flag(&self.metadata_source, "enable-tracing"),
+            conformance_log: boolean_flag(&self.metadata_source, "log"),
             ..environment
         };
         let modules = self.modules();
@@ -415,6 +424,7 @@ fn test_exit(error: &mars_v9::protocol::EngineError) -> Option<Result<(), String
 fn copy_input<'a>(input: &mars_v9::PageInput<'a>) -> mars_v9::PageInput<'a> {
     mars_v9::PageInput {
         sources: input.sources,
+        source_keys: &[],
         document: input.document.clone(),
         storage: input.storage.clone(),
         host: input.host,

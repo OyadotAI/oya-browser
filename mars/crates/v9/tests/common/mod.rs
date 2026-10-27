@@ -66,6 +66,7 @@ pub fn load_with(source: &str, environment: &PageEnvironment) -> Execution {
     let host = host();
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
+        source_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,
@@ -115,6 +116,7 @@ pub fn input<'a>(
 ) -> PageInput<'a> {
     PageInput {
         sources,
+        source_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host,

@@ -17,16 +17,20 @@ use crate::{
 pub(super) use number::{
     literal, number_to_string, radix_string, string_number, to_int32, to_uint32,
 };
-use std::sync::Arc;
 use storage::Storage;
 pub use string::CodePointCursor;
 
 /** Heap object identities; intrinsic objects live in a reserved high range. */
 pub type ObjectId = u32;
 
+/// Code units at or below this value are Latin-1, the widest unit a one-byte string can hold.
+const LATIN1_MAX_UNIT: u16 = 0xFF;
+
 /// JavaScript strings keep UTF-16 code units, including lone surrogates, and share their buffer.
+/// The second field records whether every unit fits Latin-1; it is computed once at construction
+/// (a copy already touches every unit), carried through clones, and combined in O(1) by concatenation.
 #[derive(Clone)]
-pub struct JsString(Storage);
+pub struct JsString(Storage, bool);
 
 impl PartialEq for JsString {
     /** Strings compare UTF-16 content, independently of flat or concatenated storage. */
@@ -74,7 +78,7 @@ impl JsString {
                 JS_STRING_UNITS,
             ));
         }
-        Ok(Self(Storage::Flat(units.into())))
+        Ok(Self::flat(&units))
     }
     /// Build from a slice under the same limit.
     pub fn from_slice(units: &[u16]) -> EngineResult<Self> {
@@ -84,7 +88,7 @@ impl JsString {
                 JS_STRING_UNITS,
             ));
         }
-        Ok(Self(Storage::Flat(units.into())))
+        Ok(Self::flat(units))
     }
     /// Count code units rather than Rust Unicode scalar values or UTF-8 bytes.
     pub fn len(&self) -> usize {
@@ -96,7 +100,17 @@ impl JsString {
     }
     /// The empty string.
     pub fn empty() -> Self {
-        Self(Storage::Flat(Arc::from(Vec::new())))
+        Self::flat(&[])
+    }
+    /// Wrap a fresh flat buffer, scanning it once for the Latin-1 property.
+    fn flat(units: &[u16]) -> Self {
+        let latin1 = units.iter().all(|unit| *unit <= LATIN1_MAX_UNIT);
+        Self(Storage::Flat(units.into()), latin1)
+    }
+    /// Whether every code unit fits Latin-1; answered from the flag, never by scanning.
+    #[cfg(feature = "conformance")]
+    pub fn is_latin1(&self) -> bool {
+        self.1
     }
     /// DOMString support is incomplete; fail explicitly rather than silently replacing surrogates.
     pub fn to_dom(&self) -> EngineResult<String> {
@@ -124,7 +138,7 @@ impl JsString {
         if self.is_empty() {
             return Ok(other.clone());
         }
-        Ok(Self(self.0.concat(&other.0)))
+        Ok(Self(self.0.concat(&other.0), self.1 && other.1))
     }
     /// Whether the string equals ASCII text.
     pub fn is(&self, text: &str) -> bool {

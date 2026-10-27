@@ -505,7 +505,8 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         fragments: &document::DomFragments,
     };
     let input = v9::PageInput {
-        sources: &sources,
+        sources: &sources.texts,
+        source_keys: &sources.keys,
         document: call.document,
         storage: call.storage,
         host: &host,
@@ -542,7 +543,8 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         fragments: &document::DomFragments,
     };
     let input = v9::PageInput {
-        sources: &sources,
+        sources: &sources.texts,
+        source_keys: &sources.keys,
         document: call.document,
         storage: call.storage,
         host: &host,
@@ -581,34 +583,24 @@ pub(super) const RESIDENT_PAGES: usize = 4;
 /// restarted, or dropped the page); the coordinator cannot resend it, so it reloads the page.
 pub(super) const STATE_MISSING: &str = "state_missing";
 
-/** One resident state, with a copy being made in the background for the step that next
-starts from it. A step runs on its own copy, because a retry or an abort returns to the
-original; copying YouTube's state takes as long as many steps run, so it happens while the
-coordinator applies the previous step instead of at the start of the next. */
+/** One resident state. A step runs on its own copy, because a retry or an abort returns to the
+original; the heap is persistent, so the copy shares every object the step does not write and
+costs nothing to take. */
 struct Resident {
     /** The state itself, never changed. */
     state: std::sync::Arc<v9::VmState>,
-    /** A copy for the next step, if one is being made. */
-    spare: Option<std::thread::JoinHandle<v9::VmState>>,
 }
 
 impl Resident {
-    /** Keep `state` and start copying it for the next step. */
+    /** Keep `state`. */
     fn new(state: v9::VmState) -> Self {
-        let state = std::sync::Arc::new(state);
-        let source = std::sync::Arc::clone(&state);
-        let spare = std::thread::Builder::new()
-            .name("oya-v9-copy".into())
-            .spawn(move || v9::VmState::clone(&source))
-            .ok();
-        Self { state, spare }
-    }
-    /** A copy to run a step on: the background one when it is there, else a fresh one. */
-    fn copy(&mut self) -> v9::VmState {
-        match self.spare.take().map(std::thread::JoinHandle::join) {
-            Some(Ok(copy)) => copy,
-            _ => v9::VmState::clone(&self.state),
+        Self {
+            state: std::sync::Arc::new(state),
         }
+    }
+    /** A copy to run a step on. */
+    fn copy(&mut self) -> v9::VmState {
+        v9::VmState::clone(&self.state)
     }
 }
 
@@ -704,9 +696,25 @@ pub(super) const RESIDENT_SOURCES: usize = 2;
 /// restarted, or evicted them); the coordinator then sends the sources themselves.
 pub(super) const SOURCES_MISSING: &str = "sources_missing";
 
+/** A page's scripts with their code-cache keys, hashed once when they arrive: V9 hashed every
+source on every step, and YouTube's 10 MB of scripts took longer to hash than many steps ran. */
+#[derive(Debug)]
+pub(super) struct ResidentSources {
+    pub texts: Vec<String>,
+    pub keys: Vec<v9::SourceKey>,
+}
+
+impl ResidentSources {
+    /** Sources with their keys. */
+    fn new(texts: Vec<String>) -> Self {
+        let keys = texts.iter().map(|text| v9::source_key(text)).collect();
+        Self { texts, keys }
+    }
+}
+
 thread_local! {
     /** Most recently used first; content-addressed, so pages never see each other's state. */
-    static RESIDENT: std::cell::RefCell<std::collections::VecDeque<(String, std::rc::Rc<Vec<String>>)>> =
+    static RESIDENT: std::cell::RefCell<std::collections::VecDeque<(String, std::rc::Rc<ResidentSources>)>> =
         Default::default();
 }
 
@@ -718,9 +726,13 @@ thread_local! {
 fn resident_sources(
     sources: Vec<String>,
     digest: Option<String>,
-) -> EngineResult<std::rc::Rc<Vec<String>>> {
+) -> EngineResult<std::rc::Rc<ResidentSources>> {
     let Some(digest) = digest else {
-        return Ok(std::rc::Rc::new(sources));
+        // Sent on every call, so hashed by V9 on every call: nothing to keep keys for.
+        return Ok(std::rc::Rc::new(ResidentSources {
+            texts: sources,
+            keys: Vec::new(),
+        }));
     };
     RESIDENT.with_borrow_mut(|resident| {
         let position = resident.iter().position(|(key, _)| *key == digest);
@@ -746,7 +758,7 @@ fn resident_sources(
         if let Some(index) = position {
             resident.remove(index);
         }
-        let sources = std::rc::Rc::new(sources);
+        let sources = std::rc::Rc::new(ResidentSources::new(sources));
         resident.push_front((digest, std::rc::Rc::clone(&sources)));
         resident.truncate(RESIDENT_SOURCES);
         Ok(sources)
@@ -1072,11 +1084,13 @@ mod tests {
         let forged = resident_sources(vec!["evil()".into()], Some(digest.clone())).unwrap_err();
         assert_ne!(forged.code, SOURCES_MISSING);
         assert_eq!(
-            *resident_sources(sources.clone(), Some(digest.clone())).unwrap(),
+            resident_sources(sources.clone(), Some(digest.clone()))
+                .unwrap()
+                .texts,
             sources
         );
         assert_eq!(
-            *resident_sources(Vec::new(), Some(digest)).unwrap(),
+            resident_sources(Vec::new(), Some(digest)).unwrap().texts,
             sources
         );
         assert_ne!(

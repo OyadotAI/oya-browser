@@ -200,6 +200,7 @@ fn input<'a>(
 ) -> PageInput<'a> {
     PageInput {
         sources,
+        source_keys: &[],
         document: document.clone(),
         storage: StorageState::default(),
         host,

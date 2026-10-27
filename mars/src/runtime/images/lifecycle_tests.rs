@@ -29,6 +29,7 @@ fn decoded_events(source: &str) -> Vec<String> {
     let environment = PageEnvironment::default();
     let input = || PageInput {
         sources: &sources,
+        source_keys: &[],
         document: crate::document::ScriptDocument {
             identity: "decoded-image".into(),
             nodes: Vec::new(),

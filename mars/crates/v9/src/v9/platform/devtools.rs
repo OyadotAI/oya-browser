@@ -147,6 +147,7 @@ pub fn run(
         let (mut vm, compiled) = session(
             Limits::default(),
             input.sources,
+            input.source_keys,
             true,
             Some(input.document),
             input.storage,

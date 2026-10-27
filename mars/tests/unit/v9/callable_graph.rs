@@ -46,7 +46,7 @@ fn bound_cycles_and_dangling_owned_values_are_rejected_before_execution() {
 }
 /**
  * Calling a forged bound function whose target is itself must stop at the call depth or the
- * deadline rather than spinning past SCRIPT_DEADLINE.
+ * deadline rather than spinning past the script deadline.
  */
 #[test]
 fn forged_self_bound_calls_stop_within_the_deadline() {

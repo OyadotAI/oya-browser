@@ -11,15 +11,18 @@ pub(in crate::v9) fn validate(heap: &Heap) -> EngineResult<()> {
 /** Same-ID records are grouped locally and the newest internally consistent snapshot wins. */
 fn canonical(heap: &Heap) -> EngineResult<BTreeMap<u64, SharedBuffer>> {
     let mut stores: BTreeMap<u64, SharedBuffer> = BTreeMap::new();
-    if heap
-        .objects
-        .values()
-        .filter_map(|object| object.function())
-        .any(|function| !super::atomics::valid_function(heap, &function.kind))
-    {
-        return Err(EngineError::invalid("Invalid asynchronous shared capture."));
-    }
-    for object in heap.objects.values() {
+    // The heap indexes shared buffers and poll callbacks as it stores them; a page with none
+    // (nearly every page) pays nothing here instead of a walk over every object per request.
+    for id in heap.shared_objects() {
+        let Some(object) = heap.objects.get(&id) else {
+            continue;
+        };
+        if let Some(function) = object.function() {
+            if !super::atomics::valid_function(heap, &function.kind) {
+                return Err(EngineError::invalid("Invalid asynchronous shared capture."));
+            }
+            continue;
+        }
         if let Class::SharedArrayBuffer(buffer) = &object.class {
             if buffer
                 .async_tickets()

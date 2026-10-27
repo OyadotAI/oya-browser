@@ -104,10 +104,26 @@ impl Vm<'_> {
     /** Dead weak targets are cleared before sweep, while live registries keep pending holdings. */
     pub(super) fn clear_dead_weak(&mut self, marker: &Marker) -> Vec<ObjectId> {
         let mut cleanup = Vec::new();
-        for (id, object) in &mut self.heap.objects {
-            if !marker.objects.contains(id) {
+        // Weak holders are found by a read pass: writing through every live object would copy
+        // the whole heap the step shares with the committed state.
+        let weak: Vec<ObjectId> = self
+            .heap
+            .objects
+            .iter()
+            .filter(|(id, object)| {
+                marker.objects.contains(id)
+                    && matches!(
+                        object.class,
+                        Class::WeakRef(_) | Class::FinalizationRegistry(_)
+                    )
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in weak {
+            let Some(object) = self.heap.objects.get_mut(&id) else {
                 continue;
-            }
+            };
+            let id = &id;
             match &mut object.class {
                 Class::WeakRef(target) => clear(target, marker),
                 Class::FinalizationRegistry(data) => {

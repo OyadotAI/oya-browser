@@ -7,9 +7,19 @@ use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Vm};
 mod async_hooks;
 mod cputrace;
+mod d8_constants;
+mod extras;
 mod fast_api;
 mod files;
+mod inspector;
+mod log;
+mod shared;
+mod source_positions;
+mod statistics;
 mod test_dom;
+pub(in crate::v9) use inspector::pause_point;
+pub(in crate::v9) use shared::{check_define, check_store};
+mod trigger_failure;
 pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
 mod microtasks;
@@ -32,6 +42,7 @@ pub(in crate::v9) use async_hooks::{
     async_hook_unwind, expose as expose_async_hooks,
 };
 pub(in crate::v9) use cputrace::validate as validate_environment;
+pub(in crate::v9) use log::record_collection;
 pub(in crate::v9) use memory::measure as measure_memory;
 pub(in crate::v9) use output::console as console_output;
 use std::sync::OnceLock;
@@ -46,6 +57,10 @@ pub(in crate::v9) fn expose_conformance_globals(
     super::expose_async_hooks(vm, global, bank);
     fast_api::expose(vm, bank);
     cputrace::expose(vm, global, bank);
+    statistics::expose(vm, global, bank);
+    trigger_failure::expose(vm, global, bank);
+    inspector::expose(vm, global, bank);
+    shared::expose(vm, global, bank);
     expose_iterator_options(vm, bank);
 }
 
@@ -93,11 +108,19 @@ pub(super) fn install(builder: &mut Builder) {
     output::install(builder);
     cputrace::install(builder);
     files::install(builder);
+    inspector::install(builder);
+    shared::install(builder);
     let d8 = builder.object(Some(builder.ids.object_prototype));
     serializer::install(builder, d8);
-    fast_api::install(builder, d8);
+    let test = fast_api::install(builder, d8);
+    source_positions::install(builder, test);
     test_dom::install(builder, d8);
     profiling::install(builder, d8);
+    d8_constants::install(builder, d8);
+    log::install(builder, d8);
+    extras::install(builder, d8);
+    statistics::install(builder);
+    trigger_failure::install(builder);
     builder.method(d8, "terminate", 0, terminate);
     builder.method(d8, "terminateNow", 0, terminate);
     let file = builder.object(Some(builder.ids.object_prototype));

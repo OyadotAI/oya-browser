@@ -44,6 +44,11 @@ pub(super) fn equivalents(point: u32, unicode: bool) -> impl Iterator<Item = u32
         .filter(move |candidate| unicode || legacy(*candidate) == legacy(point))
 }
 
+/** The smallest member of a character's equivalence class: strings that differ only by case share one key. */
+pub(super) fn canonical(point: u32) -> u32 {
+    equivalents(point, true).min().unwrap_or(point)
+}
+
 /** Class escapes close their set before complementing, so [\W] cannot gain word characters through later folding. */
 pub(super) fn closed_ranges(ranges: &[(u32, u32)]) -> Vec<(u32, u32)> {
     let contains = |point| {

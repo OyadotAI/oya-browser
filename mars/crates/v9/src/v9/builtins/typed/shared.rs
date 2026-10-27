@@ -2,7 +2,7 @@
 use super::*;
 use crate::v9::vm::data::SharedBytes;
 mod atomics;
-pub(in crate::v9) use atomics::notify_shared;
+pub(in crate::v9) use atomics::{is_poll, notify_shared};
 mod snapshots;
 pub(in crate::v9) use crate::v9::vm::data::SharedBytes as SharedBuffer;
 pub(in crate::v9) use snapshots::{initialize, validate};

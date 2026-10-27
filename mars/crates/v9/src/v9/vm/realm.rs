@@ -438,6 +438,11 @@ impl Builder {
     pub fn global(&mut self, name: &'static str, value: ObjectId) {
         self.globals.push((name, JsValue::Object(value)));
     }
+    /** Expose a primitive constant, such as a host-declared length, as a global binding. */
+    #[cfg(feature = "conformance")]
+    pub fn global_value(&mut self, name: &'static str, value: JsValue) {
+        self.globals.push((name, value));
+    }
     /** Alias an existing value under another name. */
     pub fn alias(&mut self, target: ObjectId, name: &str, value: ObjectId) {
         self.value(target, name, JsValue::Object(value), HIDDEN_ATTRS);

@@ -13,6 +13,16 @@ mod conformance;
 pub(in crate::v9) use conformance::{
     ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state,
 };
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{
+    check_define as check_shared_define, check_store as check_shared_store,
+    pause_point as loop_stack_check,
+};
+/** The wasm loop stack check. Only the conformance host has a debugger to pause here; other builds run straight through. */
+#[cfg(not(feature = "conformance"))]
+pub(in crate::v9) fn loop_stack_check(_vm: &mut crate::v9::vm::Vm) -> crate::v9::vm::Res<()> {
+    Ok(())
+}
 mod date;
 pub(in crate::v9) use date::validate_timezone;
 mod disposal;
@@ -79,7 +89,7 @@ pub(in crate::v9) use typed::{
     valid_view as valid_typed_view, view_of,
 };
 pub(in crate::v9) use typed::{
-    import_shared_buffer, initialize_shared, notify_shared, validate_shared,
+    import_shared_buffer, initialize_shared, is_shared_poll, notify_shared, validate_shared,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use weak::cancel_finalizers_for_realm;
@@ -117,7 +127,7 @@ pub(in crate::v9) use conformance::{
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
-    console_output as conformance_console,
+    console_output as conformance_console, record_collection,
     validate_environment as validate_conformance_environment, validate_native_test_object,
 };
 #[cfg(feature = "conformance")]

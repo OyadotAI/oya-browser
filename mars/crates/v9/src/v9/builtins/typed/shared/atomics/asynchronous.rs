@@ -118,6 +118,11 @@ fn schedule(vm: &mut Vm, callback: ObjectId, deadline: f64) -> Res<()> {
 }
 
 /** Native future captures are checked even when unreachable; forged state cannot enter a body with missing slots. */
+/** Whether a function is an atomics poll callback: the one native whose captured slots a
+snapshot check must verify, so the heap can index those functions as it stores them. */
+pub(in crate::v9) fn is_poll(kind: &FunctionKind) -> bool {
+    matches!(kind, FunctionKind::Native { id, .. } if Some(id) == POLL.get())
+}
 pub(in crate::v9) fn valid_function(heap: &crate::v9::vm::heap::Heap, kind: &FunctionKind) -> bool {
     let _ = crate::v9::vm::realm::realm_for(crate::v9::vm::heap::INTRINSIC_BASE);
     let FunctionKind::Native { id, slots } = kind else {

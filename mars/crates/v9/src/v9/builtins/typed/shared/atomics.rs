@@ -3,7 +3,7 @@ use super::*;
 use crate::v9::vm::data::{ElementKind, WaitResult};
 use std::time::Duration;
 mod asynchronous;
-pub(in crate::v9) use asynchronous::notify_shared;
+pub(in crate::v9) use asynchronous::{is_poll, notify_shared};
 pub(super) use asynchronous::{valid_function, valid_ticket};
 
 /** Each callable has its specified arity and cannot be constructed. */

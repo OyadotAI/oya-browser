@@ -19,6 +19,18 @@ enum Collection {
     Snapshot,
 }
 
+impl Collection {
+    /** The kind named in the d8 log, so each record says which collection produced it. */
+    #[cfg(feature = "conformance")]
+    fn label(self) -> &'static str {
+        match self {
+            Collection::Major => "major",
+            Collection::Minor => "minor",
+            Collection::Snapshot => "snapshot",
+        }
+    }
+}
+
 /** Marking state; state validation reuses it to find every edge a saved graph holds. */
 #[derive(Default)]
 pub(super) struct Marker {
@@ -229,6 +241,7 @@ impl Vm<'_> {
         self.heap
             .objects
             .retain(|id, _| marker.objects.contains(id));
+        self.heap.retain_shared(&marker.objects);
         self.heap.envs.retain(|id, _| marker.envs.contains(id));
         self.templates.retain_objects(&marker.objects);
         #[cfg(feature = "conformance")]
@@ -241,6 +254,8 @@ impl Vm<'_> {
         self.page.sweep(&marker.objects);
         self.heap.recount();
         self.heap.collected = self.heap.objects.len() + self.heap.envs.len();
+        #[cfg(feature = "conformance")]
+        crate::v9::builtins::record_collection(self, kind.label(), self.heap.objects.len())?;
         for id in cleanup {
             crate::v9::builtins::schedule_finalization(self, id)?;
         }
@@ -469,6 +484,7 @@ mod tests {
         };
         let execution = crate::load_page(PageInput {
             sources: &[source],
+            source_keys: &[],
             document: ScriptDocument {
                 identity: "page-1".into(),
                 nodes: Vec::new(),

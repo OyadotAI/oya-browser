@@ -476,6 +476,22 @@ impl Parser {
         Ok(list)
     }
     /** Literals, names, groups, functions, classes, arrays, objects and templates. */
+    /** A literal whose pattern does not compile is an early error even if the literal never runs, as ECMA-262 requires. */
+    fn regex_literal_check(&self, pos: Pos, pattern: &str, flags: &str) -> EngineResult<()> {
+        let units: Vec<u16> = pattern.encode_utf16().collect();
+        // Boundary assertions are accepted here; the runtime still refuses them where the environment disables them.
+        match crate::v9::regexp::compile(&units, flags, true) {
+            // Only ECMAScript early errors throw here; V9's own gaps wait for the runtime, so real pages still parse.
+            Err(error) if !error.is_engine_gap() => Err(self.error_at(
+                pos,
+                &format!(
+                    "Invalid regular expression: /{pattern}/{flags}: {}",
+                    error.0
+                ),
+            )),
+            _ => Ok(()),
+        }
+    }
     fn primary(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         let token = self.peek().clone();
@@ -502,6 +518,7 @@ impl Parser {
                 ExprKind::BigIntWide(Name::from(digits.as_str()))
             }
             Kind::Regex { pattern, flags } => {
+                self.regex_literal_check(pos, &pattern, &flags)?;
                 self.next();
                 ExprKind::Regex(Name::from(pattern.as_str()), Name::from(flags.as_str()))
             }

@@ -711,6 +711,8 @@ impl Vm<'_> {
     }
     /** Arrays and host objects handle some keys themselves; None means ordinary handling. */
     fn exotic_write(&mut self, id: ObjectId, key: &Key, value: &JsValue) -> Res<Option<bool>> {
+        #[cfg(feature = "conformance")]
+        crate::v9::builtins::check_shared_store(self, id, key, value)?;
         let limit = self.limits.array_length;
         let Some(object) = self.heap.get(id) else {
             return Ok(None);
@@ -863,6 +865,8 @@ impl Vm<'_> {
         if let Some(done) = crate::v9::modules::namespace_define(self, id, &key, &desc)? {
             return Ok(done);
         }
+        #[cfg(feature = "conformance")]
+        crate::v9::builtins::check_shared_define(self, id, &key, desc.value.as_ref())?;
         self.materialize(id)?;
         if let Some(done) = self.define_name_snapshot(id, &key, &desc)? {
             return Ok(done);

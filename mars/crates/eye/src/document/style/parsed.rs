@@ -110,6 +110,18 @@ struct Recent {
     sheets: Vec<String>,
     state: Rc<State>,
     parsed: std::cell::OnceCell<Rc<Parsed>>,
+    /// The last scoped list parsed on top of this parse, for the next cascade to reuse or extend.
+    scoped: RefCell<Option<Rc<ScopedParse>>>,
+}
+
+/** One scoped sheet list parsed on top of a recent main parse, kept whole: the parser after it,
+each rule's group and what the cascade reads. */
+struct ScopedParse {
+    scoped: Vec<(String, usize)>,
+    group: usize,
+    state: Rc<State>,
+    groups: Vec<usize>,
+    parsed: Rc<Parsed>,
 }
 
 thread_local! {
@@ -121,7 +133,9 @@ thread_local! {
  * The parse of `sheets` under `context`, followed by `scoped` shadow sheets, and each rule's
  * group (`scoped` rules take their sheet's group, the others `document_group`). The parse of
  * `sheets` comes from this thread's recent parses, exactly or by continuing the longest one
- * these sheets extend, and is kept for the next cascade; scoped sheets parse on top of it.
+ * these sheets extend, and is kept for the next cascade; scoped sheets parse on top of it,
+ * continuing the parse of the last scoped list they extend (a shadow-DOM page hands the cascade
+ * the same hundreds of scoped sheets every step, plus the newly defined components').
  */
 pub(super) fn parsed(
     sheets: &[String],
@@ -149,8 +163,67 @@ pub(super) fn parsed(
             Vec::new(),
         ));
     }
-    let (state, groups) = parse((*main).clone(), sheets, scoped, document_group, context)?;
-    Ok((Rc::new(Parsed::of(&state)), groups))
+    let prior = RECENT.with_borrow(|recent| {
+        recent
+            .iter()
+            .find(|entry| Rc::ptr_eq(&entry.state, &main))
+            .and_then(|entry| entry.scoped.borrow().clone())
+            .filter(|prior| prior.group == document_group)
+    });
+    // ponytail: the list compares are O(scoped bytes) per cascade; a digest from the
+    // coordinator would make them O(1).
+    if let Some(prior) = &prior
+        && prior.scoped == scoped
+    {
+        return Ok((Rc::clone(&prior.parsed), prior.groups.clone()));
+    }
+    let (state, from, groups) = match &prior {
+        Some(prior) if scoped.starts_with(&prior.scoped) => (
+            (*prior.state).clone(),
+            prior.scoped.len(),
+            prior.groups.clone(),
+        ),
+        _ => ((*main).clone(), 0, Vec::new()),
+    };
+    let (state, groups) = parse_scoped(state, &scoped[from..], groups, document_group, context)?;
+    let parsed = Rc::new(Parsed::of(&state));
+    RECENT.with_borrow(|recent| {
+        if let Some(entry) = recent.iter().find(|entry| Rc::ptr_eq(&entry.state, &main)) {
+            entry.scoped.replace(Some(Rc::new(ScopedParse {
+                scoped: scoped.to_vec(),
+                group: document_group,
+                state: Rc::new(state),
+                groups: groups.clone(),
+                parsed: Rc::clone(&parsed),
+            })));
+        }
+    });
+    Ok((parsed, groups))
+}
+
+/** Continues `state` over scoped sheets, extending `groups` (one per rule so far) with each
+sheet's group; the rules before them take `document_group`. */
+fn parse_scoped(
+    mut state: State,
+    scoped: &[(String, usize)],
+    mut groups: Vec<usize>,
+    document_group: usize,
+    context: RenderContext,
+) -> EngineResult<(State, Vec<usize>)> {
+    groups.resize(state.rules.len(), document_group);
+    for (sheet, group) in scoped {
+        let shared = (
+            &mut state.rules,
+            &mut state.budget,
+            &mut state.keyframes,
+            &mut state.font_faces,
+            &mut state.layers,
+            &mut state.properties,
+        );
+        parse_sheet(sheet, context, shared, &mut state.diagnostics, false)?;
+        groups.resize(state.rules.len(), *group);
+    }
+    Ok((state, groups))
 }
 
 /** The parser after the recent parse of exactly these sheets (true), or after the longest
@@ -179,6 +252,7 @@ fn remember(sheets: &[String], context: RenderContext, state: State) -> Rc<State
             sheets: sheets.to_vec(),
             state: Rc::clone(&state),
             parsed: std::cell::OnceCell::new(),
+            scoped: RefCell::new(None),
         });
         recent.truncate(PARSED_SHEETS);
     });
@@ -211,28 +285,37 @@ fn parse(
         parse_sheet(sheet, context, shared, &mut state.diagnostics, skipped)?;
         state.count = index + 1;
     }
-    let mut groups = Vec::new();
-    if !scoped.is_empty() {
-        groups.resize(state.rules.len(), document_group);
-        for (sheet, group) in scoped {
-            let shared = (
-                &mut state.rules,
-                &mut state.budget,
-                &mut state.keyframes,
-                &mut state.font_faces,
-                &mut state.layers,
-                &mut state.properties,
-            );
-            parse_sheet(sheet, context, shared, &mut state.diagnostics, false)?;
-            groups.resize(state.rules.len(), *group);
-        }
+    if scoped.is_empty() {
+        return Ok((state, Vec::new()));
     }
-    Ok((state, groups))
+    parse_scoped(state, scoped, Vec::new(), document_group, context)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** The same scoped list on the same main parse is one parse; a list that extends it keeps
+    the earlier scoped rules' identity and groups and parses only the added sheets. */
+    #[test]
+    fn scoped_lists_are_reused_and_extended() {
+        let sheets = vec!["p { color: red }".to_owned()];
+        let context = RenderContext::default();
+        let scoped = vec![("a { color: blue }".to_owned(), 7)];
+        let (first, groups) = parsed(&sheets, &scoped, 0, context).unwrap();
+        assert_eq!(groups, [0, 7]);
+        let (again, _) = parsed(&sheets, &scoped, 0, context).unwrap();
+        assert!(Rc::ptr_eq(&first, &again));
+        let mut longer = scoped.clone();
+        longer.push(("b { color: green }".to_owned(), 9));
+        let (extended, groups) = parsed(&sheets, &longer, 0, context).unwrap();
+        assert_eq!(groups, [0, 7, 9]);
+        assert!(Rc::ptr_eq(&first.rules[1], &extended.rules[1]));
+        assert_eq!(extended.rules.len(), 3);
+        let (other_group, groups) = parsed(&sheets, &longer, 1, context).unwrap();
+        assert!(!Rc::ptr_eq(&extended, &other_group));
+        assert_eq!(groups, [1, 7, 9]);
+    }
 
     /** The same texts under the same context share one parse; a changed text or context does not. */
     #[test]

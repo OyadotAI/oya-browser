@@ -71,6 +71,7 @@ fn input<'a>(
 ) -> PageInput<'a> {
     PageInput {
         sources,
+        source_keys: &[],
         environment,
         host,
         modules,
@@ -95,6 +96,7 @@ fn execute(
     let (mut vm, compiled) = v9::session(
         Limits::default(),
         &sources,
+        &[],
         true,
         Some(input.document.clone()),
         StorageState::default(),
@@ -164,7 +166,7 @@ fn execute(
 /** A real task gets the same operation and wall-clock budgets as one public V9 event delivery. */
 fn begin(vm: &mut Vm) {
     vm.remaining = vm.limits.operations;
-    vm.deadline = Some(std::time::Instant::now() + crate::constants::SCRIPT_DEADLINE);
+    vm.deadline = Some(std::time::Instant::now() + crate::constants::script_deadline());
     vm.page.throw_location = None;
     vm.page.throw_trace.clear();
 }

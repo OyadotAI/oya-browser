@@ -327,6 +327,14 @@ pub struct PageEnvironment {
     /// Enable d8 Promise lifecycle hooks only when actual test metadata requested that extension.
     #[cfg(feature = "conformance")]
     pub conformance_async_hooks: bool,
+    /// The actual --enable-inspector shell flag: exposes the `send` inspector session.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_inspector: bool,
+    /// The actual --harmony-struct shell flag: exposes SharedArray and SharedStructType.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_harmony_struct: bool,
     /** Actual V8 metadata may disable async stack enrichment; physical captured frames are unaffected. */
     #[cfg(feature = "conformance")]
     pub conformance_async_stack_traces: bool,
@@ -372,6 +380,22 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(skip)]
     pub conformance_worker_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The original `--expose-statistics` shell flag exposes `getV8Statistics`.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_expose_statistics: bool,
+    /// The original `--expose-trigger-failure` shell flag exposes the failure triggers.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_expose_trigger_failure: bool,
+    /// The original `--enable-tracing` shell flag enables the V8 trace category.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_enable_tracing: bool,
+    /// The original `--log` shell flag starts the d8 log capture when the page loads.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_log: bool,
 }
 
 /// One painted box the app's layout gave a node, in document coordinates.
@@ -445,6 +469,10 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_async_hooks: false,
             #[cfg(feature = "conformance")]
+            conformance_inspector: false,
+            #[cfg(feature = "conformance")]
+            conformance_harmony_struct: false,
+            #[cfg(feature = "conformance")]
             conformance_async_stack_traces: true,
             #[cfg(feature = "conformance")]
             conformance_experimental_stack_trace_frames: false,
@@ -470,6 +498,14 @@ impl Default for PageEnvironment {
             conformance_worker_id: None,
             #[cfg(feature = "conformance")]
             conformance_worker_cancel: None,
+            #[cfg(feature = "conformance")]
+            conformance_expose_statistics: false,
+            #[cfg(feature = "conformance")]
+            conformance_expose_trigger_failure: false,
+            #[cfg(feature = "conformance")]
+            conformance_enable_tracing: false,
+            #[cfg(feature = "conformance")]
+            conformance_log: false,
         }
     }
 }
@@ -622,6 +658,10 @@ pub struct HostEffects {
     /// D8 counts terminal unhandled rejections across child isolates when deciding its process result.
     #[cfg(feature = "conformance")]
     pub conformance_rejection: bool,
+    /// Captured d8 log text while logging is active; `None` once stopped or never started.
+    #[cfg(feature = "conformance")]
+    #[serde(skip)]
+    pub conformance_log: Option<String>,
     /// Virtual time of the next pending timer or animation frame, if any.
     pub next_timer_ms: Option<f64>,
     /// Unsupported APIs scripts reached (and may have caught), first occurrence each.
@@ -875,6 +915,11 @@ impl<'h> Page<'h> {
             .map(|id| id + 1)
             .max()
             .unwrap_or(0);
+        let effects = HostEffects {
+            #[cfg(feature = "conformance")]
+            conformance_log: environment.conformance_log.then(String::new),
+            ..HostEffects::default()
+        };
         Self {
             environment,
             languages,
@@ -884,7 +929,7 @@ impl<'h> Page<'h> {
             storage,
             changes: Vec::new(),
             script_changes: Vec::new(),
-            effects: HostEffects::default(),
+            effects,
             throw_location: None,
             throw_trace: Vec::new(),
             joining: Vec::new(),

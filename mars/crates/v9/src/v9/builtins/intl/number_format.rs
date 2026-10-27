@@ -576,9 +576,7 @@ fn unwrap(vm: &mut Vm, value: &JsValue, kind: &str) -> Res<IntlData> {
 fn format_getter(vm: &mut Vm, call: Call) -> Res<JsValue> {
     unwrap(vm, &call.this, "NumberFormat")?;
     let index = *BOUND_FORMAT.get().expect("installed");
-    Ok(JsValue::Object(
-        vm.native_closure(index, vec![call.this.clone()])?,
-    ))
+    super::bound::cached(vm, &call.this, index)
 }
 
 /** The bound format function. */

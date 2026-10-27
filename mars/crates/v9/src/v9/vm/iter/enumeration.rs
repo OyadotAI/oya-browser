@@ -56,6 +56,12 @@ impl Vm<'_> {
             }
             current = crate::v9::builtins::object_get_prototype(self, id)?;
         }
+        // Conformance only: V8 cannot enumerate more keys than a fixed array holds, so an oversized
+        // typed array throws RangeError here. Browser builds keep the unbounded snapshot.
+        #[cfg(feature = "conformance")]
+        if keys.len() > crate::constants::VM_ARRAY_LENGTH {
+            return Err(self.range_error("Invalid array length"));
+        }
         Ok(keys)
     }
     /** Candidate presence checks use descriptors and virtual prototypes, never the proxy has trap. */

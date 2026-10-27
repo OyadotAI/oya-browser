@@ -17,6 +17,7 @@ fn removed_nodes_keep_their_ids_across_requests() {
     environment.dom_level = DomLevel::Extended;
     let input = |document| PageInput {
         sources: &sources,
+        source_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

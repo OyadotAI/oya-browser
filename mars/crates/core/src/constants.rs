@@ -1,4 +1,5 @@
 /** Explicit resource budgets for the native Rust browser runtime. */
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Wire compatibility is independent of the package version.
@@ -130,15 +131,73 @@ pub const STATEMENTS: usize = SCRIPT_BYTES / 32;
 /// Bounds one script's tokens and AST nodes. Every token is at least one byte and minified code
 /// averages three to four, so half of SCRIPT_BYTES admits any realistic bundle.
 pub const TOKENS: usize = SCRIPT_BYTES / 2;
-/// Bounds one script's (or one event's handlers') interpreter work; SCRIPT_DEADLINE stops it
+/// Bounds one script's (or one event's handlers') interpreter work; the script deadline stops it
 /// sooner on slow hardware. YouTube's app runs past 50 million operations initializing its
 /// components after load, so this admits a few seconds of optimized work.
 pub const OPERATIONS: usize = 400_000_000;
-/// Wall-clock guard for one V9 request (all of a page's scripts, or one click). It sits under
-/// RPC_TIMEOUT so decoding and the reply still fit before the coordinator gives up on the service.
-/// Loading YouTube's 10.8 MB app bundle and the scripts around it takes over 1.5 s in an
-/// optimized build, so the guard allows what a real page load needs on this hardware.
-pub const SCRIPT_DEADLINE: Duration = Duration::from_millis(4000);
+/// Product default for the wall-clock guard on one V9 request (all of a page's scripts, or one
+/// click). It sits under RPC_TIMEOUT so decoding and the reply still fit before the coordinator
+/// gives up on the service. Loading YouTube's 10.8 MB app bundle and the scripts around it takes
+/// over 1.5 s in an optimized build, so the guard allows what a real page load needs on this
+/// hardware. Use `script_deadline()` at runtime; this constant is only the default and the bound.
+pub const SCRIPT_DEADLINE_DEFAULT: Duration = Duration::from_millis(4000);
+/// Environment variable that overrides the script deadline in milliseconds. The test
+/// configuration sets it generously so parallel load cannot stop scripts before the heap bounds
+/// under test are reached; a product deployment normally leaves it unset.
+pub const SCRIPT_DEADLINE_ENV: &str = "MARS_V9_SCRIPT_DEADLINE_MS";
+/** The effective script deadline: the environment override when it is a positive whole number of
+milliseconds, otherwise the product default. Read once per process, so every V9 request in the
+process sees the same guard and a malformed value cannot change it midway. */
+pub fn script_deadline() -> Duration {
+    static DEADLINE: OnceLock<Duration> = OnceLock::new();
+    *DEADLINE
+        .get_or_init(|| parse_script_deadline(std::env::var(SCRIPT_DEADLINE_ENV).ok().as_deref()))
+}
+
+/** Parses the override text; anything that is not a positive number keeps the default. */
+fn parse_script_deadline(raw: Option<&str>) -> Duration {
+    raw.and_then(|text| text.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map_or(SCRIPT_DEADLINE_DEFAULT, Duration::from_millis)
+}
+
+/** Unit tests for the deadline override parser, the only logic in this module. */
+#[cfg(test)]
+mod script_deadline_tests {
+    use super::*;
+
+    /** A missing override keeps the product default. */
+    #[test]
+    fn unset_override_keeps_the_default() {
+        assert_eq!(parse_script_deadline(None), SCRIPT_DEADLINE_DEFAULT);
+    }
+
+    /** A positive whole number of milliseconds replaces the default. */
+    #[test]
+    fn positive_override_replaces_the_default() {
+        assert_eq!(
+            parse_script_deadline(Some(" 60000 ")),
+            Duration::from_millis(60_000)
+        );
+    }
+
+    /** Zero, negative, fractional and non-numeric text is refused and keeps the default. */
+    #[test]
+    fn malformed_override_keeps_the_default() {
+        for raw in ["0", "-5", "1.5", "soon", ""] {
+            assert_eq!(
+                parse_script_deadline(Some(raw)),
+                SCRIPT_DEADLINE_DEFAULT,
+                "{raw}"
+            );
+        }
+    }
+}
+/// A heap count this close to its bound (numerator over denominator) collects before the bounds
+/// are checked: counts only overestimate between collections, so a state is refused for being
+/// over a bound only once garbage is out of the count. Below it the running counts stand: a
+/// large app's requests (YouTube keeps half a million objects) skip every walk over the heap.
+pub const NEAR_BOUNDS_FRACTION: (usize, usize) = (19, 20);
 /// Heap entries a page may add between end-of-request collections before one runs again.
 pub const GC_GROWTH_MIN: usize = 1_000;
 /// Or this fraction of the entries alive after the last collection, whichever is larger.
@@ -176,7 +235,7 @@ pub const ID_BYTES: usize = 128;
 pub const HTML_ID_BYTES: usize = 4096;
 /// Absolute deadline for a complete HTTP exchange.
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(2);
-/// Covers child writes and reads, not just response reads; a second past SCRIPT_DEADLINE for
+/// Covers child writes and reads, not just response reads; a second past the script deadline for
 /// decoding the request and encoding the reply.
 pub const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 /// Successful status supported by the minimal HTTP implementation.
@@ -426,7 +485,7 @@ const _: () = assert!(
         <= FRAME_BYTES
 );
 /* The V9 guard must fire before the coordinator abandons the service call. */
-const _: () = assert!(SCRIPT_DEADLINE.as_millis() < RPC_TIMEOUT.as_millis());
+const _: () = assert!(SCRIPT_DEADLINE_DEFAULT.as_millis() < RPC_TIMEOUT.as_millis());
 /** navigator.languages exposes at most this many preferred language tags. */
 pub const NAVIGATOR_LANGUAGES: usize = 16;
 /** BCP 47 recommends implementations accept language tags of at least this length. */

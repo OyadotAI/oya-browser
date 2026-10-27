@@ -145,6 +145,7 @@ fn main() {
         }
         let input = PageInput {
             sources: &call.sources,
+            source_keys: &[],
             document: document.clone(),
             storage: call.storage,
             host: &host,

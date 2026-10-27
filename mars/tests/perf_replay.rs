@@ -127,6 +127,7 @@ fn page(
     }
     let input = v9::PageInput {
         sources: &call.sources,
+        source_keys: &[],
         document: document.clone(),
         storage: call.storage,
         host: &host,

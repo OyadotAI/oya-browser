@@ -21,15 +21,29 @@ pub(in crate::v9) fn cancel_for_realm(vm: &mut Vm, bank: u32) {
     for id in &cancelled {
         cancel_registry(vm, *id);
     }
+    // Tasks are found by a read pass: writing through every object would copy the whole
+    // heap the step shares with the committed state.
+    let tasks: Vec<ObjectId> = vm
+        .heap
+        .objects
+        .iter()
+        .filter(|(_, object)| {
+            matches!(&object.class, Class::Function(function)
+                if matches!(&function.kind, FunctionKind::Native { id: native, slots }
+                    if *native == *TASK.get().unwrap()
+                        && slots.iter().any(|value| matches!(value, JsValue::Number(id) if cancelled.contains(&(*id as ObjectId))))))
+        })
+        .map(|(id, _)| *id)
+        .collect();
     let mut empty = Vec::new();
-    for (id, object) in &mut vm.heap.objects {
-        if let Class::Function(function) = &mut object.class
-            && let FunctionKind::Native { id: native, slots } = &mut function.kind
-            && *native == *TASK.get().unwrap()
+    for id in tasks {
+        if let Some(object) = vm.heap.objects.get_mut(&id)
+            && let Class::Function(function) = &mut object.class
+            && let FunctionKind::Native { slots, .. } = &mut function.kind
         {
             slots.retain(|value| !matches!(value, JsValue::Number(id) if cancelled.contains(&(*id as ObjectId))));
             if slots.is_empty() {
-                empty.push(*id);
+                empty.push(id);
             }
         }
     }

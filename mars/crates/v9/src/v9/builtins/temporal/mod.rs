@@ -5,6 +5,10 @@ mod instant;
 mod iso;
 mod month;
 mod plain;
+mod zone;
+mod zone_rules;
+mod zone_source;
+mod zoned;
 
 use super::*;
 use crate::v9::vm::Thrown;
@@ -314,6 +318,7 @@ pub(super) fn install(b: &mut Builder) {
     plain::install(b, ns, &mut protos);
     duration::install(b, ns, &mut protos);
     instant::install(b, ns, &mut protos);
+    zoned::install(b, ns, &mut protos);
     month::install(b, ns, &mut protos);
     let _ = PROTOS.set(protos);
 }

@@ -543,7 +543,7 @@ fn run_guarded(
     timeout: Duration,
 ) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
-    // ponytail: a timed-out worker thread is abandoned, not killed; V9's own SCRIPT_DEADLINE ends it.
+    // ponytail: a timed-out worker thread is abandoned, not killed; V9's own script deadline ends it.
     thread::Builder::new()
         .stack_size(64 << 20)
         .spawn(move || {

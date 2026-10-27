@@ -38,8 +38,9 @@ pub use platform::{
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
-    LANGUAGE_TAG_BYTES, NAVIGATOR_LANGUAGES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_DEADLINE,
+    LANGUAGE_TAG_BYTES, NAVIGATOR_LANGUAGES, NEAR_BOUNDS_FRACTION, SCRIPT_BYTES, SCRIPT_COUNT,
     SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES, STORAGE_ENTRIES, STORAGE_VALUE_BYTES, TEXT_BYTES,
+    script_deadline,
 };
 use crate::document::{
     DomChange, FragmentParser, ScriptChange, ScriptDocument, ScriptNode, TextChange,
@@ -447,10 +448,21 @@ impl FragmentParser for RefuseFragments {
     }
 }
 
+/// The content key of one classic script, from `source_key`.
+pub type SourceKey = [u8; 32];
+
+/// The key under which a classic script's compiled code is cached, so a caller that keeps the
+/// source resident computes it once instead of V9 hashing the source on every request.
+pub fn source_key(source: &str) -> SourceKey {
+    compile::source_key(source)
+}
+
 /// Everything one page request needs besides committed state.
 pub struct PageInput<'a> {
     /// The page's classic scripts in execution order (failed ones blanked to spaces).
     pub sources: &'a [String],
+    /// Each source's `source_key`, or empty to hash them here.
+    pub source_keys: &'a [SourceKey],
     /// The current projection.
     pub document: ScriptDocument,
     /// Origin storage candidates.
@@ -625,12 +637,13 @@ enum Compiled {
 
 /** Open a VM for a request: restore state, compile sources, set the clock and deadline. The
 deadline is armed once compilation is done: scanning and parsing are already bounded by
-SCRIPT_BYTES, TOKENS and STATEMENTS, and a max-token script takes several times SCRIPT_DEADLINE
+SCRIPT_BYTES, TOKENS and STATEMENTS, and a max-token script takes several times the script deadline
 to compile in an unoptimized build, so charging it would refuse admitted sources. */
 #[allow(clippy::too_many_arguments)]
 fn session<'h>(
     limits: Limits,
     sources: &[String],
+    keys: &[SourceKey],
     isolated: bool,
     document: Option<ScriptDocument>,
     storage: StorageState,
@@ -684,7 +697,7 @@ fn session<'h>(
     vm.jobs = state.jobs.into();
     initialize_page(&mut vm);
     modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
-    let compiled = compile_sources(&mut vm, sources, isolated)?;
+    let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
     for (index, source) in state.dynamic.iter().enumerate() {
         let base = vm::dynamic_source_base(&state.dynamic, index);
         compile_dynamic(
@@ -709,7 +722,7 @@ fn session<'h>(
     #[cfg(feature = "conformance")]
     scripts.extend(vm.realm_codes(0).into_iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
-    vm.deadline = Some(std::time::Instant::now() + SCRIPT_DEADLINE);
+    vm.deadline = Some(std::time::Instant::now() + script_deadline());
     Ok((vm, compiled))
 }
 
@@ -736,7 +749,12 @@ fn initialize_page(vm: &mut Vm) {
 }
 
 /** Compile page sources at their page offsets. */
-fn compile_sources(vm: &mut Vm, sources: &[String], isolated: bool) -> EngineResult<Compiled> {
+fn compile_sources(
+    vm: &mut Vm,
+    sources: &[String],
+    keys: &[SourceKey],
+    isolated: bool,
+) -> EngineResult<Compiled> {
     let starts = offsets(sources);
     let mut total = 0usize;
     let mut each = Vec::with_capacity(sources.len());
@@ -752,8 +770,12 @@ fn compile_sources(vm: &mut Vm, sources: &[String], isolated: bool) -> EngineRes
             // Module scripts and import maps compiled with the module map; never as classic.
             Err(EngineError::invalid("V9 module entry."))
         } else {
+            let key = keys
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| compile::source_key(source));
             vm.registry
-                .script(source, start, || parse_at(source, start, Some(index)))
+                .script_keyed(key, source, start, || parse_at(source, start, Some(index)))
         };
         if !isolated {
             each.push(Ok(result?));
@@ -883,6 +905,15 @@ starts (every one ends collected or recounted), so this only collects garbage be
 could run into a bound mid-request; at half, YouTube's 525,000 live properties of 1,048,576
 collected on every request. */
 fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
+    past_fraction(counts, limits, NEAR_BOUNDS_FRACTION)
+}
+
+/** Whether any count has reached `numerator / denominator` of its bound. */
+fn past_fraction(
+    counts: &vm::heap::Counts,
+    limits: &Limits,
+    (numerator, denominator): (usize, usize),
+) -> bool {
     [
         (counts.objects, limits.objects),
         (counts.functions, limits.functions),
@@ -892,7 +923,7 @@ fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
         (counts.bindings, limits.bindings),
     ]
     .iter()
-    .any(|(count, limit)| count.saturating_mul(4) >= limit.saturating_mul(3))
+    .any(|(count, limit)| count.saturating_mul(denominator) >= limit.saturating_mul(numerator))
 }
 
 /** Collect, validate and package the request's outcome. */
@@ -903,14 +934,11 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.frames.clear();
     vm.pins.clear();
     // Counts only overestimate between collections, so a heap near any bound is collected
-    // (and counted exactly) before its bounds are checked.
+    // (and counted exactly) before its bounds are checked. Elsewhere the running counts stand:
+    // a bound reached mid-script collects there (`collect_if_needed`), so an overestimate
+    // carried into the next request can only cause a collection, never a refusal.
     if vm.heap.grew_since_collection() || near_bounds(&vm.heap.counts, &vm.limits) {
         vm.collect_snapshot().map_err(fatal)?;
-    } else {
-        // Every state leaves exact counts, so the next request needs no recount to open it:
-        // counts only overestimate between recounts, and carried over they would reach a
-        // bound and force collections mid-script.
-        vm.heap.recount();
     }
     let effects_timer = vm.next_timer();
     let script_requests: Vec<ScriptLoadRequest> = vm
@@ -988,6 +1016,7 @@ fn load_isolated(
     let (mut vm, compiled) = session(
         limits,
         input.sources,
+        input.source_keys,
         true,
         Some(input.document),
         input.storage,
@@ -1028,6 +1057,7 @@ fn load_isolated(
             }));
             let empty = PageInput {
                 sources: &[],
+                source_keys: &[],
                 document: initial.0,
                 storage: initial.1,
                 host: input.host,
@@ -1037,6 +1067,7 @@ fn load_isolated(
             let (vm, _) = session(
                 limits,
                 empty.sources,
+                empty.source_keys,
                 true,
                 Some(empty.document),
                 empty.storage,
@@ -1259,6 +1290,7 @@ fn open<'h>(
     session(
         limits,
         input.sources,
+        input.source_keys,
         true,
         Some(input.document.clone()),
         input.storage.clone(),
@@ -1428,6 +1460,7 @@ pub fn load_document_scripts(
         let (mut vm, compiled) = session(
             Limits::default(),
             sources,
+            &[],
             false,
             Some(document),
             storage,
@@ -1468,6 +1501,7 @@ pub fn load_document_scripts_isolated(
     let environment = default_environment();
     load_page(PageInput {
         sources,
+        source_keys: &[],
         document,
         storage,
         host,
@@ -1507,6 +1541,7 @@ pub fn click_document_scripts_with(
     click_page(
         PageInput {
             sources,
+            source_keys: &[],
             document,
             storage,
             host,
@@ -1569,6 +1604,7 @@ fn legacy(
         let (mut vm, compiled) = session(
             Limits::default(),
             sources,
+            &[],
             false,
             Some(document),
             storage,

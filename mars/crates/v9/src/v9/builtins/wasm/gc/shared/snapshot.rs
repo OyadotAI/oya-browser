@@ -109,7 +109,7 @@ fn valid_value(
 }
 /** Validation examines every graph, including unreachable forged wrappers, before any author code executes. */
 pub(in crate::v9::builtins::wasm) fn validate(heap: &Heap) -> EngineResult<()> {
-    for object in heap.objects.values() {
+    for object in heap.shared_objects().filter_map(|id| heap.objects.get(&id)) {
         if let Class::WasmShared(root) = &object.class {
             if object.extensible || object.proto.is_some() || !object.props.is_empty() {
                 return Err(invalid());
@@ -124,10 +124,10 @@ pub(in crate::v9::builtins::wasm) fn initialize(vm: &mut Vm) -> EngineResult<()>
     validate(&vm.heap)?;
     let roots = vm
         .heap
-        .objects
-        .iter()
+        .shared_objects()
+        .filter_map(|id| Some((id, vm.heap.objects.get(&id)?)))
         .filter_map(|(id, o)| match &o.class {
-            Class::WasmShared(root) => Some((*id, root.clone())),
+            Class::WasmShared(root) => Some((id, root.clone())),
             _ => None,
         })
         .collect::<Vec<_>>();

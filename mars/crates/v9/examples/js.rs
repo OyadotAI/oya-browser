@@ -33,6 +33,7 @@ fn main() {
     let started = std::time::Instant::now();
     let input = PageInput {
         sources: &sources,
+        source_keys: &[],
         document: ScriptDocument {
             identity: "page".into(),
             nodes: Vec::new(),

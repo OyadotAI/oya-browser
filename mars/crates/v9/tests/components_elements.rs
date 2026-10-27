@@ -10,6 +10,7 @@ fn run(source: &str) -> Execution {
     environment.dom_level = DomLevel::Extended;
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
+        source_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

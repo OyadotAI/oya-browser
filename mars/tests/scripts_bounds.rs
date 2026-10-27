@@ -1,7 +1,7 @@
 /** Script bounds: each one is enforced, per script, without panics, hangs or a fatal page. */
 use mars::constants::{
     EXPRESSION_DEPTH, FRAME_BYTES, OPERATIONS, RPC_TIMEOUT, SCRIPT_BYTES, SCRIPT_COUNT,
-    SCRIPT_DEADLINE, SCRIPT_TOTAL_BYTES, STATEMENT_DEPTH, STYLE_BYTES, STYLE_SHEETS,
+    SCRIPT_DEADLINE_DEFAULT, SCRIPT_TOTAL_BYTES, STATEMENT_DEPTH, STYLE_BYTES, STYLE_SHEETS,
     STYLE_TOTAL_BYTES, SYNTAX_DEPTH, TEXT_BYTES, TOKENS,
 };
 use mars::v9::{DocumentHost, StorageState, check, load_document_scripts_isolated};
@@ -19,7 +19,7 @@ fn bounds_admit_real_bundles_and_fit_the_frame() {
     assert_eq!(STYLE_BYTES, 4 * 1024 * 1024);
     assert_eq!(STYLE_SHEETS, 256);
     assert_eq!(TEXT_BYTES, 64 * 1024);
-    assert!(SCRIPT_DEADLINE < RPC_TIMEOUT);
+    assert!(SCRIPT_DEADLINE_DEFAULT < RPC_TIMEOUT);
 }
 
 /** Pathological nesting is a limit error at any depth, never a stack overflow. */

@@ -33,6 +33,7 @@ pub(in crate::v9) mod realms;
 pub(in crate::v9) mod run;
 pub(in crate::v9) mod shape;
 pub(in crate::v9) mod templates;
+pub(in crate::v9) mod trie;
 pub(in crate::v9) mod validate;
 pub(in crate::v9) use dynamic::{
     source_base as dynamic_source_base, validate_sources as validate_dynamic_sources,

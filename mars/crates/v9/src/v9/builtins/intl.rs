@@ -14,10 +14,13 @@ use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
 use std::collections::BTreeMap;
 
+mod bound;
 mod date_receiver;
 mod decimal;
 mod display_names;
 mod locale;
+/** CanonicalizeLocaleList, shared with String.prototype.toLocale*Case. */
+pub(in crate::v9) use locale::canonical_list;
 mod locale_info;
 mod number_format;
 mod tag;
@@ -71,6 +74,12 @@ const OPTIONS: [&str; 34] = [
     "localeMatcher",
 ];
 
+/** Argument counts ECMA-402 gives formatter methods. */
+const NO_ARGUMENTS: u32 = 0;
+/** One argument. */
+const ONE_ARGUMENT: u32 = 1;
+/** Two arguments. */
+const TWO_ARGUMENTS: u32 = 2;
 /** The locale every formatter resolves to. */
 const LOCALE: &str = "en-US";
 /** Fraction digits a plain number keeps at most. */
@@ -107,6 +116,16 @@ const WEEKDAYS: [(&str, &str); 7] = [
     ("Saturday", "Sat"),
 ];
 
+/** Spec length of a formatter method: resolvedOptions takes none, the range methods and relative-time formatting take two. */
+fn method_length(kind: &str, name: &str) -> u32 {
+    match name {
+        "resolvedOptions" => NO_ARGUMENTS,
+        "formatRange" | "selectRange" => TWO_ARGUMENTS,
+        "format" | "formatToParts" if kind == "RelativeTimeFormat" => TWO_ARGUMENTS,
+        _ => ONE_ARGUMENT,
+    }
+}
+
 /** Install `Intl` and its constructors. */
 pub(super) fn install(b: &mut Builder) {
     let intl = b.object(Some(b.ids.object_prototype));
@@ -129,13 +148,15 @@ pub(super) fn install(b: &mut Builder) {
             "resolvedOptions",
             "select",
             "selectRange",
-            "compare",
             "segment",
         ] {
+            if name == "format" && kind == "DateTimeFormat" {
+                continue;
+            }
             b.method(
                 proto,
                 name,
-                1,
+                method_length(kind, name),
                 if kind == "DateTimeFormat" {
                     date_receiver::method
                 } else {
@@ -143,6 +164,7 @@ pub(super) fn install(b: &mut Builder) {
                 },
             );
         }
+        bound::install(b, proto, kind);
         to_string_tag(
             b,
             proto,
@@ -296,10 +318,6 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let value = vm.to_number(&call.arg(0))?;
             number_parts(vm, &format_number(value, &data.options))
         }
-        ("format", "DateTimeFormat") => {
-            let time = time_value(vm, &call.arg(0))?;
-            text(vm, &format_date(vm, time, &data.options))
-        }
         ("formatToParts", "DateTimeFormat") => {
             let time = time_value(vm, &call.arg(0))?;
             let formatted = format_date(vm, time, &data.options);
@@ -333,11 +351,6 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         ("format", "ListFormat") => {
             let items = locale_list(vm, &call.arg(0))?;
             text(vm, &format_list(&items, &data.options))
-        }
-        ("compare", "Collator") => {
-            let a = vm.to_text(&call.arg(0))?;
-            let b = vm.to_text(&call.arg(1))?;
-            Ok(JsValue::Number(collate(&a, &b, &data.options)))
         }
         ("segment", "Segmenter") => {
             let input = vm.to_text(&call.arg(0))?;

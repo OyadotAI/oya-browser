@@ -76,7 +76,7 @@ pub(super) fn locale_of(vm: &Vm, value: &JsValue) -> Option<String> {
 }
 
 /** ECMA-402 CanonicalizeLocaleList: strings and Locale objects, validated, canonical, deduplicated. */
-pub(super) fn canonical_list(vm: &mut Vm, locales: &JsValue) -> Res<Vec<String>> {
+pub(in crate::v9) fn canonical_list(vm: &mut Vm, locales: &JsValue) -> Res<Vec<String>> {
     if *locales == JsValue::Undefined {
         return Ok(Vec::new());
     }

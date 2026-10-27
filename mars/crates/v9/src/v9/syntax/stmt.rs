@@ -551,23 +551,10 @@ impl Parser {
         self.next();
         let label = if !self.peek().line_terminator_before && self.at_identifier() {
             let name = self.identifier()?;
-            let found = self.labels.iter().rev().find(|(label, _)| *label == name);
-            match found {
-                Some((_, is_loop)) if is_break || *is_loop => {}
-                _ => return Err(self.error_at(pos, "Undefined label")),
-            }
+            self.check_label_jump(pos, &name, is_break)?;
             Some(name)
         } else {
-            if is_break && !self.context.breakable || !is_break && !self.context.continuable {
-                return Err(self.error_at(
-                    pos,
-                    if is_break {
-                        "Illegal break statement"
-                    } else {
-                        "Illegal continue statement"
-                    },
-                ));
-            }
+            self.check_unlabeled_jump(pos, is_break)?;
             None
         };
         self.semicolon()?;
@@ -576,6 +563,33 @@ impl Parser {
         } else {
             StmtKind::Continue(label)
         })
+    }
+    /** A labelled jump needs an enclosing label; `continue` further needs that label to name a loop. */
+    fn check_label_jump(&self, pos: Pos, name: &Name, is_break: bool) -> EngineResult<()> {
+        let found = self.labels.iter().rev().find(|(label, _)| label == name);
+        match found {
+            None => Err(self.error_at(pos, &format!("Undefined label '{name}'"))),
+            Some((_, is_loop)) if is_break || *is_loop => Ok(()),
+            Some(_) => Err(self.error_at(
+                pos,
+                &format!(
+                    "Illegal continue statement: '{name}' does not denote an iteration statement"
+                ),
+            )),
+        }
+    }
+    /** An unlabelled jump must sit inside a breakable or continuable statement, and V8 says which is missing. */
+    fn check_unlabeled_jump(&self, pos: Pos, is_break: bool) -> EngineResult<()> {
+        if is_break && !self.context.breakable {
+            return Err(self.error_at(pos, "Illegal break statement"));
+        }
+        if !is_break && !self.context.continuable {
+            return Err(self.error_at(
+                pos,
+                "Illegal continue statement: no surrounding iteration statement",
+            ));
+        }
+        Ok(())
     }
     /** `label: statement` */
     fn labeled(&mut self, list_item: bool) -> EngineResult<StmtKind> {

@@ -479,6 +479,11 @@ pub(in crate::v9) struct Registry {
     pub codes: FastMap<u32, Arc<Code>>,
 }
 
+/** The content key of a classic script, wherever it sits on a page. */
+pub(in crate::v9) fn source_key(source: &str) -> cache::Key {
+    cache::text_key(cache::Grammar::Script, source)
+}
+
 impl Registry {
     /** Compile a script and its nested functions; returns the script's top-level code. */
     pub fn add(&mut self, program: &Program) -> EngineResult<Arc<Code>> {
@@ -497,7 +502,18 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
-        let text = cache::text_key(cache::Grammar::Script, source);
+        self.script_keyed(source_key(source), source, offset, parse)
+    }
+    /** `script` for a source whose `source_key` the caller already holds: a service that keeps
+    a page's sources resident hashes each once, not on every step (YouTube's 10 MB of scripts
+    took longer to hash than many steps took to run). */
+    pub fn script_keyed(
+        &mut self,
+        text: cache::Key,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<Arc<Code>> {
         let key = cache::at(&text, offset);
         let unit = match cache::get(&key) {
             Some(unit) => unit,

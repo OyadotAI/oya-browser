@@ -24,8 +24,8 @@ pub(in crate::v9) use buffer_state::{
     set_maximum as set_buffer_maximum, valid as valid_buffer, valid_immutable_brand, valid_view,
 };
 pub(in crate::v9) use shared::{
-    import_shared_buffer, initialize as initialize_shared, notify_shared,
-    validate as validate_shared,
+    import_shared_buffer, initialize as initialize_shared, is_poll as is_shared_poll,
+    notify_shared, validate as validate_shared,
 };
 use storage::{read_range, storage_len, write_range};
 mod codec;

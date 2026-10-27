@@ -275,7 +275,7 @@ fn more_than_statements_changes_fail_explicitly() {
     );
     let error = failure(&source, &[], &Empty);
     assert_eq!(error.code, "limit_exceeded");
-    // An unoptimized build under parallel load may reach SCRIPT_DEADLINE first; either is a limit.
+    // An unoptimized build under parallel load may reach the script deadline first; either is a limit.
     assert!(
         error.message.contains("V9 changes") || error.message.contains("time limit"),
         "{}",

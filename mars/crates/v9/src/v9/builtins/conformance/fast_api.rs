@@ -18,7 +18,7 @@ struct Natives {
 }
 static NATIVES: OnceLock<Natives> = OnceLock::new();
 /** The namespace always exists, but FastCAPI constructors are exposed only by actual host metadata. */
-pub(super) fn install(builder: &mut Builder, d8: ObjectId) {
+pub(super) fn install(builder: &mut Builder, d8: ObjectId) -> ObjectId {
     let namespace = builder.object(Some(builder.ids.object_prototype));
     builder.alias(d8, "test", namespace);
     let prototype = builder.object(Some(builder.ids.object_prototype));
@@ -42,6 +42,7 @@ pub(super) fn install(builder: &mut Builder, d8: ObjectId) {
         leaf_prototype: leaf_proto,
         supports,
     });
+    namespace
 }
 /** Method descriptors mirror FunctionTemplate prototype properties; callbacks themselves cannot be constructed. */
 fn install_methods(builder: &mut Builder, prototype: ObjectId) {

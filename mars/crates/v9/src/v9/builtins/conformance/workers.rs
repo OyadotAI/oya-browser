@@ -171,7 +171,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     vm.pin(JsValue::Object(instance));
     let deadline = vm
         .deadline
-        .unwrap_or_else(|| Instant::now() + crate::constants::SCRIPT_DEADLINE);
+        .unwrap_or_else(|| Instant::now() + crate::constants::script_deadline());
     let id = host.spawn(environment, source, None, deadline)?;
     vm.heap
         .put(instance, id_key(), Prop::data(JsValue::BigInt(id as i128)));

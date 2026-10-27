@@ -167,6 +167,16 @@ fn capture_metadata(vm: &mut Vm, wrapper: ObjectId, target: ObjectId) -> Res<()>
     Ok(())
 }
 
+/** Inspection reads a wrapper's captured target without calling it, so the membrane stays unobservable. */
+pub(super) fn wrapped_target(vm: &Vm, id: ObjectId) -> Option<JsValue> {
+    match vm.heap.get(id)?.function().map(|function| &function.kind)? {
+        FunctionKind::Native { id, slots } if Some(id) == WRAPPED_CALL.get() => {
+            slots.first().cloned()
+        }
+        _ => None,
+    }
+}
+
 /** Call arguments and receivers are wrapped in the target context, and results in the caller. */
 fn wrapped_call(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let target = vm.slots(call.callee)[0].clone();

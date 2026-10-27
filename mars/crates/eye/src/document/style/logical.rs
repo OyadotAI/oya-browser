@@ -5,6 +5,17 @@
  * Logical and physical spellings of one side then compete by cascade priority, as in CSS.
  */
 use super::cascade::{Chosen, choose};
+use std::{cell::RefCell, collections::HashMap};
+/** Writing modes `physical` is memoized under: one slot per (rtl, vertical, lr). */
+const MODES: usize = 8;
+/** Keys memoized before the memo starts over; custom properties could otherwise grow it. */
+const PHYSICAL_MEMO: usize = 4096;
+thread_local! {
+    /** `physical` by key and mode: the cascade asks it for every chosen property of every
+    element, and its substring searches cost more than the cascade around them. */
+    static PHYSICAL: RefCell<HashMap<String, [Option<Option<String>>; MODES]>> =
+        RefCell::new(HashMap::new());
+}
 /** Flow-relative side segments, in the order key names are tried. */
 const SIDES: [&str; 4] = ["inline-start", "inline-end", "block-start", "block-end"];
 /** Box properties with flow-relative two-value shorthands (`margin-inline: start end`). */
@@ -47,6 +58,22 @@ impl Mode {
 }
 /** The physical longhand for a flow-relative one, or None when `key` is physical. */
 pub(super) fn physical(key: &str, mode: Mode) -> Option<String> {
+    let slot = usize::from(mode.rtl) | usize::from(mode.vertical) << 1 | usize::from(mode.lr) << 2;
+    let found = PHYSICAL.with_borrow(|memo| memo.get(key).and_then(|modes| modes[slot].clone()));
+    if let Some(found) = found {
+        return found;
+    }
+    let found = map_physical(key, mode);
+    PHYSICAL.with_borrow_mut(|memo| {
+        if memo.len() >= PHYSICAL_MEMO {
+            memo.clear();
+        }
+        memo.entry(key.to_owned()).or_default()[slot] = Some(found.clone());
+    });
+    found
+}
+/** `physical`, computed. */
+fn map_physical(key: &str, mode: Mode) -> Option<String> {
     let sides = mode.sides();
     if let Some(corner) = corner(key, sides) {
         return Some(corner);
