@@ -167,6 +167,7 @@ pub(in crate::v9) struct Ids {
     pub class_list_prototype: ObjectId,
     pub dataset_prototype: ObjectId,
     pub node_list_prototype: ObjectId,
+    pub html_collection_prototype: ObjectId,
     pub xhr_prototype: ObjectId,
     pub response_prototype: ObjectId,
     pub headers_prototype: ObjectId,

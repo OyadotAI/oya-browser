@@ -964,6 +964,15 @@ fn host_mirror(
             interface.clone(),
             format!("{interface}({})", nodes.len()),
         ),
+        HostData::Live(list) => {
+            let count = crate::v9::platform::collections::current(vm, list).len();
+            (
+                "object",
+                Some("array"),
+                interface.clone(),
+                format!("{interface}({count})"),
+            )
+        }
         HostData::Children(node, _) => {
             let count = vm.page.children(*node).len();
             (

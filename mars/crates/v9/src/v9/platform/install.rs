@@ -174,6 +174,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "querySelector",
             "querySelectorAll",
             "getElementsByTagName",
+            "getElementsByTagNameNS",
             "getElementsByClassName",
             "matches",
             "webkitMatchesSelector",
@@ -343,6 +344,7 @@ fn document(b: &mut Builder, node: u32) {
             "getElementById",
             "getElementsByName",
             "getElementsByTagName",
+            "getElementsByTagNameNS",
             "getElementsByClassName",
             "querySelector",
             "querySelectorAll",
@@ -493,6 +495,18 @@ fn collections(b: &mut Builder) {
         list,
         Key::Sym(symbol::ITERATOR),
         Static::Value(JsValue::Object(values)),
+        HIDDEN_ATTRS,
+    );
+    let collection = b.object(Some(object_prototype));
+    b.ids.html_collection_prototype = collection;
+    methods(b, collection, &["item", "namedItem"], dom::list_method);
+    // HTMLCollection has no forEach, entries or keys (only NodeList does), but it is iterable: its
+    // @@iterator is the same list walk. The function is not installed under a visible name.
+    let iterator = b.function("values", 0, dom::list_method);
+    b.put(
+        collection,
+        Key::Sym(symbol::ITERATOR),
+        Static::Value(JsValue::Object(iterator)),
         HIDDEN_ATTRS,
     );
     let storage = b.object(Some(object_prototype));
@@ -1201,7 +1215,8 @@ fn global_object(b: &mut Builder) {
             "Document" | "HTMLDocument" => b.ids.document_prototype,
             "XMLDocument" => b.ids.xml_document_prototype,
             "Window" => proto,
-            "NodeList" | "HTMLCollection" => b.ids.node_list_prototype,
+            "NodeList" => b.ids.node_list_prototype,
+            "HTMLCollection" => b.ids.html_collection_prototype,
             "CSSStyleDeclaration" => b.ids.style_prototype,
             "DOMTokenList" => b.ids.class_list_prototype,
             "Storage" => b.ids.storage_prototype,

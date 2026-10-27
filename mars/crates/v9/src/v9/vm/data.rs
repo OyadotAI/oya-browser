@@ -617,6 +617,8 @@ pub(in crate::v9) enum HostData {
     NodeList(std::sync::Arc<[usize]>),
     /** A live child or element list of a node. */
     Children(usize, bool),
+    /** A live HTMLCollection from getElementsByTagName, getElementsByTagNameNS or getElementsByClassName. */
+    Live(std::sync::Arc<crate::v9::platform::collections::LiveList>),
     Xhr(u32),
     Response(Box<ResponseData>),
     Headers(Vec<(String, String)>),

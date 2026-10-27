@@ -481,7 +481,7 @@ pub(super) fn document_method(vm: &mut Vm, document: usize, call: &Call) -> Res<
             wrap_option(vm, found.first().copied())?
         }
         "querySelector" | "querySelectorAll" => dom::query(vm, document, call)?,
-        "getElementsByTagName" | "getElementsByClassName" => {
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
             let Some(root) = document_part(vm, document, "html") else {
                 return dom::node_list(vm, Vec::new()).map(Some);
             };

@@ -12,8 +12,20 @@ use crate::document::{DomChange, InsertPosition, ScriptChange, ScriptNode};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::vm::heap::FastMap;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 mod leading_text;
 mod namespace_store;
+
+/** The source of tree generations. Every page draws from this one counter, so a generation a live
+collection cached can never equal the current generation of another page, even after a page is replaced. */
+static GENERATIONS: AtomicU64 = AtomicU64::new(1);
+
+/** A fresh tree generation. Each change to the tree takes one, and a cached read is current only while
+its generation is still the page's. */
+pub(in crate::v9) fn next_generation() -> u64 {
+    GENERATIONS.fetch_add(1, Ordering::Relaxed)
+}
+
 
 /** Text and attribute bytes one change adds to the request's change budget. */
 fn change_bytes(change: &ScriptChange) -> usize {
@@ -93,12 +105,19 @@ impl Page<'_> {
     /** Forget the index after the projection changed. */
     pub fn invalidate(&mut self) {
         self.tree = None;
+        self.touch();
+    }
+    /** Mark the tree changed. Every live collection rescans on its next read; the mark costs O(1), so
+    a mutation pays nothing for the collections it may affect. */
+    pub fn touch(&mut self) {
+        self.generation = next_generation();
     }
     /** Bring the index up to date after `count` nodes were spliced in at `at`, instead of
     rebuilding it: a page that stamps thousands of elements (YouTube) would otherwise rebuild
     the whole index on each insert. Nodes after the splice shift by `count`; only the one
     parent whose child list gained the fragment's roots is reordered. */
     fn tree_inserted(&mut self, at: usize, count: usize) {
+        self.touch();
         let (Some(document), Some(tree)) = (&self.document, &mut self.tree) else {
             return;
         };
@@ -479,6 +498,7 @@ impl Page<'_> {
     }
     /** Record a change in whichever log the app replays. */
     pub fn record(&mut self, change: ScriptChange) -> EngineResult<()> {
+        self.touch();
         if self.environment.dom_level == DomLevel::Extended
             && let ScriptChange::Attribute { node, name, .. } = &change
             && let Some(slot) = self.attribute_slot(*node, name)
@@ -668,6 +688,7 @@ impl Page<'_> {
     }
     /** Remove a node from its parent. */
     pub fn remove(&mut self, id: usize) -> EngineResult<()> {
+        self.touch();
         if matches!(id, HTML | HEAD | BODY) {
             return Err(EngineError::unsupported(
                 "Removing the html, head or body element is not supported.",
@@ -708,6 +729,7 @@ impl Page<'_> {
         child: usize,
         reference: Option<usize>,
     ) -> EngineResult<Vec<(usize, usize)>> {
+        self.touch();
         if child == parent || self.ancestors(parent).contains(&child) {
             return Err(EngineError::invalid(
                 "HierarchyRequestError: The new child element contains the parent.",
@@ -1038,6 +1060,7 @@ impl Page<'_> {
     }
     /** Replace a node's children with text. */
     pub fn set_text(&mut self, id: usize, text: &str) -> EngineResult<()> {
+        self.touch();
         // A shadow host keeps its shadow root, so its light children go one by one.
         let host = self.has_shadows() && self.shadow_root(id).is_some();
         if (self.is_projected(id) || id == BODY) && !host {
@@ -1144,6 +1167,7 @@ impl Page<'_> {
             // A removed attribute keeps no namespace record, so a later write starts null.
             self.forget_attribute_namespace(id, name);
         }
+        self.touch();
         let name = name.to_string();
         if matches!(id, HTML | HEAD | BODY) {
             let seed = self.root_attributes(id);
@@ -1206,6 +1230,7 @@ impl Page<'_> {
     }
     /** Set a field's value. */
     pub fn set_value(&mut self, id: usize, value: &str) -> EngineResult<()> {
+        self.touch();
         crate::document::validate_text(value)?;
         self.state.values.insert(id, value.into());
         if self.is_projected(id) && self.environment.dom_level == DomLevel::Extended {
@@ -1223,6 +1248,7 @@ impl Page<'_> {
         position: InsertPosition,
         html: &str,
     ) -> EngineResult<()> {
+        self.touch();
         if self.is_projected(id) || id == BODY {
             let target = (id != BODY).then_some(id);
             if id == BODY

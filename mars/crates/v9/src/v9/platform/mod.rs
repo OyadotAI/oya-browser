@@ -8,6 +8,7 @@ pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 mod channel;
+pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;
 mod console;
 /** DevTools evaluation (Runtime.evaluate and friends) over the page's realm; new entry points only. */
@@ -994,6 +995,8 @@ pub(in crate::v9) struct Page<'h> {
     /** Values seen by legacy getElementById(...).value reads. */
     pub legacy: bool,
     pub tree: Option<nodes::Tree>,
+    /** The tree's change generation: bumped by every mutation, so a live collection rescans only after one. */
+    pub generation: u64,
     /** The script element of the script running now. */
     pub current_script: Option<usize>,
     /** Legacy-log InsertHtml entries this execution made: change index, root, subtree. */
@@ -1061,6 +1064,7 @@ impl<'h> Page<'h> {
             next_id,
             legacy: false,
             tree: None,
+            generation: nodes::next_generation(),
             inserted: Vec::new(),
             current_script: None,
             mutations: Vec::new(),
@@ -1237,6 +1241,7 @@ pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> 
         HostData::ClassList(_) => "DOMTokenList".into(),
         HostData::Dataset(_) => "DOMStringMap".into(),
         HostData::NodeList(_) | HostData::Children(..) => "NodeList".into(),
+        HostData::Live(_) => "HTMLCollection".into(),
         HostData::Xhr(_) => "XMLHttpRequest".into(),
         HostData::Response(_) => "Response".into(),
         HostData::Headers(_) => "Headers".into(),

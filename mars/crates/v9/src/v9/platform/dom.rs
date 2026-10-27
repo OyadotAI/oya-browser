@@ -1,4 +1,5 @@
 use super::attr_dom;
+use super::collections::{self, live_collection, tag_ns_filter, current, Filter, LiveList};
 use super::components;
 /** The DOM scripts see: node wrappers, the document, and Node/Element/HTMLElement members. */
 pub(in crate::v9) use super::html::{parse_detached, serialize};
@@ -205,6 +206,7 @@ fn list_nodes(vm: &mut Vm, data: &HostData) -> Vec<usize> {
                 children
             }
         }
+        HostData::Live(list) => current(vm, list).to_vec(),
         _ => Vec::new(),
     }
 }
@@ -215,6 +217,7 @@ fn list_count(vm: &mut Vm, data: &HostData) -> usize {
     match data {
         HostData::NodeList(nodes) => nodes.len(),
         HostData::Children(node, elements) => vm.page.child_count(*node, *elements),
+        HostData::Live(list) => current(vm, list).len(),
         _ => 0,
     }
 }
@@ -226,6 +229,7 @@ fn list_item(vm: &mut Vm, call: &Call, data: &HostData) -> Res<JsValue> {
         _ if index < 0.0 => None,
         HostData::NodeList(nodes) => nodes.get(index as usize).copied(),
         HostData::Children(node, elements) => vm.page.child_at(*node, *elements, index as usize),
+        HostData::Live(list) => current(vm, list).get(index as usize).copied(),
         _ => None,
     };
     wrap_option(vm, found)
@@ -238,6 +242,21 @@ fn href_in_document_encoding(vm: &Vm, href: &str) -> String {
         Some(encoding) if encoding.name() != UTF_8 => encode_url_query(href, encoding),
         _ => href.to_string(),
     }
+}
+
+/** A live list's own index or `length`, read from its current answer so a mutation shows at once. */
+fn live_own(vm: &mut Vm, list: &LiveList, key: &Key) -> Res<Option<Prop>> {
+    if let Some(index) = key.index() {
+        return match current(vm, list).get(index as usize).copied() {
+            Some(node) => Ok(Some(data_prop(wrap(vm, node)?))),
+            None => Ok(None),
+        };
+    }
+    if matches!(key, Key::Str(name) if name.is("length")) {
+        let count = current(vm, list).len();
+        return Ok(Some(data_prop(JsValue::Number(count as f64))));
+    }
+    Ok(None)
 }
 
 /** A static NodeList's own index or `length`. The values come from the list's own vector, read
@@ -313,6 +332,7 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             }
             Ok(None)
         }
+        HostData::Live(list) => live_own(vm, list, key),
         HostData::Style(node) => {
             let text = name.lossy();
             if !style_property(&text) {
@@ -406,7 +426,7 @@ pub(super) fn host_write(
             super::window::storage_set(vm, local, property, text)?;
             Ok(Some(true))
         }
-        HostData::NodeList(_) | HostData::Children(..)
+        HostData::NodeList(_) | HostData::Children(..) | HostData::Live(_)
             if key.index().is_some() || name.is("length") =>
         {
             Ok(Some(false))
@@ -448,7 +468,7 @@ pub(super) fn host_keys(vm: &mut Vm, id: ObjectId) -> Res<Vec<Key>> {
     };
     let data = (**data).clone();
     let keys: Vec<String> = match &data {
-        HostData::NodeList(_) | HostData::Children(..) => {
+        HostData::NodeList(_) | HostData::Children(..) | HostData::Live(_) => {
             let count = list_count(vm, &data);
             (0..count).map(|index| index.to_string()).collect()
         }
@@ -2630,8 +2650,9 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         | "setAttributeNodeNS"
         | "removeAttributeNode" => attr_dom::element_attr_method(vm, node, &call),
         "querySelector" | "querySelectorAll" => query(vm, node, &call),
-        "getElementsByTagName" => elements_by_tag(vm, node, &call),
-        "getElementsByClassName" => elements_by_class(vm, node, &call),
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
+            live_elements(vm, node, &call)
+        }
         "matches" | "webkitMatchesSelector" | "msMatchesSelector" => {
             let text = vm.to_text(&call.arg(0))?;
             let list = parse_selector(vm, "matches", &text)?;
@@ -2900,35 +2921,27 @@ fn parse_selector(vm: &mut Vm, method: &str, text: &str) -> Res<selector::Select
     })
 }
 
-/** getElementsByTagName for an element or the document. The document searches its whole tree,
-including the root element, which an element's own search never includes. */
-fn elements_by_tag(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
-    let tag = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
-    let found = search(vm, node, |page, id| {
-        page.is_element(id) && (tag == "*" || page.tag(id) == tag)
-    });
-    node_list(vm, found)
+/** getElementsByTagName, getElementsByTagNameNS and getElementsByClassName: a live list rooted at `root`. The filter comes from the method and its arguments; `live_collection` keeps the answer current. */
+fn live_elements(vm: &mut Vm, root: usize, call: &Call) -> Res<JsValue> {
+    let filter = match native_name(call) {
+        "getElementsByClassName" => Filter::Class(class_names(vm, &call.arg(0))?),
+        "getElementsByTagNameNS" => {
+            let namespace = collections::namespace_arg(vm, &call.arg(0))?;
+            let local = vm.to_text(&call.arg(1))?;
+            tag_ns_filter(&namespace, &local)
+        }
+        _ => Filter::Tag(vm.to_text(&call.arg(0))?.to_ascii_lowercase()),
+    };
+    live_collection(vm, root, filter)
 }
 
-/** getElementsByClassName: the elements under `node` carrying every named class. An empty list of
-class names matches nothing, as the DOM requires. */
-fn elements_by_class(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
-    let wanted: Vec<String> = vm
-        .to_text(&call.arg(0))?
+/** The whitespace-separated class names a getElementsByClassName call asks for, in order. */
+fn class_names(vm: &mut Vm, value: &JsValue) -> Res<Vec<String>> {
+    Ok(vm
+        .to_text(value)?
         .split_ascii_whitespace()
         .map(String::from)
-        .collect();
-    let found = search(vm, node, |page, id| {
-        let classes = page
-            .view(id)
-            .and_then(|view| view.attributes.get("class").cloned())
-            .unwrap_or_default();
-        !wanted.is_empty()
-            && wanted
-                .iter()
-                .all(|class| classes.split_ascii_whitespace().any(|c| c == class))
-    });
-    node_list(vm, found)
+        .collect())
 }
 
 /** querySelector and querySelectorAll. */
@@ -3280,8 +3293,9 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             });
             node_list(vm, found)
         }
-        "getElementsByTagName" => elements_by_tag(vm, DOCUMENT, &call),
-        "getElementsByClassName" => elements_by_class(vm, DOCUMENT, &call),
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
+            live_elements(vm, DOCUMENT, &call)
+        }
         "querySelector" | "querySelectorAll" => query(vm, DOCUMENT, &call),
         "createElement" => create_element_call(vm, &call, false),
         "createElementNS" => create_element_call(vm, &call, true),

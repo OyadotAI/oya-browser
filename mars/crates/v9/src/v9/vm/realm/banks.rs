@@ -201,6 +201,7 @@ impl Ids {
             class_list_prototype: shift(self.class_list_prototype, amount),
             dataset_prototype: shift(self.dataset_prototype, amount),
             node_list_prototype: shift(self.node_list_prototype, amount),
+            html_collection_prototype: shift(self.html_collection_prototype, amount),
             xhr_prototype: shift(self.xhr_prototype, amount),
             response_prototype: shift(self.response_prototype, amount),
             headers_prototype: shift(self.headers_prototype, amount),
