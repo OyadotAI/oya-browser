@@ -1,3 +1,4 @@
+use super::FrameRequest;
 /**
  * Documents beyond the page's own: the same-origin document of an `about:blank` or `srcdoc`
  * iframe (Blink's HTMLFrameOwnerElement::contentDocument and contentWindow), a script-made one
@@ -17,7 +18,6 @@
 use super::dom::{self, dom_error, native_name, wrap, wrap_option};
 use super::html::{Parsed, parse_tree};
 use super::xml_frames;
-use super::FrameRequest;
 use crate::protocol::EngineResult;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
@@ -228,8 +228,15 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
         }
         None => blank_document(vm)?.0,
     };
-    vm.page.state.frames.insert(frame, document);
+    remember_frame_document(vm, frame, document);
     Ok(Some(document))
+}
+
+/** Records that `document` is the document `frame` shows, both ways, so the frame's contentDocument
+and a frame document's defaultView each find the other in O(log n). */
+fn remember_frame_document(vm: &mut Vm, frame: usize, document: usize) {
+    vm.page.state.frames.insert(frame, document);
+    vm.page.state.document_frames.insert(document, frame);
 }
 
 /** The document of a frame whose `src` the app answered: built from the source it fetched, as its
@@ -246,7 +253,7 @@ fn source_document(vm: &mut Vm, frame: usize, src: &str) -> Res<Option<usize>> {
     };
     let document = create(vm, DOCUMENT_NODE, None)?;
     xml_frames::build_source(vm, document, &loaded.media_type, &source)?;
-    vm.page.state.frames.insert(frame, document);
+    remember_frame_document(vm, frame, document);
     Ok(Some(document))
 }
 
@@ -296,8 +303,8 @@ pub(in crate::v9) fn run_frames(vm: &mut Vm) -> EngineResult<()> {
 
 /** Fire one frame's `load`; an uncaught error in its handler goes to the console. */
 fn fire_load(vm: &mut Vm, element: usize) -> EngineResult<()> {
-    let fired = super::fire(vm, super::Target::Node(element), "load", false)
-        .and_then(|_| vm.drain_jobs());
+    let fired =
+        super::fire(vm, super::Target::Node(element), "load", false).and_then(|_| vm.drain_jobs());
     match fired {
         Ok(()) => Ok(()),
         Err(crate::v9::vm::Thrown::Value(error)) => {
@@ -326,15 +333,18 @@ pub(super) fn frame_get(vm: &mut Vm, frame: usize, name: &str) -> Res<JsValue> {
     content_window(vm, frame, document)
 }
 
-/** The frame's window: its document, the frame element, and the page as parent and top. It
-carries no globals of its own; the frame has no realm of its own. */
-fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
+/** The frame's window: its document, the frame element, and the page as parent and top. It shares
+the page's realm, so its interface constructors and DOMException come from its prototype, and its
+own members shadow the page's. Created once per frame and kept, so identity holds. */
+pub(super) fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
     if let Some(id) = vm.page.state.frame_windows.get(&frame)
         && vm.heap.get(*id).is_some()
     {
         return Ok(JsValue::Object(*id));
     }
-    let id = vm.new_object()?;
+    let interfaces = vm.intrinsic_id(realm().ids.window_interfaces);
+    vm.materialize(interfaces)?;
+    let id = vm.alloc(Object::new(Class::Plain, Some(interfaces)))?;
     let document = wrap_document(vm, document)?;
     let element = wrap(vm, frame)?;
     vm.put(id, "document", document)?;
@@ -496,13 +506,7 @@ fn close(vm: &mut Vm, document: usize) -> Res<()> {
         return Ok(());
     };
     build(vm, document, &markup)?;
-    let frame = vm
-        .page
-        .state
-        .frames
-        .iter()
-        .find(|(_, owned)| **owned == document)
-        .map(|(frame, _)| *frame);
+    let frame = vm.page.state.document_frames.get(&document).copied();
     if let Some(frame) = frame {
         super::fire(vm, super::Target::Node(frame), "load", false)?;
     }

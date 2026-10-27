@@ -194,6 +194,7 @@ impl Ids {
             xml_document_prototype: shift(self.xml_document_prototype, amount),
             document: shift(self.document, amount),
             document_all: shift(self.document_all, amount),
+            window_interfaces: shift(self.window_interfaces, amount),
             event_prototype: shift(self.event_prototype, amount),
             custom_event_prototype: shift(self.custom_event_prototype, amount),
             style_prototype: shift(self.style_prototype, amount),

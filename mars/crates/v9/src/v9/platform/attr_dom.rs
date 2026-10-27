@@ -44,7 +44,10 @@ pub(in crate::v9) fn wrap_attr(vm: &mut Vm, id: u64) -> Res<JsValue> {
         return Ok(JsValue::Object(*object));
     }
     let proto = realm().ids.attr_prototype;
-    let object = vm.alloc(Object::new(Class::Host(Box::new(HostData::Attr(id))), Some(proto)))?;
+    let object = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Attr(id))),
+        Some(proto),
+    ))?;
     vm.page.state.attr_wrappers.insert(id, object);
     Ok(JsValue::Object(object))
 }
@@ -113,9 +116,7 @@ fn write_record(vm: &mut Vm, node: usize, record: &AttrNode, value: &str) -> Res
             vm.page
                 .set_namespaced_attribute(node, Some(namespace), &qname, &record.name, value)
         }
-        None => vm
-            .page
-            .set_named_attribute(node, &record.name, Some(value)),
+        None => vm.page.set_named_attribute(node, &record.name, Some(value)),
     };
     result.map_err(|error| dom_error(vm, error))
 }
@@ -211,8 +212,9 @@ pub(in crate::v9) fn create_attribute(vm: &mut Vm, call: &Call, namespaced: bool
     let (namespace, qualified, qname) = if namespaced {
         let namespace = optional_string_arg(vm, call, 0)?;
         let qualified = vm.to_text(&call.arg(1))?;
-        let qname = namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Attribute)
-            .map_err(|error| name_error(vm, error))?;
+        let qname =
+            namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Attribute)
+                .map_err(|error| name_error(vm, error))?;
         (namespace, qualified, qname)
     } else {
         let qualified = vm.to_text(&call.arg(0))?.to_ascii_lowercase();

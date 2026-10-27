@@ -64,7 +64,10 @@ fn create_attribute_ns_splits_the_prefix_and_keeps_the_namespace() {
 
 #[test]
 fn create_attribute_ns_refuses_a_prefix_without_a_namespace() {
-    let source = format!("const r={};", outcome("document.createAttributeNS(null,'a:b')"));
+    let source = format!(
+        "const r={};",
+        outcome("document.createAttributeNS(null,'a:b')")
+    );
     assert_eq!(eval(&source, "r"), "NamespaceError");
 }
 
@@ -214,7 +217,10 @@ fn class_list_replace_keeps_place_and_reports_a_missing_token() {
 
 #[test]
 fn class_list_supports_throws_type_error() {
-    let source = format!("const e=document.createElement('p');const r={};", outcome("e.classList.supports('x')"));
+    let source = format!(
+        "const e=document.createElement('p');const r={};",
+        outcome("e.classList.supports('x')")
+    );
     assert_eq!(eval(&source, "r"), "TypeError");
 }
 

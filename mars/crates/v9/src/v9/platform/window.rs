@@ -39,11 +39,23 @@ pub(in crate::v9) fn set_name(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/** document.defaultView: the window of the frame a frame document belongs to, so a frame's
+document reaches its own window and that window's constructors. Every other document reports the
+page's window, as before; a frame document's window is created on first use and then kept. */
+pub(in crate::v9) fn default_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let owner = super::dom::node_of(vm, &call.this)
+        .and_then(|document| Some((document, *vm.page.state.document_frames.get(&document)?)));
+    match owner {
+        Some((document, frame)) => super::frames::content_window(vm, frame, document),
+        None => Ok(JsValue::Object(vm.global_object())),
+    }
+}
+
 /** Window getters by registered name. */
 pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
-        "window" | "self" | "globalThis" | "frames" | "top" | "parent" | "defaultView" => {
+        "window" | "self" | "globalThis" | "frames" | "top" | "parent" => {
             JsValue::Object(vm.global_object())
         }
         "document" => JsValue::Object(realm().ids.document),

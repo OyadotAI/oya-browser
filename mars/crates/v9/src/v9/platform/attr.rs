@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::namespaces::AttrNs;
 use super::Page;
+use super::namespaces::AttrNs;
 
 /** One Attr object's record: where it is attached, its name and namespace, and its detached value. */
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +90,9 @@ impl Page<'_> {
             return String::new();
         };
         match record.owner {
-            Some(node) => self.attribute_value(node, &record.name).unwrap_or(record.value),
+            Some(node) => self
+                .attribute_value(node, &record.name)
+                .unwrap_or(record.value),
             None => record.value,
         }
     }
@@ -119,7 +121,12 @@ impl Page<'_> {
         else {
             return;
         };
-        if self.state.attr_of.get(&node).is_some_and(BTreeMap::is_empty) {
+        if self
+            .state
+            .attr_of
+            .get(&node)
+            .is_some_and(BTreeMap::is_empty)
+        {
             self.state.attr_of.remove(&node);
         }
         if let Some(record) = self.state.attr_nodes.get_mut(&id) {

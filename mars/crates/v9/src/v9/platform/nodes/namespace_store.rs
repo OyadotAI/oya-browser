@@ -1,3 +1,4 @@
+use super::super::Page;
 /**
  * Namespace records of the node model: the namespace, prefix and local name of script-created
  * elements, the namespace of attributes set through the namespace-aware methods, and the
@@ -6,8 +7,7 @@
  * rather than a scan of the document. The maps are nested rather than tuple-keyed because page
  * state is written as JSON, which only takes string map keys.
  */
-use super::super::namespaces::{implied_namespace, non_empty, AttrNs, ElementNs, QName};
-use super::super::Page;
+use super::super::namespaces::{AttrNs, ElementNs, QName, implied_namespace, non_empty};
 use crate::constants::DOCUMENT_DEPTH;
 use crate::protocol::EngineResult;
 
@@ -170,7 +170,11 @@ impl Page<'_> {
 
     /** What one element answers for a prefix: its own namespace when it carries that prefix, or
     its declaration attribute. None means it says nothing and the walk goes on. */
-    fn declared_namespace(&mut self, element: usize, prefix: Option<&str>) -> Option<Option<String>> {
+    fn declared_namespace(
+        &mut self,
+        element: usize,
+        prefix: Option<&str>,
+    ) -> Option<Option<String>> {
         let namespace = self.element_namespace(element);
         if namespace.is_some() && self.element_prefix(element).as_deref() == prefix {
             return Some(namespace);

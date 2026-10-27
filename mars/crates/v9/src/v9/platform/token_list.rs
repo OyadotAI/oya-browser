@@ -4,7 +4,7 @@
  * check their tokens before any change, and `supports` reads the token list an attribute accepts.
  * Keeping these free of the VM lets each rule be tested on its own.
  */
-use super::namespaces::{NameError, INVALID_CHARACTER_ERROR};
+use super::namespaces::{INVALID_CHARACTER_ERROR, NameError};
 
 /** The DOM error an empty token raises. */
 pub(in crate::v9) const SYNTAX_ERROR: &str = "SyntaxError";
@@ -41,7 +41,10 @@ pub(in crate::v9) fn check_token(token: &str) -> Result<(), NameError> {
             message: "The token provided must not be empty.".to_string(),
         });
     }
-    if token.chars().any(|character| character.is_ascii_whitespace()) {
+    if token
+        .chars()
+        .any(|character| character.is_ascii_whitespace())
+    {
         return Err(NameError {
             name: INVALID_CHARACTER_ERROR,
             message: format!("The token provided ('{token}') contains HTML space characters."),
@@ -66,7 +69,10 @@ pub(in crate::v9) fn required_arguments(method: &str) -> usize {
 
 /** The tokens `supports` accepts for an element's attribute, or None when that list has none,
 which is the case for classList, so `supports` on it throws. */
-pub(in crate::v9) fn supported_tokens(tag: &str, attribute: &str) -> Option<&'static [&'static str]> {
+pub(in crate::v9) fn supported_tokens(
+    tag: &str,
+    attribute: &str,
+) -> Option<&'static [&'static str]> {
     if attribute != REL_ATTRIBUTE {
         return None;
     }

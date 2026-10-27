@@ -78,7 +78,10 @@ fn a_source_that_is_not_well_formed_becomes_a_parsererror_document() {
 #[test]
 fn an_html_frame_source_builds_an_html_document() {
     let environment = answered(FRAME_URL, "text/html", Some("<p>hi</p>"));
-    let source = frame_script(FRAME_URL, "[d.body.textContent, String(d.createElement('x').namespaceURI)].join('|')");
+    let source = frame_script(
+        FRAME_URL,
+        "[d.body.textContent, String(d.createElement('x').namespaceURI)].join('|')",
+    );
     let execution = load_with(&source, &environment);
     assert_eq!(failure(&execution), None);
     assert_eq!(global(&execution, "r"), format!("hi|{XHTML}"));
@@ -102,7 +105,11 @@ fn a_refused_frame_has_no_content_document() {
 
 #[test]
 fn a_frame_shows_only_the_document_answered_for_its_own_source() {
-    let environment = answered("https://example.com/other.xml", "application/xml", Some("<x/>"));
+    let environment = answered(
+        "https://example.com/other.xml",
+        "application/xml",
+        Some("<x/>"),
+    );
     let source = frame_script(FRAME_URL, "String(d)");
     let execution = load_with(&source, &environment);
     assert_eq!(global(&execution, "r"), "null");
@@ -128,7 +135,11 @@ fn a_connected_iframe_requests_its_document_and_loads_when_answered() {
     let sources = vec![source.to_string()];
     let execution = load_with(source, &environment());
     assert_eq!(failure(&execution), None);
-    let requested: Vec<&str> = execution.frame_requests.iter().map(|r| r.url.as_str()).collect();
+    let requested: Vec<&str> = execution
+        .frame_requests
+        .iter()
+        .map(|r| r.url.as_str())
+        .collect();
     assert_eq!(requested, ["https://example.com/dyn.xml"]);
     assert_eq!(global(&execution, "before"), "null");
     assert_eq!(global(&execution, "loaded"), "no");
@@ -170,4 +181,48 @@ fn a_refused_connected_iframe_still_fires_load_with_no_document() {
     page_input.modules = &modules;
     let after = mars_v9::load_modules(page_input, round_trip(execution.state)).expect("refused");
     assert_eq!(global(&after, "loaded"), "null");
+}
+
+#[test]
+fn a_frame_document_reports_its_own_frames_window() {
+    let environment = answered(FRAME_URL, "application/xml", Some("<foo>Dummy</foo>"));
+    let source = frame_script(
+        FRAME_URL,
+        "[d.defaultView === f.contentWindow, f.contentWindow.document === d,\
+          d.defaultView.frameElement === f].join('|')",
+    );
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "true|true|true");
+}
+
+#[test]
+fn a_blank_iframe_document_reports_its_frames_window() {
+    let source = frame_script("about:blank", "d.defaultView === f.contentWindow");
+    let execution = load_with(&source, &environment());
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "true");
+}
+
+#[test]
+fn a_frame_window_exposes_the_interface_constructors_and_dom_exception() {
+    let environment = answered(FRAME_URL, "application/xml", Some("<foo>Dummy</foo>"));
+    let source = frame_script(
+        FRAME_URL,
+        "[d.createElement('x') instanceof f.contentWindow.Element,\
+          d.createElement('x') instanceof f.contentWindow.Node,\
+          f.contentWindow.DOMException === DOMException].join('|')",
+    );
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "true|true|true");
+}
+
+#[test]
+fn the_page_document_still_reports_the_page_window() {
+    let source = "const r = [document.defaultView === window,\
+        document.defaultView !== undefined && document.defaultView.DOMException === DOMException].join('|');";
+    let execution = load_with(source, &environment());
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "true|true");
 }

@@ -131,7 +131,14 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_get,
     );
-    for name in ["className", "innerHTML", "outerHTML", "style", "part", "classList"] {
+    for name in [
+        "className",
+        "innerHTML",
+        "outerHTML",
+        "style",
+        "part",
+        "classList",
+    ] {
         b.accessor(
             element,
             name,
@@ -381,7 +388,7 @@ fn document(b: &mut Builder, node: u32) {
             crate::v9::vm::realm::realm().ids.document_all,
         ))
     });
-    b.getter(proto, "defaultView", window::window_get);
+    b.getter(proto, "defaultView", window::default_view_get);
     b.getter(proto, "location", super::frames::location_get);
 }
 
@@ -1227,7 +1234,8 @@ fn global_object(b: &mut Builder) {
     super::components::install(b);
     // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
     // stay undefined, so libraries that feature-detect them take their fallback paths.
-    let globals = std::mem::take(&mut b.globals);
+    // The list is kept, not taken: install_window_interfaces reads it after every install.
+    let globals = b.globals.clone();
     for (name, value) in globals {
         b.put(proto, Key::from(name), Static::Value(value), HIDDEN_ATTRS);
     }
@@ -1443,7 +1451,12 @@ fn attr_members(b: &mut Builder, attr: u32) {
         attr_dom::attr_get,
     );
     for name in ["value", "nodeValue", "textContent"] {
-        b.accessor(attr, name, Some(attr_dom::attr_get), Some(attr_dom::attr_set));
+        b.accessor(
+            attr,
+            name,
+            Some(attr_dom::attr_get),
+            Some(attr_dom::attr_set),
+        );
     }
 }
 

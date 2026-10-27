@@ -98,7 +98,9 @@ pub(in crate::v9) fn non_empty(text: &str) -> Option<String> {
 /** Whether a character may not appear anywhere in a name. */
 fn is_forbidden(character: char, kind: NameKind) -> bool {
     let attribute_only = kind == NameKind::Attribute && character == ATTRIBUTE_EQUALS;
-    character.is_ascii_whitespace() || FORBIDDEN_NAME_CHARS.contains(&character) || attribute_only
+    character.is_ascii_whitespace()
+        || FORBIDDEN_NAME_CHARS.contains(&character)
+        || attribute_only
         || character.is_control()
 }
 
@@ -123,7 +125,10 @@ fn element_local_is_valid(text: &str) -> bool {
 
 /** The attribute local-name grammar: any non-empty text without the forbidden characters. */
 fn attribute_local_is_valid(text: &str) -> bool {
-    !text.is_empty() && !text.chars().any(|character| is_forbidden(character, NameKind::Attribute))
+    !text.is_empty()
+        && !text
+            .chars()
+            .any(|character| is_forbidden(character, NameKind::Attribute))
 }
 
 /** Whether a local name (one with no prefix to split off) is valid for its kind. */
@@ -160,7 +165,9 @@ fn split_qualified(qualified: &str, kind: NameKind) -> Result<QName, NameError> 
         }),
         Some((prefix, local))
             if !prefix.is_empty()
-                && !prefix.chars().any(|character| is_forbidden(character, kind))
+                && !prefix
+                    .chars()
+                    .any(|character| is_forbidden(character, kind))
                 && local_is_valid(local, kind) =>
         {
             Ok(QName {

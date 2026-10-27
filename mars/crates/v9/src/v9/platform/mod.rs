@@ -19,14 +19,16 @@ pub(in crate::v9) mod events;
 mod form_data;
 mod form_submit;
 pub(in crate::v9) mod frames;
-mod xml_frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
 mod implementation;
 mod install;
 mod interfaces;
 mod keyboard;
+mod xml_frames;
 pub(in crate::v9) use keyboard::press_key;
+mod attr;
+mod attr_dom;
 mod namespaces;
 mod net;
 mod nodes;
@@ -39,10 +41,8 @@ mod scrolling;
 mod selector;
 mod sheets;
 mod timers;
-mod token_set;
 mod token_list;
-mod attr;
-mod attr_dom;
+mod token_set;
 mod url_bindings;
 mod url_parser;
 mod window;
@@ -910,6 +910,9 @@ pub(in crate::v9) struct PageState {
     pub frames: BTreeMap<usize, usize>,
     /** Each iframe's contentWindow object. */
     pub frame_windows: BTreeMap<usize, ObjectId>,
+    /** The reverse of `frames`: the iframe a frame document belongs to, so defaultView finds
+    the frame's window without scanning every frame. */
+    pub document_frames: BTreeMap<usize, usize>,
     /** Markup written to an open document, parsed when it closes. */
     pub writes: BTreeMap<usize, String>,
     /** The document a script-made root node belongs to (a doctype or processing instruction

@@ -1,15 +1,13 @@
+use super::attr_dom;
 use super::components;
 /** The DOM scripts see: node wrappers, the document, and Node/Element/HTMLElement members. */
 pub(in crate::v9) use super::html::{parse_detached, serialize};
 use super::implementation::{self, PROCESSING_INSTRUCTION};
+use super::namespaces::{self, ElementNs, HTML_NAMESPACE, NameError, NameKind};
 use super::nodes::{BODY, HEAD, HTML, VIRTUAL_BASE};
-use super::namespaces::{
-    self, ElementNs, NameError, NameKind, HTML_NAMESPACE,
-};
 use super::selector;
 use super::token_list;
 use super::token_set::TokenSet;
-use super::attr_dom;
 use crate::document::InsertPosition;
 use crate::protocol::EngineError;
 use crate::v9::value::{JsString, JsValue, ObjectId};
@@ -138,7 +136,10 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
         return Ok(node);
     }
     if matches!(super::host_data(vm, &value), Some(HostData::Attr(_))) {
-        return Err(vm.dom_exception("HierarchyRequestError", "An attribute cannot be a child node."));
+        return Err(vm.dom_exception(
+            "HierarchyRequestError",
+            "An attribute cannot be a child node.",
+        ));
     }
     Err(vm.type_error("parameter is not of type 'Node'"))
 }
@@ -1020,12 +1021,18 @@ fn owner_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
     if node == DOCUMENT || vm.page.tag(node) == super::frames::DOCUMENT_NODE {
         return Ok(JsValue::Null);
     }
+    let owner = owning_document_id(vm, node);
+    wrap(vm, owner)
+}
+
+/** The document a node belongs to: its tree's document node, else the document recorded for a
+detached root, else the page document. Each step is a map lookup or the ancestor walk. */
+fn owning_document_id(vm: &mut Vm, node: usize) -> usize {
     let root = vm.page.ancestors(node).last().copied().unwrap_or(node);
     if vm.page.tag(root) == super::frames::DOCUMENT_NODE {
-        return wrap(vm, root);
+        return root;
     }
-    let owner = vm.page.state.owners.get(&root).copied().unwrap_or(DOCUMENT);
-    wrap(vm, owner)
+    vm.page.state.owners.get(&root).copied().unwrap_or(DOCUMENT)
 }
 
 /** An attribute a node keeps for its own sake (a doctype's name, a processing instruction's
@@ -1363,7 +1370,9 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "isDefaultNamespace" => {
             let namespace = optional_string_arg(vm, &call, 0)?;
-            Ok(JsValue::Boolean(namespace == lookup_context(vm, node, None)))
+            Ok(JsValue::Boolean(
+                namespace == lookup_context(vm, node, None),
+            ))
         }
         "isEqualNode" => {
             let Some(other) = node_of(vm, &call.arg(0)) else {
@@ -1418,12 +1427,9 @@ fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValu
     let (qualified, record, options) = if namespaced {
         let namespace = optional_string_arg(vm, call, 0)?;
         let qualified = vm.to_text(&call.arg(1))?;
-        let qname = namespaces::validate_and_extract(
-            namespace.as_deref(),
-            &qualified,
-            NameKind::Element,
-        )
-        .map_err(|error| name_error(vm, error))?;
+        let qname =
+            namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Element)
+                .map_err(|error| name_error(vm, error))?;
         let record = ElementNs {
             namespace,
             prefix: qname.prefix,
@@ -2185,7 +2191,11 @@ fn replace_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
  * shadow an index or a member on the chain (`length`, `item`). jQuery 1.x's feature probe reads
  * `div.attributes['onfocusin'].expando` and throws on load without it.
  */
-pub(super) fn named_attributes(vm: &mut Vm, list: ObjectId, named: Vec<(String, ObjectId)>) -> Res<()> {
+pub(super) fn named_attributes(
+    vm: &mut Vm,
+    list: ObjectId,
+    named: Vec<(String, ObjectId)>,
+) -> Res<()> {
     for (name, item) in named {
         let key = Key::from(name.as_str());
         if key.index().is_some() || vm.has_property(list, &key)? {
@@ -2417,12 +2427,9 @@ fn set_namespaced_attribute(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValu
     let namespace = optional_string_arg(vm, call, 0)?;
     let qualified = vm.to_text(&call.arg(1))?;
     let value = vm.to_text(&call.arg(2))?;
-    let qname = namespaces::validate_and_extract(
-        namespace.as_deref(),
-        &qualified,
-        NameKind::Attribute,
-    )
-    .map_err(|error| name_error(vm, error))?;
+    let qname =
+        namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Attribute)
+            .map_err(|error| name_error(vm, error))?;
     vm.page
         .set_namespaced_attribute(node, namespace.as_deref(), &qname, &qualified, &value)
         .map_err(|error| dom_error(vm, error))?;
@@ -2536,7 +2543,10 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
             Ok(JsValue::Boolean(wanted))
         }
-        "getAttributeNode" | "getAttributeNodeNS" | "setAttributeNode" | "setAttributeNodeNS"
+        "getAttributeNode"
+        | "getAttributeNodeNS"
+        | "setAttributeNode"
+        | "setAttributeNodeNS"
         | "removeAttributeNode" => attr_dom::element_attr_method(vm, node, &call),
         "querySelector" | "querySelectorAll" => query(vm, node, &call),
         "getElementsByTagName" => {
@@ -3077,7 +3087,13 @@ fn qualified_name(vm: &mut Vm, node: usize) -> String {
     let tag = vm.page.tag(node);
     // A script-created element's tag is its qualified name, and only HTML elements upper-case it.
     if let Some(record) = vm.page.state.element_ns.get(&node) {
-        return if record.namespace.as_deref() == Some(HTML_NAMESPACE) {
+        // Only an HTML-namespace element in an HTML document upper-cases its name; an XHTML
+        // document keeps the case the script gave.
+        let html_element = record.namespace.as_deref() == Some(HTML_NAMESPACE);
+        let document = owning_document_id(vm, node);
+        let html_document =
+            super::frames::content_type_of(vm, document) == super::frames::HTML_TYPE;
+        return if html_element && html_document {
             tag.to_ascii_uppercase()
         } else {
             tag
@@ -3399,7 +3415,8 @@ fn token_method(
 ) -> Res<(JsValue, bool)> {
     let required = token_list::required_arguments(name);
     if arguments.len() < required {
-        let message = format!("Failed to execute '{name}' on 'DOMTokenList': {required} argument required.");
+        let message =
+            format!("Failed to execute '{name}' on 'DOMTokenList': {required} argument required.");
         return Err(vm.type_error(&message));
     }
     if token_list::MUTATING_METHODS.contains(&name) {
@@ -3419,7 +3436,10 @@ fn token_method(
         // and for-of loops classList, and a TypeError there stopped its rendering.
         "values" | "keys" | "entries" | "forEach" => value(token_iteration(vm, call, name, set)?),
         "supports" => match supported {
-            Some(list) => value(JsValue::Boolean(token_list::is_supported(list, &arguments[0]))),
+            Some(list) => value(JsValue::Boolean(token_list::is_supported(
+                list,
+                &arguments[0],
+            ))),
             None => Err(vm.type_error("DOMTokenList has no supported tokens.")),
         },
         "add" => {

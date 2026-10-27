@@ -178,7 +178,8 @@ fn create_element_in_an_xhtml_document_keeps_the_name_in_the_html_namespace() {
 
 #[test]
 fn create_element_in_an_html_document_still_lowercases_the_name() {
-    let source = "const e=document.createElement('DIV');const r=[e.localName,e.namespaceURI].join('|');";
+    let source =
+        "const e=document.createElement('DIV');const r=[e.localName,e.namespaceURI].join('|');";
     assert_eq!(eval(source, "r"), "div|http://www.w3.org/1999/xhtml");
 }
 

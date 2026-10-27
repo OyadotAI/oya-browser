@@ -158,6 +158,9 @@ pub(in crate::v9) struct Ids {
     pub implementation_prototype: ObjectId,
     /** `document.all`: the one object with [[IsHTMLDDA]], falsy and typeof "undefined". */
     pub document_all: ObjectId,
+    /** The prototype of every frame window: it holds the page's interface constructors and
+    DOMException, so a frame's window reaches them without a copy per frame. */
+    pub window_interfaces: ObjectId,
     pub event_prototype: ObjectId,
     pub custom_event_prototype: ObjectId,
     pub style_prototype: ObjectId,
@@ -465,6 +468,17 @@ pub(in crate::v9) fn string(text: &str) -> JsValue {
     JsValue::String(JsString::from_utf8(text).expect("builtin text fits"))
 }
 
+/** Gathers every global the builder exposed onto one object, the prototype of frame windows. It runs
+after all installs, so it sees every interface; each frame window then reaches the constructors
+through its prototype chain in O(1), and nothing is copied per frame. */
+fn install_window_interfaces(builder: &mut Builder) {
+    let interfaces = builder.object(Some(builder.ids.object_prototype));
+    for (name, value) in builder.globals.clone() {
+        builder.value(interfaces, name, value, HIDDEN_ATTRS);
+    }
+    builder.ids.window_interfaces = interfaces;
+}
+
 /** Build every intrinsic. */
 fn build() -> Realm {
     let mut builder = Builder {
@@ -478,6 +492,7 @@ fn build() -> Realm {
     let shell_globals = builder.globals.clone();
     super::super::platform::install(&mut builder);
     super::super::modules::install(&mut builder);
+    install_window_interfaces(&mut builder);
     Realm {
         objects: builder.objects,
         natives: builder.natives,

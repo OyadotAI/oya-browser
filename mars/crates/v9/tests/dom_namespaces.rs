@@ -53,7 +53,10 @@ fn create_element_ns_sets_namespace_prefix_and_local_name() {
         "const e=document.createElementNS('{SVG}','svg:rect');\
          const r=[e.namespaceURI,e.prefix,e.localName,e.tagName,e.nodeName].join('|');"
     );
-    assert_eq!(eval(&source, "r"), format!("{SVG}|svg|rect|svg:rect|svg:rect"));
+    assert_eq!(
+        eval(&source, "r"),
+        format!("{SVG}|svg|rect|svg:rect|svg:rect")
+    );
 }
 
 #[test]
@@ -74,7 +77,10 @@ fn create_element_ns_puts_an_html_name_in_the_html_namespace_upper_cased() {
 
 #[test]
 fn create_element_ns_refuses_a_name_that_starts_with_a_digit() {
-    let source = format!("const r={};", outcome(&format!("document.createElementNS(null,'1foo')")));
+    let source = format!(
+        "const r={};",
+        outcome(&format!("document.createElementNS(null,'1foo')"))
+    );
     assert_eq!(eval(&source, "r"), "InvalidCharacterError");
 }
 
@@ -93,7 +99,10 @@ fn create_element_ns_accepts_a_name_with_non_ascii_and_brace_characters() {
 
 #[test]
 fn create_element_ns_refuses_a_prefix_without_a_namespace() {
-    let source = format!("const r={};", outcome("document.createElementNS(null,'f:oo')"));
+    let source = format!(
+        "const r={};",
+        outcome("document.createElementNS(null,'f:oo')")
+    );
     assert_eq!(eval(&source, "r"), "NamespaceError");
 }
 
