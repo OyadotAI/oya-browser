@@ -191,6 +191,7 @@ impl Ids {
             html_element_prototype: shift(self.html_element_prototype, amount),
             text_prototype: shift(self.text_prototype, amount),
             document_prototype: shift(self.document_prototype, amount),
+            xml_document_prototype: shift(self.xml_document_prototype, amount),
             document: shift(self.document, amount),
             document_all: shift(self.document_all, amount),
             event_prototype: shift(self.event_prototype, amount),

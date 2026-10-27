@@ -110,3 +110,95 @@ fn processing_instruction_refuses_a_bad_target_or_close_in_data() {
         "InvalidCharacterError|InvalidCharacterError|InvalidCharacterError"
     );
 }
+
+#[test]
+fn create_document_returns_an_xml_document_with_xmldocument_prototype() {
+    let source = "const d=document.implementation.createDocument(null,'a',null);\
+        const r=[Object.getPrototypeOf(d)===XMLDocument.prototype, d instanceof Document, d instanceof XMLDocument].join('|');";
+    assert_eq!(eval(source, "r"), "true|true|true");
+}
+
+#[test]
+fn create_document_media_type_follows_its_namespace() {
+    let source = "const t=[[null,'a'],['http://www.w3.org/1999/xhtml','html'],['http://www.w3.org/2000/svg','svg'],['http://example.com/','a']]\
+        .map(([n,q])=>document.implementation.createDocument(n,q,null).contentType).join('|');";
+    assert_eq!(
+        eval(source, "t"),
+        "application/xml|application/xhtml+xml|image/svg+xml|application/xml"
+    );
+}
+
+#[test]
+fn create_document_has_no_location_and_an_about_blank_url() {
+    let source = "const d=document.implementation.createDocument(null,'a',null);\
+        const r=[d.location===null,d.URL,d.documentURI].join('|');";
+    assert_eq!(eval(source, "r"), "true|about:blank|about:blank");
+}
+
+#[test]
+fn create_document_root_keeps_its_namespace() {
+    let source = "const d=document.implementation.createDocument('http://example.com/','p:a',null);\
+        const e=d.documentElement;const r=[e.namespaceURI,e.prefix,e.localName].join('|');";
+    assert_eq!(eval(source, "r"), "http://example.com/|p|a");
+}
+
+#[test]
+fn create_document_rejects_a_name_the_namespace_rules_refuse() {
+    let source = "const r=['1foo','f:oo'].map(q=>{try{document.implementation.createDocument(null,q,null);return 'ok'}catch(e){return e.name}}).join('|');";
+    assert_eq!(eval(source, "r"), "InvalidCharacterError|NamespaceError");
+}
+
+#[test]
+fn new_document_is_a_document_that_reports_application_xml() {
+    let source = "const d=new Document();\
+        const r=[Object.getPrototypeOf(d)===Document.prototype,d instanceof XMLDocument,d.contentType].join('|');";
+    assert_eq!(eval(source, "r"), "true|false|application/xml");
+}
+
+#[test]
+fn script_made_html_document_still_reports_text_html() {
+    let source = "const d=document.implementation.createHTMLDocument('');\
+        const r=[d.contentType,document.contentType].join('|');";
+    assert_eq!(eval(source, "r"), "text/html|text/html");
+}
+
+#[test]
+fn create_element_in_an_xml_document_keeps_the_name_in_the_null_namespace() {
+    let source = "const d=document.implementation.createDocument(null,'a',null);\
+        const e=d.createElement('DIV');const r=[e.localName,String(e.namespaceURI)].join('|');";
+    assert_eq!(eval(source, "r"), "DIV|null");
+}
+
+#[test]
+fn create_element_in_an_xhtml_document_keeps_the_name_in_the_html_namespace() {
+    let source = "const d=document.implementation.createDocument('http://www.w3.org/1999/xhtml','html',null);\
+        const e=d.createElement('DIV');const r=[e.localName,e.namespaceURI].join('|');";
+    assert_eq!(eval(source, "r"), "DIV|http://www.w3.org/1999/xhtml");
+}
+
+#[test]
+fn create_element_in_an_html_document_still_lowercases_the_name() {
+    let source = "const e=document.createElement('DIV');const r=[e.localName,e.namespaceURI].join('|');";
+    assert_eq!(eval(source, "r"), "div|http://www.w3.org/1999/xhtml");
+}
+
+#[test]
+fn create_element_in_an_xml_document_is_a_plain_element() {
+    let source = "const d=document.implementation.createDocument(null,'a',null);\
+        const e=d.createElement('a');const r=[e instanceof Element,Object.getPrototypeOf(e)===Element.prototype].join('|');";
+    assert_eq!(eval(source, "r"), "true|true");
+}
+
+#[test]
+fn create_document_treats_an_undefined_qualified_name_as_the_text_undefined() {
+    let source = "const d=document.implementation.createDocument(undefined,undefined,null);\
+        const r=[d.documentElement.localName,d.documentElement.namespaceURI===null].join('|');";
+    assert_eq!(eval(source, "r"), "undefined|true");
+}
+
+#[test]
+fn create_document_treats_a_null_qualified_name_as_no_root_element() {
+    let source = "const d=document.implementation.createDocument(null,null,null);\
+        const r=String(d.documentElement);";
+    assert_eq!(eval(source, "r"), "null");
+}

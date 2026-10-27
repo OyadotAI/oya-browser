@@ -880,6 +880,9 @@ pub(in crate::v9) struct PageState {
     from DOMImplementation or createProcessingInstruction), for ownerDocument. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub owners: BTreeMap<usize, usize>,
+    /** The media type of each script-made document that is not text/html (XML documents). */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub content_types: BTreeMap<usize, String>,
     /** Each script-made document's DOMImplementation object, by the implementation. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub implementations: BTreeMap<ObjectId, usize>,

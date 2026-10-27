@@ -71,7 +71,7 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
         super::frames::DOCTYPE => super::frames::doctype_prototype().unwrap_or(ids.node_prototype),
         components::FRAGMENT => components::ids().fragment,
         components::SHADOW_ROOT => components::ids().shadow_root,
-        _ => super::interfaces::prototype_for(&tag).unwrap_or(ids.html_element_prototype),
+        _ => element_prototype_for(vm, node, &tag),
     };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Node(node))),
@@ -79,6 +79,39 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
     ))?;
     vm.page.state.wrappers.insert(node, id);
     Ok(JsValue::Object(id))
+}
+
+/** The prototype of an element wrapper: an element in the null namespace (made by an XML document
+or createElementNS(null, ...)) is a plain Element, whatever its name; any other takes its interface
+from its tag, as HTML and SVG do. */
+fn element_prototype_for(vm: &Vm, node: usize, tag: &str) -> u32 {
+    let ids = &realm().ids;
+    let null_namespace = vm
+        .page
+        .state
+        .element_ns
+        .get(&node)
+        .is_some_and(|record| record.namespace.is_none());
+    if null_namespace {
+        return ids.element_prototype;
+    }
+    super::interfaces::prototype_for(tag).unwrap_or(ids.html_element_prototype)
+}
+
+/** An element in the null namespace is a plain Element. Its wrapper was made before the namespace
+was recorded, so it is relinked here; a custom element keeps its class, which the wrapper got first. */
+fn relink_null_namespace(vm: &mut Vm, node: usize) -> Res<()> {
+    let null_namespace = vm
+        .page
+        .state
+        .element_ns
+        .get(&node)
+        .is_some_and(|record| record.namespace.is_none());
+    let wrapper = vm.page.state.wrappers.get(&node).copied();
+    if let (true, Some(id)) = (null_namespace, wrapper) {
+        vm.set_proto(id, Some(realm().ids.element_prototype))?;
+    }
+    Ok(())
 }
 
 /** The node a value wraps. */
@@ -1362,6 +1395,24 @@ fn lookup_context(vm: &mut Vm, node: usize, prefix: Option<&str>) -> Option<Stri
 /** createElement and createElementNS. createElement lowercases the name and puts it in the HTML
 namespace; createElementNS validates and extracts the namespace and qualified name. Either way
 the element's namespace record is kept, so its namespaceURI and tagName are the DOM's. */
+/** How createElement treats its name and namespace on the document it is called on, per the DOM:
+an HTML document lowercases the name and uses the HTML namespace, an XHTML document keeps the name
+and uses the HTML namespace, and any other XML document keeps the name in the null namespace. */
+fn create_element_rules(vm: &Vm, call: &Call) -> (bool, Option<&'static str>) {
+    let media = match node_of(vm, &call.this) {
+        Some(document) => super::frames::content_type_of(vm, document),
+        None => super::frames::HTML_TYPE.to_string(),
+    };
+    match media.as_str() {
+        super::frames::HTML_TYPE => (true, Some(HTML_NAMESPACE)),
+        super::frames::XHTML_TYPE => (false, Some(HTML_NAMESPACE)),
+        _ => (false, None),
+    }
+}
+
+/** createElement and createElementNS. createElement lowercases the name and puts it in the HTML
+namespace; createElementNS validates and extracts the namespace and qualified name. Either way
+the element's namespace record is kept, so its namespaceURI and tagName are the DOM's. */
 fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValue> {
     let (qualified, record, options) = if namespaced {
         let namespace = optional_string_arg(vm, call, 0)?;
@@ -1379,11 +1430,17 @@ fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValu
         };
         (qualified, record, call.arg(2))
     } else {
-        let qualified = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+        let (lowercase, namespace) = create_element_rules(vm, call);
+        let given = vm.to_text(&call.arg(0))?;
+        let qualified = if lowercase {
+            given.to_ascii_lowercase()
+        } else {
+            given
+        };
         namespaces::validate_local_name(&qualified, NameKind::Element)
             .map_err(|error| name_error(vm, error))?;
         let record = ElementNs {
-            namespace: Some(HTML_NAMESPACE.to_string()),
+            namespace: namespace.map(str::to_string),
             prefix: None,
             local: qualified.clone(),
         };
@@ -1392,6 +1449,7 @@ fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValu
     let value = components::create_element(vm, &qualified, &options)?;
     if let Some(node) = node_of(vm, &value) {
         vm.page.set_element_namespace(node, record);
+        relink_null_namespace(vm, node)?;
     }
     Ok(value)
 }
@@ -2943,6 +3001,7 @@ pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&title).map_err(Into::into)
         }
         "URL" | "documentURI" => JsValue::string(&vm.page.state.href).map_err(Into::into),
+        "contentType" => JsValue::string(super::frames::HTML_TYPE).map_err(Into::into),
         "referrer" => JsValue::string(&vm.page.environment.referrer).map_err(Into::into),
         "domain" => {
             let host = super::net::parse_url(&vm.page.state.href)

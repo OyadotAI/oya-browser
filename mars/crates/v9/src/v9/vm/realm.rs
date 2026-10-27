@@ -150,6 +150,8 @@ pub(in crate::v9) struct Ids {
     pub html_element_prototype: ObjectId,
     pub text_prototype: ObjectId,
     pub document_prototype: ObjectId,
+    /** XMLDocument.prototype: the prototype of documents createDocument makes, an XML document. */
+    pub xml_document_prototype: ObjectId,
     pub document: ObjectId,
     /** The page's `document.implementation`, and the prototype script-made ones share. */
     pub implementation: ObjectId,

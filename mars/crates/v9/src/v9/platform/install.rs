@@ -267,6 +267,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
 fn document(b: &mut Builder, node: u32) {
     let proto = b.object(Some(node));
     b.ids.document_prototype = proto;
+    b.ids.xml_document_prototype = b.object(Some(proto));
     getters(
         b,
         proto,
@@ -310,8 +311,8 @@ fn document(b: &mut Builder, node: u32) {
     for name in ["characterSet", "charset", "inputEncoding"] {
         b.getter(proto, name, dom::document_get);
     }
+    b.getter(proto, "contentType", dom::document_get);
     for (name, value) in [
-        ("contentType", "text/html"),
         ("compatMode", "CSS1Compat"),
         ("visibilityState", "visible"),
         ("designMode", "off"),
@@ -381,7 +382,7 @@ fn document(b: &mut Builder, node: u32) {
         ))
     });
     b.getter(proto, "defaultView", window::window_get);
-    b.getter(proto, "location", window::window_get);
+    b.getter(proto, "location", super::frames::location_get);
 }
 
 /** document.fonts: a FontFaceSet with nothing to load. V9 renders no text, so every font is
@@ -1126,6 +1127,7 @@ fn global_object(b: &mut Builder) {
         "Text",
         "Comment",
         "Document",
+        "XMLDocument",
         "HTMLDocument",
         "Window",
         "NodeList",
@@ -1148,6 +1150,7 @@ fn global_object(b: &mut Builder) {
             "Element" => b.ids.element_prototype,
             "Text" | "Comment" | "CharacterData" => b.ids.text_prototype,
             "Document" | "HTMLDocument" => b.ids.document_prototype,
+            "XMLDocument" => b.ids.xml_document_prototype,
             "Window" => proto,
             "NodeList" | "HTMLCollection" => b.ids.node_list_prototype,
             "CSSStyleDeclaration" => b.ids.style_prototype,

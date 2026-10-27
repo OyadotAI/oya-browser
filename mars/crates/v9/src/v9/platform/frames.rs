@@ -87,6 +87,12 @@ fn doctype_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The wrapper of a document node: Document.prototype over `HostData::Document`. */
 pub(super) fn wrap_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
+    wrap_document_as(vm, node, realm().ids.document_prototype)
+}
+
+/** A document's wrapper object over `proto`: Document for HTML documents, XMLDocument for the
+documents createDocument makes. A node keeps the wrapper it was first given. */
+pub(super) fn wrap_document_as(vm: &mut Vm, node: usize, proto: u32) -> Res<JsValue> {
     if let Some(id) = vm.page.state.wrappers.get(&node)
         && vm.heap.get(*id).is_some()
     {
@@ -94,10 +100,36 @@ pub(super) fn wrap_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
     }
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Document(node))),
-        Some(realm().ids.document_prototype),
+        Some(proto),
     ))?;
     vm.page.state.wrappers.insert(node, id);
     Ok(JsValue::Object(id))
+}
+
+/** The media type a script-made document reports: the one its creator recorded, else text/html. */
+pub(super) fn content_type_of(vm: &Vm, document: usize) -> String {
+    vm.page
+        .state
+        .content_types
+        .get(&document)
+        .map_or_else(|| HTML_TYPE.to_string(), String::clone)
+}
+
+/** Record the media type of a script-made document that is not HTML (XML documents). */
+pub(super) fn set_content_type(vm: &mut Vm, document: usize, media_type: &str) {
+    vm.page
+        .state
+        .content_types
+        .insert(document, media_type.to_string());
+}
+
+/** `document.location` of a script-made or frame document: null, since it has no browsing
+context of its own. The page's document keeps the window's location. */
+pub(super) fn location_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    match super::host_data(vm, &call.this) {
+        Some(HostData::Document(_)) => Ok(JsValue::Null),
+        _ => super::window::window_get(vm, call),
+    }
 }
 
 /** A new detached node of `tag`, as a script error on failure. */
@@ -227,6 +259,17 @@ fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
     Ok(JsValue::Object(id))
 }
 
+/** The media type of an HTML document, which the page and every HTML document report. */
+pub(super) const HTML_TYPE: &str = "text/html";
+/** The media type of an XHTML document, which createDocument gives the HTML namespace. */
+pub(super) const XHTML_TYPE: &str = "application/xhtml+xml";
+/** The media type of an SVG document, which createDocument gives the SVG namespace. */
+pub(super) const SVG_TYPE: &str = "image/svg+xml";
+/** The media type of every other XML document: a new Document and the rest of createDocument. */
+pub(super) const XML_TYPE: &str = "application/xml";
+/** The URL of a document with no address of its own: script-made and frame documents. */
+pub(super) const ABOUT_BLANK: &str = "about:blank";
+
 /** The document's element child and the html child named `tag` (head or body). */
 pub(super) fn document_part(vm: &mut Vm, document: usize, tag: &str) -> Option<usize> {
     let root = vm
@@ -257,6 +300,8 @@ pub(super) fn document_get(vm: &mut Vm, document: usize, call: Call) -> Res<JsVa
         "childNodes" | "firstChild" | "lastChild" => dom::node_get(vm, call),
         "children" | "firstElementChild" | "lastElementChild" => dom::element_get(vm, call),
         "readyState" => JsValue::string("complete").map_err(Into::into),
+        "contentType" => JsValue::string(&content_type_of(vm, document)).map_err(Into::into),
+        "URL" | "documentURI" => JsValue::string(ABOUT_BLANK).map_err(Into::into),
         "title" => {
             let title = dom::search(vm, document, |page, id| page.tag(id) == "title");
             let text = title
