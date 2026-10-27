@@ -181,9 +181,14 @@ pub(in crate::v9) fn node_list(vm: &mut Vm, nodes: Vec<usize>) -> Res<JsValue> {
 
 /** A live list of a node's children (or element children). */
 fn live_children(vm: &mut Vm, node: usize, elements: bool) -> Res<JsValue> {
+    let prototype = if elements {
+        realm().ids.html_collection_prototype
+    } else {
+        realm().ids.node_list_prototype
+    };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Children(node, elements))),
-        Some(realm().ids.node_list_prototype),
+        Some(prototype),
     ))?;
     Ok(JsValue::Object(id))
 }
