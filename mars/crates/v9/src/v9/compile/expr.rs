@@ -100,12 +100,14 @@ impl Compiler {
                 if spreads(args) {
                     self.spread_array(args)?;
                     self.at(expr.pos);
+                    self.name_callee(callee);
                     self.emit(Op::NewSpread);
                 } else {
                     for arg in args {
                         self.element_value(arg)?;
                     }
                     self.at(expr.pos);
+                    self.name_callee(callee);
                     self.emit(Op::New(count(args)?));
                 }
             }
@@ -335,15 +337,25 @@ impl Compiler {
         if spreads(args) {
             self.spread_array(args)?;
             self.at(pos);
+            self.name_callee(callee);
             self.emit(Op::CallSpread);
         } else {
             for arg in args {
                 self.element_value(arg)?;
             }
             self.at(pos);
+            self.name_callee(callee);
             self.emit(Op::Call(count(args)?));
         }
         Ok(())
+    }
+    /** Remember the callee's written name for the call instruction emitted next, so a call of a
+     * non-function can name it as V8 does. Callees without a written name keep the generic text. */
+    fn name_callee(&mut self, callee: &Expr) {
+        if let Some(label) = callee_label(callee) {
+            let pc = self.here() as u32;
+            self.f().callees.push((pc, label.into()));
+        }
     }
     /** `super(...)` binds `this`. */
     fn super_call(&mut self, args: &[Element], pos: Pos) -> EngineResult<()> {
@@ -964,5 +976,19 @@ fn logical(operator: LogicalOp) -> Op {
         LogicalOp::And => Op::JumpIfFalseKeep(0),
         LogicalOp::Or => Op::JumpIfTrueKeep(0),
         LogicalOp::Nullish => Op::JumpIfNotNullishKeep(0),
+    }
+}
+/** The callee as V8 prints it in "is not a function": identifiers, `this`, member chains and
+ * calls. Computed and private keys have no written name here, so they keep the generic text. */
+fn callee_label(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Ident(name) => Some(name.to_string()),
+        ExprKind::This => Some("this".into()),
+        ExprKind::Chain(inner) => callee_label(inner),
+        ExprKind::Member(object, MemberProp::Name(name), _) => {
+            Some(format!("{}.{name}", callee_label(object)?))
+        }
+        ExprKind::Call(callee, _, _) => Some(format!("{}(...)", callee_label(callee)?)),
+        _ => None,
     }
 }

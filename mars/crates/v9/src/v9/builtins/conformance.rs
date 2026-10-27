@@ -96,6 +96,13 @@ pub(in crate::v9) fn is_test_exit(error: &crate::protocol::EngineError) -> bool 
     error.code == EXIT_CODE || reporting::is_failed_exit(error)
 }
 
+/** Host natives are API entries in V8 terms, so their frames follow the shell flag rather than builtin rules. */
+pub(in crate::v9) fn mark_host_api(natives: &mut [crate::v9::vm::realm::NativeDef]) {
+    for native in natives {
+        native.host = true;
+    }
+}
+
 /** Only real fixture operations are installed; absent d8 capabilities remain absent. */
 pub(super) fn install(builder: &mut Builder) {
     realms::install(builder);

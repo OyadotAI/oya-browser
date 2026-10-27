@@ -201,10 +201,7 @@ fn define_or_throw(vm: &mut Vm, id: ObjectId, name: Key, desc: Descriptor) -> Re
     if vm.define(id, name.clone(), desc)? {
         return Ok(());
     }
-    Err(vm.type_error(&format!(
-        "Cannot redefine property: {}",
-        crate::v9::vm::property::key_text(&name)
-    )))
+    Err(vm.refused_define(id, &name))
 }
 
 /** Object.defineProperty. */
@@ -426,10 +423,7 @@ fn restrict_generic(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
             desc.writable = Some(false);
         }
         if !vm.define(id, property.clone(), desc)? {
-            return Err(vm.type_error(&format!(
-                "Cannot redefine property: {}",
-                crate::v9::vm::property::key_text(&property)
-            )));
+            return Err(vm.refused_define(id, &property));
         }
     }
     Ok(())
@@ -694,10 +688,7 @@ fn define_getter(vm: &mut Vm, call: Call) -> Res<JsValue> {
         },
     )?;
     if !defined {
-        return Err(vm.type_error(&format!(
-            "Cannot redefine property: {}",
-            crate::v9::vm::property::key_text(&property)
-        )));
+        return Err(vm.refused_define(id, &property));
     }
     Ok(JsValue::Undefined)
 }
@@ -724,10 +715,7 @@ fn define_setter(vm: &mut Vm, call: Call) -> Res<JsValue> {
         },
     )?;
     if !defined {
-        return Err(vm.type_error(&format!(
-            "Cannot redefine property: {}",
-            crate::v9::vm::property::key_text(&property)
-        )));
+        return Err(vm.refused_define(id, &property));
     }
     Ok(JsValue::Undefined)
 }

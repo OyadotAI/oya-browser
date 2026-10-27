@@ -9,6 +9,14 @@ use super::{Call, Exit, Frame, Res, Resume, Thrown, Vm};
 use crate::protocol::EngineError;
 use crate::v9::value::{JsValue, ObjectId};
 
+/** Natives that forward to another callable without a stack frame of their own in V8. */
+const TRANSPARENT_FORWARDERS: &[&str] = &["call", "apply"];
+
+/** Unnamed natives are internal entries (Wasm exports and imports) that V8 reports as Wasm frames, not builtins. */
+fn is_transparent_native(name: &str) -> bool {
+    name.is_empty() || TRANSPARENT_FORWARDERS.contains(&name)
+}
+
 /** The outcome of starting a call from the interpreter loop. */
 pub(in crate::v9) enum Invoked {
     /** The call finished and produced a value. */
@@ -307,15 +315,28 @@ impl Vm<'_> {
         // A native that calls a native (apply.apply, bind chains through call) recurses in Rust
         // without pushing a frame, so it counts against the call depth here.
         self.native_depth += 1;
-        let result = (def.function)(
-            self,
-            Call {
-                this,
-                args,
-                new_target,
-                callee,
-            },
-        );
+        // Every builtin is a real stack frame in V8's traces, so each entry records its activation.
+        let construct = new_target.is_some();
+        let receiver = this.clone();
+        let run = move |vm: &mut Self| {
+            (def.function)(
+                vm,
+                Call {
+                    this,
+                    args,
+                    new_target,
+                    callee,
+                },
+            )
+        };
+        // Forwarders run no frame of their own; V8 shows only the function they forward to.
+        let result = if is_transparent_native(def.name) {
+            run(self)
+        } else if def.host {
+            self.with_api_activation(callee, receiver, run)
+        } else {
+            self.with_builtin_activation(callee, receiver, construct, run)
+        };
         self.native_depth -= 1;
         self.pinning = pinning;
         self.pins.truncate(mark);
@@ -386,10 +407,15 @@ impl Vm<'_> {
             resume: Resume::Next,
             code,
         };
-        if construct.is_some() && !flags.derived {
-            self.run_fields(&function, &this)?;
-        }
         self.frames.push(frame);
+        // A base constructor's field initializers run inside its own frame, as V8 traces them.
+        if construct.is_some()
+            && !flags.derived
+            && let Err(error) = self.run_fields(&function, &this)
+        {
+            self.frames.pop();
+            return Err(error);
+        }
         if flags.asynchronous && !flags.generator {
             return self.start_async().map(Invoked::Value);
         }

@@ -69,7 +69,19 @@ impl Vm<'_> {
     }
     /** Keep the activations an error was made in, hidden on it, for its `stack` property. */
     pub fn record_trace(&mut self, id: ObjectId) -> Result<(), EngineError> {
-        self.record_structured_trace(id)?;
+        self.record_trace_with(id, false)
+    }
+    /** A native that records its own error is the youngest frame of that capture, which V8 never shows. */
+    pub fn record_builtin_trace(&mut self, id: ObjectId) -> Result<(), EngineError> {
+        self.record_trace_with(id, true)
+    }
+    /** Shared capture: `hide_top_builtin` drops the recording builtin before the frame limit applies. */
+    fn record_trace_with(
+        &mut self,
+        id: ObjectId,
+        hide_top_builtin: bool,
+    ) -> Result<(), EngineError> {
+        self.record_structured_trace(id, hide_top_builtin)?;
         let trace = self.throw_trace().join("\n");
         self.heap.put(
             id,

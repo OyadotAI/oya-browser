@@ -771,6 +771,15 @@ fn key_name(key: &PropKey) -> String {
     }
 }
 
+/** Only the class's own field and static initializers carry V8's synthetic frame names. */
+fn initializer_name(tag: u32) -> &'static str {
+    match tag {
+        SITE_FIELDS => INSTANCE_INITIALIZER_NAME,
+        SITE_STATICS => STATIC_INITIALIZER_NAME,
+        _ => "",
+    }
+}
+
 /** A synthesized class initializer running field definitions and static blocks in order. */
 fn initializer(pos: Pos, tag: u32, body: Vec<Stmt>) -> Option<Rc<Func>> {
     if body.is_empty() {
@@ -780,7 +789,7 @@ fn initializer(pos: Pos, tag: u32, body: Vec<Stmt>) -> Option<Rc<Func>> {
         source_span: RefCell::new(None),
         site: site(pos, tag),
         name: None,
-        display: RefCell::new(Name::from("")),
+        display: RefCell::new(Name::from(initializer_name(tag))),
         params: Vec::new(),
         rest: None,
         body: Body::Block(body),

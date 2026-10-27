@@ -15,6 +15,10 @@ use crate::v9::vm::{Call, Res, Vm};
 use std::collections::BTreeMap;
 
 mod bound;
+#[cfg(feature = "conformance")]
+mod break_cursor;
+#[cfg(feature = "conformance")]
+mod break_iterator;
 mod date_receiver;
 mod decimal;
 mod display_names;
@@ -23,6 +27,7 @@ mod locale;
 pub(in crate::v9) use locale::canonical_list;
 mod locale_info;
 mod number_format;
+mod segmentation;
 mod tag;
 
 /** The formatter kinds, each a constructor on `Intl`. */
@@ -81,7 +86,7 @@ const ONE_ARGUMENT: u32 = 1;
 /** Two arguments. */
 const TWO_ARGUMENTS: u32 = 2;
 /** The locale every formatter resolves to. */
-const LOCALE: &str = "en-US";
+pub(super) const LOCALE: &str = "en-US";
 /** Fraction digits a plain number keeps at most. */
 const DEFAULT_FRACTION_DIGITS: usize = 3;
 /** Fraction digits a currency amount keeps. */
@@ -136,6 +141,8 @@ pub(super) fn install(b: &mut Builder) {
     display_names::install(b, intl);
     number_format::install(b, intl);
     to_string_tag(b, intl, "Intl");
+    #[cfg(feature = "conformance")]
+    break_iterator::install(b, intl);
     for kind in KINDS {
         if kind == "NumberFormat" || kind == "PluralRules" {
             continue;
@@ -234,7 +241,7 @@ fn supported_values(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** `supportedLocalesOf(locales)`: every requested tag, since all format as English. */
-fn supported_locales(vm: &mut Vm, call: Call) -> Res<JsValue> {
+pub(super) fn supported_locales(vm: &mut Vm, call: Call) -> Res<JsValue> {
     canonical_locales(vm, call)
 }
 
@@ -259,6 +266,28 @@ fn locale_list(vm: &mut Vm, value: &JsValue) -> Res<Vec<String>> {
     }
 }
 
+/** One constructor option as text. A timeZone must name a zone, so `0` or `true` throws a
+ * RangeError as V8 does instead of formatting in an unknown zone. */
+fn option_text(vm: &mut Vm, name: &str, value: &JsValue) -> Res<String> {
+    let text = vm.to_text(value)?;
+    if name == "timeZone" && !plausible_time_zone(&text) {
+        return Err(vm.range_error(&format!("Invalid time zone specified: {text}")));
+    }
+    Ok(text)
+}
+
+/** Whether a timeZone names something Mars can format: UTC, a fixed offset, or an `Area/Location`
+ * identifier. Mars has no zone database, so the location part is not checked.
+ * ponytail: no tz database; unknown Area/Location names format as local time. Add the database
+ * when Intl must reject a misspelt zone. */
+fn plausible_time_zone(name: &str) -> bool {
+    name.eq_ignore_ascii_case("UTC")
+        || name.starts_with(['+', '-'])
+        || name
+            .split_once('/')
+            .is_some_and(|(area, _)| area.starts_with(|c: char| c.is_ascii_alphabetic()))
+}
+
 /** `new Intl.X(locales, options)`, also callable without `new`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     // The constructor's own `name` says which formatter this is; natives on constructors have
@@ -276,7 +305,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         for name in OPTIONS {
             let value = vm.get(&init, &Key::from(name))?;
             if value != JsValue::Undefined {
-                options.insert(name.to_string(), vm.to_text(&value)?);
+                options.insert(name.to_string(), option_text(vm, name, &value)?);
             }
         }
     }
@@ -698,64 +727,15 @@ fn segments(vm: &mut Vm, input: &str, options: &BTreeMap<String, String>) -> Res
     let granularity = options
         .get("granularity")
         .map_or("grapheme", String::as_str);
-    let mut pieces: Vec<(usize, String, bool)> = Vec::new();
-    match granularity {
-        "word" => {
-            let mut run = String::new();
-            let mut start = 0;
-            for (index, c) in input.char_indices() {
-                let wordy = c.is_alphanumeric() || c == '\'';
-                let run_wordy = run
-                    .chars()
-                    .next()
-                    .is_some_and(|first| first.is_alphanumeric());
-                if !run.is_empty() && (!wordy || !run_wordy) {
-                    pieces.push((start, std::mem::take(&mut run), run_wordy));
-                }
-                if run.is_empty() {
-                    start = index;
-                }
-                run.push(c);
-            }
-            if !run.is_empty() {
-                let wordy = run
-                    .chars()
-                    .next()
-                    .is_some_and(|first| first.is_alphanumeric());
-                pieces.push((start, run, wordy));
-            }
-        }
-        "sentence" => {
-            let mut start = 0;
-            for (index, c) in input.char_indices() {
-                if matches!(c, '.' | '!' | '?') {
-                    let end = index + c.len_utf8();
-                    pieces.push((start, input[start..end].into(), false));
-                    start = end;
-                }
-            }
-            if start < input.len() {
-                pieces.push((start, input[start..].into(), false));
-            }
-        }
-        _ => {
-            for (index, c) in input.char_indices() {
-                pieces.push((index, c.to_string(), false));
-            }
-        }
-    }
+    let pieces = segmentation::split(input, granularity);
     let mut out = Vec::with_capacity(pieces.len());
-    for (index, segment, wordy) in pieces {
+    for piece in pieces {
         let id = vm.new_object()?;
-        vm.put(id, "segment", JsValue::string(&segment)?)?;
-        vm.put(
-            id,
-            "index",
-            JsValue::Number(input[..index].encode_utf16().count() as f64),
-        )?;
+        vm.put(id, "segment", JsValue::string(&piece.text)?)?;
+        vm.put(id, "index", JsValue::Number(piece.start as f64))?;
         vm.put(id, "input", JsValue::string(input)?)?;
         if granularity == "word" {
-            vm.put(id, "isWordLike", JsValue::Boolean(wordy))?;
+            vm.put(id, "isWordLike", JsValue::Boolean(piece.wordy))?;
         }
         out.push(JsValue::Object(id));
     }

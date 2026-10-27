@@ -9,7 +9,7 @@ use crate::v9::value::{JsString, JsValue, ObjectId};
 
 impl Vm<'_> {
     /** An ordinary unmodified own name has no observable getter or proxy trap to execute. */
-    fn ordinary_name_snapshot(&self, id: ObjectId) -> Option<FunctionName> {
+    pub(in crate::v9) fn ordinary_name_snapshot(&self, id: ObjectId) -> Option<FunctionName> {
         let key = Key::from("name");
         if let Some(object) = self.heap.get(id) {
             if object.props.get(&key).is_some() || self.virtual_deleted(id, &key) {

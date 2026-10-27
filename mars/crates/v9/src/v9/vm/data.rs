@@ -635,6 +635,9 @@ pub(in crate::v9) enum HostData {
     Selection(Vec<JsValue>),
     /** An Intl formatter: its kind, locale and the options it was built with. */
     Intl(Box<IntlData>),
+    /** A conformance-only Intl.v8BreakIterator: its segmentation and cursor. */
+    #[cfg(feature = "conformance")]
+    BreakIterator(Box<BreakIteratorData>),
     /** A CSSStyleSheet: the style or stylesheet link element it belongs to. */
     StyleSheet(usize),
     /** A DOMTokenList over an attribute other than `class` (`sandbox`, `rel`, `part`). */
@@ -650,6 +653,39 @@ pub(in crate::v9) struct IntlData {
     pub kind: String,
     pub locale: String,
     pub options: std::collections::BTreeMap<String, String>,
+}
+
+/** The type ICU reports for the segment a conformance break iterator last passed. */
+#[cfg(feature = "conformance")]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub(in crate::v9) enum BreakType {
+    /** Punctuation, spaces, or any segment that is not a word. */
+    None,
+    /** Digits. */
+    Number,
+    /** Letters without a script of their own here. */
+    Letter,
+    /** Hiragana or katakana. */
+    Kana,
+    /** CJK ideographs. */
+    Ideo,
+}
+
+/** A conformance break iterator's state. Every boundary is computed when text is adopted, so each
+step is an index move; the cursor counts boundaries, and equals their count once the iterator is done. */
+#[cfg(feature = "conformance")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(in crate::v9) struct BreakIteratorData {
+    /** The locale the constructor resolved, reported by resolvedOptions. */
+    pub locale: String,
+    /** The `type` option the constructor read, reported by resolvedOptions. */
+    pub kind: String,
+    /** Every boundary in UTF-16 units, from 0 through the text's length. */
+    pub boundaries: Vec<usize>,
+    /** One type per segment, the gap between each pair of neighbouring boundaries. */
+    pub break_types: Vec<BreakType>,
+    /** Index of the current boundary; past the last boundary once the iterator is done. */
+    pub cursor: usize,
 }
 
 /** A Range's boundary points; each holds the container's wrapper, which follows the node when

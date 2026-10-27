@@ -159,13 +159,10 @@ const NO_CLOSER: u32 = u32::MAX;
 impl Parser {
     /** Decoded token values cannot erase Annex B's strict-mode lexical early errors. */
     fn strict_literal(&self, token: &Token) -> EngineResult<()> {
-        if self.strict && token.legacy {
-            return Err(errors::syntax(
-                token.location,
-                "Octal literals and legacy escapes are not allowed in strict mode",
-            ));
+        match token.legacy {
+            Some(message) if self.strict => Err(errors::syntax(token.location, message)),
+            _ => Ok(()),
         }
-        Ok(())
     }
     /** Matching parentheses are found once, in one bounded pass. */
     fn new(tokens: Vec<Token>, strict: bool) -> Self {

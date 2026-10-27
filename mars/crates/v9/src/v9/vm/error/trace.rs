@@ -83,8 +83,18 @@ impl Vm<'_> {
         self.trace_boundaries.pop();
         result
     }
-    /** StackTraceLimit is an inert own numeric setting, so capturing an Error cannot run a getter. */
+    /** The frame count an Error captures: NaN and non-positive limits capture none. */
     fn trace_limit(&self) -> usize {
+        match self.stack_limit() {
+            Some(limit) if !limit.is_nan() && limit > 0.0 => {
+                limit.trunc().min(self.limits.frames as f64) as usize
+            }
+            _ => 0,
+        }
+    }
+    /** StackTraceLimit is an inert own numeric setting, so capturing an Error cannot run a getter.
+    Only a number here enables `stack`; V8 installs no stack property for any other value. */
+    fn stack_limit(&self) -> Option<f64> {
         let ctor = realm().ids.error;
         let key = Key::from("stackTraceLimit");
         let value = match self.heap.get(ctor) {
@@ -101,14 +111,22 @@ impl Vm<'_> {
                 }),
         };
         match value {
-            Some(JsValue::Number(limit)) if !limit.is_nan() && *limit > 0.0 => {
-                limit.trunc().min(self.limits.frames as f64) as usize
-            }
-            _ => 0,
+            Some(JsValue::Number(limit)) => Some(*limit),
+            _ => None,
         }
     }
     /** Actual callsites are ordinary graph edges, with the same object and retained-value quotas. */
-    pub(super) fn record_structured_trace(&mut self, error: ObjectId) -> Result<(), EngineError> {
+    pub(super) fn record_structured_trace(
+        &mut self,
+        error: ObjectId,
+        hide_top_builtin: bool,
+    ) -> Result<(), EngineError> {
+        // The recording builtin is the youngest activation of its own capture, so it is dropped first.
+        let hidden = if hide_top_builtin {
+            self.native_activations.len().checked_sub(1)
+        } else {
+            None
+        };
         if let Some(object) = self.heap.get(error)
             && matches!(object.class, Class::Error)
             && let Some(prop) = object.props.get(&Key::from("message"))
@@ -123,6 +141,10 @@ impl Vm<'_> {
                 },
             );
         }
+        // A non-number StackTraceLimit installs no `stack` at all, so there is nothing to capture.
+        if self.stack_limit().is_none() {
+            return Ok(());
+        }
         let mut strict = false;
         let mut frames: Vec<_> = self
             .frames
@@ -131,16 +153,23 @@ impl Vm<'_> {
             .rev()
             .flat_map(|(_index, frame)| {
                 let mut captures = Vec::new();
-                for activation in self
+                let visible = |(slot, activation): &(usize, &crate::v9::vm::NativeActivation)| {
+                    activation.depth == _index + 1 && Some(*slot) != hidden
+                };
+                for (_, activation) in self
                     .native_activations
                     .iter()
+                    .enumerate()
                     .rev()
-                    .filter(|activation| activation.depth == _index + 1)
+                    .filter(visible)
                 {
                     if self.trace_frame_visible(activation.realm) {
                         // Real JS builtins have strict SharedFunctionInfo in V8; opacity starts
-                        // here, after younger callbacks and before this older script frame.
-                        if matches!(&activation.kind, super::super::NativeKind::Builtin { .. }) {
+                        // here, after younger callbacks and before this older script frame. A
+                        // builtin with no younger JS frame (a plain `new Error()`) hides nothing.
+                        if matches!(&activation.kind, super::super::NativeKind::Builtin { .. })
+                            && _index + 1 < self.frames.len()
+                        {
                             strict = true;
                         }
                         captures.push(Captured::native(self, activation, strict));
@@ -235,7 +264,9 @@ impl Vm<'_> {
                 attrs: 0,
             },
         );
-        self.install_stack_accessor(error);
+        if self.stack_limit().is_some() {
+            self.install_stack_accessor(error);
+        }
         self.heap.put(
             error,
             Key::private(STRUCTURED_KEY),

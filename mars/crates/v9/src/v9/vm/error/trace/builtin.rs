@@ -5,15 +5,19 @@ use crate::v9::vm::{NativeActivation, NativeKind, data::FunctionKind};
 impl Captured {
     /** Private identities remain real even though strict builtin frames hide them from public accessors. */
     pub(super) fn native(vm: &Vm, activation: &NativeActivation, _strict: bool) -> Self {
-        let (callee, receiver, strict) = match &activation.kind {
+        let (callee, receiver, strict, construct) = match &activation.kind {
             NativeKind::Wasm {
                 instance,
                 index,
                 position,
             } => return Self::wasm(activation.realm, *instance, *index, *position),
-            NativeKind::Builtin { callee, receiver } => (callee, receiver, true),
+            NativeKind::Builtin {
+                callee,
+                receiver,
+                construct,
+            } => (callee, receiver, true, *construct),
             #[cfg(feature = "conformance")]
-            NativeKind::Api { callee, receiver } => (callee, receiver, _strict),
+            NativeKind::Api { callee, receiver } => (callee, receiver, _strict, false),
         };
         let intrinsics = vm.object_intrinsics(*callee);
         let definition = intrinsics.native(*callee).or_else(|| {
@@ -34,7 +38,7 @@ impl Captured {
             position: 0,
             realm: activation.realm,
             strict,
-            construct: false,
+            construct,
             eval: false,
             site: 0,
             asynchronous: false,

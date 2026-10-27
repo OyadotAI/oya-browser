@@ -30,7 +30,13 @@ fn format_stack(vm: &mut Vm, error: ObjectId) -> Res<JsValue> {
     } else {
         default_stack(vm, error)?
     };
-    if !formatting {
+    // A name getter that deleted `stack` while formatting leaves it deleted: the caller still gets the text.
+    if !formatting
+        && vm
+            .heap
+            .get(error)
+            .is_some_and(|o| o.props.get(&key("stack")).is_some())
+    {
         vm.heap.put(
             error,
             key("stack"),

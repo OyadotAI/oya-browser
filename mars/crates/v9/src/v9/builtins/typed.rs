@@ -103,7 +103,8 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         }
     }
     b.method(typed, "includes", 1, search::includes);
-    let methods: [(&'static str, u32, NativeFn); 9] = [
+    let methods: [(&'static str, u32, NativeFn); 10] = [
+        ("toLocaleString", 0, typed_to_locale_string),
         ("toReversed", 0, typed_to_reversed),
         ("toSorted", 1, typed_to_sorted),
         ("with", 2, typed_with),
@@ -663,6 +664,13 @@ fn typed_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         store(vm, id, offset + index, value)?;
     }
     Ok(JsValue::Undefined)
+}
+
+/** %TypedArray%.prototype.toLocaleString (ECMA-402): each element's own toLocaleString, joined
+with commas, exactly as Array.prototype.toLocaleString does, but over the view's length. */
+fn typed_to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (id, view) = this_typed(vm, &call)?;
+    super::array::locale_elements(vm, &JsValue::Object(id), view.length, &call)
 }
 
 /** %TypedArray%.prototype.toReversed: a fresh array of the same kind, reversed. */

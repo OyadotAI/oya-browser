@@ -1118,6 +1118,8 @@ pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> 
         HostData::Range(_) => "Range".into(),
         HostData::Selection(_) => "Selection".into(),
         HostData::Intl(data) => format!("Intl.{}", data.kind),
+        #[cfg(feature = "conformance")]
+        HostData::BreakIterator(_) => "Intl.v8BreakIterator".into(),
         HostData::StyleSheet(_) => "CSSStyleSheet".into(),
         HostData::TokenList(..) => "DOMTokenList".into(),
         HostData::Request(_) => "Request".into(),

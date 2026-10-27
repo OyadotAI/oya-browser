@@ -131,3 +131,34 @@ fn strict_body_rechecks_the_function_name() {
         );
     }
 }
+
+/** Strict code names each legacy spelling the way V8 does, and sloppy code still accepts them. */
+#[test]
+fn strict_legacy_spellings_report_v8_messages() {
+    for (source, message) in [
+        (
+            "'use strict';010",
+            "Octal literals are not allowed in strict mode.",
+        ),
+        (
+            "'use strict';08",
+            "Decimals with leading zeros are not allowed in strict mode.",
+        ),
+        (
+            "'use strict';'\\8'",
+            "\\8 and \\9 are not allowed in strict mode.",
+        ),
+        (
+            "'use strict';'\\12'",
+            "Octal escape sequences are not allowed in strict mode.",
+        ),
+    ] {
+        let error = mars_v9::check(source).unwrap_err();
+        assert!(
+            error.message.contains(message),
+            "{source}: {}",
+            error.message
+        );
+    }
+    assert!(mars_v9::check("'\\8';010;'\\12'").is_ok());
+}

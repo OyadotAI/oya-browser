@@ -31,8 +31,9 @@ pub(super) struct Token {
     pub line_terminator_before: bool,
     /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
     pub escaped: bool,
-    /// Annex B numeric spellings and string escapes are legal only outside strict code.
-    pub legacy: bool,
+    /// Annex B numeric spellings and string escapes are legal only outside strict code; the
+    /// message is the one V8 gives for that spelling when strict code meets it.
+    pub legacy: Option<&'static str>,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
@@ -112,7 +113,7 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
                 exact_strict: false,
                 line_terminator_before,
                 escaped: false,
-                legacy: false,
+                legacy: None,
             });
             break;
         }

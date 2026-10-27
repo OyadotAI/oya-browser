@@ -132,3 +132,12 @@ fn group_names_and_annex_b_k() {
     );
     assert_eq!(r, "a,b,truetrue");
 }
+
+/** With a named group declared, `\k` inside a class is no identity escape and is a SyntaxError; without one Annex B keeps it a literal `k`. */
+#[test]
+fn class_k_escape_is_an_error_only_with_named_groups() {
+    let r = run(
+        "let out=[];try{new RegExp('[\\\\k](?<a>)');out.push(false)}catch(e){out.push(e instanceof SyntaxError)}out.push(new RegExp('[\\\\k]').test('k'));r=out.join();",
+    );
+    assert_eq!(r, "true,true");
+}

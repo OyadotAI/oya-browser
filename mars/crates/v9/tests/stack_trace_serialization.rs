@@ -50,3 +50,14 @@ fn reconstructed_frames_serialize_the_actual_async_marker() {
         "true,true,true"
     );
 }
+
+/** V8 installs `stack` only while Error.stackTraceLimit is a number: any other value leaves errors without one, while NaN is still a number and keeps it. */
+#[test]
+fn non_numeric_stack_trace_limit_installs_no_stack() {
+    assert_eq!(
+        eval(
+            "Error.stackTraceLimit='none';const absent=new Error('x').stack===undefined;const e=new Error('y');e.stack='abc';Error.stackTraceLimit=NaN;const kept=typeof new Error('z').stack==='string';let r=[absent,e.stack,kept].join();"
+        ),
+        "true,abc,true"
+    );
+}

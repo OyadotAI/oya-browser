@@ -1,10 +1,13 @@
 /** V8 CallSite methods inspect recorded activations without exposing strict or ShadowRealm objects. */
 use super::*;
+use crate::v9::syntax::{INSTANCE_INITIALIZER_NAME, STATIC_INITIALIZER_NAME};
 use crate::v9::vm::error::{CALLSITE_KEY, FRAMES_KEY};
 use crate::v9::vm::heap::{Prop, Slot};
 mod formatting;
+mod method;
 pub(super) use formatting::skip_constructor;
 pub(in crate::v9) use formatting::stack;
+use method::{ANONYMOUS, method_call, method_name_of, type_name_of};
 
 /** CallSite has no public constructor; only genuine error captures make branded instances. */
 pub(super) fn install(builder: &mut Builder) {
@@ -131,10 +134,19 @@ fn nullable_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
     if data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
         return Ok(data(vm, id, "callSiteWasmFunctionName"));
     }
+    let declared = data(vm, id, "callSiteFunction")
+        .object()
+        .and_then(|function| method::own_name(vm, function));
+    if let Some(name) = declared {
+        return Ok(JsValue::String(name));
+    }
     match data(vm, id, "callSiteName") {
         JsValue::String(name) if !name.as_units().is_empty() => Ok(JsValue::String(name)),
         _ if data(vm, id, "callSiteEval") == JsValue::Boolean(true) => Ok(JsValue::string("eval")?),
-        _ => Ok(JsValue::Null),
+        _ => Ok(data(vm, id, "callSiteFunction")
+            .object()
+            .and_then(|function| method::static_name(vm, function))
+            .map_or(JsValue::Null, JsValue::String)),
     }
 }
 
@@ -172,35 +184,111 @@ fn toplevel(vm: &Vm, id: ObjectId) -> bool {
         })
 }
 
-/** Method calls retain their inferred source name without consulting mutable user descriptors. */
-fn method_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
-    if toplevel(vm, id)
-        || data(vm, id, "callSiteConstruct") == JsValue::Boolean(true)
-        || data(vm, id, "callSiteWasm") == JsValue::Boolean(true)
-    {
-        Ok(JsValue::Null)
-    } else {
-        nullable_name(vm, id)
+/** A method is a call with a non-global receiver that is not a construction. */
+fn is_method_call(vm: &Vm, id: ObjectId) -> bool {
+    !toplevel(vm, id) && data(vm, id, "callSiteConstruct") != JsValue::Boolean(true)
+}
+
+/** The function's own name as a string, if the frame has one. */
+fn frame_name(vm: &Vm, id: ObjectId) -> Option<String> {
+    match nullable_name(vm, id) {
+        Ok(JsValue::String(name)) => Some(name.lossy()),
+        _ => None,
     }
 }
 
-/** Type names come from actual receiver storage and cannot call a user toString hook. */
-fn type_name(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
-    if toplevel(vm, id) || data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
+/** Method names: an accessor's installing key first, then the property holding the callee, never a user getter. */
+fn method_name(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
+    if !is_method_call(vm, id) || data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
         return Ok(JsValue::Null);
     }
-    let value = data(vm, id, "callSiteThis");
-    let name = value
-        .object()
-        .and_then(|object| vm.heap.get(object))
-        .map(|object| match object.class {
-            Class::Array(_) => "Array",
-            Class::Function(_) => "Function",
-            Class::Error => "Error",
-            _ => "Object",
-        })
-        .unwrap_or("Object");
-    text(vm, name)
+    if let Some(name) = accessor_method(vm, id) {
+        return Ok(name);
+    }
+    let receiver = data(vm, id, "callSiteThis");
+    let callee = data(vm, id, "callSiteFunction");
+    let name = frame_name(vm, id);
+    match method_name_of(vm, &receiver, &callee, name.as_deref()) {
+        Some(method) => text(vm, &method),
+        None => Ok(JsValue::Null),
+    }
+}
+
+/** Type names come from the receiver's constructor, read as data so no user hook runs. */
+fn type_name(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
+    if !is_method_call(vm, id) || data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
+        return Ok(JsValue::Null);
+    }
+    let receiver = data(vm, id, "callSiteThis");
+    match type_name_of(vm, &receiver) {
+        Some(name) => text(vm, &name),
+        None => Ok(JsValue::Null),
+    }
+}
+
+/** Callee text for a frame: a method spelling, a construction, a plain name, or nothing for a bare script. */
+fn callee_text(vm: &Vm, id: ObjectId, name: &str) -> Option<String> {
+    // Synthetic initializers run with the instance or class as receiver, yet V8 prints them bare.
+    if [INSTANCE_INITIALIZER_NAME, STATIC_INITIALIZER_NAME].contains(&name) {
+        return Some(name.to_owned());
+    }
+    let is_eval = data(vm, id, "callSiteEval") == JsValue::Boolean(true);
+    if data(vm, id, "callSiteConstruct") == JsValue::Boolean(true) {
+        let name = if name.is_empty() { ANONYMOUS } else { name };
+        return Some(format!("new {name}"));
+    }
+    if !toplevel(vm, id) {
+        let function = (!name.is_empty()).then_some(name);
+        let receiver = data(vm, id, "callSiteThis");
+        let callee = data(vm, id, "callSiteFunction");
+        let ty = type_name_of(vm, &receiver);
+        let method = method_name_of(vm, &receiver, &callee, function);
+        return Some(method_call(ty.as_deref(), function, method.as_deref()));
+    }
+    if !name.is_empty() {
+        Some(name.to_owned())
+    } else if is_eval {
+        Some("eval".to_owned())
+    } else {
+        None
+    }
+}
+
+/** How far up the receiver's prototype chain an accessor's property name is searched. */
+const ACCESSOR_CHAIN_LIMIT: usize = 64;
+
+/** A getter or setter frame is named by the property that installs it, as V8 reports it, not by its `get `/`set ` function name. */
+fn accessor_method(vm: &Vm, id: ObjectId) -> Option<JsValue> {
+    let JsValue::Object(callee) = data(vm, id, "callSiteFunction") else {
+        return None;
+    };
+    let JsValue::Object(receiver) = data(vm, id, "callSiteThis") else {
+        return None;
+    };
+    let key = installing_key(vm, receiver, callee)?;
+    JsValue::string(&crate::v9::vm::property::key_text(&key)).ok()
+}
+
+/** Walks the receiver's prototype chain, bounded, for the key whose accessor slot holds `callee`. */
+fn installing_key(vm: &Vm, receiver: ObjectId, callee: ObjectId) -> Option<Key> {
+    let mut holder = Some(receiver);
+    for _ in 0..ACCESSOR_CHAIN_LIMIT {
+        let object = vm.heap.get(holder?)?;
+        if let Some((key, _)) = object
+            .props
+            .iter()
+            .find(|(_, prop)| installs(&prop.slot, callee))
+        {
+            return Some(key.clone());
+        }
+        holder = object.proto;
+    }
+    None
+}
+
+/** Whether an accessor slot holds the function as its getter or its setter. */
+fn installs(slot: &Slot, callee: ObjectId) -> bool {
+    matches!(slot, Slot::Accessor(get, set) if *get == Some(callee) || *set == Some(callee))
 }
 
 /** Default formatting uses the same actual source coordinates exposed by the numeric accessors. */
@@ -263,21 +351,8 @@ fn render(vm: &Vm, id: ObjectId) -> String {
     } else {
         ""
     };
-    if name.is_empty()
-        && data(vm, id, "callSiteEval") != JsValue::Boolean(true)
-        && data(vm, id, "callSiteConstruct") != JsValue::Boolean(true)
-        && toplevel(vm, id)
-    {
-        return format!("{prefix}{location}");
+    match callee_text(vm, id, &name) {
+        Some(callee) => format!("{prefix}{callee} ({location})"),
+        None => format!("{prefix}{location}"),
     }
-    let name = if name.is_empty() {
-        if data(vm, id, "callSiteEval") == JsValue::Boolean(true) {
-            "eval"
-        } else {
-            "<anonymous>"
-        }
-    } else {
-        &name
-    };
-    format!("{prefix}{name} ({location})")
 }

@@ -761,6 +761,7 @@ fn locale(vm: &Vm, time: f64, date: bool, clock: bool) -> String {
 /** Date.prototype.toLocaleString. */
 fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let time = this_time(vm, &call)?;
+    check_locale_options(vm, &call, time)?;
     let formatted = locale(vm, time, true, true);
     text(vm, &formatted)
 }
@@ -768,6 +769,7 @@ fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Date.prototype.toLocaleDateString. */
 fn to_locale_date_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let time = this_time(vm, &call)?;
+    check_locale_options(vm, &call, time)?;
     let formatted = locale(vm, time, true, false);
     text(vm, &formatted)
 }
@@ -775,8 +777,18 @@ fn to_locale_date_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Date.prototype.toLocaleTimeString. */
 fn to_locale_time_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let time = this_time(vm, &call)?;
+    check_locale_options(vm, &call, time)?;
     let formatted = locale(vm, time, false, true);
     text(vm, &formatted)
+}
+
+/** ToDateTimeOptions coerces any options value other than undefined to an object, so null throws a TypeError; an invalid date skips this and returns "Invalid Date". */
+fn check_locale_options(vm: &mut Vm, call: &Call, time: f64) -> Res<()> {
+    if time.is_nan() || call.arg(1) == JsValue::Undefined {
+        return Ok(());
+    }
+    vm.to_object(&call.arg(1))?;
+    Ok(())
 }
 
 /** Date.prototype[Symbol.toPrimitive]: "number" gives the time, otherwise the string. */

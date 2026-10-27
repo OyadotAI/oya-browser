@@ -177,7 +177,7 @@ fn dom_exception(vm: &mut Vm, call: Call) -> Res<JsValue> {
             },
         )?;
     }
-    vm.record_trace(id)?;
+    record_from_constructor(vm, id)?;
     Ok(JsValue::Object(id))
 }
 
@@ -233,6 +233,12 @@ fn make(vm: &mut Vm, call: &Call, message: JsValue, options: JsValue) -> Res<Obj
     Ok(id)
 }
 
+/** A native error constructor is the youngest frame of its own capture, so its activation is dropped. */
+fn record_from_constructor(vm: &mut Vm, id: ObjectId) -> Res<()> {
+    vm.record_builtin_trace(id)?;
+    Ok(())
+}
+
 /** `Error(message, options)` with or without `new`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = make(vm, &call, call.arg(0), call.arg(1))?;
@@ -242,7 +248,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Records the trace of a constructed error; a subclass's own frames above its constructor are hidden, as V8 does. */
 fn record_constructed(vm: &mut Vm, call: &Call, id: ObjectId) -> Res<()> {
-    vm.record_trace(id)?;
+    record_from_constructor(vm, id)?;
     if let Some(target) = call
         .new_target
         .as_ref()
@@ -330,7 +336,7 @@ fn stack_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Error.captureStackTrace(object): gives the object a `stack` string. */
 fn capture_stack_trace(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = stack_entry::prepare_capture(vm, &call.arg(0))?;
-    vm.record_trace(id)?;
+    vm.record_builtin_trace(id)?;
     trace::skip_constructor(vm, id, &call.arg(1));
     Ok(JsValue::Undefined)
 }

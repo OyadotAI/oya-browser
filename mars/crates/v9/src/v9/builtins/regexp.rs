@@ -257,8 +257,13 @@ impl Vm<'_> {
             return Ok(JsValue::Undefined);
         }
         let groups = self.alloc(Object::new(Class::Plain, None))?;
-        for (name, index) in &program.names {
-            let value = values.get(*index).cloned().unwrap_or(JsValue::Undefined);
+        for (name, indices) in &program.names {
+            let value = indices
+                .iter()
+                .filter_map(|index| values.get(*index))
+                .find(|value| **value != JsValue::Undefined)
+                .cloned()
+                .unwrap_or(JsValue::Undefined);
             self.put(groups, name, value)?;
         }
         Ok(JsValue::Object(groups))

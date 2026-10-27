@@ -23,6 +23,8 @@ pub(in crate::v9) struct NativeDef {
     pub function: NativeFn,
     /** Callable with `new`. */
     pub constructor: bool,
+    /** Embedder API entries record activations only under the shell flag, never as builtins. */
+    pub host: bool,
 }
 
 /** An intrinsic property's static value. */
@@ -286,6 +288,7 @@ impl Builder {
             length,
             function,
             constructor: false,
+            host: false,
         });
         NATIVE_BASE + (self.natives.len() as u32 - 1)
     }
@@ -310,6 +313,7 @@ impl Builder {
             length,
             function,
             constructor: true,
+            host: false,
         });
         let native = self.natives.len() as u32 - 1;
         self.def(id).call = Some(native);

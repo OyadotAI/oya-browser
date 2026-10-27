@@ -159,6 +159,9 @@ pub(in crate::v9) enum Op {
     CopyData,
     /** source key1..keyN -> rest */
     CopyRest(u32),
+    /** Throw the destructuring TypeError for a nullish source, naming the pattern's first key
+     * (an index into the strings, `u32::MAX` when there is none). The source stays on the stack. */
+    RequireCoercible(u32),
     /** obj proto -> obj, for a literal `__proto__: value`. */
     SetProtoLiteral,
     GetProp(u32),
@@ -358,11 +361,22 @@ pub(in crate::v9) struct Code {
     pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
     /// Instruction index to source position, sorted.
     pub positions: Vec<(u32, Pos)>,
+    /// Call instructions whose callee has a written name, as V8 prints it in "is not a function":
+    /// instruction index and name, sorted by index.
+    pub callees: Vec<(u32, Arc<str>)>,
     /// Inline caches of the property loads and stores, one per entry of `strings`.
     pub caches: crate::v9::vm::shape::SiteCaches,
 }
 
 impl Code {
+    /** The written callee name of the call instruction at `pc`, found by binary search. */
+    pub fn callee_at(&self, pc: usize) -> Option<&str> {
+        let index = self
+            .callees
+            .binary_search_by_key(&(pc as u32), |(at, _)| *at)
+            .ok()?;
+        Some(&self.callees[index].1)
+    }
     /** Preserve comments and whitespace without interpreting the function's public name. */
     pub fn original_source(&self) -> Option<&str> {
         let (source, base) = self.source.as_ref()?;
@@ -432,6 +446,7 @@ impl Code {
                 .collect(),
             privates: self.privates.clone(),
             templates: self.templates.clone(),
+            callees: self.callees.clone(),
             positions: self
                 .positions
                 .iter()
@@ -468,6 +483,11 @@ impl Code {
             + strings(&self.strings)
             + templates
             + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
+            + self
+                .callees
+                .iter()
+                .map(|(_, name)| name.len() * 2)
+                .sum::<usize>()
             + self.strict_ranges.len() * std::mem::size_of::<(u32, u32)>()
             + self.caches.bytes()
     }
@@ -735,6 +755,7 @@ struct Target {
 struct FnState {
     ops: Vec<Op>,
     positions: Vec<(u32, Pos)>,
+    callees: Vec<(u32, Arc<str>)>,
     strings: Vec<JsString>,
     /// Strong mixing avoids clustered UTF16 identifier hashes; keys share the pool's immutable string storage.
     string_index: std::collections::HashMap<JsString, u32>,
@@ -995,6 +1016,7 @@ impl Compiler {
             privates: state.private_index.into_values().collect(),
             templates: state.templates,
             positions: state.positions,
+            callees: state.callees,
         }
     }
     /** Compile a script's top level. */

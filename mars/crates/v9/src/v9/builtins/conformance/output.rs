@@ -16,18 +16,14 @@ pub(super) fn install(builder: &mut Builder) {
 
 /** Stdout becomes a bounded real host effect, keeping worker protocol stdout reserved for its transport. */
 fn print(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.with_api_activation(call.callee, call.this.clone(), |vm| {
-        writing::write(vm, call.args, "log", "", true)?;
-        Ok(JsValue::Undefined)
-    })
+    writing::write(vm, call.args, "log", "", true)?;
+    Ok(JsValue::Undefined)
 }
 
 /** Stderr has an independent output level and cannot be mistaken for an uncaught script exception. */
 fn print_err(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.with_api_activation(call.callee, call.this.clone(), |vm| {
-        writing::write(vm, call.args, "error", "", true)?;
-        Ok(JsValue::Undefined)
-    })
+    writing::write(vm, call.args, "error", "", true)?;
+    Ok(JsValue::Undefined)
 }
 
 /** D8Console::Assert writes all arguments, then throws its own Error after a falsy condition. */

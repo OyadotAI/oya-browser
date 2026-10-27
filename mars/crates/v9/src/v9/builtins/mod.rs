@@ -115,6 +115,8 @@ pub(in crate::v9) use conformance::enqueue_shell_microtask;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::mark_host_api;
+#[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::measure_memory;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::report_terminal_exception;
@@ -166,7 +168,11 @@ pub(in crate::v9) fn install(builder: &mut Builder) {
     proxy::install(builder);
     temporal::install(builder);
     #[cfg(feature = "conformance")]
-    conformance::install(builder);
+    {
+        let first = builder.natives.len();
+        conformance::install(builder);
+        conformance::mark_host_api(&mut builder.natives[first..]);
+    }
 }
 
 /** A string argument, converted. */

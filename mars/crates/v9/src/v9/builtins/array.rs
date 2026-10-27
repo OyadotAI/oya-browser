@@ -436,9 +436,7 @@ fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Array.prototype.map. */
 fn map(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.with_builtin_activation(call.callee, call.this.clone(), |vm| {
-        walk(vm, call, "Array.prototype.map", Walk::Map, false)
-    })
+    walk(vm, call, "Array.prototype.map", Walk::Map, false)
 }
 /** Array.prototype.filter. */
 fn filter(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -615,7 +613,12 @@ fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Locale element calls preserve their receivers and run in increasing index order. */
-fn locale_elements(vm: &mut Vm, object: &JsValue, length: usize, call: &Call) -> Res<JsValue> {
+pub(super) fn locale_elements(
+    vm: &mut Vm,
+    object: &JsValue,
+    length: usize,
+    call: &Call,
+) -> Res<JsValue> {
     let mut units = Vec::new();
     for index in 0..length {
         if index > 0 {

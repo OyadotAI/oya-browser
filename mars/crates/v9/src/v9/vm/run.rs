@@ -695,6 +695,12 @@ impl Vm<'_> {
                 self.copy_data(&target, &source, &[])?;
                 self.pop();
             }
+            Op::RequireCoercible(name) => {
+                let source = self.peek(0);
+                if source.nullish() {
+                    return Err(self.destructure_error(&source, name));
+                }
+            }
             Op::CopyRest(count) => {
                 let stack = &mut self.frame().stack;
                 let start = stack.len().saturating_sub(count as usize);
@@ -1481,7 +1487,13 @@ impl Vm<'_> {
         consumed: usize,
         construct: Option<JsValue>,
     ) -> Res<Flow> {
-        let invoked = self.invoke(function, this, args, construct, false);
+        let constructing = construct.is_some();
+        let invoked = match self.invoke(function.clone(), this, args, construct, false) {
+            Err(_) if !self.callable_for(&function, constructing) => {
+                Err(self.uncallable_error(&function, constructing))
+            }
+            other => other,
+        };
         // A pushed frame sits above the caller; its operands are dropped from the caller.
         let depth = if matches!(invoked, Ok(Invoked::Frame)) {
             2
@@ -1496,6 +1508,30 @@ impl Vm<'_> {
             self.push(value);
         }
         Ok(Flow::Next)
+    }
+    /** Whether a value can be called (or constructed) at all, ignoring the call's arguments. */
+    fn callable_for(&mut self, function: &JsValue, constructing: bool) -> bool {
+        if constructing {
+            self.is_constructor(function)
+        } else {
+            self.is_callable(function)
+        }
+    }
+    /** The TypeError for calling a non-function. The call site's written name is used when the
+     * compiler recorded one (`arr.push`), as V8 prints it; otherwise the value's kind is named. */
+    fn uncallable_error(&mut self, function: &JsValue, constructing: bool) -> Thrown {
+        let pc = self.frame().pc.saturating_sub(1);
+        let named = self.frame().code.callee_at(pc).map(str::to_owned);
+        let text = match named {
+            Some(name) => name,
+            None => self.callee_text(function),
+        };
+        let noun = if constructing {
+            "constructor"
+        } else {
+            "function"
+        };
+        self.type_error(&format!("{text} is not a {noun}"))
     }
     /** Return from the running frame, running finally blocks first. */
     fn do_return(&mut self, value: JsValue) -> Res<Flow> {
@@ -1800,26 +1836,31 @@ impl Vm<'_> {
             return self.add_private_field(*id, key, value);
         }
         if !self.define(*id, key.clone(), Descriptor::data(value))? {
-            let name = super::property::key_text(&key);
-            let mut target = *id;
-            for _ in 0..self.limits.frames {
-                match self.proxy_of(target).and_then(|proxy| proxy.target) {
-                    Some(next) => target = next,
-                    None => break,
-                }
-            }
-            let message = if self
-                .heap
-                .get(target)
-                .is_some_and(|object| !object.extensible)
-            {
-                format!("Cannot define property {name}, object is not extensible")
-            } else {
-                format!("Cannot redefine property: {name}")
-            };
-            return Err(self.type_error(&message));
+            return Err(self.refused_define(*id, &key));
         }
         Ok(())
+    }
+    /** The TypeError for destructuring a nullish value. The pattern's first key is named when it
+     * has one, as V8 does; the value is written as its own word, since no source text is kept. */
+    fn destructure_error(&mut self, source: &JsValue, name: u32) -> Thrown {
+        let word = if matches!(source, JsValue::Null) {
+            "null"
+        } else {
+            "undefined"
+        };
+        let key = self
+            .frame()
+            .code
+            .strings
+            .get(name as usize)
+            .map(|key| key.lossy());
+        let message = match key {
+            Some(key) => {
+                format!("Cannot destructure property '{key}' of '{word}' as it is {word}.")
+            }
+            None => format!("Cannot destructure '{word}' as it is {word}."),
+        };
+        self.type_error(&message)
     }
     /** Define a method, getter or setter and give the function its home object. */
     fn define_method(

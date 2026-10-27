@@ -906,6 +906,8 @@ fn singletons(b: &mut Builder) {
     );
     b.global("screen", screen);
     let console = b.object(Some(object_prototype));
+    #[cfg(feature = "conformance")]
+    let first_console_native = b.natives.len();
     methods(
         b,
         console,
@@ -935,6 +937,9 @@ fn singletons(b: &mut Builder) {
         ],
         console::console,
     );
+    // d8's console is an embedder API object, so under conformance its frames follow the shell flag.
+    #[cfg(feature = "conformance")]
+    crate::v9::builtins::mark_host_api(&mut b.natives[first_console_native..]);
     b.global("console", console);
     let performance = b.object(Some(b.ids.event_target_prototype));
     #[cfg(feature = "conformance")]

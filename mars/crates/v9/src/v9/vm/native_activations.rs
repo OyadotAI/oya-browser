@@ -18,13 +18,12 @@ pub(in crate::v9) enum NativeKind {
     Builtin {
         callee: ObjectId,
         receiver: JsValue,
+        /// A `new` entry reports as a construction frame, as V8 prints "new Name".
+        construct: bool,
     },
     /// Actual embedder API functions have sloppy metadata and no source Script.
     #[cfg(feature = "conformance")]
-    Api {
-        callee: ObjectId,
-        receiver: JsValue,
-    },
+    Api { callee: ObjectId, receiver: JsValue },
     Wasm {
         instance: ObjectId,
         index: u32,
@@ -38,12 +37,17 @@ impl Vm<'_> {
         &mut self,
         callee: ObjectId,
         receiver: JsValue,
+        construct: bool,
         work: impl FnOnce(&mut Self) -> Res<T>,
     ) -> Res<T> {
         self.with_function_activation(
             callee,
             receiver.clone(),
-            NativeKind::Builtin { callee, receiver },
+            NativeKind::Builtin {
+                callee,
+                receiver,
+                construct,
+            },
             work,
         )
     }
@@ -69,6 +73,17 @@ impl Vm<'_> {
             NativeKind::Api { callee, receiver },
             work,
         )
+    }
+
+    /** Production builds have no host API entries, so the dispatcher's host path is plain execution. */
+    #[cfg(not(feature = "conformance"))]
+    pub(in crate::v9) fn with_api_activation<T>(
+        &mut self,
+        _callee: ObjectId,
+        _receiver: JsValue,
+        work: impl FnOnce(&mut Self) -> Res<T>,
+    ) -> Res<T> {
+        work(self)
     }
 
     /** Actual function entry identities share one bounded ordering and their exact temporary root scope. */

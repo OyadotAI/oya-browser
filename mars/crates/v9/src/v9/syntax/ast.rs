@@ -377,6 +377,10 @@ pub(in crate::v9) const SITE_FIELDS: u32 = 2;
 pub(in crate::v9) const SITE_STATICS: u32 = 3;
 /** A script's top-level code. */
 pub(in crate::v9) const SITE_SCRIPT: u32 = 4;
+/** The frame name V8 prints for a class's synthesized instance-field initializer. */
+pub(in crate::v9) const INSTANCE_INITIALIZER_NAME: &str = "<instance_members_initializer>";
+/** The frame name V8 prints for a class's synthesized static initializer. */
+pub(in crate::v9) const STATIC_INITIALIZER_NAME: &str = "<static_initializer>";
 /** How many tags each byte offset carries. */
 pub(in crate::v9) const SITE_TAGS: u32 = 5;
 

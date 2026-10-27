@@ -10,9 +10,12 @@ use crate::constants::{
 mod case;
 mod case_data;
 mod class_set;
+mod group_names;
 mod modifiers;
 mod unicode;
+use group_names::GroupNames;
 use modifiers::Modes;
+use std::collections::BTreeMap;
 use unicode::property_ranges;
 
 /** A compiled pattern. */
@@ -21,8 +24,10 @@ pub(super) struct Program {
     root: Node,
     /// Capture groups, not counting the whole match.
     pub groups: usize,
-    /// Named groups and their indexes.
-    pub names: Vec<(String, usize)>,
+    /// Named groups in source order, with every capture index that carries each name.
+    pub names: Vec<(String, Vec<usize>)>,
+    /// Position in `names` for each name, so back-references by name resolve in O(log n).
+    name_slots: BTreeMap<String, usize>,
     pub global: bool,
     pub ignore_case: bool,
     pub multiline: bool,
@@ -30,6 +35,14 @@ pub(super) struct Program {
     pub unicode: bool,
     pub sticky: bool,
     pub indices: bool,
+}
+
+impl Program {
+    /** Every capture index carrying a group name; a duplicated name lists each carrier. */
+    pub(super) fn named_indices(&self, name: &str) -> Option<&[usize]> {
+        let slot = *self.name_slots.get(name)?;
+        self.names.get(slot).map(|(_, indices)| indices.as_slice())
+    }
 }
 
 /** A pattern node. */
@@ -104,6 +117,7 @@ pub(super) fn compile(
         root: Node::Empty,
         groups: 0,
         names: Vec::new(),
+        name_slots: BTreeMap::new(),
         global: false,
         ignore_case: false,
         multiline: false,
@@ -149,15 +163,17 @@ pub(super) fn compile(
         units: pattern,
         position: 0,
         groups: 0,
-        names: Vec::new(),
+        group_names: GroupNames::default(),
         nodes: 0,
         unicode: program.unicode,
         unicode_sets,
         modes: Modes::from_program(&program),
         buffer_boundaries,
         depth: 0,
+        named_groups: declares_named_groups(pattern),
     };
     parser.count_groups();
+    parser.group_names.open_frame();
     let root = parser.disjunction()?;
     if parser.position < pattern.len() {
         return Err(PatternError(
@@ -166,7 +182,8 @@ pub(super) fn compile(
     }
     program.root = root;
     program.groups = parser.groups;
-    program.names = parser.names;
+    program.names = parser.group_names.entries;
+    program.name_slots = parser.group_names.slots;
     Ok(program)
 }
 
@@ -175,7 +192,7 @@ struct PatternParser<'a> {
     units: &'a [u16],
     position: usize,
     groups: usize,
-    names: Vec<(String, usize)>,
+    group_names: GroupNames,
     nodes: usize,
     unicode: bool,
     /** The v flag: classes use set notation with operators and strings. */
@@ -183,6 +200,8 @@ struct PatternParser<'a> {
     modes: Modes,
     buffer_boundaries: bool,
     depth: usize,
+    /// Whether any `(?<name>` group exists; decided once, since it changes how `\k` reads.
+    named_groups: bool,
 }
 
 /** Pattern nesting the parser follows before refusing. */
@@ -258,16 +277,24 @@ impl PatternParser<'_> {
             index += 1;
         }
     }
-    /** `a|b|c` */
+    /** `a|b|c`. Each alternative gets its own name scope, so the same group name may appear in
+    several alternatives (ES2025) while its carriers still conflict with names outside them. */
     fn disjunction(&mut self) -> Result<Node, PatternError> {
         self.depth += 1;
         if self.depth > PATTERN_DEPTH {
             return Err(PatternError(format!("{ENGINE_LIMIT}: too deeply nested")));
         }
-        let mut alternatives = vec![self.alternative()?];
-        while self.eat('|') {
+        let mut alternatives = Vec::new();
+        let mut declared = Vec::new();
+        loop {
+            self.group_names.open_frame();
             alternatives.push(self.alternative()?);
+            declared.extend(self.group_names.close_frame());
+            if !self.eat('|') {
+                break;
+            }
         }
+        self.group_names.adopt(declared);
         self.depth -= 1;
         Ok(if alternatives.len() == 1 {
             alternatives.pop().expect("one alternative")
@@ -452,10 +479,7 @@ impl PatternParser<'_> {
                     )));
                 }
                 let index = self.groups;
-                if self.names.iter().any(|(existing, _)| *existing == name) {
-                    return Err(PatternError("Duplicate capture group name".into()));
-                }
-                self.names.push((name, index));
+                self.group_names.declare(name, index)?;
                 let inner = self.disjunction()?;
                 self.close()?;
                 return Ok(Node::Group(Box::new(inner), Some(index)));
@@ -556,15 +580,6 @@ impl PatternParser<'_> {
         }
         Some(high)
     }
-    /** Whether the pattern declares any `(?<name>` group; without one, Annex B reads `\k` as a
-    literal `k`. */
-    fn has_named_groups(&self) -> bool {
-        self.units.windows(3).enumerate().any(|(index, window)| {
-            window == [0x28, 0x3f, 0x3c]
-                && !matches!(self.units.get(index + 3), Some(0x3d | 0x21))
-                && (index == 0 || self.units[index - 1] != 0x5c)
-        })
-    }
     /** An escape outside a class. */
     fn escape(&mut self) -> Result<Node, PatternError> {
         self.position += 1;
@@ -588,7 +603,7 @@ impl PatternParser<'_> {
             self.position = start;
             return Ok(Node::Char(self.legacy_octal()));
         }
-        if c == 'k' && (self.unicode || self.has_named_groups()) {
+        if c == 'k' && (self.unicode || self.named_groups) {
             self.position += 1;
             if !self.eat('<') {
                 return Err(PatternError("Invalid named reference".into()));
@@ -876,6 +891,10 @@ impl PatternParser<'_> {
         if c.is_ascii_digit() && !self.unicode {
             return Ok(ClassAtom::Char(self.legacy_octal()));
         }
+        // With named groups present, `\k` is a reference slot and cannot be an identity escape.
+        if c == 'k' && self.named_groups {
+            return Err(PatternError("Invalid escape".into()));
+        }
         Ok(ClassAtom::Char(self.character_escape()?))
     }
 }
@@ -884,6 +903,16 @@ impl PatternParser<'_> {
 enum ClassAtom {
     Char(u32),
     Set(Vec<(u32, u32)>),
+}
+
+/** Whether the pattern declares any `(?<name>` group. Without one, Annex B reads `\k` as a
+literal `k`; with one, `\k` must be a named reference, even inside a class. */
+fn declares_named_groups(units: &[u16]) -> bool {
+    units.windows(3).enumerate().any(|(index, window)| {
+        window == [0x28, 0x3f, 0x3c]
+            && !matches!(units.get(index + 3), Some(0x3d | 0x21))
+            && (index == 0 || units[index - 1] != 0x5c)
+    })
 }
 
 /** Digits. */
@@ -1113,12 +1142,7 @@ impl<'a> Matcher<'a> {
             }
             Node::Back(index) => self.back(*index, position, next),
             Node::NamedBack(name) => {
-                let index = self
-                    .program
-                    .names
-                    .iter()
-                    .find(|(found, _)| found == name)
-                    .map_or(0, |(_, index)| *index);
+                let index = self.named_capture(name);
                 self.back(index, position, next)
             }
             Node::Concat(nodes) => self.sequence(nodes, position, next),
@@ -1231,6 +1255,18 @@ impl<'a> Matcher<'a> {
         }
         self.captures = saved;
         false
+    }
+    /** The capture a named back-reference reads: among the groups sharing the name, the first one
+    that participated (at most one does in any single match path). */
+    fn named_capture(&self, name: &str) -> usize {
+        let Some(indices) = self.program.named_indices(name) else {
+            return 0;
+        };
+        indices
+            .iter()
+            .copied()
+            .find(|index| matches!(self.captures.get(*index), Some(Some(_))))
+            .unwrap_or(indices[0])
     }
     /** A back-reference; an unset group matches empty. */
     fn back(&mut self, index: usize, position: usize, next: Next<'_, 'a>) -> bool {

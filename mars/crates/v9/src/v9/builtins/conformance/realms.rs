@@ -133,9 +133,7 @@ pub(super) fn create_bank(vm: &mut Vm, token: Option<u32>) -> Res<u32> {
 }
 /** Parse a global Script outside the target context, then run it inside the explicit entry. */
 fn eval(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.with_api_activation(call.callee, call.this.clone(), |vm| {
-        eval_in_context(vm, call)
-    })
+    eval_in_context(vm, call)
 }
 /** Compilation still precedes the explicit target entry; the API function retains its own creation realm. */
 fn eval_in_context(vm: &mut Vm, call: Call) -> Res<JsValue> {

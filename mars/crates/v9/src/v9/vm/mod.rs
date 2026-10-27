@@ -11,6 +11,7 @@ pub(in crate::v9) mod call;
 mod codegen;
 pub(in crate::v9) mod convert;
 pub(in crate::v9) mod data;
+mod define_refusal;
 mod dynamic;
 mod eval_origin;
 pub(in crate::v9) use eval_origin::EvalOrigin;
