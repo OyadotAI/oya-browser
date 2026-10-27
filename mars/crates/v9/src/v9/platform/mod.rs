@@ -18,7 +18,8 @@ mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
 mod form_submit;
-mod frames;
+pub(in crate::v9) mod frames;
+mod xml_frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
 mod implementation;
@@ -264,6 +265,11 @@ pub struct PageEnvironment {
     /// Metadata elements Eye keeps out of layout, in source order; V9 makes each a head
     /// element at load so scripts find and read them.
     pub metadata: Vec<crate::document::MetadataElement>,
+    /// Frame documents the app fetched, keyed by the URL the frame asked for. A frame whose
+    /// `src` resolves to one shows that document to scripts; an entry without a source records a
+    /// refusal, so the frame's load event still fires with no document.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub frame_documents: BTreeMap<String, FrameDocument>,
     /// The `<html>` element's own attributes, which the document engine keeps apart from its
     /// nodes; `document.documentElement` shows them under what scripts set since.
     pub html_attributes: BTreeMap<String, String>,
@@ -448,6 +454,7 @@ impl Default for PageEnvironment {
             scripts: Vec::new(),
             script_attributes: Vec::new(),
             metadata: Vec::new(),
+            frame_documents: BTreeMap::new(),
             html_attributes: BTreeMap::new(),
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
@@ -758,6 +765,28 @@ pub(in crate::v9) enum ReadyState {
     Complete,
 }
 
+/** A frame's document as the app fetched it. `source` is None when the app refused the frame or
+could not fetch it: the frame then shows no document, and its load event still fires. */
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameDocument {
+    /// The absolute URL the frame asked for, which is its key in `PageEnvironment`.
+    pub address: String,
+    /// The media type the response declared, after any fallback the app applied.
+    pub media_type: String,
+    /// The document's text, or None when the frame has no document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/** A frame document V9 asks the app to fetch: the absolute URL an iframe's `src` names. */
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameRequest {
+    /// The absolute URL to fetch.
+    pub url: String,
+}
+
 /** One script element a script connected to the document. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -866,6 +895,13 @@ pub(in crate::v9) struct PageState {
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
+    /** Iframes scripts connected whose documents the app has not answered yet, by element: the
+    URL each asked for. The answer fires the element's `load` event and leaves the list. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub frame_loads: BTreeMap<usize, String>,
+    /** Frame documents the step asked the app to fetch, delivered with the step's result. */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_requests: Vec<FrameRequest>,
     /** The focused element (`document.activeElement`), set by `focus()`, typing and clicks. */
     pub focused: Option<usize>,
     /** Custom element definitions, shadow and template bookkeeping, mutation observers. */

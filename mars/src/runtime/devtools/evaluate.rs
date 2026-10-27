@@ -234,6 +234,10 @@ impl Runtime {
                 .modules
                 .pending_scripts
                 .extend(execution.script_requests);
+            scripting
+                .modules
+                .frame_requests
+                .extend(execution.frame_requests);
         }
         scripting::record_console(
             scripting,

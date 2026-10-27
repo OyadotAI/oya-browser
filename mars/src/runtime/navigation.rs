@@ -402,7 +402,7 @@ impl Runtime {
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
-        let frames =
+        let (frames, scripted_frames) =
             self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?;
         perf::record("page.frames", phase, || frames.len().to_string());
         phase = Instant::now();
@@ -424,7 +424,7 @@ impl Runtime {
             .checked_add(1)
             .ok_or_else(|| EngineError::limit("page generations", usize::MAX))?;
         let script_identity = format!("{}:document-{generation}", self.active_tab_id);
-        let environment = self.page_environment(
+        let mut environment = self.page_environment(
             &acquired.response.url,
             self.referrer(&acquired.response.url),
             resolved
@@ -437,6 +437,10 @@ impl Runtime {
                 .collect(),
             &document.formatting,
         );
+        environment.frame_documents = scripted_frames
+            .into_iter()
+            .map(|frame| (frame.address.clone(), frame))
+            .collect();
         let mut page = Page {
             generation,
             script_identity,

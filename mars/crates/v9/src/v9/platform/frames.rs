@@ -16,6 +16,9 @@
  */
 use super::dom::{self, dom_error, native_name, wrap, wrap_option};
 use super::html::{Parsed, parse_tree};
+use super::xml_frames;
+use super::FrameRequest;
+use crate::protocol::EngineResult;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
@@ -28,6 +31,8 @@ use std::sync::OnceLock;
 pub(super) const DOCUMENT_NODE: &str = "#document";
 /** The tag of a doctype node; its name and ids are attributes. */
 pub(super) const DOCTYPE: &str = "#doctype";
+/** Iframes scripts connected whose documents V9 has asked the app for and not heard back on. */
+const FRAME_REQUESTS_PENDING: usize = 64;
 /** Elements the in-head insertion mode keeps in the head. */
 const HEAD_CONTENT: [&str; 11] = [
     "base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template",
@@ -212,7 +217,8 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
         src.is_empty() || src.eq_ignore_ascii_case("about:blank")
     });
     if srcdoc.is_none() && !blank {
-        return Ok(None);
+        let src = attribute("src").unwrap_or_default();
+        return source_document(vm, frame, &src);
     }
     let document = match srcdoc {
         Some(markup) => {
@@ -224,6 +230,89 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
     };
     vm.page.state.frames.insert(frame, document);
     Ok(Some(document))
+}
+
+/** The document of a frame whose `src` the app answered: built from the source it fetched, as its
+media type says, or None when the app refused the frame or has not answered. */
+fn source_document(vm: &mut Vm, frame: usize, src: &str) -> Res<Option<usize>> {
+    let Some(address) = super::net::resolve(vm, src) else {
+        return Ok(None);
+    };
+    let Some(loaded) = vm.page.environment.frame_documents.get(&address).cloned() else {
+        return Ok(None);
+    };
+    let Some(source) = loaded.source else {
+        return Ok(None);
+    };
+    let document = create(vm, DOCUMENT_NODE, None)?;
+    xml_frames::build_source(vm, document, &loaded.media_type, &source)?;
+    vm.page.state.frames.insert(frame, document);
+    Ok(Some(document))
+}
+
+/** An iframe a script connected asks the app for its document, once, as a browser loads a frame
+when it is inserted. A frame with no source, an `about:blank` source or a `srcdoc` loads nothing
+of its own. */
+pub(in crate::v9) fn connected(vm: &mut Vm, node: usize) -> Res<()> {
+    let Some(src) = vm.page.attribute_value(node, "src") else {
+        return Ok(());
+    };
+    let src = src.trim();
+    let inert = src.is_empty()
+        || src.eq_ignore_ascii_case("about:blank")
+        || vm.page.attribute_value(node, "srcdoc").is_some();
+    let pending = vm.page.state.frame_loads.contains_key(&node)
+        || vm.page.state.frame_loads.len() >= FRAME_REQUESTS_PENDING;
+    if inert || pending {
+        return Ok(());
+    }
+    let Some(url) = super::net::resolve(vm, src) else {
+        return Ok(());
+    };
+    vm.page.state.frame_loads.insert(node, url.clone());
+    vm.page.state.frame_requests.push(FrameRequest { url });
+    Ok(())
+}
+
+/** Fire `load` on each frame whose answer has arrived, with a document or a refusal. A frame that
+left the document meanwhile fires nothing, as a removed frame does not load. */
+pub(in crate::v9) fn run_frames(vm: &mut Vm) -> EngineResult<()> {
+    let answered: Vec<usize> = vm
+        .page
+        .state
+        .frame_loads
+        .iter()
+        .filter(|(_, url)| vm.page.environment.frame_documents.contains_key(*url))
+        .map(|(element, _)| *element)
+        .collect();
+    for element in answered {
+        vm.page.state.frame_loads.remove(&element);
+        if vm.page.connected(element) {
+            fire_load(vm, element)?;
+        }
+    }
+    Ok(())
+}
+
+/** Fire one frame's `load`; an uncaught error in its handler goes to the console. */
+fn fire_load(vm: &mut Vm, element: usize) -> EngineResult<()> {
+    let fired = super::fire(vm, super::Target::Node(element), "load", false)
+        .and_then(|_| vm.drain_jobs());
+    match fired {
+        Ok(()) => Ok(()),
+        Err(crate::v9::vm::Thrown::Value(error)) => {
+            vm.report_error(&error);
+            Ok(())
+        }
+        Err(crate::v9::vm::Thrown::Fatal(error)) => Err(error),
+    }
+}
+
+/** A frame element the document re-identified keeps its pending answer. */
+pub(in crate::v9) fn adopt(page: &mut super::Page, old: usize, new: usize) {
+    if let Some(url) = page.state.frame_loads.remove(&old) {
+        page.state.frame_loads.insert(new, url);
+    }
 }
 
 /** HTMLIFrameElement's contentDocument and contentWindow. */

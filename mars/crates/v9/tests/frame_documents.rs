@@ -1,0 +1,173 @@
+/**
+ * Frame documents in V9: an iframe whose source the app fetched shows that document to scripts,
+ * built by the source's media type. Each test pins one rule: the XML tree, XHTML's namespace,
+ * the parsererror document for a source that is not well-formed, the HTML builder, the refusal
+ * and unanswered cases, and the request and `load` round trip a script-created iframe takes.
+ */
+mod common;
+use common::{environment, failure, global, host, input, load_with, round_trip};
+use mars_v9::{FrameDocument, ModuleInput, PageEnvironment};
+
+/** The XHTML namespace, spelled as the tests compare it. */
+const XHTML: &str = "http://www.w3.org/1999/xhtml";
+/** The test page's URL, which relative frame sources resolve against. */
+const FRAME_URL: &str = "https://example.com/frame.xml";
+
+/** The test environment with one answered frame document for `url`. */
+fn answered(url: &str, media_type: &str, source: Option<&str>) -> PageEnvironment {
+    let mut environment = environment();
+    environment.frame_documents.insert(
+        url.to_string(),
+        FrameDocument {
+            address: url.to_string(),
+            media_type: media_type.to_string(),
+            source: source.map(str::to_string),
+        },
+    );
+    environment
+}
+
+/** A script that appends an iframe to `src` and returns the frame's content document as text. */
+fn frame_script(src: &str, expression: &str) -> String {
+    format!(
+        "const f = document.createElement('iframe'); f.src = '{src}';\
+         document.head.appendChild(f); const d = f.contentDocument;\
+         const r = {expression};"
+    )
+}
+
+#[test]
+fn an_xml_frame_document_exposes_its_parsed_tree() {
+    let environment = answered(FRAME_URL, "application/xml", Some("<foo>Dummy</foo>"));
+    let source = frame_script(
+        FRAME_URL,
+        "[d.contentType, d.documentElement.localName, d.documentElement.textContent,\
+          String(d.documentElement.namespaceURI)].join('|')",
+    );
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "application/xml|foo|Dummy|null");
+}
+
+#[test]
+fn xhtml_frame_elements_are_in_the_html_namespace() {
+    let markup = "<html xmlns='http://www.w3.org/1999/xhtml'><head><title>T</title></head><body><p>x</p></body></html>";
+    let environment = answered(FRAME_URL, "application/xhtml+xml", Some(markup));
+    let source = frame_script(
+        FRAME_URL,
+        "[String(d.createElement('x').namespaceURI), d.documentElement.namespaceURI, d.title].join('|')",
+    );
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), format!("{XHTML}|{XHTML}|T"));
+}
+
+#[test]
+fn a_source_that_is_not_well_formed_becomes_a_parsererror_document() {
+    let environment = answered(FRAME_URL, "application/xml", Some("<a><b></a>"));
+    let source = frame_script(
+        FRAME_URL,
+        "[d.documentElement.localName, d.documentElement.namespaceURI,\
+          d.documentElement.textContent.includes('match')].join('|')",
+    );
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), format!("parsererror|{XHTML}|true"));
+}
+
+#[test]
+fn an_html_frame_source_builds_an_html_document() {
+    let environment = answered(FRAME_URL, "text/html", Some("<p>hi</p>"));
+    let source = frame_script(FRAME_URL, "[d.body.textContent, String(d.createElement('x').namespaceURI)].join('|')");
+    let execution = load_with(&source, &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), format!("hi|{XHTML}"));
+}
+
+#[test]
+fn a_frame_with_no_answer_has_no_content_document() {
+    let source = frame_script(FRAME_URL, "String(d)");
+    let execution = load_with(&source, &environment());
+    assert_eq!(failure(&execution), None);
+    assert_eq!(global(&execution, "r"), "null");
+}
+
+#[test]
+fn a_refused_frame_has_no_content_document() {
+    let environment = answered(FRAME_URL, "application/xml", None);
+    let source = frame_script(FRAME_URL, "String(d)");
+    let execution = load_with(&source, &environment);
+    assert_eq!(global(&execution, "r"), "null");
+}
+
+#[test]
+fn a_frame_shows_only_the_document_answered_for_its_own_source() {
+    let environment = answered("https://example.com/other.xml", "application/xml", Some("<x/>"));
+    let source = frame_script(FRAME_URL, "String(d)");
+    let execution = load_with(&source, &environment);
+    assert_eq!(global(&execution, "r"), "null");
+}
+
+#[test]
+fn an_iframe_without_a_source_or_about_blank_requests_nothing() {
+    let source = "const a = document.createElement('iframe');\
+        const b = document.createElement('iframe'); b.src = 'about:blank';\
+        const c = document.createElement('iframe'); c.srcdoc = '<p>x</p>';\
+        document.head.appendChild(a); document.head.appendChild(b); document.head.appendChild(c);";
+    let execution = load_with(source, &environment());
+    assert_eq!(failure(&execution), None);
+    assert!(execution.frame_requests.is_empty());
+}
+
+#[test]
+fn a_connected_iframe_requests_its_document_and_loads_when_answered() {
+    let source = "let loaded = 'no'; let before = 'no';\
+        const f = document.createElement('iframe'); f.src = '/dyn.xml';\
+        f.addEventListener('load', () => { loaded = f.contentDocument.documentElement.textContent });\
+        document.head.appendChild(f); before = String(f.contentDocument);";
+    let sources = vec![source.to_string()];
+    let execution = load_with(source, &environment());
+    assert_eq!(failure(&execution), None);
+    let requested: Vec<&str> = execution.frame_requests.iter().map(|r| r.url.as_str()).collect();
+    assert_eq!(requested, ["https://example.com/dyn.xml"]);
+    assert_eq!(global(&execution, "before"), "null");
+    assert_eq!(global(&execution, "loaded"), "no");
+
+    let answered = answered(
+        "https://example.com/dyn.xml",
+        "application/xml",
+        Some("<dyn>Dynamic</dyn>"),
+    );
+    let host = host();
+    let modules = ModuleInput::default();
+    let mut page_input = input(&sources, &host, &answered);
+    page_input.modules = &modules;
+    let after = mars_v9::load_modules(page_input, round_trip(execution.state)).expect("answered");
+    assert_eq!(global(&after, "loaded"), "Dynamic");
+    assert!(after.frame_requests.is_empty());
+}
+
+#[test]
+fn a_refused_connected_iframe_still_fires_load_with_no_document() {
+    let source = "let loaded = 'no';\
+        const f = document.createElement('iframe'); f.src = 'https://other.example/x.xml';\
+        f.addEventListener('load', () => { loaded = String(f.contentDocument) });\
+        document.head.appendChild(f);";
+    let sources = vec![source.to_string()];
+    let execution = load_with(source, &environment());
+    let mut refused = environment();
+    refused.frame_documents.insert(
+        "https://other.example/x.xml".to_string(),
+        FrameDocument {
+            address: "https://other.example/x.xml".into(),
+            media_type: String::new(),
+            source: None,
+        },
+    );
+    let host = host();
+    let modules = ModuleInput::default();
+    let mut page_input = input(&sources, &host, &refused);
+    page_input.modules = &modules;
+    let after = mars_v9::load_modules(page_input, round_trip(execution.state)).expect("refused");
+    assert_eq!(global(&after, "loaded"), "null");
+}

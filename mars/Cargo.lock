@@ -541,12 +541,17 @@ dependencies = [
  "icu_properties",
  "idna",
  "mars-core",
+ "mars-xml",
  "ring",
  "ryu-js",
  "serde",
  "serde_json",
  "url",
 ]
+
+[[package]]
+name = "mars-xml"
+version = "0.1.0"
 
 [[package]]
 name = "memchr"

@@ -14,11 +14,12 @@
  */
 use super::images::{Budget, Fetched, ImageAsset, data_body, svg_address, svg_url, vector};
 use super::navigation::Gaps;
-use super::page::StylesCall;
+use super::page::{Page, StylesCall};
 use super::supervisor::Runtime;
 use crate::document::{DisplayList, Document, FRAME_VIEWPORT_MIN, Node, RenderContext};
 use crate::network::{Destination, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
+use crate::v9::FrameDocument;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -38,6 +39,8 @@ const FRAME_ID_SHIFT: u32 = 32;
 const DEFAULT_VIEWPORT: (f64, f64) = (300.0, 150.0);
 /// The only HTTP status whose body is the embedded document.
 const HTTP_OK: u16 = 200;
+/// Frame answers a page keeps in its environment, one per distinct URL its scripts asked for.
+const SCRIPT_FRAME_ANSWERS: usize = 256;
 
 /** One embedded document, ready to lay out in its frame. */
 #[derive(Clone)]
@@ -79,6 +82,8 @@ struct Allowance {
     count: usize,
     /// Frame source bytes admitted so far.
     bytes: usize,
+    /// The documents of the page's own frames that scripts may reach, for the environment.
+    scripts: Vec<FrameDocument>,
 }
 
 /** The content source of a frame element, if it names one. */
@@ -108,7 +113,8 @@ impl Runtime {
      * Loads the documents the frames of the styled `document` show, depth first in document
      * order, adding their images to `images` under their identity ranges. An object or embed
      * that loaded is marked `embedded`, so Eye lays it out as a replaced box; one showing a
-     * drawing carries it as an img carries an SVG.
+     * drawing carries it as an img carries an SVG. Also returns the documents of the page's own
+     * same-origin frames, which V9 hands to scripts.
      */
     pub(super) fn load_frames(
         &mut self,
@@ -116,11 +122,12 @@ impl Runtime {
         base: &str,
         deadline: Instant,
         images: &mut BTreeMap<usize, ImageAsset>,
-    ) -> EngineResult<Vec<Frame>> {
+    ) -> EngineResult<(Vec<Frame>, Vec<FrameDocument>)> {
         let base =
             url::Url::parse(base).map_err(|_| EngineError::invalid("Invalid frame base URL."))?;
         let mut allowance = Allowance::default();
-        self.frames_in(document, &base, deadline, images, &mut allowance, 0)
+        let frames = self.frames_in(document, &base, deadline, images, &mut allowance, 0)?;
+        Ok((frames, allowance.scripts))
     }
     /** The frames of one document at nesting `depth`. */
     fn frames_in(
@@ -147,19 +154,25 @@ impl Runtime {
             allowance.count += 1;
             let id_base = allowance.count << FRAME_ID_SHIFT;
             let node = &mut document.nodes[index];
-            match self.frame_content(source, base, deadline, allowance)? {
-                Some(Content::Drawing(markup, size)) => {
+            let Some((content, script)) = self.frame_content(source, base, deadline, allowance)?
+            else {
+                continue;
+            };
+            if depth == 0 {
+                allowance.scripts.extend(script);
+            }
+            match content {
+                Content::Drawing(markup, size) => {
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
                     node.embedded = true;
                 }
-                Some(Content::Document(child, url)) => {
+                Content::Document(child, url) => {
                     node.embedded = true;
                     let owner = node.local_id;
                     let frame = self.frame(*child, owner, &url, id_base, deadline, images)?;
                     frames.push(self.nest(frame, deadline, images, allowance, depth)?);
                 }
-                None => {}
             }
         }
         Ok(frames)
@@ -223,30 +236,28 @@ impl Runtime {
             frames: Vec::new(),
         })
     }
-    /** What one frame source shows; None when it names nothing Mars can embed or fails to load
-    (only authority, service and deadline failures stop the navigation). */
+    /** What one frame source shows, with the document scripts may reach when the frame is
+    same-origin; None when it names nothing Mars can embed or fails to load (only authority,
+    service and deadline failures stop the navigation). */
     fn frame_content(
         &mut self,
         source: Source,
         base: &url::Url,
         deadline: Instant,
         allowance: &mut Allowance,
-    ) -> EngineResult<Option<Content>> {
+    ) -> EngineResult<Option<(Content, Option<FrameDocument>)>> {
         let fetched = match source {
-            Source::Markup(markup) => Ok((markup, "text/html".into(), base.clone(), None)),
+            Source::Markup(markup) => Ok((markup, "text/html".into(), base.clone(), None, None)),
             Source::Address(address, declared) => {
+                let requested = base.join(&address).ok();
                 self.frame_source(&address, base, deadline)
                     .map(|(text, mime, url, charset)| {
-                        (
-                            text,
-                            declared.filter(|_| mime.is_empty()).unwrap_or(mime),
-                            url,
-                            charset,
-                        )
+                        let mime = declared.filter(|_| mime.is_empty()).unwrap_or(mime);
+                        (text, mime, url, charset, requested)
                     })
             }
         };
-        let (text, mime, url, charset) = match fetched {
+        let (text, mime, url, charset, requested) = match fetched {
             Ok(fetched) => fetched,
             Err(error) if super::images::stops_loading(&error) => return Err(error),
             Err(_) => return Ok(None),
@@ -258,7 +269,11 @@ impl Runtime {
             return Ok(None);
         }
         allowance.bytes += text.len();
-        self.parse_content(&text, &mime, url, charset)
+        let Some(content) = self.parse_content(&text, &mime, url.clone(), charset)? else {
+            return Ok(None);
+        };
+        let script = script_document(base, requested.as_ref(), &url, text, &mime);
+        Ok(Some((content, script)))
     }
     /** A frame document's text, media type, final URL and declared charset: a `data:` URL
     decodes here, anything else is one governed document request from the embedding page. */
@@ -401,3 +416,108 @@ struct RenderCall<'a> {
     /// Its viewport: the frame's content box size.
     context: RenderContext,
 }
+
+/** Whether two addresses share an origin. An opaque origin, as a `data:` address has, shares none. */
+pub(super) fn same_origin(page: &url::Url, other: &url::Url) -> bool {
+    page.origin() == other.origin()
+}
+
+/** The document a same-origin frame exposes to scripts: its source, keyed by the address it
+requested. Cross-origin frames still load and paint, but no script reaches them. */
+fn script_document(
+    page: &url::Url,
+    requested: Option<&url::Url>,
+    final_url: &url::Url,
+    text: String,
+    media_type: &str,
+) -> Option<FrameDocument> {
+    let requested = requested?;
+    (same_origin(page, requested) && same_origin(page, final_url)).then(|| FrameDocument {
+        address: requested.as_str().to_string(),
+        media_type: media_type.to_string(),
+        source: Some(text),
+    })
+}
+
+impl Runtime {
+    /**
+     * Answers the frame documents a V9 step asked for, recording each answer in the page's
+     * environment so the next step's `load` event can fire. `give_up` (the module rounds ran out)
+     * or the deadline refuses everything that is still pending.
+     */
+    pub(super) fn fetch_frames(
+        &mut self,
+        page: &mut Page,
+        deadline: Instant,
+        give_up: bool,
+    ) -> EngineResult<()> {
+        let requests = std::mem::take(&mut page.scripting.modules.frame_requests);
+        for request in requests {
+            let answer = self.answer_frame(page, &request.url, deadline, give_up)?;
+            page.scripting
+                .environment
+                .frame_documents
+                .insert(request.url, answer);
+        }
+        Ok(())
+    }
+    /** The answer to one frame request: a same-origin document of a type Mars parses, within the
+    page's frame bytes, or a refusal. The frame is never fetched cross-origin. */
+    fn answer_frame(
+        &mut self,
+        page: &mut Page,
+        address: &str,
+        deadline: Instant,
+        give_up: bool,
+    ) -> EngineResult<FrameDocument> {
+        let refused = FrameDocument {
+            address: address.to_string(),
+            media_type: String::new(),
+            source: None,
+        };
+        let (Ok(requested), Ok(page_url)) = (url::Url::parse(address), url::Url::parse(&page.url))
+        else {
+            return Ok(refused);
+        };
+        let answered = page.scripting.environment.frame_documents.len();
+        if give_up || Instant::now() >= deadline || answered >= SCRIPT_FRAME_ANSWERS {
+            return Ok(refused);
+        }
+        if !same_origin(&page_url, &requested) {
+            return Ok(refused);
+        }
+        let (text, media_type, final_url, _) = match self.frame_source(address, &page_url, deadline)
+        {
+            Ok(fetched) => fetched,
+            Err(error) if super::images::stops_loading(&error) => return Err(error),
+            Err(_) => return Ok(refused),
+        };
+        let parsed = media_type == "text/html" || crate::document::xml_mime(&media_type);
+        let fits = page.scripting.modules.frame_bytes + text.len() <= FRAME_BYTES_TOTAL;
+        if !parsed || !fits || !same_origin(&page_url, &final_url) {
+            return Ok(refused);
+        }
+        page.scripting.modules.frame_bytes += text.len();
+        Ok(FrameDocument {
+            address: address.to_string(),
+            media_type,
+            source: Some(text),
+        })
+    }
+}
+
+/// The frame-document rule, exposed to the frame tests in this module's sibling file.
+#[cfg(test)]
+pub(super) fn script_document_for_tests(
+    page: &url::Url,
+    requested: Option<&url::Url>,
+    final_url: &url::Url,
+    text: &str,
+    media_type: &str,
+) -> Option<FrameDocument> {
+    script_document(page, requested, final_url, text.to_string(), media_type)
+}
+
+#[cfg(test)]
+#[path = "frame_tests.rs"]
+mod frame_tests;

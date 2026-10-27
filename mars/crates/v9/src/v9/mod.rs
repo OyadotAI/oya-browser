@@ -31,9 +31,9 @@ pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
-    AnimationTarget, ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
-    ImageAdoption, ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
-    SimpleFragmentParser,
+    AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
+    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
+    NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
 };
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
@@ -349,6 +349,10 @@ pub struct Execution {
     /// (or as failed) with `load_modules`, which runs it and fires the element's event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub script_requests: Vec<ScriptLoadRequest>,
+    /// Frame documents the page's iframes asked for: the app fetches each URL and delivers it
+    /// with `load_modules`, which fires the frame's `load` event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_requests: Vec<FrameRequest>,
 }
 
 /** A `<script src>` a script connected to the document, for the app to fetch the way a browser
@@ -949,6 +953,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         vm.collect_snapshot().map_err(fatal)?;
     }
     let effects_timer = vm.next_timer();
+    let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
         .page
         .state
@@ -1001,6 +1006,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         effects,
         module_requests,
         script_requests,
+        frame_requests,
     })
 }
 
@@ -1051,6 +1057,7 @@ fn load_isolated(
     }
     if resume {
         platform::scripts::run_delivered(&mut vm)?;
+        platform::frames::run_frames(&mut vm)?;
     }
     run_async_modules(&mut vm, &mut failed, &mut ran);
     if resume {

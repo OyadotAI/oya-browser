@@ -78,6 +78,7 @@ pub(in crate::v9) fn connected(vm: &mut Vm, node: usize) -> Res<()> {
         match vm.page.tag(node).as_str() {
             "script" => connected_script(vm, node)?,
             "link" => connected_sheet(vm, node)?,
+            "iframe" => super::frames::connected(vm, node)?,
             _ => {}
         }
     }
@@ -277,6 +278,7 @@ fn fatal(thrown: Thrown) -> crate::protocol::EngineError {
 
 /** Follow a script element to its new identity after the document adopted it. */
 pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) {
+    super::frames::adopt(page, old, new);
     for load in &mut page.state.script_loads {
         if load.element == old {
             load.element = new;

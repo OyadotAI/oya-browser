@@ -157,6 +157,7 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
         }
         components::adopt(&mut vm.page, *old, *new);
         super::scripts::adopt(&mut vm.page, *old, *new);
+        super::frames::adopt(&mut vm.page, *old, *new);
         if vm.page.state.focused == Some(*old) {
             vm.page.state.focused = Some(*new);
         }
@@ -1450,6 +1451,9 @@ fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValu
     if let Some(node) = node_of(vm, &value) {
         vm.page.set_element_namespace(node, record);
         relink_null_namespace(vm, node)?;
+        if let Some(document) = node_of(vm, &call.this).filter(|document| *document != DOCUMENT) {
+            vm.page.state.owners.insert(node, document);
+        }
     }
     Ok(value)
 }

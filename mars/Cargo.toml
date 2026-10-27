@@ -1,6 +1,6 @@
 # Mars composes independent Rust browser engines and native agent control.
 [workspace]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
