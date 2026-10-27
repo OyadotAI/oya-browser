@@ -214,6 +214,7 @@ impl PatternParser<'_> {
 
     /** Parse the body of a v-mode class from just after `[`, through its `]`. */
     pub(super) fn class_set_class(&mut self) -> Result<Node, PatternError> {
+        self.count()?;
         let negated = self.eat('^');
         let set = self.class_contents()?;
         self.close_class()?;
@@ -332,12 +333,23 @@ impl PatternParser<'_> {
         }
     }
 
-    /** A nested `[...]` or `[^...]` used as an operand. */
+    /** A nested `[...]` or `[^...]` used as an operand. Nesting shares the pattern depth bound
+    with groups and alternatives, so a deeply nested class fails as a limit instead of
+    overflowing the native stack; each nested class is also charged against the node budget. */
     fn nested_class(&mut self) -> Result<ClassSet, PatternError> {
+        self.count()?;
+        self.depth += 1;
+        if self.depth > super::PATTERN_DEPTH {
+            return Err(PatternError(format!(
+                "{}: too deeply nested",
+                super::ENGINE_LIMIT
+            )));
+        }
         self.position += 1;
         let negated = self.eat('^');
         let set = self.class_contents()?;
         self.close_class()?;
+        self.depth -= 1;
         if negated { complement(set) } else { Ok(set) }
     }
 

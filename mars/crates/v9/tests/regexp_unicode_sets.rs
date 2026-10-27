@@ -97,3 +97,35 @@ fn engine_gaps_parse_and_real_early_errors_still_throw() {
         "runtime SyntaxError"
     );
 }
+
+/** Deep nesting of v-mode classes is a limit, not a native stack overflow: 1000 levels fail as an
+engine limit (limits are uncatchable, so the page load reports it), and a shallow class compiles. */
+#[test]
+fn deeply_nested_v_mode_classes_fail_as_a_limit() {
+    let deep = format!("{}a{}", "[".repeat(1000), "]".repeat(1000));
+    let environment = common::environment();
+    let host = common::host();
+    let source = format!("new RegExp('{deep}', 'v');");
+    let input = mars_v9::PageInput {
+        sources: &[source],
+        source_keys: &[],
+        document: common::page(),
+        storage: mars_v9::StorageState::default(),
+        host: &host,
+        environment: &environment,
+        modules: mars_v9::ModuleInput::NONE,
+    };
+    let execution = mars_v9::load_page(input).expect("page loads");
+    let message = common::failure(&execution).expect("the deep class must fail");
+    assert!(
+        message.contains("SyntaxError: Invalid regular expression"),
+        "{message}"
+    );
+    assert_eq!(
+        common::eval(
+            "let r = new RegExp('[[a]]', 'v').test('a') ? 'ok' : 'no';",
+            "r"
+        ),
+        "ok"
+    );
+}
