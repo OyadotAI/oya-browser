@@ -13,6 +13,7 @@ use crate::protocol::{EngineError, EngineResult};
 use crate::v9::vm::heap::FastMap;
 use std::collections::BTreeMap;
 mod leading_text;
+mod namespace_store;
 
 /** Text and attribute bytes one change adds to the request's change budget. */
 fn change_bytes(change: &ScriptChange) -> usize {
@@ -1103,15 +1104,29 @@ impl Page<'_> {
             ));
         }
         let name = name.to_ascii_lowercase();
+        self.set_named_attribute(id, &name, value)
+    }
+    /** Write one attribute under a name already in its final case, then tell images and the
+    mutation log. Both setAttribute and the namespace-aware methods end here, so every write
+    reaches the same observers. */
+    pub fn set_named_attribute(
+        &mut self,
+        id: usize,
+        name: &str,
+        value: Option<&str>,
+    ) -> EngineResult<()> {
         let old = self
             .view(id)
-            .and_then(|view| view.attributes.get(&name).cloned());
-        self.write_attribute(id, &name, value)?;
-        super::images::source_changed(self, id, &name)?;
+            .and_then(|view| view.attributes.get(name).cloned());
+        self.write_attribute(id, name, value)?;
+        if value.is_none() {
+            self.detach_attr(id, name, old.clone());
+        }
+        super::images::source_changed(self, id, name)?;
         if self.mutations.len() < crate::constants::STATEMENTS {
             self.mutations.push(super::components::Mutation::Attribute {
                 node: id,
-                name,
+                name: name.to_string(),
                 old,
             });
         }
@@ -1125,6 +1140,10 @@ impl Page<'_> {
     }
     /** Set or remove an attribute in whichever store holds the node. */
     fn write_attribute(&mut self, id: usize, name: &str, value: Option<&str>) -> EngineResult<()> {
+        if value.is_none() {
+            // A removed attribute keeps no namespace record, so a later write starts null.
+            self.forget_attribute_namespace(id, name);
+        }
         let name = name.to_string();
         if matches!(id, HTML | HEAD | BODY) {
             let seed = self.root_attributes(id);

@@ -26,6 +26,7 @@ mod install;
 mod interfaces;
 mod keyboard;
 pub(in crate::v9) use keyboard::press_key;
+mod namespaces;
 mod net;
 mod nodes;
 mod offsets;
@@ -38,6 +39,9 @@ mod selector;
 mod sheets;
 mod timers;
 mod token_set;
+mod token_list;
+mod attr;
+mod attr_dom;
 mod url_bindings;
 mod url_parser;
 mod window;
@@ -817,6 +821,18 @@ pub(in crate::v9) struct PageState {
     pub wrappers: BTreeMap<usize, ObjectId>,
     pub detached: BTreeMap<usize, Detached>,
     pub next_detached: usize,
+    /** Namespace, prefix and local name of each script-created element, by node. Projected
+    elements have no record and take their namespace from their tag. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub element_ns: BTreeMap<usize, namespaces::ElementNs>,
+    /** Namespace of each attribute set through a namespace-aware method, by node and then by
+    stored name. Null-namespace attributes have no record. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_ns: BTreeMap<usize, BTreeMap<String, namespaces::AttrNs>>,
+    /** Stored name of a namespaced attribute, by node, then namespace, then local name, so a
+    namespace-aware read finds it without scanning the node's attributes. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_index: BTreeMap<usize, BTreeMap<String, BTreeMap<String, String>>>,
     pub pending: Vec<Pending>,
     pub next_request: u32,
     pub ready: ReadyState,
@@ -871,6 +887,22 @@ pub(in crate::v9) struct PageState {
     identity holds across reads. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub implementation_of: BTreeMap<usize, ObjectId>,
+    /** Attr records by id: each Attr object's owner, name, namespace and detached value. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_nodes: BTreeMap<u64, attr::AttrNode>,
+    /** The attached Attr of each element attribute, by node and then by stored name, so one
+    attribute has one Attr object. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_of: BTreeMap<usize, BTreeMap<String, u64>>,
+    /** The next Attr id; ids only grow, so none is reused. */
+    #[serde(default)]
+    pub next_attr: u64,
+    /** Attr wrapper objects by id, so an Attr keeps its identity across reads. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_wrappers: BTreeMap<u64, ObjectId>,
+    /** DOMTokenList objects by node and then attribute, so classList reads return one object. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub token_lists: BTreeMap<usize, BTreeMap<String, ObjectId>>,
 }
 
 /** Runtime platform state for one request. */
@@ -1054,6 +1086,10 @@ impl<'h> Page<'h> {
         self.state.active_animations.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
+        self.state.attr_wrappers.retain(|_, id| live.contains(id));
+        for by_attribute in self.state.token_lists.values_mut() {
+            by_attribute.retain(|_, id| live.contains(id));
+        }
     }
 }
 
@@ -1152,6 +1188,7 @@ pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> 
         HostData::BreakIterator(_) => "Intl.v8BreakIterator".into(),
         HostData::StyleSheet(_) => "CSSStyleSheet".into(),
         HostData::TokenList(..) => "DOMTokenList".into(),
+        HostData::Attr(_) => "Attr".into(),
         HostData::Request(_) => "Request".into(),
     })
 }

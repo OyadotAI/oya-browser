@@ -1,4 +1,5 @@
 /** Builds the platform's intrinsic prototypes and singletons, and the global object's prototype. */
+use super::attr_dom;
 use super::dom::{self, REFLECTED};
 use super::{console, events, interfaces, net, timers, url_bindings, window};
 use crate::v9::value::JsValue;
@@ -78,6 +79,8 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "compareDocumentPosition",
             "isEqualNode",
             "isSameNode",
+            "lookupNamespaceURI",
+            "isDefaultNamespace",
             "normalize",
         ],
         dom::node_method,
@@ -101,13 +104,14 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         &[
             "tagName",
             "localName",
+            "namespaceURI",
+            "prefix",
             "children",
             "childElementCount",
             "firstElementChild",
             "lastElementChild",
             "nextElementSibling",
             "previousElementSibling",
-            "classList",
             "dataset",
             "sheet",
             "pathname",
@@ -127,7 +131,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_get,
     );
-    for name in ["className", "innerHTML", "outerHTML", "style", "part"] {
+    for name in ["className", "innerHTML", "outerHTML", "style", "part", "classList"] {
         b.accessor(
             element,
             name,
@@ -143,6 +147,11 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "setAttribute",
             "removeAttribute",
             "hasAttribute",
+            "getAttributeNode",
+            "getAttributeNodeNS",
+            "setAttributeNode",
+            "setAttributeNodeNS",
+            "removeAttributeNode",
             "getAttributeNS",
             "setAttributeNS",
             "removeAttributeNS",
@@ -325,6 +334,8 @@ fn document(b: &mut Builder, node: u32) {
             "querySelectorAll",
             "createElement",
             "createElementNS",
+            "createAttribute",
+            "createAttributeNS",
             "createTextNode",
             "createComment",
             "createDocumentFragment",
@@ -416,7 +427,13 @@ fn collections(b: &mut Builder) {
         Static::Value(JsValue::Object(values)),
         HIDDEN_ATTRS,
     );
-    getters(b, class_list, &["length", "value"], dom::class_list);
+    getters(b, class_list, &["length"], dom::class_list);
+    b.accessor(
+        class_list,
+        "value",
+        Some(dom::class_list),
+        Some(dom::class_list_value_set),
+    );
     let style = b.object(Some(object_prototype));
     b.ids.style_prototype = style;
     methods(
@@ -1100,6 +1117,9 @@ fn global_object(b: &mut Builder) {
         &["scroll", "scrollTo", "scrollBy"],
         super::scrolling::window_scroll,
     );
+    let attr = b.object(Some(b.ids.node_prototype));
+    b.ids.attr_prototype = attr;
+    attr_members(b, attr);
     for name in [
         "Node",
         "Element",
@@ -1133,7 +1153,7 @@ fn global_object(b: &mut Builder) {
             "CSSStyleDeclaration" => b.ids.style_prototype,
             "DOMTokenList" => b.ids.class_list_prototype,
             "Storage" => b.ids.storage_prototype,
-            "Attr" => b.ids.node_prototype,
+            "Attr" => b.ids.attr_prototype,
             _ => b.ids.html_element_prototype,
         };
         let ctor = match name {
@@ -1400,6 +1420,28 @@ fn constructor_without_link(b: &mut Builder, name: &'static str, prototype: u32)
         dom::illegal_constructor
     };
     b.constructor(name, 0, function, prototype, None)
+}
+
+/** The Attr members: name and owner reads, and value, nodeValue and textContent, which write back. */
+fn attr_members(b: &mut Builder, attr: u32) {
+    getters(
+        b,
+        attr,
+        &[
+            "name",
+            "localName",
+            "namespaceURI",
+            "prefix",
+            "ownerElement",
+            "specified",
+            "nodeName",
+            "nodeType",
+        ],
+        attr_dom::attr_get,
+    );
+    for name in ["value", "nodeValue", "textContent"] {
+        b.accessor(attr, name, Some(attr_dom::attr_get), Some(attr_dom::attr_set));
+    }
 }
 
 /** Getters on a shared prototype, leaving out the members one interface owns. */

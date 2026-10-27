@@ -178,6 +178,8 @@ pub(in crate::v9) struct Ids {
     pub idle_deadline_prototype: ObjectId,
     pub range_prototype: ObjectId,
     pub named_node_map_prototype: ObjectId,
+    /** The Attr prototype: an Attr is a Node whose members are its name, value and owner. */
+    pub attr_prototype: ObjectId,
     pub style_sheet_prototype: ObjectId,
     pub request_prototype: ObjectId,
     pub selection_prototype: ObjectId,

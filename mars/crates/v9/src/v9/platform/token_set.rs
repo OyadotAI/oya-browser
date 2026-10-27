@@ -47,6 +47,11 @@ impl TokenSet {
         self.position.len()
     }
 
+    /** Whether the set holds no tokens. */
+    pub fn is_empty(&self) -> bool {
+        self.position.is_empty()
+    }
+
     /** Whether a token is in the set, in O(log n). */
     pub fn contains(&self, token: &str) -> bool {
         self.position.contains_key(token)

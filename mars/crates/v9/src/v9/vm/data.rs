@@ -642,6 +642,8 @@ pub(in crate::v9) enum HostData {
     StyleSheet(usize),
     /** A DOMTokenList over an attribute other than `class` (`sandbox`, `rel`, `part`). */
     TokenList(usize, String),
+    /** An Attr object: the id of its record in the page's Attr table (attr.rs). */
+    Attr(u64),
     /** A fetch Request: the request `fetch(request)` sends. */
     Request(Box<crate::v9::platform::HostRequest>),
 }

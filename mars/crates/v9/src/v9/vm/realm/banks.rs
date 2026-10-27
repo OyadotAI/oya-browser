@@ -214,6 +214,7 @@ impl Ids {
             idle_deadline_prototype: shift(self.idle_deadline_prototype, amount),
             range_prototype: shift(self.range_prototype, amount),
             named_node_map_prototype: shift(self.named_node_map_prototype, amount),
+            attr_prototype: shift(self.attr_prototype, amount),
             style_sheet_prototype: shift(self.style_sheet_prototype, amount),
             request_prototype: shift(self.request_prototype, amount),
             selection_prototype: shift(self.selection_prototype, amount),
