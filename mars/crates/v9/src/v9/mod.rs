@@ -666,6 +666,8 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
+    // Only the first step of a page runs the platform bootstrap; every step compiles it (see below).
+    let fresh = !state.page.initialized;
     let verified = state.verified;
     if !verified {
         state.validate(&limits)?;
@@ -714,6 +716,8 @@ fn session<'h>(
     }
     vm.dynamic = state.dynamic;
     vm.templates = state.templates;
+    // The platform bootstrap is not a dynamic source: every step compiles it at its fixed offset, so the heap's closures always find their code.
+    let bootstrap = platform::observable::compile(&mut vm)?;
     if !verified {
         vm.validate_graph()?;
     }
@@ -728,6 +732,9 @@ fn session<'h>(
     scripts.extend(vm.realm_codes(0).into_iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
     vm.deadline = Some(std::time::Instant::now() + script_deadline());
+    if fresh {
+        platform::observable::run(&mut vm, bootstrap)?;
+    }
     Ok((vm, compiled))
 }
 

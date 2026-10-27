@@ -212,6 +212,10 @@ fn text(vm: &mut Vm, node: usize) -> String {
 
 /** Wrap a node list entry; kept here so `elements` and `namedItem` share one lookup. */
 pub(super) fn named(vm: &mut Vm, nodes: &[usize], key: &str) -> Res<JsValue> {
+    // An empty name never names an element, even one whose id or name is also empty.
+    if key.is_empty() {
+        return Ok(JsValue::Null);
+    }
     let found = nodes.iter().copied().find(|n| {
         vm.page.view(*n).is_some_and(|v| {
             v.attributes.get("id").map(String::as_str) == Some(key)

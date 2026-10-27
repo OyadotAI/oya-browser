@@ -151,8 +151,19 @@ impl Parser {
         }
         Ok(Complex(parts))
     }
+    /** Whether the text at the cursor is a digit, or a hyphen then a digit: neither may start an
+    identifier (CSS Syntax 3), so `#-123` and `.1a` are SyntaxErrors. */
+    fn at_digit_start(&self) -> bool {
+        let digit = |c: Option<&char>| c.is_some_and(char::is_ascii_digit);
+        digit(self.chars.get(self.position))
+            || (self.chars.get(self.position) == Some(&'-')
+                && digit(self.chars.get(self.position + 1)))
+    }
     /** An identifier with CSS escapes. */
     fn ident(&mut self) -> Result<String, String> {
+        if self.at_digit_start() {
+            return Err("expected an identifier in selector".into());
+        }
         let mut out = String::new();
         while let Some(c) = self.peek() {
             if c == '\\' {
@@ -168,9 +179,11 @@ impl Parser {
                         self.position += 1;
                     }
                 } else {
+                    // CSS Syntax 4: a zero, surrogate or out-of-range escape is U+FFFD.
                     out.push(
                         u32::from_str_radix(&hex, 16)
                             .ok()
+                            .filter(|code| *code != 0)
                             .and_then(char::from_u32)
                             .unwrap_or('\u{fffd}'),
                     );

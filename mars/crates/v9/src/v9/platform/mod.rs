@@ -32,10 +32,13 @@ mod attr_dom;
 mod namespaces;
 mod net;
 mod nodes;
+pub(in crate::v9) mod observable;
 mod offsets;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) mod random;
 mod range;
+mod range_contents;
+mod range_live;
 pub(in crate::v9) mod scripts;
 mod scrolling;
 mod selector;
@@ -898,6 +901,9 @@ pub(in crate::v9) struct PageState {
     pub initialized: bool,
     /** The page's Selection object, once a script asked for it; its ranges stay reachable. */
     pub selection: Option<ObjectId>,
+    /** Live Range objects, whose boundary points move with the tree. Held weakly: the sweep drops
+    any the heap collected, so a script's unreferenced ranges do not stay alive here. */
+    pub live_ranges: Vec<ObjectId>,
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
@@ -1140,6 +1146,7 @@ impl<'h> Page<'h> {
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         self.state.active_animations.retain(|id| live.contains(id));
+        self.state.live_ranges.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
         self.state.attr_wrappers.retain(|_, id| live.contains(id));

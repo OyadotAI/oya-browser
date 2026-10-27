@@ -13,14 +13,19 @@ const IDLE_FRAMES: f64 = 3.0;
 
 /** `Node.ELEMENT_NODE` and the other node type and position constants, on the prototype and
 on the `Node` constructor itself, where DOM polyfills compare `nodeType` against them. */
-const NODE_CONSTANTS: [(&str, f64); 12] = [
+const NODE_CONSTANTS: [(&str, f64); 17] = [
     ("ELEMENT_NODE", 1.0),
     ("ATTRIBUTE_NODE", 2.0),
     ("TEXT_NODE", 3.0),
+    ("CDATA_SECTION_NODE", 4.0),
+    ("ENTITY_REFERENCE_NODE", 5.0),
+    ("ENTITY_NODE", 6.0),
+    ("PROCESSING_INSTRUCTION_NODE", 7.0),
     ("COMMENT_NODE", 8.0),
     ("DOCUMENT_NODE", 9.0),
     ("DOCUMENT_TYPE_NODE", 10.0),
     ("DOCUMENT_FRAGMENT_NODE", 11.0),
+    ("NOTATION_NODE", 12.0),
     ("DOCUMENT_POSITION_DISCONNECTED", 1.0),
     ("DOCUMENT_POSITION_PRECEDING", 2.0),
     ("DOCUMENT_POSITION_FOLLOWING", 4.0),
@@ -346,6 +351,7 @@ fn document(b: &mut Builder, node: u32) {
             "createAttribute",
             "createAttributeNS",
             "createTextNode",
+            "createCDATASection",
             "createComment",
             "createDocumentFragment",
             "createEvent",
@@ -1373,6 +1379,28 @@ fn ranges(b: &mut Builder) {
         b.value(ctor, name, JsValue::Number(value), 0);
     }
     b.global("Range", ctor);
+    let static_range = b.object(Some(object_prototype));
+    b.ids.static_range_prototype = static_range;
+    getters(
+        b,
+        static_range,
+        &[
+            "startContainer",
+            "startOffset",
+            "endContainer",
+            "endOffset",
+            "collapsed",
+        ],
+        super::range::range_get,
+    );
+    let static_ctor = b.constructor(
+        "StaticRange",
+        0,
+        super::range::construct_static_range,
+        static_range,
+        None,
+    );
+    b.global("StaticRange", static_ctor);
     let selection = b.object(Some(object_prototype));
     b.ids.selection_prototype = selection;
     getters(

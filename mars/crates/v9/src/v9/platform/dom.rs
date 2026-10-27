@@ -5,6 +5,7 @@ pub(in crate::v9) use super::html::{parse_detached, serialize};
 use super::implementation::{self, PROCESSING_INSTRUCTION};
 use super::namespaces::{self, ElementNs, HTML_NAMESPACE, NameError, NameKind};
 use super::nodes::{BODY, HEAD, HTML, VIRTUAL_BASE};
+use super::range_live;
 use super::selector;
 use super::token_list;
 use super::token_set::TokenSet;
@@ -1133,15 +1134,10 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if node != DOCUMENT {
         let tag = vm.page.tag(node);
         if tag.starts_with('#') && tag != components::FRAGMENT && tag != components::SHADOW_ROOT {
-            let old = vm.page.text_content(node);
-            vm.page
-                .set_text(node, &text)
-                .map_err(|error| dom_error(vm, error))?;
-            vm.page
-                .mutations
-                .push(components::Mutation::Text { node, old });
+            set_data(vm, node, &text)?;
         } else {
             let removed = vm.page.children(node);
+            clear_children_hooks(vm, node)?;
             vm.page
                 .set_text(node, &text)
                 .map_err(|error| dom_error(vm, error))?;
@@ -1152,16 +1148,38 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
-/** Replace a character data node's text, queueing the characterData record. */
+/** Replace a character data node's whole text (the data setter's replace-data over all of it). */
 fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
+    let length = vm.page.text_content(node).encode_utf16().count();
+    replace_data(vm, node, 0, length, text)
+}
+
+/**
+ * Replace `count` UTF-16 units of a character data node at `offset` with `data`, queueing the
+ * characterData record and moving the live range points inside the span as the standard does.
+ * Callers keep offset and count within the node's length.
+ */
+pub(super) fn replace_data(
+    vm: &mut Vm,
+    node: usize,
+    offset: usize,
+    count: usize,
+    data: &str,
+) -> Res<()> {
+    let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
+    let tail = (offset + count).min(units.len());
+    let mut next = units[..offset.min(units.len())].to_vec();
+    next.extend(data.encode_utf16());
+    next.extend_from_slice(&units[tail..]);
     let old = vm.page.text_content(node);
     vm.page
-        .set_text(node, text)
+        .set_text(node, &String::from_utf16_lossy(&next))
         .map_err(|error| dom_error(vm, error))?;
     vm.page
         .mutations
         .push(components::Mutation::Text { node, old });
-    Ok(())
+    let inserted = data.encode_utf16().count();
+    range_live::replaced(vm, node, offset, count, inserted)
 }
 
 /** A WebIDL `unsigned long` argument: ToNumber, then modulo 2^32. */
@@ -1201,9 +1219,8 @@ pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error(&format!("{required} arguments required.")));
     }
     if name == "appendData" {
-        let mut text = String::from_utf16_lossy(&units);
-        text.push_str(&vm.to_text(&call.arg(0))?);
-        set_data(vm, node, &text)?;
+        let data = vm.to_text(&call.arg(0))?;
+        replace_data(vm, node, length, 0, &data)?;
         return Ok(JsValue::Undefined);
     }
     let offset = unsigned_long(vm, &call.arg(0))?;
@@ -1217,41 +1234,69 @@ pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "insertData" | "splitText" => 0,
         _ => unsigned_long(vm, &call.arg(1))?.min(length - offset),
     };
-    let tail = &units[offset + count..];
     match name {
         "substringData" => {
             JsValue::string(&String::from_utf16_lossy(&units[offset..offset + count]))
                 .map_err(Into::into)
         }
-        "splitText" => split_text(vm, node, &units, offset),
+        "splitText" => {
+            let created = split_text_node(vm, node, offset)?;
+            wrap(vm, created)
+        }
         _ => {
             let inserted = match name {
                 "insertData" => vm.to_text(&call.arg(1))?,
                 "replaceData" => vm.to_text(&call.arg(2))?,
                 _ => String::new(),
             };
-            let mut text = String::from_utf16_lossy(&units[..offset]);
-            text.push_str(&inserted);
-            text.push_str(&String::from_utf16_lossy(tail));
-            set_data(vm, node, &text)?;
+            replace_data(vm, node, offset, count, &inserted)?;
             Ok(JsValue::Undefined)
         }
     }
 }
 
-/** Text.splitText: the data after `offset` moves into a new text node placed after this one. */
-fn split_text(vm: &mut Vm, node: usize, units: &[u16], offset: usize) -> Res<JsValue> {
+/**
+ * Text.splitText as the DOM standard runs it: the data from `offset` moves into a new text node
+ * placed after this one. The insertion moves the live points after it; the points past the split
+ * then follow the data, and the data leaves this node through replaceData. Returns the new node.
+ */
+pub(super) fn split_text_node(vm: &mut Vm, node: usize, offset: usize) -> Res<usize> {
+    let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
+    let length = units.len();
     let rest = String::from_utf16_lossy(&units[offset..]);
     let created = vm
         .page
         .create("#text", Some(rest))
         .map_err(|error| dom_error(vm, error))?;
-    if let Some(parent) = traverse_parent(vm, node) {
+    let parent = traverse_parent(vm, node);
+    let index = parent.map_or(0, |parent| index_of(vm, parent, node));
+    if let Some(parent) = parent {
         let next = sibling(vm, node, 1, false);
         insert(vm, parent, created, next)?;
     }
-    set_data(vm, node, &String::from_utf16_lossy(&units[..offset]))?;
-    wrap(vm, created)
+    range_live::split(vm, node, offset, created, parent, index)?;
+    replace_data(vm, node, offset, length - offset, "")?;
+    Ok(created)
+}
+
+/** The index of `node` among `parent`'s children, or 0 when it is not one of them. */
+pub(super) fn index_of(vm: &mut Vm, parent: usize, node: usize) -> usize {
+    vm.page
+        .children(parent)
+        .iter()
+        .position(|child| *child == node)
+        .unwrap_or(0)
+}
+
+/**
+ * The live-range step of a replace-all: each child leaves at index 0 in turn, which moves the
+ * points inside it to the parent's start and pulls points past the start back to it.
+ */
+pub(super) fn clear_children_hooks(vm: &mut Vm, parent: usize) -> Res<()> {
+    for child in vm.page.children(parent) {
+        range_live::removed(vm, parent, 0, child)?;
+    }
+    Ok(())
 }
 
 /** Queue a child list change of `parent` for reactions and observers. */
@@ -1272,6 +1317,10 @@ pub(super) fn children_changed(vm: &mut Vm, parent: usize, added: Vec<usize>, re
 pub(in crate::v9) fn remove_node(vm: &mut Vm, node: usize) -> Res<()> {
     let parent = vm.page.parent(node);
     let siblings = parent.map(|parent| vm.page.children(parent));
+    if let Some(parent) = parent {
+        let index = index_of(vm, parent, node);
+        range_live::removed(vm, parent, index, node)?;
+    }
     vm.page.remove(node).map_err(|error| dom_error(vm, error))?;
     if let (Some(parent), Some(siblings)) = (parent, siblings) {
         let position = siblings.iter().position(|child| *child == node);
@@ -1501,34 +1550,34 @@ fn equal_nodes(vm: &mut Vm, a: usize, b: usize) -> bool {
 /** Node.normalize: drop empty text nodes and merge each run of adjacent text nodes into its
 first, through the whole subtree. */
 fn normalize(vm: &mut Vm, node: usize) -> Res<()> {
-    let mut run: Option<(usize, String)> = None;
+    let mut first: Option<usize> = None;
     for child in traverse_children(vm, node) {
         if node_type(vm, child) != 3 {
-            flush_text_run(vm, run.take())?;
+            first = None;
             normalize(vm, child)?;
             continue;
         }
-        let data = vm.page.text_content(child);
-        match run.as_mut() {
-            Some((_, text)) => {
-                text.push_str(&data);
-                remove_node(vm, child)?;
-            }
-            None if data.is_empty() => remove_node(vm, child)?,
-            None => run = Some((child, data)),
+        match first {
+            Some(text) => merge_text(vm, text, child)?,
+            None if vm.page.text_content(child).is_empty() => remove_node(vm, child)?,
+            None => first = Some(child),
         }
     }
-    flush_text_run(vm, run)
+    Ok(())
 }
 
-/** Write a merged text run back into the first node of the run, if it grew. */
-fn flush_text_run(vm: &mut Vm, run: Option<(usize, String)>) -> Res<()> {
-    if let Some((first, text)) = run
-        && vm.page.text_content(first) != text
-    {
-        set_data(vm, first, &text)?;
-    }
-    Ok(())
+/**
+ * normalize folds the text node `child` into `first`, the text node before it: `child`'s data is
+ * appended, the points in `child` move to `first` past the old text, and the node is removed.
+ */
+fn merge_text(vm: &mut Vm, first: usize, child: usize) -> Res<()> {
+    let length = vm.page.text_content(first).encode_utf16().count();
+    let parent = vm.page.parent(child);
+    let index = parent.map_or(0, |parent| index_of(vm, parent, child));
+    let data = vm.page.text_content(child);
+    replace_data(vm, first, length, 0, &data)?;
+    range_live::merged(vm, first, child, parent, index, length)?;
+    remove_node(vm, child)
 }
 
 /** DOCUMENT_POSITION bits for compareDocumentPosition. */
@@ -1726,6 +1775,30 @@ fn replace_child(vm: &mut Vm, parent: usize, new: usize, old: usize) -> Res<()> 
     insert(vm, parent, new, reference)
 }
 
+/**
+ * Take `node` out of the parent it is in before an insertion. A fragment's children leave the
+ * fragment silently in the child list log (the fragment itself was logged), but still move their
+ * live range points out as a removal does.
+ */
+fn leave_current_parent(vm: &mut Vm, node: usize, from_fragment: bool) -> Res<()> {
+    let Some(old) = vm.page.parent(node) else {
+        return Ok(());
+    };
+    if !from_fragment {
+        children_changed(vm, old, Vec::new(), vec![node]);
+    }
+    let index = index_of(vm, old, node);
+    range_live::removed(vm, old, index, node)
+}
+
+/** The child index an insertion before `reference` (or at the end) lands at. */
+fn insertion_index(vm: &mut Vm, parent: usize, reference: Option<usize>) -> usize {
+    let siblings = vm.page.children(parent);
+    reference
+        .and_then(|reference| siblings.iter().position(|id| *id == reference))
+        .unwrap_or(siblings.len())
+}
+
 /** Insert a node (fragments insert their children), adopting new identities. */
 pub(in crate::v9) fn insert(
     vm: &mut Vm,
@@ -1753,13 +1826,13 @@ pub(in crate::v9) fn insert(
     }
     let mut added = Vec::with_capacity(children.len());
     for node in children {
-        if let Some(old) = vm.page.parent(node).filter(|_| tag != components::FRAGMENT) {
-            children_changed(vm, old, Vec::new(), vec![node]);
-        }
+        leave_current_parent(vm, node, tag == components::FRAGMENT)?;
+        let index = insertion_index(vm, parent, reference);
         let mapping = vm
             .page
             .insert(parent, node, reference)
             .map_err(|error| dom_error(vm, error))?;
+        range_live::inserted(vm, parent, index, 1)?;
         adopt(vm, &mapping)?;
         added.push(
             mapping
@@ -2151,6 +2224,7 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
         node
     };
     let removed = vm.page.children(node);
+    clear_children_hooks(vm, node)?;
     replace_html(vm, node, html)?;
     let added = vm.page.children(node);
     for child in &added {
@@ -2550,36 +2624,11 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         | "setAttributeNodeNS"
         | "removeAttributeNode" => attr_dom::element_attr_method(vm, node, &call),
         "querySelector" | "querySelectorAll" => query(vm, node, &call),
-        "getElementsByTagName" => {
-            let tag = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
-            let found = search(vm, node, |page, id| {
-                page.is_element(id) && (tag == "*" || page.tag(id) == tag)
-            });
-            node_list(vm, found)
-        }
-        "getElementsByClassName" => {
-            let wanted: Vec<String> = vm
-                .to_text(&call.arg(0))?
-                .split_ascii_whitespace()
-                .map(String::from)
-                .collect();
-            let found = search(vm, node, |page, id| {
-                let classes = page
-                    .view(id)
-                    .and_then(|view| view.attributes.get("class").cloned())
-                    .unwrap_or_default();
-                !wanted.is_empty()
-                    && wanted
-                        .iter()
-                        .all(|class| classes.split_ascii_whitespace().any(|c| c == class))
-            });
-            node_list(vm, found)
-        }
+        "getElementsByTagName" => elements_by_tag(vm, node, &call),
+        "getElementsByClassName" => elements_by_class(vm, node, &call),
         "matches" | "webkitMatchesSelector" | "msMatchesSelector" => {
             let text = vm.to_text(&call.arg(0))?;
-            let list = selector::parse(&text).map_err(|message| {
-                vm.syntax_error(&format!("Failed to execute 'matches': {message}"))
-            })?;
+            let list = parse_selector(vm, "matches", &text)?;
             Ok(JsValue::Boolean(selector::matches(
                 &mut vm.page,
                 &vm.heap,
@@ -2590,9 +2639,7 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "closest" => {
             let text = vm.to_text(&call.arg(0))?;
-            let list = selector::parse(&text).map_err(|message| {
-                vm.syntax_error(&format!("Failed to execute 'closest': {message}"))
-            })?;
+            let list = parse_selector(vm, "closest", &text)?;
             let mut candidates = vec![node];
             candidates.extend(vm.page.ancestors(node));
             let found = candidates
@@ -2836,15 +2883,53 @@ pub(super) fn search(
         .collect()
 }
 
+/** Parse a selector for `method`. A bad selector is the DOM's SyntaxError DOMException (code 12),
+which scripts test by name, not the JavaScript SyntaxError class. */
+fn parse_selector(vm: &mut Vm, method: &str, text: &str) -> Res<selector::SelectorList> {
+    selector::parse(text).map_err(|message| {
+        vm.dom_exception(
+            "SyntaxError",
+            &format!("Failed to execute '{method}' on 'Document': {message}"),
+        )
+    })
+}
+
+/** getElementsByTagName for an element or the document. The document searches its whole tree,
+including the root element, which an element's own search never includes. */
+fn elements_by_tag(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+    let tag = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+    let found = search(vm, node, |page, id| {
+        page.is_element(id) && (tag == "*" || page.tag(id) == tag)
+    });
+    node_list(vm, found)
+}
+
+/** getElementsByClassName: the elements under `node` carrying every named class. An empty list of
+class names matches nothing, as the DOM requires. */
+fn elements_by_class(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+    let wanted: Vec<String> = vm
+        .to_text(&call.arg(0))?
+        .split_ascii_whitespace()
+        .map(String::from)
+        .collect();
+    let found = search(vm, node, |page, id| {
+        let classes = page
+            .view(id)
+            .and_then(|view| view.attributes.get("class").cloned())
+            .unwrap_or_default();
+        !wanted.is_empty()
+            && wanted
+                .iter()
+                .all(|class| classes.split_ascii_whitespace().any(|c| c == class))
+    });
+    node_list(vm, found)
+}
+
 /** querySelector and querySelectorAll. */
 pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     let all = native_name(call) == "querySelectorAll";
     let text = vm.to_text(&call.arg(0))?;
-    let list = selector::parse(&text).map_err(|message| {
-        vm.syntax_error(&format!(
-            "Failed to execute 'querySelector' on 'Document': {message}"
-        ))
-    })?;
+    let list = parse_selector(vm, "querySelector", &text)?;
     let scope = (node != DOCUMENT).then_some(node);
     vm.charge(
         vm.page
@@ -3072,6 +3157,9 @@ pub(in crate::v9) fn document_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => {
             let key = vm.to_text(&call.arg(0))?;
+            if key.is_empty() {
+                return Ok(JsValue::Null);
+            }
             let found = elements.into_iter().find(|id| {
                 let view = vm.page.view(*id);
                 view.is_some_and(|view| {
@@ -3186,24 +3274,27 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             });
             node_list(vm, found)
         }
-        "getElementsByTagName"
-        | "getElementsByClassName"
-        | "querySelector"
-        | "querySelectorAll" => {
-            if name.starts_with("query") {
-                return query(vm, DOCUMENT, &call);
-            }
-            let this = call.this.clone();
-            let html = JsValue::Object(match wrap(vm, HTML)? {
-                JsValue::Object(id) => id,
-                _ => return Ok(JsValue::Null),
-            });
-            let _ = this;
-            let method = vm.get(&html, &Key::from(name))?;
-            vm.call(method, html, call.args.to_vec())
-        }
+        "getElementsByTagName" => elements_by_tag(vm, DOCUMENT, &call),
+        "getElementsByClassName" => elements_by_class(vm, DOCUMENT, &call),
+        "querySelector" | "querySelectorAll" => query(vm, DOCUMENT, &call),
         "createElement" => create_element_call(vm, &call, false),
         "createElementNS" => create_element_call(vm, &call, true),
+        "createCDATASection" => {
+            // The page document refuses CDATA as HTML does; another document (`new Document()`)
+            // takes it. ponytail: a CDATA section is kept as a text node, so its nodeType is 3.
+            if this_node(vm, &call)? == DOCUMENT {
+                return Err(vm.dom_exception(
+                    "NotSupportedError",
+                    "CDATA sections are not supported in HTML documents.",
+                ));
+            }
+            let text = vm.to_text(&call.arg(0))?;
+            let node = vm
+                .page
+                .create("#text", Some(text))
+                .map_err(|error| dom_error(vm, error))?;
+            wrap(vm, node)
+        }
         "createAttribute" => attr_dom::create_attribute(vm, &call, false),
         "createAttributeNS" => attr_dom::create_attribute(vm, &call, true),
         "createTextNode" | "createComment" => {
@@ -3258,6 +3349,9 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "importNode" | "adoptNode" => {
             let node = arg_node(vm, &call, 0)?;
             if name == "adoptNode" {
+                if vm.page.parent(node).is_some() {
+                    remove_node(vm, node)?;
+                }
                 return Ok(call.arg(0));
             }
             let copy = clone_node(vm, node, call.arg(1).truthy())?;
