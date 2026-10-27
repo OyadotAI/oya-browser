@@ -164,11 +164,8 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
         if vm.page.state.focused == Some(*old) {
             vm.page.state.focused = Some(*new);
         }
-        for listener in &mut vm.page.state.listeners {
-            if listener.target == super::Target::Node(*old) {
-                listener.target = super::Target::Node(*new);
-            }
-        }
+        vm.page.state.listeners.renumber_node(*old, *new);
+        range_live::renumber(vm, *old, *new);
     }
     Ok(())
 }

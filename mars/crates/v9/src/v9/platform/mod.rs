@@ -40,7 +40,9 @@ mod pseudo_attributes;
 pub(in crate::v9) mod random;
 mod range;
 mod range_contents;
+mod range_index;
 mod range_live;
+mod listener_store;
 pub(in crate::v9) mod scripts;
 mod scrolling;
 mod selector;
@@ -721,7 +723,7 @@ pub(in crate::v9) struct Timer {
 }
 
 /** Where a listener is registered. */
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::v9) enum Target {
     Node(usize),
@@ -855,7 +857,7 @@ pub(in crate::v9) struct PageState {
     pub active_animations: Vec<ObjectId>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
-    pub listeners: Vec<Listener>,
+    pub listeners: listener_store::ListenerStore,
     pub next_listener: u32,
     /** Node wrappers by node id, so identity survives requests. */
     pub wrappers: BTreeMap<usize, ObjectId>,
@@ -905,7 +907,7 @@ pub(in crate::v9) struct PageState {
     pub selection: Option<ObjectId>,
     /** Live Range objects, whose boundary points move with the tree. Held weakly: the sweep drops
     any the heap collected, so a script's unreferenced ranges do not stay alive here. */
-    pub live_ranges: Vec<ObjectId>,
+    pub live_ranges: range_index::LiveRanges,
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
@@ -1127,7 +1129,7 @@ impl<'h> Page<'h> {
             out.push(timer.callback.clone());
             out.extend(timer.args.iter().cloned());
         }
-        for listener in &self.state.listeners {
+        for listener in self.state.listeners.iter() {
             out.push(listener.callback.clone());
             out.extend(listener.signal.clone());
             if let Target::Object(id) = listener.target {

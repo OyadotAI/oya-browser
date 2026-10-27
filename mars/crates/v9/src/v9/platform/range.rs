@@ -45,11 +45,12 @@ fn collapsed_data() -> RangeData {
 
 /** Allocate a Range host object over its data and register it as live. */
 fn range_object(vm: &mut Vm, data: RangeData) -> Res<JsValue> {
+    let nodes = range_live::nodes_of(vm, &data);
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Range(Box::new(data)))),
         Some(realm().ids.range_prototype),
     ))?;
-    range_live::register(vm, id);
+    range_live::register(vm, id, nodes);
     Ok(JsValue::Object(id))
 }
 
@@ -120,11 +121,15 @@ pub(super) fn range_data(vm: &mut Vm, value: &JsValue) -> Res<RangeData> {
 
 /** Store a Range's data back. */
 pub(super) fn set_range(vm: &mut Vm, value: &JsValue, data: RangeData) {
-    if let JsValue::Object(id) = value
-        && let Some(Class::Host(host)) = vm.heap.get_mut(*id).map(|object| &mut object.class)
-    {
-        **host = HostData::Range(Box::new(data));
-    }
+    let Some(id) = value.object() else {
+        return;
+    };
+    let nodes = range_live::nodes_of(vm, &data);
+    let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|object| &mut object.class) else {
+        return;
+    };
+    **host = HostData::Range(Box::new(data));
+    range_live::relink(vm, id, nodes);
 }
 
 /** A boundary's node identity and offset; a boundary whose node was collected is the document. */

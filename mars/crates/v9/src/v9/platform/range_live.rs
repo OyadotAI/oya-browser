@@ -5,35 +5,64 @@
  * standard names, so a point always follows the node it sat in. Ranges are registered when made
  * and held weakly: the page's sweep drops one that the heap has collected.
  *
- * ponytail: each hook walks every registered range, so a mutation costs O(live ranges). The
- * standard requires that walk; a per-node index of ranges would cut it if pages held many ranges.
+ * Each hook reads only the ranges linked under the nodes it affects (range_index). A removal also
+ * walks the removed subtree, which is the standard's own cost: the points inside it must be found.
  */
 use super::dom::wrap;
-use super::range::{Boundary, boundary, range_data, set_range};
+use super::range::{Boundary, boundary, children, range_data, set_range};
+use super::range_index::Nodes;
 use crate::v9::value::{JsValue, ObjectId};
+use crate::v9::vm::data::RangeData;
 use crate::v9::vm::{Res, Vm};
+use std::collections::BTreeSet;
 
-/** Track a new Range object so that later mutations move its boundary points. */
-pub(super) fn register(vm: &mut Vm, id: ObjectId) {
-    vm.page.state.live_ranges.push(id);
+/** The two containers of a range's data, as the node index keys them. */
+pub(super) fn nodes_of(vm: &Vm, data: &RangeData) -> Nodes {
+    (
+        boundary(vm, &data.start, data.start_offset).0,
+        boundary(vm, &data.end, data.end_offset).0,
+    )
+}
+
+/** Track a Range object, linked under its containers, so later mutations move its points. */
+pub(super) fn register(vm: &mut Vm, id: ObjectId, nodes: Nodes) {
+    vm.page.state.live_ranges.place(id, nodes);
+}
+
+/** A range's points were rewritten: re-link it under its new containers if it is registered. */
+pub(super) fn relink(vm: &mut Vm, id: ObjectId, nodes: Nodes) {
+    if vm.page.state.live_ranges.contains(id) {
+        vm.page.state.live_ranges.place(id, nodes);
+    }
+}
+
+/** A node was renumbered by an insertion: the ranges linked under it follow the new identity. */
+pub(super) fn renumber(vm: &mut Vm, old: usize, new: usize) {
+    vm.page.state.live_ranges.renumber(old, new);
 }
 
 /** A node left `parent`, where it sat at `index`: points inside it move to the parent's place. */
 pub(super) fn removed(vm: &mut Vm, parent: usize, index: usize, node: usize) -> Res<()> {
-    move_points(vm, |vm, point| {
-        removal_point(vm, point, parent, index, node)
+    ensure_indexed(vm);
+    if vm.page.state.live_ranges.is_empty() {
+        return Ok(());
+    }
+    let subtree = subtree_of(vm, node);
+    let mut nodes: Vec<usize> = subtree.iter().copied().collect();
+    nodes.push(parent);
+    move_at(vm, &nodes, |_, point| {
+        removal_point(point, &subtree, parent, index)
     })
 }
 
-/** Where one point goes when `node` is removed from `parent` at `index`. */
+/** Where one point goes when a subtree leaves `parent` at `index`: inside the subtree it moves to the gap. */
 fn removal_point(
-    vm: &mut Vm,
     point: Boundary,
+    subtree: &BTreeSet<usize>,
     parent: usize,
     index: usize,
-    node: usize,
 ) -> Boundary {
-    if point.0 == node || vm.page.ancestors(point.0).contains(&node) {
+    if subtree.contains(&point.0) {
         (parent, index)
     } else if point.0 == parent && point.1 > index {
         (parent, point.1 - 1)
@@ -44,7 +73,7 @@ fn removal_point(
 
 /** `count` nodes entered `parent` at `index`: points after that index in the parent move on. */
 pub(super) fn inserted(vm: &mut Vm, parent: usize, index: usize, count: usize) -> Res<()> {
-    move_points(vm, |_, point| {
+    move_at(vm, &[parent], |_, point| {
         if point.0 == parent && point.1 > index {
             (parent, point.1 + count)
         } else {
@@ -61,7 +90,7 @@ pub(super) fn replaced(
     count: usize,
     new_len: usize,
 ) -> Res<()> {
-    move_points(vm, |_, point| {
+    move_at(vm, &[node], |_, point| {
         replaced_point(point, node, offset, count, new_len)
     })
 }
@@ -96,7 +125,8 @@ pub(super) fn split(
     parent: Option<usize>,
     index: usize,
 ) -> Res<()> {
-    move_points(vm, |_, point| {
+    let nodes: Vec<usize> = std::iter::once(node).chain(parent).collect();
+    move_at(vm, &nodes, |_, point| {
         if point.0 == node && point.1 > offset {
             (created, point.1 - offset)
         } else if Some(point.0) == parent && point.1 == index + 1 {
@@ -120,7 +150,8 @@ pub(super) fn merged(
     index: usize,
     length: usize,
 ) -> Res<()> {
-    move_points(vm, |_, point| {
+    let nodes: Vec<usize> = std::iter::once(child).chain(parent).collect();
+    move_at(vm, &nodes, |_, point| {
         if point.0 == child {
             (first, length + point.1)
         } else if Some(point.0) == parent && point.1 == index {
@@ -131,42 +162,75 @@ pub(super) fn merged(
     })
 }
 
-/** The live ranges still registered, after dropping any whose objects are gone. */
-fn registered(vm: &mut Vm) -> Vec<ObjectId> {
-    let heap = &vm.heap;
-    vm.page
-        .state
-        .live_ranges
-        .retain(|id| heap.get(*id).is_some());
-    vm.page.state.live_ranges.clone()
+/** The node and every node under it, found by walking the tree: the cost a removal walk has. */
+fn subtree_of(vm: &mut Vm, root: usize) -> BTreeSet<usize> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if seen.insert(node) {
+            stack.extend(children(vm, node));
+        }
+    }
+    seen
 }
 
-/**
- * Apply `adjust` to both boundary points of every registered range and store the results. A
- * point is rewritten only when it changes, so an untouched range keeps its wrappers.
- */
-fn move_points<F>(vm: &mut Vm, adjust: F) -> Res<()>
+/** Links the ranges of a registry loaded in the old bare-id form, from the heap, once. */
+fn ensure_indexed(vm: &mut Vm) {
+    if vm.page.state.live_ranges.is_indexed() {
+        return;
+    }
+    for id in vm.page.state.live_ranges.registered() {
+        if let Ok(data) = range_data(vm, &JsValue::Object(id)) {
+            let nodes = nodes_of(vm, &data);
+            vm.page.state.live_ranges.place(id, nodes);
+        }
+    }
+    vm.page.state.live_ranges.mark_indexed();
+}
+
+/** Apply `adjust` to the points of every range linked under any of `nodes`. */
+fn move_at<F>(vm: &mut Vm, nodes: &[usize], adjust: F) -> Res<()>
 where
     F: Fn(&mut Vm, Boundary) -> Boundary,
 {
-    for id in registered(vm) {
-        let handle = JsValue::Object(id);
-        let Ok(mut data) = range_data(vm, &handle) else {
-            continue;
-        };
-        let start = boundary(vm, &data.start, data.start_offset);
-        let end = boundary(vm, &data.end, data.end_offset);
-        let new_start = adjust(vm, start);
-        let new_end = adjust(vm, end);
-        if new_start != start {
-            data.start = wrap(vm, new_start.0)?;
-            data.start_offset = new_start.1;
-        }
-        if new_end != end {
-            data.end = wrap(vm, new_end.0)?;
-            data.end_offset = new_end.1;
-        }
-        set_range(vm, &handle, data);
+    ensure_indexed(vm);
+    let affected: BTreeSet<ObjectId> = nodes
+        .iter()
+        .flat_map(|node| vm.page.state.live_ranges.ranges_at(*node))
+        .collect();
+    for id in affected {
+        move_range(vm, id, &adjust)?;
     }
+    Ok(())
+}
+
+/**
+ * Apply `adjust` to both points of one range and store it only if a point moved, so an untouched
+ * range keeps its wrappers. Storing re-links the range under its new containers.
+ */
+fn move_range<F>(vm: &mut Vm, id: ObjectId, adjust: &F) -> Res<()>
+where
+    F: Fn(&mut Vm, Boundary) -> Boundary,
+{
+    let handle = JsValue::Object(id);
+    let Ok(mut data) = range_data(vm, &handle) else {
+        return Ok(());
+    };
+    let start = boundary(vm, &data.start, data.start_offset);
+    let end = boundary(vm, &data.end, data.end_offset);
+    let new_start = adjust(vm, start);
+    let new_end = adjust(vm, end);
+    if new_start == start && new_end == end {
+        return Ok(());
+    }
+    if new_start != start {
+        data.start = wrap(vm, new_start.0)?;
+        data.start_offset = new_start.1;
+    }
+    if new_end != end {
+        data.end = wrap(vm, new_end.0)?;
+        data.end_offset = new_end.1;
+    }
+    set_range(vm, &handle, data);
     Ok(())
 }

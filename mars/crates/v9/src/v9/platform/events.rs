@@ -111,10 +111,13 @@ pub(in crate::v9) fn event_target(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if callback.nullish() {
                 return Ok(JsValue::Undefined);
             }
+            let Some(callback) = callback.object() else {
+                return Err(vm.type_error("parameter 2 is not of type 'Object'."));
+            };
             if adding {
                 add_listener(vm, target, kind, callback, options)?;
             } else {
-                remove_listener(vm, target, &kind, &callback, options.capture);
+                remove_listener(vm, target, &kind, callback, options.capture);
             }
             Ok(JsValue::Undefined)
         }
@@ -140,22 +143,6 @@ fn is_event(vm: &Vm, id: ObjectId) -> bool {
     matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Host(data)) if matches!(**data, HostData::Event(_)))
 }
 
-/** Index of the registration matching target, type, callback and capture, if one exists. */
-fn find_listener(
-    vm: &Vm,
-    target: Target,
-    kind: &str,
-    callback: &JsValue,
-    capture: bool,
-) -> Option<usize> {
-    vm.page.state.listeners.iter().position(|listener| {
-        listener.target == target
-            && listener.kind == kind
-            && listener.callback == *callback
-            && listener.capture == capture
-    })
-}
-
 /**
  * Touch and wheel listeners on the window, the document, the root element and the body default
  * to passive, so they cannot stall scrolling. Other targets keep the non-passive default.
@@ -175,28 +162,28 @@ fn add_listener(
     vm: &mut Vm,
     target: Target,
     kind: String,
-    callback: JsValue,
+    callback: ObjectId,
     options: ListenerOptions,
 ) -> Res<()> {
     if signal_aborted(vm, options.signal.as_ref())? {
         return Ok(());
     }
-    if find_listener(vm, target, &kind, &callback, options.capture).is_some() {
+    let listeners = &vm.page.state.listeners;
+    if listeners.find(target, &kind, options.capture, callback).is_some() {
         return Ok(());
     }
-    if vm.page.state.listeners.len() >= LISTENERS {
+    if listeners.len() >= LISTENERS {
         return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
     }
     let passive = options
         .passive
         .unwrap_or_else(|| passive_by_default(target, &kind));
-    let id = vm.page.state.next_listener;
-    vm.page.state.next_listener += 1;
-    vm.page.state.listeners.push(Listener {
+    let id = next_listener_id(vm);
+    vm.page.state.listeners.insert(Listener {
         id,
         target,
         kind,
-        callback,
+        callback: JsValue::Object(callback),
         capture: options.capture,
         once: options.once,
         passive,
@@ -205,10 +192,18 @@ fn add_listener(
     Ok(())
 }
 
+/** Takes the next registration id; ids order listeners by registration. */
+fn next_listener_id(vm: &mut Vm) -> u32 {
+    let id = vm.page.state.next_listener;
+    vm.page.state.next_listener += 1;
+    id
+}
+
 /** Removes the matching registration, if any. */
-fn remove_listener(vm: &mut Vm, target: Target, kind: &str, callback: &JsValue, capture: bool) {
-    if let Some(index) = find_listener(vm, target, kind, callback, capture) {
-        vm.page.state.listeners.remove(index);
+fn remove_listener(vm: &mut Vm, target: Target, kind: &str, callback: ObjectId, capture: bool) {
+    let listeners = &mut vm.page.state.listeners;
+    if let Some(key) = listeners.find(target, kind, capture, callback) {
+        listeners.remove(&key);
     }
 }
 
@@ -495,43 +490,24 @@ fn invoke(
             data.target = shown;
         }
     });
-    let snapshot: Vec<Listener> = vm
-        .page
-        .state
-        .listeners
-        .iter()
-        .filter(|listener| {
-            listener.target == target
-                && listener.kind == kind
-                && (phase == 2 || listener.capture == capture)
-        })
-        .filter(|listener| phase != 2 || listener.capture == capture)
-        .cloned()
-        .collect();
+    // The bucket of this target, type and capture is exactly what the phase fires: a phase reads
+    // capture listeners in the capture passes and the others in the bubble passes.
+    let firing = vm.page.state.listeners.firing(target, kind, capture);
     // A markup `on<type>` attribute was registered when the element was parsed, before any
     // script listener, so it runs first; listeners it adds wait for the next dispatch.
     let inline_first = !capture && inline_source(vm, target, kind).is_some();
     if inline_first {
         handler_property(vm, target, &current, event, kind)?;
     }
-    for listener in snapshot {
+    for (key, listener) in firing {
         if immediate(vm, event) {
             return Ok(());
         }
-        if !vm
-            .page
-            .state
-            .listeners
-            .iter()
-            .any(|existing| existing.id == listener.id)
-        {
+        if !vm.page.state.listeners.contains(&key) {
             continue;
         }
         if listener.once || signal_aborted(vm, listener.signal.as_ref())? {
-            vm.page
-                .state
-                .listeners
-                .retain(|existing| existing.id != listener.id);
+            vm.page.state.listeners.remove(&key);
         }
         if signal_aborted(vm, listener.signal.as_ref())? {
             continue;
