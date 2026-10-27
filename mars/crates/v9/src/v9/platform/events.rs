@@ -37,15 +37,61 @@ pub(in crate::v9) fn target_value(vm: &mut Vm, target: Target) -> Res<JsValue> {
     }
 }
 
-/** Read capture and once from the options argument. */
-fn options(vm: &mut Vm, value: &JsValue) -> Res<(bool, bool)> {
-    match value {
-        JsValue::Object(_) => {
-            let capture = vm.get(value, &Key::from("capture"))?.truthy();
-            let once = vm.get(value, &Key::from("once"))?.truthy();
-            Ok((capture, once))
-        }
-        other => Ok((other.truthy(), false)),
+/** The options of one addEventListener or removeEventListener call. */
+struct ListenerOptions {
+    capture: bool,
+    once: bool,
+    passive: Option<bool>,
+    signal: Option<JsValue>,
+}
+
+/**
+ * Reads the options argument. Removal reads only `capture`; adding also reads `once`, `passive`
+ * and `signal`, so a feature check through a getter sees exactly the members the DOM standard
+ * reads. A signal must be an object, so `signal: null` throws.
+ */
+fn listener_options(vm: &mut Vm, value: &JsValue, adding: bool) -> Res<ListenerOptions> {
+    let mut parsed = ListenerOptions {
+        capture: value.truthy(),
+        once: false,
+        passive: None,
+        signal: None,
+    };
+    if !matches!(value, JsValue::Object(_)) {
+        return Ok(parsed);
+    }
+    parsed.capture = vm.get(value, &Key::from("capture"))?.truthy();
+    if adding {
+        parsed.once = vm.get(value, &Key::from("once"))?.truthy();
+        let passive = vm.get(value, &Key::from("passive"))?;
+        parsed.passive = (passive != JsValue::Undefined).then(|| passive.truthy());
+        parsed.signal = signal_option(vm, value)?;
+    }
+    Ok(parsed)
+}
+
+/** The `signal` member: absent is None; anything that is not an object throws a TypeError. */
+fn signal_option(vm: &mut Vm, options: &JsValue) -> Res<Option<JsValue>> {
+    let signal = vm.get(options, &Key::from("signal"))?;
+    if signal == JsValue::Undefined {
+        return Ok(None);
+    }
+    if signal.object().is_some() {
+        return Ok(Some(signal));
+    }
+    Err(vm.type_error(
+        "Failed to execute 'addEventListener': member signal is not of type AbortSignal.",
+    ))
+}
+
+/**
+ * Whether a listener's signal has aborted. It is checked when the listener would run, so an
+ * aborted listener never runs even though its registration is removed lazily.
+ */
+fn signal_aborted(vm: &mut Vm, signal: Option<&JsValue>) -> Res<bool> {
+    match signal {
+        Some(signal) => Ok(vm.get(signal, &Key::from("aborted"))?.truthy()),
+        None => Ok(false),
     }
 }
 
@@ -55,58 +101,114 @@ pub(in crate::v9) fn event_target(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Illegal invocation"));
     };
     match native_name(&call) {
-        "dispatchEvent" => {
-            let event = call.arg(0);
-            let Some(id) = event.object().filter(|id| matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::Host(data)) if matches!(**data, HostData::Event(_)))) else {
-                return Err(vm.type_error("parameter 1 is not of type 'Event'."));
-            };
-            if flag(vm, id, DISPATCHING) || flag(vm, id, UNINITIALIZED) {
-                return Err(vm.dom_exception(
-                    "InvalidStateError",
-                    "The event is already being dispatched or was not initialized.",
-                ));
-            }
-            let proceed = dispatch(vm, target, id)?;
-            Ok(JsValue::Boolean(proceed))
-        }
+        "dispatchEvent" => dispatch_from_script(vm, target, &call.arg(0)),
         name => {
             let kind = vm.to_text(&call.arg(0))?;
+            let adding = name == "addEventListener";
+            // WebIDL converts the options before the null-callback early return.
+            let options = listener_options(vm, &call.arg(2), adding)?;
             let callback = call.arg(1);
             if callback.nullish() {
                 return Ok(JsValue::Undefined);
             }
-            let (capture, once) = options(vm, &call.arg(2))?;
-            let listeners = &mut vm.page.state.listeners;
-            let existing = listeners.iter().position(|listener| {
-                listener.target == target
-                    && listener.kind == kind
-                    && listener.callback == callback
-                    && listener.capture == capture
-            });
-            if name == "removeEventListener" {
-                if let Some(index) = existing {
-                    listeners.remove(index);
-                }
-                return Ok(JsValue::Undefined);
+            if adding {
+                add_listener(vm, target, kind, callback, options)?;
+            } else {
+                remove_listener(vm, target, &kind, &callback, options.capture);
             }
-            if existing.is_some() {
-                return Ok(JsValue::Undefined);
-            }
-            if listeners.len() >= LISTENERS {
-                return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
-            }
-            let id = vm.page.state.next_listener;
-            vm.page.state.next_listener += 1;
-            vm.page.state.listeners.push(Listener {
-                id,
-                target,
-                kind,
-                callback,
-                capture,
-                once,
-            });
             Ok(JsValue::Undefined)
         }
+    }
+}
+
+/** The `dispatchEvent(event)` method: the argument must be an Event that is not already in flight. */
+fn dispatch_from_script(vm: &mut Vm, target: Target, event: &JsValue) -> Res<JsValue> {
+    let Some(id) = event.object().filter(|id| is_event(vm, *id)) else {
+        return Err(vm.type_error("parameter 1 is not of type 'Event'."));
+    };
+    if flag(vm, id, DISPATCHING) || flag(vm, id, UNINITIALIZED) {
+        return Err(vm.dom_exception(
+            "InvalidStateError",
+            "The event is already being dispatched or was not initialized.",
+        ));
+    }
+    Ok(JsValue::Boolean(dispatch(vm, target, id)?))
+}
+
+/** Whether an object is an Event host object. */
+fn is_event(vm: &Vm, id: ObjectId) -> bool {
+    matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Host(data)) if matches!(**data, HostData::Event(_)))
+}
+
+/** Index of the registration matching target, type, callback and capture, if one exists. */
+fn find_listener(
+    vm: &Vm,
+    target: Target,
+    kind: &str,
+    callback: &JsValue,
+    capture: bool,
+) -> Option<usize> {
+    vm.page.state.listeners.iter().position(|listener| {
+        listener.target == target
+            && listener.kind == kind
+            && listener.callback == *callback
+            && listener.capture == capture
+    })
+}
+
+/**
+ * Touch and wheel listeners on the window, the document, the root element and the body default
+ * to passive, so they cannot stall scrolling. Other targets keep the non-passive default.
+ */
+fn passive_by_default(target: Target, kind: &str) -> bool {
+    const DEFAULT_PASSIVE_KINDS: [&str; 4] = ["touchstart", "touchmove", "wheel", "mousewheel"];
+    let root = match target {
+        Target::Window | Target::Document => true,
+        Target::Node(node) => node == super::HTML || node == super::nodes::BODY,
+        Target::Object(_) => false,
+    };
+    root && DEFAULT_PASSIVE_KINDS.contains(&kind)
+}
+
+/** Registers a listener unless the same one exists or its signal has already aborted. */
+fn add_listener(
+    vm: &mut Vm,
+    target: Target,
+    kind: String,
+    callback: JsValue,
+    options: ListenerOptions,
+) -> Res<()> {
+    if signal_aborted(vm, options.signal.as_ref())? {
+        return Ok(());
+    }
+    if find_listener(vm, target, &kind, &callback, options.capture).is_some() {
+        return Ok(());
+    }
+    if vm.page.state.listeners.len() >= LISTENERS {
+        return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
+    }
+    let passive = options
+        .passive
+        .unwrap_or_else(|| passive_by_default(target, &kind));
+    let id = vm.page.state.next_listener;
+    vm.page.state.next_listener += 1;
+    vm.page.state.listeners.push(Listener {
+        id,
+        target,
+        kind,
+        callback,
+        capture: options.capture,
+        once: options.once,
+        passive,
+        signal: options.signal,
+    });
+    Ok(())
+}
+
+/** Removes the matching registration, if any. */
+fn remove_listener(vm: &mut Vm, target: Target, kind: &str, callback: &JsValue, capture: bool) {
+    if let Some(index) = find_listener(vm, target, kind, callback, capture) {
+        vm.page.state.listeners.remove(index);
     }
 }
 
@@ -160,6 +262,10 @@ pub(in crate::v9) fn create_event(
 const DISPATCHING: &str = "dispatching";
 /** Set on `document.createEvent` events until initEvent runs. */
 pub(in crate::v9) const UNINITIALIZED: &str = "uninitialized";
+/** Set while a passive listener runs for the event. */
+const PASSIVE: &str = "passive";
+/** The type of the event fired at the window when a listener throws. */
+const ERROR_KIND: &str = "error";
 
 /** Read one of an event's private flags. */
 fn flag(vm: &Vm, event: ObjectId, name: &str) -> bool {
@@ -293,7 +399,9 @@ pub(in crate::v9) fn dispatch(vm: &mut Vm, target: Target, event: ObjectId) -> R
     })
     .ok_or_else(|| EngineError::invalid("Invalid V9 event."))?;
     set_flag(vm, event, DISPATCHING, true);
+    let outer = vm.page.current_event.replace(event);
     let result = propagate(vm, target, event, &data);
+    vm.page.current_event = outer;
     // The DOM standard's dispatch ends by clearing the dispatch and both stop flags, so the
     // same event can be dispatched again and its listeners run again.
     set_flag(vm, event, DISPATCHING, false);
@@ -419,13 +527,16 @@ fn invoke(
         {
             continue;
         }
-        if listener.once {
+        if listener.once || signal_aborted(vm, listener.signal.as_ref())? {
             vm.page
                 .state
                 .listeners
                 .retain(|existing| existing.id != listener.id);
         }
-        call_listener(vm, &listener.callback, &current, event)?;
+        if signal_aborted(vm, listener.signal.as_ref())? {
+            continue;
+        }
+        call_listener(vm, &listener.callback, &current, event, listener.passive)?;
     }
     if !capture && !inline_first && !immediate(vm, event) {
         handler_property(vm, target, &current, event, kind)?;
@@ -510,33 +621,66 @@ fn inline_source(vm: &mut Vm, target: Target, kind: &str) -> Option<String> {
         })
 }
 
-/** Call a listener function or `handleEvent` object; its exceptions go to the console. */
-fn call_listener(vm: &mut Vm, callback: &JsValue, current: &JsValue, event: ObjectId) -> Res<()> {
-    let (function, this) = if vm.is_callable(callback) {
-        (callback.clone(), current.clone())
-    } else {
-        (
-            vm.get(callback, &Key::from("handleEvent"))?,
-            callback.clone(),
-        )
-    };
-    match vm.call(function, this, vec![JsValue::Object(event)]) {
+/** The function to call and its `this` for a listener: a callable, or an object's handleEvent. */
+fn listener_target(vm: &mut Vm, callback: &JsValue, current: &JsValue) -> Res<(JsValue, JsValue)> {
+    if vm.is_callable(callback) {
+        return Ok((callback.clone(), current.clone()));
+    }
+    Ok((
+        vm.get(callback, &Key::from("handleEvent"))?,
+        callback.clone(),
+    ))
+}
+
+/**
+ * Call a listener function or `handleEvent` object. While it runs, `passive` is set on the
+ * event so its cancel requests are ignored. An exception is reported and then fired at the
+ * window as an `error` event, as HTML's "report the exception" does.
+ */
+fn call_listener(
+    vm: &mut Vm,
+    callback: &JsValue,
+    current: &JsValue,
+    event: ObjectId,
+    passive: bool,
+) -> Res<()> {
+    let (function, this) = listener_target(vm, callback, current)?;
+    set_flag(vm, event, PASSIVE, passive);
+    let outcome = vm.call(function, this, vec![JsValue::Object(event)]);
+    set_flag(vm, event, PASSIVE, false);
+    match outcome {
         Ok(result) => {
             if result == JsValue::Boolean(false) {
-                with_event(vm, event, |data| {
-                    if data.cancelable {
-                        data.default_prevented = true;
-                    }
-                });
+                cancel(vm, event);
             }
             Ok(())
         }
-        Err(Thrown::Value(error)) => {
-            vm.report_error(&error);
-            Ok(())
-        }
+        Err(Thrown::Value(error)) => report_exception(vm, event, &error),
         Err(fatal) => Err(fatal),
     }
+}
+
+/** Reports an uncaught listener exception, then fires `error` at the window unless that event is itself `error`. */
+fn report_exception(vm: &mut Vm, event: ObjectId, error: &JsValue) -> Res<()> {
+    vm.report_error(error);
+    let dispatching_error =
+        event_data(vm, &JsValue::Object(event)).is_some_and(|data| data.kind == ERROR_KIND);
+    if !dispatching_error {
+        fire(vm, Target::Window, ERROR_KIND, false, true)?;
+    }
+    Ok(())
+}
+
+/** Cancels an event: only a cancelable event that no passive listener is running for. */
+fn cancel(vm: &mut Vm, event: ObjectId) {
+    if flag(vm, event, PASSIVE) {
+        return;
+    }
+    with_event(vm, event, |data| {
+        if data.cancelable {
+            data.default_prevented = true;
+        }
+    });
 }
 
 /** `onclick = function` properties and inline `onclick="..."` attributes. */
@@ -566,7 +710,7 @@ fn handler_property(
     if let Some(handler) = handler
         && vm.is_callable(&handler)
     {
-        call_listener(vm, &handler, current, event)?;
+        call_listener(vm, &handler, current, event, false)?;
     }
     Ok(())
 }
@@ -625,6 +769,9 @@ pub(in crate::v9::platform) fn fire_keyboard(
 
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.new_target.is_none() {
+        return Err(vm.type_error("Failed to construct 'Event': Please use the 'new' operator, this DOM object constructor cannot be called as a function."));
+    }
     if call.args.is_empty() {
         return Err(vm.type_error("Failed to construct 'Event': 1 argument required."));
     }
@@ -653,10 +800,11 @@ pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
         });
     }
-    if let Some(target) = &call.new_target {
-        let proto = vm.prototype_for(target, realm().ids.event_prototype)?;
-        vm.set_proto(id, Some(proto))?;
-    }
+    let Some(target) = &call.new_target else {
+        return Err(vm.type_error("Failed to construct 'Event': Please use the 'new' operator, this DOM object constructor cannot be called as a function."));
+    };
+    let proto = vm.prototype_for(target, realm().ids.event_prototype)?;
+    vm.set_proto(id, Some(proto))?;
     Ok(event)
 }
 
@@ -705,13 +853,7 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Illegal invocation"));
     };
     match native_name(&call) {
-        "preventDefault" => {
-            with_event(vm, id, |data| {
-                if data.cancelable {
-                    data.default_prevented = true;
-                }
-            });
-        }
+        "preventDefault" => cancel(vm, id),
         "stopPropagation" => {
             with_event(vm, id, |data| data.stopped = true);
         }
@@ -725,6 +867,9 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let Some(data) = event_data(vm, &call.this) else {
                 return Ok(JsValue::Undefined);
             };
+            if !flag(vm, id, DISPATCHING) {
+                return Ok(JsValue::Object(vm.new_array(Vec::new())?));
+            }
             let target = match super::components::original_target(vm, id) {
                 Some(node) => Some(Target::Node(node)),
                 None => target_of(vm, &data.target),
@@ -739,7 +884,9 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
             return Ok(JsValue::Object(vm.new_array(values)?));
         }
-        "initEvent" | "initCustomEvent" => {
+        "initEvent" | "initCustomEvent" | "initUIEvent" | "initMouseEvent"
+        | "initKeyboardEvent" => {
+            let name = native_name(&call);
             if call.args.is_empty() {
                 return Err(vm.type_error("1 argument required, but only 0 present."));
             }
@@ -750,7 +897,7 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let kind = vm.to_text(&call.arg(0))?;
             let bubbles = call.arg(1).truthy();
             let cancelable = call.arg(2).truthy();
-            let detail = call.arg(3);
+            let detail = detail_index(name).map_or(JsValue::Undefined, |index| call.arg(index));
             with_event(vm, id, |data| {
                 data.kind = kind;
                 data.bubbles = bubbles;
@@ -769,6 +916,18 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/**
+ * Position of the `detail` argument in each legacy init method. Keyboard events have no
+ * detail, and initEvent takes none.
+ */
+fn detail_index(name: &str) -> Option<usize> {
+    match name {
+        "initCustomEvent" => Some(3),
+        "initUIEvent" | "initMouseEvent" => Some(4),
+        _ => None,
+    }
+}
+
 /** Event setters (returnValue, cancelBubble). */
 pub(in crate::v9) fn event_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(id) = call.this.object() else {
@@ -776,13 +935,7 @@ pub(in crate::v9) fn event_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let value = call.arg(0).truthy();
     match native_name(&call) {
-        "returnValue" if !value => {
-            with_event(vm, id, |data| {
-                if data.cancelable {
-                    data.default_prevented = true;
-                }
-            });
-        }
+        "returnValue" if !value => cancel(vm, id),
         "cancelBubble" if value => {
             with_event(vm, id, |data| data.stopped = true);
         }

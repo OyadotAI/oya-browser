@@ -369,6 +369,26 @@ pub(super) const XML_TYPE: &str = "application/xml";
 /** The URL of a document with no address of its own: script-made and frame documents. */
 pub(super) const ABOUT_BLANK: &str = "about:blank";
 
+/** Give a clone of a document the media type and URL its source had, as cloneNode keeps both. */
+pub(super) fn copy_document_kind(vm: &mut Vm, from: usize, to: usize) {
+    if let Some(media) = vm.page.state.content_types.get(&from).cloned() {
+        vm.page.state.content_types.insert(to, media);
+    }
+    if vm.page.state.parsed_documents.contains(&from) {
+        vm.page.state.parsed_documents.insert(to);
+    }
+}
+
+/** The URL a document reports: a DOMParser document has the page's address, and every other
+script-made or frame document is about:blank. */
+pub(super) fn document_url(vm: &Vm, document: usize) -> String {
+    if vm.page.state.parsed_documents.contains(&document) {
+        vm.page.state.href.clone()
+    } else {
+        ABOUT_BLANK.to_string()
+    }
+}
+
 /** The document's element child and the html child named `tag` (head or body). */
 pub(super) fn document_part(vm: &mut Vm, document: usize, tag: &str) -> Option<usize> {
     let root = vm
@@ -400,7 +420,9 @@ pub(super) fn document_get(vm: &mut Vm, document: usize, call: Call) -> Res<JsVa
         "children" | "firstElementChild" | "lastElementChild" => dom::element_get(vm, call),
         "readyState" => JsValue::string("complete").map_err(Into::into),
         "contentType" => JsValue::string(&content_type_of(vm, document)).map_err(Into::into),
-        "URL" | "documentURI" => JsValue::string(ABOUT_BLANK).map_err(Into::into),
+        "URL" | "documentURI" | "baseURI" => {
+            JsValue::string(&document_url(vm, document)).map_err(Into::into)
+        }
         "title" => {
             let title = dom::search(vm, document, |page, id| page.tag(id) == "title");
             let text = title

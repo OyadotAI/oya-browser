@@ -286,6 +286,7 @@ fn document(b: &mut Builder, node: u32) {
             "readyState",
             "URL",
             "documentURI",
+            "baseURI",
             "referrer",
             "domain",
             "activeElement",
@@ -499,6 +500,36 @@ fn collections(b: &mut Builder) {
     b.getter(storage, "length", window::storage_method);
 }
 
+/** The phase constants, which Event and Event.prototype both carry. */
+const PHASE_CONSTANTS: [(&str, f64); 4] = [
+    ("NONE", 0.0),
+    ("CAPTURING_PHASE", 1.0),
+    ("AT_TARGET", 2.0),
+    ("BUBBLING_PHASE", 3.0),
+];
+
+/** The animation and transition handler attributes, which start null on every event target. */
+const EVENT_HANDLER_ATTRIBUTES: [&str; 8] = [
+    "onanimationstart",
+    "onanimationend",
+    "onanimationiteration",
+    "ontransitionend",
+    "onwebkitanimationstart",
+    "onwebkitanimationend",
+    "onwebkitanimationiteration",
+    "onwebkittransitionend",
+];
+
+/** The init method a subtype owns in the DOM standard, if it has one. */
+fn legacy_init(name: &str) -> Option<&'static str> {
+    match name {
+        "UIEvent" => Some("initUIEvent"),
+        "MouseEvent" => Some("initMouseEvent"),
+        "KeyboardEvent" => Some("initKeyboardEvent"),
+        _ => None,
+    }
+}
+
 /** Event and its subtypes. */
 fn event_types(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
@@ -567,15 +598,11 @@ fn event_types(b: &mut Builder) {
         ],
         events::event_method,
     );
-    for (name, value) in [
-        ("NONE", 0.0),
-        ("CAPTURING_PHASE", 1.0),
-        ("AT_TARGET", 2.0),
-        ("BUBBLING_PHASE", 3.0),
-    ] {
-        b.value(proto, name, JsValue::Number(value), 0);
-    }
     let event = b.constructor("Event", 1, events::construct_event, proto, None);
+    for (name, value) in PHASE_CONSTANTS {
+        b.value(proto, name, JsValue::Number(value), 0);
+        b.value(event, name, JsValue::Number(value), 0);
+    }
     b.global("Event", event);
     for name in [
         "CustomEvent",
@@ -598,6 +625,9 @@ fn event_types(b: &mut Builder) {
         "TransitionEvent",
     ] {
         let sub = b.object(Some(proto));
+        if let Some(init) = legacy_init(name) {
+            methods(b, sub, &[init], events::event_method);
+        }
         if name == "KeyboardEvent" {
             events::keyboard_prototype(sub);
         }
@@ -611,6 +641,12 @@ fn event_types(b: &mut Builder) {
         b.global(name, ctor);
     }
     let target = b.ids.event_target_prototype;
+    for name in EVENT_HANDLER_ATTRIBUTES {
+        let attrs = crate::v9::vm::heap::WRITABLE
+            | crate::v9::vm::heap::CONFIGURABLE
+            | crate::v9::vm::heap::ENUMERABLE;
+        b.value(target, name, JsValue::Null, attrs);
+    }
     let ctor = b.constructor("EventTarget", 0, construct_event_target, target, None);
     b.global("EventTarget", ctor);
 }

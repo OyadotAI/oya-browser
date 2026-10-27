@@ -40,14 +40,16 @@ pub(in crate::v9) fn set_name(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** document.defaultView: the window of the frame a frame document belongs to, so a frame's
-document reaches its own window and that window's constructors. Every other document reports the
-page's window, as before; a frame document's window is created on first use and then kept. */
+document reaches its own window and that window's constructors. The page's document reports the
+page's window. A script-made document (DOMParser, createDocument) has no browsing context, so
+it reports null, as the HTML standard says. */
 pub(in crate::v9) fn default_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let owner = super::dom::node_of(vm, &call.this)
-        .and_then(|document| Some((document, *vm.page.state.document_frames.get(&document)?)));
-    match owner {
-        Some((document, frame)) => super::frames::content_window(vm, frame, document),
-        None => Ok(JsValue::Object(vm.global_object())),
+    let document = super::dom::node_of(vm, &call.this);
+    let frame = document.and_then(|node| vm.page.state.document_frames.get(&node).copied());
+    match (document, frame) {
+        (Some(node), Some(frame)) => super::frames::content_window(vm, frame, node),
+        (Some(node), None) if node != super::dom::DOCUMENT => Ok(JsValue::Null),
+        _ => Ok(JsValue::Object(vm.global_object())),
     }
 }
 
@@ -76,6 +78,11 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&origin)?
         }
         "opener" | "frameElement" => JsValue::Null,
+        // window.event is the event being dispatched, and undefined outside dispatch.
+        "event" => vm
+            .page
+            .current_event
+            .map_or(JsValue::Undefined, JsValue::Object),
         "name" => JsValue::string("")?,
         "localStorage" => storage_object(vm, true)?,
         "sessionStorage" => storage_object(vm, false)?,

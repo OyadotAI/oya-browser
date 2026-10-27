@@ -1,17 +1,27 @@
 /**
- * DOMParser: `parseFromString` builds an inert tree from markup, as a parsed document does, and
- * returns it with the document members pages read (`documentElement`, `firstChild`, and for
- * HTML `head` and `body`). LinkedIn turns each fetched SVG icon into an element this way and
- * appends it; without DOMParser every icon placeholder stayed empty.
- *
- * The tree is the content of an inert template, so nothing in it runs or upgrades, and its
- * nodes adopt into the page when appended. Markup goes through the HTML parser for every type;
- * an XML declaration is dropped first, since it is not a node.
+ * DOMParser: `parseFromString` builds a document from markup, as the DOM Parsing standard does,
+ * and returns it. text/html goes through the HTML tree builder, so the document has html, head
+ * and body; text/xml, application/xml, application/xhtml+xml and image/svg+xml go through the
+ * namespace-aware XML reader, so the document's root is the first element of the source. A
+ * source that is not well-formed becomes the parsererror document. The document is a real
+ * Document (or XMLDocument) with its own contentType and the page's URL, and its location is
+ * null, since it has no browsing context. Its nodes adopt into the page when appended.
  */
-use super::dom::{self, set_inner_html, wrap};
+use super::frames::{self, DOCUMENT_NODE, HTML_TYPE, SVG_TYPE, XHTML_TYPE, XML_TYPE};
+use super::xml_frames;
 use crate::v9::value::JsValue;
-use crate::v9::vm::realm::Builder;
-use crate::v9::vm::{Call, Res, Vm};
+use crate::v9::vm::realm::{Builder, realm};
+use crate::v9::vm::{Call, Res, Thrown, Vm};
+
+/** The XML media type DOMParser accepts beside application/xml, which it also parses as XML. */
+const TEXT_XML_TYPE: &str = "text/xml";
+/** The media types parseFromString accepts: the DOMParserSupportedType enumeration. */
+const SUPPORTED_TYPES: [&str; 5] = [HTML_TYPE, TEXT_XML_TYPE, XML_TYPE, XHTML_TYPE, SVG_TYPE];
+/** The arguments parseFromString requires: the markup and the media type. */
+const PARSE_ARGS: usize = 2;
+/** The TypeError message for a call with fewer arguments than parseFromString requires. */
+const MISSING_ARGUMENTS: &str =
+    "Failed to execute 'parseFromString' on 'DOMParser': 2 arguments required";
 
 /** Install the DOMParser constructor and its prototype. */
 pub(super) fn install(b: &mut Builder) {
@@ -35,75 +45,47 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Object(id))
 }
 
-/** `parseFromString(markup, type)`: the parsed tree as a document-like fragment. */
+/** `parseFromString(markup, type)`: a new document holding the parsed markup. The type must be
+one of the supported media types, and both arguments are required, as WebIDL demands. */
 fn parse_from_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.args.len() < PARSE_ARGS {
+        return Err(vm.type_error(MISSING_ARGUMENTS));
+    }
     let markup = vm.to_text(&call.arg(0))?;
-    let html = vm.to_text(&call.arg(1))?.eq_ignore_ascii_case("text/html");
-    let template = create(vm, "template")?;
-    let content = vm
-        .page
-        .content_or_self(template)
-        .map_err(|error| dom::dom_error(vm, error))?;
-    let parts = if html {
-        Some(html_skeleton(vm, content, &markup)?)
+    let media = vm.to_text(&call.arg(1))?;
+    match supported_type(&media) {
+        Some(media_type) => new_document(vm, &markup, media_type),
+        None => Err(unsupported_type(vm, &media)),
+    }
+}
+
+/** The TypeError for a media type outside the supported list, naming the value that was given. */
+fn unsupported_type(vm: &mut Vm, media: &str) -> Thrown {
+    let message = format!(
+        "Failed to execute 'parseFromString' on 'DOMParser': The provided value '{media}' is not a valid enum value of type DOMParserSupportedType."
+    );
+    vm.type_error(&message)
+}
+
+/** The supported media type `media` names exactly, or None for any other text. */
+fn supported_type(media: &str) -> Option<&'static str> {
+    SUPPORTED_TYPES
+        .iter()
+        .copied()
+        .find(|known| *known == media)
+}
+
+/** A new document of `media_type` holding `markup`, wrapped as Document for HTML and as
+XMLDocument for every XML type. Its URL is the page's, since DOMParser takes it from the page. */
+fn new_document(vm: &mut Vm, markup: &str, media_type: &str) -> Res<JsValue> {
+    let document = frames::create(vm, DOCUMENT_NODE, None)?;
+    xml_frames::build_source(vm, document, media_type, markup)?;
+    vm.page.state.parsed_documents.insert(document);
+    let ids = &realm().ids;
+    let proto = if media_type == HTML_TYPE {
+        ids.document_prototype
     } else {
-        set_inner_html(vm, template, without_declaration(&markup))?;
-        None
+        ids.xml_document_prototype
     };
-    let document = wrap(vm, content)?;
-    let JsValue::Object(id) = document else {
-        return Err(vm.type_error("DOMParser could not build the document"));
-    };
-    let root = match node_of_root(vm, content) {
-        Some(node) => wrap(vm, node)?,
-        None => JsValue::Null,
-    };
-    vm.put(id, "documentElement", root)?;
-    if let Some((head, body)) = parts {
-        let head = wrap(vm, head)?;
-        vm.put(id, "head", head)?;
-        let body = wrap(vm, body)?;
-        vm.put(id, "body", body)?;
-    }
-    Ok(document)
-}
-
-/** A detached element of `tag`. */
-fn create(vm: &mut Vm, tag: &str) -> Res<usize> {
-    vm.page
-        .create(tag, None)
-        .map_err(|error| dom::dom_error(vm, error))
-}
-
-/** An html element with an empty head and a body holding the parsed markup, under `content`. */
-fn html_skeleton(vm: &mut Vm, content: usize, markup: &str) -> Res<(usize, usize)> {
-    let root = create(vm, "html")?;
-    let head = create(vm, "head")?;
-    let body = create(vm, "body")?;
-    for (parent, child) in [(content, root), (root, head), (root, body)] {
-        vm.page
-            .insert(parent, child, None)
-            .map_err(|error| dom::dom_error(vm, error))?;
-    }
-    set_inner_html(vm, body, markup)?;
-    Ok((head, body))
-}
-
-/** The fragment's first element. */
-fn node_of_root(vm: &mut Vm, content: usize) -> Option<usize> {
-    vm.page
-        .children(content)
-        .into_iter()
-        .find(|node| !vm.page.tag(*node).starts_with('#'))
-}
-
-/** Markup without a leading XML declaration (`<?xml ...?>`), which is not a node. */
-fn without_declaration(markup: &str) -> &str {
-    let trimmed = markup.trim_start();
-    if trimmed.starts_with("<?xml")
-        && let Some(end) = trimmed.find("?>")
-    {
-        return trimmed[end + 2..].trim_start();
-    }
-    markup
+    frames::wrap_document_as(vm, document, proto)
 }

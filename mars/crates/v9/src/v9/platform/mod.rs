@@ -187,7 +187,7 @@ use crate::constants::{VM_CONSOLE_BYTES, VM_CONSOLE_ENTRIES};
 use crate::document::{DomChange, FragmentParser, ScriptChange, ScriptDocument};
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Which change log the app's document engine replays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -734,6 +734,12 @@ pub(in crate::v9) struct Listener {
     pub callback: JsValue,
     pub capture: bool,
     pub once: bool,
+    /** Passive listeners cannot cancel: preventDefault and returnValue writes are ignored. */
+    #[serde(default)]
+    pub passive: bool,
+    /** The AbortSignal whose abort removes this listener; absent for listeners without one. */
+    #[serde(default)]
+    pub signal: Option<JsValue>,
 }
 
 /** A node created by script and not (yet) in the document. */
@@ -922,6 +928,10 @@ pub(in crate::v9) struct PageState {
     /** The media type of each script-made document that is not text/html (XML documents). */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub content_types: BTreeMap<usize, String>,
+    /** The documents DOMParser made. They share the page's URL, where a script-made document
+    is about:blank. */
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub parsed_documents: BTreeSet<usize>,
     /** Each script-made document's DOMImplementation object, by the implementation. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub implementations: BTreeMap<ObjectId, usize>,
@@ -971,6 +981,8 @@ pub(in crate::v9) struct Page<'h> {
     pub attribute_slots: std::collections::BTreeMap<(usize, String), usize>,
     /** Events this request created, which give each one its own timestamp tick. */
     pub event_ticks: u64,
+    /** The event being dispatched, which `window.event` reads; restored when dispatch nests. */
+    pub current_event: Option<ObjectId>,
     pub fragment_bytes: usize,
     pub next_id: usize,
     /** Values seen by legacy getElementById(...).value reads. */
@@ -1038,6 +1050,7 @@ impl<'h> Page<'h> {
             change_bytes: 0,
             attribute_slots: std::collections::BTreeMap::new(),
             event_ticks: 0,
+            current_event: None,
             fragment_bytes: 0,
             next_id,
             legacy: false,
@@ -1105,6 +1118,7 @@ impl<'h> Page<'h> {
         }
         for listener in &self.state.listeners {
             out.push(listener.callback.clone());
+            out.extend(listener.signal.clone());
             if let Target::Object(id) = listener.target {
                 out.push(JsValue::Object(id));
             }

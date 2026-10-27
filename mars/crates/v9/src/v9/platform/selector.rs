@@ -5,6 +5,7 @@
  * as browsers throw, so libraries fall back to their own engines.
  */
 use super::Page;
+use super::namespaces::HTML_NAMESPACE;
 use crate::v9::vm::heap::Heap;
 
 /** A comma-separated selector list. */
@@ -198,7 +199,7 @@ impl Parser {
                 self.position += 1;
             }
             Some(c) if c.is_alphabetic() || c == '\\' || c == '_' || c == '-' => {
-                compound.tag = Some(self.ident()?.to_ascii_lowercase());
+                compound.tag = Some(self.ident()?);
             }
             _ => {}
         }
@@ -482,6 +483,24 @@ fn element_siblings(page: &mut Page, node: usize, before: bool) -> Vec<usize> {
         .collect()
 }
 
+/** Whether an element is the root of its document: the child of a document node. An XML
+document's root is its first element, so :root must find it there as well as on the page. */
+fn is_document_element(page: &mut Page, node: usize) -> bool {
+    page.parent(node)
+        .is_some_and(|parent| page.tag(parent) == super::frames::DOCUMENT_NODE)
+}
+
+/** Whether an element's local name answers to a type selector's name. An HTML element matches
+without regard to case, since HTML names are case-insensitive; an element in any other namespace
+(an XML document's, or SVG's) matches exactly, and a prefix is not part of its name. */
+fn tag_matches(page: &mut Page, node: usize, wanted: &str) -> bool {
+    let local = page.element_local_name(node);
+    match page.element_namespace(node).as_deref() {
+        Some(HTML_NAMESPACE) => local.eq_ignore_ascii_case(wanted),
+        _ => local == wanted,
+    }
+}
+
 /** Whether a node matches one compound. */
 fn compound_matches(
     page: &mut Page,
@@ -496,7 +515,9 @@ fn compound_matches(
     if view.tag.starts_with('#') {
         return false;
     }
-    if compound.tag.as_ref().is_some_and(|tag| *tag != view.tag) {
+    if let Some(wanted) = compound.tag.as_deref()
+        && !tag_matches(page, node, wanted)
+    {
         return false;
     }
     let id = view.attributes.get("id").map(String::as_str).unwrap_or("");
@@ -594,7 +615,7 @@ fn pseudo_matches(
             page.tag(*child) == "#comment"
                 || page.tag(*child) == "#text" && page.text_content(*child).is_empty()
         }),
-        Pseudo::Root => node == super::HTML,
+        Pseudo::Root => node == super::HTML || is_document_element(page, node),
         Pseudo::Scope => scope.map_or(node == super::HTML, |scope| scope == node),
         Pseudo::PopoverOpen => super::interfaces::popover::matches_open(page, heap, node),
         Pseudo::Checked => {

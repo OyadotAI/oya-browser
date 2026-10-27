@@ -1818,6 +1818,7 @@ pub(super) fn clone_tree(vm: &mut Vm, node: usize, deep: bool) -> Res<usize> {
         record.attributes = view.attributes.clone();
     }
     vm.page.copy_namespaces(node, copy);
+    super::frames::copy_document_kind(vm, node, copy);
     if let Some(value) = view.value {
         vm.page.state.values.insert(copy, value);
     }
@@ -3014,7 +3015,9 @@ pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .unwrap_or_else(|| vm.page.environment.title.clone());
             JsValue::string(&title).map_err(Into::into)
         }
-        "URL" | "documentURI" => JsValue::string(&vm.page.state.href).map_err(Into::into),
+        "URL" | "documentURI" | "baseURI" => {
+            JsValue::string(&vm.page.state.href).map_err(Into::into)
+        }
         "contentType" => JsValue::string(super::frames::HTML_TYPE).map_err(Into::into),
         "referrer" => JsValue::string(&vm.page.environment.referrer).map_err(Into::into),
         "domain" => {
