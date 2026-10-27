@@ -954,5 +954,8 @@
 
   define(global, 'Observable', Observable);
   define(global, 'Subscriber', Subscriber);
-  define(global.EventTarget.prototype, 'when', when);
+  // Sessions without the DOM (the conformance harness) have no EventTarget; `when` belongs only where it exists.
+  if (typeof global.EventTarget === 'function') {
+    define(global.EventTarget.prototype, 'when', when);
+  }
 })(globalThis);
