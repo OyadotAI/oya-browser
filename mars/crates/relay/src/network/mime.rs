@@ -1,17 +1,10 @@
 /** One owned Content-Type parser and charset decoder keeps every fetch path's verdict identical. */
 use crate::protocol::{EngineError, EngineResult};
+use mars_core::charset;
 use mars_core::http::{self, encoding_for_label};
 
-/** First byte of the windows-1252 range that differs from Latin-1. */
-const WINDOWS_1252_HIGH: u8 = 0x80;
-
-/** Code points for 0x80 to 0x9F; the five undefined bytes map to themselves. */
-const WINDOWS_1252: [char; 32] = [
-    '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}',
-    '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}', '\u{017D}', '\u{008F}',
-    '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}',
-    '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
-];
+/** The essence a page is decoded as HTML under, the only type whose body may name its charset in markup. */
+const HTML_TYPE: &str = "text/html";
 
 /** A UTF-8 byte order mark is not document content. */
 const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -47,23 +40,43 @@ pub(crate) fn parse(value: &str) -> Option<ContentType> {
     })
 }
 
-/** Strict decoding to UTF-8; an unknown charset is refused rather than guessed. */
+/** Strict UTF-8 for the UTF-8 label; every other label decodes with its WHATWG encoding, malformed
+bytes becoming U+FFFD. An unknown label is refused rather than guessed. */
 pub(crate) fn decode(body: Vec<u8>, charset: Option<&str>) -> EngineResult<String> {
     let encoding = encoding_for_label(charset.unwrap_or(http::UTF_8));
     if encoding == Some(http::UTF_8) {
-        let start = if body.starts_with(UTF8_BOM) {
-            UTF8_BOM.len()
-        } else {
-            0
-        };
-        return std::str::from_utf8(&body[start..])
-            .map(str::to_owned)
-            .map_err(|_| EngineError::unsupported("The resource is not valid UTF-8."));
+        return strict_utf8(&body);
     }
-    if encoding == Some(http::WINDOWS_1252) {
-        return Ok(body.into_iter().map(windows_1252).collect());
+    let encoding = encoding
+        .and_then(charset::for_label)
+        .ok_or_else(|| EngineError::unsupported("Unsupported resource encoding."))?;
+    Ok(encoding.decode(&body).0.into_owned())
+}
+
+/** UTF-8 with its byte order mark dropped; any malformed sequence refuses the body. */
+fn strict_utf8(body: &[u8]) -> EngineResult<String> {
+    let start = if body.starts_with(UTF8_BOM) {
+        UTF8_BOM.len()
+    } else {
+        0
+    };
+    std::str::from_utf8(&body[start..])
+        .map(str::to_owned)
+        .map_err(|_| EngineError::unsupported("The resource is not valid UTF-8."))
+}
+
+/** The charset an HTML body is decoded with: a UTF-8 byte order mark, else the transport's declared
+charset, else the body's own meta declaration, read before decoding so a legacy page is not misread
+as UTF-8. Other types keep the declared charset alone, since only markup names a charset in its bytes. */
+pub(crate) fn html_charset(mime: &str, declared: Option<String>, body: &[u8]) -> Option<String> {
+    if mime != HTML_TYPE {
+        return declared;
     }
-    Err(EngineError::unsupported("Unsupported resource encoding."))
+    // WHATWG sniffs a UTF-8 byte order mark before any label, transport or meta, so it wins.
+    if body.starts_with(UTF8_BOM) {
+        return Some(http::UTF_8.to_owned());
+    }
+    declared.or_else(|| charset::prescan(body).map(str::to_owned))
 }
 
 /** Splits one `name[=value]` parameter and returns the input after its `;`. */
@@ -116,14 +129,6 @@ pub(crate) fn token(value: &str) -> bool {
 /** HTTP whitespace per WHATWG: space, tab, CR and LF. */
 fn http_space(c: char) -> bool {
     [' ', '\t', '\r', '\n'].contains(&c)
-}
-
-/** Bytes outside 0x80 to 0x9F are identity Latin-1. */
-fn windows_1252(byte: u8) -> char {
-    byte.checked_sub(WINDOWS_1252_HIGH)
-        .and_then(|index| WINDOWS_1252.get(usize::from(index)))
-        .copied()
-        .unwrap_or(char::from(byte))
 }
 
 #[cfg(test)]
@@ -186,7 +191,7 @@ mod tests {
 
     #[test]
     fn unknown_charsets_are_unsupported() {
-        let error = decode(b"ok".to_vec(), Some("shift_jis")).unwrap_err();
+        let error = decode(b"ok".to_vec(), Some("nope")).unwrap_err();
         assert_eq!(error.code, "unsupported_feature");
         assert_eq!(error.message, "Unsupported resource encoding.");
     }
@@ -197,6 +202,47 @@ mod tests {
             let error = decode(b"\xFF".to_vec(), charset).unwrap_err();
             assert_eq!(error.code, "unsupported_feature");
         }
+    }
+
+    /** Legacy labels decode through their WHATWG tables, malformed bytes becoming U+FFFD. */
+    #[test]
+    fn legacy_charsets_decode_with_their_tables() {
+        let cases: [(&str, &[u8], &str); 4] = [
+            ("shift_jis", b"\x82\xA0", "\u{3042}"),
+            ("euc-jp", b"\xA4\xA2", "\u{3042}"),
+            ("big5", b"\xA4\x40", "\u{4E00}"),
+            ("shift_jis", b"\x81", "\u{FFFD}"),
+        ];
+        for (charset, body, expected) in cases {
+            let value = format!("text/html; charset={charset}");
+            assert_eq!(text(&value, body).as_deref(), Ok(expected), "{charset}");
+        }
+    }
+
+    /** A UTF-8 byte order mark decides the charset over a declared label, as WHATWG sniffs it. */
+    #[test]
+    fn utf8_bom_overrides_the_declared_charset() {
+        let body = b"\xEF\xBB\xBFok";
+        assert_eq!(super::html_charset("text/html", Some("windows-1252".into()), body).as_deref(), Some("UTF-8"));
+        assert_eq!(decode(body.to_vec(), Some("UTF-8")).unwrap(), "ok");
+    }
+
+    /** A body with no declared charset names its meta charset before it is decoded. */
+    #[test]
+    fn undeclared_html_reads_its_meta_charset() {
+        let body = b"<meta charset=big5>\xA4\x40";
+        let charset = super::html_charset("text/html", None, body);
+        assert_eq!(charset.as_deref(), Some("Big5"));
+        let decoded = decode(body.to_vec(), charset.as_deref()).unwrap();
+        assert!(decoded.ends_with('\u{4E00}'));
+    }
+
+    /** A declared charset is kept, and non-HTML bodies are never prescanned. */
+    #[test]
+    fn declared_or_non_html_bodies_keep_their_charset() {
+        let body = b"<meta charset=big5>";
+        assert_eq!(super::html_charset("text/html", Some("UTF-8".into()), body).as_deref(), Some("UTF-8"));
+        assert_eq!(super::html_charset("text/css", None, body), None);
     }
 
     #[test]

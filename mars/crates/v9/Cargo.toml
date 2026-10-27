@@ -8,7 +8,7 @@ description = "V9: Mars's bounded, Rust-owned JavaScript runtime"
 
 [dependencies]
 mars-core = { path = "../core" }
-serde = { version = "=1.0.229", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 ryu-js = "=1.0.3"
 # Already in the workspace through the app; WHATWG URL parsing for location, URL and fetch.

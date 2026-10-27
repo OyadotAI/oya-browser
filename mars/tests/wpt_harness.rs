@@ -44,28 +44,43 @@ const SETTLE_POLLS: usize = 3;
 const SLOW_MS: u128 = 20_000;
 /** The reporter that stands in for testharnessreport.js. */
 const REPORTER: &str = r#"(function () {
-  var results = [], finish;
+  var finish;
   self.__wpt_done = new Promise(function (resolve) { finish = resolve; });
-  function message(m) { return m == null ? null : String(m).slice(0, 300); }
-  function put(harness, hmessage) {
-    var el = document.getElementById('__wpt_results');
-    if (!el) {
-      el = document.createElement('wpt-results');
-      el.id = '__wpt_results';
-      (document.body || document.documentElement).appendChild(el);
+  /* A lone surrogate in a test name or message makes encodeURIComponent throw, and the throw
+     inside the result callback dropped every later record of that test (encodeInto's names carry
+     them). Lone surrogates become U+FFFD here; valid pairs pass through. */
+  function safeText(text) {
+    var out = '';
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      var next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (c >= 0xd800 && c <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+        out += text.charAt(i) + text.charAt(i + 1);
+        i++;
+      } else {
+        out += c >= 0xd800 && c <= 0xdfff ? '\ufffd' : text.charAt(i);
+      }
     }
-    el.setAttribute('data-r', encodeURIComponent(JSON.stringify(
-      {harness: harness, message: message(hmessage), tests: results})));
+    return out;
+  }
+  function message(m) { return m == null ? null : safeText(String(m)).slice(0, 300); }
+  /* One element per record: a single attribute holding every result so far grows with each
+     result and outgrows the engine's text limit, which stopped the page's scripts. */
+  function record(tag, payload) {
+    var el = document.createElement(tag);
+    el.setAttribute('data-r', encodeURIComponent(JSON.stringify(payload)));
+    (document.body || document.documentElement).appendChild(el);
+  }
+  function report(test) {
+    if (test.reported) return;
+    test.reported = true;
+    record('wpt-result', [safeText(String(test.name)), test.status, message(test.message)]);
   }
   setup({output: false});
-  var seen = 0;
-  add_result_callback(function () {
-    seen += 1;
-    try { put(null, seen + ' results before completion'); } catch (e) {}
-  });
+  add_result_callback(report);
   add_completion_callback(function (tests, status) {
-    results = tests.map(function (t) { return [String(t.name), t.status, message(t.message)]; });
-    put(status.status, status.message);
+    tests.forEach(report);
+    record('wpt-status', {harness: status.status, message: message(status.message)});
     finish(true);
   });
 })();
@@ -185,6 +200,7 @@ fn answer(mut socket: TcpStream, root: &Path) {
     let path = path.split(['?', '#']).next().unwrap_or("/");
     let response = match body(root, path) {
         Some((body, kind)) => {
+            let kind = declared_type(root, path).unwrap_or_else(|| kind.to_owned());
             let mut head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
@@ -224,9 +240,23 @@ fn percent_decode(path: &str) -> String {
 }
 
 /** Content type by extension. */
+/** The Content-Type a `<file>.headers` sibling names, which wptserve sends in place of the default:
+the encoding suite declares its charset that way, so a page is never served a charset it did not ask for. */
+fn declared_type(root: &Path, path: &str) -> Option<String> {
+    let text = std::fs::read_to_string(file(root, &format!("{path}.headers"))?).ok()?;
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-type")
+            .then(|| value.trim().to_owned())
+    })
+}
+
+/** The default Content-Type for a file. HTML carries no charset: wptserve sends none, so a page's
+own meta (or its `.headers` file) decides how it is decoded. */
 fn mime(file: &Path) -> &'static str {
     match file.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" | "htm" => "text/html; charset=utf-8",
+        "html" | "htm" => "text/html",
         "xhtml" | "xht" => "application/xhtml+xml",
         "xml" => "application/xml",
         "css" => "text/css",
@@ -398,11 +428,26 @@ struct Outcome {
 /** The reporter's results on the current page, if it wrote any. */
 fn results(runtime: &mut mars::runtime::Runtime) -> Option<Value> {
     let nodes = agent_call(runtime, "page.nodes", json!({})).ok()?;
-    let node = nodes["nodes"]
-        .as_array()?
-        .iter()
-        .find(|n| n["attributes"]["id"] == "__wpt_results")?;
-    serde_json::from_str(&percent_decode(node["attributes"]["data-r"].as_str()?)).ok()
+    let mut tests = Vec::new();
+    let mut status = None;
+    for node in nodes["nodes"].as_array()? {
+        let Some(payload) = node["attributes"]["data-r"].as_str() else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_str::<Value>(&percent_decode(payload)) else {
+            continue;
+        };
+        match node["tag"].as_str() {
+            Some("wpt-result") => tests.push(record),
+            Some("wpt-status") => status = Some(record),
+            _ => {}
+        }
+    }
+    if tests.is_empty() && status.is_none() {
+        return None;
+    }
+    let field = |name: &str| status.as_ref().map_or(Value::Null, |s| s[name].clone());
+    Some(json!({"harness": field("harness"), "message": field("message"), "tests": tests}))
 }
 
 /** Load a case and read back its subtests. */

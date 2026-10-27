@@ -34,6 +34,8 @@ pub struct WebPage {
     pub source: String,
     /// Final destination for relative resolution and committed address state.
     pub url: String,
+    /// Canonical encoding the source was decoded with, so the parser checks the page's meta against it.
+    pub charset: Option<String>,
 }
 
 /// A one-use prepared exchange that expires with the navigation's remaining deadline. It is
@@ -403,6 +405,7 @@ fn finish(
         ));
     }
     let download = status == HTTP_OK && downloads(request, &headers, &mime);
+    let charset = mime::html_charset(&mime, charset, &body);
     let declared = charset
         .as_deref()
         .and_then(mars_core::http::encoding_for_label)
@@ -526,10 +529,16 @@ fn complete(response: body::Response, url: Url) -> EngineResult<WebPage> {
     let content_type = mime::parse(value)
         .filter(|parsed| parsed.essence == "text/html")
         .ok_or_else(|| EngineError::unsupported("Only text/html documents are supported."))?;
-    let source = mime::decode(response.body, content_type.charset.as_deref())?;
+    let charset = mime::html_charset(&content_type.essence, content_type.charset, &response.body);
+    let source = mime::decode(response.body, charset.as_deref())?;
+    let canonical = charset
+        .as_deref()
+        .and_then(mars_core::http::encoding_for_label)
+        .map(str::to_owned);
     Ok(WebPage {
         source,
         url: url.to_string(),
+        charset: canonical,
     })
 }
 

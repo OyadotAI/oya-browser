@@ -61,6 +61,8 @@ const fn interface(name: &'static str, tags: &'static [&'static str]) -> Interfa
 
 /// Every interface with members of its own. Tags not listed use HTMLElement.prototype.
 const INTERFACES: &[Interface] = &[
+    // Its window-forwarded handler accessors are added in `install`, beside the other members.
+    interface("HTMLBodyElement", &["body"]),
     Interface {
         reflected: &["href", "name", "type", "rel", "target"],
         getters: &[
@@ -474,6 +476,9 @@ pub(super) fn install(b: &mut Builder, html: u32) {
         members(b, proto, interface);
         if interface.name == "HTMLImageElement" {
             super::images::install(b, proto);
+        }
+        if interface.name == "HTMLBodyElement" {
+            super::events::install_body_handlers(b, proto);
         }
         registry.define(b, proto, interface.table);
         let ctor = b.constructor(interface.name, 0, dom::illegal_constructor, proto, None);

@@ -24,6 +24,10 @@ pub struct ScriptDocument {
     pub identity: String,
     /// Preorder nodes retain their original identities after descendant replacement.
     pub nodes: Vec<ScriptNode>,
+    /// The encoding name `document.characterSet` reports: the one the parser settled, after a
+    /// meta charset. Empty (old saved state) reads as UTF-8.
+    #[serde(default)]
+    pub charset: String,
 }
 
 /// A metadata element Eye keeps out of layout: `meta`, `link`, `style`, `title`, `base` and
@@ -601,6 +605,20 @@ fn subtree_end<T>(nodes: &[T], key: &impl Fn(&T) -> (usize, Option<usize>), star
     end
 }
 
+/// Refuses an attribute write a script may not make, and a value that is not valid text. Shared by
+/// both write paths so they refuse exactly the same writes.
+fn check_any_attribute(name: &str, value: Option<&str>) -> EngineResult<()> {
+    if !script_attribute_allowed(name) {
+        return Err(EngineError::unsupported(
+            "Scripts may not write event handler, srcdoc or http-equiv attributes.",
+        ));
+    }
+    if let Some(value) = value {
+        validate_text(value)?;
+    }
+    Ok(())
+}
+
 /** Hostile private state is rejected without exposing values or native identities. */
 fn invalid_projection() -> EngineError {
     EngineError::invalid("Invalid script document projection.")
@@ -728,26 +746,51 @@ impl ScriptDocument {
         Ok(ScriptChange::Remove { node })
     }
 
-    /// Sets or removes one allowed attribute and returns the change to replay.
+    /// Sets or removes one allowed attribute and returns the change to replay. Finds the node by
+    /// identity, which scans every node; a caller that already holds the node's position uses
+    /// `set_any_attribute_at`.
     pub fn set_any_attribute(
         &mut self,
         node: usize,
         name: &str,
         value: Option<&str>,
     ) -> EngineResult<ScriptChange> {
-        if !script_attribute_allowed(name) {
-            return Err(EngineError::unsupported(
-                "Scripts may not write event handler, srcdoc or http-equiv attributes.",
-            ));
-        }
-        if let Some(value) = value {
-            validate_text(value)?;
-        }
+        check_any_attribute(name, value)?;
+        let at = self
+            .nodes
+            .iter()
+            .position(|entry| entry.local_id == node && entry.tag != "#text")
+            .ok_or_else(invalid_projection)?;
+        self.write_any_attribute(at, node, name, value)
+    }
+
+    /// The same write as `set_any_attribute` for a node whose position in `nodes` the caller knows,
+    /// so the write costs O(1) on a page of thousands of nodes. `at` must be the position of `node`;
+    /// a stale position is refused rather than written to another node.
+    pub fn set_any_attribute_at(
+        &mut self,
+        at: usize,
+        node: usize,
+        name: &str,
+        value: Option<&str>,
+    ) -> EngineResult<ScriptChange> {
+        check_any_attribute(name, value)?;
+        self.write_any_attribute(at, node, name, value)
+    }
+
+    /// Applies an attribute write to the node at `at`, after the caller checked the name and value.
+    fn write_any_attribute(
+        &mut self,
+        at: usize,
+        node: usize,
+        name: &str,
+        value: Option<&str>,
+    ) -> EngineResult<ScriptChange> {
         let name = name.to_ascii_lowercase();
         let entry = self
             .nodes
-            .iter_mut()
-            .find(|entry| entry.local_id == node && entry.tag != "#text")
+            .get_mut(at)
+            .filter(|entry| entry.local_id == node && entry.tag != "#text")
             .ok_or_else(invalid_projection)?;
         match value {
             Some(value) => {

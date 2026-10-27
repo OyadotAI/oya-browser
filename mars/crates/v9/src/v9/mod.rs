@@ -459,7 +459,8 @@ pub fn source_key(source: &str) -> SourceKey {
 
 /// Everything one page request needs besides committed state.
 pub struct PageInput<'a> {
-    /// The page's classic scripts in execution order (failed ones blanked to spaces).
+    /// The page's classic scripts in execution order. A failed script keeps its text, since its
+    /// declarations outlive it.
     pub sources: &'a [String],
     /// Each source's `source_key`, or empty to hash them here.
     pub source_keys: &'a [SourceKey],
@@ -734,12 +735,19 @@ fn initialize_page(vm: &mut Vm) {
         .as_ref()
         .map(|document| document.identity.clone())
         .unwrap_or_else(|| "legacy".into());
+    let charset = vm
+        .page
+        .document
+        .as_ref()
+        .map(|document| document.charset.clone())
+        .unwrap_or_default();
     let state = &mut vm.page.state;
     if state.initialized {
         return;
     }
     let environment = &vm.page.environment;
     state.identity = identity;
+    state.charset = charset;
     state.epoch = environment.time_origin_ms;
     state.random = environment.random_seed;
     state.href = environment.url.clone();
@@ -1585,6 +1593,7 @@ fn legacy_document(inputs: &[InputValue]) -> EngineResult<ScriptDocument> {
     }
     Ok(ScriptDocument {
         identity: "legacy".into(),
+        charset: "UTF-8".into(),
         nodes,
     })
 }

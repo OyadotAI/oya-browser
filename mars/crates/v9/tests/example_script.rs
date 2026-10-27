@@ -48,6 +48,7 @@ fn node(
 fn page() -> ScriptDocument {
     ScriptDocument {
         identity: "page-a".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None, "p", &[])],
     }
 }
@@ -306,6 +307,7 @@ fn nested() -> ScriptDocument {
     div.text_writable = true;
     ScriptDocument {
         identity: "page-a".into(),
+        charset: "UTF-8".into(),
         nodes: vec![div, node(1, Some(0), "p", &[])],
     }
 }

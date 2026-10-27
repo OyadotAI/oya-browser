@@ -14,6 +14,24 @@ use crate::v9::vm::heap::FastMap;
 use std::collections::BTreeMap;
 mod leading_text;
 
+/** Text and attribute bytes one change adds to the request's change budget. */
+fn change_bytes(change: &ScriptChange) -> usize {
+    match change {
+        ScriptChange::Dom {
+            change: DomChange::Text { text, .. },
+        }
+        | ScriptChange::NodeText { text, .. } => text.len(),
+        ScriptChange::Dom {
+            change: DomChange::InsertHtml { html, .. },
+        } => html.len(),
+        ScriptChange::Attribute { value, .. } | ScriptChange::RootAttribute { value, .. } => {
+            value.as_ref().map_or(0, String::len)
+        }
+        ScriptChange::Value { value, .. } => value.len(),
+        _ => 0,
+    }
+}
+
 /** What a blank script-created text node crosses to the document parser as: a zero-width
 space, which the parser keeps where it drops a blank run; the node's own text replaces it. */
 const BLANK_TEXT_PLACEHOLDER: &str = "\u{200B}";
@@ -36,7 +54,13 @@ pub(in crate::v9) struct Tree {
     index: FastMap<usize, usize>,
     /** Whether the projection holds any shadow root. */
     shadow: bool,
+    /** Each parent's element children in order, built on the first element read and dropped when
+    that parent's child list changes, so `children[i]` costs O(1) after the first read. */
+    elements: FastMap<usize, Vec<usize>>,
 }
+
+/** The list a parent with no children reads as. */
+const EMPTY: &[usize] = &[];
 
 /** A read-only view of any node. */
 #[derive(Clone, Debug)]
@@ -86,6 +110,7 @@ impl Page<'_> {
         let mut roots_parent = None;
         for node in &document.nodes[range.clone()] {
             let parent = node.parent.unwrap_or(BODY);
+            tree.elements.remove(&parent);
             tree.parents.insert(node.local_id, parent);
             tree.shadow |= node.tag == super::components::SHADOW_ROOT;
             if tree.index.get(&parent).is_some_and(|p| range.contains(p)) {
@@ -98,6 +123,7 @@ impl Page<'_> {
         let Some(parent) = roots_parent else {
             return;
         };
+        tree.elements.remove(&parent);
         let existing = tree.children.remove(&parent).unwrap_or_default();
         let split = existing
             .iter()
@@ -227,6 +253,85 @@ impl Page<'_> {
             .into_iter()
             .filter(|child| !self.is_shadow_root(*child))
             .collect()
+    }
+    /** The text of one attribute, read in place: a class write needs that one string, not a copy of
+    every attribute the node has. */
+    pub fn attribute_value(&mut self, id: usize, name: &str) -> Option<String> {
+        self.with_element(id, |_, attributes| attributes.get(name).cloned())
+            .flatten()
+    }
+    /** The child at `index` of a parent's live child list (element children only when `elements`).
+    A direct parent answers from the tree's cached list, so a loop over `children[i]` does not
+    rebuild the list per read; any other parent reads the children scripts see. */
+    pub fn child_at(&mut self, parent: usize, elements: bool, index: usize) -> Option<usize> {
+        if self.children_read_directly(parent) {
+            return self.direct_children(parent, elements).get(index).copied();
+        }
+        self.child_list(parent, elements).get(index).copied()
+    }
+    /** How many children a parent's live child list holds, with the same reads as `child_at`. */
+    pub fn child_count(&mut self, parent: usize, elements: bool) -> usize {
+        if self.children_read_directly(parent) {
+            return self.direct_children(parent, elements).len();
+        }
+        self.child_list(parent, elements).len()
+    }
+    /** Whether a parent's children are exactly its projected children: no head, detached, virtual
+    or local children to merge in, and no shadow root to filter out. Only then is the tree's list
+    the list scripts see. */
+    fn children_read_directly(&mut self, parent: usize) -> bool {
+        let local = self
+            .state
+            .local_children
+            .get(&parent)
+            .is_some_and(|locals| !locals.is_empty());
+        !matches!(parent, HTML | HEAD)
+            && !self.state.detached.contains_key(&parent)
+            && !local
+            && !self.has_shadows()
+    }
+    /** The projected children of a direct parent, or only its element children, from the tree. The
+    element list is built once per tree state, O(children), and kept until the parent's children change. */
+    fn direct_children(&mut self, parent: usize, elements: bool) -> &[usize] {
+        if !elements {
+            return self
+                .tree()
+                .children
+                .get(&parent)
+                .map_or(EMPTY, Vec::as_slice);
+        }
+        if !self.tree().elements.contains_key(&parent) {
+            let all = self
+                .tree()
+                .children
+                .get(&parent)
+                .cloned()
+                .unwrap_or_default();
+            let kept: Vec<usize> = all
+                .into_iter()
+                .filter(|child| self.is_element(*child))
+                .collect();
+            if let Some(tree) = self.tree.as_mut() {
+                tree.elements.insert(parent, kept);
+            }
+        }
+        self.tree()
+            .elements
+            .get(&parent)
+            .map_or(EMPTY, Vec::as_slice)
+    }
+    /** The children a parent's live list shows, by the general reads, for the parents the tree
+    cannot answer alone. Costs O(children). */
+    fn child_list(&mut self, parent: usize, elements: bool) -> Vec<usize> {
+        let children = self.children(parent);
+        if elements {
+            children
+                .into_iter()
+                .filter(|child| self.is_element(*child))
+                .collect()
+        } else {
+            children
+        }
     }
     /** Whether any shadow root exists, so pages without components skip the shadow checks. */
     pub fn has_shadows(&mut self) -> bool {
@@ -373,39 +478,86 @@ impl Page<'_> {
     }
     /** Record a change in whichever log the app replays. */
     pub fn record(&mut self, change: ScriptChange) -> EngineResult<()> {
-        let bytes = match &change {
-            ScriptChange::Dom {
-                change: DomChange::Text { text, .. },
-            }
-            | ScriptChange::NodeText { text, .. } => text.len(),
-            ScriptChange::Dom {
-                change: DomChange::InsertHtml { html, .. },
-            } => html.len(),
-            ScriptChange::Attribute { value, .. } | ScriptChange::RootAttribute { value, .. } => {
-                value.as_ref().map_or(0, String::len)
-            }
-            ScriptChange::Value { value, .. } => value.len(),
-            _ => 0,
-        };
-        self.change_bytes += bytes;
-        if self.change_bytes > SCRIPT_CHANGE_BYTES {
-            return Err(EngineError::limit(
-                "V9 script change bytes",
-                SCRIPT_CHANGE_BYTES,
-            ));
+        if self.environment.dom_level == DomLevel::Extended
+            && let ScriptChange::Attribute { node, name, .. } = &change
+            && let Some(slot) = self.attribute_slot(*node, name)
+        {
+            return self.supersede(slot, change);
         }
-        if self.changes.len() + self.script_changes.len() >= STATEMENTS {
-            return Err(EngineError::limit("V9 changes", STATEMENTS));
-        }
+        let bytes = change_bytes(&change);
+        self.admit(bytes, 1)?;
         match (self.environment.dom_level, change) {
             (DomLevel::Legacy, ScriptChange::Dom { change }) => self.changes.push(change),
-            (DomLevel::Extended, change) => self.script_changes.push(change),
+            (DomLevel::Extended, change) => {
+                if let ScriptChange::Attribute { node, name, .. } = &change {
+                    let position = self.script_changes.len();
+                    self.attribute_slots.insert((*node, name.clone()), position);
+                }
+                self.script_changes.push(change);
+            }
             (DomLevel::Legacy, _) => {
                 return Err(EngineError::unsupported(
                     "This DOM change needs the extended change log, which the app has not enabled.",
                 ));
             }
         }
+        self.change_bytes += bytes;
+        Ok(())
+    }
+    /**
+     * Checks a change's cost against the limits before the document is touched. A write refused
+     * after it changed the document leaves V9 and the app's engine disagreeing on structure.
+     */
+    fn admit(&self, bytes: usize, entries: usize) -> EngineResult<()> {
+        if self.change_bytes + bytes > SCRIPT_CHANGE_BYTES {
+            return Err(EngineError::limit(
+                "V9 script change bytes",
+                SCRIPT_CHANGE_BYTES,
+            ));
+        }
+        if self.changes.len() + self.script_changes.len() + entries > STATEMENTS {
+            return Err(EngineError::limit("V9 changes", STATEMENTS));
+        }
+        Ok(())
+    }
+    /**
+     * Admits an attribute write before it lands. A write that would only replace the latest entry
+     * for the same attribute adds no entry, and its bytes are counted as the new value's size.
+     */
+    fn admit_attribute(&self, node: usize, name: &str, value: Option<&str>) -> EngineResult<()> {
+        let entries = usize::from(self.attribute_slot(node, name).is_none());
+        self.admit(value.map_or(0, str::len), entries)
+    }
+    /**
+     * The log position of the latest write to this attribute. The hint is verified against the log,
+     * so a log restored after a failed step can never send a write to the wrong entry.
+     */
+    fn attribute_slot(&self, node: usize, name: &str) -> Option<usize> {
+        let slot = *self.attribute_slots.get(&(node, name.to_string()))?;
+        match self.script_changes.get(slot) {
+            Some(ScriptChange::Attribute {
+                node: at, name: an, ..
+            }) if *at == node && an.as_str() == name => Some(slot),
+            _ => None,
+        }
+    }
+    /**
+     * Replaces an earlier write to the same attribute in place. Attribute writes only set data, so
+     * the final state is unchanged, and the log keeps one entry per attribute instead of one per call.
+     */
+    fn supersede(&mut self, slot: usize, change: ScriptChange) -> EngineResult<()> {
+        let total = self
+            .change_bytes
+            .saturating_sub(change_bytes(&self.script_changes[slot]))
+            + change_bytes(&change);
+        if total > SCRIPT_CHANGE_BYTES {
+            return Err(EngineError::limit(
+                "V9 script change bytes",
+                SCRIPT_CHANGE_BYTES,
+            ));
+        }
+        self.change_bytes = total;
+        self.script_changes[slot] = change;
         Ok(())
     }
     /** Whether only the original change log is available. */
@@ -443,21 +595,7 @@ impl Page<'_> {
         if touched || index >= self.changes.len() {
             return false;
         }
-        let views: Vec<(usize, NodeView, Vec<usize>)> = subtree
-            .iter()
-            .map(|node| {
-                (
-                    *node,
-                    self.view(*node).unwrap_or(NodeView {
-                        tag: String::new(),
-                        attributes: BTreeMap::new(),
-                        text: None,
-                        value: None,
-                    }),
-                    self.all_children(*node),
-                )
-            })
-            .collect();
+        let records = self.capture(&subtree);
         self.changes.remove(index);
         for entry in &mut self.inserted {
             if entry.0 > index {
@@ -471,67 +609,61 @@ impl Page<'_> {
                 .retain(|node| !subtree.contains(&node.local_id));
         }
         self.invalidate();
-        for (node, view, children) in &views {
-            self.state.detached.insert(
-                *node,
-                Detached {
-                    tag: view.tag.clone(),
-                    attributes: view.attributes.clone(),
-                    parent: None,
-                    children: children.clone(),
-                    text: view.text.clone(),
-                },
-            );
-        }
-        for (node, _, children) in views {
-            for child in children {
-                if let Some(record) = self.state.detached.get_mut(&child) {
-                    record.parent = Some(node);
-                }
-            }
-        }
+        self.store_detached(records);
         true
     }
     /** Detach a projected subtree into page state, keeping identities. */
     fn detach_projected(&mut self, id: usize) -> EngineResult<()> {
         let mut subtree = vec![id];
         subtree.extend(self.all_descendants(id));
-        let views: Vec<(usize, NodeView, Vec<usize>)> = subtree
-            .iter()
-            .map(|node| {
-                let view = self.view(*node).unwrap_or(NodeView {
-                    tag: String::new(),
-                    attributes: BTreeMap::new(),
-                    text: None,
-                    value: None,
-                });
-                (*node, view, self.all_children(*node))
-            })
-            .collect();
+        let records = self.capture(&subtree);
         let document = self.document.as_mut().ok_or_else(invalid)?;
         let change = document.remove(id)?;
         self.invalidate();
         self.record(change)?;
-        for (node, view, children) in &views {
-            self.state.detached.insert(
-                *node,
-                Detached {
-                    tag: view.tag.clone(),
-                    attributes: view.attributes.clone(),
-                    parent: None,
-                    children: children.clone(),
-                    text: view.text.clone(),
-                },
-            );
+        self.store_detached(records);
+        Ok(())
+    }
+    /** Captures each node's record as a detached node would hold it. Call this before the
+    projection changes, since a node's view reads the projection. */
+    fn capture(&mut self, nodes: &[usize]) -> Vec<(usize, Detached)> {
+        nodes
+            .iter()
+            .map(|node| (*node, self.detached_record(*node)))
+            .collect()
+    }
+    /** One node's record: its view, and its projected children for the parent links. */
+    fn detached_record(&mut self, node: usize) -> Detached {
+        let children = self.all_children(node);
+        match self.view(node) {
+            Some(view) => Detached {
+                tag: view.tag,
+                attributes: view.attributes,
+                parent: None,
+                children,
+                text: view.text,
+            },
+            None => Detached {
+                children,
+                ..Detached::default()
+            },
         }
-        for (node, _, children) in views {
-            for child in children {
-                if let Some(record) = self.state.detached.get_mut(&child) {
-                    record.parent = Some(node);
-                }
+    }
+    /** Stores captured records as detached nodes, and points each captured child at its
+    captured parent, so a removed subtree stays reachable from its root. */
+    fn store_detached(&mut self, records: Vec<(usize, Detached)>) {
+        let links: Vec<(usize, usize)> = records
+            .iter()
+            .flat_map(|(node, record)| record.children.iter().map(move |child| (*child, *node)))
+            .collect();
+        for (node, record) in records {
+            self.state.detached.insert(node, record);
+        }
+        for (child, parent) in links {
+            if let Some(record) = self.state.detached.get_mut(&child) {
+                record.parent = Some(parent);
             }
         }
-        Ok(())
     }
     /** Remove a node from its parent. */
     pub fn remove(&mut self, id: usize) -> EngineResult<()> {
@@ -1031,6 +1163,12 @@ impl Page<'_> {
         if current.as_deref() == value {
             return Ok(());
         }
+        if self.environment.dom_level == DomLevel::Extended {
+            self.admit_attribute(id, &name, value)?;
+        }
+        // An attribute write moves no node, so the tree index stays valid and is not rebuilt: a
+        // class write on a page of thousands of elements used to rebuild the whole index.
+        let at = self.tree().index.get(&id).copied();
         let document = self.document.as_mut().ok_or_else(invalid)?;
         if self.environment.dom_level == DomLevel::Legacy {
             let Some(value) = value else {
@@ -1039,11 +1177,12 @@ impl Page<'_> {
                 ));
             };
             let change = document.set_attribute(id, &name, value)?;
-            self.invalidate();
             return self.record(ScriptChange::Dom { change });
         }
-        let change = document.set_any_attribute(id, &name, value)?;
-        self.invalidate();
+        let change = match at {
+            Some(at) => document.set_any_attribute_at(at, id, &name, value)?,
+            None => document.set_any_attribute(id, &name, value)?,
+        };
         self.record(change)
     }
     /** Set a field's value. */

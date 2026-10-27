@@ -78,6 +78,7 @@ fn input<'a>(
         storage: StorageState::default(),
         document: crate::document::ScriptDocument {
             identity: "conformance-worker".into(),
+            charset: "UTF-8".into(),
             nodes: Vec::new(),
         },
     }

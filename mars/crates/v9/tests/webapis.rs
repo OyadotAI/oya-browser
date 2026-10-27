@@ -116,6 +116,26 @@ fn text_decoder_labels_and_legacy_encodings() {
     assert_eq!(r, "windows-1252|utf-16le|true|B|true|true|RangeError");
 }
 
+/** Legacy labels decode through their WHATWG tables, report the spec's lowercase name, and
+`fatal` turns a truncated lead byte into a TypeError. */
+#[test]
+fn text_decoder_legacy_families_decode() {
+    let r = eval(
+        "let fatal = 'none'; try { new TextDecoder('shift_jis', {fatal: true}).decode(new Uint8Array([0x81])); } catch (e) { fatal = e.name; }
+         const r = [new TextDecoder('sjis').decode(new Uint8Array([0x82, 0xA0])) === '\\u{3042}',
+           new TextDecoder('euc-jp').decode(new Uint8Array([0xA4, 0xA2])) === '\\u{3042}',
+           new TextDecoder('big5').decode(new Uint8Array([0xA4, 0x40])) === '\\u{4E00}',
+           new TextDecoder('SJIS').encoding, new TextDecoder('gbk').encoding, fatal].join('|');",
+        "r",
+    );
+    assert_eq!(r, "true|true|true|shift_jis|gbk|TypeError");
+    let refused = eval(
+        "let refused = 0; for (const label of ['csiso2022kr', 'hz-gb-2312', 'iso-2022-cn']) { try { new TextDecoder(label); } catch (e) { refused++; } } String(refused)",
+        "refused",
+    );
+    assert_eq!(refused, "3");
+}
+
 /** `fatal` throws on malformed input, `ignoreBOM` keeps the BOM, and `stream` holds a split
 sequence for the next call. */
 #[test]

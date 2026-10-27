@@ -21,6 +21,7 @@ mod form_submit;
 mod frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
+mod implementation;
 mod install;
 mod interfaces;
 mod keyboard;
@@ -36,6 +37,7 @@ mod scrolling;
 mod selector;
 mod sheets;
 mod timers;
+mod token_set;
 mod url_bindings;
 mod url_parser;
 mod window;
@@ -820,6 +822,9 @@ pub(in crate::v9) struct PageState {
     pub ready: ReadyState,
     /** The current URL (pushState changes it). */
     pub href: String,
+    /** The main document's encoding name, from the parser; empty reads as UTF-8. */
+    #[serde(default)]
+    pub charset: String,
     pub history_state: Option<JsValue>,
     pub history_length: u32,
     pub cookie: String,
@@ -855,6 +860,17 @@ pub(in crate::v9) struct PageState {
     pub frame_windows: BTreeMap<usize, ObjectId>,
     /** Markup written to an open document, parsed when it closes. */
     pub writes: BTreeMap<usize, String>,
+    /** The document a script-made root node belongs to (a doctype or processing instruction
+    from DOMImplementation or createProcessingInstruction), for ownerDocument. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub owners: BTreeMap<usize, usize>,
+    /** Each script-made document's DOMImplementation object, by the implementation. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub implementations: BTreeMap<ObjectId, usize>,
+    /** The reverse of `implementations`: a document's implementation object, kept so its
+    identity holds across reads. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub implementation_of: BTreeMap<usize, ObjectId>,
 }
 
 /** Runtime platform state for one request. */
@@ -874,6 +890,13 @@ pub(in crate::v9) struct Page<'h> {
     pub joining: Vec<JsValue>,
     pub unhandled: Vec<ObjectId>,
     pub change_bytes: usize,
+    /**
+     * Where each (node, attribute) last written sits in `script_changes`. A hint only: a stale
+     * slot is checked against the log before use, so a restored log cannot be corrupted by it.
+     */
+    pub attribute_slots: std::collections::BTreeMap<(usize, String), usize>,
+    /** Events this request created, which give each one its own timestamp tick. */
+    pub event_ticks: u64,
     pub fragment_bytes: usize,
     pub next_id: usize,
     /** Values seen by legacy getElementById(...).value reads. */
@@ -885,6 +908,10 @@ pub(in crate::v9) struct Page<'h> {
     pub inserted: Vec<(usize, usize, Vec<usize>)>,
     /** Changes the current DOM call made, for custom element reactions and observers. */
     pub mutations: Vec<components::Mutation>,
+    /** Token sets of class-like attributes, by element and attribute name, kept for this request so
+    repeated classList calls do not re-split the attribute. Each set is reused only while the
+    attribute still holds the text it was read from. */
+    pub token_sets: std::collections::BTreeMap<(usize, String), token_set::TokenSet>,
 }
 
 impl<'h> Page<'h> {
@@ -935,6 +962,8 @@ impl<'h> Page<'h> {
             joining: Vec::new(),
             unhandled: Vec::new(),
             change_bytes: 0,
+            attribute_slots: std::collections::BTreeMap::new(),
+            event_ticks: 0,
             fragment_bytes: 0,
             next_id,
             legacy: false,
@@ -942,6 +971,7 @@ impl<'h> Page<'h> {
             inserted: Vec::new(),
             current_script: None,
             mutations: Vec::new(),
+            token_sets: std::collections::BTreeMap::new(),
         }
     }
     /** Record a console line within the bounds. */

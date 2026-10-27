@@ -24,6 +24,7 @@ fn node(local_id: usize, parent: Option<usize>) -> ScriptNode {
 fn tree() -> ScriptDocument {
     ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None), node(1, Some(0)), node(2, None)],
     }
 }
@@ -43,6 +44,7 @@ fn rejects_empty_and_oversized_projection_identities() {
     for identity in [String::new(), "x".repeat(ID_BYTES + 1)] {
         let document = ScriptDocument {
             identity,
+            charset: "UTF-8".into(),
             nodes: vec![node(0, None)],
         };
         assert_eq!(document.validate().unwrap_err().code, "invalid_request");
@@ -54,6 +56,7 @@ fn rejects_empty_and_oversized_projection_identities() {
 fn rejects_forward_parent_references() {
     let document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, Some(1)), node(1, None)],
     };
     assert_eq!(document.validate().unwrap_err().code, "invalid_request");
@@ -64,6 +67,7 @@ fn rejects_forward_parent_references() {
 fn rejects_duplicate_local_identities() {
     let document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None), node(0, None)],
     };
     assert_eq!(document.validate().unwrap_err().code, "invalid_request");
@@ -74,6 +78,7 @@ fn rejects_duplicate_local_identities() {
 fn enforces_projection_depth_at_the_shared_boundary() {
     let mut document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: (0..DOCUMENT_DEPTH)
             .map(|id| node(id, id.checked_sub(1)))
             .collect(),
@@ -91,6 +96,7 @@ is refused, one level under its parent is accepted, and a refusal changes nothin
 fn insert_counts_fragment_depth_from_the_insertion_point() {
     let chain = || ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: (0..DOCUMENT_DEPTH)
             .map(|id| node(id, id.checked_sub(1)))
             .collect(),
@@ -129,6 +135,7 @@ fn insert_counts_fragment_depth_from_the_insertion_point() {
 fn enforces_projection_input_text_at_the_shared_boundary() {
     let mut document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None)],
     };
     document.nodes[0].value = Some("x".repeat(TEXT_BYTES));
@@ -142,6 +149,7 @@ fn enforces_projection_input_text_at_the_shared_boundary() {
 fn emits_a_text_proposal_and_updates_only_the_inert_tree() {
     let mut document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None), node(1, Some(0)), node(2, None)],
     };
     document.validate().unwrap();
@@ -311,6 +319,7 @@ fn digest_is_stable_and_sensitive_to_structure() {
 fn rejects_non_contiguous_subtrees() {
     let document = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: vec![node(0, None), node(2, None), node(1, Some(0))],
     };
     assert_eq!(document.validate().unwrap_err().code, "invalid_request");

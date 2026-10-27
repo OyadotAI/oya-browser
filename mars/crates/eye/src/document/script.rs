@@ -9,6 +9,7 @@ pub fn script_document(document: &Document, identity: &str) -> EngineResult<Scri
     let first = first_ids(document);
     let projection = ScriptDocument {
         identity: identity.into(),
+        charset: document.charset.clone(),
         nodes: document
             .nodes
             .iter()
@@ -99,6 +100,7 @@ fn project_fragment(nodes: Vec<Node>) -> EngineResult<Vec<ScriptNode>> {
         formatting: Default::default(),
         csp: Vec::new(),
         metadata: Vec::new(),
+        charset: String::new(),
     };
     let first = first_ids(&document);
     Ok(document

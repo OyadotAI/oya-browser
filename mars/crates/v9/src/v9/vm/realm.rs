@@ -151,6 +151,9 @@ pub(in crate::v9) struct Ids {
     pub text_prototype: ObjectId,
     pub document_prototype: ObjectId,
     pub document: ObjectId,
+    /** The page's `document.implementation`, and the prototype script-made ones share. */
+    pub implementation: ObjectId,
+    pub implementation_prototype: ObjectId,
     /** `document.all`: the one object with [[IsHTMLDDA]], falsy and typeof "undefined". */
     pub document_all: ObjectId,
     pub event_prototype: ObjectId,

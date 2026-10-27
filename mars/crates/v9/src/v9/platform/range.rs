@@ -451,6 +451,10 @@ fn text_nodes_under(vm: &mut Vm, root: usize) -> Vec<usize> {
 
 /** `createContextualFragment(html)`: a fragment holding the parsed markup. */
 fn contextual_fragment(vm: &mut Vm, call: &Call) -> Res<JsValue> {
+    // WebIDL: the markup argument is required, so a call without it is a TypeError, not an empty fragment.
+    if call.args.is_empty() {
+        return Err(vm.type_error("1 argument required, but only 0 present."));
+    }
     let html = vm.to_text(&call.arg(0))?;
     let roots = super::html::parse_detached(&mut vm.page, &html)
         .map_err(|error| dom::dom_error(vm, error))?;

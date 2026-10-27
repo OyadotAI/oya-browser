@@ -43,6 +43,10 @@ pub(super) fn install(b: &mut Builder) {
     for name in ["name", "publicId", "systemId"] {
         b.getter(proto, name, doctype_get);
     }
+    // A doctype is a ChildNode, so it takes the same before, after, replaceWith and remove.
+    for name in ["before", "after", "replaceWith", "remove"] {
+        b.method(proto, name, 0, dom::character_data_method);
+    }
     let ctor = b.constructor("DocumentType", 0, dom::illegal_constructor, proto, None);
     b.global("DocumentType", ctor);
     let _ = DOCTYPE_PROTOTYPE.set(proto);
@@ -97,14 +101,14 @@ pub(super) fn wrap_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
 }
 
 /** A new detached node of `tag`, as a script error on failure. */
-fn create(vm: &mut Vm, tag: &str, text: Option<String>) -> Res<usize> {
+pub(super) fn create(vm: &mut Vm, tag: &str, text: Option<String>) -> Res<usize> {
     vm.page
         .create(tag, text)
         .map_err(|error| dom_error(vm, error))
 }
 
 /** Append `child` to `parent` (a template's content for a template). */
-fn append(vm: &mut Vm, parent: usize, child: usize) -> Res<()> {
+pub(super) fn append(vm: &mut Vm, parent: usize, child: usize) -> Res<()> {
     let parent = vm
         .page
         .content_or_self(parent)
@@ -116,7 +120,7 @@ fn append(vm: &mut Vm, parent: usize, child: usize) -> Res<()> {
 }
 
 /** A doctype node with this name and ids. */
-fn doctype(vm: &mut Vm, name: &str, public: &str, system: &str) -> Res<usize> {
+pub(super) fn doctype(vm: &mut Vm, name: &str, public: &str, system: &str) -> Res<usize> {
     let node = create(vm, DOCTYPE, None)?;
     if let Some(record) = vm.page.state.detached.get_mut(&node) {
         record.attributes = BTreeMap::from([

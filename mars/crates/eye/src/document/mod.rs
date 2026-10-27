@@ -96,6 +96,10 @@ pub struct Document {
     /// never nodes, so layout, paint and agents never see them; scripts find them through V9.
     #[serde(default)]
     pub metadata: Vec<MetadataElement>,
+    /// The encoding name the parser settled: a meta charset when one agreed with the decoding,
+    /// else the transport's. Empty only for fragments; it is what `document.characterSet` reports.
+    #[serde(default)]
+    pub charset: String,
 }
 
 /// What a script element holds; modules and import maps go to V9's module loader.

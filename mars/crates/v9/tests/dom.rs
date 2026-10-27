@@ -137,11 +137,10 @@ fn extended_log_records_every_mutation() {
     assert_eq!(
         ops,
         [
-            "title=t",
+            "title=-",
             "class=on",
             "style=color: red;",
             "data-mode=m",
-            "title=-",
             "text:new",
             "remove:2",
             "hidden="
@@ -311,4 +310,53 @@ fn webkit_style_attributes_name_dash_prefixed_properties() {
         ),
         "2,vertical"
     );
+}
+
+/** Repeated classList writes to one element keep one change entry, not one per call. */
+#[test]
+fn class_list_writes_coalesce_into_one_change() {
+    let source = "const f=document.getElementById('first');for(let i=0;i<1500;i++){f.classList.add('cls-'+i);}\
+        const r=f.classList.length;";
+    let execution = load_with(source, &extended());
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "1500");
+    let class_writes = execution
+        .script_changes
+        .iter()
+        .filter(|change| matches!(change, ScriptChange::Attribute { name, .. } if name == "class"))
+        .count();
+    assert_eq!(class_writes, 1);
+}
+
+/**
+ * An over-budget attribute write fails the step as the budget limit, before the document changes,
+ * so the step never reaches the structure check with V9 and the app's engine out of step.
+ */
+#[test]
+fn over_budget_attribute_write_is_refused_before_it_lands() {
+    let source = "const f=document.getElementById('first');for(let i=0;i<80;i++){f.setAttribute('data-v'+i,'x'.repeat(60000));}";
+    let execution = load_with(source, &extended());
+    let message = common::failure(&execution).unwrap_or_default();
+    assert!(message.contains("change bytes"), "{message}");
+    assert!(!message.contains("disagree"), "{message}");
+}
+
+/** Event timestamps differ within one request, so a fast-resolution probe sees nonzero steps. */
+#[test]
+fn event_timestamps_step_within_one_request() {
+    let source = "const a=new MouseEvent('one'),b=new MouseEvent('two');\
+        const r=[b.timeStamp>a.timeStamp,Math.round((b.timeStamp-a.timeStamp)*1000)].join();";
+    assert_eq!(eval(source, "r"), "true,5");
+}
+
+/** A static list reads its index and length without copying, and index identity holds. */
+#[test]
+fn static_node_list_indexes_and_lengths() {
+    let source = "const l=document.querySelectorAll('p');\
+        const r=[l.length,l[0]===document.getElementById('first'),l[1].className,l[2]===undefined].join();";
+    assert_eq!(eval(source, "r"), "2,true,note,true");
 }

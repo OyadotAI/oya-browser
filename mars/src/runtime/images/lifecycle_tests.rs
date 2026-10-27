@@ -32,6 +32,7 @@ fn decoded_events(source: &str) -> Vec<String> {
         source_keys: &[],
         document: crate::document::ScriptDocument {
             identity: "decoded-image".into(),
+            charset: "UTF-8".into(),
             nodes: Vec::new(),
         },
         storage: StorageState::default(),

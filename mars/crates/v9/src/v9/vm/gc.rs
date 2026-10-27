@@ -487,6 +487,7 @@ mod tests {
             source_keys: &[],
             document: ScriptDocument {
                 identity: "page-1".into(),
+                charset: "UTF-8".into(),
                 nodes: Vec::new(),
             },
             storage: StorageState::default(),

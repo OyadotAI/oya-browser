@@ -4,8 +4,9 @@
  * `ignoreBOM` keeps a leading byte order mark, and `{stream: true}` holds an incomplete
  * trailing sequence for the next call. It replaces the UTF-8-only builtin decoder.
  *
- * ponytail: UTF-8, UTF-16LE/BE, windows-1252 (with its latin1 and ascii labels) and
- * x-user-defined only; the other legacy encodings need their index tables and stay RangeErrors.
+ * Every legacy encoding decodes through encoding_rs, the WHATWG tables, one chunk at a time.
+ * ponytail: a legacy stream does not carry decoder state across calls, so a multibyte sequence
+ * split between two chunks decodes as U+FFFD; upgrade by holding an encoding_rs::Decoder per object.
  */
 use crate::v9::builtins::typed;
 use crate::v9::value::{JsString, JsValue, ObjectId};
@@ -13,70 +14,30 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object, Prop, Slot};
 use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
+use mars_core::charset::{self, Encoding};
 use std::sync::OnceLock;
 
-/** The decoders this file implements. */
-#[derive(Clone, Copy, PartialEq)]
-enum Encoding {
+/** The decoders this file runs: its own UTF-8 and UTF-16 paths, and every other encoding through
+encoding_rs, x-user-defined included. */
+#[derive(Clone, Copy)]
+enum Decoder {
     Utf8,
     Utf16Le,
     Utf16Be,
-    Windows1252,
-    UserDefined,
+    Legacy(&'static Encoding),
 }
 
-/** The canonical names, in `Encoding` order, as the `encoding` attribute reports them. */
-const NAMES: [&str; 5] = [
-    "utf-8",
-    "utf-16le",
-    "utf-16be",
-    "windows-1252",
-    "x-user-defined",
-];
-
-/** The spec's label table, for the encodings above. */
-const LABELS: &[(&str, Encoding)] = &[
-    ("unicode-1-1-utf-8", Encoding::Utf8),
-    ("unicode11utf8", Encoding::Utf8),
-    ("unicode20utf8", Encoding::Utf8),
-    ("utf-8", Encoding::Utf8),
-    ("utf8", Encoding::Utf8),
-    ("x-unicode20utf8", Encoding::Utf8),
-    ("csunicode", Encoding::Utf16Le),
-    ("iso-10646-ucs-2", Encoding::Utf16Le),
-    ("ucs-2", Encoding::Utf16Le),
-    ("unicode", Encoding::Utf16Le),
-    ("unicodefeff", Encoding::Utf16Le),
-    ("utf-16", Encoding::Utf16Le),
-    ("utf-16le", Encoding::Utf16Le),
-    ("unicodefffe", Encoding::Utf16Be),
-    ("utf-16be", Encoding::Utf16Be),
-    ("ansi_x3.4-1968", Encoding::Windows1252),
-    ("ascii", Encoding::Windows1252),
-    ("cp1252", Encoding::Windows1252),
-    ("cp819", Encoding::Windows1252),
-    ("csisolatin1", Encoding::Windows1252),
-    ("ibm819", Encoding::Windows1252),
-    ("iso-8859-1", Encoding::Windows1252),
-    ("iso-ir-100", Encoding::Windows1252),
-    ("iso8859-1", Encoding::Windows1252),
-    ("iso88591", Encoding::Windows1252),
-    ("iso_8859-1", Encoding::Windows1252),
-    ("iso_8859-1:1987", Encoding::Windows1252),
-    ("l1", Encoding::Windows1252),
-    ("latin1", Encoding::Windows1252),
-    ("us-ascii", Encoding::Windows1252),
-    ("windows-1252", Encoding::Windows1252),
-    ("x-cp1252", Encoding::Windows1252),
-    ("x-user-defined", Encoding::UserDefined),
-];
-
-/** windows-1252's code points for bytes 0x80..=0x9F; the rest map to themselves. */
-const WINDOWS_1252_HIGH: [u16; 32] = [
-    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039,
-    0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
-    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
-];
+impl Decoder {
+    /** The canonical name the `encoding` attribute reports: lowercase, as the spec spells it. */
+    fn name(self) -> String {
+        match self {
+            Self::Utf8 => "utf-8".into(),
+            Self::Utf16Le => "utf-16le".into(),
+            Self::Utf16Be => "utf-16be".into(),
+            Self::Legacy(encoding) => encoding.name().to_ascii_lowercase(),
+        }
+    }
+}
 
 /** The TextDecoder prototype. */
 static PROTO: OnceLock<u32> = OnceLock::new();
@@ -93,15 +54,23 @@ pub(super) fn install(b: &mut Builder) {
     let _ = PROTO.set(proto);
 }
 
-/** The encoding a label names: ASCII whitespace trimmed, ASCII case ignored. */
-fn lookup(label: &str) -> Option<Encoding> {
+/** The decoder a label names: ASCII whitespace trimmed, ASCII case ignored. UTF-16 labels that
+encoding_rs maps to LE or BE keep the native UTF-16 path, which handles streamed surrogates. */
+fn lookup(label: &str) -> Option<Decoder> {
     let label = label
         .trim_matches(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '))
         .to_ascii_lowercase();
-    LABELS
-        .iter()
-        .find(|(name, _)| *name == label)
-        .map(|(_, encoding)| *encoding)
+    let encoding = charset::for_label(&label)?;
+    // WHATWG's replacement encoding exists for labels only; TextDecoder refuses it.
+    if encoding.name() == "replacement" {
+        return None;
+    }
+    Some(match encoding.name() {
+        "UTF-8" => Decoder::Utf8,
+        "UTF-16LE" => Decoder::Utf16Le,
+        "UTF-16BE" => Decoder::Utf16Be,
+        _ => Decoder::Legacy(encoding),
+    })
 }
 
 /** A private slot key. */
@@ -145,7 +114,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         JsValue::Undefined => String::from("utf-8"),
         value => vm.to_text(&value)?,
     };
-    let Some(encoding) = lookup(&label) else {
+    let Some(decoder) = lookup(&label) else {
         let message = format!(
             "Failed to construct 'TextDecoder': The encoding label provided ('{label}') is invalid."
         );
@@ -155,12 +124,8 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let fatal = flag(vm, &options, "fatal")?;
     let ignore_bom = flag(vm, &options, "ignoreBOM")?;
     let id = vm.alloc(Object::new(Class::Plain, Some(proto)))?;
-    write_slot(
-        vm,
-        id,
-        "decEncoding",
-        JsValue::Number(encoding as u8 as f64),
-    );
+    let name = JsString::from_utf8(&decoder.name())?;
+    write_slot(vm, id, "decEncoding", JsValue::String(name));
     write_slot(vm, id, "decFatal", JsValue::Boolean(fatal));
     write_slot(vm, id, "decIgnoreBOM", JsValue::Boolean(ignore_bom));
     reset(vm, id)?;
@@ -175,30 +140,21 @@ fn reset(vm: &mut Vm, id: ObjectId) -> Res<()> {
     Ok(())
 }
 
-/** The receiver's encoding, or the TypeError for a receiver that is no TextDecoder. */
-fn encoding_of(vm: &mut Vm, this: &JsValue) -> Res<Encoding> {
-    let all = [
-        Encoding::Utf8,
-        Encoding::Utf16Le,
-        Encoding::Utf16Be,
-        Encoding::Windows1252,
-        Encoding::UserDefined,
-    ];
+/** The receiver's decoder, or the TypeError for a receiver that is no TextDecoder. */
+fn decoder_of(vm: &mut Vm, this: &JsValue) -> Res<Decoder> {
     // The slot is engine-written, but a bad value must still be a TypeError, never a panic.
-    let encoding = match read_slot(vm, this, "decEncoding") {
-        Some(JsValue::Number(index)) if index.fract() == 0.0 && index >= 0.0 => {
-            all.get(index as usize).copied()
-        }
+    let decoder = match read_slot(vm, this, "decEncoding") {
+        Some(JsValue::String(name)) => lookup(&name.lossy()),
         _ => None,
     };
-    encoding.ok_or_else(|| vm.type_error("Illegal invocation: the receiver is not a TextDecoder"))
+    decoder.ok_or_else(|| vm.type_error("Illegal invocation: the receiver is not a TextDecoder"))
 }
 
 /** `encoding`, `fatal` and `ignoreBOM`. */
 fn attribute(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let encoding = encoding_of(vm, &call.this)?;
+    decoder_of(vm, &call.this)?;
     Ok(match super::dom::native_name(&call) {
-        "encoding" => JsValue::String(JsString::from_utf8(NAMES[encoding as usize])?),
+        "encoding" => read_slot(vm, &call.this, "decEncoding").unwrap_or(JsValue::Undefined),
         "fatal" => read_slot(vm, &call.this, "decFatal").unwrap_or(JsValue::Boolean(false)),
         _ => read_slot(vm, &call.this, "decIgnoreBOM").unwrap_or(JsValue::Boolean(false)),
     })
@@ -206,7 +162,7 @@ fn attribute(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** `decode(input, {stream})`. */
 fn decode(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let encoding = encoding_of(vm, &call.this)?;
+    let decoder = decoder_of(vm, &call.this)?;
     let id = call.this.object().expect("checked receiver");
     let input = match call.arg(0) {
         JsValue::Undefined => Vec::new(),
@@ -221,7 +177,7 @@ fn decode(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .unwrap_or_default();
     bytes.extend(input);
     let fatal = read_slot(vm, &call.this, "decFatal").is_some_and(|v| v.truthy());
-    let (units, rest, failed) = run(encoding, &bytes, stream);
+    let (units, rest, failed) = run(decoder, &bytes, stream);
     if failed && fatal {
         reset(vm, id)?;
         return Err(vm.type_error(
@@ -255,39 +211,19 @@ fn strip_bom(vm: &mut Vm, id: ObjectId, mut units: Vec<u16>) -> Res<Vec<u16>> {
 
 /** Decode `bytes`: the UTF-16 units, the incomplete tail held for a streaming call, and whether
 any input was malformed. */
-fn run(encoding: Encoding, bytes: &[u8], stream: bool) -> (Vec<u16>, Vec<u8>, bool) {
-    match encoding {
-        Encoding::Utf8 => utf8(bytes, stream),
-        Encoding::Utf16Le => utf16(bytes, stream, u16::from_le_bytes),
-        Encoding::Utf16Be => utf16(bytes, stream, u16::from_be_bytes),
-        Encoding::Windows1252 => (
-            bytes.iter().map(|&b| windows_1252(b)).collect(),
-            Vec::new(),
-            false,
-        ),
-        Encoding::UserDefined => (
-            bytes.iter().map(|&b| user_defined(b)).collect(),
-            Vec::new(),
-            false,
-        ),
+fn run(decoder: Decoder, bytes: &[u8], stream: bool) -> (Vec<u16>, Vec<u8>, bool) {
+    match decoder {
+        Decoder::Utf8 => utf8(bytes, stream),
+        Decoder::Utf16Le => utf16(bytes, stream, u16::from_le_bytes),
+        Decoder::Utf16Be => utf16(bytes, stream, u16::from_be_bytes),
+        Decoder::Legacy(encoding) => legacy(encoding, bytes),
     }
 }
 
-/** One windows-1252 byte. */
-fn windows_1252(byte: u8) -> u16 {
-    match byte {
-        0x80..=0x9F => WINDOWS_1252_HIGH[usize::from(byte - 0x80)],
-        _ => u16::from(byte),
-    }
-}
-
-/** One x-user-defined byte: ASCII as is, the high half in U+F780..U+F7FF. */
-fn user_defined(byte: u8) -> u16 {
-    if byte < 0x80 {
-        u16::from(byte)
-    } else {
-        0xF780 + u16::from(byte - 0x80)
-    }
+/** One whole legacy chunk through its WHATWG table; malformed bytes become U+FFFD and report. */
+fn legacy(encoding: &'static Encoding, bytes: &[u8]) -> (Vec<u16>, Vec<u8>, bool) {
+    let (text, failed) = encoding.decode_without_bom_handling(bytes);
+    (text.encode_utf16().collect(), Vec::new(), failed)
 }
 
 /** UTF-8 with U+FFFD for each maximal malformed subpart, as the spec's decoder does. */

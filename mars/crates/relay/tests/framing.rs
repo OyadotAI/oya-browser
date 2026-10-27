@@ -261,7 +261,7 @@ fn chunk_framing_past_its_budget_is_refused() {
 fn web_responses_report_the_declared_charset() {
     for (content_type, expected) in [
         ("text/html; charset=ISO-8859-1", Some("windows-1252")),
-        ("text/html; charset=utf8", Some("utf-8")),
+        ("text/html; charset=utf8", Some("UTF-8")),
         ("text/html", None),
     ] {
         let response = format!(

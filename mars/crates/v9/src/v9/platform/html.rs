@@ -174,6 +174,11 @@ pub(in crate::v9) struct Parsed {
     pub parent: Option<usize>,
 }
 
+/** The input-stream newline rule: CRLF and a lone CR both become LF before any token is read, so attribute values see LF too. */
+fn normalize_newlines(html: &str) -> String {
+    html.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 /** Parse HTML into a preorder node list. */
 pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
     if html.len() > FRAGMENT_BYTES * 4 {
@@ -181,7 +186,8 @@ pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
     }
     let mut nodes: Vec<Parsed> = Vec::new();
     let mut open: Vec<(usize, String)> = Vec::new();
-    let mut rest = html;
+    let normalized = normalize_newlines(html);
+    let mut rest = normalized.as_str();
     let push = |nodes: &mut Vec<Parsed>,
                 open: &[(usize, String)],
                 tag: &str,

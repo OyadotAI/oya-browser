@@ -8,3 +8,5 @@ publish = false
 [dependencies]
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
+# WHATWG charset labels and every legacy decoder Mars reads a page or a TextDecoder with.
+encoding_rs = "=0.8.35"

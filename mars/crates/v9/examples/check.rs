@@ -14,6 +14,7 @@ fn main() {
     if run {
         let document = ScriptDocument {
             identity: "example".into(),
+            charset: "UTF-8".into(),
             nodes: Vec::new(),
         };
         let started = std::time::Instant::now();

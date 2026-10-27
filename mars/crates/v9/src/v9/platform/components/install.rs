@@ -40,7 +40,8 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     registry_object(b);
     let (tree_walker, node_iterator) = traversals(b);
     let (mutation_observer, mutation_record) = observers(b);
-    for name in ["CDATASection", "ProcessingInstruction"] {
+    // ProcessingInstruction is installed by platform::implementation, which gives it a prototype.
+    for name in ["CDATASection"] {
         // Pages patch these interfaces' prototypes; V9 creates no such nodes.
         let proto = b.object(Some(b.ids.text_prototype));
         let ctor = b.constructor(name, 0, dom::illegal_constructor, proto, None);

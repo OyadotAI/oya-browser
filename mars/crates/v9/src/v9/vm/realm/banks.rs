@@ -134,6 +134,8 @@ impl Ids {
     fn shifted(&self, amount: u32) -> Self {
         Self {
             object_prototype: shift(self.object_prototype, amount),
+            implementation: shift(self.implementation, amount),
+            implementation_prototype: shift(self.implementation_prototype, amount),
             function_prototype: shift(self.function_prototype, amount),
             array_prototype: shift(self.array_prototype, amount),
             array: shift(self.array, amount),

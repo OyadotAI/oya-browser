@@ -5,7 +5,7 @@ use crate::protocol::EngineError;
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{Class, EventData, HostData};
 use crate::v9::vm::heap::{Key, Object};
-use crate::v9::vm::realm::realm;
+use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, GLOBAL, Res, Thrown, Vm};
 
 /// Event listeners one page may register on nodes, the document and the window together. A
@@ -110,6 +110,23 @@ pub(in crate::v9) fn event_target(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
+/**
+ * Resolution of event timestamps in virtual milliseconds: 5 microseconds, the floor browsers
+ * clamp to. The page clock only moves with timers, so without a tick every event in a request
+ * would share one timestamp.
+ */
+const EVENT_TICK_MS: f64 = 0.005;
+
+/**
+ * The timestamp for the next event: the page clock plus one tick per event this request made,
+ * so timestamps strictly increase in creation order. Ceiling: a request creating N events
+ * drifts N * 5 microseconds past the clock.
+ */
+fn next_event_timestamp(vm: &mut Vm) -> f64 {
+    vm.page.event_ticks += 1;
+    vm.page.state.clock + vm.page.event_ticks as f64 * EVENT_TICK_MS
+}
+
 /** A new event object. */
 pub(in crate::v9) fn create_event(
     vm: &mut Vm,
@@ -117,6 +134,7 @@ pub(in crate::v9) fn create_event(
     bubbles: bool,
     cancelable: bool,
 ) -> Res<JsValue> {
+    let timestamp = next_event_timestamp(vm);
     let data = EventData {
         kind: kind.into(),
         target: JsValue::Null,
@@ -129,6 +147,7 @@ pub(in crate::v9) fn create_event(
         phase: 0,
         detail: JsValue::Null,
         trusted: false,
+        timestamp,
     };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Event(Box::new(data)))),
@@ -414,32 +433,56 @@ fn invoke(
     Ok(())
 }
 
-/** Window events whose `<body>` content attributes set the window's handler (HTML's
-WindowEventHandlers and the body-forwarded blur, error, focus, load, resize and scroll). */
-const BODY_FORWARDED: [&str; 22] = [
-    "afterprint",
-    "beforeprint",
-    "beforeunload",
-    "blur",
-    "error",
-    "focus",
-    "hashchange",
-    "languagechange",
-    "load",
-    "message",
-    "messageerror",
-    "offline",
-    "online",
-    "pagehide",
-    "pagereveal",
-    "pageshow",
-    "popstate",
-    "rejectionhandled",
-    "resize",
-    "scroll",
-    "storage",
-    "unload",
+/** The window handler properties `<body>` forwards (HTML's WindowEventHandlers, the body-forwarded
+blur, error, focus, load, resize and scroll). Both `<body onload>` content attributes and the
+body's `onload` script property set the window's own handler, so these names are the body's
+accessors and the window's handler keys at once. */
+pub(in crate::v9) const BODY_FORWARDED: [&str; 22] = [
+    "onafterprint",
+    "onbeforeprint",
+    "onbeforeunload",
+    "onblur",
+    "onerror",
+    "onfocus",
+    "onhashchange",
+    "onlanguagechange",
+    "onload",
+    "onmessage",
+    "onmessageerror",
+    "onoffline",
+    "ononline",
+    "onpagehide",
+    "onpagereveal",
+    "onpageshow",
+    "onpopstate",
+    "onrejectionhandled",
+    "onresize",
+    "onscroll",
+    "onstorage",
+    "onunload",
 ];
+
+/** `document.body.onload` and its siblings read the window's handler, as HTML defines the body's
+forwarded handlers: a body that answered with its own property would never be the one that fires. */
+pub(in crate::v9) fn body_handler_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let key = Key::from(native_name(&call));
+    vm.get(&JsValue::Object(GLOBAL), &key)
+}
+
+/** Writing `document.body.onload` writes the window's handler, the one dispatch consults. Without
+this the body kept a plain property that no event ever read, so `onload` set from script never ran. */
+pub(in crate::v9) fn body_handler_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let key = Key::from(native_name(&call));
+    vm.put_key(GLOBAL, key, call.arg(0))?;
+    Ok(JsValue::Undefined)
+}
+
+/** Installs the forwarded handler accessors on HTMLBodyElement.prototype. */
+pub(in crate::v9) fn install_body_handlers(b: &mut Builder, proto: u32) {
+    for name in BODY_FORWARDED {
+        b.accessor(proto, name, Some(body_handler_get), Some(body_handler_set));
+    }
+}
 
 /** The markup `on<kind>` attribute source of a node target, if it has one. */
 fn inline_source(vm: &mut Vm, target: Target, kind: &str) -> Option<String> {
@@ -447,7 +490,9 @@ fn inline_source(vm: &mut Vm, target: Target, kind: &str) -> Option<String> {
         Target::Node(node) => node,
         // HTML forwards these `<body on...>` attributes to the window's handlers, so
         // `<body onload="...">` runs on the window's load event.
-        Target::Window if BODY_FORWARDED.contains(&kind) => super::nodes::BODY,
+        Target::Window if BODY_FORWARDED.contains(&format!("on{kind}").as_str()) => {
+            super::nodes::BODY
+        }
         _ => return None,
     };
     let name = format!("on{kind}");
@@ -638,7 +683,7 @@ pub(in crate::v9) fn event_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     .object()
                     .is_some_and(|id| super::components::composed(vm, id)),
         ),
-        "timeStamp" => JsValue::Number(vm.page.state.clock),
+        "timeStamp" => JsValue::Number(data.timestamp),
         "detail" => data.detail,
         "button" | "buttons" | "clientX" | "clientY" | "pageX" | "pageY" | "screenX"
         | "screenY" | "offsetX" | "offsetY" | "keyCode" | "charCode" | "deltaX" | "deltaY" => {

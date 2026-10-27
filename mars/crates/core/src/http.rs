@@ -61,53 +61,13 @@ impl Method {
     }
 }
 
-/// Canonical name of the UTF-8 encoding, shared by Relay's decoder and Eye's meta check.
-pub const UTF_8: &str = "utf-8";
+/// Canonical name of the UTF-8 encoding, as WHATWG spells it and as `document.characterSet` reports it.
+pub const UTF_8: &str = "UTF-8";
 /// Canonical name of windows-1252, which WHATWG also uses for Latin-1 and ASCII labels.
 pub const WINDOWS_1252: &str = "windows-1252";
 
-/** WHATWG labels for UTF-8; any other spelling is not UTF-8. */
-const UTF8_LABELS: [&str; 6] = [
-    "unicode-1-1-utf-8",
-    "unicode11utf8",
-    "unicode20utf8",
-    "utf-8",
-    "utf8",
-    "x-unicode20utf8",
-];
-
-/** WHATWG labels that all mean windows-1252, including Latin-1 and ASCII. */
-const WINDOWS_1252_LABELS: [&str; 17] = [
-    "ansi_x3.4-1968",
-    "ascii",
-    "cp1252",
-    "cp819",
-    "csisolatin1",
-    "ibm819",
-    "iso-8859-1",
-    "iso-ir-100",
-    "iso8859-1",
-    "iso88591",
-    "iso_8859-1",
-    "iso_8859-1:1987",
-    "l1",
-    "latin1",
-    "us-ascii",
-    "windows-1252",
-    "x-cp1252",
-];
-
-/// Resolves a charset label to the one encoding Mars decodes it as, so the transport and a meta
-/// declaration compare by encoding rather than by spelling. Unsupported labels return None.
+/// Resolves a charset label to its canonical WHATWG name, so the transport and a meta declaration
+/// compare by encoding rather than by spelling. Labels WHATWG does not define return None.
 pub fn encoding_for_label(label: &str) -> Option<&'static str> {
-    let label = label
-        .trim_matches(|c: char| c.is_ascii_whitespace())
-        .to_ascii_lowercase();
-    if UTF8_LABELS.contains(&label.as_str()) {
-        Some(UTF_8)
-    } else if WINDOWS_1252_LABELS.contains(&label.as_str()) {
-        Some(WINDOWS_1252)
-    } else {
-        None
-    }
+    crate::charset::for_label(label).map(crate::charset::Encoding::name)
 }

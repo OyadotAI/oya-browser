@@ -14,7 +14,9 @@ fn charset_labels_resolve_by_encoding() {
     assert_eq!(encoding_for_label("ISO-8859-1"), Some(WINDOWS_1252));
     assert_eq!(encoding_for_label("us-ascii"), Some(WINDOWS_1252));
     assert_eq!(encoding_for_label(" Latin1 "), Some(WINDOWS_1252));
-    assert_eq!(encoding_for_label("shift_jis"), None);
+    assert_eq!(encoding_for_label("shift_jis"), Some("Shift_JIS"));
+    assert_eq!(encoding_for_label("x-user-defined"), Some("x-user-defined"));
+    assert_eq!(encoding_for_label("nope"), None);
     assert_eq!(encoding_for_label(""), None);
 }
 
@@ -64,6 +66,7 @@ fn node(local_id: usize, parent: Option<usize>) -> ScriptNode {
 fn document(nodes: Vec<ScriptNode>) -> ScriptDocument {
     ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes,
     }
 }

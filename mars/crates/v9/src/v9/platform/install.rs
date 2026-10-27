@@ -298,10 +298,10 @@ fn document(b: &mut Builder, node: u32) {
             Some(dom::document_set),
         );
     }
+    for name in ["characterSet", "charset", "inputEncoding"] {
+        b.getter(proto, name, dom::document_get);
+    }
     for (name, value) in [
-        ("characterSet", "UTF-8"),
-        ("charset", "UTF-8"),
-        ("inputEncoding", "UTF-8"),
         ("contentType", "text/html"),
         ("compatMode", "CSS1Compat"),
         ("visibilityState", "visible"),
@@ -343,19 +343,17 @@ fn document(b: &mut Builder, node: u32) {
         ],
         dom::document_method,
     );
-    let implementation = b.object(Some(b.ids.object_prototype));
-    b.method(
-        implementation,
-        "createHTMLDocument",
-        1,
-        dom::create_html_document,
-    );
-    b.method(implementation, "hasFeature", 0, yes);
-    b.value(
+    super::implementation::install_prototype(b);
+    b.getter(
         proto,
         "implementation",
-        JsValue::Object(implementation),
-        CONFIGURABLE,
+        super::implementation::implementation_get,
+    );
+    b.method(
+        proto,
+        "createProcessingInstruction",
+        super::implementation::PI_LENGTH,
+        dom::document_method,
     );
     font_faces(b, proto);
     ranges(b);
@@ -1138,7 +1136,11 @@ fn global_object(b: &mut Builder) {
             "Attr" => b.ids.node_prototype,
             _ => b.ids.html_element_prototype,
         };
-        let ctor = constructor_without_link(b, name, prototype);
+        let ctor = match name {
+            "Text" => b.constructor("Text", 1, construct_text, prototype, None),
+            "Comment" => b.constructor("Comment", 1, construct_comment, prototype, None),
+            _ => constructor_without_link(b, name, prototype),
+        };
         if name == "Node" {
             for (name, value) in NODE_CONSTANTS {
                 b.value(ctor, name, JsValue::Number(value), 0);
@@ -1197,6 +1199,7 @@ fn global_object(b: &mut Builder) {
     super::channel::install(b);
     super::dom_parser::install(b);
     super::frames::install(b);
+    super::implementation::install(b);
     super::scripts::install(b);
     super::components::install(b);
     // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
@@ -1390,14 +1393,13 @@ fn sheets(b: &mut Builder) {
 
 /** A constructor whose prototype already names its own constructor elsewhere. */
 fn constructor_without_link(b: &mut Builder, name: &'static str, prototype: u32) -> u32 {
-    let existing = b.objects[(prototype - crate::v9::vm::heap::INTRINSIC_BASE) as usize]
-        .get(&Key::from("constructor"))
-        .is_some();
-    let ctor = b.constructor(name, 0, dom::illegal_constructor, prototype, None);
-    if existing {
-        return ctor;
-    }
-    ctor
+    // Document is the one interface scripts may construct; every other one is illegal.
+    let function: NativeFn = if name == "Document" {
+        super::implementation::construct_document
+    } else {
+        dom::illegal_constructor
+    };
+    b.constructor(name, 0, function, prototype, None)
 }
 
 /** Getters on a shared prototype, leaving out the members one interface owns. */
@@ -1439,7 +1441,7 @@ fn noop_method(_: &mut Vm, _: Call) -> Res<JsValue> {
 }
 
 /** Always true. */
-fn yes(_: &mut Vm, _: Call) -> Res<JsValue> {
+pub(super) fn yes(_: &mut Vm, _: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(true))
 }
 
@@ -1490,6 +1492,30 @@ fn construct_observer(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** `new Image(width, height)`. */
+/** `new Text(data)`: a text node holding `data`, which is empty when the argument is omitted. */
+fn construct_text(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    construct_character_node(vm, &call, "#text")
+}
+
+/** `new Comment(data)`: a comment node holding `data`, which is empty when the argument is omitted. */
+fn construct_comment(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    construct_character_node(vm, &call, "#comment")
+}
+
+/** A character-data node made by its constructor. An omitted argument is the empty string, not
+the text "undefined", as the DOM's `data = ""` default requires. */
+fn construct_character_node(vm: &mut Vm, call: &Call, tag: &str) -> Res<JsValue> {
+    let text = match call.arg(0) {
+        JsValue::Undefined => String::new(),
+        value => vm.to_text(&value)?,
+    };
+    let node = vm
+        .page
+        .create(tag, Some(text))
+        .map_err(|error| dom::dom_error(vm, error))?;
+    dom::wrap(vm, node)
+}
+
 fn construct_image(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = vm
         .page

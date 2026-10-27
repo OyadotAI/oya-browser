@@ -613,8 +613,8 @@ pub(in crate::v9) enum HostData {
     Computed(usize),
     ClassList(usize),
     Dataset(usize),
-    /** A static list of nodes. */
-    NodeList(Vec<usize>),
+    /** A static list of nodes. Shared, so cloning the host handle on each property read is O(1). */
+    NodeList(std::sync::Arc<[usize]>),
     /** A live child or element list of a node. */
     Children(usize, bool),
     Xhr(u32),
@@ -712,6 +712,8 @@ pub(in crate::v9) struct EventData {
     pub phase: u8,
     pub detail: JsValue,
     pub trusted: bool,
+    /** Virtual milliseconds at creation; events in one request never share a timestamp. */
+    pub timestamp: f64,
 }
 
 /** A fetch response body and metadata. */

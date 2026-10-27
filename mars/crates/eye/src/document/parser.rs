@@ -16,6 +16,7 @@ use crate::constants::{
 };
 use crate::protocol::{EngineError, EngineResult};
 use mars_core::dom::MetadataElement;
+use mars_core::charset::meta_name;
 use mars_core::http::{UTF_8, WINDOWS_1252, encoding_for_label};
 
 /** Table structure start tags HTML ignores outside a table. */
@@ -39,6 +40,7 @@ pub fn parse_with_charset(source: &str, charset: Option<&str>) -> EngineResult<D
     }
     let mut tree = Tree::new(source, 0, false);
     tree.decoded = charset.map_or(Some(UTF_8), encoding_for_label);
+    name_transport(&mut tree, charset);
     tree.run()?;
     tree.document.formatting.quirks = super::quirks::quirks(source);
     finish_page(tree)
@@ -54,6 +56,7 @@ pub fn parse_xml(source: &str, charset: Option<&str>) -> EngineResult<Document> 
     let mut tree = Tree::new(source, 0, false);
     tree.tokens = Tokens::Xml(XmlTokenizer::new(source));
     tree.decoded = charset.map_or(Some(UTF_8), encoding_for_label);
+    name_transport(&mut tree, charset);
     tree.run()?;
     if let Some(message) = tree.tokens.error().map(str::to_owned) {
         super::xml::error_block(&mut tree.document, &message)?;
@@ -61,8 +64,20 @@ pub fn parse_xml(source: &str, charset: Option<&str>) -> EngineResult<Document> 
     finish_page(tree)
 }
 
+/** A transport charset (or a BOM the transport was sniffed by) names the document, so a meta that
+agrees with it on ASCII cannot rename it. Without one, the first agreeing meta names the page. */
+fn name_transport(tree: &mut Tree, charset: Option<&str>) {
+    if charset.is_some() {
+        tree.document.charset = tree.decoded.unwrap_or(UTF_8).into();
+    }
+}
+
 /** The page passes both parsers share: content bounds, forms and tables. */
 fn finish_page(mut tree: Tree) -> EngineResult<Document> {
+    // A meta charset that agreed already named the encoding; otherwise the transport decides.
+    if tree.document.charset.is_empty() {
+        tree.document.charset = tree.decoded.unwrap_or(UTF_8).into();
+    }
     super::validate_content(&tree.document)?;
     super::forms::normalize(&mut tree.document)?;
     super::table::annotate(&mut tree.document)?;
@@ -281,6 +296,7 @@ impl<'a> Tree<'a> {
                 formatting: Default::default(),
                 csp: Vec::new(),
                 metadata: Vec::new(),
+                charset: String::new(),
             },
             stack: Vec::new(),
             head: false,
@@ -1018,13 +1034,16 @@ impl<'a> Tree<'a> {
         self.document.csp.push(content.to_owned());
         self.diagnose("A meta Content-Security-Policy was recorded for enforcement.");
     }
-    /** Only labels that read these bytes as the decoding did pass; UTF-8 and windows-1252 agree on ASCII. */
-    fn charset(&self, label: &str) -> EngineResult<()> {
-        let meta = encoding_for_label(label);
+    /** Only labels that read these bytes as the decoding did pass; UTF-8 and windows-1252 agree on ASCII. The first agreeing label names the document's encoding. */
+    fn charset(&mut self, label: &str) -> EngineResult<()> {
+        let meta = meta_name(label);
         let ascii_safe = |e: Option<&str>| matches!(e, Some(UTF_8 | WINDOWS_1252));
         let agrees = meta.is_some() && meta == self.decoded
             || self.ascii && ascii_safe(meta) && ascii_safe(self.decoded);
         if agrees {
+            if let Some(name) = meta.filter(|_| self.document.charset.is_empty()) {
+                self.document.charset = name.into();
+            }
             return Ok(());
         }
         Err(EngineError::unsupported(

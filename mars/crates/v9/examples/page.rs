@@ -45,6 +45,7 @@ fn main() {
     };
     let mut document_now = ScriptDocument {
         identity: "page".into(),
+        charset: "UTF-8".into(),
         nodes: Vec::new(),
     };
     let report = |label: &str, execution: &mars_v9::Execution| {

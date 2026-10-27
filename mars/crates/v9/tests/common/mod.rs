@@ -52,6 +52,7 @@ pub fn element(
 pub fn page() -> ScriptDocument {
     ScriptDocument {
         identity: "page-1".into(),
+        charset: "UTF-8".into(),
         nodes: vec![
             element(0, None, "div", &[("id", "main"), ("class", "a b")]),
             element(1, Some(0), "p", &[("id", "first")]),

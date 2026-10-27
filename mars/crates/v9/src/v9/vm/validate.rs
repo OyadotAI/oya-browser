@@ -23,8 +23,10 @@ fn forged(check: &str) -> EngineError {
 }
 
 impl Vm<'_> {
-    /** Lexical globals are exactly ones the page's scripts declare, with the declared kind and
-    a value (a committed declaration always initialized). A script that failed declares none. */
+    /** Lexical globals are exactly ones the page's scripts declare, with the declared kind. A
+    value may be absent only for a declaration that threw before its initializer ran (the
+    temporal dead zone). A failed script keeps its declarations, so its text must stay in the
+    sources a later step compiles, or its bindings would look forged. */
     pub fn validate_globals(&self, scripts: &[&Code]) -> EngineResult<()> {
         self.validate_global_bindings(&self.globals, scripts)?;
         #[cfg(feature = "conformance")]
@@ -57,9 +59,9 @@ impl Vm<'_> {
                 }
             }
         }
-        let valid = globals.iter().all(|(name, binding)| {
-            binding.value.is_some() && declared.get(name) == Some(&binding.kind)
-        });
+        let valid = globals
+            .iter()
+            .all(|(name, binding)| declared.get(name) == Some(&binding.kind));
         if valid {
             Ok(())
         } else {

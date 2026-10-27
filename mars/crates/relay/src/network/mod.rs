@@ -25,6 +25,12 @@ pub use web::{WebPage, fetch as fetch_web};
 
 /// Every call revalidates the literal destination inside the network service.
 pub fn fetch(url: &str) -> EngineResult<String> {
+    fetch_decoded(url).map(|(source, _)| source)
+}
+
+/** The decoded body and the canonical charset it was decoded with, so Eye parses the page's meta
+against the same encoding. The charset is None for UTF-8 pages that declare none. */
+pub fn fetch_decoded(url: &str) -> EngineResult<(String, Option<String>)> {
     let endpoint = Endpoint::parse(url)?;
     let deadline = Instant::now() + NETWORK_TIMEOUT;
     let mut socket =
@@ -38,7 +44,13 @@ pub fn fetch(url: &str) -> EngineResult<String> {
     let (header, mut body) = read_headers(&mut socket, deadline)?;
     let head = headers::parse(&header)?;
     read_body(&mut socket, &mut body, head.length, deadline)?;
-    mime::decode(body, head.charset.as_deref())
+    let charset = mime::html_charset("text/html", head.charset, &body);
+    let source = mime::decode(body, charset.as_deref())?;
+    let canonical = charset
+        .as_deref()
+        .and_then(mars_core::http::encoding_for_label)
+        .map(str::to_owned);
+    Ok((source, canonical))
 }
 
 /** A header budget is independent of the response body budget. */

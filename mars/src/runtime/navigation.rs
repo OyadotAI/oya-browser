@@ -330,7 +330,7 @@ impl Runtime {
                     mime: "text/html".into(),
                     location: None,
                     set_cookies: Vec::new(),
-                    charset: None,
+                    charset: value["charset"].as_str().map(str::to_owned),
                     download: false,
                     disposition: None,
                     headers: Vec::new(),
@@ -522,8 +522,9 @@ impl Runtime {
     }
     /**
      * Run the page's scripts the way a browser does: V9 isolates each one, so a script that
-     * fails is rolled back alone and noted, and its source is blanked to spaces of the same
-     * length so later requests re-parse the page with unchanged code offsets. Then
+     * fails is rolled back alone and noted. Its source stays as it was: its top-level declarations
+     * still exist in a browser, so later requests must compile them, and no later step runs a
+     * script that already ran. Then
      * DOMContentLoaded and load fire and the page settles (its requests answered, its first
      * timers run). If V9 or the document engine refuses the whole load, the page still loads
      * without script effects. Returns whether the document changed.
@@ -556,7 +557,6 @@ impl Runtime {
                 };
                 super::scripting::record_console(&mut page.scripting, vec![entry], 0);
                 gaps.note("scripts", note);
-                page.scripts[failure.index] = " ".repeat(script.source.len());
             }
         }
         let mut changed = loaded.changed;

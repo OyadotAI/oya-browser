@@ -381,8 +381,8 @@ struct DocumentClick {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PageCall {
-    /** The page's classic scripts in execution order (failed ones blanked to spaces); empty when
-    `sources_digest` names sources this process already holds. */
+    /** The page's classic scripts in execution order (failed ones keep their text, since their
+    declarations outlive them); empty when `sources_digest` names sources this process holds. */
     sources: Vec<String>,
     /** SHA-256 of the sources (`sources_digest`), so a page's megabytes of script cross the pipe
     once instead of on every lifecycle step. */
@@ -841,7 +841,8 @@ pub(super) fn sources_digest(sources: &[String]) -> String {
 
 /** Headless policy stays literal-loopback only. */
 fn fetch(params: Value) -> EngineResult<Value> {
-    Ok(json!({"source":network::fetch(&parameters::<Fetch>(params)?.url)?}))
+    let (source, charset) = network::fetch_decoded(&parameters::<Fetch>(params)?.url)?;
+    Ok(json!({"source": source, "charset": charset}))
 }
 /** Desktop policy validates every exact destination inside this process. */
 fn web_fetch(params: Value) -> EngineResult<Value> {
