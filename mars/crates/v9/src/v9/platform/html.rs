@@ -31,7 +31,7 @@ fn escape_text(text: &str, out: &mut String) {
 }
 
 /** Escape an attribute value. */
-fn escape_attribute(text: &str, out: &mut String) {
+pub(super) fn escape_attribute(text: &str, out: &mut String) {
     for c in text.chars() {
         match c {
             '&' => out.push_str("&amp;"),

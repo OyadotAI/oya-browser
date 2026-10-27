@@ -63,6 +63,7 @@ const fn interface(name: &'static str, tags: &'static [&'static str]) -> Interfa
 const INTERFACES: &[Interface] = &[
     // Its window-forwarded handler accessors are added in `install`, beside the other members.
     interface("HTMLBodyElement", &["body"]),
+    interface("HTMLHeadElement", &["head"]),
     Interface {
         reflected: &["href", "name", "type", "rel", "target"],
         getters: &[

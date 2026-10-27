@@ -35,6 +35,7 @@ mod net;
 mod nodes;
 pub(in crate::v9) mod observable;
 mod offsets;
+mod pseudo_attributes;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) mod random;
 mod range;

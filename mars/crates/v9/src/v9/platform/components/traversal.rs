@@ -3,10 +3,12 @@
  * are not children). Each object keeps its root, filter and position in private slots; filters
  * are page functions or `acceptNode` objects, and their exceptions propagate as in browsers.
  */
-use super::{get_slot, set_slot};
+use super::{FRAGMENT, SHADOW_ROOT, get_slot, set_slot};
 use crate::constants::{DOCUMENT_DEPTH, NODES, VM_DETACHED_NODES};
 use crate::v9::platform::HTML;
 use crate::v9::platform::dom::{DOCUMENT, native_name, node_of, wrap};
+use crate::v9::platform::frames::{DOCTYPE, DOCUMENT_NODE};
+use crate::v9::platform::implementation::PROCESSING_INSTRUCTION;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{Key, Object};
@@ -33,6 +35,12 @@ pub(super) const FILTERS: [(&str, f64); 16] = [
 ];
 /** Every node type is shown. */
 const SHOW_ALL: u32 = u32::MAX;
+/** The private slot that is true while the traversal's filter is running. */
+const ACTIVE_FLAG: &str = "active";
+/** The DOM error a filter that calls back into its own traversal raises. */
+const INVALID_STATE: &str = "InvalidStateError";
+/** The message for that error. */
+const RECURSIVE_FILTER: &str = "The filter is already running for this traversal.";
 /** The node is accepted. */
 const ACCEPT: u8 = 1;
 /** The node and its subtree are rejected (TreeWalker); just the node (NodeIterator). */
@@ -40,10 +48,23 @@ const REJECT: u8 = 2;
 /** The node is skipped but its children are considered. */
 const SKIP: u8 = 3;
 /** Node types that set `whatToShow` bits. */
+const ELEMENT_TYPE: u32 = 1;
+const PROCESSING_INSTRUCTION_TYPE: u32 = 7;
 const TEXT_TYPE: u32 = 3;
 const COMMENT_TYPE: u32 = 8;
 const DOCUMENT_TYPE: u32 = 9;
+const DOCTYPE_TYPE: u32 = 10;
 const FRAGMENT_TYPE: u32 = 11;
+/** The node type of each engine tag that is not an element, by tag. */
+const TAG_TYPES: [(&str, u32); 7] = [
+    ("#text", TEXT_TYPE),
+    ("#comment", COMMENT_TYPE),
+    (PROCESSING_INSTRUCTION, PROCESSING_INSTRUCTION_TYPE),
+    (DOCTYPE, DOCTYPE_TYPE),
+    (DOCUMENT_NODE, DOCUMENT_TYPE),
+    (FRAGMENT, FRAGMENT_TYPE),
+    (SHADOW_ROOT, FRAGMENT_TYPE),
+];
 
 /** `document.createTreeWalker` and `document.createNodeIterator`. */
 pub(in crate::v9) fn create(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -115,20 +136,50 @@ fn settle(vm: &mut Vm, walk: &Walk, node: usize) -> Res<JsValue> {
     Ok(value)
 }
 
-/** The node type number behind `whatToShow`. */
+/** The node type number behind `whatToShow`: a tag from TAG_TYPES, else an element. */
 fn node_type(vm: &mut Vm, node: usize) -> u32 {
     if node == DOCUMENT {
         return DOCUMENT_TYPE;
     }
-    match vm.page.tag(node).as_str() {
-        "#text" => TEXT_TYPE,
-        "#comment" => COMMENT_TYPE,
-        super::FRAGMENT | super::SHADOW_ROOT => FRAGMENT_TYPE,
-        _ => 1,
+    let tag = vm.page.tag(node);
+    TAG_TYPES
+        .iter()
+        .find(|(known, _)| *known == tag)
+        .map_or(ELEMENT_TYPE, |(_, kind)| *kind)
+}
+
+/** Set or clear one of the traversal's private flags on its object. */
+fn set_flag(vm: &mut Vm, walk: &Walk, key: &str, value: bool) {
+    if let Some(id) = walk.this.object() {
+        set_slot(vm, id, key, JsValue::Boolean(value));
     }
 }
 
-/** Filter a node: whatToShow first, then the page's filter. */
+/** Mark the traversal as running its filter, failing if it already is: a filter may not call
+back into the traversal that is calling it (the spec's InvalidStateError). */
+fn enter_filter(vm: &mut Vm, walk: &Walk) -> Res<()> {
+    if get_slot(vm, &walk.this, ACTIVE_FLAG).truthy() {
+        return Err(vm.dom_exception(INVALID_STATE, RECURSIVE_FILTER));
+    }
+    set_flag(vm, walk, ACTIVE_FLAG, true);
+    Ok(())
+}
+
+/** Call the page's filter (a function or an object with acceptNode) for one node. */
+fn call_filter(vm: &mut Vm, walk: &Walk, node: usize) -> Res<JsValue> {
+    let value = wrap(vm, node)?;
+    if vm.is_callable(&walk.filter) {
+        return vm.call(walk.filter.clone(), JsValue::Undefined, vec![value]);
+    }
+    let method = vm.get(&walk.filter, &Key::from("acceptNode"))?;
+    if !vm.is_callable(&method) {
+        return Err(vm.type_error("NodeFilter has no acceptNode method"));
+    }
+    vm.call(method, walk.filter.clone(), vec![value])
+}
+
+/** Filter a node: whatToShow first, then the page's filter. The active flag is cleared even when
+the filter throws, so a later call is not refused as recursive. */
 fn filter(vm: &mut Vm, walk: &Walk, node: usize) -> Res<u8> {
     let bit = 1u32 << (node_type(vm, node) - 1);
     if walk.show & bit == 0 {
@@ -137,17 +188,10 @@ fn filter(vm: &mut Vm, walk: &Walk, node: usize) -> Res<u8> {
     if walk.filter.nullish() {
         return Ok(ACCEPT);
     }
-    let value = wrap(vm, node)?;
-    let result = if vm.is_callable(&walk.filter) {
-        vm.call(walk.filter.clone(), JsValue::Undefined, vec![value])?
-    } else {
-        let method = vm.get(&walk.filter, &Key::from("acceptNode"))?;
-        if !vm.is_callable(&method) {
-            return Err(vm.type_error("NodeFilter has no acceptNode method"));
-        }
-        vm.call(method, walk.filter.clone(), vec![value])?
-    };
-    Ok(vm.to_number(&result)? as u8)
+    enter_filter(vm, walk)?;
+    let result = call_filter(vm, walk, node);
+    set_flag(vm, walk, ACTIVE_FLAG, false);
+    Ok(vm.to_number(&result?)? as u8)
 }
 
 /** Children for traversal, including the document's html element. */

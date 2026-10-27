@@ -1169,7 +1169,7 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Replace a character data node's whole text (the data setter's replace-data over all of it). */
-fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
+pub(super) fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
     let length = vm.page.text_content(node).encode_utf16().count();
     replace_data(vm, node, 0, length, text)
 }

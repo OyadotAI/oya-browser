@@ -1098,7 +1098,11 @@ impl Page<'_> {
             self.remove(child)?;
         }
         let tag = self.tag(id);
-        if tag == "#text" || tag == "#comment" {
+        // Character data (text, comment, processing instruction) holds its text on the node.
+        if tag == "#text"
+            || tag == "#comment"
+            || tag == super::implementation::PROCESSING_INSTRUCTION
+        {
             if let Some(record) = self.state.detached.get_mut(&id) {
                 record.text = Some(text.into());
             }

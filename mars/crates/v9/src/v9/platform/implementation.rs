@@ -7,10 +7,11 @@
 use super::dom::{self, DOCUMENT, node_of, wrap};
 use super::frames::{self, DOCTYPE, DOCUMENT_NODE, SVG_TYPE, XHTML_TYPE, XML_TYPE};
 use super::namespaces::{self, ElementNs, HTML_NAMESPACE, NameKind, QName, SVG_NAMESPACE};
+use super::pseudo_attributes as pseudo;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::Object;
-use crate::v9::vm::realm::{Builder, realm};
+use crate::v9::vm::realm::{Builder, NativeFn, realm};
 use crate::v9::vm::{Call, Res, Thrown, Vm};
 use std::sync::OnceLock;
 
@@ -91,11 +92,26 @@ pub(super) fn install_prototype(b: &mut Builder) {
     b.ids.implementation = page;
 }
 
+/** The attribute methods ProcessingInstruction carries beside Element's (which it does not
+inherit), with the lengths they report. */
+const PI_METHODS: [(&str, u32, NativeFn); 7] = [
+    ("getAttribute", 1, pseudo::get_attribute),
+    ("setAttribute", 2, pseudo::set_attribute),
+    ("removeAttribute", 1, pseudo::remove_attribute),
+    ("hasAttribute", 1, pseudo::has_attribute),
+    ("hasAttributes", 0, pseudo::has_attributes),
+    ("getAttributeNames", 0, pseudo::get_attribute_names),
+    ("toggleAttribute", 1, pseudo::toggle_attribute),
+];
+
 /** Install ProcessingInstruction and the DOMImplementation and Document constructors that
 scripts reach through instanceof; neither constructs anything from script (Document does). */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.text_prototype));
     b.getter(proto, "target", target_get);
+    for (name, length, method) in PI_METHODS {
+        b.method(proto, name, length, method);
+    }
     let ctor = b.constructor(
         "ProcessingInstruction",
         0,
