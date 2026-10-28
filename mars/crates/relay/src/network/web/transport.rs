@@ -97,8 +97,18 @@ fn resolve(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Vec<Sock
 /** Lookups still running past their request: a resolver stall storm may hold this many helper
 threads at once; beyond it a lookup fails at once instead of adding another blocked thread. */
 const DNS_IN_FLIGHT: usize = 16;
-/** Helper threads currently inside the system resolver. */
+/** Helper threads currently inside the system resolver. The service process belongs to one
+window and answers one request at a time, so this pool is per window: a page can only fill it
+one stalled host per request, and slots return as the system resolver gives up. */
 static DNS_RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/** One slot of DNS_RUNNING, given back when the lookup thread ends however it ends. */
+struct DnsSlot;
+impl Drop for DnsSlot {
+    fn drop(&mut self) {
+        DNS_RUNNING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 /** The system resolver's answers for a domain, bounded by the request deadline and by the
 number of lookups still outstanding. */
@@ -110,19 +120,17 @@ fn resolve_domain(host: &str, port: u16, deadline: Instant) -> EngineResult<Vec<
     let (sender, receiver) = std::sync::mpsc::channel();
     let query = (host.to_string(), port);
     DNS_RUNNING.fetch_add(1, Ordering::Relaxed);
-    let spawned = std::thread::Builder::new()
+    let slot = DnsSlot;
+    std::thread::Builder::new()
         .name("mars-dns".into())
         .spawn(move || {
+            let _slot = slot;
             let answer = query
                 .to_socket_addrs()
                 .map(|addresses| addresses.take(DNS_ANSWERS + 1).collect::<Vec<_>>());
-            DNS_RUNNING.fetch_sub(1, Ordering::Relaxed);
             let _ = sender.send(answer);
-        });
-    if let Err(error) = spawned {
-        DNS_RUNNING.fetch_sub(1, Ordering::Relaxed);
-        return Err(io_error(error));
-    }
+        })
+        .map_err(io_error)?;
     match receiver.recv_timeout(remaining(deadline)?) {
         Ok(answer) => answer.map_err(io_error),
         Err(_) => Err(resolver_timeout()),
