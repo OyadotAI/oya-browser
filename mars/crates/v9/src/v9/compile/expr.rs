@@ -46,7 +46,11 @@ impl Compiler {
                         self.emit(Op::Undefined);
                     }
                 }
-                self.emit(Op::NativeIntrinsic(*intrinsic));
+                if *intrinsic == 57 {
+                    self.emit(Op::Call(count(&args[2..])?));
+                } else {
+                    self.emit(Op::NativeIntrinsic(*intrinsic));
+                }
             }
             ExprKind::InvalidReference(message) => {
                 let index = self.name(message)?;

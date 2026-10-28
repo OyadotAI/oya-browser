@@ -323,6 +323,7 @@ impl Scripts {
             conformance_wasm_wasmfx: boolean_flag(&self.metadata_source, "wasm-wasmfx"),
             conformance_wasm_shared: boolean_flag(&self.metadata_source, "wasm-shared"),
             conformance_wasm_compact_imports: boolean_flag(&self.metadata_source, "wasm-compact-imports"),
+            conformance_wasm_testing_opcode: boolean_flag(&self.metadata_source, "enable-testing-opcode-in-wasm"),
             conformance_wasm_test_streaming: Some(boolean_flag(&self.metadata_source, "wasm-test-streaming")),
             conformance_operation_limit: operation_limit,
             conformance_shared_string_table: boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct"),

@@ -377,6 +377,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_compact_imports: bool,
+    /** Permits the dedicated Wasm testing NOP in the shell only when requested. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_testing_opcode: bool,
     /// Shell test metadata can select whether its Wasm streaming callback is installed.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -597,6 +601,8 @@ impl Default for PageEnvironment {
             conformance_wasm_shared: false,
             #[cfg(feature = "conformance")]
             conformance_wasm_compact_imports: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_testing_opcode: false,
             #[cfg(feature = "conformance")]
             conformance_wasm_test_streaming: None,
             #[cfg(feature = "conformance")]

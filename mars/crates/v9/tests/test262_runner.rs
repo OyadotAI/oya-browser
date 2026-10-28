@@ -579,6 +579,16 @@ fn supported_native_intrinsics(source: &str) -> bool {
             "WasmStruct",
             "WasmArray",
             "IsWasmTrapHandlerEnabled",
+            "StringLessThan",
+            "StringLessThanOrEqual",
+            "StringGreaterThan",
+            "StringGreaterThanOrEqual",
+            "StringEqual",
+            "StringCompare",
+            "Call",
+            "ToNumber",
+            "ToString",
+            "ToNumeric",
         ]
         .contains(&name)
         {
@@ -676,6 +686,7 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                     | "--wasm-wasmfx"
                     | "--wasm-shared"
                     | "--wasm-compact-imports"
+                    | "--enable-testing-opcode-in-wasm"
                     | "--no-wasm-lazy-compilation"
                     | "--nowasm-lazy-compilation"
                     | "--no-wasm-inlining"
@@ -757,6 +768,8 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags("// Flags: --wasm-wasmfx\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
+    assert!(supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm --unknown\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-compact-imports --unknown\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-shared --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"));

@@ -1,7 +1,7 @@
 /** String: the constructor, statics and prototype methods over UTF-16 code units. */
 use super::*;
 use crate::constants::{
-    JS_STRING_UNITS, UTF16_HIGH_SURROGATE_END, UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END,
+    JS_STRING_UNITS, STRING_SEARCH_FLAT_UNITS, UTF16_HIGH_SURROGATE_END, UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END,
     UTF16_LOW_SURROGATE_START,
 };
 use crate::protocol::EngineError;
@@ -371,14 +371,19 @@ fn text_matches_at(text: &JsString, needle: &JsString, start: usize) -> bool {
 }
 
 /** Search a compact string without allocating a flattened copy. */
-fn find_string(text: &JsString, needle: &JsString, from: usize) -> Option<usize> {
+fn find_string(vm: &mut Vm, text: &JsString, needle: &JsString, from: usize) -> Res<Option<usize>> {
     if let (Some(haystack), Some(pattern)) = (text.flat_units(), needle.flat_units()) {
-        return find(haystack, pattern, from);
+        return Ok(find(haystack, pattern, from));
     }
     if needle.len() > text.len() {
-        return None;
+        return Ok(None);
     }
-    (from..=text.len() - needle.len()).find(|start| text_matches_at(text, needle, *start))
+    if text.len() <= STRING_SEARCH_FLAT_UNITS && needle.len() <= STRING_SEARCH_FLAT_UNITS {
+        let haystack = vm.materialize_string(text)?;
+        let pattern = vm.materialize_string(needle)?;
+        return Ok(find(haystack, pattern, from));
+    }
+    Ok((from..=text.len() - needle.len()).find(|start| text_matches_at(text, needle, *start)))
 }
 
 /** String.prototype.includes. */
@@ -387,7 +392,7 @@ fn includes(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let needle = not_regexp(vm, &call.arg(0), "includes")?;
     let from = vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize;
     Ok(JsValue::Boolean(
-        find_string(&text, &needle, from).is_some(),
+        find_string(vm, &text, &needle, from)?.is_some(),
     ))
 }
 
@@ -397,7 +402,7 @@ fn index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let needle = arg_string(vm, &call, 0)?;
     let from = vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize;
     Ok(JsValue::Number(
-        find_string(&text, &needle, from).map_or(-1.0, |i| i as f64),
+        find_string(vm, &text, &needle, from)?.map_or(-1.0, |i| i as f64),
     ))
 }
 
@@ -572,7 +577,7 @@ fn replace_string(vm: &mut Vm, call: &Call, all: bool) -> Res<JsValue> {
     };
     let mut positions = Vec::new();
     let mut from = 0;
-    while let Some(found) = find_string(&text, &needle, from) {
+    while let Some(found) = find_string(vm, &text, &needle, from)? {
         positions.push(found);
         if !all {
             break;
@@ -678,7 +683,7 @@ fn split(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
     } else {
         let mut start = 0;
-        while let Some(found) = find_string(&text, &separator, start) {
+        while let Some(found) = find_string(vm, &text, &separator, start)? {
             parts.push(JsValue::String(string_slice(vm, &text, start, found)?));
             start = found + separator.len();
             if parts.len() >= limit {

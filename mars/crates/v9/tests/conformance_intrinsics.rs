@@ -2,6 +2,42 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** Native conversion helpers use ordinary coercion and preserve existing numeric identity. */
+#[test]
+fn native_conversion_helpers_preserve_coercion_and_number_identity() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let order='';let x={[Symbol.toPrimitive](hint){order+=hint;return 7n}};let n=%AllocateHeapNumberWithValue(1.5);let same=%IsSameHeapObject(n,%ToNumber(n))&&%IsSameHeapObject(n,%ToNumeric(n));let bad=false;try{%ToNumber(x)}catch(e){bad=e instanceof TypeError}let r=[same,bad,%ToNumeric(x),%ToString({toString(){return 'ok'}}),order].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,7,ok,numbernumber");
+}
+
+/** Native Call uses normal call semantics and evaluates its operands once in order. */
+#[test]
+fn native_call_preserves_receiver_arguments_and_evaluation_order() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let order='';const receiver={x:10};function f(a,b){'use strict';return this.x+a+b}let r=%Call((order+='f',f),(order+='t',receiver),(order+='a',2),(order+='b',3));let bad=false;try{%Call(1,0)}catch(e){bad=e instanceof TypeError}r=[r,order,bad].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "15,ftab,true");
+}
+
+/** Comparison intrinsics order real UTF-16 code units without coercing their operands. */
+#[test]
+fn native_string_comparisons_follow_utf16_order() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let a='abc\\u0102',b='abc\\u0201';let r=[%StringLessThan(a,b),%StringLessThanOrEqual(a,a),%StringGreaterThan(b,a),%StringGreaterThanOrEqual(a,a),%StringEqual(a,a),%StringCompare(a,b),%StringCompare(a,a),%StringCompare(b,a)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,-1,0,1");
+}
+
 /** Compact large spreads retain the canonical character identity across GC and saved state. */
 #[test]
 fn large_string_spread_roots_survive_gc_and_snapshot() {

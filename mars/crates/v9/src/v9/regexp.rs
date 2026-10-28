@@ -386,7 +386,7 @@ impl PatternParser<'_> {
                     "Invalid regular expression: nothing to repeat".into(),
                 ));
             }
-            Some('{') if self.unicode => {
+            Some('{') if self.unicode || self.leading_quantifier() => {
                 return Err(PatternError(
                     "Invalid regular expression: nothing to repeat".into(),
                 ));
@@ -460,6 +460,13 @@ impl PatternParser<'_> {
         if result.is_none() {
             self.position = start;
         }
+        result
+    }
+    /** A complete interval at atom start has nothing to repeat, even in legacy mode. */
+    fn leading_quantifier(&mut self) -> bool {
+        let start = self.position;
+        let result = self.braces().is_some();
+        self.position = start;
         result
     }
     /** A decimal number. */

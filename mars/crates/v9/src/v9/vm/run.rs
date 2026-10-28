@@ -773,6 +773,40 @@ impl Vm<'_> {
                     self.push(value);
                 }
                 50 => self.push(JsValue::Boolean(false)),
+                51..=56 => {
+                    let right = self.pop();
+                    let left = self.pop();
+                    let (JsValue::String(left), JsValue::String(right)) = (left, right) else {
+                        return Err(self.unsupported_error("V8 string comparison intrinsic requires string operands"));
+                    };
+                    let ordering = left.cmp(&right);
+                    let value = match intrinsic {
+                        51 => JsValue::Boolean(ordering.is_lt()),
+                        52 => JsValue::Boolean(!ordering.is_gt()),
+                        53 => JsValue::Boolean(ordering.is_gt()),
+                        54 => JsValue::Boolean(!ordering.is_lt()),
+                        55 => JsValue::Boolean(ordering.is_eq()),
+                        _ => JsValue::Smi(match ordering { std::cmp::Ordering::Less => -1.0, std::cmp::Ordering::Equal => 0.0, std::cmp::Ordering::Greater => 1.0 }),
+                    };
+                    self.push(value);
+                }
+                58 | 60 => {
+                    let input = self.peek(0);
+                    let primitive = self.to_primitive(&input, super::convert::Hint::Number)?;
+                    let value = if primitive.number_value().is_some() || (intrinsic == 60 && primitive.is_bigint()) {
+                        primitive
+                    } else {
+                        JsValue::Number(self.to_number(&primitive)?)
+                    };
+                    self.pop();
+                    self.push(value);
+                }
+                59 => {
+                    let input = self.peek(0);
+                    let value = self.to_string(&input)?;
+                    self.pop();
+                    self.push(JsValue::String(value));
+                }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
@@ -1102,8 +1136,16 @@ impl Vm<'_> {
             Op::ArraySpread => {
                 let iterable = self.peek(0);
                 let array = self.peek(1);
-                let iterator = self.get_iterator(&iterable)?;
+                let roots = self.pins.len();
+                let iterator = match self.get_iterator(&iterable) {
+                    Ok(iterator) => iterator,
+                    Err(error) => {
+                        self.pins.truncate(roots);
+                        return Err(error);
+                    }
+                };
                 self.push(JsValue::Object(iterator));
+                self.pins.truncate(roots);
                 if self.compact_hole_spread(&array, iterator)? {
                     self.drop_n(2);
                     return Ok(Flow::Next);

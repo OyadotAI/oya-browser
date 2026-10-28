@@ -548,6 +548,16 @@ impl Parser {
                     "WasmStruct" => (48, 0),
                     "WasmArray" => (49, 0),
                     "IsWasmTrapHandlerEnabled" => (50, 0),
+                    "StringLessThan" => (51, 2),
+                    "StringLessThanOrEqual" => (52, 2),
+                    "StringGreaterThan" => (53, 2),
+                    "StringGreaterThanOrEqual" => (54, 2),
+                    "StringEqual" => (55, 2),
+                    "StringCompare" => (56, 2),
+                    "Call" => (57, 2),
+                    "ToNumber" => (58, 1),
+                    "ToString" => (59, 1),
+                    "ToNumeric" => (60, 1),
                     _ => {
                         return Err(crate::protocol::EngineError::unsupported(&format!(
                             "V8 native intrinsic %{name}"
@@ -574,7 +584,8 @@ impl Parser {
                 } else {
                     intrinsic
                 };
-                if (args.len() != count && !matches!(intrinsic, 12 | 29 | 30 | 33 | 34 | 40 | 41 | 45))
+                if (intrinsic == 57 && args.len() < 2)
+                    || (args.len() != count && !matches!(intrinsic, 12 | 29 | 30 | 33 | 34 | 40 | 41 | 45 | 57))
                     || args.iter().any(|arg| !matches!(arg, Element::Value(_)))
                 {
                     return Err(self.error_at(pos, "Invalid V8 intrinsic arguments"));

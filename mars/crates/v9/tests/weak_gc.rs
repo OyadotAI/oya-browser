@@ -7,6 +7,18 @@ use mars_v9::{Execution, PageEnvironment};
 const TASK_LIMIT: usize = 128;
 
 #[test]
+/** A finished spread must release its source before a later block consumes the resident budget. */
+fn completed_spread_releases_resident_strings_during_the_same_execution() {
+    let sources = ["let result=0; {let x=new Map();for(let i=0;i<130000;i++)x.set(i,String(i));let a=[...x.values()];result+=a.length} {let x=new Map();for(let i=0;i<130000;i++)x.set(i,String(i));let a=[...x.keys()];result+=a.length}".to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert_clean(&execution);
+    assert_eq!(common::global(&execution, "result"), "260000");
+}
+
+#[test]
 /** A repeated backing releases a target after every logical occurrence is overwritten. */
 fn repeated_array_releases_fully_shadowed_target() {
     drive(
@@ -85,19 +97,25 @@ fn nonregistered_symbol_targets_are_collected() {
 #[test]
 /** A weak map must not retain an otherwise unreachable symbol key during async GC. */
 fn weak_map_does_not_retain_symbol_keys() {
-    drive("let reference;const map=new WeakMap();(()=>{const key=Symbol('temporary');map.set(key,1);reference=new WeakRef(key)})();(async () => { await gc({type:'major', execution:'async'}); if(reference.deref() !== undefined) throw Error('weak map retained symbol'); })();");
+    drive(
+        "let reference;const map=new WeakMap();(()=>{const key=Symbol('temporary');map.set(key,1);reference=new WeakRef(key)})();(async () => { await gc({type:'major', execution:'async'}); if(reference.deref() !== undefined) throw Error('weak map retained symbol'); })();",
+    );
 }
 
 #[test]
 /** Nested async closures keep the surviving symbol but not a completed inner call's key. */
 fn weak_map_does_not_retain_inner_symbol_across_nested_async_closure() {
-    drive("let reference;let map;(()=>{map=new WeakMap();const outer=Symbol('outer');map.set(outer,1);(()=>{const inner=Symbol('inner');map.set(inner,2);if(!map.has(inner)||map.get(inner)!==2)throw Error('not inserted');reference=new WeakRef(inner)})();(async () => { await gc({type:'major', execution:'async'}); if (!map.has(outer)) throw Error('outer missing'); if(reference.deref() !== undefined) throw Error('inner retained'); })()})();");
+    drive(
+        "let reference;let map;(()=>{map=new WeakMap();const outer=Symbol('outer');map.set(outer,1);(()=>{const inner=Symbol('inner');map.set(inner,2);if(!map.has(inner)||map.get(inner)!==2)throw Error('not inserted');reference=new WeakRef(inner)})();(async () => { await gc({type:'major', execution:'async'}); if (!map.has(outer)) throw Error('outer missing'); if(reference.deref() !== undefined) throw Error('inner retained'); })()})();",
+    );
 }
 
 #[test]
 /** A losing pending input does not retain the value of an already settled race. */
 fn settled_promise_race_releases_its_payload() {
-    drive("let reference;const pending=new Promise(()=>{});(async () => { await (async function(){const value={};reference=new WeakRef(value);await Promise.race([pending,Promise.resolve(value)])})();await gc({type:'major',execution:'async'});if(reference.deref()!==undefined)throw Error('settled race retained value')})();");
+    drive(
+        "let reference;const pending=new Promise(()=>{});(async () => { await (async function(){const value={};reference=new WeakRef(value);await Promise.race([pending,Promise.resolve(value)])})();await gc({type:'major',execution:'async'});if(reference.deref()!==undefined)throw Error('settled race retained value')})();",
+    );
 }
 
 #[test]

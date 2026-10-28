@@ -308,6 +308,8 @@ pub const STATEMENT_DEPTH: usize = 128;
 /// literals past 2048 units; a whole script response body (VM_RESPONSE_BYTES) must fit too, and
 /// YouTube serializes its initial data (over 256K units) into one string while loading.
 pub const JS_STRING_UNITS: usize = 1024 * 1024;
+/** Small compact strings may be flattened once for repeated substring searches. */
+pub const STRING_SEARCH_FLAT_UNITS: usize = 4096;
 /** A leading UTF-16 surrogate combines only with an immediately following trailing surrogate. */
 pub const UTF16_HIGH_SURROGATE_START: u16 = 0xd800;
 /** The inclusive upper bound prevents low surrogates from being treated as leading units. */
