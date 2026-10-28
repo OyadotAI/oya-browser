@@ -25,7 +25,7 @@ pub(super) enum Connection {
  * the address families as Chromium's Happy Eyeballs does (eyeballs.rs).
  */
 pub(super) fn connect(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Connection> {
-    let addresses = resolve(url, fixture)?;
+    let addresses = resolve(url, fixture, deadline)?;
     remaining(deadline)?;
     let (socket, _) = race(&addresses, deadline)?;
     establish(socket, &addresses, url, deadline)
@@ -65,8 +65,12 @@ fn establish(
         .map_err(io_error)
 }
 
-/** Standard DNS remains inside the supervised process so a stalled resolver can be killed. */
-fn resolve(url: &Url, fixture: bool) -> EngineResult<Vec<SocketAddr>> {
+/** Addresses for a URL: literal and loopback hosts answer at once; a domain asks the system
+resolver on a helper thread and waits only until `deadline`. The resolver has no timeout of its
+own, and when it stalled on one third-party host the whole service stalled with it, which the
+supervisor then killed and restarted ("Browser network service stopped" on every ad-heavy page);
+now only that one request fails and the stalled lookup finishes on its own. */
+fn resolve(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Vec<SocketAddr>> {
     let port = url.port_or_known_default().ok_or_else(denied)?;
     let host = url.host().ok_or_else(denied)?;
     let addresses: Vec<SocketAddr> = match host {
@@ -77,11 +81,7 @@ fn resolve(url: &Url, fixture: bool) -> EngineResult<Vec<SocketAddr>> {
             SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port),
             SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port),
         ],
-        Host::Domain(host) => (host, port)
-            .to_socket_addrs()
-            .map_err(io_error)?
-            .take(DNS_ANSWERS + 1)
-            .collect(),
+        Host::Domain(host) => resolve_domain(host, port, deadline)?,
     };
     if addresses.is_empty()
         || addresses.len() > DNS_ANSWERS
@@ -92,6 +92,34 @@ fn resolve(url: &Url, fixture: bool) -> EngineResult<Vec<SocketAddr>> {
         return Err(denied());
     }
     Ok(addresses)
+}
+
+/** The system resolver's answers for a domain, bounded by the request deadline. */
+fn resolve_domain(host: &str, port: u16, deadline: Instant) -> EngineResult<Vec<SocketAddr>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let query = (host.to_string(), port);
+    std::thread::Builder::new()
+        .name("mars-dns".into())
+        .spawn(move || {
+            let answer = query
+                .to_socket_addrs()
+                .map(|addresses| addresses.take(DNS_ANSWERS + 1).collect::<Vec<_>>());
+            let _ = sender.send(answer);
+        })
+        .map_err(io_error)?;
+    match receiver.recv_timeout(remaining(deadline)?) {
+        Ok(answer) => answer.map_err(io_error),
+        Err(_) => Err(resolver_timeout()),
+    }
+}
+
+/** A lookup that outlived the request: the destination is reported unreachable for now. */
+fn resolver_timeout() -> EngineError {
+    EngineError::new(
+        "timeout",
+        "The destination's address could not be resolved in time.",
+        "Retry the destination.",
+    )
 }
 
 /** The one destination predicate: public, or loopback under the exact fixture grant. */

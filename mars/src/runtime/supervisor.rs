@@ -1037,13 +1037,9 @@ impl Service {
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
             .try_send(frame)
-            .map_err(|error| {
-                eprintln!("DEBUG try_send failed for {op}: {error:?}");
-                EngineError::service(self.name, false)
-            })?;
+            .map_err(|_| EngineError::service(self.name, false))?;
         let reply = loop {
             if self.cancel.load(Ordering::Relaxed) {
-                eprintln!("DEBUG cancel flag set for {op}");
                 return Err(EngineError::service(self.name, false));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
