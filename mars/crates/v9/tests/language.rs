@@ -168,11 +168,15 @@ fn long_text_searches_are_not_cut_off() {
     assert_eq!(common::global(&execution, "r"), "-1,true,true");
 }
 
-/** A greedy loop over long text recurses once per repetition; it fails as a bounded limit
-instead of overflowing the native stack. */
+/** A greedy loop over a single atom runs flat over a million characters, while a loop whose
+body carries a capture still recurses per repetition and fails as a bounded limit instead of
+overflowing the native stack. */
 #[test]
 fn deep_matches_are_bounded_not_a_crash() {
-    let execution = common::load("const r=/x+$/.test('x'.repeat(1000000));");
+    let execution = common::load("const r=String(/x+$/.test('x'.repeat(1000000)));");
+    assert_eq!(common::failure(&execution), None);
+    assert_eq!(common::global(&execution, "r"), "true");
+    let execution = common::load("const r=/(x)+$/.test('x'.repeat(1000000));");
     let message = common::failure(&execution).expect("bounded failure");
     assert!(
         message.contains("RangeError: Maximum regular expression steps"),

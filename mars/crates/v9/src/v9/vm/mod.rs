@@ -94,6 +94,8 @@ impl Call<'_> {
 }
 
 /** An executing activation. */
+/** How many returned frames' vectors stay pooled; deeper recursion simply allocates. */
+pub(in crate::v9) const FRAME_POOL: usize = 64;
 pub(in crate::v9) struct Frame {
     /** The function's creation context selects intrinsics and global bindings during execution. */
     pub realm: u32,
@@ -297,6 +299,10 @@ pub(in crate::v9) struct Vm<'h> {
     #[cfg(feature = "conformance")]
     number_source_hashes: FastMap<usize, (std::sync::Weak<str>, [u8; 32])>,
     pub frames: Vec<Frame>,
+    /** Operand stacks and register files of returned frames, kept for the next calls: every
+    call allocated two vectors and every return freed them, and calls are the most common
+    operation in page scripts after property access. Bounded by FRAME_POOL. */
+    pub frame_pool: Vec<(Vec<JsValue>, Vec<JsValue>)>,
     /** Selected native bodies retain their real position only during the active invocation. */
     pub native_activations: Vec<NativeActivation>,
     /** Native async drivers identify current output promises; committed continuations remain in the ordinary heap graph. */
@@ -640,6 +646,7 @@ impl<'h> Vm<'h> {
             #[cfg(feature = "conformance")]
             number_source_hashes: FastMap::default(),
             frames: Vec::new(),
+            frame_pool: Vec::new(),
             native_activations: Vec::new(),
             async_drivers: Vec::new(),
             formatting_stack: false,

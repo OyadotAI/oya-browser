@@ -394,11 +394,13 @@ impl Vm<'_> {
             ),
             None => env,
         };
+        let (stack, mut regs) = self.frame_pool.pop().unwrap_or_default();
+        regs.resize(code.registers as usize, JsValue::Undefined);
         let frame = Frame {
             realm: self.active_realm,
             pc: 0,
-            stack: Vec::new(),
-            regs: vec![JsValue::Undefined; code.registers as usize],
+            stack,
+            regs,
             env,
             this: this.clone(),
             callee: function.clone(),

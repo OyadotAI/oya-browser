@@ -257,6 +257,27 @@ impl Vm<'_> {
             .cloned()
             .unwrap_or(JsValue::Undefined)
     }
+    /** The two plain numbers on top of the stack, read in place: the arithmetic and comparison
+    fast paths neither clone nor drop operand values, which the generic peek-and-drop sequence
+    did on every operation. */
+    #[cfg(not(feature = "conformance"))]
+    fn number_pair(&mut self) -> Option<(f64, f64)> {
+        let stack = &self.frame().stack;
+        let top = stack.len().checked_sub(1)?;
+        match (stack.get(top.checked_sub(1)?), stack.get(top)) {
+            (Some(JsValue::Number(a)), Some(JsValue::Number(b))) => Some((*a, *b)),
+            _ => None,
+        }
+    }
+    /** Replace the two values on top of the stack with one result. */
+    #[cfg(not(feature = "conformance"))]
+    fn replace_pair(&mut self, value: JsValue) {
+        let stack = &mut self.frame().stack;
+        stack.pop();
+        if let Some(top) = stack.last_mut() {
+            *top = value;
+        }
+    }
     /** Drop `count` values. */
     fn drop_n(&mut self, count: usize) {
         let stack = &mut self.frame().stack;
@@ -1601,6 +1622,11 @@ impl Vm<'_> {
                 return self.do_return(value);
             }
             Op::Add => {
+                #[cfg(not(feature = "conformance"))]
+                if let Some((a, b)) = self.number_pair() {
+                    self.replace_pair(JsValue::Number(a + b));
+                    return Ok(Flow::Next);
+                }
                 let right = self.peek(0);
                 let left = self.peek(1);
                 let value = self.add(&left, &right)?;
@@ -1610,6 +1636,18 @@ impl Vm<'_> {
                 self.push(value);
             }
             Op::Sub | Op::Mul | Op::Div | Op::Mod | Op::Exp => {
+                #[cfg(not(feature = "conformance"))]
+                if let Some((a, b)) = self.number_pair() {
+                    let value = match op {
+                        Op::Sub => a - b,
+                        Op::Mul => a * b,
+                        Op::Div => a / b,
+                        Op::Mod => js_remainder(a, b),
+                        _ => js_power(a, b),
+                    };
+                    self.replace_pair(JsValue::Number(value));
+                    return Ok(Flow::Next);
+                }
                 let right = self.peek(0);
                 let left = self.peek(1);
                 let (a, b) = match (&left, &right) {
@@ -1681,6 +1719,17 @@ impl Vm<'_> {
                 self.push(JsValue::Boolean(equal == (op == Op::StrictEq)));
             }
             Op::Lt | Op::Gt | Op::Le | Op::Ge => {
+                #[cfg(not(feature = "conformance"))]
+                if let Some((a, b)) = self.number_pair() {
+                    let result = match op {
+                        Op::Lt => a < b,
+                        Op::Gt => a > b,
+                        Op::Le => a <= b,
+                        _ => a >= b,
+                    };
+                    self.replace_pair(JsValue::Boolean(result));
+                    return Ok(Flow::Next);
+                }
                 let right = self.peek(0);
                 let left = self.peek(1);
                 let result = match (&left, &right) {
@@ -2223,7 +2272,19 @@ impl Vm<'_> {
         } else {
             value
         };
-        Ok(self.finish_frame(value, frame.boundary))
+        let boundary = frame.boundary;
+        self.recycle_frame(frame);
+        Ok(self.finish_frame(value, boundary))
+    }
+    /** Keep a returned frame's vectors for the next call, emptied so no value outlives its frame. */
+    fn recycle_frame(&mut self, frame: super::Frame) {
+        if self.frame_pool.len() >= super::FRAME_POOL {
+            return;
+        }
+        let (mut stack, mut regs) = (frame.stack, frame.regs);
+        stack.clear();
+        regs.clear();
+        self.frame_pool.push((stack, regs));
     }
     /** The innermost active derived constructor frame whose scope chain holds `env`, the
     environment that owns the `this` slot super() just filled. The frame may be inside a block
