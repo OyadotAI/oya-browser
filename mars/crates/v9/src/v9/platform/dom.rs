@@ -335,6 +335,8 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             Ok(None)
         }
         HostData::Live(list) => live_own(vm, list, key),
+        HostData::ClassList(node) => token_own(vm, *node, "class", key),
+        HostData::TokenList(node, attribute) => token_own(vm, *node, attribute, key),
         HostData::Style(node) => {
             let text = name.lossy();
             if !style_property(&text) {
@@ -3530,6 +3532,28 @@ fn class_list_value_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The token set of an attribute: the one this request kept while the attribute still holds the
 text it was read from, otherwise one parsed from `current` now. */
+/** An indexed read of a token list (`classList[0]`): the token at that rank, found in O(log n) through
+the cached set. Other keys belong to no token list, so they are left to the object. */
+fn token_own(vm: &mut Vm, node: usize, attribute: &str, key: &Key) -> Res<Option<Prop>> {
+    let Some(index) = key.index() else {
+        return Ok(None);
+    };
+    let current = vm.page.attribute_value(node, attribute);
+    let set = token_set_for(vm, node, attribute, current.as_deref().unwrap_or(""));
+    let token = set.nth(index as usize).map(str::to_string);
+    vm.page
+        .token_sets
+        .insert((node, attribute.to_string()), set);
+    match token {
+        Some(token) => Ok(Some(Prop {
+            slot: Slot::Data(JsValue::String(JsString::from_utf8(&token)?)),
+            attrs: crate::v9::vm::heap::ENUMERABLE,
+        })),
+        None => Ok(None),
+    }
+}
+
+/** The token set an attribute's text parses to, reused from the cache while the text matches. */
 fn token_set_for(vm: &mut Vm, node: usize, attribute: &str, current: &str) -> TokenSet {
     match vm.page.token_sets.remove(&(node, attribute.to_string())) {
         Some(set) if set.source() == current => set,

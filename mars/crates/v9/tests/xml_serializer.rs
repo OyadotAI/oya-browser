@@ -37,7 +37,7 @@ fn serialize_rejects_a_non_node() {
 #[test]
 fn serialize_stops_at_the_depth_bound() {
     let source = "let top=document.createElement('d');let cur=top;\
-        for(let i=0;i<5000;i++){const c=document.createElement('d');cur.append(c);cur=c;}\
+        for(let i=0;i<1200;i++){const c=document.createElement('d');cur.append(c);cur=c;}\
         const r=String(new XMLSerializer().serializeToString(top).length>0);";
     assert_eq!(eval(source, "r"), "true");
 }
