@@ -827,6 +827,12 @@ fn shift(vm: &mut Vm, call: Call) -> Res<JsValue> {
         set_length(vm, &object, 0)?;
         return Ok(JsValue::Undefined);
     }
+    if let Some(id) = vm.plain_dense_array(&object, length) {
+        vm.charge(length)?;
+        if let Some(first) = vm.array_shift_dense(id) {
+            return Ok(first);
+        }
+    }
     let first = get_index(vm, &object, 0)?;
     for index in 1..length {
         move_index(vm, &object, index, index - 1)?;
@@ -841,6 +847,15 @@ fn unshift(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.unshift")?;
     let count = call.args.len();
     let new_length = safe_growth(vm, length, count)?;
+    if count > 0
+        && new_length <= vm.limits.array_length
+        && let Some(id) = vm.plain_dense_array(&object, length)
+    {
+        vm.charge(new_length)?;
+        if vm.array_unshift_dense(id, call.args.to_vec()) {
+            return Ok(JsValue::Number(new_length as f64));
+        }
+    }
     if count > 0 {
         for index in (0..length).rev() {
             move_index(vm, &object, index, index + count)?;

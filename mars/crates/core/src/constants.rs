@@ -306,8 +306,11 @@ pub const EXPRESSION_DEPTH: usize = 256;
 pub const STATEMENT_DEPTH: usize = 128;
 /// UTF-16 code units of one JavaScript string or literal. Google's inline scripts carry
 /// literals past 2048 units; a whole script response body (VM_RESPONSE_BYTES) must fit too, and
-/// YouTube serializes its initial data (over 256K units) into one string while loading.
-pub const JS_STRING_UNITS: usize = 1024 * 1024;
+/// YouTube serializes its initial data (over 256K units) into one string while loading. At 1M
+/// units a 2 MB JSON payload or a Unicode property table (test262 builds 2.2M units for one)
+/// failed; 8M units is 16 MB of text, half of JS_ENVIRONMENT_UNITS, so two such strings may
+/// live at once and the collector still has room.
+pub const JS_STRING_UNITS: usize = 8 * 1024 * 1024;
 /** Small compact strings may be flattened once for repeated substring searches. */
 pub const STRING_SEARCH_FLAT_UNITS: usize = 4096;
 /** A leading UTF-16 surrogate combines only with an immediately following trailing surrogate. */

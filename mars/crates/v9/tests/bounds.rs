@@ -56,14 +56,16 @@ fn properties_are_bounded() {
     );
 }
 
-/** Strings past JS_STRING_UNITS fail as a limit. */
+/** A string past JS_STRING_UNITS is the catchable RangeError browsers throw, so a page's own
+try/catch around a runaway concatenation keeps working; the bound itself still holds. */
 #[test]
 fn string_length_is_bounded() {
     let execution = load(&format!(
-        "let s='x'.repeat({});s=s+'yy';",
+        "let s='x'.repeat({});let caught='';try{{s=s+'yy'}}catch(e){{caught=e.constructor.name+':'+e.message}}",
         JS_STRING_UNITS - 1
     ));
-    assert!(failure(&execution).unwrap().contains("UTF-16 units"));
+    assert!(execution.failed.is_empty(), "{:?}", failure(&execution));
+    assert_eq!(common::global(&execution, "caught"), "RangeError:Invalid string length");
 }
 
 /** An infinite loop stops at the operation budget or the deadline. */
