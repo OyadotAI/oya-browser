@@ -196,3 +196,10 @@ fn leading_interval_quantifier_is_invalid() {
     let result = run("let a,b;try{new RegExp('{4,5}abc')}catch(e){a=e instanceof SyntaxError}try{new RegExp('{abc')}catch(e){b=true}r=a+','+b;");
     assert_eq!(result, "true,undefined");
 }
+
+/** An impossible non-Latin-1 continuation prunes nested loops without losing optional branches. */
+#[test]
+fn non_latin1_literals_prune_latin1_subjects() {
+    let result = run("const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/K/ui.test('k')].join();");
+    assert_eq!(result, "false,false,true,true,true");
+}

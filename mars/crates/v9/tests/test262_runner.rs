@@ -589,6 +589,7 @@ fn supported_native_intrinsics(source: &str) -> bool {
             "ToNumber",
             "ToString",
             "ToNumeric",
+            "ConstructDouble",
         ]
         .contains(&name)
         {
@@ -686,10 +687,15 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                     | "--wasm-wasmfx"
                     | "--wasm-shared"
                     | "--wasm-compact-imports"
+                    | "--wasm-ref-cast-nop"
                     | "--enable-testing-opcode-in-wasm"
                     | "--no-wasm-lazy-compilation"
                     | "--nowasm-lazy-compilation"
                     | "--no-wasm-inlining"
+                    | "--no-enable-avx"
+                    | "--no-enable-sse4-1"
+                    | "--no-enable-sse4-2"
+                    | "--no-enable-ssse3"
                     | "--no-wasm-trap-handler"
                     | "--wasm-enforce-bounds-checks"
                     | "--no-wasm-loop-unrolling"
@@ -768,6 +774,8 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags("// Flags: --wasm-wasmfx\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm\n"));
     assert!(!supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm --unknown\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-compact-imports --unknown\n"));
@@ -775,6 +783,9 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags("// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"));
     assert!(supported_mjsunit_flags("// Flags: --no-wasm-inlining --no-wasm-loop-unrolling --no-wasm-loop-peeling --no-wasm-opt --no-wasm-dynamic-tiering --no-wasm-native-module-cache\n"));
     assert!(!supported_mjsunit_flags("// Flags: --no-wasm-inlining --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-enable-avx --no-enable-sse4-1 --no-enable-sse4-2 --no-enable-ssse3\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-enable-avx --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --enable-avx\n"));
     assert!(supported_mjsunit_flags("// Flags: --no-wasm-tier-up --wasm-num-compilation-tasks=0\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks 0\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks=1\n"));

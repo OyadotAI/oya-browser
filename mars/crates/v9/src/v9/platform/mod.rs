@@ -381,6 +381,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_testing_opcode: bool,
+    /** Enables V8's explicit test-only unchecked reference cast instruction. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_ref_cast_nop: bool,
     /// Shell test metadata can select whether its Wasm streaming callback is installed.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -603,6 +607,8 @@ impl Default for PageEnvironment {
             conformance_wasm_compact_imports: false,
             #[cfg(feature = "conformance")]
             conformance_wasm_testing_opcode: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_ref_cast_nop: false,
             #[cfg(feature = "conformance")]
             conformance_wasm_test_streaming: None,
             #[cfg(feature = "conformance")]

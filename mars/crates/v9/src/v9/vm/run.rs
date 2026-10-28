@@ -807,6 +807,33 @@ impl Vm<'_> {
                     self.pop();
                     self.push(JsValue::String(value));
                 }
+                61 => {
+                    let low = self.pop();
+                    let high = self.pop();
+                    let (Some(high), Some(low)) = (high.number_value(), low.number_value()) else {
+                        return Err(self.unsupported_error("V8 ConstructDouble requires numeric operands"));
+                    };
+                    let bits = (u64::from(to_uint32(high)) << 32) | u64::from(to_uint32(low));
+                    let number = f64::from_bits(bits);
+                    let value = if number.is_finite() && number.fract() == 0.0
+                        && number >= -((1_i64 << 30) as f64) && number <= f64::from(crate::v9::value::SMI_MAX)
+                        && !(number == 0.0 && number.is_sign_negative()) {
+                        JsValue::Smi(number)
+                    } else {
+                        let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
+                        JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root }))
+                    };
+                    self.push(value);
+                }
+                62 => {
+                    let value = self.pop();
+                    let result = match value {
+                        JsValue::String(text) => text.thin_target().is_none() && text.is_interned(),
+                        JsValue::Smi(_) | JsValue::Number(_) => return Err(self.unsupported_error("V8 IsInternalizedString requires a heap object")),
+                        _ => false,
+                    };
+                    self.push(JsValue::Boolean(result));
+                }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });

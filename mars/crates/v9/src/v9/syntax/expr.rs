@@ -558,6 +558,8 @@ impl Parser {
                     "ToNumber" => (58, 1),
                     "ToString" => (59, 1),
                     "ToNumeric" => (60, 1),
+                    "ConstructDouble" => (61, 2),
+                    "IsInternalizedString" => (62, 1),
                     _ => {
                         return Err(crate::protocol::EngineError::unsupported(&format!(
                             "V8 native intrinsic %{name}"

@@ -22,6 +22,8 @@ use unicode::property_ranges;
 #[derive(Debug)]
 pub(super) struct Program {
     root: Node,
+    /** Whether the parsed pattern has a possible match on a Latin-1 subject. */
+    latin1_possible: bool,
     /// Capture groups, not counting the whole match.
     pub groups: usize,
     /// Named groups in source order, with every capture index that carries each name.
@@ -117,6 +119,7 @@ pub(super) fn compile(
 ) -> Result<Program, PatternError> {
     let mut program = Program {
         root: Node::Empty,
+        latin1_possible: true,
         groups: 0,
         names: Vec::new(),
         name_slots: BTreeMap::new(),
@@ -186,6 +189,7 @@ pub(super) fn compile(
     if parser.emoji_expansion_limit {
         return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
     }
+    program.latin1_possible = latin1_possible(&root, Modes::from_program(&program), program.unicode);
     program.root = root;
     program.groups = parser.groups;
     program.names = parser.group_names.entries;
@@ -1419,6 +1423,39 @@ impl<'a> Matcher<'a> {
     }
 }
 
+/** Decide whether one atom can consume a Latin-1 subject unit under effective case folding. */
+fn latin1_char(point: u32, modes: Modes, unicode: bool) -> bool {
+    point <= u32::from(u8::MAX)
+        || modes.ignore_case
+            && (0..=u32::from(u8::MAX)).any(|unit| case::same(point, unit, unicode))
+}
+
+/** A class is feasible when at least one Latin-1 point survives its case fold and negation. */
+fn latin1_class(ranges: &[(u32, u32)], negated: bool, modes: Modes, unicode: bool) -> bool {
+    (0..=u32::from(u8::MAX)).any(|point| {
+        let contains = |candidate| ranges.iter().any(|(low, high)| (*low..=*high).contains(&candidate));
+        let matched = contains(point)
+            || modes.ignore_case && case::equivalents(point, unicode).any(contains);
+        matched != negated
+    })
+}
+
+/** Prune only branches that necessarily consume a character absent from a Latin-1 subject. */
+fn latin1_possible(node: &Node, modes: Modes, unicode: bool) -> bool {
+    match node {
+        Node::Char(point) => latin1_char(*point, modes, unicode),
+        Node::Literal(points) => points.iter().all(|point| latin1_char(*point, modes, unicode)),
+        Node::Class(ranges, negated) => latin1_class(ranges, *negated, modes, unicode),
+        Node::Group(inner, _) => latin1_possible(inner, modes, unicode),
+        Node::Scoped(inner, effective) => latin1_possible(inner, *effective, unicode),
+        Node::Look(inner, _, false) => latin1_possible(inner, modes, unicode),
+        Node::Concat(parts) => parts.iter().all(|part| latin1_possible(part, modes, unicode)),
+        Node::Alt(parts) => parts.iter().any(|part| latin1_possible(part, modes, unicode)),
+        Node::Repeat(inner, min, _, _, _) => *min == 0 || latin1_possible(inner, modes, unicode),
+        _ => true,
+    }
+}
+
 /** Execute from `start`; sticky programs try only that position. */
 pub(super) fn exec(
     program: &Program,
@@ -1426,6 +1463,11 @@ pub(super) fn exec(
     start: usize,
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<Captures>, MatchError> {
+    if !program.latin1_possible
+        && input.iter().all(|unit| *unit <= u16::from(u8::MAX))
+    {
+        return Ok(None);
+    }
     let mut steps = 0;
     // Every start position of an unanchored search costs steps, so a fixed budget failed plain
     // scans of long text (YouTube's megabyte page data) and stopped the page's scripts. The

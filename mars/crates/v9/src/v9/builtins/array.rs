@@ -7,6 +7,7 @@ use crate::v9::vm::realm::{NativeFn, symbol};
 mod concat;
 mod copy;
 mod create;
+mod fill_compact;
 mod flatten;
 mod from_async;
 mod join_sparse;
@@ -485,6 +486,9 @@ fn fill(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.fill")?;
     let start = vm.relative_index(&call.arg(1), length, 0)?;
     let end = vm.relative_index(&call.arg(2), length, length)?;
+    if fill_compact::run(vm, &object, call.arg(0), start, end, length)? {
+        return Ok(object);
+    }
     for index in start..end {
         set_index(vm, &object, index, call.arg(0))?;
     }

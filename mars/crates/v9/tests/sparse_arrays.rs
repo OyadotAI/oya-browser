@@ -6,6 +6,61 @@ use mars_v9::VmState;
 const SMALL_SNAPSHOT: usize = 64 * 1024;
 
 #[test]
+/** Filling a large hole array retains each value and ordinary indexed mutation semantics. */
+fn large_fill_keeps_value_identity_and_mutations() {
+    assert_eq!(
+        common::eval(
+            "let value={x:7},a=Array(300000).fill(value); a[1]={x:9}; delete a[2]; a.length=4; let result=[a.length,a[0]===value,a[1].x,2 in a,a[3]===value].join(':');",
+            "result"
+        ),
+        "4:true:9:false:true"
+    );
+}
+
+#[test]
+/** Inherited setters remain observable before a large fill can use compact storage. */
+fn large_fill_observes_inherited_setter() {
+    assert_eq!(
+        common::eval(
+            "let a=Array(300000),p=Object.create(Array.prototype),seen=0; Object.defineProperty(p,'0',{set(v){seen=v;throw Error('setter')}}); Object.setPrototypeOf(a,p); try{a.fill(7)}catch(e){} let result=seen;",
+            "result"
+        ),
+        "7"
+    );
+}
+
+#[test]
+/** A non-extensible hole array must reject its first attempted element creation. */
+fn large_fill_rejects_nonextensible_receiver() {
+    assert_eq!(
+        common::eval(
+            "let a=Object.preventExtensions(Array(300000)),result=false;try{a.fill(7)}catch(e){result=e instanceof TypeError}",
+            "result"
+        ),
+        "true"
+    );
+}
+
+#[test]
+/** Filled object references and subsequent edits survive compact page-state transport. */
+fn large_fill_survives_page_state_transport() {
+    let sources = ["let value={x:7},a=Array(300000).fill(value); a[1]={x:9}; delete a[2]; document.getElementById('go').addEventListener('click',()=>console.log([a.length,a[0]===value,a[1].x,2 in a,a[3]===value].join(':')));".to_string()];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    assert!(serde_json::to_vec(&loaded.state).unwrap().len() < SMALL_SNAPSHOT);
+    let clicked = mars_v9::click_page(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        3,
+    )
+    .unwrap();
+    assert!(clicked.failed.is_empty(), "{:?}", common::failure(&clicked));
+    assert_eq!(common::console(&clicked), ["300000:true:9:false:true"]);
+}
+
+#[test]
 /** Oversized calls evaluate later arguments and finish the native iterator before failing. */
 fn oversized_hole_spread_preserves_call_evaluation_order() {
     assert_eq!(

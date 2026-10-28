@@ -394,7 +394,8 @@ fn module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
     let bytes = bytes(vm, &record)?;
     let compact = get(vm, object, "wasm.feature.compact-imports") == Some(JsValue::Boolean(true));
     let testing = get(vm, object, "wasm.feature.testing-opcode") == Some(JsValue::Boolean(true));
-    let mut module = binary::parse_with_features(&bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, compact, testing)
+    let ref_cast_nop = get(vm, object, "wasm.feature.ref-cast-nop") == Some(JsValue::Boolean(true));
+    let mut module = binary::parse_with_features(&bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, compact, testing, ref_cast_nop)
         .map_err(|e| compile_failure(vm, e))?;
     module.wasmfx_enabled = get(vm, object, "wasm.feature.wasmfx") == Some(JsValue::Boolean(true));
     Ok((object, module))
@@ -555,6 +556,13 @@ fn testing_opcode_enabled(vm: &Vm) -> bool {
     #[cfg(not(feature = "conformance"))]
     { let _ = vm; false }
 }
+/** Unchecked casts are permitted only by the explicit d8 experiment flag. */
+fn ref_cast_nop_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    { return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_ref_cast_nop; }
+    #[cfg(not(feature = "conformance"))]
+    { let _ = vm; false }
+}
 /** Host test limits can only lower the native table declaration bound. */
 fn table_limit(vm: &Vm) -> u64 {
     #[cfg(feature = "conformance")]
@@ -585,6 +593,7 @@ fn finish_module(
         table_limit(vm),
         compact_imports_enabled(vm),
         testing_opcode_enabled(vm),
+        ref_cast_nop_enabled(vm),
     )
     .map_err(|e| compile_failure(vm, e))?;
     let proto = match new_target {
@@ -602,6 +611,7 @@ fn finish_module(
     );
     set(vm, object, "wasm.feature.compact-imports", JsValue::Boolean(compact_imports_enabled(vm)));
     set(vm, object, "wasm.feature.testing-opcode", JsValue::Boolean(testing_opcode_enabled(vm)));
+    set(vm, object, "wasm.feature.ref-cast-nop", JsValue::Boolean(ref_cast_nop_enabled(vm)));
     imports::store(vm, object, options)?;
     imports::validate(vm, object, &parsed)?;
     Ok(object)
@@ -651,6 +661,7 @@ fn validate_api(vm: &mut Vm, call: Call) -> Res<JsValue> {
         table_limit(vm),
         compact_imports_enabled(vm),
         testing_opcode_enabled(vm),
+        ref_cast_nop_enabled(vm),
     ) {
         Ok(m) => {
             let object = vm.new_object()?;

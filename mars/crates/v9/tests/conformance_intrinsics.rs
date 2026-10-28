@@ -2,6 +2,30 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** Internalized-string tests inspect actual backing and distinguish thin aliases. */
+#[test]
+fn native_internalized_string_test_reads_real_representation() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let interned=%ConstructInternalizedString('internalized-example'),thin=%ConstructThinString('thin-string-long-enough');let r=[%IsInternalizedString(interned),%IsInternalizedString(thin),%IsInternalizedString('literal'),%IsInternalizedString({})].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,false,true,false");
+}
+
+/** ConstructDouble preserves exact IEEE-754 bits and uses actual Smi or heap-number backing. */
+#[test]
+fn native_construct_double_preserves_bits_and_numeric_identity() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let min=%ConstructDouble(0,1),zero=%ConstructDouble(0,0),negative=%ConstructDouble(0x80000000,0),nan=%ConstructDouble(0x7ff80000,123);let view=new DataView(new ArrayBuffer(8));view.setFloat64(0,nan,false);let r=[min===Number.MIN_VALUE,%IsSmi(zero),%IsSmi(negative),Object.is(negative,-0),Number.isNaN(nan),view.getUint32(4,false)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,false,true,true,123");
+}
+
 /** Native conversion helpers use ordinary coercion and preserve existing numeric identity. */
 #[test]
 fn native_conversion_helpers_preserve_coercion_and_number_identity() {

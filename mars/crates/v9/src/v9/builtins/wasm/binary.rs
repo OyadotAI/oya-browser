@@ -16,6 +16,7 @@ pub(super) struct Reader<'a> {
     pub(super) table_limit: u64,
     pub(super) compact_imports_enabled: bool,
     pub(super) testing_opcode_enabled: bool,
+    pub(super) ref_cast_nop_enabled: bool,
 }
 impl<'a> Reader<'a> {
     /** A fresh section or body reader. */
@@ -34,6 +35,7 @@ impl<'a> Reader<'a> {
             table_limit: MAX_DECLARED_TABLE_MINIMUM,
             compact_imports_enabled: true,
             testing_opcode_enabled: true,
+            ref_cast_nop_enabled: true,
         }
     }
     /** Nested readers retain absolute binary offsets without reading outside their own section. */
@@ -53,6 +55,7 @@ impl<'a> Reader<'a> {
             table_limit: self.table_limit,
             compact_imports_enabled: self.compact_imports_enabled,
             testing_opcode_enabled: self.testing_opcode_enabled,
+            ref_cast_nop_enabled: self.ref_cast_nop_enabled,
         })
     }
     /** One byte, failing at the actual end of this section. */
@@ -685,7 +688,7 @@ impl<'a> Reader<'a> {
 
 /** Validate the envelope, decode sections in order, then apply full supported-subset typing. */
 pub(super) fn parse(bytes: &[u8]) -> Result<Module, Error> {
-    parse_with_features(bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, true, true)
+    parse_with_features(bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, true, true, true)
 }
 /** Compilation applies the optional proposal state selected by the current embedding. */
 pub(super) fn parse_with_features(
@@ -701,6 +704,7 @@ pub(super) fn parse_with_features(
     table_limit: u64,
     compact_imports_enabled: bool,
     testing_opcode_enabled: bool,
+    ref_cast_nop_enabled: bool,
 ) -> Result<Module, Error> {
     if bytes.len() > BUFFER_BYTES {
         return Err(Error::invalid("WebAssembly binary exceeds V9 buffer limit"));
@@ -719,6 +723,7 @@ pub(super) fn parse_with_features(
     reader.table_limit = table_limit.min(MAX_DECLARED_TABLE_MINIMUM);
     reader.compact_imports_enabled = compact_imports_enabled;
     reader.testing_opcode_enabled = testing_opcode_enabled;
+    reader.ref_cast_nop_enabled = ref_cast_nop_enabled;
     let header = reader.take(MAGIC.len())?;
     if header[..4] != MAGIC[..4] {
         return Err(Error::invalid("expected magic word").at(0));
