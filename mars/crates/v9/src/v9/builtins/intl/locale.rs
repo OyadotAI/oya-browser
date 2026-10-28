@@ -85,7 +85,7 @@ pub(in crate::v9) fn canonical_list(vm: &mut Vm, locales: &JsValue) -> Res<Vec<S
     } else {
         vm.to_object(locales)?
     };
-    let length = vm.get(&JsValue::Object(object), &Key::from("length"))?;
+    let length = vm.get(&JsValue::Object(object), &Key::length())?;
     let length = vm.to_integer(&length)?.clamp(0.0, 9_007_199_254_740_991.0) as u64;
     let mut seen = Vec::new();
     for index in 0..length {
@@ -208,7 +208,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(target) = call.new_target.clone() else {
         return Err(vm.type_error("Constructor Intl.Locale requires 'new'"));
     };
-    let fallback = match vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))? {
+    let fallback = match vm.get(&JsValue::Object(call.callee), &Key::prototype())? {
         JsValue::Object(id) => id,
         _ => crate::v9::vm::realm::realm().ids.object_prototype,
     };

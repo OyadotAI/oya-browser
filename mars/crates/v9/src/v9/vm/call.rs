@@ -443,7 +443,7 @@ impl Vm<'_> {
     }
     /** The prototype for a new object: new.target's `prototype` if it is an object. */
     pub fn prototype_for(&mut self, new_target: &JsValue, fallback: ObjectId) -> Res<ObjectId> {
-        match self.get(new_target, &Key::from("prototype"))? {
+        match self.get(new_target, &Key::prototype())? {
             JsValue::Object(proto) => Ok(proto),
             _ => self.constructor_fallback(new_target, fallback),
         }
@@ -541,7 +541,7 @@ impl Vm<'_> {
         }
         self.heap.put(
             id,
-            Key::from("length"),
+            Key::length(),
             Prop {
                 slot: Slot::Data(JsValue::Number(args.len() as f64)),
                 attrs: HIDDEN_ATTRS,

@@ -255,6 +255,7 @@ fn split(
     for (index, (&(at, before), next)) in starts.iter().zip(starts.iter().skip(1)).enumerate() {
         let x = run.x + before + gained + extra * index as f64;
         pieces.push(PaintLine {
+            color: None,
             text: run.text[at..next.0].to_string(),
             x,
             y: run.y,
@@ -265,6 +266,7 @@ fn split(
     let open = marks.last() == Some(&run.text.len());
     let tail = run.width - before + if open { extra } else { 0.0 };
     pieces.push(PaintLine {
+        color: None,
         text: run.text[at..].to_string(),
         x: run.x + before + gained + extra * (starts.len() - 1) as f64,
         y: run.y,

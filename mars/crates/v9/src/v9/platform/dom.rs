@@ -2322,7 +2322,7 @@ pub(super) fn named_attributes(
 writes through it are unsupported. */
 pub(in crate::v9) fn named_node_map_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
-    let length = vm.get(&call.this, &Key::from("length"))?;
+    let length = vm.get(&call.this, &Key::length())?;
     let count = vm.to_integer(&length)?.max(0.0) as usize;
     match name {
         "item" => {

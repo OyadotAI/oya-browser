@@ -160,6 +160,11 @@ pub(in crate::v9) fn fire(vm: &mut Vm, target: Target, kind: &str, bubbles: bool
     events::fire(vm, target, kind, bubbles, kind == "click")
 }
 
+/** A trusted, bubbling, cancelable `submit` at a form; true when no handler prevented it. */
+pub(in crate::v9) fn fire_submit(vm: &mut Vm, form: usize) -> Res<bool> {
+    events::fire(vm, Target::Node(form), "submit", true, true)
+}
+
 /** A trusted `popstate` at the window whose `state` is the entry's restored state. */
 pub(in crate::v9) fn fire_pop_state(vm: &mut Vm, state: JsValue) -> Res<bool> {
     events::fire_with_state(vm, Target::Window, "popstate", state)
@@ -822,6 +827,14 @@ pub struct HostEffects {
     pub requests: Vec<HostRequest>,
     /// The last navigation request, if any.
     pub navigation: Option<NavigationRequest>,
+    /// A person's or agent's form submission whose `submit` event nobody cancelled: the app
+    /// submits this form natively. None when a handler called preventDefault.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub submit: Option<usize>,
+    /// A native Enter that no keydown or keypress handler cancelled: the app performs its
+    /// default (submit the field's form, or a newline in a textarea).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub key_default: bool,
     /// pushState, replaceState and hash changes, in order.
     pub history: Vec<HistoryRecord>,
     /// Raw `document.cookie = ...` fields, in order, for `CookieJar::set_document_cookie`.

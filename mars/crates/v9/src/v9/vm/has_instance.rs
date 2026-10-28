@@ -25,7 +25,7 @@ impl Vm<'_> {
         let &JsValue::Object(id) = value else {
             return Ok(false);
         };
-        let prototype = self.get(constructor, &Key::from("prototype"))?;
+        let prototype = self.get(constructor, &Key::prototype())?;
         let JsValue::Object(prototype) = prototype else {
             return Err(self.type_error("Function has non-object prototype in instanceof check"));
         };

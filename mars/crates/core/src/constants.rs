@@ -264,6 +264,12 @@ pub const DOCUMENT_DEPTH: usize = 256;
 pub const SERVICE_STACK_BYTES: usize = 256 * 1024 * 1024;
 /// Committed history is a bounded local session resource.
 pub const HISTORY_ENTRIES: usize = 64;
+/// The full Chrome version Mars reports where Chrome reports one: the high-entropy client hints
+/// Relay sends and V9's `navigator.userAgentData.getHighEntropyValues`. One constant, so the two
+/// agree; its major matches Relay's `CHROME_ENGINE` (a Relay test pins that).
+pub const CHROME_FULL_VERSION: &str = "152.0.7739.0";
+/// The macOS version Chrome reports as `Sec-CH-UA-Platform-Version` and `platformVersion`.
+pub const MACOS_PLATFORM_VERSION: &str = "15.6.1";
 /// Native windows cap retained page documents to bound aggregate tab memory.
 pub const TABS: usize = 16;
 /// Cancellation stays responsive even while a worker waits for a child reply.

@@ -250,7 +250,7 @@ fn locale_list(vm: &mut Vm, value: &JsValue) -> Res<Vec<String>> {
     match value {
         JsValue::Undefined | JsValue::Null => Ok(Vec::new()),
         JsValue::Object(id) => {
-            let length = vm.get(value, &Key::from("length"))?;
+            let length = vm.get(value, &Key::length())?;
             let count = vm.to_integer(&length)?.max(0.0) as usize;
             let mut out = Vec::with_capacity(count.min(16));
             for index in 0..count.min(16) {
@@ -289,7 +289,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| vm.page.environment.locale.clone());
     let options = read_options(vm, &call.arg(1), &kind)?;
-    let prototype = vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))?;
+    let prototype = vm.get(&JsValue::Object(call.callee), &Key::prototype())?;
     let proto = match prototype {
         JsValue::Object(id) => id,
         _ => realm().ids.object_prototype,

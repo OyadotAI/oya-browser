@@ -5,6 +5,7 @@ mod cache;
 mod encoding;
 mod eyeballs;
 mod fields;
+mod hints;
 mod h2;
 mod hello;
 mod lease;
@@ -403,6 +404,11 @@ fn finish(
         return Err(EngineError::unsupported(
             "Only PNG, JPEG, WebP and GIF images are supported.",
         ));
+    }
+    if request.destination == Destination::Document
+        && let Some(accept) = headers.get("accept-ch")
+    {
+        hints::remember(&url, accept);
     }
     let download = status == HTTP_OK && downloads(request, &headers, &mime);
     let charset = mime::html_charset(&mime, charset, &body);

@@ -132,6 +132,9 @@ pub(in crate::v9) enum Op {
     ThrowReference(u32),
     /** Top-level `let`/`const`/`class`: create the dead-zone global binding; flag is const. */
     DeclareLexical(u32, bool),
+    /** The collision checks of `DeclareLexical` alone, run for every top-level lexical name
+    before a script creates any binding, so a script that fails them leaves no `var` behind. */
+    CheckGlobalLexical(u32),
     /** Initialize a top-level lexical binding with the value on the stack (popped). */
     InitLexical(u32),
     /** Assignment to a constant. */

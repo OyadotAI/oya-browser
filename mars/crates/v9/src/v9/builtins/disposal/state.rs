@@ -115,7 +115,7 @@ pub(super) fn pop(vm: &mut Vm, id: ObjectId) -> Res<()> {
     let length = vm.length_of(&array)?;
     vm.set(
         &array,
-        Key::from("length"),
+        Key::length(),
         JsValue::Number(length.saturating_sub(1) as f64),
         true,
     )

@@ -379,7 +379,7 @@ pub(in crate::v9) fn atomic(vm: &mut Vm, call: &crate::v9::vm::Call, name: &str)
 fn atomic_pinned(vm: &mut Vm, call: &crate::v9::vm::Call, name: &str) -> Res<JsValue> {
     let id = call.arg(0).object().ok_or_else(|| vm.type_error("Invalid shared container"))?;
     let key = vm.to_key(&call.arg(1))?;
-    if key == Key::from("length") && matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Array(_))) {
+    if key == Key::length() && matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Array(_))) {
         if name == "load" { return vm.get(&JsValue::Object(id), &key); }
         return Err(vm.type_error("Cannot modify shared array length"));
     }

@@ -1037,7 +1037,7 @@ fn constructor_name(vm: &mut Vm, id: ObjectId) -> String {
         let Some(object) = current else {
             break;
         };
-        if let Ok(Some(prop)) = vm.own(object, &Key::from("constructor"))
+        if let Ok(Some(prop)) = vm.own(object, &Key::constructor())
             && let Slot::Data(JsValue::Object(constructor)) = prop.slot
             && let Ok(Some(name)) = vm.own(constructor, &Key::from("name"))
             && let Slot::Data(JsValue::String(text)) = name.slot

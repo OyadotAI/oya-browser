@@ -428,7 +428,7 @@ impl Vm<'_> {
                     if !flags.generator {
                         self.heap.put(
                             prototype,
-                            Key::from("constructor"),
+                            Key::constructor(),
                             Prop {
                                 slot: Slot::Data(JsValue::Object(id)),
                                 attrs: WRITABLE | CONFIGURABLE,
@@ -439,7 +439,7 @@ impl Vm<'_> {
                         slot: Slot::Data(JsValue::Object(prototype)),
                         attrs: WRITABLE,
                     };
-                    self.heap.put(id, Key::from("prototype"), prop.clone());
+                    self.heap.put(id, Key::prototype(), prop.clone());
                     return Ok(Some(prop));
                 }
             }
@@ -1188,7 +1188,7 @@ impl Vm<'_> {
         let mut done = true;
         if let Some(length) = length {
             done = self
-                .exotic_write(id, &Key::from("length"), &JsValue::Number(length as f64))?
+                .exotic_write(id, &Key::length(), &JsValue::Number(length as f64))?
                 .unwrap_or(true);
         }
         if desc.writable == Some(false) && !fixed {
@@ -1295,7 +1295,7 @@ impl Vm<'_> {
         self.guard_realm_global(id)?;
         let Some(object) = self.heap.get(id) else {
             if id >= NATIVE_BASE {
-                return Ok(vec![Key::from("length"), Key::from("name")]);
+                return Ok(vec![Key::length(), Key::from("name")]);
             }
             return Ok(realm_for(id)
                 .object(id)
@@ -1317,13 +1317,13 @@ impl Vm<'_> {
                 keys.extend(elements.resident_entries().map(|(index, _)| {
                     Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
                 }));
-                keys.push(Key::from("length"));
+                keys.push(Key::length());
             }
             Class::String(text) => {
                 keys.extend((0..text.len()).map(|index| {
                     Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
                 }));
-                keys.push(Key::from("length"));
+                keys.push(Key::length());
             }
             Class::Host(_) => keys.extend(super::super::platform::host_keys(self, id)?),
             Class::Namespace(module) => {

@@ -47,6 +47,10 @@ pub(super) enum PseudoBox {
     ScrollMarker,
     /// `::scroll-button(<direction>)`, by style/scroll_button.rs's direction number.
     ScrollButton(u8),
+    /// `::placeholder` of an input or textarea; only its color is used (the native field draws it).
+    Placeholder,
+    /// `::marker` of a list item; only its color is used (the marker is a run of the item).
+    Marker,
 }
 /** One style rule per selector in a list, ordered for the cascade. */
 #[derive(Clone, Debug)]
@@ -440,6 +444,9 @@ fn generated(text: &str) -> (String, Option<PseudoBox>) {
         (":first-letter", PseudoBox::FirstLetter),
         ("::first-line", PseudoBox::FirstLine),
         (":first-line", PseudoBox::FirstLine),
+        ("::placeholder", PseudoBox::Placeholder),
+        ("::marker", PseudoBox::Marker),
+        ("::-webkit-input-placeholder", PseudoBox::Placeholder),
         ("::scroll-marker-group", PseudoBox::ScrollMarkerGroup),
         ("::scroll-marker", PseudoBox::ScrollMarker),
     ]) {

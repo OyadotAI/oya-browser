@@ -21,6 +21,13 @@ impl Compiler {
         scan::var_names(body, true, true, &mut required);
         let functions = scan::function_declarations(body);
         self.check_global_declarations(&required, &functions, false)?;
+        let lexical = lexical_declarations(body);
+        // Every check passes before any binding exists (spec GlobalDeclarationInstantiation).
+        for (name, _, pos) in &lexical {
+            self.at(*pos);
+            let index = self.name(name)?;
+            self.emit(Op::CheckGlobalLexical(index));
+        }
         let required: std::collections::HashSet<&Name> = required.iter().collect();
         for name in &vars {
             let index = self.name(name)?;
@@ -32,7 +39,7 @@ impl Compiler {
             self.declare(name, Declared::Var)?;
         }
         // Hoisted, yet a redeclaration error points at the declaration's own line.
-        for (name, kind, pos) in lexical_declarations(body) {
+        for (name, kind, pos) in lexical {
             self.at(pos);
             let index = self.name(&name)?;
             self.emit(Op::DeclareLexical(index, kind.immutable()));

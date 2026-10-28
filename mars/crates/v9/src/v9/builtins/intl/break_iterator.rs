@@ -80,7 +80,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| vm.page.environment.locale.clone());
     let kind = option_type(vm, &call.arg(1))?;
-    let prototype = vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))?;
+    let prototype = vm.get(&JsValue::Object(call.callee), &Key::prototype())?;
     let proto = match prototype {
         JsValue::Object(id) => id,
         _ => realm().ids.object_prototype,

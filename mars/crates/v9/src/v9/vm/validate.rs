@@ -285,7 +285,7 @@ impl Vm<'_> {
                 }
                 Class::Array(elements)
                     if object.props.iter().any(|(key, _)| {
-                        *key == Key::from("length")
+                        *key == Key::length()
                             || key.index().is_some_and(|index| {
                                 elements
                                     .get(index as usize)

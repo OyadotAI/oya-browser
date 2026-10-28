@@ -41,5 +41,6 @@ pub(super) fn marker(
         x: start,
         y,
         width,
+        color: node.style.marker_color.clone(),
     }))
 }

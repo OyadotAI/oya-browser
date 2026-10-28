@@ -389,6 +389,9 @@ pub struct PaintLine {
     pub y: f64,
     /// Shaped width of this exact string/font combination.
     pub width: f64,
+    /// A color for this run alone, over the item's: a list marker under a `::marker` rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /** Whether a small code is zero, the default a display item leaves out. */

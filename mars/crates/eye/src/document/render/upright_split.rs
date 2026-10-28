@@ -43,6 +43,7 @@ fn split_item(item: &mut DisplayItem) -> Option<DisplayItem> {
                 line.x
             };
             let piece = PaintLine {
+                color: None,
                 text: part.to_string(),
                 x,
                 y,

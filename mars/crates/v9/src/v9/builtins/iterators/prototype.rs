@@ -40,7 +40,7 @@ fn get_tag(_: &mut Vm, _: Call) -> Res<JsValue> {
 
 /** A constructor assignment invokes the standard intrinsic home setter. */
 fn set_constructor(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    set(vm, call, Key::from("constructor"))
+    set(vm, call, Key::constructor())
 }
 
 /** A tag assignment invokes the same home setter with its symbol key. */

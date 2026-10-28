@@ -339,7 +339,7 @@ pub(in crate::v9) fn atomic(vm: &mut Vm, call: &crate::v9::vm::Call, name: &str)
         .object()
         .ok_or_else(|| vm.type_error("Invalid shared container"))?;
     let key = vm.to_key(&call.arg(1))?;
-    if key == Key::from("length")
+    if key == Key::length()
         && matches!(
             vm.heap.get(id).map(|object| &object.class),
             Some(Class::Array(_))

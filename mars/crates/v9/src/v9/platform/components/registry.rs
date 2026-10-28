@@ -170,7 +170,7 @@ fn read_definition(
     extends: Option<String>,
     constructor: JsValue,
 ) -> Res<Definition> {
-    let prototype = vm.get(&constructor, &Key::from("prototype"))?;
+    let prototype = vm.get(&constructor, &Key::prototype())?;
     if !matches!(prototype, JsValue::Object(_)) {
         return Err(vm.type_error(
             "Failed to execute 'define' on 'CustomElementRegistry': The prototype is not an object.",

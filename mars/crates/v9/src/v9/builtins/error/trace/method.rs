@@ -157,7 +157,7 @@ pub(super) fn type_name_of(vm: &Vm, receiver: &JsValue) -> Option<String> {
     });
     let constructor = || {
         chain(vm, start).into_iter().find_map(|id| {
-            match own_data(vm, id, &Key::from("constructor"))? {
+            match own_data(vm, id, &Key::constructor())? {
                 JsValue::Object(function) => function_name(vm, function),
                 _ => None,
             }

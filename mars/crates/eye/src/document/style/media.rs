@@ -16,7 +16,7 @@ pub(super) enum Truth {
 }
 impl Truth {
     /** Boolean to definite truth. */
-    fn of(value: bool) -> Self {
+    pub(super) fn of(value: bool) -> Self {
         if value { Self::True } else { Self::False }
     }
     /** Kleene negation. */
@@ -83,7 +83,7 @@ fn media_type(kind: &str) -> Truth {
     }
 }
 /** `not C`, `C and C ...` or `C or C ...` over parenthesized leaves. */
-fn condition(parts: &[&str], leaf: &dyn Fn(&str) -> Truth) -> Truth {
+pub(super) fn condition(parts: &[&str], leaf: &dyn Fn(&str) -> Truth) -> Truth {
     match parts {
         [] => Truth::Unknown,
         ["not", rest @ ..] => condition(rest, leaf).not(),
@@ -101,10 +101,12 @@ fn condition(parts: &[&str], leaf: &dyn Fn(&str) -> Truth) -> Truth {
         }
     }
 }
-/** One parenthesized group: a nested condition or a leaf test. */
+/** One parenthesized group: a nested condition or a leaf test. A function such as `style()`
+ * or `selector()` is a leaf of its own, which the caller's leaf test reads whole. */
 fn group(part: &str, leaf: &dyn Fn(&str) -> Truth) -> Truth {
     let Some(inner) = part.strip_prefix('(').and_then(|p| p.strip_suffix(')')) else {
-        return Truth::Unknown;
+        let function = part.ends_with(')') && part.contains('(');
+        return if function { leaf(part) } else { Truth::Unknown };
     };
     let inner = inner.trim();
     let parts = tokens(inner);
@@ -114,7 +116,7 @@ fn group(part: &str, leaf: &dyn Fn(&str) -> Truth) -> Truth {
     leaf(inner)
 }
 /** `name: value`, range comparisons, or a bare boolean feature. */
-fn feature(inner: &str, context: RenderContext) -> Truth {
+pub(super) fn feature(inner: &str, context: RenderContext) -> Truth {
     if let Some((name, value)) = inner.split_once(':') {
         return named(name.trim(), value.trim(), context);
     }
@@ -268,31 +270,6 @@ fn range(inner: &str, context: RenderContext) -> Truth {
         truth = truth.and(Truth::of(holds));
     }
     truth
-}
-/**
- * An `@container` condition against a container's content-box width; None means it is not laid
- * out yet. Only width features are decidable: height, block size, aspect ratio, orientation and
- * `style()` queries stay Unknown, so their hiding rules keep masking.
- */
-pub(super) fn container(source: &str, width: Option<f64>) -> Truth {
-    let source = source.to_ascii_lowercase().replace("inline-size", "width");
-    let parts = tokens(source.trim());
-    condition(&parts, &|inner| {
-        let width_only = inner.contains("width")
-            && !["height", "device", "block-size", "aspect", "orientation"]
-                .iter()
-                .any(|other| inner.contains(other));
-        match width {
-            Some(width) if width_only => feature(
-                inner,
-                RenderContext {
-                    width,
-                    ..RenderContext::default()
-                },
-            ),
-            _ => Truth::Unknown,
-        }
-    })
 }
 /** `@supports`: declarations Eye parses, `selector()` it can match, and boolean combinations. */
 pub(super) fn supports(source: &str) -> Truth {

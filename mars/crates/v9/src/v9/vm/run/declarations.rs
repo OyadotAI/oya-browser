@@ -143,7 +143,9 @@ impl Vm<'_> {
         Ok(None)
     }
 
-    /** Script instantiation and sloppy global eval distinguish SyntaxError from TypeError, without author constructors. */
+    /** Script instantiation throws SyntaxError and sloppy global eval TypeError, as V8 does
+    (`DeclareGlobal` in runtime-scopes.cc takes kSyntaxError for scripts). The spec says TypeError
+    for both, and test262's script-decl-*-err cases expect that; Mars follows Chrome. */
     fn global_declaration_error(&mut self, name: &JsString, eval: bool) -> Thrown {
         let message = format!("Identifier '{}' has already been declared", name.lossy());
         if eval {

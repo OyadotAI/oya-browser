@@ -111,6 +111,22 @@ impl Key {
         }
         (value < u64::from(u32::MAX)).then_some(value as u32)
     }
+    /** `"prototype"`, built once per process: `new` reads it on every construction, and
+    building the string each time was a quarter of the cost of `new` (C3 note). */
+    pub fn prototype() -> Self {
+        static KEY: std::sync::OnceLock<Key> = std::sync::OnceLock::new();
+        KEY.get_or_init(|| Self::from("prototype")).clone()
+    }
+    /** `"constructor"`, built once per process for the same reason. */
+    pub fn constructor() -> Self {
+        static KEY: std::sync::OnceLock<Key> = std::sync::OnceLock::new();
+        KEY.get_or_init(|| Self::from("constructor")).clone()
+    }
+    /** `"length"`, built once per process: array and string paths read it constantly. */
+    pub fn length() -> Self {
+        static KEY: std::sync::OnceLock<Key> = std::sync::OnceLock::new();
+        KEY.get_or_init(|| Self::from("length")).clone()
+    }
     /** The one constructor of engine-private keys, for class `#names` and platform slots. */
     pub fn private(name: &str) -> Self {
         Self::Private(JsString::from_utf8(name).expect("short key"))

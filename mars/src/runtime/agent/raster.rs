@@ -550,6 +550,8 @@ impl Canvas {
             .iter()
             .filter(|line| !line.text.trim().is_empty())
         {
+            // A run with its own color (a `::marker` bullet) paints in it.
+            let ink = line.color.as_deref().and_then(painter_rgba).unwrap_or(ink);
             let member = self
                 .chains
                 .members

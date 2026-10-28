@@ -614,7 +614,7 @@ fn fire_progress(vm: &mut Vm, xhr: ObjectId, kind: &str, loaded: usize, total: u
     let global = JsValue::Object(crate::v9::vm::GLOBAL);
     let ctor = vm.get(&global, &Key::from("ProgressEvent"))?;
     if matches!(ctor, JsValue::Object(_))
-        && let JsValue::Object(proto) = vm.get(&ctor, &Key::from("prototype"))?
+        && let JsValue::Object(proto) = vm.get(&ctor, &Key::prototype())?
     {
         vm.set_proto(id, Some(proto))?;
     }

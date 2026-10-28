@@ -26,7 +26,7 @@ pub(in crate::v9) const TRACE_KEY: &str = "errorTrace";
 impl Vm<'_> {
     /** Inspect ordinary prototype data for a diagnostic without invoking accessors or proxy traps. */
     pub(in crate::v9) fn inert_constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
-        let constructor = Key::from("constructor");
+        let constructor = Key::constructor();
         for _ in 0..PEEK_DEPTH {
             let object = self.heap.get(id)?;
             if !matches!(object.class, Class::Plain) { return None; }
@@ -294,7 +294,7 @@ impl Vm<'_> {
     }
     /** The `name` of the object's `constructor`, read without running getters. */
     fn constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
-        let key = Key::from("constructor");
+        let key = Key::constructor();
         for _ in 0..PEEK_DEPTH {
             if let Ok(Some(prop)) = self.own(id, &key) {
                 return match prop.slot {

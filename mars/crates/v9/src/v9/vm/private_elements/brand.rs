@@ -7,7 +7,7 @@ impl Vm<'_> {
         let constructor = self
             .heap
             .get(home)
-            .and_then(|object| object.props.get(&Key::from("constructor")))
+            .and_then(|object| object.props.get(&Key::constructor()))
             .and_then(|prop| match prop.slot {
                 Slot::Data(JsValue::Object(id)) => Some(id),
                 _ => None,
@@ -35,7 +35,7 @@ impl Vm<'_> {
         } else {
             match object
                 .props
-                .get(&Key::from("prototype"))
+                .get(&Key::prototype())
                 .map(|prop| &prop.slot)
             {
                 Some(Slot::Data(JsValue::Object(id))) => *id,

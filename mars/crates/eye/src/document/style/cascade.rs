@@ -75,8 +75,9 @@ fn cascade(
         context,
         scopes: Scopes::default(),
         diagnostics: std::mem::take(&mut candidate.diagnostics),
-        widths: None,
+        sizes: None,
         ancestry: Vec::new(),
+        parent_scope: None,
         ua_margin_top: false,
     };
     cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
@@ -91,12 +92,13 @@ fn cascade(
     super::values::take_measured();
     cascade.wrappers(document, &mut candidate)?;
     cascade.nodes(document, &mut candidate)?;
-    // `@container` conditions need laid-out sizes: one layout of these styles, then one more
-    // cascade that reads them. Bounded to that single extra pass; nothing iterates to a fixpoint.
+    // `@container` conditions and `cq*` units need laid-out sizes: one layout of these styles,
+    // then one more cascade that reads them. Bounded to that single extra pass; nothing iterates
+    // to a fixpoint.
     if cascade.parsed.container_rules
-        && let Some(widths) = super::container::widths(&candidate, context)
+        && let Some(sizes) = super::container::sizes(&candidate, context)
     {
-        cascade.widths = Some(widths);
+        cascade.sizes = Some(sizes);
         cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
         super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
         super::values::set_root_line(0.0);
@@ -130,10 +132,13 @@ struct Cascade<'a> {
     scopes: Scopes,
     /// Value-free diagnostics for the document.
     diagnostics: Vec<String>,
-    /// Container content widths from the first layout; None during the first pass.
-    widths: Option<super::container::Widths>,
-    /// Size containers above the element being styled, nearest first.
+    /// Container content boxes from the first layout; None during the first pass.
+    sizes: Option<super::container::Sizes>,
+    /// Named and size containers above the element being styled, nearest first.
     ancestry: Vec<super::container::Ancestor>,
+    /// The custom-property scope of the styled element's parent, which answers its unnamed
+    /// style queries; None while the root wrappers are styled.
+    parent_scope: Option<usize>,
     /// The element styled last took its top margin from the UA sheet, for the quirks-mode
     /// margin quirk.
     ua_margin_top: bool,
@@ -153,6 +158,9 @@ impl<'a> Cascade<'a> {
                 .and_then(|id| positions.get(&id).copied());
             if self.parsed.container_rules {
                 self.ancestry = ancestry(candidate, &positions, parent);
+                self.parent_scope = Some(parent.map_or(BODY, |index| index + FIRST_NODE));
+                let extent = super::container::extent(&self.ancestry, self.sizes.as_ref());
+                super::values::set_container_extent(extent);
             }
             let mut style = self.node(&document.nodes[index], parent, candidate)?;
             // Only an in-flow box's margin collapses into its container's top.
@@ -168,6 +176,8 @@ impl<'a> Cascade<'a> {
             candidate.nodes[index].style = style;
         }
         self.ancestry.clear();
+        self.parent_scope = None;
+        super::values::set_container_extent([None, None]);
         Ok(())
     }
     /** Root and body are formatting subjects, never surrogate declarations on actual children. */
@@ -320,6 +330,14 @@ impl<'a> Cascade<'a> {
             }
             style.first_letter = self.first_part(node, &style, scope, PseudoBox::FirstLetter)?;
             style.first_line = self.first_part(node, &style, scope, PseudoBox::FirstLine)?;
+            if ["input", "textarea"].contains(&node.tag.as_str()) {
+                let placeholder = self.first_part(node, &style, scope, PseudoBox::Placeholder)?;
+                style.placeholder_color = placeholder.and_then(|part| part.color);
+            }
+            if style.list_item {
+                let marker = self.first_part(node, &style, scope, PseudoBox::Marker)?;
+                style.marker_color = marker.and_then(|part| part.color);
+            }
             self.scroll_marker_boxes(node, &mut style, scope)?;
         }
         if style.validate().is_err() {
@@ -425,7 +443,11 @@ impl<'a> Cascade<'a> {
         scope: usize,
         part: PseudoBox,
     ) -> EngineResult<Option<Box<ComputedStyle>>> {
-        if (element.inline && !element.inline_block) || element.display_flex || element.display_grid
+        let block_part = matches!(part, PseudoBox::FirstLetter | PseudoBox::FirstLine);
+        if block_part
+            && ((element.inline && !element.inline_block)
+                || element.display_flex
+                || element.display_grid)
         {
             return Ok(None);
         }
@@ -771,8 +793,10 @@ impl<'a> Cascade<'a> {
 impl Cascade<'_> {
     /** Whether every `@container` query around a matched rule holds for the current element. */
     fn container_truth(&self, rule: &Rule) -> Truth {
+        let custom = |scope: usize, name: &str| self.scopes.substitute(scope, &format!("var({name})"));
         rule.containers.iter().fold(Truth::True, |truth, query| {
-            truth.and(query.truth(&self.ancestry, self.widths.as_ref()))
+            let sizes = self.sizes.as_ref();
+            truth.and(query.truth(&self.ancestry, self.parent_scope, sizes, &custom))
         })
     }
 }
@@ -786,7 +810,8 @@ fn ancestry(
     let mut current = parent;
     while let Some(index) = current {
         let node = &candidate.nodes[index];
-        found.extend(super::container::ancestor(node.local_id, &node.style));
+        let scope = index + FIRST_NODE;
+        found.extend(super::container::ancestor(node.local_id, scope, &node.style));
         current = node.parent.and_then(|id| positions.get(&id).copied());
     }
     found

@@ -151,7 +151,7 @@ fn array_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = vm.new_array(vec![JsValue::Undefined; length])?;
     vm.set_proto(id, None)?;
     mark(vm, id, ARRAY_MARK)?;
-    vm.define(id, Key::from("length"), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?;
+    vm.define(id, Key::length(), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?;
     // Shared arrays never grow: a store past the end is refused like any non-extensible array.
     crate::v9::builtins::integrity::prevent_extensions(vm, id)?;
     Ok(JsValue::Object(id))
@@ -178,7 +178,7 @@ fn struct_type_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     vm.heap.put(ctor, Key::private(STRUCT_CONSTRUCTOR), Prop::data(JsValue::Boolean(true)));
     vm.heap.put(
         ctor,
-        Key::from("prototype"),
+        Key::prototype(),
         Prop {
             slot: Slot::Data(JsValue::Null),
             attrs: 0,
@@ -199,7 +199,7 @@ fn field_names(vm: &mut Vm, value: &JsValue) -> Res<Vec<JsString>> {
     let JsValue::Object(_) = value else {
         return Err(vm.type_error(FIELD_NAME_NOT_STRING));
     };
-    let raw_length = vm.get(value, &Key::from("length"))?;
+    let raw_length = vm.get(value, &Key::length())?;
     let length = vm.to_number(&raw_length)?;
     let length = if length.is_nan() { 0.0 } else { length.trunc().max(0.0) };
     if length > MAX_STRUCT_FIELDS as f64 { return Err(vm.range_error("Shared struct field count out of range")); }
@@ -276,7 +276,7 @@ fn mark(vm: &mut Vm, id: ObjectId, name: &str) -> Res<()> {
 /** A decoded worker wrapper receives the same hidden kind marker as its source. */
 pub(super) fn mark_transport(vm: &mut Vm, id: ObjectId, array: bool) -> Res<()> {
     mark(vm, id, if array { ARRAY_MARK } else { STRUCT_MARK })?;
-    if array { vm.define(id, Key::from("length"), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?; }
+    if array { vm.define(id, Key::length(), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?; }
     Ok(())
 }
 

@@ -43,6 +43,8 @@ pub(super) struct Buckets {
     scroll_marker_group: Keys,
     scroll_marker: Keys,
     scroll_button: Keys,
+    placeholder: Keys,
+    marker: Keys,
 }
 impl Buckets {
     /** Indexes every rule once. */
@@ -68,6 +70,8 @@ impl Buckets {
             Some(PseudoBox::ScrollMarkerGroup) => &mut self.scroll_marker_group,
             Some(PseudoBox::ScrollMarker) => &mut self.scroll_marker,
             Some(PseudoBox::ScrollButton(_)) => &mut self.scroll_button,
+            Some(PseudoBox::Placeholder) => &mut self.placeholder,
+            Some(PseudoBox::Marker) => &mut self.marker,
         }
     }
     /** Candidate rule indexes for an element (`pseudo` None) or one of its generated boxes, in
@@ -87,6 +91,8 @@ impl Buckets {
             Some(PseudoBox::ScrollMarkerGroup) => &self.scroll_marker_group,
             Some(PseudoBox::ScrollMarker) => &self.scroll_marker,
             Some(PseudoBox::ScrollButton(_)) => &self.scroll_button,
+            Some(PseudoBox::Placeholder) => &self.placeholder,
+            Some(PseudoBox::Marker) => &self.marker,
         };
         keys.candidates(tag, attributes)
     }

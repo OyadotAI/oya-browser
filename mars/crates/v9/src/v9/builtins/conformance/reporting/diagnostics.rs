@@ -62,7 +62,7 @@ fn ordinary_chain(vm: &Vm, mut id: ObjectId) -> bool {
 
 /** Constructor lookup reads inert own data slots only, matching the diagnostic helper without calling [[GetOwnProperty]]. */
 fn constructor(vm: &Vm, mut id: ObjectId) -> Option<ObjectId> {
-    let name = Key::from("constructor");
+    let name = Key::constructor();
     for _ in 0..DIAGNOSTIC_DEPTH {
         if let Some(object) = vm.heap.get(id) {
             if let Some(prop) = object.props.get(&name) {

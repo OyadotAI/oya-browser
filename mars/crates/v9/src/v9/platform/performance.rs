@@ -69,13 +69,15 @@ fn save(vm: &mut Vm, id: ObjectId, values: Vec<JsValue>) -> Res<()> {
 }
 
 /** Allocate an entry with real name, type and virtual monotonic timeline values. */
-fn entry(vm: &mut Vm, name: JsString, kind: &str, start: f64, duration: f64) -> Res<JsValue> {
+fn entry(vm: &mut Vm, name: JsString, kind: &str, span: (f64, f64), detail: JsValue) -> Res<JsValue> {
+    let (start, duration) = span;
     let id = vm.new_object()?;
     for (key, value) in [
         ("name", JsValue::String(name)),
         ("entryType", JsValue::string(kind)?),
         ("startTime", JsValue::Number(start)),
         ("duration", JsValue::Number(duration)),
+        ("detail", detail),
     ] {
         vm.heap.put(
             id,
@@ -101,15 +103,81 @@ pub(super) fn mark(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("performance.mark requires a name"));
     }
     let name = vm.to_string(&call.arg(0))?;
-    if call.arg(1) != JsValue::Undefined {
-        return Err(vm.unsupported_error("performance.mark options"));
+    // User Timing 3 options: `startTime` (a timestamp, never negative) and `detail`.
+    let options = call.arg(1);
+    let start = match option(vm, &options, "startTime")? {
+        Some(time) => vm.to_number(&time)?,
+        None => now(vm),
+    };
+    if start < 0.0 {
+        return Err(vm.type_error("performance.mark: startTime cannot be negative"));
     }
+    let detail = option(vm, &options, "detail")?.unwrap_or(JsValue::Null);
     let (_, mut values) = entries(vm, &call.this)?;
-    let start = now(vm);
-    let value = entry(vm, name, "mark", start, 0.0)?;
+    let value = entry(vm, name, "mark", (start, 0.0), detail)?;
     values.push(value.clone());
     save(vm, id, values)?;
     Ok(value)
+}
+
+/** A member of an options dictionary, None when absent or undefined (or no dictionary). */
+fn option(vm: &mut Vm, options: &JsValue, name: &str) -> Res<Option<JsValue>> {
+    if !matches!(options, JsValue::Object(_)) {
+        return Ok(None);
+    }
+    let value = vm.get(options, &Key::from(name))?;
+    Ok((value != JsValue::Undefined).then_some(value))
+}
+
+/** measure's second argument is an options dictionary when it is a plain object, not an entry. */
+fn is_options(vm: &Vm, value: &JsValue) -> bool {
+    value.object().is_some_and(|id| {
+        vm.heap
+            .get(id)
+            .is_some_and(|object| object.props.get(&Key::private(ENTRY_BRAND)).is_none())
+    })
+}
+
+/** `measure(name, {start, end, duration, detail})`: start and end are mark names or
+timestamps; a missing one comes from the other and `duration`, else from 0 and now. */
+fn measure_options(
+    vm: &mut Vm,
+    values: &[JsValue],
+    options: &JsValue,
+    now: f64,
+) -> Res<((f64, f64), JsValue)> {
+    let start = option(vm, options, "start")?;
+    let end = option(vm, options, "end")?;
+    let duration = match option(vm, options, "duration")? {
+        Some(value) => Some(vm.to_number(&value)?),
+        None => None,
+    };
+    let detail = option(vm, options, "detail")?.unwrap_or(JsValue::Null);
+    let start = match start {
+        Some(value) => Some(timestamp(vm, values, value)?),
+        None => None,
+    };
+    let end = match end {
+        Some(value) => Some(timestamp(vm, values, value)?),
+        None => None,
+    };
+    let (from, to) = match (start, end, duration) {
+        (Some(from), Some(to), _) => (from, to),
+        (Some(from), None, Some(length)) => (from, from + length),
+        (None, Some(to), Some(length)) => (to - length, to),
+        (Some(from), None, None) => (from, now),
+        (None, Some(to), None) => (0.0, to),
+        (None, None, _) => (0.0, now),
+    };
+    Ok(((from, to - from), detail))
+}
+
+/** A measure endpoint: a number is a timestamp, anything else names a mark. */
+fn timestamp(vm: &mut Vm, values: &[JsValue], value: JsValue) -> Res<f64> {
+    match value.number_value() {
+        Some(time) => Ok(time),
+        None => position(vm, values, value, 0.0),
+    }
 }
 
 /** Resolve an existing mark by its latest matching name or by the mark entry itself. */
@@ -156,9 +224,16 @@ pub(super) fn measure(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = vm.to_string(&call.arg(0))?;
     let (_, mut values) = entries(vm, &call.this)?;
     let now = now(vm);
+    if is_options(vm, &call.arg(1)) {
+        let (span, detail) = measure_options(vm, &values, &call.arg(1), now)?;
+        let value = entry(vm, name, "measure", span, detail)?;
+        values.push(value.clone());
+        save(vm, id, values)?;
+        return Ok(value);
+    }
     let start = position(vm, &values, call.arg(1), 0.0)?;
     let end = position(vm, &values, call.arg(2), now)?;
-    let value = entry(vm, name, "measure", start, end - start)?;
+    let value = entry(vm, name, "measure", (start, end - start), JsValue::Null)?;
     values.push(value.clone());
     save(vm, id, values)?;
     Ok(value)
