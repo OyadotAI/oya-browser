@@ -4,6 +4,8 @@ use objc2_app_kit::{NSButtonType, NSPopUpButton, NSScrollView, NSSecureTextField
 
 /// Native checkbox and radio frame; the glyph is 13 points and AppKit needs a little room around it.
 const CHOICE_FRAME: f64 = 16.0;
+/** Room an unbezeled text field cell keeps around its line, two points above and below. */
+const FIELD_CELL_MARGIN: f64 = 4.0;
 
 /** Native controls retain identity across revisions and never parse HTML themselves. */
 pub(super) enum Widget {
@@ -102,6 +104,9 @@ impl Canvas {
                     let styled = styled(item, node);
                     field.setBezeled(!styled);
                     field.setDrawsBackground(!styled);
+                    if styled {
+                        field.setFrame(line_frame(item));
+                    }
                     if let Some(color) = text_color(item, styled) {
                         field.setTextColor(Some(&color));
                     }
@@ -115,7 +120,7 @@ impl Canvas {
                         .borrow_mut()
                         .insert(node.local_id, node.value.clone());
                 }
-                field.setPlaceholderString(Some(&NSString::from_str(&node.placeholder)));
+                placeholder(field, item, node);
                 field.setEditable(human && !node.readonly());
                 field.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
@@ -368,4 +373,92 @@ fn place_text(field: &NSTextView, item: &DisplayItem, styled: bool) {
         _ => (0.0, 0.0),
     };
     field.setTextContainerInset(objc2_foundation::NSSize::new(left, top));
+}
+
+/** A page-styled single-line field: one line of text, vertically centered in the element's
+content box, as Chrome centers an input's text. AppKit draws a field's text at the top of its
+frame, so a tall styled input (padding, a fixed height) showed its text near the top edge. The
+canvas paints the element's box; a click in its padding focuses the field (`focus_input`). */
+fn line_frame(item: &DisplayItem) -> NSRect {
+    let height = item.control_height.unwrap_or(item.height);
+    let [x, y, width, inner] = item
+        .content_box
+        .unwrap_or([item.x, item.y, item.width, height]);
+    let (_, natural) = platform::metrics(face(item));
+    let line = (natural + FIELD_CELL_MARGIN).min(inner).max(0.0);
+    rect(x, y + (inner - line) / 2.0, width, line)
+}
+
+impl Canvas {
+    /** A press on a styled text input outside its centered field (in the padding) focuses the
+    field, as a click anywhere in an input's box does in Chrome. */
+    pub(super) fn focus_input(&self, id: usize) {
+        let widgets = self.ivars().widgets.borrow();
+        if let (Some(Widget::Input(field)), Some(window)) = (widgets.get(&id), self.window()) {
+            window.makeFirstResponder(Some(&**field));
+        }
+    }
+}
+
+/** The face an item's text is set in, for measuring a field's line and drawing its placeholder. */
+fn face(item: &DisplayItem) -> platform::Face {
+    platform::Face {
+        size: item.font_size,
+        weight: item.font_weight,
+        family: item.font_family,
+        spacing: item.letter_spacing,
+        italic: item.italic,
+        autospace: item.autospace,
+        upright: crate::platform::upright::TURNED,
+    }
+}
+
+/** A field's placeholder, in the page's `::placeholder` color and the field's own face when a rule
+set one, else AppKit's default gray. */
+fn placeholder(field: &NSTextField, item: &DisplayItem, node: &crate::document::Node) {
+    let color = node
+        .style
+        .placeholder_color
+        .as_deref()
+        .and_then(super::literal_color);
+    match color {
+        Some(color) => {
+            let text = platform::spaced(&node.placeholder, face(item), &color, item.rtl, 0.0);
+            field.setPlaceholderAttributedString(Some(&text));
+        }
+        None => field.setPlaceholderString(Some(&NSString::from_str(&node.placeholder))),
+    }
+}
+
+impl Canvas {
+    /** Return in a search-style textarea (one row, or a combobox such as Google's search box) is a
+    key press the page handles: Google submits from its keydown handler. Any other textarea
+    keeps inserting the newline at the caret itself, since the engine's fallback only appends. */
+    pub(super) fn multiline_enter(&self, view: &NSTextView) -> bool {
+        let id = self.ivars().widgets.borrow().iter().find_map(|(id, widget)| match widget {
+            Widget::Textarea(_, field) => std::ptr::eq(&**field, view).then_some(*id),
+            _ => None,
+        });
+        let (Some(id), Some(page)) = (id, self.page_id()) else {
+            return false;
+        };
+        if !self.search_style(id) {
+            return false;
+        }
+        self.push(Action::Enter(id, page));
+        true
+    }
+
+    /** A textarea that behaves as a one-line field: `rows=1` or `role=combobox`. */
+    fn search_style(&self, id: usize) -> bool {
+        let snapshot = self.ivars().snapshot.borrow();
+        let node = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.document.as_ref())
+            .and_then(|document| document.nodes.iter().find(|node| node.local_id == id));
+        node.is_some_and(|node| {
+            node.attributes.get("rows").map(String::as_str) == Some("1")
+                || node.attributes.get("role").map(String::as_str) == Some("combobox")
+        })
+    }
 }

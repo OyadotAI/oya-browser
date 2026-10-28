@@ -38,7 +38,8 @@ pub(super) struct Parsed {
     pub font_faces: Vec<FontFace>,
     /// Some rule styles a `::before` or `::after` box.
     pub pseudo_rules: bool,
-    /// Some rule sits inside an `@container` query.
+    /// Some rule sits inside an `@container` query or declares a `cq*` length, so the cascade
+    /// needs container sizes from a first layout.
     pub container_rules: bool,
     /// A hiding rule could not be kept: no node may be agent-actionable.
     pub untrusted: bool,
@@ -56,7 +57,10 @@ impl Parsed {
         Self {
             buckets: Buckets::new(&state.rules),
             pseudo_rules: state.rules.iter().any(|rule| rule.pseudo.is_some()),
-            container_rules: state.rules.iter().any(|rule| !rule.containers.is_empty()),
+            container_rules: state.rules.iter().any(|rule| {
+                let unit = |d: &super::declaration::Declaration| super::values::container_relative(&d.value);
+                !rule.containers.is_empty() || rule.declarations.iter().any(unit)
+            }),
             untrusted: state.budget.untrusted,
             rules: state.rules.clone(),
             keyframes: state.keyframes.clone(),

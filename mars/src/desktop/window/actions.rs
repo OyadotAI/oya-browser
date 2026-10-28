@@ -159,7 +159,11 @@ impl Window {
                 ));
                 ("page.select", params, Some(observed))
             }
-            Action::Submit(id, observed) => ("page.submit", self.target(id, None), Some(observed)),
+            Action::Enter(id, observed) => {
+                let mut params = self.target(id, None);
+                params["key"] = json!("Enter");
+                ("page.press", params, Some(observed))
+            }
             Action::Wheel(x, y, [dx, dy], observed) => {
                 let inspection = &snapshot.inspection;
                 let params = json!({"page_id":inspection["page_id"],"expected_revision":inspection["revision"],

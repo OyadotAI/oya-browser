@@ -393,7 +393,7 @@ impl Vm<'_> {
         {
             return Ok(elements.len());
         }
-        let length = self.get(value, &Key::from("length"))?;
+        let length = self.get(value, &Key::length())?;
         let length = self.to_integer(&length)?;
         Ok(length.clamp(0.0, crate::constants::VM_MAX_SAFE_LENGTH) as usize)
     }

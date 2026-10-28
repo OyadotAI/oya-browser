@@ -957,6 +957,10 @@ fn singletons(b: &mut Builder) {
         ],
         window::navigator_method,
     );
+    let ua_data = b.object(Some(object_prototype));
+    getters(b, ua_data, &["brands", "mobile", "platform"], window::ua_data_get);
+    methods(b, ua_data, &["getHighEntropyValues", "toJSON"], window::ua_data_method);
+    b.alias(navigator, "userAgentData", ua_data);
     b.global("navigator", navigator);
     let screen = b.object(Some(object_prototype));
     getters(

@@ -334,6 +334,7 @@ pub(super) fn rasterize_vertical(
         x: 0.0,
         y: 0.0,
         width: line.width,
+        color: line.color.clone(),
     };
     let scratch = [
         -TURN_CANVAS / 2.0,

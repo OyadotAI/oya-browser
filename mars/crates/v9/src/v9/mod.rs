@@ -837,6 +837,13 @@ pub enum PageEvent {
         /// The two entries differ only in their fragment.
         hash_changed: bool,
     },
+    /// A person or agent submits this form (Enter in a field, a submit button): `submit` fires
+    /// at it first, so validation and single-page handlers run, and `effects.submit` names the
+    /// form when nobody cancelled it.
+    Submit {
+        /// The form's projected id.
+        form: usize,
+    },
 }
 
 /**
@@ -1718,6 +1725,7 @@ fn page_event_with(
                 state,
                 hash_changed,
             } => pop_state(&mut vm, state.as_deref(), hash_changed)?,
+            PageEvent::Submit { form } => submit_event(&mut vm, form)?,
         }
         finish(vm)
     }
@@ -1775,6 +1783,23 @@ fn pop_state(vm: &mut Vm, state: Option<&str>, hash_changed: bool) -> EngineResu
     report_thrown(vm, fired)?;
     if hash_changed {
         fire_lifecycle(vm, platform::Target::Window, "hashchange", false)?;
+    }
+    Ok(())
+}
+
+/** Fires `submit` at a person's form submission and records whether it may go ahead. A handler
+that throws does not cancel it, as in a browser. */
+fn submit_event(vm: &mut Vm, form: usize) -> EngineResult<()> {
+    if !vm.page.exists(form) {
+        return Err(EngineError::invalid("Invalid projected form."));
+    }
+    vm.remaining = vm.limits.operations;
+    let fired = platform::fire_submit(vm, form);
+    let proceed = !matches!(fired, Ok(false));
+    let drained = fired.and_then(|_| vm.drain_jobs());
+    report_thrown(vm, drained)?;
+    if proceed {
+        vm.page.effects.submit = Some(form);
     }
     Ok(())
 }

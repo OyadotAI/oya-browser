@@ -182,6 +182,9 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
             percent: signed_number(number)?,
         });
     }
+    if let Some(length) = container_unit(value, context)? {
+        return Ok(length);
+    }
     let (width, height) = (context.width / PERCENT, context.height / PERCENT);
     let root = root_font();
     // Blink's CSSPrimitiveValue length units. Longer suffixes come first so `rem` is not read
@@ -446,6 +449,49 @@ fn ideograph_advance() -> f64 {
     } else {
         1.0
     }
+}
+thread_local! {
+    /** The `cq*` basis of the element being resolved: its nearest size container's content
+     * width and its nearest `size` container's content height; None uses the viewport. */
+    static CONTAINER: std::cell::Cell<[Option<f64>; 2]> = const { std::cell::Cell::new([None, None]) };
+}
+/** Sets (or with `[None, None]` clears) the `cq*` basis for the lengths resolved next. */
+pub(super) fn set_container_extent(extent: [Option<f64>; 2]) {
+    CONTAINER.with(|basis| basis.set(extent));
+}
+/** Container query units, longest suffix first so `cqmin` is not read as `in`. */
+const CONTAINER_UNITS: [&str; 6] = ["cqmin", "cqmax", "cqw", "cqh", "cqi", "cqb"];
+/**
+ * A `cq*` length against the current basis (`cqi`/`cqb` as `cqw`/`cqh` in horizontal writing);
+ * None when `value` has another unit. Without a qualifying container CSS uses the small
+ * viewport, which on a desktop window is the viewport.
+ */
+fn container_unit(value: &str, context: RenderContext) -> EngineResult<Option<Dimension>> {
+    let Some(suffix) = CONTAINER_UNITS.iter().find(|unit| value.ends_with(*unit)) else {
+        return Ok(None);
+    };
+    let [width, height] = CONTAINER.with(std::cell::Cell::get);
+    let width = width.unwrap_or(context.width) / PERCENT;
+    let height = height.unwrap_or(context.height) / PERCENT;
+    let scale = match *suffix {
+        "cqmin" => width.min(height),
+        "cqmax" => width.max(height),
+        "cqw" | "cqi" => width,
+        _ => height,
+    };
+    let number = &value[..value.len() - suffix.len()];
+    Ok(Some(Dimension {
+        px: saturated(number)? * scale,
+        percent: 0.0,
+    }))
+}
+/** Whether a declared value uses a container query unit, so its cascade needs container sizes. */
+pub(super) fn container_relative(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.match_indices("cq").any(|(at, _)| {
+        let numeric = lower[..at].ends_with(|c: char| c.is_ascii_digit() || c == '.');
+        numeric && CONTAINER_UNITS.iter().any(|unit| lower[at..].starts_with(unit))
+    })
 }
 thread_local! {
     /** The root element's font size for `rem`, set by the cascade once `html` is resolved. */

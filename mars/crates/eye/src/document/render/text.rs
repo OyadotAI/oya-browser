@@ -65,6 +65,7 @@ pub(super) fn inline(
         // An empty run at the box's content start, so the line settles it and the box gets its
         // content area, padding and borders around it like any other inline box.
         let run = PaintLine {
+            color: None,
             text: String::new(),
             x: flow.left() + flow.cursor + before,
             y,
@@ -848,6 +849,7 @@ fn place(
             let frag = text_frag(context, node, item, lines.len());
             flow.push(frag);
             lines.push(PaintLine {
+                color: None,
                 text: text.to_string(),
                 x: flow.left() + flow.cursor,
                 y: flow.y,
@@ -958,6 +960,7 @@ fn words(
                 let frag = text_frag(context, node, item, lines.len());
                 flow.push(frag);
                 lines.push(PaintLine {
+                    color: None,
                     text: chunk.text,
                     x,
                     y: flow.y,

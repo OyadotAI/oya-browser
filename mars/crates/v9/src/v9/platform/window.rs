@@ -244,6 +244,110 @@ pub(in crate::v9) fn navigator_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     })
 }
 
+/** navigator.userAgentData getters: the low-entropy values, matching Relay's Sec-CH-UA,
+Sec-CH-UA-Mobile and Sec-CH-UA-Platform headers. Google's pages read these before searching. */
+pub(in crate::v9) fn ua_data_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    match native_name(&call) {
+        "brands" => brands(vm, false),
+        "mobile" => Ok(JsValue::Boolean(false)),
+        "platform" => Ok(JsValue::string(UA_PLATFORM)?),
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** navigator.userAgentData methods: `getHighEntropyValues` resolves with the hints asked for,
+the same values Relay sends as high-entropy client hints, and `toJSON` gives the low-entropy set. */
+pub(in crate::v9) fn ua_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let low = low_entropy(vm)?;
+    if native_name(&call) == "toJSON" {
+        return record(vm, &low);
+    }
+    let hints = call.arg(0);
+    if !matches!(hints, JsValue::Object(_)) {
+        return Err(vm.type_error("Failed to execute 'getHighEntropyValues' on 'NavigatorUAData': The provided value cannot be converted to a sequence."));
+    }
+    let mut fields = low;
+    for index in 0..vm.length_of(&hints)? {
+        let hint = vm.get(&hints, &crate::v9::vm::heap::Key::from(&index.to_string()))?;
+        let hint = vm.to_text(&hint)?;
+        if let Some(value) = high_entropy(vm, &hint)? {
+            fields.retain(|(name, _)| *name != hint);
+            fields.push((hint, value));
+        }
+    }
+    let result = record(vm, &fields)?;
+    Ok(JsValue::Object(vm.promise_resolve(result)?))
+}
+
+/** brands, mobile and platform, which every userAgentData answer includes. */
+fn low_entropy(vm: &mut Vm) -> Res<Vec<(String, JsValue)>> {
+    Ok(vec![
+        ("brands".into(), brands(vm, false)?),
+        ("mobile".into(), JsValue::Boolean(false)),
+        ("platform".into(), JsValue::string(UA_PLATFORM)?),
+    ])
+}
+
+/** One high-entropy hint's value, or None for a name Chrome does not answer. */
+fn high_entropy(vm: &mut Vm, hint: &str) -> Res<Option<JsValue>> {
+    use crate::constants::{CHROME_FULL_VERSION, MACOS_PLATFORM_VERSION};
+    let arch = if cfg!(target_arch = "aarch64") { "arm" } else { "x86" };
+    Ok(Some(match hint {
+        "architecture" => JsValue::string(arch)?,
+        "bitness" => JsValue::string("64")?,
+        "formFactors" => {
+            let desktop = JsValue::string("Desktop")?;
+            JsValue::Object(vm.new_array(vec![desktop])?)
+        }
+        "fullVersionList" => brands(vm, true)?,
+        "model" => JsValue::string("")?,
+        "platformVersion" => JsValue::string(MACOS_PLATFORM_VERSION)?,
+        "uaFullVersion" => JsValue::string(CHROME_FULL_VERSION)?,
+        "wow64" => JsValue::Boolean(false),
+        _ => return Ok(None),
+    }))
+}
+
+/** The brand list in Sec-CH-UA's order, with major versions, or full ones for fullVersionList. */
+fn brands(vm: &mut Vm, full: bool) -> Res<JsValue> {
+    let major = vm
+        .page
+        .environment
+        .user_agent
+        .split("Chrome/")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+        .unwrap_or_default()
+        .to_owned();
+    let chrome = if full { crate::constants::CHROME_FULL_VERSION.to_owned() } else { major };
+    let grease = if full { UA_GREASE_FULL } else { UA_GREASE };
+    let mut list = Vec::new();
+    for (brand, version) in [("Chromium", chrome.as_str()), ("Not?A_Brand", grease), ("Google Chrome", chrome.as_str())] {
+        let fields = [
+            ("brand".to_owned(), JsValue::string(brand)?),
+            ("version".to_owned(), JsValue::string(version)?),
+        ];
+        list.push(record(vm, &fields)?);
+    }
+    Ok(JsValue::Object(vm.new_array(list)?))
+}
+
+/** A plain object with these data properties, in order. */
+fn record(vm: &mut Vm, fields: &[(String, JsValue)]) -> Res<JsValue> {
+    let object = JsValue::Object(vm.new_object()?);
+    for (name, value) in fields {
+        vm.set(&object, crate::v9::vm::heap::Key::from(name), value.clone(), true)?;
+    }
+    Ok(object)
+}
+
+/** userAgentData.platform, as Sec-CH-UA-Platform says it. */
+const UA_PLATFORM: &str = "macOS";
+/** The GREASE brand's version in Sec-CH-UA for Chrome 152. */
+const UA_GREASE: &str = "24";
+/** The GREASE brand's full version in Sec-CH-UA-Full-Version-List. */
+const UA_GREASE_FULL: &str = "24.0.0.0";
+
 /** What navigator.hardwareConcurrency reports. */
 const NAVIGATOR_CORES: f64 = 8.0;
 /** What navigator.deviceMemory reports. */
@@ -922,7 +1026,7 @@ pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let resize = vm
         .get(
             &JsValue::Object(observer),
-            &crate::v9::vm::heap::Key::from("constructor"),
+            &crate::v9::vm::heap::Key::constructor(),
         )
         .and_then(|ctor| vm.get(&ctor, &crate::v9::vm::heap::Key::from("name")))?;
     if vm.to_text(&resize)? == "ResizeObserver" {

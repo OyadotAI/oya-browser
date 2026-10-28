@@ -209,9 +209,20 @@ impl Runtime {
         if let Some(y) = self.scroll_key(&key) {
             return self.scroll_to(&input.page_id, input.expected_revision, y);
         }
+        let mut revision = input.expected_revision;
+        if key == "Enter"
+            && input.modifiers.is_empty()
+            && let Some(node_id) = input.node_id.as_deref()
+        {
+            if let Some(handled) = self.press_enter(&input.page_id, revision, node_id)? {
+                return Ok(handled);
+            }
+            // The handlers' commit moved the revision; the native action applies to that page.
+            revision = self.current()?.revision;
+        }
         let (op, mut params) = self.key_operation(&input, &key)?;
         params["page_id"] = json!(input.page_id);
-        params["expected_revision"] = json!(input.expected_revision);
+        params["expected_revision"] = json!(revision);
         params["node_id"] = json!(input.node_id);
         self.dispatch_active(Request::new("press", op, params))
     }

@@ -573,7 +573,7 @@ fn allocate(
     locale: String,
     options: BTreeMap<String, String>,
 ) -> Res<JsValue> {
-    let fallback = match vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))? {
+    let fallback = match vm.get(&JsValue::Object(call.callee), &Key::prototype())? {
         JsValue::Object(id) => id,
         _ => realm().ids.object_prototype,
     };

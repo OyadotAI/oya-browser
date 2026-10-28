@@ -150,7 +150,7 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Nullish species uses the calling method's intrinsic constructor; arbitrary constructors are observed. */
 fn species_constructor(vm: &mut Vm, value: &JsValue) -> Res<JsValue> {
     let fallback = JsValue::Object(realm().ids.shared_array_buffer);
-    let ctor = vm.get(value, &Key::from("constructor"))?;
+    let ctor = vm.get(value, &Key::constructor())?;
     if ctor == JsValue::Undefined {
         return Ok(fallback);
     }

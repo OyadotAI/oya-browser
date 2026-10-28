@@ -153,8 +153,8 @@ fn a_query_without_a_container_applies_nothing_but_masks_its_hiding_rules() {
 fn undecidable_container_queries_still_mask_their_hiding_rules() {
     let document = styled(
         "<div id=c><a id=a href=/x>a</a></div>",
-        "#c{container-type:size}@container (min-height:1px){a{display:none}}\
-         @container style(--x: 1){#c a{visibility:hidden}}",
+        "#c{container-type:size}@container scroll-state(stuck: top){a{display:none}}\
+         @container (min-resolution: 1dppx){#c a{visibility:hidden}}",
     );
     let a = &by_id(&document, "a").style;
     assert!(!a.hidden, "the unknown rule does not apply");

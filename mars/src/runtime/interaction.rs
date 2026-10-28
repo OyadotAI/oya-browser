@@ -338,6 +338,11 @@ impl Runtime {
         } else {
             crate::document::form_owner(&page.document, node).ok_or_else(invalid_target)?
         };
+        if let Some(result) = self.scripted_submit(page, form)? {
+            return Ok(result);
+        }
+        // The page as the submit handlers left it: they may have filled or fixed fields.
+        let page = &self.current()?.clone();
         let submitter =
             if node.input_type() == "submit" && ["input", "button"].contains(&node.tag.as_str()) {
                 Some(id)
@@ -371,6 +376,39 @@ impl Runtime {
             }
         };
         self.navigate_submission(proposal)
+    }
+    /** Runs the page's `submit` handlers before a person's or agent's submission and commits
+    what they changed. Some(result) when the page cancelled it (a single-page app that sends the
+    form with fetch, or validation that refused it); None when the native submission goes on.
+    A page whose scripts fail keeps the native submission, as a browser does. */
+    fn scripted_submit(&mut self, page: &Page, form: usize) -> EngineResult<Option<Value>> {
+        if !page.scripting.loaded {
+            return Ok(None);
+        }
+        let mut page = page.clone();
+        let event = json!({"kind":"event","event":{"submit":{"form":form}}});
+        let step = match self.script_step(&mut page, event) {
+            Ok(step) => step,
+            Err(error) if stops_operation(&error) => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
+        let changed = self.settle_after_load(&mut page, deadline)? || step.changed;
+        let allowed = page.scripting.submit_allowed.take() == Some(form);
+        page.scripting.wake();
+        let result = if changed {
+            self.finish_mutation(page)?
+        } else {
+            self.commit_quietly(page)?;
+            self.inspection()
+        };
+        if allowed {
+            return Ok(None);
+        }
+        Ok(Some(match self.follow_script_navigation(0) {
+            Some(Ok(followed)) => followed,
+            _ => result,
+        }))
     }
     /** Commit a change a person or agent made, and keep the page's timers awake for another
     window, since they are interacting with it. */

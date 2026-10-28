@@ -57,6 +57,52 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /** Enter at a field runs the page's keydown, keypress and keyup first, as a person's key
+    does: Google submits its search from its own keydown handler and cancels the newline.
+    None when nobody cancelled it, so the caller performs the native action; Some(result)
+    when the page handled it. A page without scripts, or whose scripts fail, gets the native
+    action, as in a browser. */
+    pub(in crate::runtime::agent) fn press_enter(
+        &mut self,
+        page_id: &str,
+        revision: u64,
+        node_id: &str,
+    ) -> EngineResult<Option<Value>> {
+        let mut page = self.current()?.clone();
+        if page.id() != page_id || page.revision != revision || !page.scripting.loaded {
+            return Ok(None);
+        }
+        let Some(target) = node_id
+            .strip_prefix(&format!("{}:node-", page.id()))
+            .and_then(|value| value.parse::<usize>().ok())
+        else {
+            return Err(invalid_target());
+        };
+        let event = json!({"kind":"keyboard","key":"enter","target":target});
+        let step = match self.script_step(&mut page, event) {
+            Ok(step) => step,
+            Err(error) if error.service.is_some() => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        let changed = self
+            .settle_after_load(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
+            || step.changed;
+        let native = std::mem::take(&mut page.scripting.key_default);
+        page.scripting.wake();
+        let result = if changed {
+            self.finish_mutation(page)?
+        } else {
+            self.commit_quietly(page)?;
+            self.inspection()
+        };
+        if let Some(Ok(followed)) = self.follow_script_navigation(0) {
+            return Ok(Some(followed));
+        }
+        Ok((!native).then_some(result))
+    }
+}
+
 /** Native key requests never interpret an arbitrary node string as current-page authority. */
 fn invalid_target() -> EngineError {
     EngineError::new(

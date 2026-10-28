@@ -60,7 +60,9 @@ pub(super) enum Action {
     /** Local text bounds reject input before allocating a queued engine request. */
     Rejected,
     Select(usize, usize, String),
-    Submit(usize, String),
+    /** Return in a field: the page's key handlers run first, then the native action (submit,
+    newline) unless they cancelled it, so a search box that submits from keydown works. */
+    Enter(usize, String),
     /** A wheel over a scroll container inside the page: viewport point, accumulated delta in
     points (positive scrolls content up and left), and the page it was seen on. */
     Wheel(f64, f64, [f64; 2], String),
@@ -111,7 +113,9 @@ define_class!(
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self,event:&objc2_app_kit::NSEvent) {
             let point=self.convertPoint_fromView(event.locationInWindow(),None);
-            self.ivars().pressed.set(self.node_at(point).map(|node|(node,point)));
+            let node=self.node_at(point);
+            self.ivars().pressed.set(node.map(|node|(node,point)));
+            if let Some(node)=node && self.ivars().human.get() {self.focus_input(node);}
             unsafe {let _:()=msg_send![super(self),mouseDown:event];}
         }
         /** A release on the node that was pressed, without dragging, is a click on that node. */
@@ -135,7 +139,7 @@ define_class!(
         fn activate(&self,sender:&objc2::runtime::AnyObject) {let tag:isize=unsafe {msg_send![sender,tag]};if tag>=NODE_TAG {if let Some(page)=self.page_id() {self.push(Action::Click((tag-NODE_TAG) as usize,page));}} else {self.push(Action::Activate(tag));}}
         /** Return submits only the focused field's own form. */
         #[unsafe(method(submit:))]
-        fn submit_field(&self,sender:&NSTextField) {if let Some(page)=self.page_id(){self.push(Action::Submit((sender.tag()-NODE_TAG) as usize,page));}}
+        fn submit_field(&self,sender:&NSTextField) {if let Some(page)=self.page_id(){self.push(Action::Enter((sender.tag()-NODE_TAG) as usize,page));}}
         /** Popups report an explicit option identity. */
         #[unsafe(method(selectOption:))]
         fn select_option(&self,sender:&NSPopUpButton) {self.select_action(sender);}
@@ -158,7 +162,7 @@ define_class!(
         /** Plain textarea Return inserts a newline; Tab and Shift-Tab traverse native controls. */
         #[unsafe(method(textView:doCommandBySelector:))]
         unsafe fn multiline_command(&self,view:&objc2_app_kit::NSTextView,command:objc2::runtime::Sel)->bool {
-            if command==sel!(insertTab:) || command==sel!(insertBacktab:) {if let Some(window)=self.window(){if command==sel!(insertTab:) {window.selectNextKeyView(Some(view));}else{window.selectPreviousKeyView(Some(view));}}true}else{false}
+            if command==sel!(insertTab:) || command==sel!(insertBacktab:) {if let Some(window)=self.window(){if command==sel!(insertTab:) {window.selectNextKeyView(Some(view));}else{window.selectPreviousKeyView(Some(view));}}true}else if command==sel!(insertNewline:) {self.multiline_enter(view)}else{false}
         }
     }
 );
@@ -704,6 +708,10 @@ fn paint_lines(
         {
             continue;
         }
+        // A run with its own color (a `::marker` bullet) paints in it. ponytail: unfaded by the
+        // item's opacity, as only list markers carry one.
+        let own = line.color.as_deref().and_then(literal_color);
+        let color: &NSColor = own.as_deref().unwrap_or(color);
         // A vertical run draws in a context turned a quarter clockwise about its top-left, so it
         // is laid out here as a horizontal run at the origin (raster glyphs.rs turns the same way).
         let turned = item.writing != 0;
@@ -716,6 +724,7 @@ fn paint_lines(
                 x: 0.0,
                 y: 0.0,
                 width: line.width,
+                color: line.color.clone(),
             }
         } else {
             line.clone()

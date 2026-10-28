@@ -110,6 +110,10 @@ pub(super) struct Scripting {
     /// pushState, replaceState and hash changes not yet in the tab's history; the commit that
     /// publishes this page adds them (`Runtime::adopt_history_records`).
     pub history_records: Vec<crate::v9::HistoryRecord>,
+    /// The form the last `submit` event let through (see `Runtime::scripted_submit`).
+    pub submit_allowed: Option<usize>,
+    /// The last native Enter went uncancelled, so its default action follows (`press_enter`).
+    pub key_default: bool,
     /// A document scroll offset the page's scripts asked for and the runtime has not adopted.
     pub scroll_y: Option<f64>,
     /// The horizontal document scroll offset the page's scripts asked for, not yet adopted.
@@ -196,6 +200,8 @@ impl Default for Scripting {
             pending_images: None,
             scroll_pending: false,
             history_records: Vec::new(),
+            submit_allowed: None,
+            key_default: false,
             scroll_y: None,
             scroll_x: None,
         }
@@ -410,6 +416,8 @@ impl Runtime {
             page.document.title = title;
         }
         apply_history(page, &effects.history);
+        page.scripting.submit_allowed = effects.submit;
+        page.scripting.key_default = effects.key_default;
         super::supervisor::perf::record("script.step", started, || format!("{kind}\t{changed}"));
         page.scripting.modules.pending.extend(module_requests);
         page.scripting

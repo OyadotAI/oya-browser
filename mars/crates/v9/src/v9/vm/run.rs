@@ -1130,24 +1130,14 @@ impl Vm<'_> {
                 let message = self.constant(message).lossy();
                 return Err(self.syntax_error(&message));
             }
+            Op::CheckGlobalLexical(name) => {
+                let name = self.constant(name);
+                self.check_global_lexical(&name)?;
+            }
             Op::DeclareLexical(name, constant) => {
                 let name = self.constant(name);
+                self.check_global_lexical(&name)?;
                 let text = name.lossy();
-                let shadowed = self
-                    .heap
-                    .get(self.global_object())
-                    .and_then(|object| object.props.get(&Key::Str(name.clone())))
-                    .is_some_and(|prop| prop.attrs & CONFIGURABLE == 0);
-                // Non-configurable globals (undefined, NaN, Infinity) and the unforgeable
-                // window, document and location cannot be shadowed by a global lexical either.
-                let restricted = matches!(
-                    text.as_str(),
-                    "undefined" | "NaN" | "Infinity" | "window" | "document" | "location"
-                );
-                if self.globals.contains_key(&text) || shadowed || restricted {
-                    return Err(self
-                        .syntax_error(&format!("Identifier '{text}' has already been declared")));
-                }
                 self.globals.insert(
                     text,
                     Binding {
@@ -2885,7 +2875,7 @@ impl Vm<'_> {
                 if !self.is_constructor(&parent) {
                     return Err(self.type_error("Class extends value is not a constructor or null"));
                 }
-                let proto = self.get(&parent, &Key::from("prototype"))?;
+                let proto = self.get(&parent, &Key::prototype())?;
                 let proto = match proto {
                     JsValue::Object(id) => Some(id),
                     JsValue::Null => None,
@@ -2917,7 +2907,7 @@ impl Vm<'_> {
         }
         self.heap.put(
             constructor,
-            Key::from("prototype"),
+            Key::prototype(),
             Prop {
                 slot: Slot::Data(JsValue::Object(prototype)),
                 attrs: 0,
@@ -2925,7 +2915,7 @@ impl Vm<'_> {
         );
         self.heap.put(
             prototype,
-            Key::from("constructor"),
+            Key::constructor(),
             Prop {
                 slot: Slot::Data(JsValue::Object(constructor)),
                 attrs: WRITABLE | CONFIGURABLE,
@@ -3001,6 +2991,26 @@ impl Vm<'_> {
     }
     /** A var or function declaration of a name an earlier script declared with let, const or
     class is a SyntaxError, as for two declarations in one script. */
+    /** A top-level lexical name collides with an existing global binding or a non-configurable
+    global property (spec HasLexicalDeclaration and HasRestrictedGlobalProperty): a SyntaxError. */
+    fn check_global_lexical(&mut self, name: &crate::v9::value::JsString) -> Res<()> {
+        let text = name.lossy();
+        let shadowed = self
+            .heap
+            .get(self.global_object())
+            .and_then(|object| object.props.get(&Key::Str(name.clone())))
+            .is_some_and(|prop| prop.attrs & CONFIGURABLE == 0);
+        // Non-configurable globals (undefined, NaN, Infinity) and the unforgeable
+        // window, document and location cannot be shadowed by a global lexical either.
+        let restricted = matches!(
+            text.as_str(),
+            "undefined" | "NaN" | "Infinity" | "window" | "document" | "location"
+        );
+        if self.globals.contains_key(&text) || shadowed || restricted {
+            return Err(self.syntax_error(&format!("Identifier '{text}' has already been declared")));
+        }
+        Ok(())
+    }
     fn no_global_lexical(&mut self, name: &crate::v9::value::JsString) -> Res<()> {
         let text = name.lossy();
         if self.globals.contains_key(&text) {

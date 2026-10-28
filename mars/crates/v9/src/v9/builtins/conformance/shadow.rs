@@ -34,7 +34,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Constructor ShadowRealm requires 'new'"));
     };
     let fallback = vm
-        .get(&JsValue::Object(call.callee), &Key::from("prototype"))?
+        .get(&JsValue::Object(call.callee), &Key::prototype())?
         .object()
         .expect("intrinsic prototype");
     let proto = vm.prototype_for(&new_target, fallback)?;
@@ -145,7 +145,7 @@ fn wrap(vm: &mut Vm, value: JsValue) -> Res<JsValue> {
 
 /** CopyNameAndLength observes metadata once in specification order, including callable proxy traps. */
 fn capture_metadata(vm: &mut Vm, wrapper: ObjectId, target: ObjectId) -> Res<()> {
-    let key = Key::from("length");
+    let key = Key::length();
     let length = if vm.own(target, &key)?.is_some() {
         match vm.get(&JsValue::Object(target), &key)? {
             JsValue::Number(n) if !n.is_nan() => n.trunc().max(0.0),

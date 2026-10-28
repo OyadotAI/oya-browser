@@ -89,9 +89,16 @@ const MJSUNIT_UPSTREAM_FAIL: &[&str] = &["es6/unicode-regexp-ignore-case-noi18n"
 const UNCLAIMED_DIRS: &[&str] = &["staging"];
 /** mjsunit folders that test d8, wasm or the sandbox rather than the language. */
 const MJSUNIT_SKIP_DIRS: &[&str] = &["wasm", "shared-memory", "sandbox", "d8", "tools"];
-/** Host definitions test262 expects (INTERPRETING.md): print for async tests and a small $262. */
+/** Host definitions test262 expects (INTERPRETING.md): print for async tests and a small $262.
+`createRealm` makes a fresh realm through the conformance build's d8 `Realm` (with cross-realm
+access, so a test can reach the other realm's constructors) and returns that realm's $262. */
 const PRELUDE: &str = "var print = function (m) { console.log(String(m)); };\n\
+function __v9CreateRealm() { var i = Realm.createAllowCrossRealmAccess(); \
+return { global: Realm.global(i), agent: {}, createRealm: __v9CreateRealm, \
+detachArrayBuffer: function (b) { if (!b.detached) b.transfer(); }, \
+evalScript: function (s) { return Realm.eval(i, s); } }; }\n\
 var $262 = { global: globalThis, agent: {}, detachArrayBuffer: function (b) { if (!b.detached) b.transfer(); }, \
+createRealm: typeof Realm === 'object' ? __v9CreateRealm : undefined, \
 evalScript: typeof __v9EvalScript === 'function' ? __v9EvalScript : function (s) { return (0, eval)(s); } };\n";
 
 /** One test: its file, the source modes to run and what it must do. */

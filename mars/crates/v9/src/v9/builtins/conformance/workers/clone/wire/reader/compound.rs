@@ -96,7 +96,7 @@ impl Reader<'_> {
             }
         }
         let mut fields = self.fields(if tag == b'A' { b'$' } else { b'@' }, depth)?;
-        if fields.iter().any(|(key, _)| *key == Key::from("length")) {
+        if fields.iter().any(|(key, _)| *key == Key::length()) {
             return Err(Failure::Invalid);
         }
         if self.var32()? as usize != length {

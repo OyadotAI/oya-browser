@@ -81,6 +81,7 @@ pub(super) fn fields(
         fields.push(("sec-ch-ua", SEC_CH_UA.into()));
         fields.push(("sec-ch-ua-mobile", "?0".into()));
         fields.push(("sec-ch-ua-platform", "\"macOS\"".into()));
+        fields.extend(super::hints::high_entropy(url));
     }
     if let Some(origin) = origin(request, initiator.as_ref()) {
         fields.push(("origin", origin));

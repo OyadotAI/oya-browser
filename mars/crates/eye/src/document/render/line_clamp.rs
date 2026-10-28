@@ -131,6 +131,7 @@ fn place_marker(
         .position(|item| item.local_id == block.local_id);
     let x = end + closing;
     let line = crate::document::PaintLine {
+        color: None,
         text: marker.to_string(),
         x,
         y,

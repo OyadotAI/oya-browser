@@ -303,10 +303,58 @@ fn integer(output: &mut Vec<u8>, flags: u8, prefix: u32, value: usize) {
     output.push(rest as u8);
 }
 
-/** A raw (non-Huffman) string literal. */
+/** A string literal, Huffman-coded when that is shorter, as Chrome writes every header string;
+raw strings made Mars's header blocks longer than any browser's (mars/docs/D1-fingerprint.md).
+ponytail: no incremental indexing, so repeated headers are not shared across requests. */
 fn string(output: &mut Vec<u8>, value: &str) {
-    integer(output, 0x00, 7, value.len());
-    output.extend_from_slice(value.as_bytes());
+    let coded = huffman_encode(value.as_bytes());
+    if coded.len() < value.len() {
+        integer(output, HUFFMAN_FLAG, 7, coded.len());
+        output.extend_from_slice(&coded);
+    } else {
+        integer(output, 0x00, 7, value.len());
+        output.extend_from_slice(value.as_bytes());
+    }
+}
+
+/** The high bit of a string's length byte marks Huffman coding (RFC 7541 section 5.2). */
+const HUFFMAN_FLAG: u8 = 0x80;
+
+/** Each byte's canonical Huffman code and bit length, from the same table the decoder uses. */
+fn codes() -> &'static [(u32, u8); 256] {
+    static CODES: OnceLock<[(u32, u8); 256]> = OnceLock::new();
+    CODES.get_or_init(|| {
+        let table = canonical();
+        let mut codes = [(0u32, 0u8); 256];
+        for (index, symbol) in table.symbols.iter().enumerate() {
+            let length = LENGTHS[*symbol as usize];
+            let rank = (index - table.offset[length as usize]) as u32;
+            if let Some(slot) = codes.get_mut(*symbol as usize) {
+                *slot = (table.first[length as usize] + rank, length);
+            }
+        }
+        codes
+    })
+}
+
+/** Section 5.2 Huffman coding, padded with the most significant bits of EOS (all ones). */
+fn huffman_encode(bytes: &[u8]) -> Vec<u8> {
+    let codes = codes();
+    let (mut output, mut buffer, mut bits) = (Vec::new(), 0u64, 0u32);
+    for byte in bytes {
+        let (code, length) = codes[*byte as usize];
+        buffer = (buffer << length) | u64::from(code);
+        bits += u32::from(length);
+        while bits >= 8 {
+            bits -= 8;
+            output.push((buffer >> bits) as u8);
+        }
+    }
+    if bits > 0 {
+        let pad = 8 - bits;
+        output.push(((buffer << pad) | ((1 << pad) - 1)) as u8);
+    }
+    output
 }
 
 #[cfg(test)]
@@ -437,6 +485,15 @@ mod tests {
         string(&mut block, &"v".repeat(1000));
         block.extend(std::iter::repeat_n(0xbe, 1000));
         assert_eq!(decoder.decode(&block, 64 * 1024), Err(Error::TooLarge));
+    }
+
+    #[test]
+    fn huffman_encoding_round_trips_and_matches_the_rfc() {
+        // RFC 7541 C.4.1: "www.example.com" Huffman-codes to these 12 bytes.
+        assert_eq!(huffman_encode(b"www.example.com"), hex("f1e3 c2e5 f23a 6ba0 ab90 f4ff"));
+        for text in ["", "a", "custom-key", "Mozilla/5.0 (Macintosh)", "\u{0}\u{ff}"] {
+            assert_eq!(huffman_decode(&huffman_encode(text.as_bytes())).unwrap(), text.as_bytes());
+        }
     }
 
     #[test]

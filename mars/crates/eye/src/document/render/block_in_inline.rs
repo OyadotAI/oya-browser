@@ -63,6 +63,7 @@ fn empty_run(
     index: usize,
 ) {
     let run = PaintLine {
+        color: None,
         text: String::new(),
         x: flow.left() + flow.cursor,
         y: flow.y,

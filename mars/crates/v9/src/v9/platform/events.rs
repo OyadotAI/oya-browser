@@ -325,7 +325,7 @@ pub(in crate::v9) fn create_legacy_event(vm: &mut Vm, interface: &str) -> Res<Js
     let id = event.object().expect("event object");
     let ctor = vm.get(&JsValue::Object(GLOBAL), &Key::from(name))?;
     if let JsValue::Object(_) = ctor
-        && let JsValue::Object(proto) = vm.get(&ctor, &Key::from("prototype"))?
+        && let JsValue::Object(proto) = vm.get(&ctor, &Key::prototype())?
     {
         vm.set_proto(id, Some(proto))?;
     }
@@ -762,9 +762,35 @@ pub(in crate::v9::platform) fn fire_keyboard(
             },
         );
     }
+    // The legacy numeric codes older handlers test (`e.keyCode == 13`); charCode only on keypress.
+    let code = legacy_key_code(key);
+    let char_code = if kind == "keypress" { code } else { 0.0 };
+    for (name, value) in [("keyCode", code), ("which", code), ("charCode", char_code)] {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(JsValue::Number(value)),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
     with_event(vm, id, |data| data.trusted = true);
     dispatch(vm, target, id)
 }
+
+/** The Windows virtual key code browsers report as `keyCode` for the keys Mars delivers. */
+fn legacy_key_code(key: &str) -> f64 {
+    match key {
+        "Enter" => ENTER_KEY_CODE,
+        "Escape" => ESCAPE_KEY_CODE,
+        _ => 0.0,
+    }
+}
+/** `keyCode` of Enter. */
+const ENTER_KEY_CODE: f64 = 13.0;
+/** `keyCode` of Escape. */
+const ESCAPE_KEY_CODE: f64 = 27.0;
 
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {

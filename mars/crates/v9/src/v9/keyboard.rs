@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 pub enum KeyboardKey {
     /** Dispatch keydown, run the top close watcher's default action, then dispatch keyup. */
     Escape,
+    /** Focus the target, dispatch keydown, keypress and keyup, and report through
+    `effects.key_default` whether the app should do Enter's native action (submit, newline).
+    Google submits its search from its own keydown handler and cancels the newline. */
+    Enter,
 }
 
 /** Dispatch a real native key to the current focused node; an optional target must match that focus. */

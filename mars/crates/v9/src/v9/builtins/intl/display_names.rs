@@ -153,7 +153,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(target) = call.new_target.clone() else {
         return Err(vm.type_error("Constructor Intl.DisplayNames requires 'new'"));
     };
-    let fallback_proto = match vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))? {
+    let fallback_proto = match vm.get(&JsValue::Object(call.callee), &Key::prototype())? {
         JsValue::Object(id) => id,
         _ => realm().ids.object_prototype,
     };
