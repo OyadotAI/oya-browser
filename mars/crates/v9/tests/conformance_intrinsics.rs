@@ -226,14 +226,27 @@ fn native_grammar_requires_shell_and_explicit_script_index() {
     assert!(!common::load_with(source, &environment).failed.is_empty());
 }
 
-/** A real unknown intrinsic fails without calling or fabricating an optimizer state. */
+/** A real unknown intrinsic fails rather than being guessed at. */
 #[test]
 fn unknown_intrinsics_fail_explicitly() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     environment.conformance_native_main_source = Some(0);
-    let failure = common::load_with("%OptimizeFunctionOnNextCall(()=>{});", &environment);
+    let failure = common::load_with("%HasSmiElements([]);", &environment);
     assert!(!failure.failed.is_empty());
+}
+
+/** Optimizer hints evaluate their arguments, answer undefined, and the status reports V8's own
+never-optimize bits (kIsFunction | kNeverOptimize) so mjsunit's assertUnoptimized holds. */
+#[test]
+fn optimizer_hints_are_inert_and_status_never_optimizes() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let calls=0;function f(){calls++;return f}const out=[%PrepareFunctionForOptimization(f()),%OptimizeFunctionOnNextCall(f(),'concurrent'),%DeoptimizeNow(),%GetOptimizationStatus(f),%GetOptimizationStatus(undefined,''),%IsMaglevEnabled(),%IsBeingInterpreted(),%DebugPrint(7),calls];const r=out.join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), ",,,3,2,false,true,7,2");
 }
 
 /** Inputs other than detachable ordinary buffers cannot grant detachment authority. */

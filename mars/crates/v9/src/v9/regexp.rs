@@ -1311,6 +1311,9 @@ impl<'a> Matcher<'a> {
     }
     /** Quantified matching; an iteration that consumes nothing ends the loop. */
     fn repeat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+        if r.captures.0 >= r.captures.1 && single_atom(r.inner) {
+            return self.repeat_flat(r, position, count, next);
+        }
         if count < r.min {
             return self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
                 if end == position && count + 1 >= r.min {
@@ -1337,6 +1340,54 @@ impl<'a> Matcher<'a> {
                 && self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
                     end != position && matcher.repeat(r, end, count + 1, next)
                 })
+        }
+    }
+    /** A quantified single atom runs as a flat scan: take as many atoms as the bounds allow, then
+    offer the continuation from each end, longest first when greedy and shortest first when lazy.
+    The general path recurses once per iteration and stops at REGEXP_DEPTH, so `/^[a-z]+$/` on
+    25k characters failed as a limit; a page's whole-document matches are far longer than that. */
+    fn repeat_flat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+        let mut ends = vec![position];
+        let mut taken = count;
+        while r.max.is_none_or(|max| taken < max) {
+            self.steps += 1;
+            if self.steps > self.budget || self.expired() {
+                self.exceeded = true;
+                return false;
+            }
+            let Some((point, end)) = self.atom(ends[ends.len() - 1]) else { break };
+            if !self.atom_matches(r.inner, point) {
+                break;
+            }
+            ends.push(end);
+            taken += 1;
+        }
+        let needed = r.min.saturating_sub(count) as usize;
+        if ends.len() <= needed {
+            return false;
+        }
+        let candidates: Box<dyn Iterator<Item = usize>> = if r.greedy {
+            Box::new((needed..ends.len()).rev())
+        } else {
+            Box::new(needed..ends.len())
+        };
+        for index in candidates {
+            if self.exceeded {
+                return false;
+            }
+            if next(self, ends[index]) {
+                return true;
+            }
+        }
+        false
+    }
+    /** Whether a single-atom node accepts `point`, the same test its own `node_body` arm makes. */
+    fn atom_matches(&self, node: &Node, point: u32) -> bool {
+        match node {
+            Node::Char(expected) => self.same(point, *expected),
+            Node::Any => self.modes.dot_all || !line_terminator(point),
+            Node::Class(ranges, negated) => self.in_set(ranges, point) != *negated,
+            _ => false,
         }
     }
     /** One iteration of a quantified atom: RepeatMatcher clears the atom's captures first, so a
@@ -1541,6 +1592,12 @@ pub(super) fn exec(
 }
 
 /** Line terminators for `.`, `^` and `$`. */
+/** The atoms that consume exactly one point and keep no state, so a loop over them needs no
+recursion: a character, a dot, or a class. */
+fn single_atom(node: &Node) -> bool {
+    matches!(node, Node::Char(_) | Node::Any | Node::Class(..))
+}
+
 fn line_terminator(point: u32) -> bool {
     matches!(point, 0x0a | 0x0d | 0x2028 | 0x2029)
 }

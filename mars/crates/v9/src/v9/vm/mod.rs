@@ -681,6 +681,13 @@ impl<'h> Vm<'h> {
                 .insert_at(GLOBAL, Object::new(Class::Plain, Some(proto)));
             vm.heap.next_object = vm.heap.next_object.max(GLOBAL + 1);
             #[cfg(feature = "conformance")]
+            let page_host = !vm.page.environment.conformance_d8;
+            #[cfg(not(feature = "conformance"))]
+            let page_host = true;
+            if page_host {
+                super::platform::expose_window_globals(&mut vm);
+            }
+            #[cfg(feature = "conformance")]
             if vm.page.environment.conformance_d8 {
                 vm.seed_realm_global(GLOBAL, 0);
             }

@@ -185,7 +185,18 @@ impl Vm<'_> {
             };
             match vm.call(timer.callback.clone(), JsValue::Undefined, args) {
                 Ok(_) => Ok(()),
-                Err(Thrown::Value(error)) => crate::v9::builtins::report_shell_exception(vm, error),
+                Err(Thrown::Value(error)) => {
+                    crate::v9::builtins::report_shell_exception(vm, error.clone())?;
+                    // d8 fails the run when a task throws, whether or not onerror swallowed the
+                    // printout (ProcessMessages' verbose TryCatch still sees it), so a test whose
+                    // only assertion sits in a timer cannot pass by throwing quietly.
+                    let text = vm.describe(&error);
+                    vm.page
+                        .effects
+                        .conformance_error
+                        .get_or_insert(format!("Uncaught {text}"));
+                    Ok(())
+                }
                 Err(fatal) => Err(fatal),
             }
         });

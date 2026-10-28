@@ -25,30 +25,30 @@ pub(in crate::v9) fn parse(tokens: Vec<Token>) -> EngineResult<Program> {
     Parser::new(tokens, false).program()
 }
 
-/** The explicitly enabled fixture grammar recognizes only implemented shell intrinsics. */
-#[cfg(feature = "conformance")]
-pub(in crate::v9) fn parse_native_fixture(tokens: Vec<Token>) -> EngineResult<Program> {
-    let mut parser = Parser::new(tokens, false);
-    parser.native_fixture = true;
-    parser.program()
-}
-
 /** Direct eval inherits its caller's strict grammar, including nested function bodies. */
 pub(in crate::v9) fn parse_strict(tokens: Vec<Token>) -> EngineResult<Program> {
     Parser::new(tokens, true).program()
 }
 
-/** Direct eval inherits only the caller's private declarations; source text cannot inject this context. */
+/** Direct eval inherits only the caller's private declarations; source text cannot inject this
+context. `native` admits the shell intrinsic grammar, which dynamic code created by a natively
+admitted test (mjsunit builds `new Function("return %GetOptimizationStatus(fun)")`) must share. */
 pub(in crate::v9) fn parse_eval(
     tokens: Vec<Token>,
     strict: bool,
     private_names: &[Name],
     grammar: u8,
+    native: bool,
 ) -> EngineResult<Program> {
     let mut parser = Parser::new(tokens, strict);
+    #[cfg(feature = "conformance")]
+    {
+        parser.native_fixture = native;
+    }
+    let _ = native;
     parser.context.method = grammar & EVAL_SUPER_PROPERTY != 0;
     parser.context.derived = grammar & EVAL_SUPER_CALL != 0;
-    parser.context.eval_new_target = grammar & EVAL_NEW_TARGET != 0;
+    parser.context.new_target = grammar & EVAL_NEW_TARGET != 0;
     parser.context.no_arguments = grammar & EVAL_NO_ARGUMENTS != 0;
     if !private_names.is_empty() {
         parser.privates.push(PrivateScope {
@@ -79,8 +79,9 @@ struct Context {
     using_allowed: bool,
     /// `return` is legal.
     function: bool,
-    /// Direct eval inherits new.target syntax without permitting return.
-    eval_new_target: bool,
+    /// `new.target` is legal: a non-arrow function, a class element or eval code inside one.
+    /// Arrows inherit it, so a global arrow cannot use it although `return` is legal there.
+    new_target: bool,
     /// `yield` is an operator.
     generator: bool,
     /// `await` is an operator.
@@ -109,8 +110,10 @@ pub(in crate::v9) struct Parser {
     position: usize,
     /// Index of the matching `)` for each `(`, so arrow heads are found without backtracking.
     closers: Vec<u32>,
-    /// Parenthesized object/array nodes cannot later become assignment patterns.
+    /// Parenthesized object, array and assignment nodes cannot later become assignment patterns.
     parenthesized_patterns: std::collections::BTreeSet<u32>,
+    /// Array and object literals whose rest element a comma follows: valid literals, never patterns.
+    rest_commas: std::collections::BTreeSet<u32>,
     /// Parentheses permit mixing nullish and boolean logical expressions without changing the emitted AST.
     parenthesized_logical: std::collections::BTreeSet<u32>,
     strict: bool,
@@ -196,6 +199,7 @@ impl Parser {
             position: 0,
             closers,
             parenthesized_patterns: std::collections::BTreeSet::new(),
+            rest_commas: std::collections::BTreeSet::new(),
             parenthesized_logical: std::collections::BTreeSet::new(),
             strict,
             context: Context::default(),

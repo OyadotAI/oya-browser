@@ -1520,6 +1520,33 @@ pub(in crate::v9) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Optio
     dom::host_own(vm, id, key)
 }
 
+/** Give a fresh page's window every global interface as its own property, the way WebIDL puts a
+[Global] interface's members on the object itself: `window.hasOwnProperty("Promise")` and
+`Object.getOwnPropertyDescriptor(window, "Date")` are how polyfills and feature tests look, and
+with the constructors only on the prototype both said no. Values stay shared intrinsics; only the
+property slots are copied, non-enumerable like a browser's. Deleting one still leaves the
+prototype's copy reachable by name (ponytail: a deletion mark on the chain walk would close that). */
+pub(in crate::v9) fn expose_window_globals(vm: &mut Vm) {
+    use super::vm::heap::Slot;
+    use super::vm::realm::{Static, realm};
+    use crate::v9::value::JsValue;
+    let interfaces = realm().ids.window_interfaces;
+    let Some(def) = realm().object(interfaces) else {
+        return;
+    };
+    let globals: Vec<(Key, JsValue, u8)> = def
+        .props
+        .iter()
+        .filter_map(|(key, value, attrs)| match value {
+            Static::Value(value) => Some((key.clone(), value.clone(), *attrs)),
+            Static::Accessor(..) => None,
+        })
+        .collect();
+    for (key, value, attrs) in globals {
+        vm.heap.put(GLOBAL, key, Prop { slot: Slot::Data(value), attrs });
+    }
+}
+
 /** Host objects' own writes; None means ordinary handling. */
 pub(in crate::v9) fn host_write(
     vm: &mut Vm,

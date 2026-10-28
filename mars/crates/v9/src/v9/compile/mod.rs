@@ -115,6 +115,15 @@ pub(in crate::v9) enum Op {
     SetWith(u32, Slot, Slot),
     /** -> result true, or false: `delete name` on the `with` object when it holds the name. */
     DeleteWith(u32, Slot, Slot),
+    /** The reference step of an assignment or update: resolve the name against the eval-var
+    or `with` object (the flag) in env slot (hops, slot) before the right-hand side runs,
+    pushing the object and true when it holds the name, else false. */
+    ResolveRef(u32, Slot, Slot, bool),
+    /** base -> base value true, or base false when the base is not a resolved object. */
+    GetRef(u32),
+    /** base value -> value true, or value false when the base is not a resolved object: the
+    store goes to the object the reference resolved to, whether or not it still has the name. */
+    SetRef(u32),
     /** value -> object, throwing a TypeError for null and undefined (spec ToObject). */
     ToObject,
     /** Throw a SyntaxError with this message, for eval's runtime declaration conflicts. */

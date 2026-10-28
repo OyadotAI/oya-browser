@@ -428,23 +428,14 @@ fn last_index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Number(-1.0))
 }
 
-/** String.prototype.localeCompare: code-unit order (no Intl). */
+/** String.prototype.localeCompare: the same collation as `Intl.Collator`, with the same options
+(`sensitivity`, `numeric`), so a page's `array.sort((a, b) => a.localeCompare(b))` orders names
+the way the browser's collator does. */
 fn locale_compare(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let other = arg_string(vm, &call, 0)?;
-    Ok(JsValue::Number(
-        match lossy_points(&text).cmp(lossy_points(&other)) {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        },
-    ))
-}
-
-/** Preserve lossy scalar ordering without creating contiguous UTF-16 or UTF-8 copies. */
-fn lossy_points(text: &JsString) -> impl Iterator<Item = char> + '_ {
-    char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index)))
-        .map(|point| point.unwrap_or(char::REPLACEMENT_CHARACTER))
+    let options = super::intl::read_options(vm, &call.arg(2), "Collator")?;
+    Ok(JsValue::Number(super::intl::collate(&text.lossy(), &other.lossy(), &options)))
 }
 
 /** Delegate to a pattern's symbol method, else build a RegExp from it. */

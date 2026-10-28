@@ -559,7 +559,7 @@ impl Compiler {
         Ok(())
     }
     /** Assign the top of stack to a name's static place, keeping it. */
-    fn assign_static(&mut self, name: &Name) -> EngineResult<()> {
+    pub(super) fn assign_static(&mut self, name: &Name) -> EngineResult<()> {
         let index = self.name(name)?;
         match self.resolve(name) {
             Some((_, Declared::Const | Declared::ClassInner | Declared::Import, _)) => {

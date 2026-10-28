@@ -102,6 +102,7 @@ impl Parser {
         self.context = Context {
             using_allowed: true,
             function: true,
+            new_target: true,
             generator: flags.generator,
             asynchronous: flags.asynchronous,
             breakable: false,
@@ -234,7 +235,10 @@ impl Parser {
         }
         Ok(())
     }
-    /** An arrow function; `simple` means a single unparenthesized parameter. */
+    /** An arrow function; `simple` means a single unparenthesized parameter. The parameters are
+    read under the enclosing `yield` and `await` grammar (ArrowParameters[?Yield, ?Await], and an
+    async head reserves `await` itself), so a `yield` expression, an `await` expression or `await`
+    as a name there is the early error the spec requires; only the body gets the arrow's own. */
     pub(super) fn arrow_function(
         &mut self,
         pos: Pos,
@@ -248,18 +252,18 @@ impl Parser {
         self.context = Context {
             using_allowed: true,
             function: true,
-            eval_new_target: false,
-            generator: false,
-            asynchronous: is_async,
+            new_target: outer.new_target,
+            generator: outer.generator,
+            asynchronous: outer.asynchronous || is_async,
             breakable: false,
             continuable: false,
             method: outer.method,
             derived: outer.derived,
             no_arguments: outer.no_arguments,
-            static_block: false,
+            static_block: outer.static_block,
             parameters: false,
         };
-        let result = self.arrow_parts(simple, no_in);
+        let result = self.arrow_parts(simple, is_async, no_in);
         let strict = self.strict;
         self.context = saved.0;
         self.strict = saved.1;
@@ -289,6 +293,7 @@ impl Parser {
     fn arrow_parts(
         &mut self,
         simple: bool,
+        is_async: bool,
         no_in: bool,
     ) -> EngineResult<(Vec<Pattern>, Option<Pattern>, Body)> {
         let pos = self.pos();
@@ -299,6 +304,10 @@ impl Parser {
         } else {
             self.parameters()?
         };
+        // The body is the arrow's own: never a generator, async only for an async arrow.
+        self.context.generator = false;
+        self.context.asynchronous = is_async;
+        self.context.static_block = false;
         self.expect("=>")?;
         let body = if self.at("{") {
             self.next();
@@ -674,6 +683,7 @@ impl Parser {
         self.context = Context {
             using_allowed: true,
             function: true,
+            new_target: true,
             method: true,
             no_arguments: true,
             ..Context::default()
@@ -687,6 +697,7 @@ impl Parser {
         let saved = (self.context, std::mem::take(&mut self.labels));
         self.context = Context {
             function: false,
+            new_target: true,
             method: true,
             no_arguments: true,
             static_block: true,

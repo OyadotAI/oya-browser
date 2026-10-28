@@ -91,15 +91,10 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
     species_getter(b, ctor);
     let typed = b.object(Some(b.ids.object_prototype));
     for name in ["length", "byteLength", "byteOffset", "buffer"] {
-        b.builtin_accessor(typed, name, Some(view_get), None);
+        b.builtin_accessor(typed, name, Some(typed_view_get), None);
     }
     for (name, length, function) in array_methods {
-        let function = if matches!(*name, "fill" | "copyWithin" | "reverse") {
-            immutable::mutator as NativeFn
-        } else {
-            *function
-        };
-        let method = b.method(typed, name, *length, function);
+        let method = b.method(typed, name, *length, *function);
         if *name == "values" {
             b.put(
                 typed,
@@ -202,7 +197,7 @@ fn data_view(b: &mut Builder) {
     let ctor = b.constructor("DataView", 1, construct_data_view, proto, None);
     b.global("DataView", ctor);
     for name in ["byteLength", "byteOffset", "buffer"] {
-        b.builtin_accessor(proto, name, Some(view_get), None);
+        b.builtin_accessor(proto, name, Some(data_view_slot), None);
     }
     for name in [
         "getInt8",
@@ -274,17 +269,19 @@ fn construct_buffer(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Constructor ArrayBuffer requires 'new'"));
     }
     let length = to_index(vm, &call.arg(0), "array buffer length")?;
-    if length > BUFFER_BYTES {
-        return Err(vm.range_error("Array buffer allocation failed"));
-    }
     let maximum = buffer_state::options(vm, &call.arg(1))?;
     if maximum.is_some_and(|maximum| maximum < length) {
         return Err(vm.range_error("ArrayBuffer maximum byte length is smaller than its length"));
     }
+    // AllocateArrayBuffer: OrdinaryCreateFromConstructor precedes CreateByteDataBlock, so a
+    // prototype getter's error wins over the allocation's RangeError.
     let prototype = vm.prototype_for(
         call.new_target.as_ref().expect("checked new.target"),
         realm().ids.array_buffer_prototype,
     )?;
+    if length > BUFFER_BYTES {
+        return Err(vm.range_error("Array buffer allocation failed"));
+    }
     let buffer = new_buffer(vm, vec![0; length])?;
     if let Some(object) = vm.heap.get_mut(buffer) {
         object.proto = Some(prototype);
@@ -334,16 +331,19 @@ pub(in crate::v9) fn view_of(vm: &Vm, id: ObjectId) -> Option<ViewData> {
     }
 }
 
-/** A typed array (not a DataView) receiver. */
-fn this_typed(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ViewData)> {
-    let found = call
-        .this
+/** A receiver carrying the typed array brand, attached or not: subarray and the slot getters
+read a detached array's slots instead of rejecting it. */
+fn typed_brand(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ViewData)> {
+    call.this
         .object()
         .and_then(|id| view_of(vm, id).map(|view| (id, view)))
-        .filter(|(_, view)| view.kind != ElementKind::DataView);
-    let Some((id, view)) = found else {
-        return Err(vm.type_error("this is not a typed array."));
-    };
+        .filter(|(_, view)| view.kind != ElementKind::DataView)
+        .ok_or_else(|| vm.type_error("this is not a typed array."))
+}
+
+/** ValidateTypedArray: a typed array (not a DataView) receiver whose buffer is attached and in bounds. */
+fn this_typed(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ViewData)> {
+    let (id, view) = typed_brand(vm, call)?;
     if view.invalid {
         return Err(
             vm.type_error("Cannot perform operation on a detached or out-of-bounds typed array")
@@ -363,16 +363,27 @@ pub(in crate::v9) fn iterator_length(vm: &mut Vm, id: ObjectId) -> Res<Option<us
     Ok(Some(view.length))
 }
 
-/** length, byteLength, byteOffset and buffer of a view. */
-fn view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let Some(view) = call.this.object().and_then(|id| view_of(vm, id)) else {
-        return Err(vm.type_error("Receiver is not a typed array or DataView"));
-    };
-    if view.invalid && view.kind == ElementKind::DataView && callee_name(&call) != "buffer" {
+/** %TypedArray%.prototype's length, byteLength, byteOffset and buffer: a DataView receiver is a
+TypeError, since it lacks the [[TypedArrayName]] slot the getters require. */
+fn typed_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (_, view) = typed_brand(vm, &call)?;
+    Ok(view_slot(&view, callee_name(&call)))
+}
+
+/** DataView.prototype's byteLength, byteOffset and buffer: a typed array receiver is a TypeError,
+and a detached or out-of-bounds DataView answers only `buffer`. */
+fn data_view_slot(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let view = data_view_brand(vm, &call)?;
+    if view.invalid && callee_name(&call) != "buffer" {
         return Err(vm.type_error("DataView is detached or out of bounds"));
     }
+    Ok(view_slot(&view, callee_name(&call)))
+}
+
+/** One slot of a view; a detached or out-of-bounds typed array reports zero lengths and offset. */
+fn view_slot(view: &ViewData, name: &str) -> JsValue {
     let size = element_size(view.kind);
-    Ok(match callee_name(&call) {
+    match name {
         "length" => JsValue::Number(view.length as f64),
         "byteLength" => JsValue::Number((view.length * size) as f64),
         "byteOffset" => JsValue::Number(if view.invalid {
@@ -381,7 +392,7 @@ fn view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             view.offset as f64
         }),
         _ => JsValue::Object(view.buffer),
-    })
+    }
 }
 
 /** A new view of `kind` over `buffer`. */
@@ -450,23 +461,11 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .iter()
         .position(|(each, ..)| *each == kind)
         .unwrap_or(0);
-    let proto = vm.prototype_for(&target, realm().ids.view_prototypes[index])?;
     let first = call.arg(0);
     let Some(source) = first.object() else {
-        let length = to_index(vm, &first, "typed array length")?;
-        if length.saturating_mul(size) > BUFFER_BYTES {
-            return Err(vm.range_error("Invalid typed array length"));
-        }
-        let buffer = new_buffer(vm, vec![0; length * size])?;
-        return Ok(JsValue::Object(new_view(
-            vm,
-            kind,
-            buffer,
-            0,
-            length,
-            Some(proto),
-        )?));
+        return construct_typed_length(vm, &target, kind, index, &first);
     };
+    let proto = vm.prototype_for(&target, realm().ids.view_prototypes[index])?;
     if let Some(bytes) = storage_len(vm, source) {
         let offset = to_index(vm, &call.arg(1), "typed array offset")?;
         if offset % size != 0 || offset > bytes {
@@ -512,6 +511,33 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm,
         kind,
         &values,
+        Some(proto),
+    )?))
+}
+
+/** `new Uint8Array(length)`: ToIndex converts the length before new.target's prototype is read
+(a Symbol is a TypeError even when the prototype getter would throw), and the prototype is read
+before the allocation can fail with a RangeError. */
+fn construct_typed_length(
+    vm: &mut Vm,
+    target: &JsValue,
+    kind: ElementKind,
+    index: usize,
+    length: &JsValue,
+) -> Res<JsValue> {
+    let length = to_index(vm, length, "typed array length")?;
+    let proto = vm.prototype_for(target, realm().ids.view_prototypes[index])?;
+    let size = element_size(kind);
+    if length.saturating_mul(size) > BUFFER_BYTES {
+        return Err(vm.range_error("Invalid typed array length"));
+    }
+    let buffer = new_buffer(vm, vec![0; length * size])?;
+    Ok(JsValue::Object(new_view(
+        vm,
+        kind,
+        buffer,
+        0,
+        length,
         Some(proto),
     )?))
 }
@@ -653,39 +679,91 @@ fn values_of(vm: &Vm, id: ObjectId, length: usize) -> Vec<JsValue> {
         .collect()
 }
 
-/** %TypedArray%.prototype.set(source, offset). */
+/** %TypedArray%.prototype.set(source, offset): the offset converts first and the target is
+validated again afterwards, since the conversion may have detached it. */
 fn typed_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    immutable::typed(vm, &call)?;
+    let offset = set_offset(vm, &call.arg(1))?;
     let (id, view) = immutable::typed(vm, &call)?;
-    let offset = to_index(vm, &call.arg(1), "offset")?;
     let source = call.arg(0);
-    let values = match source
+    match source
         .object()
         .and_then(|other| view_of(vm, other).map(|v| (other, v)))
     {
         Some((other, other_view)) if other_view.kind != ElementKind::DataView => {
-            if other_view.invalid {
-                return Err(
-                    vm.type_error("Cannot set from a detached or out-of-bounds typed array")
-                );
-            }
-            let big = |kind| matches!(kind, ElementKind::BigInt64 | ElementKind::BigUint64);
-            if big(view.kind) != big(other_view.kind) {
-                return Err(
-                    vm.type_error("Cannot mix BigInt and other types, use explicit conversions")
-                );
-            }
-            values_of(vm, other, other_view.length)
+            set_from_typed(vm, id, &view, other, &other_view, offset)?
         }
-        Some(_) => elements_of(vm, &source)?,
-        None => elements_of(vm, &source)?,
-    };
-    if offset + values.len() > view.length {
-        return Err(vm.range_error("offset is out of bounds"));
-    }
-    for (index, value) in values.iter().enumerate() {
-        store(vm, id, offset + index, value)?;
+        _ => set_from_array_like(vm, id, &view, &source, offset)?,
     }
     Ok(JsValue::Undefined)
+}
+
+/** ToIntegerOrInfinity(offset); a negative offset is a RangeError before the source is touched. */
+fn set_offset(vm: &mut Vm, value: &JsValue) -> Res<f64> {
+    let offset = vm.to_integer(value)?;
+    if offset < 0.0 {
+        return Err(vm.range_error("offset is out of bounds"));
+    }
+    Ok(offset)
+}
+
+/** SetTypedArrayFromTypedArray: the bounds RangeError precedes the content-type TypeError, and
+the source is read whole first so a shared buffer copies as if cloned. */
+fn set_from_typed(
+    vm: &mut Vm,
+    id: ObjectId,
+    view: &ViewData,
+    other: ObjectId,
+    other_view: &ViewData,
+    offset: f64,
+) -> Res<()> {
+    if other_view.invalid {
+        return Err(vm.type_error("Cannot set from a detached or out-of-bounds typed array"));
+    }
+    if offset + other_view.length as f64 > view.length as f64 {
+        return Err(vm.range_error("offset is out of bounds"));
+    }
+    let big = |kind| matches!(kind, ElementKind::BigInt64 | ElementKind::BigUint64);
+    if big(view.kind) != big(other_view.kind) {
+        return Err(vm.type_error("Cannot mix BigInt and other types, use explicit conversions"));
+    }
+    let values = values_of(vm, other, other_view.length);
+    store_from(vm, id, offset as usize, values.iter())
+}
+
+/** SetTypedArrayFromArrayLike: elements are read with Get and stored one at a time, never
+through an iterator, so a throwing getter leaves the earlier elements written. */
+fn set_from_array_like(
+    vm: &mut Vm,
+    id: ObjectId,
+    view: &ViewData,
+    source: &JsValue,
+    offset: f64,
+) -> Res<()> {
+    let object = JsValue::Object(vm.to_object(source)?);
+    let length = vm.length_of(&object)?;
+    if offset + length as f64 > view.length as f64 {
+        return Err(vm.range_error("offset is out of bounds"));
+    }
+    for index in 0..length {
+        vm.charge(1)?;
+        let value = vm.get(&object, &key(&index.to_string()))?;
+        store(vm, id, offset as usize + index, &value)?;
+    }
+    Ok(())
+}
+
+/** Store values from `offset` on; each store converts, then writes only if the target is still valid. */
+fn store_from<'a>(
+    vm: &mut Vm,
+    id: ObjectId,
+    offset: usize,
+    values: impl Iterator<Item = &'a JsValue>,
+) -> Res<()> {
+    for (index, value) in values.enumerate() {
+        store(vm, id, offset + index, value)?;
+    }
+    Ok(())
 }
 
 /** %TypedArray%.prototype.toLocaleString (ECMA-402): each element's own toLocaleString, joined

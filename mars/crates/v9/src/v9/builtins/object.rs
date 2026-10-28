@@ -385,7 +385,12 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     // Proxies and module namespaces (whose exports refuse to freeze) answer through their own
     // [[DefineOwnProperty]].
     let namespace = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Namespace(_)));
-    let array = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
+    // Mapped arguments objects go the generic way too: freezing an index must snapshot the
+    // parameter's value and drop its mapping, which only [[DefineOwnProperty]] knows how to do.
+    let array = matches!(
+        vm.heap.get(id).map(|o| &o.class),
+        Some(Class::Array(_) | Class::MappedArguments(_))
+    );
     #[cfg(feature = "conformance")]
     let shared = super::is_shared_object(vm, id);
     #[cfg(not(feature = "conformance"))]

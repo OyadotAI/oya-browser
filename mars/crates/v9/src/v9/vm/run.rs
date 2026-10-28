@@ -31,6 +31,12 @@ const RETURN: f64 = 2.0;
 const JUMP: f64 = 3.0;
 /** Packs handler and environment depths into one completion register. */
 const DEPTH_SHIFT: f64 = 65_536.0;
+/** V8's `%GetOptimizationStatus` bits mjsunit reads: kIsFunction (1) and kNeverOptimize (2). V9
+has no optimizer, so a function is "never optimized" and anything else just "never optimized". */
+#[cfg(feature = "conformance")]
+const OPTIMIZATION_STATUS_FUNCTION: f64 = 3.0;
+#[cfg(feature = "conformance")]
+const OPTIMIZATION_STATUS_NEVER: f64 = 2.0;
 
 /** What one instruction did to control flow. */
 enum Flow {
@@ -847,6 +853,20 @@ impl Vm<'_> {
                     let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
                     self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root })));
                 }
+                68 => {
+                    // V9 never optimizes, so it reports V8's own no-turbofan answer: mjsunit's
+                    // assertUnoptimized passes and assertOptimized fails with its usual message.
+                    let value = self.pop();
+                    let status = if self.is_callable(&value) { OPTIMIZATION_STATUS_FUNCTION } else { OPTIMIZATION_STATUS_NEVER };
+                    self.push(JsValue::Smi(status));
+                }
+                66 => {
+                    // V9 has no V8 maps; verify its real heap graph and object invariants instead.
+                    self.charge(self.heap.objects.len())?;
+                    self.validate_graph()?;
+                    self.pop();
+                    self.push(JsValue::Boolean(true));
+                }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
@@ -1077,6 +1097,9 @@ impl Vm<'_> {
             Op::GetWith(name, hops, slot, call) => self.get_with(name, hops, slot, call)?,
             Op::SetWith(name, hops, slot) => self.set_with(name, hops, slot)?,
             Op::DeleteWith(name, hops, slot) => self.delete_with(name, hops, slot)?,
+            Op::ResolveRef(name, hops, slot, with) => self.resolve_ref(name, hops, slot, with)?,
+            Op::GetRef(name) => self.get_ref(name)?,
+            Op::SetRef(name) => self.set_ref(name)?,
             Op::ToObject => {
                 let value = self.pop();
                 let id = self.to_object(&value)?;
@@ -1560,10 +1583,8 @@ impl Vm<'_> {
                     return Err(self.reference_error("Super constructor may only be called once"));
                 }
                 self.heap.set_slot(env, slot as usize, this.clone());
-                if let Some(frame) = self.frames.iter_mut().rev().find(|frame| {
-                    frame.env == Some(env) && frame.construct && frame.code.flags.derived
-                }) {
-                    frame.this = this.clone();
+                if let Some(index) = self.derived_frame_over(env) {
+                    self.frames[index].this = this.clone();
                 }
                 self.run_fields(&callee, &this)?;
             }
@@ -1572,26 +1593,12 @@ impl Vm<'_> {
                 return self.do_return(value);
             }
             Op::ReturnDerived => {
-                let this = self.pop();
+                // A derived constructor's return settles only when its frame exits: a `finally`
+                // block or an iterator close still runs first and may be the super() call that
+                // initializes `this`, and its exception outranks the constructor's own.
+                let _ = self.pop();
                 let value = self.pop();
-                let result = match value {
-                    JsValue::Object(_) => value,
-                    JsValue::Undefined => {
-                        if this == JsValue::Hole {
-                            return Err(self.reference_error(
-                                "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-                            ));
-                        }
-                        this
-                    }
-                    _ => {
-                        return Err(self.type_error(
-                            "Derived constructors may only return object or undefined",
-                        ));
-                    }
-                };
-                self.frame().construct = false;
-                return self.do_return(result);
+                return self.do_return(value);
             }
             Op::Add => {
                 let right = self.peek(0);
@@ -2211,17 +2218,48 @@ impl Vm<'_> {
             }
         }
         let frame = self.frames.pop().expect("returning frame");
-        let value = if frame.construct && !matches!(value, JsValue::Object(_)) {
-            if frame.this == JsValue::Hole {
-                return Err(self.reference_error(
-                    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-                ));
-            }
-            frame.this
+        let value = if frame.construct {
+            self.construct_result(&frame, value)?
         } else {
             value
         };
         Ok(self.finish_frame(value, frame.boundary))
+    }
+    /** The innermost active derived constructor frame whose scope chain holds `env`, the
+    environment that owns the `this` slot super() just filled. The frame may be inside a block
+    or a nested arrow when super() runs, so its current environment is walked up to `env`. */
+    fn derived_frame_over(&self, env: super::heap::EnvId) -> Option<usize> {
+        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
+            if !frame.construct || !frame.code.flags.derived {
+                return None;
+            }
+            let mut current = frame.env;
+            for _ in 0..super::property::CHAIN_STEPS {
+                let found = current?;
+                if found == env {
+                    return Some(index);
+                }
+                current = self.heap.env(found)?.parent;
+            }
+            None
+        })
+    }
+    /** [[Construct]]'s result once the body has fully completed: an object is the result; a
+    derived constructor returning any other non-undefined value is a TypeError; otherwise the
+    result is `this`, which a derived constructor must have initialized by now. */
+    fn construct_result(&mut self, frame: &super::Frame, value: JsValue) -> Res<JsValue> {
+        if matches!(value, JsValue::Object(_)) {
+            return Ok(value);
+        }
+        if frame.code.flags.derived && !matches!(value, JsValue::Undefined) {
+            return Err(self.type_error("Derived constructors may only return object or undefined"));
+        }
+        if frame.this == JsValue::Hole {
+            return Err(self.reference_error(
+                "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+            ));
+        }
+        Ok(frame.this.clone())
     }
     /** Deliver a finished frame's value to its caller or to the run's caller. */
     fn finish_frame(&mut self, value: JsValue, boundary: bool) -> Flow {

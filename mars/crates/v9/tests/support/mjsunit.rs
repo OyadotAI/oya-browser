@@ -308,10 +308,10 @@ impl Scripts {
             ),
             conformance_native_main_source: (std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS")
                 .as_deref()
-                == Ok("1")
+                != Ok("0")
                 && boolean_flag(&self.metadata_source, "allow-natives-syntax"))
             .then(|| self.source_names.len().saturating_sub(1)),
-            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() == Ok("1") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
+            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() != Ok("0") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
             conformance_wasm_stringref: boolean_flag(&self.metadata_source, "wasm-stringref"),
             conformance_wasm_custom_descriptors: boolean_flag(&self.metadata_source, "wasm-custom-descriptors") || boolean_flag(&self.metadata_source, "wasm-js-interop"),
             conformance_wasm_acquire_release: boolean_flag(&self.metadata_source, "wasm-acquire-release"),

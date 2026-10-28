@@ -23,6 +23,10 @@ impl Compiler {
                 self.emit(Op::Unsupported(index));
             }
             #[cfg(feature = "conformance")]
+            ExprKind::NativeIntrinsic(intrinsic, args) if (67..=71).contains(intrinsic) => {
+                self.optimizer_intrinsic(*intrinsic, args)?;
+            }
+            #[cfg(feature = "conformance")]
             ExprKind::NativeIntrinsic(intrinsic, args) => {
                 if *intrinsic == 29 {
                     self.emit(Op::Undefined);
@@ -747,13 +751,17 @@ impl Compiler {
         let step = if increment { Op::Inc } else { Op::Dec };
         match &target.kind {
             ExprKind::Ident(name) => {
-                self.load_name(name, target.pos)?;
+                let base = self.ref_name(name, target.pos)?;
+                self.load_ref(name, target.pos, base)?;
                 self.emit(Op::ToNumeric);
                 if !prefix {
                     self.emit(Op::Dup);
+                    if base {
+                        self.emit(Op::Rot3);
+                    }
                 }
                 self.emit(step);
-                self.assign_name(name, target.pos)?;
+                self.assign_ref(name, target.pos, base)?;
                 if !prefix {
                     self.emit(Op::Pop);
                 }
@@ -808,8 +816,9 @@ impl Compiler {
     fn assign(&mut self, operator: AssignOp, target: &Pattern, value: &Expr) -> EngineResult<()> {
         match (operator, target) {
             (AssignOp::Assign, Pattern::Ident(name, pos)) => {
+                let base = self.ref_name(name, *pos)?;
                 self.expr(value)?;
-                self.assign_name(name, *pos)
+                self.assign_ref(name, *pos, base)
             }
             (AssignOp::Assign, Pattern::Expr(member)) => {
                 self.member_assign(member, |c| c.expr(value))
@@ -819,20 +828,22 @@ impl Compiler {
                 self.assign_pattern(pattern)
             }
             (AssignOp::Binary(op), Pattern::Ident(name, pos)) => {
-                self.load_name(name, *pos)?;
+                let base = self.ref_name(name, *pos)?;
+                self.load_ref(name, *pos, base)?;
                 self.expr(value)?;
                 self.emit(binary(op));
-                self.assign_name(name, *pos)
+                self.assign_ref(name, *pos, base)
             }
             (AssignOp::Binary(op), Pattern::Expr(member)) => {
                 self.compound_member(member, op, value)
             }
             (AssignOp::Logical(op), Pattern::Ident(name, pos)) => {
-                self.load_name(name, *pos)?;
+                let base = self.ref_name(name, *pos)?;
+                self.load_ref(name, *pos, base)?;
                 let skip = self.emit(logical(op));
                 self.expr(value)?;
-                self.assign_name(name, *pos)?;
-                self.patch(skip);
+                self.assign_ref(name, *pos, base)?;
+                self.end_logical_ref(skip, base);
                 Ok(())
             }
             (AssignOp::Logical(op), Pattern::Expr(member)) => {
@@ -1095,5 +1106,31 @@ fn callee_label(expr: &Expr) -> Option<String> {
         }
         ExprKind::Call(callee, _, _) => Some(format!("{}(...)", callee_label(callee)?)),
         _ => None,
+    }
+}
+
+#[cfg(feature = "conformance")]
+impl Compiler {
+    /** Optimizer intrinsics evaluate every argument for its side effects and keep only what V8
+    answers without a JIT: hints are `undefined`, tier predicates are constants, `%DebugPrint` and
+    `%CompileBaseline` return their subject, and `%GetOptimizationStatus` asks the VM. */
+    fn optimizer_intrinsic(&mut self, intrinsic: u8, args: &[Element]) -> EngineResult<()> {
+        for (index, arg) in args.iter().enumerate() {
+            if let Element::Value(value) = arg {
+                self.expr(value)?;
+                if index > 0 || !matches!(intrinsic, 68 | 71) {
+                    self.emit(Op::Pop);
+                }
+            }
+        }
+        let answer = match intrinsic {
+            67 => Op::Undefined,
+            68 => Op::NativeIntrinsic(68),
+            69 => Op::False,
+            70 => Op::True,
+            _ => return Ok(()),
+        };
+        self.emit(answer);
+        Ok(())
     }
 }

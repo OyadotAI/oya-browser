@@ -18,6 +18,7 @@ pub(super) fn install(builder: &mut Builder, prototype: ObjectId) {
         ("join", 1, join),
         ("fill", 1, fill),
         ("copyWithin", 2, copy_within),
+        ("reverse", 0, reverse),
         ("entries", 0, entries),
         ("keys", 0, keys),
         ("values", 0, values),
@@ -237,6 +238,21 @@ fn fill(vm: &mut Vm, call: Call) -> Res<JsValue> {
     for index in start..end.min(current.length) {
         vm.charge(1)?;
         write_bytes(vm, &current, index * element_size(current.kind), &bytes)?;
+    }
+    Ok(JsValue::Object(id))
+}
+
+/** Reverse swaps raw element bytes over the witness length; the generic algorithm would read a
+`length` property, which a typed array must never consult. */
+fn reverse(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (id, view) = immutable::typed(vm, &call)?;
+    let size = element_size(view.kind);
+    vm.charge(view.length)?;
+    let bytes = read_range(vm, view.buffer, view.offset, view.length * size)
+        .ok_or_else(|| vm.type_error("Typed array backing became invalid"))?;
+    let reversed: Vec<u8> = bytes.chunks_exact(size).rev().flatten().copied().collect();
+    if !write_range(vm, view.buffer, view.offset, &reversed) {
+        return Err(vm.type_error("Typed array backing became invalid"));
     }
     Ok(JsValue::Object(id))
 }

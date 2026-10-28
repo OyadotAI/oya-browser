@@ -913,9 +913,12 @@ impl Vm<'_> {
             Class::Host(_) => super::super::platform::host_write(self, id, key, value),
             // A namespace's exports are read-only to their importers.
             Class::Namespace(_) if !key.hidden() => Ok(Some(false)),
-            // Integer-indexed: in-range writes store into the buffer, others are dropped.
+            // Integer-indexed receiver of a Set that started elsewhere: OrdinarySet ends in
+            // CreateDataProperty, so this is [[DefineOwnProperty]], which answers false for an
+            // invalid index without coercing the value (the same-receiver path coerces first).
             Class::View(_) if crate::v9::builtins::typed_index(self, id, key).is_some() => {
-                crate::v9::builtins::typed_set_integer(self, id, key, value).map(Some)
+                let desc = Descriptor::data(value.clone());
+                crate::v9::builtins::typed_define_integer(self, id, key, &desc).transpose()
             }
             _ => Ok(None),
         }

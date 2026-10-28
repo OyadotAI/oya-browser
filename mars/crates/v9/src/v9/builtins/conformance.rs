@@ -45,6 +45,7 @@ pub(in crate::v9) use profiling::{
 };
 mod realms;
 mod reporting;
+mod test262;
 pub(in crate::v9) use reporting::terminal as report_terminal_exception;
 mod serializer;
 mod shadow;
@@ -69,6 +70,7 @@ pub(in crate::v9) fn expose_conformance_globals(
     bank: u32,
 ) {
     super::expose_async_hooks(vm, global, bank);
+    test262::expose(vm, global, bank);
     fast_api::expose(vm, bank);
     cputrace::expose(vm, global, bank);
     statistics::expose(vm, global, bank);
@@ -160,6 +162,7 @@ pub(in crate::v9) fn mark_host_api(natives: &mut [crate::v9::vm::realm::NativeDe
 /** Only real fixture operations are installed; absent d8 capabilities remain absent. */
 pub(super) fn install(builder: &mut Builder) {
     realms::install(builder);
+    test262::install(builder);
     shadow::install(builder);
     workers::install(builder);
     memory::install(builder);

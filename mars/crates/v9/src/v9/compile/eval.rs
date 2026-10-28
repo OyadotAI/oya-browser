@@ -293,6 +293,69 @@ impl Compiler {
         Ok(jumps)
     }
     /**
+     * Evaluate an identifier reference before its right-hand side (spec 13.15.2 step 1) when
+     * a `with` or eval-var object may hold the name: pushes the object that does, or
+     * undefined, so `load_ref` and `assign_ref` use that object whatever the right-hand side
+     * added or deleted. Returns whether a base was pushed; a static name needs none.
+     */
+    pub(super) fn ref_name(&mut self, name: &Name, pos: Pos) -> EngineResult<bool> {
+        let checks = self.ext_checks(name);
+        if checks.is_empty() {
+            return Ok(false);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        let mut jumps = Vec::new();
+        for (hops, slot, with) in checks {
+            self.emit(Op::ResolveRef(index, hops, slot, with));
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
+        }
+        self.emit(Op::Undefined);
+        self.patch_all(jumps);
+        Ok(true)
+    }
+    /** Push the value of the reference `ref_name` made: `base -> base value`. Without a base
+    this is a plain load. */
+    pub(super) fn load_ref(&mut self, name: &Name, pos: Pos, base: bool) -> EngineResult<()> {
+        if !base {
+            return self.load_name(name, pos);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        self.emit(Op::GetRef(index));
+        let found = self.emit(Op::JumpIfTrue(0));
+        self.load_static_name(name)?;
+        self.patch(found);
+        Ok(())
+    }
+    /** Store through the reference `ref_name` made: `base value -> value`. Without a base this
+    is a plain assignment. */
+    pub(super) fn assign_ref(&mut self, name: &Name, pos: Pos, base: bool) -> EngineResult<()> {
+        if !base {
+            return self.assign_name(name, pos);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        self.emit(Op::SetRef(index));
+        let stored = self.emit(Op::JumpIfTrue(0));
+        self.assign_static(name)?;
+        self.patch(stored);
+        Ok(())
+    }
+    /** End a logical assignment through a reference: the skipped store leaves the base under
+    the kept value, so that path drops it before both paths join. */
+    pub(super) fn end_logical_ref(&mut self, skip: usize, base: bool) {
+        if !base {
+            self.patch(skip);
+            return;
+        }
+        let done = self.emit(Op::Jump(0));
+        self.patch(skip);
+        self.emit(Op::Swap);
+        self.emit(Op::Pop);
+        self.patch(done);
+    }
+    /**
      * Push a called name's value and `this`: a `with` object that holds the name is the
      * receiver (spec 9.1.1.2.10 WithBaseObject); anything else calls with undefined.
      */

@@ -58,6 +58,73 @@ fn with_let_newline_is_a_name() {
     assert_eq!(eval(source, "out"), "ok");
 }
 
+/** An assignment resolves its name before the right-hand side runs: the object that held it
+gets the store even after the right-hand side deleted the property. */
+#[test]
+fn with_assignment_stores_to_the_object_resolved_first() {
+    let source = "var x=0;var scope={x:1};with(scope){x=(delete scope.x,2)}var r=[scope.x,x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "2,0");
+}
+
+/** A property the right-hand side adds to the with object comes too late to take the store. */
+#[test]
+fn with_assignment_ignores_a_property_added_by_the_right_hand_side() {
+    let source =
+        "var x=0;var scope={};with(scope){x=(scope.x=2,1)}var r=[scope.x,x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "2,1");
+}
+
+/** Nested with scopes: the inner object that resolved the name keeps the store. */
+#[test]
+fn with_nested_assignment_keeps_the_inner_object() {
+    let source =
+        "var o={x:0},i={x:1};with(o){with(i){x=(delete i.x,2)}}var r=[i.x,o.x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "2,0");
+}
+
+/** Compound assignment reads and writes the object resolved before the right-hand side. */
+#[test]
+fn with_compound_assignment_uses_the_resolved_object() {
+    let source = "var x=0;var scope={x:1};with(scope){x+=(delete scope.x,2)}var r=[scope.x,x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "3,0");
+}
+
+/** Update expressions write back to the object even when its getter deleted the property. */
+#[test]
+fn with_update_writes_back_to_the_resolved_object() {
+    let source = "var x=0;var scope={get x(){delete this.x;return 2}};var r;with(scope){r=x++}r=[r,scope.x,x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "2,3,0");
+}
+
+/** Prefix update yields the new value and stores it on the resolved object. */
+#[test]
+fn with_prefix_update_yields_the_new_value() {
+    let source = "var scope={get x(){delete this.x;return 2}};var r;with(scope){r=--x}r=[r,scope.x].join();const out=r;";
+    assert_eq!(eval(source, "out"), "1,1");
+}
+
+/** Logical assignment stores through the resolved object, and a skipped store leaves the
+old value as the result. */
+#[test]
+fn with_logical_assignment_uses_the_resolved_object() {
+    let source = "var x=0;var scope={x:0,y:1};var r;with(scope){x||=(delete scope.x,5);r=(y||=9)}r=[scope.x,x,r,scope.y].join();const out=r;";
+    assert_eq!(eval(source, "out"), "5,0,1,1");
+}
+
+/** Strict code throws a ReferenceError when the resolved binding vanished before the store. */
+#[test]
+fn with_strict_store_to_a_vanished_binding_throws() {
+    let source = "var scope={x:1};var r;with(scope){(function(){'use strict';try{x=(delete scope.x,2)}catch(e){r=e instanceof ReferenceError}})()}r=[r,'x' in scope].join();const out=r;";
+    assert_eq!(eval(source, "out"), "true,false");
+}
+
+/** A var that a direct eval in the right-hand side creates misses a store resolved before it. */
+#[test]
+fn eval_var_added_by_the_right_hand_side_misses_the_store() {
+    let source = "var x=0;var i=(function(){x=(eval('var x;'),1);return x})();var r=String(i)+','+x;const out=r;";
+    assert_eq!(eval(source, "out"), "undefined,1");
+}
+
 /** B.3.4: a function declared as an `if` branch hoists like a block function. */
 #[test]
 fn annex_b_if_branch_function_hoists() {

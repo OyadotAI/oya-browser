@@ -243,12 +243,17 @@ impl Parser {
         self.check_redeclarations(&body)?;
         Ok(body)
     }
+    /** True at the start of an async function declaration or expression (`async` then
+    `function` on the same line). */
+    fn at_async_function(&self) -> bool {
+        self.at_name("async")
+            && matches!(&self.peek_at(1).kind, Kind::Name(n) if n == "function")
+            && !self.peek_at(1).line_terminator_before
+    }
     /** The body of `if`, a loop or `with`: never a declaration, except that sloppy code may
     give `if` a plain function declaration (Annex B.3.3). */
     fn sub_statement(&mut self, if_branch: bool) -> EngineResult<Stmt> {
-        let async_function = self.at_name("async")
-            && matches!(&self.peek_at(1).kind, Kind::Name(n) if n == "function")
-            && !self.peek_at(1).line_terminator_before;
+        let async_function = self.at_async_function();
         let function = self.at_name("function")
             && (!if_branch
                 || self.strict
@@ -601,10 +606,12 @@ impl Parser {
         }
         let is_loop = self.labeled_loop();
         self.labels.push((name.clone(), is_loop));
-        // A labelled function is sloppy Annex B grammar, and only where a declaration may stand.
-        let body = if self.at_name("function") {
+        // A labelled function is sloppy Annex B grammar for a plain function only, and only
+        // where a declaration may stand: never a generator or an async function.
+        let body = if self.at_name("function") || self.at_async_function() {
             if !list_item
                 || self.strict
+                || self.at_async_function()
                 || matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply))
             {
                 self.labels.pop();

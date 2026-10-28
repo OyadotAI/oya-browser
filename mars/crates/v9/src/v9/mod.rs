@@ -886,18 +886,8 @@ fn parse_with_mode(
         token.location.byte_offset += offset;
         token.end += offset;
     }
-    #[cfg(feature = "conformance")]
-    if native_fixture {
-        return syntax::parse_native_fixture(tokens).map_err(|mut error| {
-            if let Some(location) = error.location.as_deref_mut() {
-                location.script_index = index.map(|index| index + 1);
-            }
-            error
-        });
-    }
-    let _ = native_fixture;
-    let result = if !private_names.is_empty() || grammar != 0 {
-        syntax::parse_eval(tokens, strict, private_names, grammar)
+    let result = if !private_names.is_empty() || grammar != 0 || native_fixture {
+        syntax::parse_eval(tokens, strict, private_names, grammar, native_fixture)
     } else if strict {
         syntax::parse_strict(tokens)
     } else {
@@ -912,12 +902,14 @@ fn parse_with_mode(
 }
 
 /** Compile dynamic source at `base` into the registry; returns its top-level code. `context` is
-the compiler-made caller context of direct eval code, never read from the source. */
+the compiler-made caller context of direct eval code, never read from the source. `native` is
+whether the page admitted the shell intrinsic grammar, which its dynamic code inherits. */
 pub(in crate::v9) fn compile_dynamic(
     registry: &mut Registry,
     source: &str,
     base: usize,
     context: Option<&str>,
+    native: bool,
 ) -> EngineResult<Arc<Code>> {
     let site = syntax::site_of(syntax::Pos {
         offset: base as u32,
@@ -932,18 +924,18 @@ pub(in crate::v9) fn compile_dynamic(
             if source.len() > SCRIPT_BYTES {
                 return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
             }
-            parse_with_mode(source, base, None, strict, private_names, grammar, false)
+            parse_with_mode(source, base, None, strict, private_names, grammar, native)
         }),
-        None => registry.script(source, base, || on_parse(source, base, false)),
+        None => registry.script(source, base, || on_parse(source, base, false, native)),
     }
 }
 
 /** Parse dynamic or handler source. */
-fn on_parse(source: &str, base: usize, strict: bool) -> EngineResult<syntax::Program> {
+fn on_parse(source: &str, base: usize, strict: bool, native: bool) -> EngineResult<syntax::Program> {
     if source.len() > SCRIPT_BYTES {
         return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
     }
-    parse_with_mode(source, base, None, strict, &[], 0, false)
+    parse_with_mode(source, base, None, strict, &[], 0, native)
 }
 
 /** Parse one classic script without running it, the way a page load would read it. */
@@ -1094,11 +1086,13 @@ fn session<'h>(
     let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
     for (index, source) in state.dynamic.iter().enumerate() {
         let base = vm::dynamic_source_base(&state.dynamic, index);
+        let native = vm.native_dynamic();
         compile_dynamic(
             &mut vm.registry,
             &source.source,
             base,
             source.context.as_deref(),
+            native,
         )?;
     }
     vm.dynamic = state.dynamic;

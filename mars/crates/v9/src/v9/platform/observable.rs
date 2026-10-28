@@ -11,7 +11,7 @@ const BOOTSTRAP_OFFSET: usize = crate::constants::SCRIPT_TOTAL_BYTES;
 
 /** Compile the bootstrap into this session's registry. Every step does it, because a page's heap refers to the bootstrap's code by site; the parse is cached, so a later step only adopts it. */
 pub(in crate::v9) fn compile(vm: &mut Vm) -> EngineResult<Arc<Code>> {
-    crate::v9::compile_dynamic(&mut vm.registry, SOURCE, BOOTSTRAP_OFFSET, None)
+    crate::v9::compile_dynamic(&mut vm.registry, SOURCE, BOOTSTRAP_OFFSET, None, false)
 }
 
 /** Run the bootstrap's top level once, for a fresh page, from the code the session compiled. A failure here would break every page, so the caller reports it as an engine error rather than a script error. */
