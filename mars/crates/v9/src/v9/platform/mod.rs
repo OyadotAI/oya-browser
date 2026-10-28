@@ -15,6 +15,7 @@ mod console;
 pub mod devtools;
 mod dom;
 mod dom_parser;
+mod xml_serializer;
 mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;

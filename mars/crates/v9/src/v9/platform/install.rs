@@ -1289,6 +1289,7 @@ fn global_object(b: &mut Builder) {
     super::animations::install(b);
     super::channel::install(b);
     super::dom_parser::install(b);
+    super::xml_serializer::install(b);
     super::frames::install(b);
     super::implementation::install(b);
     super::scripts::install(b);
