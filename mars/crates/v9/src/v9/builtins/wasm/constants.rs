@@ -3,6 +3,10 @@ pub(super) const MAGIC: &[u8] = b"\0asm\x01\0\0\0";
 pub(super) const PAGE_BYTES: usize = 65_536;
 pub(super) const BUFFER_BYTES: usize = crate::constants::JS_STRING_UNITS * 2;
 pub(super) const MAX_PAGES: usize = BUFFER_BYTES / PAGE_BYTES;
+/** Bytes a resumable (JSPI) program's control layout may occupy: a native per-function budget,
+kept at its original 2 MB when the string bound grew, since cloned control metadata is held per
+suspended activation and has nothing to do with how long a string may be. */
+pub(super) const RESUMABLE_CONTROL_BYTES: usize = 2 * 1024 * 1024;
 pub(super) const MAX_WASM_PAGES: u32 = 65_536;
 pub(super) const MAX_LOCALS: usize = crate::constants::VM_BINDINGS;
 pub(super) const MAX_DEPTH: usize = crate::constants::VM_NESTING_DEPTH;
