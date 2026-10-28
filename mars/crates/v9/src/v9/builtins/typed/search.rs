@@ -59,7 +59,8 @@ pub(super) fn last_index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     while index >= 0.0 {
         vm.charge(1)?;
         if load(vm, id, index as usize).is_some_and(|value| value.strict_equal(&searched)) {
-            return Ok(JsValue::Number(index));
+            // A -0 fromIndex matched at element 0 answers +0, as every index is an integer.
+            return Ok(JsValue::Number(index as usize as f64));
         }
         index -= 1.0;
     }

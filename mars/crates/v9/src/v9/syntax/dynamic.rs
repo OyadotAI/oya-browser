@@ -6,8 +6,16 @@ pub(in crate::v9) fn validate_dynamic_function(
     source: &str,
     parameters_end: usize,
     body_end: usize,
+    native: bool,
 ) -> EngineResult<()> {
     let mut parser = Parser::new(super::super::lexer::tokenize(source)?, false);
+    // The wrapper is checked with the grammar the body will compile under, so a natively admitted
+    // page's `new Function` bodies may name shell intrinsics here as well as in eval.
+    #[cfg(feature = "conformance")]
+    {
+        parser.native_fixture = native;
+    }
+    let _ = native;
     parser.expect("(")?;
     let pos = parser.pos();
     let asynchronous = parser.eat_name("async");

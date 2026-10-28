@@ -47,6 +47,12 @@ pub(super) fn decode(r: &mut binary::Reader) -> Result<Instruction, Error> {
     if op == 31 && !r.shared_enabled {
         return Err(Error::invalid("shared i31 instruction requires --wasm-shared"));
     }
+    if op == 0x4c {
+        if !r.ref_cast_nop_enabled { return Err(Error::invalid("Invalid opcode 0xfb4c (enable with --wasm-ref-cast-nop)")); }
+        let ty = gc_types::heap(r, false)?;
+        let (heap, _) = ty.reference().unwrap();
+        return Ok(Instruction::Gc(op, vec![heap, i64::from(matches!(ty, Type::Exact(..))), i64::from(matches!(ty, Type::Shared(..)))]));
+    }
     if op > u8::MAX as u32 {
         return Err(Error::invalid(&format!("invalid stringref opcode: fb{op:x}")));
     }
@@ -499,6 +505,7 @@ pub(super) fn run(
         }
         16 => fill(vm, m, args[0] as u32, stack)?,
         17 => copy(vm, m, args, stack)?,
+        0x4c => {}
         20..=23 => {
             let value = numeric::pop(stack)?;
             let target = if args.get(1) == Some(&1) {

@@ -10,6 +10,10 @@ pub(in crate::v9) fn numeric_index(key: &Key) -> Option<f64> {
     let Key::Str(text) = key else {
         return None;
     };
+    // The common case, a canonical array index, needs no number-to-string round trip.
+    if let Some(index) = key.index() {
+        return Some(f64::from(index));
+    }
     if text.len() > MAX_CANONICAL_INDEX_UNITS {
         return None;
     }
@@ -54,15 +58,16 @@ pub(in crate::v9) fn set(vm: &mut Vm, id: ObjectId, key: &Key, value: &JsValue) 
     let Some(view) = view_of(vm, id) else {
         return Ok(true);
     };
-    if buffer_state::immutable(vm, view.buffer) && matches!(self::index(vm, id, key), Some(Some(_)))
+    if matches!(self::index(vm, id, key), Some(Some(_))) && buffer_state::immutable(vm, view.buffer)
     {
         return Ok(false);
     }
     let bytes = encode(vm, view.kind, value)?;
-    if let Some(Some(index)) = self::index(vm, id, key) {
-        if let Some(current) = view_of(vm, id) {
-            write_bytes(vm, &current, index * element_size(current.kind), &bytes)?;
-        }
+    // Validity is tested after the conversion, which may have resized or detached the buffer.
+    if let Some(Some(index)) = self::index(vm, id, key)
+        && let Some(current) = view_of(vm, id)
+    {
+        write_bytes(vm, &current, index * element_size(current.kind), &bytes)?;
     }
     Ok(true)
 }

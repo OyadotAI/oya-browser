@@ -71,9 +71,16 @@ impl Vm<'_> {
             },
         )? && required
         {
-            return Err(self.global_declaration_error(&name, deletable));
+            return Err(self.undefinable_global(&name));
         }
         Ok(())
+    }
+
+    /** CanDeclareGlobalVar or CanDeclareGlobalFunction said no (a non-extensible global, or a
+    non-configurable property the declaration cannot take over): spec steps 9 to 12 throw a
+    TypeError, unlike the lexical collisions before them, which are SyntaxErrors. */
+    fn undefinable_global(&mut self, name: &JsString) -> Thrown {
+        self.type_error(&format!("Cannot redefine global property '{}'", name.lossy()))
     }
 
     /** Nonconfigurable writable globals retain their attributes; configurable accessors become ordinary data without calls. */
@@ -114,7 +121,7 @@ impl Vm<'_> {
             }
         };
         if !self.define(self.global_object(), key, descriptor)? {
-            return Err(self.global_declaration_error(&name, deletable));
+            return Err(self.undefinable_global(&name));
         }
         Ok(())
     }

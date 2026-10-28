@@ -189,3 +189,17 @@ fn global_replace_overflow_is_a_range_error() {
     let result = run("const piece='b'.repeat(32769);let a,b;try{'a'.repeat(32).replace(/a/g,piece)}catch(e){a=e instanceof RangeError}try{'a'.repeat(32).replace(/a/g,()=>piece)}catch(e){b=e instanceof RangeError}r=a+','+b;");
     assert_eq!(result, "true,true");
 }
+
+/** A complete interval cannot quantify an absent atom in legacy RegExp mode. */
+#[test]
+fn leading_interval_quantifier_is_invalid() {
+    let result = run("let a,b;try{new RegExp('{4,5}abc')}catch(e){a=e instanceof SyntaxError}try{new RegExp('{abc')}catch(e){b=true}r=a+','+b;");
+    assert_eq!(result, "true,undefined");
+}
+
+/** An impossible non-Latin-1 continuation prunes nested loops without losing optional branches. */
+#[test]
+fn non_latin1_literals_prune_latin1_subjects() {
+    let result = run("const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/(?!(((.*)*)*x)Ā)foo/.test('foo'),/(a|(((.*)*)*x)ă|(((.*)*)*x)Ā)/.test('z'),/K/ui.test('k')].join();");
+    assert_eq!(result, "false,false,true,true,true,false,true");
+}

@@ -295,9 +295,10 @@ fn copy_live(
     Ok(())
 }
 
-/** Subarray delegates the actual buffer, offset and length to species; tracking views omit the length when end is undefined. */
+/** Subarray delegates the actual buffer, offset and length to species; tracking views omit the length when end is undefined.
+A detached receiver still converts begin and end (its length reads as zero) and lets the species constructor reject the buffer. */
 pub(super) fn subarray(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, view) = this_typed(vm, &call)?;
+    let (_, view) = typed_brand(vm, &call)?;
     let start = vm.relative_index(&call.arg(0), view.length, 0)?;
     let end = vm
         .relative_index(&call.arg(1), view.length, view.length)?

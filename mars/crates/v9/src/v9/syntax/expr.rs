@@ -3,6 +3,36 @@ use super::stmt::infer_name;
 use super::*;
 use crate::v9::value::JsString;
 
+/** V8 tiering and feedback hints that V9, which has no optimizer, accepts with any arguments and
+answers `undefined`, exactly as V8 does under `--no-turbofan --no-maglev`. Without them every upstream
+language test that warms a function up before asserting its result would stay excluded. */
+#[cfg(feature = "conformance")]
+const OPTIMIZER_HINTS: &[&str] = &[
+    "PrepareFunctionForOptimization",
+    "OptimizeFunctionOnNextCall",
+    "OptimizeMaglevOnNextCall",
+    "NeverOptimizeFunction",
+    "OptimizeOsr",
+    "BaselineOsr",
+    "DeoptimizeFunction",
+    "DeoptimizeNow",
+    "_DeoptimizeNow",
+    "ClearFunctionFeedback",
+    "EnsureFeedbackVectorForFunction",
+    "TurbofanStaticAssert",
+    "AssertEscapeAnalysisElided",
+    "AssertPeeled",
+    "DisableOptimizationFinalization",
+    "FinalizeOptimization",
+    "WaitForBackgroundOptimization",
+    "WasmTierUpFunction",
+    "SetAllocationTimeout",
+    "SimulateNewspaceFull",
+    "DebugToggleBlockCoverage",
+];
+/** The precedence of `<`, `>`, `instanceof` and `in` in `binary_operator`'s table; a brand check
+`#name in object` is only grammatical where an expression of that level may start. */
+const RELATIONAL_PRECEDENCE: u8 = 8;
 impl Parser {
     /** A full Expression, including the comma operator. `no_in` excludes `in` for for-heads. */
     pub(super) fn expression(&mut self, no_in: bool) -> EngineResult<Expr> {
@@ -96,10 +126,13 @@ impl Parser {
     fn binary(&mut self, minimum: u8, no_in: bool) -> EngineResult<Expr> {
         self.enter(|parser| parser.binary_level(minimum, no_in))
     }
-    /** One precedence-climbing level. */
+    /** One precedence-climbing level. A `#name in` brand check is a RelationalExpression, so it
+    may open this level only when the level admits relational operators: as the operand of a
+    tighter operator (`0 << #x in {}`) a bare private name is the early error the spec requires. */
     fn binary_level(&mut self, minimum: u8, no_in: bool) -> EngineResult<Expr> {
         let pos = self.pos();
-        let mut left = if matches!(self.peek().kind, Kind::Private(_)) {
+        let private_in_allowed = minimum <= RELATIONAL_PRECEDENCE;
+        let mut left = if private_in_allowed && matches!(self.peek().kind, Kind::Private(_)) {
             self.private_in(no_in)?
         } else {
             self.unary()?
@@ -321,17 +354,16 @@ impl Parser {
         }
         self.node(ExprKind::Import(specifier, options), pos)
     }
-    /** `new Callee(args)`, `new Callee`, and `new.target`. */
+    /** `new Callee(args)`, `new Callee`, and `new.target`. The `target` keyword is a terminal
+    symbol, so an escaped spelling is not it; and only a function body, a class element or eval
+    code inside one may ask for it (an arrow asks for its enclosing one). */
     fn new_expression(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         self.next();
         if self.eat(".") {
+            let escaped = self.peek().escaped;
             let name = self.property_name()?;
-            if &*name != "target"
-                || !self.context.function
-                    && !self.context.static_block
-                    && !self.context.eval_new_target
-            {
+            if &*name != "target" || escaped || !self.context.new_target {
                 return Err(self.error_at(pos, "new.target expression is not allowed here"));
             }
             return self.node(ExprKind::NewTarget, pos);
@@ -379,6 +411,12 @@ impl Parser {
                 Some(".") => {
                     self.next();
                     let property = self.member_name()?;
+                    // SuperProperty names a public member: `super.#x` has no brand to check.
+                    if matches!(base.kind, ExprKind::Super)
+                        && matches!(property, MemberProp::Private(_))
+                    {
+                        return Err(self.error_at(pos, "Unexpected private field"));
+                    }
                     base = self.node(ExprKind::Member(Box::new(base), property, false), pos)?;
                 }
                 Some("?.") => {
@@ -475,23 +513,34 @@ impl Parser {
         }
         Ok(list)
     }
-    /** Literals, names, groups, functions, classes, arrays, objects and templates. */
-    /** A literal whose pattern does not compile is an early error even if the literal never runs, as ECMA-262 requires. */
+    /** A literal whose pattern does not compile is an early error even if the literal never runs,
+    as ECMA-262 requires; so is a `\k<name>` that names no group once the pattern has named groups
+    or the `u`/`v` flag (without either, Annex B reads `\k` as a literal `k`). */
     fn regex_literal_check(&self, pos: Pos, pattern: &str, flags: &str) -> EngineResult<()> {
         let units: Vec<u16> = pattern.encode_utf16().collect();
         // Boundary assertions are accepted here; the runtime still refuses them where the environment disables them.
-        match crate::v9::regexp::compile(&units, flags, true) {
+        let program = match crate::v9::regexp::compile(&units, flags, true) {
             // Only ECMAScript early errors throw here; V9's own gaps wait for the runtime, so real pages still parse.
-            Err(error) if !error.is_engine_gap() => Err(self.error_at(
-                pos,
-                &format!(
-                    "Invalid regular expression: /{pattern}/{flags}: {}",
-                    error.0
-                ),
-            )),
-            _ => Ok(()),
+            Err(error) if !error.is_engine_gap() => {
+                return Err(self.regex_error(pos, pattern, flags, &error.0));
+            }
+            Err(_) => return Ok(()),
+            Ok(program) => program,
+        };
+        let named = !program.names.is_empty() || flags.contains(['u', 'v']);
+        if named && has_dangling_group_reference(pattern, &program.names) {
+            return Err(self.regex_error(pos, pattern, flags, "Invalid named capture referenced"));
         }
+        Ok(())
     }
+    /** The SyntaxError for a regexp literal, worded as V8 words it. */
+    fn regex_error(&self, pos: Pos, pattern: &str, flags: &str, reason: &str) -> EngineError {
+        self.error_at(
+            pos,
+            &format!("Invalid regular expression: /{pattern}/{flags}: {reason}"),
+        )
+    }
+    /** Literals, names, groups, functions, classes, arrays, objects and templates. */
     fn primary(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         let token = self.peek().clone();
@@ -548,6 +597,37 @@ impl Parser {
                     "WasmStruct" => (48, 0),
                     "WasmArray" => (49, 0),
                     "IsWasmTrapHandlerEnabled" => (50, 0),
+                    "StringLessThan" => (51, 2),
+                    "StringLessThanOrEqual" => (52, 2),
+                    "StringGreaterThan" => (53, 2),
+                    "StringGreaterThanOrEqual" => (54, 2),
+                    "StringEqual" => (55, 2),
+                    "StringCompare" => (56, 2),
+                    "Call" => (57, 2),
+                    "ToNumber" => (58, 1),
+                    "ToString" => (59, 1),
+                    "ToNumeric" => (60, 1),
+                    "ConstructDouble" => (61, 2),
+                    "IsInternalizedString" => (62, 1),
+                    "GetHoleNaN" => (63, 0),
+                    "GetHoleNaNUpper" => (64, 0),
+                    "GetHoleNaNLower" => (65, 0),
+                    "HeapObjectVerify" => (66, 1),
+                    "GetOptimizationStatus" => (68, 1),
+                    "DebugPrint" | "CompileBaseline" => (71, 1),
+                    "IsBeingInterpreted" | "ActiveTierIsIgnition" => (70, 0),
+                    "IsMaglevEnabled"
+                    | "IsTurbofanEnabled"
+                    | "IsSparkplugEnabled"
+                    | "IsConcurrentRecompilationSupported"
+                    | "ActiveTierIsMaglev"
+                    | "ActiveTierIsTurbofan"
+                    | "ActiveTierIsSparkplug"
+                    | "IsDictPropertyConstTrackingEnabled"
+                    | "IsUndefinedDoubleEnabled"
+                    | "PretenureAllocationSite"
+                    | "CurrentFrameIsTurbofan" => (69, 0),
+                    name if OPTIMIZER_HINTS.contains(&name) => (67, 0),
                     _ => {
                         return Err(crate::protocol::EngineError::unsupported(&format!(
                             "V8 native intrinsic %{name}"
@@ -574,7 +654,13 @@ impl Parser {
                 } else {
                     intrinsic
                 };
-                if (args.len() != count && !matches!(intrinsic, 12 | 29 | 30 | 33 | 34 | 40 | 41 | 45))
+                if (intrinsic == 57 && args.len() < 2)
+                    || (matches!(intrinsic, 68 | 71) && !(1..=2).contains(&args.len()))
+                    || (args.len() != count
+                        && !matches!(
+                            intrinsic,
+                            12 | 29 | 30 | 33 | 34 | 40 | 41 | 45 | 57 | 67..=71
+                        ))
                     || args.iter().any(|arg| !matches!(arg, Element::Value(_)))
                 {
                     return Err(self.error_at(pos, "Invalid V8 intrinsic arguments"));
@@ -614,7 +700,10 @@ impl Parser {
                 self.next();
                 let value = self.expression(false)?;
                 self.expect(")")?;
-                if matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_)) {
+                if matches!(
+                    value.kind,
+                    ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign(..)
+                ) {
                     self.parenthesized_patterns.insert(value.pos.offset);
                 }
                 if matches!(value.kind, ExprKind::Logical(..)) {
@@ -736,6 +825,7 @@ impl Parser {
             }
             if self.eat("...") {
                 elements.push(Element::Spread(self.assignment(false)?));
+                self.note_rest_comma(pos);
             } else {
                 elements.push(Element::Value(self.assignment(false)?));
             }
@@ -745,13 +835,25 @@ impl Parser {
         }
         self.node(ExprKind::Array(elements), pos)
     }
+    /** A comma after a spread is fine in a literal but makes it unusable as a pattern: an
+    AssignmentRestElement must be the last thing in the list, with nothing (not even an elision)
+    after it. The literal is parsed before anyone knows which it is, so the fact is kept by position. */
+    fn note_rest_comma(&mut self, literal: Pos) {
+        if self.at(",") {
+            self.rest_commas.insert(literal.offset);
+        }
+    }
     /** `{a, b: c, [k]: v, m() {}, get x() {}, ...rest}` */
     fn object_literal(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         self.expect("{")?;
         let mut properties = Vec::new();
         while !self.eat("}") {
-            properties.push(self.property_definition()?);
+            let property = self.property_definition()?;
+            if matches!(property, PropDef::Spread(_)) {
+                self.note_rest_comma(pos);
+            }
+            properties.push(property);
             if !self.at("}") {
                 self.expect(",")?;
             }
@@ -866,11 +968,7 @@ impl Parser {
     /** Turn a parsed expression into an assignment or binding pattern (the cover grammar). */
     pub(super) fn pattern_of(&mut self, value: Expr) -> EngineResult<Pattern> {
         let pos = value.pos;
-        if self.parenthesized_patterns.contains(&pos.offset)
-            && matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_))
-        {
-            return Err(self.error_at(pos, "Invalid destructuring assignment target"));
-        }
+        self.check_cover(&value)?;
         match value.kind {
             ExprKind::Ident(name) => {
                 self.check_assignable(&name, pos)?;
@@ -940,10 +1038,29 @@ impl Parser {
             _ => Err(self.error_at(pos, "Invalid left-hand side in assignment")),
         }
     }
-    /** Web-compatible call targets are rewritten to call[throw ReferenceError], as in V8. */
+    /** What the cover grammar refuses to reread as a pattern: a parenthesized literal or
+    assignment (`(x = y) = 1`, `[(x = y)] = []`), and a literal with a comma after its rest. */
+    fn check_cover(&self, value: &Expr) -> EngineResult<()> {
+        let pos = value.pos;
+        let literal = matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_));
+        if self.parenthesized_patterns.contains(&pos.offset)
+            && (literal || matches!(value.kind, ExprKind::Assign(..)))
+        {
+            return Err(self.error_at(pos, "Invalid destructuring assignment target"));
+        }
+        if literal && self.rest_commas.contains(&pos.offset) {
+            return Err(self.error_at(pos, "Rest element must be last element"));
+        }
+        Ok(())
+    }
+    /** Web-compatible call targets are rewritten to call[throw ReferenceError], as in V8; the
+    web-compat allowance is sloppy only, so strict code gets the early error instead. */
     pub(super) fn legacy_target(&mut self, value: Expr) -> EngineResult<Pattern> {
         if matches!(value.kind, ExprKind::Call(_, _, false)) {
             let pos = value.pos;
+            if self.strict {
+                return Err(self.error_at(pos, "Invalid left-hand side in assignment"));
+            }
             let error = self.node(
                 ExprKind::InvalidReference("Invalid left-hand side in assignment"),
                 pos,
@@ -1019,6 +1136,37 @@ impl Parser {
             .get(close as usize + 1)
             .is_some_and(|token| matches!(token.kind, Kind::Arrow) && !token.line_terminator_before)
     }
+}
+
+/** True when some `\k<name>` in the pattern names none of the compiled groups. The compiler has
+already refused `\k` inside a class and every malformed reference, so each one left is an atom.
+ponytail: a name spelled with escapes is left to the compiler, which decodes them; only plain names are checked. */
+fn has_dangling_group_reference(pattern: &str, names: &[(String, Vec<usize>)]) -> bool {
+    let mut rest = pattern;
+    while let Some(index) = rest.find('\\') {
+        let after = &rest[index + 1..];
+        let Some(reference) = after.strip_prefix("k<") else {
+            rest = after_escape(after);
+            continue;
+        };
+        let Some(end) = reference.find('>') else {
+            return false;
+        };
+        let name = &reference[..end];
+        if !name.contains('\\') && !names.iter().any(|(declared, _)| declared == name) {
+            return true;
+        }
+        rest = &reference[end + 1..];
+    }
+    false
+}
+
+/** The text after one escaped character, stepping over the whole character. */
+fn after_escape(after: &str) -> &str {
+    after
+        .chars()
+        .next()
+        .map_or("", |escaped| &after[escaped.len_utf8()..])
 }
 
 /** `delete x.#y` (also inside an optional chain) is an early error: private names never go away. */

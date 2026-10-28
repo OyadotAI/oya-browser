@@ -308,10 +308,10 @@ impl Scripts {
             ),
             conformance_native_main_source: (std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS")
                 .as_deref()
-                == Ok("1")
+                != Ok("0")
                 && boolean_flag(&self.metadata_source, "allow-natives-syntax"))
             .then(|| self.source_names.len().saturating_sub(1)),
-            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() == Ok("1") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
+            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() != Ok("0") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
             conformance_wasm_stringref: boolean_flag(&self.metadata_source, "wasm-stringref"),
             conformance_wasm_custom_descriptors: boolean_flag(&self.metadata_source, "wasm-custom-descriptors") || boolean_flag(&self.metadata_source, "wasm-js-interop"),
             conformance_wasm_acquire_release: boolean_flag(&self.metadata_source, "wasm-acquire-release"),
@@ -323,6 +323,9 @@ impl Scripts {
             conformance_wasm_wasmfx: boolean_flag(&self.metadata_source, "wasm-wasmfx"),
             conformance_wasm_shared: boolean_flag(&self.metadata_source, "wasm-shared"),
             conformance_wasm_compact_imports: boolean_flag(&self.metadata_source, "wasm-compact-imports"),
+            conformance_wasm_testing_opcode: boolean_flag(&self.metadata_source, "enable-testing-opcode-in-wasm"),
+            conformance_wasm_ref_cast_nop: boolean_flag(&self.metadata_source, "wasm-ref-cast-nop"),
+            conformance_wasm_math_intrinsics: Some(boolean_flag_default(&self.metadata_source, "wasm-math-intrinsics", true)),
             conformance_wasm_test_streaming: Some(boolean_flag(&self.metadata_source, "wasm-test-streaming")),
             conformance_operation_limit: operation_limit,
             conformance_shared_string_table: boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct"),

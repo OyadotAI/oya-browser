@@ -126,3 +126,15 @@ fn forged_parameter_aliases_are_rejected() {
     let result = mars_v9::run_timers(common::input(&sources, &host, &environment), state, 0.0, 1);
     assert_eq!(result.unwrap_err().code, "invalid_request");
 }
+
+/** Freezing a mapped arguments object keeps each parameter's value as the now read-only
+property and drops the alias, so later parameter writes no longer show through. */
+#[test]
+fn freezing_mapped_arguments_snapshots_values_and_detaches() {
+    let source = "function f(a,b){Object.freeze(arguments);a=9;\
+        const d=Object.getOwnPropertyDescriptor(arguments,'0');\
+        return [arguments[0],arguments[1],d.writable,d.configurable,Object.isFrozen(arguments)].join()}\
+        function g(a){Object.seal(arguments);a=5;return [arguments[0],Object.isSealed(arguments)].join()}\
+        const r=[f(1,2),g(3)].join('|');";
+    assert_eq!(eval(source, "r"), "1,2,false,false,true|5,true");
+}

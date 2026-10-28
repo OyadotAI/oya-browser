@@ -58,18 +58,3 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     buffer_state::make_immutable(vm, output);
     Ok(JsValue::Object(output))
 }
-
-/** Length-preserving generic algorithms get native typed write validation even for empty targets. */
-pub(super) fn mutator(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    typed(vm, &call)?;
-    let name = callee_name(&call);
-    let function = realm()
-        .object(realm().ids.array_prototype)
-        .and_then(|object| object.get(&key(name)))
-        .and_then(|(_, property, _)| match property {
-            Static::Value(value) => Some(value.clone()),
-            _ => None,
-        })
-        .expect("intrinsic array mutator");
-    vm.call(function, call.this, call.args.to_vec())
-}

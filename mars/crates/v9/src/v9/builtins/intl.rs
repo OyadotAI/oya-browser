@@ -288,19 +288,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .next()
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| vm.page.environment.locale.clone());
-    let init = call.arg(1);
-    let mut options = BTreeMap::new();
-    if matches!(init, JsValue::Object(_)) {
-        for name in OPTIONS {
-            if name == "timeZone" && kind != "DateTimeFormat" {
-                continue;
-            }
-            let value = vm.get(&init, &Key::from(name))?;
-            if value != JsValue::Undefined {
-                options.insert(name.to_string(), option_text(vm, name, &value)?);
-            }
-        }
-    }
+    let options = read_options(vm, &call.arg(1), &kind)?;
     let prototype = vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))?;
     let proto = match prototype {
         JsValue::Object(id) => id,
@@ -315,6 +303,28 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         Some(proto),
     ))?;
     Ok(JsValue::Object(id))
+}
+
+/** Read a formatter's options object into its map, one known name at a time, so a method such
+as `String.prototype.localeCompare` can take the same options a Collator constructor does. */
+pub(super) fn read_options(
+    vm: &mut Vm,
+    init: &JsValue,
+    kind: &str,
+) -> Res<BTreeMap<String, String>> {
+    let mut options = BTreeMap::new();
+    if matches!(init, JsValue::Object(_)) {
+        for name in OPTIONS {
+            if name == "timeZone" && kind != "DateTimeFormat" {
+                continue;
+            }
+            let value = vm.get(init, &Key::from(name))?;
+            if value != JsValue::Undefined {
+                options.insert(name.to_string(), option_text(vm, name, &value)?);
+            }
+        }
+    }
+    Ok(options)
 }
 
 /** The formatter behind `this`. */
@@ -666,51 +676,83 @@ fn format_list(items: &[String], options: &BTreeMap<String, String>) -> String {
     }
 }
 
-/** Order two strings: case-insensitively unless the sensitivity asks for case, and with
-embedded numbers compared by value when `numeric` is on. */
-fn collate(a: &str, b: &str, options: &BTreeMap<String, String>) -> f64 {
-    let case_sensitive = options
-        .get("sensitivity")
-        .is_some_and(|sensitivity| sensitivity == "case" || sensitivity == "variant");
+/** Order two strings the way ICU's root collation does, in its three levels: letters without
+accents or case first (digit runs by value when `numeric` is on), then accents, then case with
+lowercase before uppercase, so `"a".localeCompare("A")` is -1 as in every browser. `sensitivity`
+drops the lower levels: `base` keeps only the first, `accent` the first two, `case` the first and
+third. Code-unit order here made sorted lists on pages come out in a different order than Chrome. */
+pub(super) fn collate(a: &str, b: &str, options: &BTreeMap<String, String>) -> f64 {
+    let sensitivity = options.get("sensitivity").map_or("variant", String::as_str);
     let numeric = options
         .get("numeric")
         .is_some_and(|numeric| numeric == "true");
-    let key = |text: &str| -> Vec<(u64, String)> {
-        let folded = if case_sensitive {
-            text.to_string()
-        } else {
-            text.to_lowercase()
-        };
-        if !numeric {
-            return vec![(0, folded)];
-        }
-        let mut parts = Vec::new();
-        let mut run = String::new();
-        for c in folded.chars() {
-            if c.is_ascii_digit()
-                != run
-                    .chars()
-                    .next()
-                    .is_some_and(|first| first.is_ascii_digit())
-                && !run.is_empty()
-            {
-                parts.push(std::mem::take(&mut run));
-            }
-            run.push(c);
-        }
-        if !run.is_empty() {
-            parts.push(run);
-        }
-        parts
-            .into_iter()
-            .map(|part| (part.parse::<u64>().unwrap_or(0), part))
-            .collect()
+    let (accents, case) = match sensitivity {
+        "base" => (false, false),
+        "accent" => (true, false),
+        "case" => (false, true),
+        _ => (true, true),
     };
-    match key(a).cmp(&key(b)) {
+    match collation_key(a, numeric, accents, case).cmp(&collation_key(b, numeric, accents, case)) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
+}
+
+/** The three-level key `collate` compares: primary runs, the accented form, and the case shape. */
+fn collation_key(
+    text: &str,
+    numeric: bool,
+    accents: bool,
+    case: bool,
+) -> (Vec<(u64, String)>, String, Vec<bool>) {
+    let decomposed = icu_normalizer::DecomposingNormalizerBorrowed::new_nfd().normalize(text);
+    let categories =
+        icu_properties::CodePointMapData::<icu_properties::props::GeneralCategory>::new();
+    let base: String = decomposed
+        .chars()
+        .filter(|c| !icu_properties::props::GeneralCategoryGroup::Mark.contains(categories.get(*c)))
+        .collect();
+    let primary = digit_runs(&base.to_lowercase(), numeric);
+    let secondary = if accents {
+        decomposed.to_lowercase()
+    } else {
+        String::new()
+    };
+    let tertiary = if case {
+        base.chars().map(char::is_uppercase).collect()
+    } else {
+        Vec::new()
+    };
+    (primary, secondary, tertiary)
+}
+
+/** Split `folded` into runs so that, when `numeric` is on, a run of digits sorts by its value. */
+fn digit_runs(folded: &str, numeric: bool) -> Vec<(u64, String)> {
+    if !numeric {
+        return vec![(0, folded.to_string())];
+    }
+    let mut parts = Vec::new();
+    let mut run = String::new();
+    for c in folded.chars() {
+        if c.is_ascii_digit()
+            != run
+                .chars()
+                .next()
+                .is_some_and(|first| first.is_ascii_digit())
+            && !run.is_empty()
+        {
+            parts.push(std::mem::take(&mut run));
+        }
+        run.push(c);
+    }
+    if !run.is_empty() {
+        parts.push(run);
+    }
+    parts
+        .into_iter()
+        .map(|part| (part.parse::<u64>().unwrap_or(0), part))
+        .collect()
 }
 
 /** `segment(input)`: an array of `{segment, index, input, isWordLike}` by grapheme (one scalar

@@ -913,9 +913,12 @@ impl Vm<'_> {
             Class::Host(_) => super::super::platform::host_write(self, id, key, value),
             // A namespace's exports are read-only to their importers.
             Class::Namespace(_) if !key.hidden() => Ok(Some(false)),
-            // Integer-indexed: in-range writes store into the buffer, others are dropped.
+            // Integer-indexed receiver of a Set that started elsewhere: OrdinarySet ends in
+            // CreateDataProperty, so this is [[DefineOwnProperty]], which answers false for an
+            // invalid index without coercing the value (the same-receiver path coerces first).
             Class::View(_) if crate::v9::builtins::typed_index(self, id, key).is_some() => {
-                crate::v9::builtins::typed_set_integer(self, id, key, value).map(Some)
+                let desc = Descriptor::data(value.clone());
+                crate::v9::builtins::typed_define_integer(self, id, key, &desc).transpose()
             }
             _ => Ok(None),
         }
@@ -943,6 +946,61 @@ impl Vm<'_> {
             units = elements.repeated_units().unwrap_or(0) as isize - before_units as isize;
         }
         self.heap.adjust(properties, units);
+    }
+    /** The array behind `object` when its first `length` elements are all resident data in dense
+    storage, with no indexed overlays, no fixed length and room to grow: sliding them is then
+    unobservable, so shift and unshift may move the storage once instead of a [[Get]] and a
+    [[Set]] with a string key per element (a 64-element queue drained by shift cost more than
+    the rest of a page's loop put together). Holes, accessors, proxies, frozen or sealed arrays
+    and foreign receivers answer None and keep the generic path. */
+    pub fn plain_dense_array(&self, object: &JsValue, length: usize) -> Option<ObjectId> {
+        let id = object.object()?;
+        let heap_object = self.heap.get(id)?;
+        let Class::Array(elements) = &heap_object.class else {
+            return None;
+        };
+        let dense = elements.dense_slice()?;
+        // Small dense vectors may still hold hole sentinels; the resident count is kept per
+        // store, so packedness is one comparison rather than a scan.
+        let packed = dense.len() == length && elements.resident_len() == length;
+        let overlay = heap_object
+            .props
+            .iter()
+            .any(|(key, _)| key.index().is_some() || *key == fixed_length_mark());
+        (packed && heap_object.extensible && !overlay).then_some(id)
+    }
+    /** Shift a plain dense array's first element out in one move, keeping the heap's counts. */
+    pub fn array_shift_dense(&mut self, id: ObjectId) -> Option<JsValue> {
+        let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
+        else {
+            return None;
+        };
+        if elements.get(0).is_none_or(|first| *first == JsValue::Hole) {
+            return None;
+        }
+        let value = elements.remove(0);
+        let units = -(value.string_units() as isize);
+        self.heap.adjust(-1, units);
+        Some(value)
+    }
+    /** Put `values` before a plain dense array's elements in one move, keeping the heap's counts. */
+    pub fn array_unshift_dense(&mut self, id: ObjectId, values: Vec<JsValue>) -> bool {
+        for value in &values {
+            self.heap.track_value(value);
+        }
+        let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
+        else {
+            return false;
+        };
+        let Some(dense) = elements.dense_slice() else {
+            return false;
+        };
+        let (count, units) = (values.len() as isize, values.iter().map(|value| value.string_units() as isize).sum());
+        let mut all = values;
+        all.extend_from_slice(dense);
+        *elements = super::array_elements::ArrayElements::from(all);
+        self.heap.adjust(count, units);
+        true
     }
     /** Sparse overlays consume physical storage even when replacing an existing logical slot. */
     fn check_array_overlay(&self, id: ObjectId, index: usize) -> Res<()> {

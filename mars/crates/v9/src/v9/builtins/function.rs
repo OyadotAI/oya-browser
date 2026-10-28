@@ -106,9 +106,13 @@ pub(super) fn create_dynamic(vm: &mut Vm, call: Call, prefix: &str) -> Res<JsVal
     let head = format!("({prefix}({}\n", params.join(","));
     let parameters_end = head.len();
     let source = format!("{head}) {{\n{body}\n}})");
-    if let Err(error) =
-        crate::v9::syntax::validate_dynamic_function(&source, parameters_end, source.len() - 2)
-    {
+    let native = vm.native_dynamic();
+    if let Err(error) = crate::v9::syntax::validate_dynamic_function(
+        &source,
+        parameters_end,
+        source.len() - 2,
+        native,
+    ) {
         if error.code == "script_syntax_error" {
             return Err(vm.syntax_error(&crate::v9::errors::syntax_reason(&error)));
         }
@@ -163,18 +167,24 @@ pub(in crate::v9) fn compile_indirect_eval(
     vm.check_string_codegen()?;
     let origin = vm.capture_eval_origin()?;
     vm.prepare_dynamic(source.len().saturating_add(origin.bytes()))?;
+    let native = vm.native_dynamic();
     let base = dynamic_base(&vm.dynamic);
-    let code =
-        match crate::v9::compile_dynamic(&mut vm.registry, &source, base, Some(INDIRECT_CONTEXT)) {
-            Ok(code) => code,
-            Err(error) if error.code == "script_syntax_error" => {
-                return Err(vm.syntax_error(&crate::v9::errors::syntax_reason(&error)));
-            }
-            Err(error) if error.code == "unsupported_feature" => {
-                return Err(vm.unsupported_error("dynamic code with unsupported syntax"));
-            }
-            Err(error) => return Err(error.into()),
-        };
+    let code = match crate::v9::compile_dynamic(
+        &mut vm.registry,
+        &source,
+        base,
+        Some(INDIRECT_CONTEXT),
+        native,
+    ) {
+        Ok(code) => code,
+        Err(error) if error.code == "script_syntax_error" => {
+            return Err(vm.syntax_error(&crate::v9::errors::syntax_reason(&error)));
+        }
+        Err(error) if error.code == "unsupported_feature" => {
+            return Err(vm.unsupported_error("dynamic code with unsupported syntax"));
+        }
+        Err(error) => return Err(error.into()),
+    };
     let origin = vm.finish_eval_origin(&source, origin)?;
     vm.dynamic.push(crate::v9::vm::DynamicSource {
         source,

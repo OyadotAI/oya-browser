@@ -4,23 +4,39 @@ use super::*;
 /** ECMAScript indices fit exactly in a binary64 integer. */
 const MAXIMUM_LENGTH: f64 = ((1u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
+thread_local! {
+    /** The four slot keys, built once per thread: every element read or write of a view looks
+    some of them up, and building a key allocates. */
+    static SLOT_KEYS: [Key; 4] = [
+        Key::private("array-buffer-maximum"),
+        Key::private("array-buffer-detached"),
+        Key::private("array-buffer-detach-protected"),
+        Key::private("array-buffer-immutable"),
+    ];
+}
+
+/** One cached slot key by position in SLOT_KEYS. */
+fn slot_key(index: usize) -> Key {
+    SLOT_KEYS.with(|keys| keys[index].clone())
+}
+
 /** The maximum is a private internal slot, never a writable JavaScript property. */
 fn maximum_key() -> Key {
-    Key::private("array-buffer-maximum")
+    slot_key(0)
 }
 /** Detachment differs from an attached zero-byte buffer. */
 fn detached_key() -> Key {
-    Key::private("array-buffer-detached")
+    slot_key(1)
 }
 
 /** Native engines retain authority over memory buffers that scripts may not detach. */
 fn protected_key() -> Key {
-    Key::private("array-buffer-detach-protected")
+    slot_key(2)
 }
 
 /** This internal capability is shared by every alias and cannot be supplied through a JS property. */
 fn immutable_key() -> Key {
-    Key::private("array-buffer-immutable")
+    slot_key(3)
 }
 
 /** Reads, clones and view construction may use immutable bytes; writes and detachment may not. */

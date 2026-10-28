@@ -89,10 +89,22 @@ To inspect previously excluded top-level directories, explicitly admit them and 
 MJSUNIT_INCLUDE_DIRS=wasm,shared-memory,d8 MJSUNIT=wasm/memory-size.js,shared-memory/value-serializer.js,d8/files/exists.js CONF_OUT=/tmp/v9-extra CONF_REQUIRE_PASS=1 cargo test --release --offline -p mars-v9 --features conformance --test test262_runner -- --ignored --nocapture --exact mjsunit
 ```
 
-Opt-in discovery records each excluded path and reason in the JSON report. Set
-`MJSUNIT_INCLUDE_INERT_NATIVE_FLAG=1` to admit tests that request native syntax but contain
-no percent character and use only other supported flags. Set `MJSUNIT_INCLUDE_NATIVE_INTRINSICS=1`
-to also admit tests whose percent tokens name only the implemented `%AbortJS`,
+Discovery records each excluded path and reason in the JSON report. Tests that request native
+syntax but contain no percent character run by default (`MJSUNIT_INCLUDE_INERT_NATIVE_FLAG=0`
+excludes them again), as do tests whose percent tokens name only implemented intrinsics
+(`MJSUNIT_INCLUDE_NATIVE_INTRINSICS=0` excludes them). V8's tiering and feedback hints
+(`%PrepareFunctionForOptimization`, `%OptimizeFunctionOnNextCall`, `%OptimizeMaglevOnNextCall`,
+`%NeverOptimizeFunction`, `%OptimizeOsr`, `%DeoptimizeFunction`, `%DeoptimizeNow`,
+`%CompileBaseline`, `%ClearFunctionFeedback`, `%EnsureFeedbackVectorForFunction`,
+`%TurbofanStaticAssert` and their relatives) evaluate their arguments and answer `undefined`,
+which is V8's own behaviour without a JIT; the tier predicates answer their constant truth for an
+interpreter, and `%GetOptimizationStatus` reports `kIsFunction | kNeverOptimize`, so mjsunit's
+`assertUnoptimized` holds and `assertOptimized` stops the test with its usual no-turbofan message.
+The runner counts such a stop as the skip `no-optimizer:assertOptimized`, never as a pass. d8 flags
+that only tune V8 machinery V9 lacks (JIT tiers and budgets, the generational collector, lazy
+parsing, diagnostic printing, `--stack-size`) are accepted as inert; the list is
+`INERT_D8_FLAGS` in the runner. Flags that change what a program means stay unsupported.
+The implemented intrinsics are the hints above plus `%AbortJS`,
 `%PerformMicrotaskCheckpoint`, `%ArrayBufferDetach`, `%Is64Bit`, `%ToLength`, and
 `%AtomicsSynchronizationPrimitiveNumWaitersForTesting`, `%IsJSReceiver`, `%IsArray`, and
 `%ToBoolean`, `%Typeof`, `%ToName`, `%CreateIterResultObject`, `%GetWeakCollectionSize`,

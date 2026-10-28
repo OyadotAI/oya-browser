@@ -62,18 +62,24 @@ impl Vm<'_> {
         self.check_eval_envs(&context)?;
         let origin = self.capture_eval_origin()?;
         self.prepare_dynamic(source.len().saturating_add(origin.bytes()))?;
+        let native = self.native_dynamic();
         let base = dynamic_base(&self.dynamic);
-        let code =
-            match crate::v9::compile_dynamic(&mut self.registry, &source, base, Some(&context)) {
-                Ok(code) => code,
-                Err(error) if error.code == "script_syntax_error" => {
-                    return Err(self.syntax_error(&crate::v9::errors::syntax_reason(&error)));
-                }
-                Err(error) if error.code == "unsupported_feature" => {
-                    return Err(self.unsupported_error("dynamic code with unsupported syntax"));
-                }
-                Err(error) => return Err(error.into()),
-            };
+        let code = match crate::v9::compile_dynamic(
+            &mut self.registry,
+            &source,
+            base,
+            Some(&context),
+            native,
+        ) {
+            Ok(code) => code,
+            Err(error) if error.code == "script_syntax_error" => {
+                return Err(self.syntax_error(&crate::v9::errors::syntax_reason(&error)));
+            }
+            Err(error) if error.code == "unsupported_feature" => {
+                return Err(self.unsupported_error("dynamic code with unsupported syntax"));
+            }
+            Err(error) => return Err(error.into()),
+        };
         let origin = self.finish_eval_origin(&source, origin)?;
         self.dynamic.push(DynamicSource {
             source,

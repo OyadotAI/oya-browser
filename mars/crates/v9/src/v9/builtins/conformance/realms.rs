@@ -183,17 +183,19 @@ fn read_source(vm: &mut Vm, call: &Call) -> Res<String> {
     }
 }
 /** Retained Script text uses the same dynamic-source quotas and registry validation as eval. */
-fn script(vm: &mut Vm, source: String, bank: u32) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
+pub(super) fn script(vm: &mut Vm, source: String, bank: u32) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
     vm.prepare_dynamic(source.len())?;
+    let native = vm.native_dynamic();
     let base = dynamic_base(&vm.dynamic);
-    let code =
-        crate::v9::compile_dynamic(&mut vm.registry, &source, base, None).map_err(|error| {
+    let code = crate::v9::compile_dynamic(&mut vm.registry, &source, base, None, native).map_err(
+        |error| {
             if error.code == "script_syntax_error" {
                 vm.syntax_error(&error.message)
             } else {
                 error.into()
             }
-        })?;
+        },
+    )?;
     vm.realms.scripts.push((vm.dynamic.len(), bank));
     vm.dynamic.push(crate::v9::vm::DynamicSource {
         source,

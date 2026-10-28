@@ -392,7 +392,11 @@ fn module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
     let object = brand(vm, value, MODULE)?;
     let record = get(vm, object, MODULE).unwrap();
     let bytes = bytes(vm, &record)?;
-    let mut module = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+    let compact = get(vm, object, "wasm.feature.compact-imports") == Some(JsValue::Boolean(true));
+    let testing = get(vm, object, "wasm.feature.testing-opcode") == Some(JsValue::Boolean(true));
+    let ref_cast_nop = get(vm, object, "wasm.feature.ref-cast-nop") == Some(JsValue::Boolean(true));
+    let mut module = binary::parse_with_features(&bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, compact, testing, ref_cast_nop)
+        .map_err(|e| compile_failure(vm, e))?;
     module.wasmfx_enabled = get(vm, object, "wasm.feature.wasmfx") == Some(JsValue::Boolean(true));
     Ok((object, module))
 }
@@ -545,6 +549,20 @@ fn compact_imports_enabled(vm: &Vm) -> bool {
     #[cfg(not(feature = "conformance"))]
     { let _ = vm; true }
 }
+/** Testing-only opcodes are disabled outside the explicit shell flag. */
+fn testing_opcode_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    { return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_testing_opcode; }
+    #[cfg(not(feature = "conformance"))]
+    { let _ = vm; false }
+}
+/** Unchecked casts are permitted only by the explicit d8 experiment flag. */
+fn ref_cast_nop_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    { return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_ref_cast_nop; }
+    #[cfg(not(feature = "conformance"))]
+    { let _ = vm; false }
+}
 /** Host test limits can only lower the native table declaration bound. */
 fn table_limit(vm: &Vm) -> u64 {
     #[cfg(feature = "conformance")]
@@ -574,6 +592,8 @@ fn finish_module(
         shared_enabled(vm),
         table_limit(vm),
         compact_imports_enabled(vm),
+        testing_opcode_enabled(vm),
+        ref_cast_nop_enabled(vm),
     )
     .map_err(|e| compile_failure(vm, e))?;
     let proto = match new_target {
@@ -589,6 +609,9 @@ fn finish_module(
         "wasm.feature.wasmfx",
         JsValue::Boolean(parsed.wasmfx_enabled),
     );
+    set(vm, object, "wasm.feature.compact-imports", JsValue::Boolean(compact_imports_enabled(vm)));
+    set(vm, object, "wasm.feature.testing-opcode", JsValue::Boolean(testing_opcode_enabled(vm)));
+    set(vm, object, "wasm.feature.ref-cast-nop", JsValue::Boolean(ref_cast_nop_enabled(vm)));
     imports::store(vm, object, options)?;
     imports::validate(vm, object, &parsed)?;
     Ok(object)
@@ -637,6 +660,8 @@ fn validate_api(vm: &mut Vm, call: Call) -> Res<JsValue> {
         shared_enabled(vm),
         table_limit(vm),
         compact_imports_enabled(vm),
+        testing_opcode_enabled(vm),
+        ref_cast_nop_enabled(vm),
     ) {
         Ok(m) => {
             let object = vm.new_object()?;

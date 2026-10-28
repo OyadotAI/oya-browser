@@ -164,7 +164,7 @@ pub(super) fn signature(
             }
             (vec![reference, I32, I32, I32], vec![])
         }
-        20..=23 => {
+        20..=23 | 0x4c => {
             if matches!(args[0], -32 | -31 | -26) {
                 return Err(Error::invalid(
                     "operand has to be in the same reference type hierarchy as a string view",

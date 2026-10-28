@@ -31,6 +31,12 @@ const RETURN: f64 = 2.0;
 const JUMP: f64 = 3.0;
 /** Packs handler and environment depths into one completion register. */
 const DEPTH_SHIFT: f64 = 65_536.0;
+/** V8's `%GetOptimizationStatus` bits mjsunit reads: kIsFunction (1) and kNeverOptimize (2). V9
+has no optimizer, so a function is "never optimized" and anything else just "never optimized". */
+#[cfg(feature = "conformance")]
+const OPTIMIZATION_STATUS_FUNCTION: f64 = 3.0;
+#[cfg(feature = "conformance")]
+const OPTIMIZATION_STATUS_NEVER: f64 = 2.0;
 
 /** What one instruction did to control flow. */
 enum Flow {
@@ -773,6 +779,94 @@ impl Vm<'_> {
                     self.push(value);
                 }
                 50 => self.push(JsValue::Boolean(false)),
+                51..=56 => {
+                    let right = self.pop();
+                    let left = self.pop();
+                    let (JsValue::String(left), JsValue::String(right)) = (left, right) else {
+                        return Err(self.unsupported_error("V8 string comparison intrinsic requires string operands"));
+                    };
+                    let ordering = left.cmp(&right);
+                    let value = match intrinsic {
+                        51 => JsValue::Boolean(ordering.is_lt()),
+                        52 => JsValue::Boolean(!ordering.is_gt()),
+                        53 => JsValue::Boolean(ordering.is_gt()),
+                        54 => JsValue::Boolean(!ordering.is_lt()),
+                        55 => JsValue::Boolean(ordering.is_eq()),
+                        _ => JsValue::Smi(match ordering { std::cmp::Ordering::Less => -1.0, std::cmp::Ordering::Equal => 0.0, std::cmp::Ordering::Greater => 1.0 }),
+                    };
+                    self.push(value);
+                }
+                58 | 60 => {
+                    let input = self.peek(0);
+                    let primitive = self.to_primitive(&input, super::convert::Hint::Number)?;
+                    let value = if primitive.number_value().is_some() || (intrinsic == 60 && primitive.is_bigint()) {
+                        primitive
+                    } else {
+                        JsValue::Number(self.to_number(&primitive)?)
+                    };
+                    self.pop();
+                    self.push(value);
+                }
+                59 => {
+                    let input = self.peek(0);
+                    let value = self.to_string(&input)?;
+                    self.pop();
+                    self.push(JsValue::String(value));
+                }
+                61 => {
+                    let low = self.pop();
+                    let high = self.pop();
+                    let (Some(high), Some(low)) = (high.number_value(), low.number_value()) else {
+                        return Err(self.unsupported_error("V8 ConstructDouble requires numeric operands"));
+                    };
+                    let bits = (u64::from(to_uint32(high)) << 32) | u64::from(to_uint32(low));
+                    let number = f64::from_bits(bits);
+                    let value = if number.is_finite() && number.fract() == 0.0
+                        && number >= -((1_i64 << 30) as f64) && number <= f64::from(crate::v9::value::SMI_MAX)
+                        && !(number == 0.0 && number.is_sign_negative()) {
+                        JsValue::Smi(number)
+                    } else {
+                        let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
+                        JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root }))
+                    };
+                    self.push(value);
+                }
+                62 => {
+                    let value = self.pop();
+                    let result = match value {
+                        JsValue::String(text) => text.thin_target().is_none() && text.is_interned(),
+                        JsValue::Smi(_) | JsValue::Number(_) => return Err(self.unsupported_error("V8 IsInternalizedString requires a heap object")),
+                        _ => false,
+                    };
+                    self.push(JsValue::Boolean(result));
+                }
+                63..=65 => {
+                    if cfg!(target_arch = "mips64") {
+                        return Err(self.unsupported_error("V8 MIPS hole NaN encoding"));
+                    }
+                    const HOLE_NAN_WORD: u32 = 0xfff7_ffff;
+                    let number = if intrinsic == 63 {
+                        f64::from_bits((u64::from(HOLE_NAN_WORD) << 32) | u64::from(HOLE_NAN_WORD))
+                    } else {
+                        f64::from(HOLE_NAN_WORD)
+                    };
+                    let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
+                    self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root })));
+                }
+                68 => {
+                    // V9 never optimizes, so it reports V8's own no-turbofan answer: mjsunit's
+                    // assertUnoptimized passes and assertOptimized fails with its usual message.
+                    let value = self.pop();
+                    let status = if self.is_callable(&value) { OPTIMIZATION_STATUS_FUNCTION } else { OPTIMIZATION_STATUS_NEVER };
+                    self.push(JsValue::Smi(status));
+                }
+                66 => {
+                    // V9 has no V8 maps; verify its real heap graph and object invariants instead.
+                    self.charge(self.heap.objects.len())?;
+                    self.validate_graph()?;
+                    self.pop();
+                    self.push(JsValue::Boolean(true));
+                }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
@@ -1003,6 +1097,9 @@ impl Vm<'_> {
             Op::GetWith(name, hops, slot, call) => self.get_with(name, hops, slot, call)?,
             Op::SetWith(name, hops, slot) => self.set_with(name, hops, slot)?,
             Op::DeleteWith(name, hops, slot) => self.delete_with(name, hops, slot)?,
+            Op::ResolveRef(name, hops, slot, with) => self.resolve_ref(name, hops, slot, with)?,
+            Op::GetRef(name) => self.get_ref(name)?,
+            Op::SetRef(name) => self.set_ref(name)?,
             Op::ToObject => {
                 let value = self.pop();
                 let id = self.to_object(&value)?;
@@ -1102,8 +1199,19 @@ impl Vm<'_> {
             Op::ArraySpread => {
                 let iterable = self.peek(0);
                 let array = self.peek(1);
-                let iterator = self.get_iterator(&iterable)?;
+                let roots = self.pins.len();
+                let iterator = match self.get_iterator(&iterable) {
+                    Ok(iterator) => iterator,
+                    Err(error) => {
+                        if let Thrown::Value(value) = &error {
+                            self.push(value.clone());
+                        }
+                        self.pins.truncate(roots);
+                        return Err(error);
+                    }
+                };
                 self.push(JsValue::Object(iterator));
+                self.pins.truncate(roots);
                 if self.compact_hole_spread(&array, iterator)? {
                     self.drop_n(2);
                     return Ok(Flow::Next);
@@ -1475,10 +1583,8 @@ impl Vm<'_> {
                     return Err(self.reference_error("Super constructor may only be called once"));
                 }
                 self.heap.set_slot(env, slot as usize, this.clone());
-                if let Some(frame) = self.frames.iter_mut().rev().find(|frame| {
-                    frame.env == Some(env) && frame.construct && frame.code.flags.derived
-                }) {
-                    frame.this = this.clone();
+                if let Some(index) = self.derived_frame_over(env) {
+                    self.frames[index].this = this.clone();
                 }
                 self.run_fields(&callee, &this)?;
             }
@@ -1487,26 +1593,12 @@ impl Vm<'_> {
                 return self.do_return(value);
             }
             Op::ReturnDerived => {
-                let this = self.pop();
+                // A derived constructor's return settles only when its frame exits: a `finally`
+                // block or an iterator close still runs first and may be the super() call that
+                // initializes `this`, and its exception outranks the constructor's own.
+                let _ = self.pop();
                 let value = self.pop();
-                let result = match value {
-                    JsValue::Object(_) => value,
-                    JsValue::Undefined => {
-                        if this == JsValue::Hole {
-                            return Err(self.reference_error(
-                                "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-                            ));
-                        }
-                        this
-                    }
-                    _ => {
-                        return Err(self.type_error(
-                            "Derived constructors may only return object or undefined",
-                        ));
-                    }
-                };
-                self.frame().construct = false;
-                return self.do_return(result);
+                return self.do_return(value);
             }
             Op::Add => {
                 let right = self.peek(0);
@@ -1820,9 +1912,20 @@ impl Vm<'_> {
             Op::Class(site, has_super) => self.class_op(site, has_super)?,
             Op::GetIterator => {
                 let value = self.peek(0);
-                let iterator = self.get_iterator(&value)?;
+                let roots = self.pins.len();
+                let iterator = match self.get_iterator(&value) {
+                    Ok(iterator) => iterator,
+                    Err(error) => {
+                        if let Thrown::Value(value) = &error {
+                            self.push(value.clone());
+                        }
+                        self.pins.truncate(roots);
+                        return Err(error);
+                    }
+                };
                 self.pop();
                 self.push(JsValue::Object(iterator));
+                self.pins.truncate(roots);
             }
             Op::IterNext(target) => {
                 let iterator = self.peek(0);
@@ -2115,17 +2218,48 @@ impl Vm<'_> {
             }
         }
         let frame = self.frames.pop().expect("returning frame");
-        let value = if frame.construct && !matches!(value, JsValue::Object(_)) {
-            if frame.this == JsValue::Hole {
-                return Err(self.reference_error(
-                    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-                ));
-            }
-            frame.this
+        let value = if frame.construct {
+            self.construct_result(&frame, value)?
         } else {
             value
         };
         Ok(self.finish_frame(value, frame.boundary))
+    }
+    /** The innermost active derived constructor frame whose scope chain holds `env`, the
+    environment that owns the `this` slot super() just filled. The frame may be inside a block
+    or a nested arrow when super() runs, so its current environment is walked up to `env`. */
+    fn derived_frame_over(&self, env: super::heap::EnvId) -> Option<usize> {
+        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
+            if !frame.construct || !frame.code.flags.derived {
+                return None;
+            }
+            let mut current = frame.env;
+            for _ in 0..super::property::CHAIN_STEPS {
+                let found = current?;
+                if found == env {
+                    return Some(index);
+                }
+                current = self.heap.env(found)?.parent;
+            }
+            None
+        })
+    }
+    /** [[Construct]]'s result once the body has fully completed: an object is the result; a
+    derived constructor returning any other non-undefined value is a TypeError; otherwise the
+    result is `this`, which a derived constructor must have initialized by now. */
+    fn construct_result(&mut self, frame: &super::Frame, value: JsValue) -> Res<JsValue> {
+        if matches!(value, JsValue::Object(_)) {
+            return Ok(value);
+        }
+        if frame.code.flags.derived && !matches!(value, JsValue::Undefined) {
+            return Err(self.type_error("Derived constructors may only return object or undefined"));
+        }
+        if frame.this == JsValue::Hole {
+            return Err(self.reference_error(
+                "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+            ));
+        }
+        Ok(frame.this.clone())
     }
     /** Deliver a finished frame's value to its caller or to the run's caller. */
     fn finish_frame(&mut self, value: JsValue, boundary: bool) -> Flow {

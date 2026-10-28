@@ -22,6 +22,8 @@ use unicode::property_ranges;
 #[derive(Debug)]
 pub(super) struct Program {
     root: Node,
+    /** Whether the parsed pattern has a possible match on a Latin-1 subject. */
+    latin1_possible: bool,
     /// Capture groups, not counting the whole match.
     pub groups: usize,
     /// Named groups in source order, with every capture index that carries each name.
@@ -117,6 +119,7 @@ pub(super) fn compile(
 ) -> Result<Program, PatternError> {
     let mut program = Program {
         root: Node::Empty,
+        latin1_possible: true,
         groups: 0,
         names: Vec::new(),
         name_slots: BTreeMap::new(),
@@ -186,6 +189,7 @@ pub(super) fn compile(
     if parser.emoji_expansion_limit {
         return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
     }
+    program.latin1_possible = latin1_possible(&root, Modes::from_program(&program), program.unicode);
     program.root = root;
     program.groups = parser.groups;
     program.names = parser.group_names.entries;
@@ -386,7 +390,7 @@ impl PatternParser<'_> {
                     "Invalid regular expression: nothing to repeat".into(),
                 ));
             }
-            Some('{') if self.unicode => {
+            Some('{') if self.unicode || self.leading_quantifier() => {
                 return Err(PatternError(
                     "Invalid regular expression: nothing to repeat".into(),
                 ));
@@ -460,6 +464,13 @@ impl PatternParser<'_> {
         if result.is_none() {
             self.position = start;
         }
+        result
+    }
+    /** A complete interval at atom start has nothing to repeat, even in legacy mode. */
+    fn leading_quantifier(&mut self) -> bool {
+        let start = self.position;
+        let result = self.braces().is_some();
+        self.position = start;
         result
     }
     /** A decimal number. */
@@ -1010,6 +1021,8 @@ struct Matcher<'a> {
     /** Current scoped flags are restored before the enclosing continuation runs. */
     modes: Modes,
     input: &'a [u16],
+    /** The whole subject has no unit outside Latin-1. */
+    latin1_input: bool,
     captures: Captures,
     steps: usize,
     /** Steps this search may take: REGEXP_STEPS, or REGEXP_STEPS_PER_UNIT per input unit. */
@@ -1226,6 +1239,9 @@ impl<'a> Matcher<'a> {
                 })
             }
             Node::Look(inner, ahead, negative) => {
+                if self.latin1_input && !latin1_possible(inner, self.modes, self.program.unicode) {
+                    return *negative && next(self, position);
+                }
                 self.look(inner, *ahead, *negative, position, next)
             }
             Node::Back(index) => self.back(*index, position, next),
@@ -1236,6 +1252,11 @@ impl<'a> Matcher<'a> {
             Node::Concat(nodes) => self.sequence(nodes, position, next),
             Node::Alt(alternatives) => {
                 for alternative in alternatives {
+                    if self.latin1_input
+                        && !latin1_possible(alternative, self.modes, self.program.unicode)
+                    {
+                        continue;
+                    }
                     if self.node(alternative, position, next) {
                         return true;
                     }
@@ -1290,6 +1311,9 @@ impl<'a> Matcher<'a> {
     }
     /** Quantified matching; an iteration that consumes nothing ends the loop. */
     fn repeat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+        if r.captures.0 >= r.captures.1 && single_atom(r.inner) {
+            return self.repeat_flat(r, position, count, next);
+        }
         if count < r.min {
             return self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
                 if end == position && count + 1 >= r.min {
@@ -1316,6 +1340,54 @@ impl<'a> Matcher<'a> {
                 && self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
                     end != position && matcher.repeat(r, end, count + 1, next)
                 })
+        }
+    }
+    /** A quantified single atom runs as a flat scan: take as many atoms as the bounds allow, then
+    offer the continuation from each end, longest first when greedy and shortest first when lazy.
+    The general path recurses once per iteration and stops at REGEXP_DEPTH, so `/^[a-z]+$/` on
+    25k characters failed as a limit; a page's whole-document matches are far longer than that. */
+    fn repeat_flat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+        let mut ends = vec![position];
+        let mut taken = count;
+        while r.max.is_none_or(|max| taken < max) {
+            self.steps += 1;
+            if self.steps > self.budget || self.expired() {
+                self.exceeded = true;
+                return false;
+            }
+            let Some((point, end)) = self.atom(ends[ends.len() - 1]) else { break };
+            if !self.atom_matches(r.inner, point) {
+                break;
+            }
+            ends.push(end);
+            taken += 1;
+        }
+        let needed = r.min.saturating_sub(count) as usize;
+        if ends.len() <= needed {
+            return false;
+        }
+        let candidates: Box<dyn Iterator<Item = usize>> = if r.greedy {
+            Box::new((needed..ends.len()).rev())
+        } else {
+            Box::new(needed..ends.len())
+        };
+        for index in candidates {
+            if self.exceeded {
+                return false;
+            }
+            if next(self, ends[index]) {
+                return true;
+            }
+        }
+        false
+    }
+    /** Whether a single-atom node accepts `point`, the same test its own `node_body` arm makes. */
+    fn atom_matches(&self, node: &Node, point: u32) -> bool {
+        match node {
+            Node::Char(expected) => self.same(point, *expected),
+            Node::Any => self.modes.dot_all || !line_terminator(point),
+            Node::Class(ranges, negated) => self.in_set(ranges, point) != *negated,
+            _ => false,
         }
     }
     /** One iteration of a quantified atom: RepeatMatcher clears the atom's captures first, so a
@@ -1412,6 +1484,39 @@ impl<'a> Matcher<'a> {
     }
 }
 
+/** Decide whether one atom can consume a Latin-1 subject unit under effective case folding. */
+fn latin1_char(point: u32, modes: Modes, unicode: bool) -> bool {
+    point <= u32::from(u8::MAX)
+        || modes.ignore_case
+            && (0..=u32::from(u8::MAX)).any(|unit| case::same(point, unit, unicode))
+}
+
+/** A class is feasible when at least one Latin-1 point survives its case fold and negation. */
+fn latin1_class(ranges: &[(u32, u32)], negated: bool, modes: Modes, unicode: bool) -> bool {
+    (0..=u32::from(u8::MAX)).any(|point| {
+        let contains = |candidate| ranges.iter().any(|(low, high)| (*low..=*high).contains(&candidate));
+        let matched = contains(point)
+            || modes.ignore_case && case::equivalents(point, unicode).any(contains);
+        matched != negated
+    })
+}
+
+/** Prune only branches that necessarily consume a character absent from a Latin-1 subject. */
+fn latin1_possible(node: &Node, modes: Modes, unicode: bool) -> bool {
+    match node {
+        Node::Char(point) => latin1_char(*point, modes, unicode),
+        Node::Literal(points) => points.iter().all(|point| latin1_char(*point, modes, unicode)),
+        Node::Class(ranges, negated) => latin1_class(ranges, *negated, modes, unicode),
+        Node::Group(inner, _) => latin1_possible(inner, modes, unicode),
+        Node::Scoped(inner, effective) => latin1_possible(inner, *effective, unicode),
+        Node::Look(inner, _, false) => latin1_possible(inner, modes, unicode),
+        Node::Concat(parts) => parts.iter().all(|part| latin1_possible(part, modes, unicode)),
+        Node::Alt(parts) => parts.iter().any(|part| latin1_possible(part, modes, unicode)),
+        Node::Repeat(inner, min, _, _, _) => *min == 0 || latin1_possible(inner, modes, unicode),
+        _ => true,
+    }
+}
+
 /** Execute from `start`; sticky programs try only that position. */
 pub(super) fn exec(
     program: &Program,
@@ -1419,6 +1524,10 @@ pub(super) fn exec(
     start: usize,
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<Captures>, MatchError> {
+    let latin1_input = input.iter().all(|unit| *unit <= u16::from(u8::MAX));
+    if !program.latin1_possible && latin1_input {
+        return Ok(None);
+    }
     let mut steps = 0;
     // Every start position of an unanchored search costs steps, so a fixed budget failed plain
     // scans of long text (YouTube's megabyte page data) and stopped the page's scripts. The
@@ -1447,6 +1556,7 @@ pub(super) fn exec(
             program,
             modes: Modes::from_program(program),
             input,
+            latin1_input,
             captures: vec![None; program.groups + 1],
             steps,
             budget,
@@ -1482,6 +1592,12 @@ pub(super) fn exec(
 }
 
 /** Line terminators for `.`, `^` and `$`. */
+/** The atoms that consume exactly one point and keep no state, so a loop over them needs no
+recursion: a character, a dot, or a class. */
+fn single_atom(node: &Node) -> bool {
+    matches!(node, Node::Char(_) | Node::Any | Node::Class(..))
+}
+
 fn line_terminator(point: u32) -> bool {
     matches!(point, 0x0a | 0x0d | 0x2028 | 0x2029)
 }

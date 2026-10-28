@@ -1,6 +1,13 @@
 /** Indexed and iterated UTF-16 access preserves rope contents without forcing flattening. */
 mod common;
 
+/** Repeated short-rope searches retain their positions after the search materializes the rope. */
+#[test]
+fn short_rope_searches_reuse_contiguous_units() {
+    let source = "const s='alpha '.repeat(200)+'omega';let ok=true;for(let i=0;i<200;i++){const part=s.substring(i*6,i*6+5);ok=ok&&s.indexOf(part,i*6)===i*6&&s.includes(part,i*6)}const r=ok+','+s.indexOf('omega');";
+    assert_eq!(common::eval(source, "r"), "true,1200");
+}
+
 /** A surrogate pair split across rope nodes remains one code point while indexed reads stay code units. */
 #[test]
 fn string_rope_reads_surrogate_pairs_across_nodes() {

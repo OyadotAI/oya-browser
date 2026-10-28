@@ -2,6 +2,78 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** V8's numeric hole-NaN test value preserves its bits without becoming a V9 missing element. */
+#[test]
+fn native_hole_nan_preserves_bits_without_becoming_a_hole() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let n=%GetHoleNaN(),a=[n],v=new DataView(new ArrayBuffer(8));v.setFloat64(0,n,false);let r=[Number.isNaN(a[0]),0 in a,v.getUint32(0,false)===%GetHoleNaNUpper(),v.getUint32(4,false)===%GetHoleNaNLower(),%IsSmi(n)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true,false");
+}
+
+/** Internalized-string tests inspect actual backing and distinguish thin aliases. */
+#[test]
+fn native_internalized_string_test_reads_real_representation() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let interned=%ConstructInternalizedString('internalized-example'),thin=%ConstructThinString('thin-string-long-enough');let r=[%IsInternalizedString(interned),%IsInternalizedString(thin),%IsInternalizedString('literal'),%IsInternalizedString({})].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,false,true,false");
+}
+
+/** ConstructDouble preserves exact IEEE-754 bits and uses actual Smi or heap-number backing. */
+#[test]
+fn native_construct_double_preserves_bits_and_numeric_identity() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let min=%ConstructDouble(0,1),zero=%ConstructDouble(0,0),negative=%ConstructDouble(0x80000000,0),nan=%ConstructDouble(0x7ff80000,123);let view=new DataView(new ArrayBuffer(8));view.setFloat64(0,nan,false);let r=[min===Number.MIN_VALUE,%IsSmi(zero),%IsSmi(negative),Object.is(negative,-0),Number.isNaN(nan),view.getUint32(4,false)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,false,true,true,123");
+}
+
+/** Native conversion helpers use ordinary coercion and preserve existing numeric identity. */
+#[test]
+fn native_conversion_helpers_preserve_coercion_and_number_identity() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let order='';let x={[Symbol.toPrimitive](hint){order+=hint;return 7n}};let n=%AllocateHeapNumberWithValue(1.5);let same=%IsSameHeapObject(n,%ToNumber(n))&&%IsSameHeapObject(n,%ToNumeric(n));let bad=false;try{%ToNumber(x)}catch(e){bad=e instanceof TypeError}let r=[same,bad,%ToNumeric(x),%ToString({toString(){return 'ok'}}),order].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,7,ok,numbernumber");
+}
+
+/** Native Call uses normal call semantics and evaluates its operands once in order. */
+#[test]
+fn native_call_preserves_receiver_arguments_and_evaluation_order() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let order='';const receiver={x:10};function f(a,b){'use strict';return this.x+a+b}let r=%Call((order+='f',f),(order+='t',receiver),(order+='a',2),(order+='b',3));let bad=false;try{%Call(1,0)}catch(e){bad=e instanceof TypeError}r=[r,order,bad].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "15,ftab,true");
+}
+
+/** Comparison intrinsics order real UTF-16 code units without coercing their operands. */
+#[test]
+fn native_string_comparisons_follow_utf16_order() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let a='abc\\u0102',b='abc\\u0201';let r=[%StringLessThan(a,b),%StringLessThanOrEqual(a,a),%StringGreaterThan(b,a),%StringGreaterThanOrEqual(a,a),%StringEqual(a,a),%StringCompare(a,b),%StringCompare(a,a),%StringCompare(b,a)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,-1,0,1");
+}
+
 /** Compact large spreads retain the canonical character identity across GC and saved state. */
 #[test]
 fn large_string_spread_roots_survive_gc_and_snapshot() {
@@ -154,14 +226,27 @@ fn native_grammar_requires_shell_and_explicit_script_index() {
     assert!(!common::load_with(source, &environment).failed.is_empty());
 }
 
-/** A real unknown intrinsic fails without calling or fabricating an optimizer state. */
+/** A real unknown intrinsic fails rather than being guessed at. */
 #[test]
 fn unknown_intrinsics_fail_explicitly() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     environment.conformance_native_main_source = Some(0);
-    let failure = common::load_with("%OptimizeFunctionOnNextCall(()=>{});", &environment);
+    let failure = common::load_with("%HasSmiElements([]);", &environment);
     assert!(!failure.failed.is_empty());
+}
+
+/** Optimizer hints evaluate their arguments, answer undefined, and the status reports V8's own
+never-optimize bits (kIsFunction | kNeverOptimize) so mjsunit's assertUnoptimized holds. */
+#[test]
+fn optimizer_hints_are_inert_and_status_never_optimizes() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let calls=0;function f(){calls++;return f}const out=[%PrepareFunctionForOptimization(f()),%OptimizeFunctionOnNextCall(f(),'concurrent'),%DeoptimizeNow(),%GetOptimizationStatus(f),%GetOptimizationStatus(undefined,''),%IsMaglevEnabled(),%IsBeingInterpreted(),%DebugPrint(7),calls];const r=out.join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), ",,,3,2,false,true,7,2");
 }
 
 /** Inputs other than detachable ordinary buffers cannot grant detachment authority. */
