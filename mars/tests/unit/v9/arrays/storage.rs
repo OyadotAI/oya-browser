@@ -16,12 +16,14 @@ fn map_results_enforce_the_environment_string_budget() {
 /** The same string retained many times counts once: references are not copies. */
 #[test]
 fn repeated_references_to_one_string_share_its_units() {
-    // Twice the budget if every reference counted; once if the text counts once.
-    let copies = 2 * JS_ENVIRONMENT_UNITS / JS_STRING_UNITS;
+    // Twice the budget if every reference counted; once if the text counts once. The string is
+    // half the string bound so building it with repeat leaves room in the environment budget.
+    let unit = JS_STRING_UNITS / 2;
+    let copies = 2 * JS_ENVIRONMENT_UNITS / unit;
     assert_eq!(
         result(
             &format!(
-                "const s='x'.repeat({JS_STRING_UNITS});const r=Array.from({{length:{copies}}},()=>s);"
+                "const s='x'.repeat({unit});const r=Array.from({{length:{copies}}},()=>s);"
             ),
             "r.length"
         ),

@@ -35,6 +35,7 @@ mod presentation;
 mod resources;
 /** Per-engine crash restart (CB-23). */
 mod restart;
+mod same_document;
 mod scripting;
 mod service;
 /** The person's browser settings. */

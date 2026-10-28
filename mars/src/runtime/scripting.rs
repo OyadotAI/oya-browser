@@ -107,6 +107,9 @@ pub(super) struct Scripting {
     pub pending_images: Option<PendingImages>,
     /// The viewport scrolled since the page last heard: the next run fires `scroll` first.
     pub scroll_pending: bool,
+    /// pushState, replaceState and hash changes not yet in the tab's history; the commit that
+    /// publishes this page adds them (`Runtime::adopt_history_records`).
+    pub history_records: Vec<crate::v9::HistoryRecord>,
     /// A document scroll offset the page's scripts asked for and the runtime has not adopted.
     pub scroll_y: Option<f64>,
     /// The horizontal document scroll offset the page's scripts asked for, not yet adopted.
@@ -192,6 +195,7 @@ impl Default for Scripting {
             loading: false,
             pending_images: None,
             scroll_pending: false,
+            history_records: Vec::new(),
             scroll_y: None,
             scroll_x: None,
         }
@@ -943,6 +947,7 @@ impl Runtime {
             }
             page.storage_dirty = false;
             runtime.page = Some(page);
+            runtime.sync_history_url();
             runtime.adopt_script_scroll();
         });
         if published.is_err()
@@ -1195,6 +1200,7 @@ fn apply_history(page: &mut Page, records: &[crate::v9::HistoryRecord]) {
             .is_some_and(|(current, next)| current.origin() == next.origin());
         if same_origin {
             page.url.clone_from(&record.url);
+            page.scripting.history_records.push(record.clone());
         }
     }
 }

@@ -27,6 +27,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         used_scheme: parent.used_scheme,
         rtl: parent.rtl,
         letter_spacing: parent.letter_spacing,
+        text_shadows: parent.text_shadows.clone(),
         word_spacing: parent.word_spacing,
         spacing_percent: parent.spacing_percent,
         text_indent: parent.text_indent,
@@ -73,6 +74,7 @@ fn inherits(key: &str) -> bool {
             "word-spacing",
             "text-indent",
             "text-transform",
+            "text-shadow",
             "white-space",
             "cursor",
             "visibility",
@@ -403,10 +405,12 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.overflow_y = source.overflow_y;
         }
         "box-shadow" => style.shadows = source.shadows.clone(),
+        "text-shadow" => style.text_shadows = source.text_shadows.clone(),
         "transform" => {
             style.transform = source.transform;
             style.translate_percent = source.translate_percent;
         }
+        "transform-origin" => style.transform_origin = source.transform_origin,
         "object-fit" => style.object_fit = source.object_fit,
         "object-position" => style.object_position = source.object_position,
         "clip" => style.clip_rect = source.clip_rect,

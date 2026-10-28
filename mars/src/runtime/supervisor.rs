@@ -845,7 +845,7 @@ impl Runtime {
                 _ => Some(service.name),
             });
         if let Some(name) = dead {
-            return Err(self.revive(name, None));
+            return Err(self.revive(name, None, None));
         }
         Ok(())
     }
@@ -901,7 +901,7 @@ impl Runtime {
                 if name == "v9" {
                     self.v9_sources.clear();
                 }
-                Err(self.revive(name, Some(error)))
+                Err(self.revive(name, Some(op), Some(error)))
             }
             Err(error) => Err(error),
             Ok(Ok(result)) => Ok(result),
@@ -1022,7 +1022,8 @@ impl Service {
         params: &impl Serialize,
         owner_deadline: Option<Instant>,
     ) -> EngineResult<Result<T, Mismatch>> {
-        let rpc_deadline = Instant::now() + rpc_timeout(op);
+        let called = Instant::now();
+        let rpc_deadline = called + rpc_timeout(op);
         let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
         if Instant::now() >= deadline {
             return Err(crate::protocol::EngineError::navigation_timeout());
@@ -1037,18 +1038,15 @@ impl Service {
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
             .try_send(frame)
-            .map_err(|error| {
-                eprintln!("DEBUG try_send failed for {op}: {error:?}");
-                EngineError::service(self.name, false)
-            })?;
+            .map_err(|_| EngineError::service(self.name, false))?;
         let reply = loop {
             if self.cancel.load(Ordering::Relaxed) {
-                eprintln!("DEBUG cancel flag set for {op}");
                 return Err(EngineError::service(self.name, false));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(EngineError::service(self.name, true));
+                let budget = deadline.saturating_duration_since(called);
+                return Err(super::restart::deadline(self.name, op, budget));
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
                 Ok(reply) => break reply?,

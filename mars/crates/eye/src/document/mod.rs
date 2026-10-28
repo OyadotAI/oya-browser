@@ -49,6 +49,7 @@ pub use style::{
     compute_styles, compute_styles_with_context, css_imports, layer_key, rebase_urls,
 };
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
+pub use style::default_transform_origin;
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,

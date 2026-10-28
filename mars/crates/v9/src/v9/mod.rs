@@ -818,7 +818,7 @@ pub struct PageInput<'a> {
 const NO_MODULES: &ModuleInput = ModuleInput::NONE;
 
 /// Page lifecycle events the app fires after scripts load.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PageEvent {
     /// readyState becomes "interactive"; DOMContentLoaded fires at the document.
@@ -828,6 +828,15 @@ pub enum PageEvent {
     /// The viewport scrolled: `scroll` fires at the document and bubbles to the window, as
     /// Blink's `ScrollableArea` queues it once per frame that moved. Lazy loaders listen for it.
     Scroll,
+    /// Back or Forward moved between two entries of this document (`environment.url` is the
+    /// entry's URL): `popstate` fires with the entry's saved state, then `hashchange` when only
+    /// the fragment differs, so a single-page router renders the route without a reload.
+    PopState {
+        /// The entry's state as JSON (`HistoryRecord::state`), or None for null.
+        state: Option<String>,
+        /// The two entries differ only in their fragment.
+        hash_changed: bool,
+    },
 }
 
 /**
@@ -1705,6 +1714,10 @@ fn page_event_with(
             PageEvent::Scroll => {
                 fire_lifecycle(&mut vm, platform::Target::Document, "scroll", true)?;
             }
+            PageEvent::PopState {
+                state,
+                hash_changed,
+            } => pop_state(&mut vm, state.as_deref(), hash_changed)?,
         }
         finish(vm)
     }
@@ -1739,6 +1752,35 @@ fn fire_lifecycle(
 ) -> EngineResult<()> {
     vm.remaining = vm.limits.operations;
     let result = platform::fire(vm, target, kind, bubbles).and_then(|_| vm.drain_jobs());
+    match result {
+        Ok(()) => Ok(()),
+        Err(Thrown::Value(error)) => {
+            vm.report_error(&error);
+            Ok(())
+        }
+        Err(Thrown::Fatal(error)) => Err(error),
+    }
+}
+
+/** Same-document traversal: the URL and `history.state` become the entry's, then `popstate`
+carries that state, then `hashchange` for a fragment-only move. A state that no longer parses
+reads as null rather than failing the traversal. */
+fn pop_state(vm: &mut Vm, state: Option<&str>, hash_changed: bool) -> EngineResult<()> {
+    vm.page.state.href = vm.page.environment.url.clone();
+    let restored = state.and_then(|json| platform::json_value(vm, json));
+    vm.page.state.history_state = restored.clone();
+    vm.remaining = vm.limits.operations;
+    let fired = platform::fire_pop_state(vm, restored.unwrap_or(JsValue::Null))
+        .and_then(|_| vm.drain_jobs());
+    report_thrown(vm, fired)?;
+    if hash_changed {
+        fire_lifecycle(vm, platform::Target::Window, "hashchange", false)?;
+    }
+    Ok(())
+}
+
+/** A thrown page error is reported like an uncaught exception; only a fatal error stops. */
+fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
     match result {
         Ok(()) => Ok(()),
         Err(Thrown::Value(error)) => {

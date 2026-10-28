@@ -95,19 +95,35 @@ fn keys(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Object.values. */
 fn values(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = object_arg(vm, &call.arg(0))?;
-    let mut list = Vec::new();
-    for key in vm.enumerable_keys(id)? {
-        list.push(vm.get(&JsValue::Object(id), &key)?);
-    }
+    let list = enumerable_own_values(vm, id)?
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect();
     Ok(JsValue::Object(vm.new_array(list)?))
+}
+
+/** EnumerableOwnProperties for values and entries: each string key's descriptor is read right
+before its value, so a getter that deletes a later key or makes it non-enumerable is seen, and a
+proxy observes getOwnPropertyDescriptor and get interleaved per key as the spec orders them. */
+fn enumerable_own_values(vm: &mut Vm, id: ObjectId) -> Res<Vec<(Key, JsValue)>> {
+    let mut out = Vec::new();
+    for key in vm.own_keys(id)? {
+        if !matches!(key, Key::Str(_)) {
+            continue;
+        }
+        if vm.own(id, &key)?.is_some_and(|prop| prop.attrs & ENUMERABLE != 0) {
+            let value = vm.get(&JsValue::Object(id), &key)?;
+            out.push((key, value));
+        }
+    }
+    Ok(out)
 }
 
 /** Object.entries. */
 fn entries(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = object_arg(vm, &call.arg(0))?;
     let result = vm.new_array(Vec::new())?;
-    for key in vm.enumerable_keys(id)? {
-        let value = vm.get(&JsValue::Object(id), &key)?;
+    for (key, value) in enumerable_own_values(vm, id)? {
         let pair = vm.new_array(vec![key.value(), value])?;
         vm.array_append(&JsValue::Object(result), JsValue::Object(pair))?;
     }

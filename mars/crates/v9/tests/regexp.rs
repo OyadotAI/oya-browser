@@ -186,7 +186,8 @@ fn class_k_escape_is_an_error_only_with_named_groups() {
 /** Global replacement reports an oversized result as a catchable RangeError. */
 #[test]
 fn global_replace_overflow_is_a_range_error() {
-    let result = run("const piece='b'.repeat(32769);let a,b;try{'a'.repeat(32).replace(/a/g,piece)}catch(e){a=e instanceof RangeError}try{'a'.repeat(32).replace(/a/g,()=>piece)}catch(e){b=e instanceof RangeError}r=a+','+b;");
+    let piece = mars_v9::constants::JS_STRING_UNITS / 32 + 1;
+    let result = run(&format!("const piece='b'.repeat({piece});let a,b;try{{'a'.repeat(32).replace(/a/g,piece)}}catch(e){{a=e instanceof RangeError}}try{{'a'.repeat(32).replace(/a/g,()=>piece)}}catch(e){{b=e instanceof RangeError}}r=a+','+b;"));
     assert_eq!(result, "true,true");
 }
 

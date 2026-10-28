@@ -30,3 +30,32 @@ fn capturing_loops_still_reset_captures_per_iteration() {
     let source = "const m='ab'.match(/(?:(a)|(b))+/);const r=[m[0],m[1],m[2]].join();";
     assert_eq!(eval(source, "r"), "ab,,b");
 }
+
+/** Wall time a 300k-character `\p{Alphabetic}` scan may take in a release build. */
+const PROPERTY_SCAN_MS: u128 = 200;
+
+/** Class membership binary searches its merged ranges instead of scanning Alphabetic's hundreds
+of ranges for every character, which was 4 to 17 times slower on long inputs. */
+#[test]
+fn property_class_scans_stay_fast_on_long_inputs() {
+    let source =
+        "const astral='\\u{10400}'.repeat(300000);const r=/^\\p{Alphabetic}+$/u.test(astral);";
+    let started = std::time::Instant::now();
+    assert_eq!(eval(source, "r"), "true");
+    let elapsed = started.elapsed().as_millis();
+    if !cfg!(debug_assertions) {
+        assert!(elapsed < PROPERTY_SCAN_MS, "{elapsed} ms");
+    }
+}
+
+/** Merged ranges keep overlapping, adjacent, unordered and case-folded members matching. */
+#[test]
+fn merged_class_ranges_keep_membership() {
+    let source = "const r=[/^[z-za-cb-yA]+$/.test('abczyA'),/^[^d-fa-c]$/.test('g'),/^[^d-fa-c]$/.test('e'),\
+        /^[\\d0-5x]+$/.test('09x'),/^[k-m]+$/i.test('KLm'),/[\\u{1F600}-\\u{1F64F}a]/u.test('\\u{1F610}'),\
+        /^[\\p{Lu}\\p{Ll}]+$/u.test('aZ'),/^[\\p{L}--[a-z]]+$/v.test('AB'),/^[\\p{L}--[a-z]]+$/v.test('Ab')].join();";
+    assert_eq!(
+        eval(source, "r"),
+        "true,true,false,true,true,true,true,true,false"
+    );
+}

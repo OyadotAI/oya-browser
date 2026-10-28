@@ -46,15 +46,22 @@ fn key_of(listener: &Listener) -> Option<ListenerKey> {
 pub(in crate::v9) struct ListenerStore {
     /** Every registration by its key. */
     entries: BTreeMap<ListenerKey, Listener>,
+    /** The serialized list held a record the index could not keep: a duplicate of another
+    registration or one with a non-object callback. Loading drops it, so state validation
+    reads this flag to refuse the whole state rather than run a silently repaired copy. */
+    #[serde(skip)]
+    malformed: bool,
 }
 
 impl From<Vec<Listener>> for ListenerStore {
     /** Rebuilds the index from the serialized list, in whatever order it was written. */
     fn from(listeners: Vec<Listener>) -> Self {
         let mut store = Self::default();
+        let written = listeners.len();
         for listener in listeners {
             store.insert(listener);
         }
+        store.malformed = store.len() != written;
         store
     }
 }
@@ -72,6 +79,11 @@ impl ListenerStore {
     /** Every registration, in no particular order: the GC roots and the page-wide checks read these. */
     pub fn iter(&self) -> impl Iterator<Item = &Listener> {
         self.entries.values()
+    }
+
+    /** Whether the loaded list had records the index dropped (see the `malformed` field). */
+    pub fn malformed(&self) -> bool {
+        self.malformed
     }
 
     /** How many registrations exist; the limit on listeners counts these. */

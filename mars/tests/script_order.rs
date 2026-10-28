@@ -159,23 +159,20 @@ fn repeated_list_headers_commit() {
     assert_eq!(text(&page, "out"), "joined");
 }
 
-/** With no transport charset, a meta that names another encoding for non-ASCII text is refused. */
+/** With no transport charset, the page's meta charset decides, as in Chrome: UTF-8 bytes under
+`<meta charset=iso-8859-1>` decode as windows-1252 (WHATWG maps the label there) and show as
+mojibake rather than refusing the page. */
 #[test]
-fn meta_charset_conflicting_with_the_decoded_bytes_is_refused() {
-    let body = "<meta charset=iso-8859-1><p>caf\u{e9}</p>";
+fn meta_charset_decides_without_a_transport_charset() {
+    let body = "<meta charset=iso-8859-1><p id=out>caf\u{e9}</p>";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     let fixture = Fixture::raw(response.into_bytes());
     let mut runtime = desktop(&fixture.url);
-    let error = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert!(
-        error.message.contains("character encoding"),
-        "{}",
-        error.message
-    );
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert_eq!(text(&page, "out"), "caf\u{c3}\u{a9}");
 }
 
 /** Loads `body` beside a small module graph and returns the committed page. */

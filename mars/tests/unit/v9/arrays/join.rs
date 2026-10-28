@@ -43,10 +43,14 @@ fn join_checks_utf16_output_budget_before_appending() {
         ),
         JS_STRING_UNITS.to_string()
     );
+    // Past the bound is the catchable RangeError browsers throw (crates/v9/tests/bounds.rs).
     assert_eq!(
-        execute(&format!("const s='x'.repeat({half});[s,s].join(',');"))
-            .unwrap_err()
-            .code,
-        "limit_exceeded"
+        result(
+            &format!(
+                "const s='x'.repeat({half});let caught='';try{{[s,s].join(',')}}catch(e){{caught=e.constructor.name+':'+e.message}}"
+            ),
+            "caught"
+        ),
+        "RangeError:Invalid string length"
     );
 }

@@ -67,7 +67,12 @@ impl Runtime {
     window, an exhausted budget or a failed respawn falls back to retiring the whole session.
     `cause` is the failed call's error, if any: a deadline keeps its `timeout` code so callers can
     still tell a hung engine from a crashed one. */
-    pub(super) fn revive(&mut self, name: &str, cause: Option<EngineError>) -> EngineError {
+    pub(super) fn revive(
+        &mut self,
+        name: &str,
+        op: Option<&str>,
+        cause: Option<EngineError>,
+    ) -> EngineError {
         let Some(index) = self
             .services
             .iter()
@@ -88,7 +93,9 @@ impl Runtime {
             Err(_) => return self.retire(name),
         }
         match self.call(name, "service.ready", json!({})) {
-            Ok(ready) if ready == json!({"service":name,"ready":true}) => restarted(name, cause),
+            Ok(ready) if ready == json!({"service":name,"ready":true}) => {
+                restarted(name, op, cause)
+            }
             _ => self.retire(name),
         }
     }
@@ -100,20 +107,88 @@ impl Runtime {
     }
 }
 
-/** The interrupted operation fails visibly and is never replayed; the person or agent retries it. */
-fn restarted(name: &str, cause: Option<EngineError>) -> EngineError {
+/** The interrupted operation fails visibly and is never replayed; the person or agent retries it.
+`op` is the call that was running when the engine went away, so the banner can name it. */
+fn restarted(name: &str, op: Option<&str>, cause: Option<EngineError>) -> EngineError {
     if let Some(mut timeout) = cause.filter(|error| error.code == "timeout") {
         timeout.hint = RESTART_HINT.into();
         timeout.previous_page_retained = true;
         return timeout;
     }
+    let during = op.map(|op| format!(" during {op}")).unwrap_or_default();
     let mut error = EngineError::new(
         "engine_restarted",
-        format!("The {name} engine stopped and Mars restarted it. This operation did not finish."),
+        format!(
+            "Browser {name} service stopped{during} and Mars restarted it. This operation did not finish."
+        ),
         RESTART_HINT,
     );
     error.retryable = true;
     error.previous_page_retained = true;
     error.service = Some(name.into());
     error
+}
+
+/** A call that passed its deadline. A hung engine and a crashed one need different reactions from
+the person (wait for a slow page versus report a crash), so this names the operation and the
+budget instead of saying the service stopped. `budget` is the whole time the call was given. */
+pub(super) fn deadline(name: &str, op: &str, budget: Duration) -> EngineError {
+    let seconds = budget.as_secs_f64().ceil().max(1.0);
+    let unit = if seconds == 1.0 { "second" } else { "seconds" };
+    let mut error = EngineError::service(name, true);
+    error.message = format!("Browser {name} service did not answer {op} within {seconds} {unit}.");
+    error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** A deadline names the service, the operation and the whole seconds it was given. */
+    #[test]
+    fn a_deadline_names_the_operation_and_its_budget() {
+        let error = deadline("network", "network.fetch", Duration::from_secs(10));
+        assert_eq!(error.code, "timeout");
+        assert_eq!(error.service.as_deref(), Some("network"));
+        assert_eq!(
+            error.message,
+            "Browser network service did not answer network.fetch within 10 seconds."
+        );
+    }
+
+    /** A partial second rounds up, and one second is singular. */
+    #[test]
+    fn a_short_deadline_rounds_up_to_one_second() {
+        let error = deadline("document", "document.parse", Duration::from_millis(300));
+        assert_eq!(
+            error.message,
+            "Browser document service did not answer document.parse within 1 second."
+        );
+    }
+
+    /** A crash names the operation that was running and stays retryable. */
+    #[test]
+    fn a_restart_names_the_interrupted_operation() {
+        let error = restarted("v9", Some("v9.run"), None);
+        assert_eq!(error.code, "engine_restarted");
+        assert!(error.retryable);
+        assert_eq!(
+            error.message,
+            "Browser v9 service stopped during v9.run and Mars restarted it. This operation did not finish."
+        );
+    }
+
+    /** A timed-out call keeps its deadline message through the restart. */
+    #[test]
+    fn a_restart_after_a_deadline_keeps_the_deadline_message() {
+        let cause = deadline("network", "network.fetch", Duration::from_secs(10));
+        let error = restarted("network", Some("network.fetch"), Some(cause));
+        assert_eq!(error.code, "timeout");
+        assert!(
+            error
+                .message
+                .contains("did not answer network.fetch within 10 seconds")
+        );
+        assert_eq!(error.hint, RESTART_HINT);
+    }
 }

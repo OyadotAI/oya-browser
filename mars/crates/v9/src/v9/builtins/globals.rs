@@ -154,37 +154,67 @@ fn encode(vm: &mut Vm, call: Call, safe: &str) -> Res<JsValue> {
     super::text(vm, &out)
 }
 
-/** Percent-decode UTF-8, keeping escapes of `reserved` characters. */
+/** Units in one `%XX` escape. */
+const ESCAPE_UNITS: usize = 3;
+/** Radix of the two digits in an escape. */
+const HEX_RADIX: u32 = 16;
+
+/** Percent-decode UTF-8, keeping escapes of `reserved` characters. Works on UTF-16 units so a lone
+surrogate outside any escape passes through as the spec requires instead of becoming U+FFFD. */
 fn decode(vm: &mut Vm, call: Call, reserved: &str) -> Res<JsValue> {
     let source = arg_string(vm, &call, 0)?;
-    let text: String =
-        char::decode_utf16((0..source.len()).filter_map(|index| source.unit_at(index)))
-            .map(|point| point.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect();
-    let bytes = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hex = text
-                .get(index + 1..index + 3)
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-            match hex {
-                Some(byte) if byte < 0x80 && reserved.contains(byte as char) => {
-                    out.extend_from_slice(&bytes[index..index + 3]);
-                }
-                Some(byte) => out.push(byte),
-                None => return Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
-            }
-            index += 3;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
-        }
+    let units: Vec<u16> = (0..source.len()).filter_map(|index| source.unit_at(index)).collect();
+    match decode_units(&units, reserved) {
+        Some(out) => Ok(JsValue::String(JsString::from_units(out)?)),
+        None => Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
     }
-    match String::from_utf8(out) {
-        Ok(decoded) => super::text(vm, &decoded),
-        Err(_) => Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
+}
+
+/** The decoded units, or None for a malformed escape: a bad hex digit, a byte that cannot start
+a UTF-8 sequence, a sequence cut short, or one that is not valid UTF-8 (overlong, surrogate). */
+fn decode_units(units: &[u16], reserved: &str) -> Option<Vec<u16>> {
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index] != u16::from(b'%') {
+            out.push(units[index]);
+            index += 1;
+            continue;
+        }
+        let count = utf8_length(percent_byte(units, index)?)?;
+        let bytes: Vec<u8> = (0..count)
+            .map(|offset| percent_byte(units, index + ESCAPE_UNITS * offset))
+            .collect::<Option<_>>()?;
+        let text = std::str::from_utf8(&bytes).ok()?;
+        if count == 1 && reserved.contains(text) {
+            out.extend_from_slice(&units[index..index + ESCAPE_UNITS]);
+        } else {
+            out.extend(text.encode_utf16());
+        }
+        index += ESCAPE_UNITS * count;
+    }
+    Some(out)
+}
+
+/** The byte of the `%XX` escape at `at`; only ASCII hex digits count, so `%+1` is malformed
+(Rust's `from_str_radix` would accept the sign). */
+fn percent_byte(units: &[u16], at: usize) -> Option<u8> {
+    if units.get(at) != Some(&u16::from(b'%')) {
+        return None;
+    }
+    let digit = |offset: usize| {
+        let unit = *units.get(at + offset)?;
+        char::from_u32(u32::from(unit))?.to_digit(HEX_RADIX)
+    };
+    u8::try_from(digit(1)? * HEX_RADIX + digit(2)?).ok()
+}
+
+/** Bytes in the UTF-8 sequence a lead byte opens; None for a continuation or invalid lead. */
+fn utf8_length(lead: u8) -> Option<usize> {
+    match lead.leading_ones() {
+        0 => Some(1),
+        count @ 2..=4 => Some(count as usize),
+        _ => None,
     }
 }
 

@@ -55,15 +55,7 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
     for id in disabled {
         document.nodes[id].disabled = true;
     }
-    let radios = document
-        .nodes
-        .iter()
-        .filter(|n| n.tag == "input" && n.input_type() == "radio" && n.checked)
-        .map(|n| n.local_id)
-        .collect::<Vec<_>>();
-    for id in radios {
-        check(document, id, true)?;
-    }
+    normalize_radios(document);
     let selects = document
         .nodes
         .iter()
@@ -88,6 +80,30 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
         }
     }
     Ok(())
+}
+/** Initial radio state from markup: in each group (same form owner and name) only the last
+checked radio stays checked, as the HTML parser leaves it. This is parse-time state, not an
+agent's click, so a disabled or hidden checked radio is kept rather than refused; GitHub's
+pages carry one and the whole document failed to parse. One pass with a map, not a document
+walk per radio. */
+fn normalize_radios(document: &mut Document) {
+    let radios: Vec<(usize, Option<usize>, Option<String>)> = document
+        .nodes
+        .iter()
+        .filter(|n| n.tag == "input" && n.input_type() == "radio" && n.checked)
+        .map(|n| (n.local_id, form_owner(document, n), n.attributes.get("name").cloned()))
+        .collect();
+    let mut last = std::collections::HashMap::new();
+    for (id, owner, name) in &radios {
+        if name.is_some() {
+            last.insert((*owner, name.clone()), *id);
+        }
+    }
+    for (id, owner, name) in radios {
+        if name.is_some() && last.get(&(owner, name)) != Some(&id) {
+            document.nodes[id].checked = false;
+        }
+    }
 }
 /// Explicit form ownership takes precedence over ancestor ownership.
 pub fn form_owner(document: &Document, node: &Node) -> Option<usize> {

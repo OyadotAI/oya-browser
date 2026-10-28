@@ -249,7 +249,7 @@ impl Canvas {
         };
         let bounds = [item.x, item.y, item.width, item.height];
         let corners = corner_radii(item);
-        for shadow in item.shadows.iter().rev().filter(|s| !s.inset) {
+        for shadow in item.shadows.iter().rev().filter(|s| !s.inset && !s.text) {
             let Some(color) = painter_rgba(&shadow.color).map(fade) else {
                 continue;
             };
@@ -357,7 +357,24 @@ impl Canvas {
         self.vectors(item, ink, &fade);
         // A decorated block's own runs paint later, at its text echo (eye `text_echo`).
         if !item.text_deferred {
+            self.text_shadows(item, &fade);
             self.text(item, ink);
+        }
+    }
+    /** `text-shadow` layers, last listed first: the runs again in the shadow's color, moved by
+    its offset, under the text. ponytail: no blur here (the desktop canvas blurs); a soft glow
+    reads as a hard copy in agent screenshots, place and color still right. */
+    fn text_shadows(&mut self, item: &DisplayItem, fade: &dyn Fn([u8; 4]) -> [u8; 4]) {
+        for shadow in item.shadows.iter().rev().filter(|s| s.text) {
+            let Some(color) = painter_rgba(&shadow.color).map(fade) else {
+                continue;
+            };
+            let mut moved = item.clone();
+            for line in &mut moved.lines {
+                line.x += shadow.x;
+                line.y += shadow.y;
+            }
+            self.text(&moved, color);
         }
     }
     /** The runs of `source`, a block whose text was deferred, painted at its echo's place in

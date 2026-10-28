@@ -705,6 +705,29 @@ pub(in crate::v9) fn fire(
     dispatch(vm, target, id)
 }
 
+/** A trusted, non-bubbling event with a readonly `state` property, as `popstate` carries the
+history entry's state to the page's router. */
+pub(in crate::v9) fn fire_with_state(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    state: JsValue,
+) -> Res<bool> {
+    let event = create_event(vm, kind, false, false)?;
+    let id = event.object().expect("event object");
+    vm.pin(event);
+    vm.heap.put(
+        id,
+        Key::from("state"),
+        crate::v9::vm::heap::Prop {
+            slot: crate::v9::vm::heap::Slot::Data(state),
+            attrs: crate::v9::vm::heap::ENUMERABLE,
+        },
+    );
+    with_event(vm, id, |data| data.trusted = true);
+    dispatch(vm, target, id)
+}
+
 /** Native keyboard events retain their intrinsic prototype across mutable global bindings and realm banks. */
 static KEYBOARD_PROTOTYPE: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
 

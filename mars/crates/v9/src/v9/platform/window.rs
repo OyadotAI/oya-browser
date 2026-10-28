@@ -299,6 +299,7 @@ pub(in crate::v9) fn navigate(vm: &mut Vm, kind: &str, url: String, hash: bool) 
                 replace: kind == "replace",
                 url,
                 title: String::new(),
+                state: None,
             },
         )?;
         super::events::fire(vm, super::Target::Window, "hashchange", false, false)?;
@@ -310,6 +311,29 @@ pub(in crate::v9) fn navigate(vm: &mut Vm, kind: &str, url: String, hash: bool) 
         delta: 0,
     });
     Ok(())
+}
+
+/** A pushState or replaceState state as JSON, so the app can keep it on the history entry and
+give it back on `popstate`. ponytail: JSON, not structured clone, so Dates, Maps and cycles do not
+survive the round trip; router states (React Router, Next.js) are plain objects and do. */
+fn saved_state(vm: &mut Vm, call: &Call, state: &JsValue) -> Res<Option<String>> {
+    if state.nullish() {
+        return Ok(None);
+    }
+    let arguments = [state.clone()];
+    let encoded = crate::v9::builtins::json_stringify(
+        vm,
+        Call {
+            this: JsValue::Undefined,
+            args: &arguments,
+            new_target: None,
+            callee: call.callee,
+        },
+    )?;
+    Ok(match encoded {
+        JsValue::String(text) => Some(text.lossy()),
+        _ => None,
+    })
 }
 
 /** Append a history record within the bound. */
@@ -383,6 +407,7 @@ pub(in crate::v9) fn history(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if !same_origin {
                 return Err(vm.throw(crate::v9::vm::error::ErrorKind::Error, "SecurityError: A history state object with a different origin cannot be created."));
             }
+            let saved = saved_state(vm, &call, &state)?;
             vm.page.state.history_state = Some(state);
             vm.page.state.href = url.clone();
             push_history(
@@ -391,6 +416,7 @@ pub(in crate::v9) fn history(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     replace: name == "replaceState",
                     url,
                     title,
+                    state: saved,
                 },
             )?;
             Ok(JsValue::Undefined)

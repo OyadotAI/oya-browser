@@ -197,29 +197,7 @@ impl Window {
                             self.canvas.restore(&self.mars.address, url);
                         }
                     }
-                    let script_index = error
-                        .location
-                        .as_deref()
-                        .and_then(|location| location.script_index);
-                    let title = if let (Some(service), Some(index)) =
-                        (error.service.as_deref(), script_index)
-                    {
-                        format!(
-                            "Browser {service} service stopped while loading page script {index}."
-                        )
-                    } else if let (Some(index), true) = (script_index, error.code == "timeout") {
-                        format!("Page script {index} timed out.")
-                    } else if let Some(index) = script_index {
-                        format!("Page script {index}: {}", error.message)
-                    } else if error.code == "permission_denied" {
-                        "Navigation blocked.".to_owned()
-                    } else if error.code == "tls_error" {
-                        "The server's certificate could not be verified.".to_owned()
-                    } else if let Some(service) = error.service.as_deref() {
-                        format!("Browser {service} service stopped.")
-                    } else {
-                        error.message.clone()
-                    };
+                    let title = banner_title(error);
                     let retention = if error.previous_page_retained {
                         "Your previous page was kept."
                     } else {
@@ -284,4 +262,124 @@ impl Window {
 /** Only secure-profile failures open recovery prompts; page errors stay in page context. */
 fn recovery_error(code: &str) -> bool {
     code.starts_with("profile_") || code.starts_with("web_storage_")
+}
+
+/** The first line of the error banner. Service failures split three ways so the person can tell
+them apart: a deadline says which operation did not answer in how long, a restart names the
+interrupted operation (both carried in the message the supervisor built), and a plain stopped
+service says only that. Page-script failures name the script's position, never its URL. */
+fn banner_title(error: &EngineError) -> String {
+    let script = error
+        .location
+        .as_deref()
+        .and_then(|location| location.script_index);
+    if let Some(service) = error.service.as_deref() {
+        return service_title(error, service, script);
+    }
+    match script {
+        Some(index) if error.code == "timeout" => format!("Page script {index} timed out."),
+        Some(index) => format!("Page script {index}: {}", error.message),
+        None if error.code == "permission_denied" => "Navigation blocked.".to_owned(),
+        None if error.code == "tls_error" => {
+            "The server's certificate could not be verified.".to_owned()
+        }
+        None => error.message.clone(),
+    }
+}
+
+/** A failed engine call: deadline and restart messages already name the operation. */
+fn service_title(error: &EngineError, service: &str, script: Option<usize>) -> String {
+    let named = error.code == "timeout" || error.code == "engine_restarted";
+    match (named, script) {
+        (true, Some(index)) => format!("{} It was loading page script {index}.", error.message),
+        (true, None) => error.message.clone(),
+        (false, Some(index)) => {
+            format!("Browser {service} service stopped while loading page script {index}.")
+        }
+        (false, None) => format!("Browser {service} service stopped."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::banner_title;
+    use crate::protocol::EngineError;
+
+    /** An error from `service` with an optional page-script position. */
+    fn service_error(code: &str, message: &str, script: Option<usize>) -> EngineError {
+        let mut error = EngineError::new(code, message, "hint");
+        error.service = Some("network".into());
+        if let Some(index) = script {
+            error
+                .location
+                .get_or_insert_with(Default::default)
+                .script_index = Some(index);
+        }
+        error
+    }
+
+    /** A deadline shows which operation did not answer and for how long, not "stopped". */
+    #[test]
+    fn a_deadline_banner_names_the_operation_and_seconds() {
+        let message = "Browser network service did not answer network.fetch within 10 seconds.";
+        assert_eq!(
+            banner_title(&service_error("timeout", message, None)),
+            message
+        );
+    }
+
+    /** A crash that Mars restarted names the operation it interrupted. */
+    #[test]
+    fn a_restart_banner_names_the_interrupted_operation() {
+        let message = "Browser network service stopped during network.fetch and Mars restarted it. This operation did not finish.";
+        assert_eq!(
+            banner_title(&service_error("engine_restarted", message, None)),
+            message
+        );
+    }
+
+    /** A deadline while loading a page script keeps both the operation and the script. */
+    #[test]
+    fn a_deadline_during_a_page_script_names_both() {
+        let message = "Browser v9 service did not answer v9.run within 5 seconds.";
+        assert_eq!(
+            banner_title(&service_error("timeout", message, Some(3))),
+            format!("{message} It was loading page script 3.")
+        );
+    }
+
+    /** A service that is simply gone still says it stopped. */
+    #[test]
+    fn an_unavailable_service_banner_says_it_stopped() {
+        let error = service_error(
+            "service_unavailable",
+            "The network service is unavailable.",
+            None,
+        );
+        assert_eq!(banner_title(&error), "Browser network service stopped.");
+        let error = service_error("service_unavailable", "x", Some(2));
+        assert_eq!(
+            banner_title(&error),
+            "Browser network service stopped while loading page script 2."
+        );
+    }
+
+    /** Errors without a service keep their page-script and navigation titles. */
+    #[test]
+    fn non_service_banners_are_unchanged() {
+        let mut error = EngineError::new("timeout", "slow", "hint");
+        error
+            .location
+            .get_or_insert_with(Default::default)
+            .script_index = Some(4);
+        assert_eq!(banner_title(&error), "Page script 4 timed out.");
+        assert_eq!(
+            banner_title(&EngineError::new("permission_denied", "x", "hint")),
+            "Navigation blocked."
+        );
+        assert_eq!(
+            banner_title(&EngineError::new("other", "As is.", "hint")),
+            "As is."
+        );
+    }
 }

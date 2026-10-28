@@ -34,10 +34,10 @@ pub(super) struct Program {
 impl Program {
     /** Each function has one compiled control layout, independent of its dynamic local values. */
     pub fn compile(code: &[Instruction]) -> crate::protocol::EngineResult<Self> {
-        if footprint(code, 0) > BUFFER_BYTES {
+        if footprint(code, 0) > RESUMABLE_CONTROL_BYTES {
             return Err(crate::protocol::EngineError::limit(
                 "V9 resumable Wasm control bytes",
-                BUFFER_BYTES,
+                RESUMABLE_CONTROL_BYTES,
             ));
         }
         let mut program = Self {

@@ -112,6 +112,10 @@ impl Resolver<'_> {
         for (key, value) in border_keywords {
             super::resolve::keyword(style, parent, &key, &value);
         }
+        let individual: Vec<(String, String)> = super::individual::KEYS
+            .iter()
+            .filter_map(|key| values.remove(*key).map(|value| (key.to_string(), value)))
+            .collect();
         let late: Vec<(String, String)> = LAST
             .iter()
             .filter_map(|key| values.remove(*key).map(|value| (key.to_string(), value)))
@@ -119,6 +123,7 @@ impl Resolver<'_> {
         for (key, value) in values.into_iter().chain(late) {
             hides |= self.apply(style, &key, &value, diagnostics);
         }
+        hides |= self.individual_transforms(style, &individual, diagnostics);
         super::values::set_font_face(None);
         default_foreground(style);
         super::blockify::blockify_table_part(style);
@@ -156,6 +161,33 @@ impl Resolver<'_> {
                 }
             }
         }
+    }
+    /** `translate`, `rotate` and `scale` composed over the finished `transform`, each in its
+    fixed order whatever order the cascade chose them in; one that fails is dropped alone. */
+    fn individual_transforms(
+        &self,
+        style: &mut ComputedStyle,
+        individual: &[(String, String)],
+        diagnostics: &mut Vec<String>,
+    ) -> bool {
+        let mut hides = false;
+        let mut parts = Vec::new();
+        for key in super::individual::KEYS {
+            let Some((_, value)) = individual.iter().find(|(name, _)| name == key) else {
+                parts.push((None, [0.0; 2]));
+                continue;
+            };
+            match super::individual::matrix(key, value, style.font_size, self.context) {
+                Ok(part) => parts.push(part),
+                Err(_) => {
+                    dropped(key, Drop::Value, diagnostics);
+                    hides |= hiding(key, value);
+                    parts.push((None, [0.0; 2]));
+                }
+            }
+        }
+        super::individual::compose(style, &parts);
+        hides
     }
     /** Applies one value; a failure is dropped with a diagnostic and reports whether it could hide. */
     fn apply(

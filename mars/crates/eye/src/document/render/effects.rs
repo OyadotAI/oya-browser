@@ -12,6 +12,8 @@ use crate::{
 type Matrix = [f64; 6];
 /** The identity leaves geometry where layout put it. */
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+/** A percentage's reference: `transform-origin: 25%` is a quarter of the box. */
+const PERCENT: f64 = 100.0;
 /** One step of a paint-order key: phase within a painting layer, z-index, document order, then
  * 0 for an element's own box, 1 for its `::before` box and 2 for its `::after` box. */
 pub(super) type Step = (u8, i32, usize, u8);
@@ -177,6 +179,7 @@ pub(super) fn stack(
         if !item.bare {
             super::border_image::decorate(&mut item, node, generated);
         }
+        text_shadows(&mut item, generated.unwrap_or(&node.style));
         item.stacking_opacity = groups(&tree, node)?;
         item.z = key
             .iter()
@@ -353,7 +356,7 @@ pub(super) fn only_text(item: &DisplayItem) -> bool {
         && item.backgrounds.is_empty()
         && item.border == 0.0
         && item.border_widths == [0.0; 4]
-        && item.shadows.is_empty()
+        && item.shadows.iter().all(|shadow| shadow.text)
         && item.border_image.is_none()
         && item.vector.is_empty()
         && item.mask.is_none()
@@ -864,14 +867,18 @@ fn pin(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Opti
 fn transformed(style: &crate::document::ComputedStyle) -> bool {
     style.transform.is_some() || style.translate_percent != [0.0; 2]
 }
-/** A box's `transform` and percentage `translate` about its own center, in its layout coordinates. */
+/** A box's `transform` and percentage `translate` about its `transform-origin` (the center
+unless authored), in its layout coordinates. */
 fn own_transform(style: &crate::document::ComputedStyle, own: Option<&DisplayItem>) -> Matrix {
     let mut transform = style.transform.unwrap_or(IDENTITY);
+    let [ox, ox_percent, oy, oy_percent] = style
+        .transform_origin
+        .unwrap_or_else(crate::document::default_transform_origin);
     let (x, y, w, h) = own
         .map(|item| {
             (
-                item.x + item.width / 2.0,
-                item.y + item.height / 2.0,
+                item.x + ox + item.width * ox_percent / PERCENT,
+                item.y + oy + item.height * oy_percent / PERCENT,
                 item.width,
                 item.height,
             )
@@ -1420,6 +1427,27 @@ fn radii(style: &crate::document::ComputedStyle, width: f64, height: f64) -> [[f
     [horizontal, vertical].map(|axis| axis.map(|value| value * scale.max(0.0)))
 }
 /** Radius, shadows and gradient layers resolved against the item's final size. */
+/** An item's text runs cast the inherited `text-shadow`s; bare text runs (most text) carry them
+too, so this runs after `decorate`, which bare items skip. Items without text get none, which
+keeps them out of the painter's always-paint list. */
+fn text_shadows(item: &mut DisplayItem, style: &crate::document::ComputedStyle) {
+    if item.lines.is_empty() || style.hidden {
+        return;
+    }
+    item.shadows
+        .extend(style.text_shadows.iter().map(|shadow| DisplayShadow {
+            x: shadow.x,
+            y: shadow.y,
+            blur: shadow.blur.max(0.0),
+            spread: 0.0,
+            color: match (shadow.current, &style.color) {
+                (true, Some(color)) => color.clone(),
+                _ => shadow.color.clone(),
+            },
+            inset: false,
+            text: true,
+        }));
+}
 fn decorate(item: &mut DisplayItem, node: &Node) {
     let style = &node.style;
     let [horizontal, vertical] = radii(style, item.width, item.height);
@@ -1432,6 +1460,10 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
         item.object_fit = style.object_fit;
         let [ox, oy] = style.object_position;
         item.object_position = [ox.px, ox.percent, oy.px, oy.percent];
+    }
+    // Text controls need it too: the native editor insets its text by the page's padding and
+    // border (Google's search box centers its line with `padding-top: 14px`).
+    if ["img", "textarea", "input"].contains(&item.tag.as_str()) || super::flow::frame(node) {
         let [bt, br, bb, bl] = sizing::border_sides(style);
         let [pt, pr, pb, pl] = style.padding;
         let (top, right, bottom, left) = (bt + pt, br + pr, bb + pb, bl + pl);
@@ -1458,6 +1490,7 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
                 _ => shadow.color.clone(),
             },
             inset: shadow.inset,
+            text: false,
         })
         .collect();
     item.backgrounds = style

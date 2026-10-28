@@ -409,7 +409,8 @@ impl Vm<'_> {
         let page = &self.page.state;
         // Listeners take the counter then advance it; timers and requests advance it first, so
         // their newest id equals the counter.
-        let ok = ahead(page.listeners.iter().map(|listener| listener.id), page.next_listener)
+        let ok = !page.listeners.malformed()
+            && ahead(page.listeners.iter().map(|listener| listener.id), page.next_listener)
             && ahead(page.timers.iter().map(|timer| timer.id), page.next_timer.saturating_add(1))
             && ahead(page.pending.iter().map(|pending| pending.id), page.next_request.saturating_add(1))
             // Detached projected nodes keep their projected ids; created ones are numbered.
