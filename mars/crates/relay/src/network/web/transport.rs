@@ -94,19 +94,35 @@ fn resolve(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Vec<Sock
     Ok(addresses)
 }
 
-/** The system resolver's answers for a domain, bounded by the request deadline. */
+/** Lookups still running past their request: a resolver stall storm may hold this many helper
+threads at once; beyond it a lookup fails at once instead of adding another blocked thread. */
+const DNS_IN_FLIGHT: usize = 16;
+/** Helper threads currently inside the system resolver. */
+static DNS_RUNNING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/** The system resolver's answers for a domain, bounded by the request deadline and by the
+number of lookups still outstanding. */
 fn resolve_domain(host: &str, port: u16, deadline: Instant) -> EngineResult<Vec<SocketAddr>> {
+    use std::sync::atomic::Ordering;
+    if DNS_RUNNING.load(Ordering::Relaxed) >= DNS_IN_FLIGHT {
+        return Err(resolver_timeout());
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     let query = (host.to_string(), port);
-    std::thread::Builder::new()
+    DNS_RUNNING.fetch_add(1, Ordering::Relaxed);
+    let spawned = std::thread::Builder::new()
         .name("mars-dns".into())
         .spawn(move || {
             let answer = query
                 .to_socket_addrs()
                 .map(|addresses| addresses.take(DNS_ANSWERS + 1).collect::<Vec<_>>());
+            DNS_RUNNING.fetch_sub(1, Ordering::Relaxed);
             let _ = sender.send(answer);
-        })
-        .map_err(io_error)?;
+        });
+    if let Err(error) = spawned {
+        DNS_RUNNING.fetch_sub(1, Ordering::Relaxed);
+        return Err(io_error(error));
+    }
     match receiver.recv_timeout(remaining(deadline)?) {
         Ok(answer) => answer.map_err(io_error),
         Err(_) => Err(resolver_timeout()),
