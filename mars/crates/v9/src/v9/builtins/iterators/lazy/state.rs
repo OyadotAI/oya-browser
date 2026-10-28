@@ -211,6 +211,8 @@ fn put(vm: &mut Vm, id: ObjectId, name: &str, value: JsValue) {
 /** Numbers include infinity only for the already validated take/drop limit. */
 fn number(vm: &Vm, id: ObjectId, name: &str) -> Res<f64> {
     match get(vm, id, name) {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(value) => Ok(value),
         JsValue::Number(value) => Ok(value),
         _ => Err(invalid().into()),
     }

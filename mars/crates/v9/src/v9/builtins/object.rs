@@ -386,7 +386,11 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     // [[DefineOwnProperty]].
     let namespace = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Namespace(_)));
     let array = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
-    if namespace || array || vm.proxy_of(id).is_some() {
+    #[cfg(feature = "conformance")]
+    let shared = super::is_shared_object(vm, id);
+    #[cfg(not(feature = "conformance"))]
+    let shared = false;
+    if namespace || array || shared || vm.proxy_of(id).is_some() {
         return restrict_generic(vm, id, clear);
     }
     vm.materialize(id)?;

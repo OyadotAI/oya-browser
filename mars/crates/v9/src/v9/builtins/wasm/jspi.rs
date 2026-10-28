@@ -88,6 +88,17 @@ pub(super) fn call(
         .object()
         .and_then(|id| get(vm, id, CALLBACK))
         .ok_or_else(|| vm.type_error("invalid suspending function"))?;
+    if super::wasmfx_instance_enabled(vm, instance) || super::wasmfx_active(vm) {
+        let context = get(vm, instance, CONTEXT);
+        if !matches!(context, Some(JsValue::Number(depth)) if depth == vm.frames.len() as f64) {
+            let message = if matches!(context, Some(JsValue::Number(_))) {
+                "trying to suspend JS frames"
+            } else {
+                "trying to suspend without WebAssembly.promising"
+            };
+            return Err(failure(vm, ids(vm).suspend_error, message));
+        }
+    }
     let value = vm.call(callback, JsValue::Undefined, args)?;
     if !value
         .object()

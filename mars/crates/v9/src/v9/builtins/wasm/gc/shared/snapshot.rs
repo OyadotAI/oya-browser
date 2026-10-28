@@ -8,29 +8,44 @@ fn invalid() -> EngineError {
 }
 
 /** Shared graph records cannot encode function bodies, foreign IDs or values outside their validated types. */
-fn validate_arena(arena: &SharedGcArena) -> EngineResult<()> {
+pub(in crate::v9::builtins::wasm) fn validate_arena(arena: &SharedGcArena) -> EngineResult<()> {
     let (sources, records) = arena.snapshot_records();
     let modules = sources
         .iter()
-        .map(|bytes| binary::parse(bytes).map_err(|_| invalid()))
-        .collect::<EngineResult<Vec<_>>>()?;
-    for record in records.values() {
+        .map(|bytes| binary::parse(bytes).ok())
+        .collect::<Vec<_>>();
+    for (node, record) in &records {
+        #[cfg(not(feature = "conformance"))]
+        let _ = node;
         let module = modules.get(record.module as usize).ok_or_else(invalid)?;
+        let Some(module) = module else {
+            if sources[record.module as usize].as_ref() == WAIT_QUEUE_META {
+                if record.ty != 0 || record.array || !record.values.is_empty() { return Err(invalid()); }
+                continue;
+            }
+            #[cfg(feature = "conformance")]
+            if crate::v9::builtins::validate_shared_js_record(arena, &records, *node)? { continue; }
+            return Err(invalid());
+        };
         let definition = module
             .definitions
             .get(record.ty as usize)
             .filter(|d| d.shared)
             .ok_or_else(invalid)?;
         let fields = match &definition.kind {
-            Kind::Struct(fields) if !record.array && fields.len() == record.values.len() => {
+            Kind::Struct(fields) if !record.array && fields.len() + usize::from(definition.descriptor.is_some()) == record.values.len() => {
                 fields.as_slice()
             }
             Kind::Array(field) if record.array => std::slice::from_ref(field),
             _ => return Err(invalid()),
         };
-        for (index, value) in record.values.iter().enumerate() {
+        if let Some(descriptor) = definition.descriptor {
+            let value = record.values.last().ok_or_else(invalid)?;
+            if !valid_value(&modules, &sources, &records, module, Type::Exact(i64::from(descriptor), false), value) { return Err(invalid()); }
+        }
+        for (index, value) in record.values.iter().take(if record.array { record.values.len() } else { fields.len() }).enumerate() {
             let field = &fields[if record.array { 0 } else { index }];
-            if !valid_value(&modules, &records, module, field.ty, value) {
+            if !valid_value(&modules, &sources, &records, module, field.ty, value) {
                 return Err(invalid());
             }
             if let Some(bits) = field.packed {
@@ -44,7 +59,8 @@ fn validate_arena(arena: &SharedGcArena) -> EngineResult<()> {
     Ok(())
 }
 fn valid_value(
-    modules: &[Module],
+    modules: &[Option<Module>],
+    sources: &[std::sync::Arc<[u8]>],
     records: &BTreeMap<u64, crate::v9::vm::data::SharedGcRecord>,
     m: &Module,
     ty: Type,
@@ -73,11 +89,17 @@ fn valid_value(
                 let Some(record) = records.get(node) else {
                     return false;
                 };
-                let source = &modules[record.module as usize];
+                let Some(Some(source)) = modules.get(record.module as usize) else {
+                    let wait_queue = sources.get(record.module as usize).is_some_and(|s| s.as_ref() == WAIT_QUEUE_META);
+                    return if wait_queue { heap == -36 } else { matches!(heap, -17 | -18) };
+                };
                 if heap < 0 {
                     return matches!(heap, -17 | -18 | -19)
                         || heap == -21 && !record.array
                         || heap == -22 && record.array;
+                }
+                if matches!(ty, Type::Exact(..)) {
+                    return gc_types::equivalent(source, record.ty, m, heap as u32);
                 }
                 let mut current = Some(record.ty);
                 for _ in 0..=source.definitions.len() {
@@ -91,7 +113,11 @@ fn valid_value(
                 }
                 false
             } else if heap == -17 {
-                matches!(
+                #[cfg(feature = "conformance")]
+                let extra = matches!(value, SharedGcValue::SharedString(_) | SharedGcValue::Smi(_));
+                #[cfg(not(feature = "conformance"))]
+                let extra = false;
+                extra || matches!(
                     value,
                     SharedGcValue::Undefined
                         | SharedGcValue::Boolean(_)
@@ -101,7 +127,12 @@ fn valid_value(
                         | SharedGcValue::String(_)
                 )
             } else {
-                matches!(heap, -18 | -19 | -20)
+                #[cfg(feature = "conformance")]
+                let shared_string = matches!(value, SharedGcValue::SharedString(_) | SharedGcValue::Smi(_));
+                #[cfg(not(feature = "conformance"))]
+                let shared_string = false;
+                (heap == -18 && (matches!(value, SharedGcValue::Undefined | SharedGcValue::Boolean(_) | SharedGcValue::Number(_) | SharedGcValue::BigInt(_) | SharedGcValue::BigIntWide(_) | SharedGcValue::String(_)) || shared_string))
+                    || matches!(heap, -18 | -19 | -20)
                     && matches!(value,SharedGcValue::Number(v) if f64::from_bits(*v).fract()==0.0 && f64::from_bits(*v)>=-1_073_741_824.0 && f64::from_bits(*v)<1_073_741_824.0)
             }
         }

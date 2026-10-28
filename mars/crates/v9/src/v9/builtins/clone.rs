@@ -52,6 +52,14 @@ fn clone(
         return Err(uncloneable(vm, "A raw JSON object"));
     }
     #[cfg(feature = "conformance")]
+    if super::conformance_local_mutex(vm, value) {
+        return Err(vm.unsupported_error("Atomics.Mutex shared clone"));
+    }
+    #[cfg(feature = "conformance")]
+    if super::conformance_local_condition(vm, value) {
+        return Err(vm.unsupported_error("Atomics.Condition shared clone"));
+    }
+    #[cfg(feature = "conformance")]
     if super::conformance_host_object(vm, value) {
         return Err(uncloneable(vm, "A native test object"));
     }

@@ -53,7 +53,7 @@ impl Type {
     pub fn js_compatible(self) -> bool {
         !matches!(
             self,
-            Self::V128 | Self::Ref(-32 | -31 | -26 | -24 | -23 | -12 | -11, _)
+            Self::V128 | Self::Ref(-32 | -31 | -26 | -24 | -23 | -12 | -11, _) | Self::Shared(-37 | -36, _)
         )
     }
     /** Changing nullability retains the exact heap-type proof instead of silently widening it. */
@@ -70,11 +70,34 @@ impl Type {
     /** Indexed reference diagnostics include nullability and exactness from the actual stack contract. */
     pub fn display(self) -> String {
         match self {
+            Self::Shared(heap, true) => format!("shared {}", Self::Ref(heap, true).display()),
+            Self::Shared(heap, false) => match Self::Ref(heap, false).display().strip_prefix("(ref ").and_then(|s| s.strip_suffix(')')) {
+                Some(name) => format!("(ref shared {name})"),
+                None => format!("(ref shared {heap})"),
+            },
             Self::Exact(heap, nullable) => {
                 format!("(ref {}exact {heap})", if nullable { "null " } else { "" })
             }
             Self::Ref(heap, nullable) if heap >= 0 => {
                 format!("(ref {}{heap})", if nullable { "null " } else { "" })
+            }
+            Self::Ref(heap @ (-23..=-16), nullable) => {
+                let name = match heap {
+                    -16 => "func",
+                    -17 => "extern",
+                    -18 => "any",
+                    -19 => "eq",
+                    -20 => "i31",
+                    -21 => "struct",
+                    -22 => "array",
+                    -23 => "exn",
+                    _ => unreachable!(),
+                };
+                if nullable {
+                    format!("{name}ref")
+                } else {
+                    format!("(ref {name})")
+                }
             }
             _ => self.name().into(),
         }
@@ -162,8 +185,8 @@ pub(super) struct Signature {
 /** Declared minimum and optional maximum, in pages or table elements. */
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Limits {
-    pub min: u32,
-    pub max: Option<u32>,
+    pub min: u64,
+    pub max: Option<u64>,
     pub shared: bool,
     pub address64: bool,
 }
@@ -179,6 +202,8 @@ pub(super) enum External {
 /** The import name and its type. */
 #[derive(Clone, Debug)]
 pub(super) struct Import {
+    pub offset: usize,
+    pub exact_function: bool,
     pub module: String,
     pub name: String,
     pub kind: External,
@@ -189,6 +214,7 @@ pub(super) struct Export {
     pub name: String,
     pub kind: u8,
     pub index: u32,
+    pub name_offset: usize,
 }
 /** A typed constant expression, possibly reading an imported immutable global. */
 #[derive(Clone, Debug)]
@@ -220,6 +246,12 @@ pub(super) enum Instruction {
     Throw(u32),
     Rethrow(u32),
     ThrowRef,
+    Continuation(u8, u32),
+    ContinuationBind(u32, u32),
+    Resume(u32, Vec<EffectHandler>),
+    ResumeThrow(u32, Option<u32>, Vec<EffectHandler>),
+    Suspend(u32),
+    Switch(u32, u32),
     Delegate(Signature, Vec<Instruction>, u32),
     Try(
         Signature,
@@ -251,6 +283,13 @@ pub(super) struct Catch {
     pub reference: bool,
     pub depth: u32,
 }
+/** A suspend handler transfers the tag payload and continuation to a structured label. */
+#[derive(Clone, Debug)]
+pub(super) struct EffectHandler {
+    pub tag: u32,
+    pub depth: u32,
+    pub switch: bool,
+}
 /** A validated body's locals and structured instruction sequence. */
 #[derive(Clone, Debug)]
 pub(super) struct Body {
@@ -277,8 +316,11 @@ pub(super) struct Element {
 /** Reconstructed from immutable private bytes for every native use. */
 #[derive(Clone, Debug, Default)]
 pub(super) struct Module {
+    pub custom_descriptors_enabled: bool,
+    pub wasmfx_enabled: bool,
     pub types: Vec<Signature>,
     pub names: std::collections::BTreeMap<u32, String>,
+    pub string_literals: Vec<crate::v9::value::JsString>,
     pub definitions: Vec<super::gc_types::Definition>,
     pub imports: Vec<Import>,
     pub functions: Vec<u32>,
@@ -295,6 +337,13 @@ pub(super) struct Module {
     pub data_count: Option<u32>,
 }
 impl Module {
+    /** Defined functions and explicitly exact function imports retain exact reference types. */
+    pub fn exact_function(&self, index: u32) -> bool {
+        if !self.custom_descriptors_enabled { return false; }
+        let imported = self.imported_functions();
+        if index as usize >= imported { return true; }
+        self.imports.iter().filter(|import| matches!(import.kind, External::Function(_))).nth(index as usize).is_some_and(|import| import.exact_function)
+    }
     /** Function index lookup stays separate from the type table's struct and array members. */
     pub fn function_type(&self, index: u32) -> Result<u32, Error> {
         let imported = self.imported_functions();

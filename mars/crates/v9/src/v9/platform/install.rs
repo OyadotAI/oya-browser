@@ -1,4 +1,5 @@
 /** Builds the platform's intrinsic prototypes and singletons, and the global object's prototype. */
+use super::attr_dom;
 use super::dom::{self, REFLECTED};
 use super::{console, events, interfaces, net, timers, url_bindings, window};
 use crate::v9::value::JsValue;
@@ -12,19 +13,25 @@ const IDLE_FRAMES: f64 = 3.0;
 
 /** `Node.ELEMENT_NODE` and the other node type and position constants, on the prototype and
 on the `Node` constructor itself, where DOM polyfills compare `nodeType` against them. */
-const NODE_CONSTANTS: [(&str, f64); 12] = [
+const NODE_CONSTANTS: [(&str, f64); 18] = [
     ("ELEMENT_NODE", 1.0),
     ("ATTRIBUTE_NODE", 2.0),
     ("TEXT_NODE", 3.0),
+    ("CDATA_SECTION_NODE", 4.0),
+    ("ENTITY_REFERENCE_NODE", 5.0),
+    ("ENTITY_NODE", 6.0),
+    ("PROCESSING_INSTRUCTION_NODE", 7.0),
     ("COMMENT_NODE", 8.0),
     ("DOCUMENT_NODE", 9.0),
     ("DOCUMENT_TYPE_NODE", 10.0),
     ("DOCUMENT_FRAGMENT_NODE", 11.0),
+    ("NOTATION_NODE", 12.0),
     ("DOCUMENT_POSITION_DISCONNECTED", 1.0),
     ("DOCUMENT_POSITION_PRECEDING", 2.0),
     ("DOCUMENT_POSITION_FOLLOWING", 4.0),
     ("DOCUMENT_POSITION_CONTAINS", 8.0),
     ("DOCUMENT_POSITION_CONTAINED_BY", 16.0),
+    ("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", 32.0),
 ];
 
 /** Install the platform into the realm. */
@@ -78,6 +85,8 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "compareDocumentPosition",
             "isEqualNode",
             "isSameNode",
+            "lookupNamespaceURI",
+            "isDefaultNamespace",
             "normalize",
         ],
         dom::node_method,
@@ -101,13 +110,14 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         &[
             "tagName",
             "localName",
+            "namespaceURI",
+            "prefix",
             "children",
             "childElementCount",
             "firstElementChild",
             "lastElementChild",
             "nextElementSibling",
             "previousElementSibling",
-            "classList",
             "dataset",
             "sheet",
             "pathname",
@@ -127,7 +137,14 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_get,
     );
-    for name in ["className", "innerHTML", "outerHTML", "style", "part"] {
+    for name in [
+        "className",
+        "innerHTML",
+        "outerHTML",
+        "style",
+        "part",
+        "classList",
+    ] {
         b.accessor(
             element,
             name,
@@ -143,6 +160,11 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "setAttribute",
             "removeAttribute",
             "hasAttribute",
+            "getAttributeNode",
+            "getAttributeNodeNS",
+            "setAttributeNode",
+            "setAttributeNodeNS",
+            "removeAttributeNode",
             "getAttributeNS",
             "setAttributeNS",
             "removeAttributeNS",
@@ -153,6 +175,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "querySelector",
             "querySelectorAll",
             "getElementsByTagName",
+            "getElementsByTagNameNS",
             "getElementsByClassName",
             "matches",
             "webkitMatchesSelector",
@@ -166,6 +189,10 @@ pub(in crate::v9) fn install(b: &mut Builder) {
             "replaceWith",
             "replaceChildren",
             "insertAdjacentHTML",
+            "appendHTMLUnsafe",
+            "prependHTMLUnsafe",
+            "beforeHTMLUnsafe",
+            "afterHTMLUnsafe",
             "insertAdjacentElement",
             "insertAdjacentText",
             "getBoundingClientRect",
@@ -258,6 +285,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
 fn document(b: &mut Builder, node: u32) {
     let proto = b.object(Some(node));
     b.ids.document_prototype = proto;
+    b.ids.xml_document_prototype = b.object(Some(proto));
     getters(
         b,
         proto,
@@ -269,6 +297,7 @@ fn document(b: &mut Builder, node: u32) {
             "readyState",
             "URL",
             "documentURI",
+            "baseURI",
             "referrer",
             "domain",
             "activeElement",
@@ -301,8 +330,8 @@ fn document(b: &mut Builder, node: u32) {
     for name in ["characterSet", "charset", "inputEncoding"] {
         b.getter(proto, name, dom::document_get);
     }
+    b.getter(proto, "contentType", dom::document_get);
     for (name, value) in [
-        ("contentType", "text/html"),
         ("compatMode", "CSS1Compat"),
         ("visibilityState", "visible"),
         ("designMode", "off"),
@@ -320,12 +349,16 @@ fn document(b: &mut Builder, node: u32) {
             "getElementById",
             "getElementsByName",
             "getElementsByTagName",
+            "getElementsByTagNameNS",
             "getElementsByClassName",
             "querySelector",
             "querySelectorAll",
             "createElement",
             "createElementNS",
+            "createAttribute",
+            "createAttributeNS",
             "createTextNode",
+            "createCDATASection",
             "createComment",
             "createDocumentFragment",
             "createEvent",
@@ -369,8 +402,8 @@ fn document(b: &mut Builder, node: u32) {
             crate::v9::vm::realm::realm().ids.document_all,
         ))
     });
-    b.getter(proto, "defaultView", window::window_get);
-    b.getter(proto, "location", window::window_get);
+    b.getter(proto, "defaultView", window::default_view_get);
+    b.getter(proto, "location", super::frames::location_get);
 }
 
 /** document.fonts: a FontFaceSet with nothing to load. V9 renders no text, so every font is
@@ -416,7 +449,13 @@ fn collections(b: &mut Builder) {
         Static::Value(JsValue::Object(values)),
         HIDDEN_ATTRS,
     );
-    getters(b, class_list, &["length", "value"], dom::class_list);
+    getters(b, class_list, &["length"], dom::class_list);
+    b.accessor(
+        class_list,
+        "value",
+        Some(dom::class_list),
+        Some(dom::class_list_value_set),
+    );
     let style = b.object(Some(object_prototype));
     b.ids.style_prototype = style;
     methods(
@@ -463,6 +502,18 @@ fn collections(b: &mut Builder) {
         Static::Value(JsValue::Object(values)),
         HIDDEN_ATTRS,
     );
+    let collection = b.object(Some(object_prototype));
+    b.ids.html_collection_prototype = collection;
+    methods(b, collection, &["item", "namedItem"], dom::list_method);
+    // HTMLCollection has no forEach, entries or keys (only NodeList does), but it is iterable: its
+    // @@iterator is the same list walk. The function is not installed under a visible name.
+    let iterator = b.function("values", 0, dom::list_method);
+    b.put(
+        collection,
+        Key::Sym(symbol::ITERATOR),
+        Static::Value(JsValue::Object(iterator)),
+        HIDDEN_ATTRS,
+    );
     let storage = b.object(Some(object_prototype));
     b.ids.storage_prototype = storage;
     methods(
@@ -472,6 +523,36 @@ fn collections(b: &mut Builder) {
         window::storage_method,
     );
     b.getter(storage, "length", window::storage_method);
+}
+
+/** The phase constants, which Event and Event.prototype both carry. */
+const PHASE_CONSTANTS: [(&str, f64); 4] = [
+    ("NONE", 0.0),
+    ("CAPTURING_PHASE", 1.0),
+    ("AT_TARGET", 2.0),
+    ("BUBBLING_PHASE", 3.0),
+];
+
+/** The animation and transition handler attributes, which start null on every event target. */
+const EVENT_HANDLER_ATTRIBUTES: [&str; 8] = [
+    "onanimationstart",
+    "onanimationend",
+    "onanimationiteration",
+    "ontransitionend",
+    "onwebkitanimationstart",
+    "onwebkitanimationend",
+    "onwebkitanimationiteration",
+    "onwebkittransitionend",
+];
+
+/** The init method a subtype owns in the DOM standard, if it has one. */
+fn legacy_init(name: &str) -> Option<&'static str> {
+    match name {
+        "UIEvent" => Some("initUIEvent"),
+        "MouseEvent" => Some("initMouseEvent"),
+        "KeyboardEvent" => Some("initKeyboardEvent"),
+        _ => None,
+    }
 }
 
 /** Event and its subtypes. */
@@ -542,15 +623,11 @@ fn event_types(b: &mut Builder) {
         ],
         events::event_method,
     );
-    for (name, value) in [
-        ("NONE", 0.0),
-        ("CAPTURING_PHASE", 1.0),
-        ("AT_TARGET", 2.0),
-        ("BUBBLING_PHASE", 3.0),
-    ] {
-        b.value(proto, name, JsValue::Number(value), 0);
-    }
     let event = b.constructor("Event", 1, events::construct_event, proto, None);
+    for (name, value) in PHASE_CONSTANTS {
+        b.value(proto, name, JsValue::Number(value), 0);
+        b.value(event, name, JsValue::Number(value), 0);
+    }
     b.global("Event", event);
     for name in [
         "CustomEvent",
@@ -573,6 +650,9 @@ fn event_types(b: &mut Builder) {
         "TransitionEvent",
     ] {
         let sub = b.object(Some(proto));
+        if let Some(init) = legacy_init(name) {
+            methods(b, sub, &[init], events::event_method);
+        }
         if name == "KeyboardEvent" {
             events::keyboard_prototype(sub);
         }
@@ -586,6 +666,12 @@ fn event_types(b: &mut Builder) {
         b.global(name, ctor);
     }
     let target = b.ids.event_target_prototype;
+    for name in EVENT_HANDLER_ATTRIBUTES {
+        let attrs = crate::v9::vm::heap::WRITABLE
+            | crate::v9::vm::heap::CONFIGURABLE
+            | crate::v9::vm::heap::ENUMERABLE;
+        b.value(target, name, JsValue::Null, attrs);
+    }
     let ctor = b.constructor("EventTarget", 0, construct_event_target, target, None);
     b.global("EventTarget", ctor);
 }
@@ -940,6 +1026,12 @@ fn singletons(b: &mut Builder) {
     crate::v9::builtins::mark_host_api(&mut b.natives[first_console_native..]);
     b.global("console", console);
     let performance = b.object(Some(b.ids.event_target_prototype));
+    b.put(
+        performance,
+        Key::private(super::performance::BRAND),
+        Static::Value(JsValue::Boolean(true)),
+        HIDDEN_ATTRS,
+    );
     #[cfg(feature = "conformance")]
     b.method(
         performance,
@@ -950,22 +1042,24 @@ fn singletons(b: &mut Builder) {
     methods(
         b,
         performance,
-        &["now", "getEntries", "getEntriesByType", "getEntriesByName"],
+        &[
+            "now",
+            "getEntries",
+            "getEntriesByType",
+            "getEntriesByName",
+            "clearMarks",
+            "clearMeasures",
+        ],
         window::performance,
     );
     methods(
         b,
         performance,
-        &[
-            "mark",
-            "measure",
-            "clearMarks",
-            "clearMeasures",
-            "clearResourceTimings",
-            "setResourceTimingBufferSize",
-        ],
+        &["clearResourceTimings", "setResourceTimingBufferSize"],
         noop_method,
     );
+    b.method(performance, "mark", 1, super::performance::mark);
+    b.method(performance, "measure", 1, super::performance::measure);
     getters(
         b,
         performance,
@@ -1100,12 +1194,16 @@ fn global_object(b: &mut Builder) {
         &["scroll", "scrollTo", "scrollBy"],
         super::scrolling::window_scroll,
     );
+    let attr = b.object(Some(b.ids.node_prototype));
+    b.ids.attr_prototype = attr;
+    attr_members(b, attr);
     for name in [
         "Node",
         "Element",
         "Text",
         "Comment",
         "Document",
+        "XMLDocument",
         "HTMLDocument",
         "Window",
         "NodeList",
@@ -1128,12 +1226,14 @@ fn global_object(b: &mut Builder) {
             "Element" => b.ids.element_prototype,
             "Text" | "Comment" | "CharacterData" => b.ids.text_prototype,
             "Document" | "HTMLDocument" => b.ids.document_prototype,
+            "XMLDocument" => b.ids.xml_document_prototype,
             "Window" => proto,
-            "NodeList" | "HTMLCollection" => b.ids.node_list_prototype,
+            "NodeList" => b.ids.node_list_prototype,
+            "HTMLCollection" => b.ids.html_collection_prototype,
             "CSSStyleDeclaration" => b.ids.style_prototype,
             "DOMTokenList" => b.ids.class_list_prototype,
             "Storage" => b.ids.storage_prototype,
-            "Attr" => b.ids.node_prototype,
+            "Attr" => b.ids.attr_prototype,
             _ => b.ids.html_element_prototype,
         };
         let ctor = match name {
@@ -1198,13 +1298,15 @@ fn global_object(b: &mut Builder) {
     super::animations::install(b);
     super::channel::install(b);
     super::dom_parser::install(b);
+    super::xml_serializer::install(b);
     super::frames::install(b);
     super::implementation::install(b);
     super::scripts::install(b);
     super::components::install(b);
     // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
     // stay undefined, so libraries that feature-detect them take their fallback paths.
-    let globals = std::mem::take(&mut b.globals);
+    // The list is kept, not taken: install_window_interfaces reads it after every install.
+    let globals = b.globals.clone();
     for (name, value) in globals {
         b.put(proto, Key::from(name), Static::Value(value), HIDDEN_ATTRS);
     }
@@ -1306,6 +1408,28 @@ fn ranges(b: &mut Builder) {
         b.value(ctor, name, JsValue::Number(value), 0);
     }
     b.global("Range", ctor);
+    let static_range = b.object(Some(object_prototype));
+    b.ids.static_range_prototype = static_range;
+    getters(
+        b,
+        static_range,
+        &[
+            "startContainer",
+            "startOffset",
+            "endContainer",
+            "endOffset",
+            "collapsed",
+        ],
+        super::range::range_get,
+    );
+    let static_ctor = b.constructor(
+        "StaticRange",
+        0,
+        super::range::construct_static_range,
+        static_range,
+        None,
+    );
+    b.global("StaticRange", static_ctor);
     let selection = b.object(Some(object_prototype));
     b.ids.selection_prototype = selection;
     getters(
@@ -1400,6 +1524,33 @@ fn constructor_without_link(b: &mut Builder, name: &'static str, prototype: u32)
         dom::illegal_constructor
     };
     b.constructor(name, 0, function, prototype, None)
+}
+
+/** The Attr members: name and owner reads, and value, nodeValue and textContent, which write back. */
+fn attr_members(b: &mut Builder, attr: u32) {
+    getters(
+        b,
+        attr,
+        &[
+            "name",
+            "localName",
+            "namespaceURI",
+            "prefix",
+            "ownerElement",
+            "specified",
+            "nodeName",
+            "nodeType",
+        ],
+        attr_dom::attr_get,
+    );
+    for name in ["value", "nodeValue", "textContent"] {
+        b.accessor(
+            attr,
+            name,
+            Some(attr_dom::attr_get),
+            Some(attr_dom::attr_set),
+        );
+    }
 }
 
 /** Getters on a shared prototype, leaving out the members one interface owns. */

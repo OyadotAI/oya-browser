@@ -74,7 +74,7 @@ pub(super) fn buffer_slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if buffer_state::detached(vm, id) {
         return Err(vm.type_error("Cannot slice a detached ArrayBuffer"));
     }
-    let length = buffer_bytes(vm, id).map_or(0, Vec::len);
+    let length = storage_len(vm, id).unwrap_or(0);
     let start = vm.relative_index(&call.arg(0), length, 0)?;
     let end = vm.relative_index(&call.arg(1), length, length)?.max(start);
     let count = end - start;
@@ -99,31 +99,23 @@ fn copy_buffer(
 ) -> Res<()> {
     let Some(target) = target
         .object()
-        .filter(|target| buffer_bytes(vm, *target).is_some())
+        .filter(|target| matches!(vm.heap.get(*target).map(|o| &o.class), Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))))
     else {
         return Err(vm.type_error("ArrayBuffer species returned an incompatible object"));
     };
     if source == target
         || buffer_state::detached(vm, target)
         || buffer_state::immutable(vm, target)
-        || buffer_bytes(vm, target).is_none_or(|bytes| bytes.len() < count)
+        || storage_len(vm, target).is_none_or(|length| length < count)
     {
         return Err(vm.type_error("ArrayBuffer species returned an invalid buffer"));
     }
     if buffer_state::detached(vm, source) {
         return Err(vm.type_error("Cannot slice a detached ArrayBuffer"));
     }
-    let bytes = buffer_bytes(vm, source)
-        .map(|bytes| {
-            bytes
-                .get(start..)
-                .unwrap_or_default()
-                .iter()
-                .take(count)
-                .copied()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let available = storage_len(vm, source).unwrap_or(0).saturating_sub(start).min(count);
+    let bytes = read_range(vm, source, start.min(storage_len(vm, source).unwrap_or(0)), available)
+        .ok_or_else(|| vm.range_error("ArrayBuffer slice exceeds resident byte limit"))?;
     if !write_range(vm, target, 0, &bytes) {
         return Err(vm.type_error("ArrayBuffer species returned unwritable backing"));
     }
@@ -144,6 +136,10 @@ pub(super) fn map(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vec![JsValue::Number(view.length as f64)],
         Some(view.length),
     )?;
+    let destination =
+        view_of(vm, target.object().expect("validated species")).expect("validated view");
+    let fast =
+        view.kind == destination.kind && special_kind(vm, &view) == special_kind(vm, &destination);
     for index in 0..view.length {
         let value = load(vm, id, index).unwrap_or(JsValue::Undefined);
         let mapped = vm.call(
@@ -151,10 +147,45 @@ pub(super) fn map(vm: &mut Vm, call: Call) -> Res<JsValue> {
             call.arg(1),
             vec![value, JsValue::Number(index as f64), call.this.clone()],
         )?;
-        vm.set(&target, key(&index.to_string()), mapped, true)?;
+        if fast {
+            map_store(vm, &target, index, &mapped)?;
+        } else {
+            vm.set(&target, key(&index.to_string()), mapped, true)?;
+        }
         vm.charge(1)?;
     }
     Ok(target)
+}
+
+/** V8 distinguishes resizable buffers and length-tracking growable shared views. */
+fn special_kind(vm: &Vm, view: &ViewData) -> bool {
+    if buffer_state::maximum(vm, view.buffer).is_none() {
+        return false;
+    }
+    let shared = matches!(
+        vm.heap.get(view.buffer).map(|object| &object.class),
+        Some(Class::SharedArrayBuffer(_))
+    );
+    !shared || view.tracking
+}
+
+/** Convert first, then recheck the live target, as a fast in-bounds typed store does. */
+fn map_store(vm: &mut Vm, target: &JsValue, index: usize, value: &JsValue) -> Res<()> {
+    let id = target.object().expect("validated species");
+    let kind = view_of(vm, id).expect("validated view").kind;
+    let bytes = encode(vm, kind, value)?;
+    let view = view_of(vm, id)
+        .filter(|view| !view.invalid && index < view.length)
+        .ok_or_else(|| vm.type_error("TypedArray map target is detached or out of bounds"))?;
+    if !write_range(
+        vm,
+        view.buffer,
+        view.offset + index * element_size(kind),
+        &bytes,
+    ) {
+        return Err(vm.type_error("TypedArray map target is detached or out of bounds"));
+    }
+    Ok(())
 }
 
 /** Filter captures values while callbacks run, then obtains species only after selection finishes. */

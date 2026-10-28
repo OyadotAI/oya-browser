@@ -17,6 +17,11 @@ pub(in crate::v9) struct TokenSet {
     token: BTreeMap<u64, String>,
     /** The position the next added token takes; positions only grow, so order is kept on removal. */
     next: u64,
+    /**
+     * A Fenwick tree over the positions: entry p (1-based, so position p-1) counts the tokens present
+     * in its span, so the k-th token in order is found in O(log n). Entry 0 is unused.
+     */
+    counts: Vec<i64>,
 }
 
 impl TokenSet {
@@ -47,6 +52,11 @@ impl TokenSet {
         self.position.len()
     }
 
+    /** Whether the set holds no tokens. */
+    pub fn is_empty(&self) -> bool {
+        self.position.is_empty()
+    }
+
     /** Whether a token is in the set, in O(log n). */
     pub fn contains(&self, token: &str) -> bool {
         self.position.contains_key(token)
@@ -59,6 +69,7 @@ impl TokenSet {
         }
         let at = self.next;
         self.next += 1;
+        self.grow();
         self.position.insert(token.to_string(), at);
         self.token.insert(at, token.to_string());
         true
@@ -70,6 +81,7 @@ impl TokenSet {
             return false;
         };
         self.token.remove(&at);
+        self.add(at as usize + 1, -1);
         true
     }
 
@@ -79,15 +91,67 @@ impl TokenSet {
             return false;
         };
         self.token.remove(&at);
+        self.add(at as usize + 1, -1);
         self.remove(new);
         self.position.insert(new.to_string(), at);
         self.token.insert(at, new.to_string());
+        self.add(at as usize + 1, 1);
         true
     }
 
-    /** The token at `index` in order. Reaching it walks past the earlier tokens, O(index). */
+    /** The token at `index` in order, found through the Fenwick tree in O(log n). */
     pub fn nth(&self, index: usize) -> Option<&str> {
-        self.token.values().nth(index).map(String::as_str)
+        let at = self.position_of_rank(index)?;
+        self.token.get(&at).map(String::as_str)
+    }
+
+    /** Appends a position for the token being added, with its present count. Its tree entry is
+    the count plus the sums of the span it covers that already exist, so later sums stay exact. */
+    fn grow(&mut self) {
+        if self.counts.is_empty() {
+            self.counts.push(0);
+        }
+        let index = self.counts.len();
+        let below = self.prefix(index - 1) - self.prefix(index - lowest_bit(index));
+        self.counts.push(1 + below);
+    }
+
+    /** Adds `delta` to the count at a 1-based tree index and every entry that covers it. */
+    fn add(&mut self, mut index: usize, delta: i64) {
+        while index < self.counts.len() {
+            self.counts[index] += delta;
+            index += lowest_bit(index);
+        }
+    }
+
+    /** The number of present tokens in positions 1..=index, in O(log n). */
+    fn prefix(&self, mut index: usize) -> i64 {
+        let mut sum = 0;
+        while index > 0 {
+            sum += self.counts[index];
+            index -= lowest_bit(index);
+        }
+        sum
+    }
+
+    /** The position of the token at rank `index` (0-based) among the present ones: a descent of the
+    tree that finds the first position whose prefix count reaches index + 1, in O(log n). */
+    fn position_of_rank(&self, index: usize) -> Option<u64> {
+        let size = self.counts.len().checked_sub(1)?;
+        if index >= self.len() {
+            return None;
+        }
+        let mut rest = index as i64 + 1;
+        let mut found = 0;
+        let mut step = if size == 0 { 0 } else { 1 << (usize::BITS - 1 - size.leading_zeros()) };
+        while step > 0 {
+            if found + step <= size && self.counts[found + step] < rest {
+                found += step;
+                rest -= self.counts[found];
+            }
+            step >>= 1;
+        }
+        Some(found as u64)
     }
 
     /** The tokens in order. */
@@ -99,6 +163,11 @@ impl TokenSet {
     pub fn serialize(&self) -> String {
         self.iter().collect::<Vec<_>>().join(" ")
     }
+}
+
+/** The lowest set bit of a 1-based Fenwick index, which is the step to the next entry that covers it. */
+fn lowest_bit(index: usize) -> usize {
+    index & index.wrapping_neg()
 }
 
 #[cfg(test)]
@@ -147,5 +216,33 @@ mod tests {
         assert_eq!(set.source(), "a");
         set.mark_written("a b".into());
         assert_eq!(set.source(), "a b");
+    }
+
+    /** nth agrees with the order a plain list keeps through a mix of adds, removes and replaces. */
+    #[test]
+    fn nth_matches_a_plain_list_through_adds_removes_and_replaces() {
+        let mut set = TokenSet::default();
+        let mut model: Vec<String> = Vec::new();
+        for step in 0..200u32 {
+            let token = format!("t{}", (step * 7) % 23);
+            if step % 3 == 0 {
+                set.remove(&token);
+                model.retain(|t| *t != token);
+            } else if step % 5 == 0 {
+                let other = format!("r{step}");
+                if set.replace(&token, &other) {
+                    let at = model.iter().position(|t| *t == token).expect("model holds it");
+                    model[at] = other;
+                    model.dedup();
+                }
+            } else if set.insert(&token) {
+                model.push(token);
+            }
+            assert_eq!(set.len(), model.len());
+            for (index, expected) in model.iter().enumerate() {
+                assert_eq!(set.nth(index), Some(expected.as_str()), "step {step} index {index}");
+            }
+            assert_eq!(set.nth(model.len()), None);
+        }
     }
 }

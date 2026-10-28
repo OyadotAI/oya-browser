@@ -14,7 +14,8 @@ use crate::document::{ScriptKind, ScriptMode, ScriptResource};
 use crate::network::{Destination, Method, WebRequest, cors};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
-    EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource, ScriptLoadRequest,
+    EntryKind, FrameRequest, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource,
+    ScriptLoadRequest,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -41,6 +42,10 @@ pub(super) struct Modules {
     pub pending_scripts: Vec<ScriptLoadRequest>,
     /// Bytes of delivered module sources, bounded by MODULE_BYTES.
     bytes: usize,
+    /// Frame documents V9 asked for that the next round fetches.
+    pub frame_requests: Vec<FrameRequest>,
+    /// Bytes of frame documents delivered to the page, bounded by FRAME_BYTES_TOTAL.
+    pub frame_bytes: usize,
 }
 
 /// What a page source that is not a classic script is, for V9.
@@ -120,12 +125,14 @@ impl Runtime {
         for round in 0..=MODULE_ROUNDS {
             if page.scripting.modules.pending.is_empty()
                 && page.scripting.modules.pending_scripts.is_empty()
+                && page.scripting.modules.frame_requests.is_empty()
             {
                 return Ok(());
             }
             let give_up = round == MODULE_ROUNDS || Instant::now() >= deadline;
             self.fetch_modules(page, deadline, give_up)?;
             self.fetch_script_loads(page, deadline, give_up)?;
+            self.fetch_frames(page, deadline, give_up)?;
             match self.script_step(page, json!({"kind":"modules"})) {
                 Ok(next) => {
                     step.changed |= next.changed;

@@ -16,6 +16,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub(super) enum Grammar {
     Script,
     Module,
+    #[cfg(feature = "conformance")]
+    NativeFixture,
 }
 
 /** One compiled source: its nested codes, its entry code and, for a module, its link facts. */
@@ -103,6 +105,8 @@ pub(super) fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
     context.update(&[match grammar {
         Grammar::Script => 0,
         Grammar::Module => 1,
+        #[cfg(feature = "conformance")]
+        Grammar::NativeFixture => 2,
     }]);
     context.update(&(offset as u64).to_le_bytes());
     context.update(&(source.len() as u64).to_le_bytes());
@@ -118,6 +122,8 @@ pub(super) fn text_key(grammar: Grammar, source: &str) -> Key {
     context.update(&[match grammar {
         Grammar::Script => 0,
         Grammar::Module => 1,
+        #[cfg(feature = "conformance")]
+        Grammar::NativeFixture => 2,
     }]);
     context.update(&(source.len() as u64).to_le_bytes());
     context.update(source.as_bytes());

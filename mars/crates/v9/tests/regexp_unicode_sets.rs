@@ -1,6 +1,89 @@
 /** RegExp v-flag (ES2024 unicodeSets): set operators, nested classes, \q{} string alternatives and their early errors. */
 mod common;
 
+/** Every Unicode string-property family matches real sequences and rejects unrelated text. */
+#[test]
+fn unicode_emoji_string_properties_match_real_sequences() {
+    let source = "const cases=[['Basic_Emoji','⚽'],['Emoji_Keycap_Sequence','4️⃣'],['RGI_Emoji','👨🏾‍⚕️'],['RGI_Emoji_Flag_Sequence','🇧🇪'],['RGI_Emoji_Modifier_Sequence','👍🏽'],['RGI_Emoji_Tag_Sequence','🏴󠁧󠁢󠁳󠁣󠁴󠁿'],['RGI_Emoji_ZWJ_Sequence','👨🏾‍⚕️']];const r=cases.map(([name,text])=>{let re=new RegExp('^\\\\p{'+name+'}$','v');return re.test(text)&&!re.test('xyz')}).join();";
+    assert_eq!(
+        common::eval(source, "r"),
+        "true,true,true,true,true,true,true"
+    );
+}
+
+/** String-set algebra retains longest-match behavior and case folding after data expansion. */
+#[test]
+fn emoji_properties_mix_with_string_sets_and_subtraction() {
+    let source = "const r=[/^[\\p{RGI_Emoji_Flag_Sequence}--\\q{🇧🇪}]$/v.test('🇧🇪'),/^[\\p{RGI_Emoji_Flag_Sequence}--\\q{🇧🇪}]$/v.test('🇨🇭'),/^[\\p{Emoji_Keycap_Sequence}\\q{Ab|abc}]$/vi.test('ABC'),/[\\p{Emoji_Keycap_Sequence}\\q{4|4️⃣}]/v.exec('4️⃣')[0]].join();";
+    assert_eq!(common::eval(source, "r"), "false,true,true,4️⃣");
+}
+
+/** Repeated emoji must not scan every property member at each input position. */
+#[test]
+fn emoji_properties_match_repeated_characters_and_sequences() {
+    let source = "const r=[/^\\p{RGI_Emoji}+$/v.test('⚽'.repeat(300)),/^\\p{RGI_Emoji}+$/v.test('👨🏾‍⚕️'.repeat(30))].join();";
+    assert_eq!(common::eval(source, "r"), "true,true");
+}
+
+/** Trie alternatives backtrack to a shorter match and also run backward in lookbehind. */
+#[test]
+fn string_set_tries_preserve_backtracking_and_lookbehind() {
+    let source = "const r=[/[\\q{ab|abc}]c/v.exec('abc')[0],/(?<=[\\q{ab|abc}])x/v.exec('abcx')[0],/[\\q{Ab|abc}]c/vi.exec('ABC')[0]].join();";
+    assert_eq!(common::eval(source, "r"), "abc,x,ABC");
+}
+
+/** Repeated large generated properties remain subject to the existing regex-node budget. */
+#[test]
+fn repeated_emoji_properties_respect_the_regex_node_limit() {
+    let source = "new RegExp('\\\\p{RGI_Emoji}\\\\p{RGI_Emoji}', 'v');";
+    let execution = common::load(source);
+    let message = common::failure(&execution).expect("two expanded properties exceed the bound");
+    assert!(message.contains("too large"), "{message}");
+}
+
+/** String properties participate in static set algebra even before matching is supported. */
+#[test]
+fn string_property_early_errors_are_checked_before_engine_gaps() {
+    for source in [
+        r"/[^\p{Basic_Emoji}]/v",
+        r"/[^[[\p{Basic_Emoji}]]]/v",
+        r"/[^\p{Basic_Emoji}&&\p{RGI_Emoji}]/v",
+        r"/[^\p{Basic_Emoji}--a]/v",
+        r"/[^\p{RGI_Emoji}&&\p{RGI_Emoji}]/v",
+        r"/\P{Basic_Emoji}/v",
+        r"/\p{Basic_Emoji}/u",
+        r"/\P{Basic_Emoji}/u",
+        r"/\p{Basic_Emoji}(/v",
+    ] {
+        assert!(
+            mars_v9::check(source).is_err(),
+            "{source} must be an early error"
+        );
+    }
+    for source in [
+        r"/[^\p{Basic_Emoji}&&a]/v",
+        r"/[^a--\p{Basic_Emoji}]/v",
+        r"/\p{Basic_Emoji}/v",
+    ] {
+        assert!(mars_v9::check(source).is_ok(), "{source} must parse");
+    }
+    assert_eq!(
+        common::eval(
+            "const bad=['/[^\\\\p{Basic_Emoji}]/v','/\\\\p{Basic_Emoji}(/v'];const r=bad.map(s=>{try{new Function(s);return 'bad'}catch(e){return e instanceof SyntaxError}}).join();",
+            "r"
+        ),
+        "true,true"
+    );
+    assert_eq!(
+        common::eval(
+            "let caught=false;try{new RegExp('[^\\\\p{Basic_Emoji}]','v')}catch(e){caught=e instanceof SyntaxError}const r=caught;",
+            "r"
+        ),
+        "true"
+    );
+    assert!(mars_v9::check(r"if(false){ /[^\p{Basic_Emoji}]/v }").is_err());
+}
+
 /** Source-level early errors: every malformed v-mode class is a SyntaxError at construction. The snippets run through the engine's own eval, which is the parser under test, not untrusted input. */
 #[test]
 fn malformed_v_classes_are_early_syntax_errors() {
@@ -73,9 +156,9 @@ fn negated_classes_invert_only_character_members() {
     );
 }
 
-/** Parse-time regex checks throw only for ECMAScript early errors. V9's own gaps (a property of strings, a size bound) must parse and fail at run time, so real pages still load. */
+/** Unicode string properties parse and execute, while invalid names remain early errors. */
 #[test]
-fn engine_gaps_parse_and_real_early_errors_still_throw() {
+fn unicode_properties_parse_and_invalid_properties_throw() {
     for source in [
         "/\\p{RGI_Emoji}/v",
         "/[\\p{Basic_Emoji}]/v",
@@ -90,11 +173,8 @@ fn engine_gaps_parse_and_real_early_errors_still_throw() {
         );
     }
     assert_eq!(
-        common::eval(
-            "let r;try{eval('/\\\\p{RGI_Emoji}/v');r='no error'}catch(e){r=e instanceof SyntaxError?'runtime SyntaxError':'other'}r",
-            "r"
-        ),
-        "runtime SyntaxError"
+        common::eval("const r=/^\\p{RGI_Emoji}$/v.test('⚽');", "r"),
+        "true"
     );
 }
 

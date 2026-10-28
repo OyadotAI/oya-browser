@@ -1,6 +1,54 @@
 /** Buffer and typed-array species use actual constructors with live native storage validation and observable callback order. */
 mod common;
 
+/** Map chooses its target store by element and buffer kind after species construction. */
+#[test]
+fn map_rechecks_matching_kind_destinations_after_callbacks() {
+    let source = "function run(shared,sourceResizable,targetResizable,different){const log=[];const aBuf=new ArrayBuffer(2,sourceResizable?{maxByteLength:4}:undefined);const bBuf=shared?aBuf:new ArrayBuffer(2,targetResizable?{maxByteLength:4}:undefined);const a=new Uint8Array(aBuf);const b=different?new Int8Array(bBuf):new Uint8Array(bBuf);a.constructor={[Symbol.species]:function(){log.push('species');return b}};let error='none';try{a.map((v,i)=>{log.push('cb'+i);if(i===0)bBuf.resize(0);return {valueOf(){log.push('convert');return 9}}})}catch(e){error=e.name}return error+':'+log.join(',')}const r=[run(true,true,true,false),run(false,true,true,false),run(false,false,true,false),run(false,true,true,true)].join('|');";
+    assert_eq!(
+        common::eval(source, "r"),
+        "TypeError:species,cb0,convert|TypeError:species,cb0,convert|none:species,cb0,convert,cb1,convert|none:species,cb0,convert,cb1,convert"
+    );
+}
+
+/** A detached source can continue through a separate valid destination with undefined reads. */
+#[test]
+fn map_keeps_captured_length_after_source_detaches() {
+    let source = "const buf=new ArrayBuffer(2),a=new Uint8Array(buf),seen=[];a.map((v,i)=>{seen.push(String(v));if(i===0)buf.transfer();return 7});const r=seen.join();";
+    assert_eq!(common::eval(source, "r"), "0,undefined");
+}
+
+/** Conversion can shrink or detach the target, so fast stores validate only afterward. */
+#[test]
+fn map_rechecks_after_conversion_side_effects() {
+    let source = "function run(detach){const log=[],buf=new ArrayBuffer(2,{maxByteLength:4}),a=new Uint8Array(buf);a.constructor={[Symbol.species]:function(){return a}};let error='none';try{a.map(()=>{log.push('callback');return {valueOf(){log.push('valueOf');if(detach)buf.transfer();else buf.resize(0);return 1}}})}catch(e){error=e.name}return error+':'+log.join(',')}const r=[run(false),run(true)].join('|');";
+    assert_eq!(
+        common::eval(source, "r"),
+        "TypeError:callback,valueOf|TypeError:callback,valueOf"
+    );
+}
+
+/** Conversion exceptions propagate before a later out-of-bounds store can replace them. */
+#[test]
+fn map_preserves_conversion_errors_after_target_shrink() {
+    let source = "const b=new ArrayBuffer(1,{maxByteLength:2}),a=new Uint8Array(b);a.constructor={[Symbol.species]:function(){return a}};let caught='';try{a.map(()=>{b.resize(0);return {valueOf(){throw 'conversion'}}})}catch(e){caught=e}const r=caught;";
+    assert_eq!(common::eval(source, "r"), "conversion");
+}
+
+/** A target regrown during conversion accepts the converted value at the live index. */
+#[test]
+fn map_accepts_target_regrown_during_conversion() {
+    let source = "const b=new ArrayBuffer(1,{maxByteLength:2}),a=new Uint8Array(b);a.constructor={[Symbol.species]:function(){return a}};const result=a.map(()=>{b.resize(0);return {valueOf(){b.resize(1);return 7}}});const r=[result===a,a[0]].join();";
+    assert_eq!(common::eval(source, "r"), "true,7");
+}
+
+/** Only length-tracking growable-shared views use V8's resizable element kind. */
+#[test]
+fn map_distinguishes_tracking_and_fixed_growable_shared_views() {
+    let source = "function run(tracking){const shared=new SharedArrayBuffer(2,{maxByteLength:4}),targetBuffer=new ArrayBuffer(2,{maxByteLength:4});const source=tracking?new Uint8Array(shared):new Uint8Array(shared,0,2);const target=new Uint8Array(targetBuffer);source.constructor={[Symbol.species]:function(){return target}};let calls=0,error='none';try{source.map(()=>{calls++;if(calls===1)targetBuffer.resize(0);return 1})}catch(e){error=e.name}return error+':'+calls}const r=[run(true),run(false)].join('|');";
+    assert_eq!(common::eval(source, "r"), "TypeError:1|none:2");
+}
+
 /** ArrayBuffer subclass construction preserves new.target and slice performs actual species allocation. */
 #[test]
 fn array_buffer_slice_preserves_subclasses_and_checks_the_real_result() {

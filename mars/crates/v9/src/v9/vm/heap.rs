@@ -96,15 +96,16 @@ impl Key {
         let Self::Str(text) = self else {
             return None;
         };
-        let units = text.as_units();
-        if units.is_empty()
-            || units.len() > MAX_INDEX_DIGITS
-            || units[0] == u16::from(b'0') && units.len() > 1
-        {
+        if text.is_empty() || text.len() > MAX_INDEX_DIGITS {
+            return None;
+        }
+        let mut units = text.code_units();
+        let first = units.next()?;
+        if first == u16::from(b'0') && text.len() > 1 {
             return None;
         }
         let mut value: u64 = 0;
-        for unit in units {
+        for unit in std::iter::once(first).chain(units) {
             let digit = unit.checked_sub(u16::from(b'0')).filter(|d| *d < 10)?;
             value = value * 10 + u64::from(digit);
         }
@@ -312,6 +313,12 @@ pub(in crate::v9) struct Heap {
     pub next_object: ObjectId,
     pub next_env: EnvId,
     pub counts: Counts,
+    /** Deduplicated resident string units found at the last GC, including active VM roots. */
+    pub last_marked_string_units: usize,
+    /** Conservative weakly registered string units, refreshed after cache publication and GC. */
+    pub last_registered_string_units: usize,
+    /** Non-owning registrations are derived state and are reset for each VM. */
+    pub(super) string_budget: super::string_budget::StringBudget,
     /** Wrapper aliases charge native shared allocation once; this derived cache is never serialized. */
     shared_stores: FastMap<(u8, u64), usize>,
     /** Mutable shared graph bytes charged at the last native observation, independently of wrapper count. */
@@ -329,6 +336,8 @@ pub(in crate::v9) struct Heap {
 fn shared_candidate(object: &Object) -> bool {
     match &object.class {
         Class::SharedArrayBuffer(_) | Class::WasmShared(_) => true,
+        #[cfg(feature = "conformance")]
+        Class::SharedContainerRoot(_) => true,
         _ => object
             .function()
             .is_some_and(|function| crate::v9::builtins::is_shared_poll(&function.kind)),
@@ -336,6 +345,51 @@ fn shared_candidate(object: &Object) -> bool {
 }
 
 impl Heap {
+    /** Register a string stored by native code without retaining its allocation. */
+    pub(super) fn track_string(&mut self, text: &JsString) {
+        self.string_budget.register(text);
+        self.last_registered_string_units = self.string_budget.upper_units();
+    }
+    /** Restore weak registrations for strings already present in a decoded or copied heap. */
+    pub(super) fn register_existing_strings(&mut self) {
+        let mut strings = Vec::new();
+        for object in self.objects.values() {
+            for (key, prop) in object.props.iter() {
+                if let Key::Str(text) | Key::Private(text) = key {
+                    strings.push(text.clone());
+                }
+                if let Slot::Data(JsValue::String(text)) = &prop.slot {
+                    strings.push(text.clone());
+                }
+            }
+            object.class.strings(&mut |value| {
+                if let JsValue::String(text) = value {
+                    strings.push(text.clone());
+                }
+            });
+            match &object.class {
+                Class::String(text) => strings.push(text.clone()),
+                Class::RegExp(data) => strings.push(data.source.clone()),
+                _ => {}
+            }
+        }
+        for env in self.envs.values() {
+            for value in &env.slots {
+                if let JsValue::String(text) = value {
+                    strings.push(text.clone());
+                }
+            }
+        }
+        for text in strings {
+            self.track_string(&text);
+        }
+    }
+    /** Primitive strings need registration even when native code writes directly to the heap. */
+    pub(in crate::v9) fn track_value(&mut self, value: &JsValue) {
+        if let JsValue::String(text) = value {
+            self.track_string(text);
+        }
+    }
     /** Whether the heap grew enough since its last collection to be worth collecting again:
     GC_GROWTH_MIN entries, or a GC_GROWTH_DIVISOR-th of what was alive. Collecting after every
     request of a large app (YouTube's half a million objects) costs a tenth of its time. */
@@ -376,6 +430,22 @@ impl Heap {
     }
     /** Add or remove an object's contribution to the counts and the shared index. */
     fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
+        if add {
+            for (key, prop) in object.props.iter() {
+                if let Key::Str(text) | Key::Private(text) = key {
+                    self.track_string(text);
+                }
+                if let Slot::Data(value) = &prop.slot {
+                    self.track_value(value);
+                }
+            }
+            object.class.strings(&mut |value| self.track_value(value));
+            match &object.class {
+                Class::String(text) => self.track_string(text),
+                Class::RegExp(data) => self.track_string(&data.source),
+                _ => {}
+            }
+        }
         if shared_candidate(object) {
             if add {
                 self.shared.insert(id);
@@ -414,6 +484,10 @@ impl Heap {
             Class::WasmShared(value) => {
                 ((1, value.arena().identity()), value.allocated().div_ceil(2))
             }
+            #[cfg(feature = "conformance")]
+            Class::SharedContainerRoot(value) => {
+                ((1, value.arena().identity()), value.allocated().div_ceil(2))
+            }
             _ => return object.units(),
         };
         let references = self.shared_stores.entry(identity).or_default();
@@ -446,6 +520,9 @@ impl Heap {
     }
     /** A new environment record. */
     pub fn new_env(&mut self, parent: Option<EnvId>, slots: Vec<JsValue>) -> EngineResult<EnvId> {
+        for value in &slots {
+            self.track_value(value);
+        }
         let id = self.next_env;
         self.next_env = id
             .checked_add(1)
@@ -483,6 +560,7 @@ impl Heap {
     }
     /** Replace one environment slot, keeping counts. */
     pub fn set_slot(&mut self, env: EnvId, slot: usize, value: JsValue) -> bool {
+        self.track_value(&value);
         let Some(record) = self.envs.get_mut(&env) else {
             return false;
         };
@@ -497,6 +575,12 @@ impl Heap {
     }
     /** Set an own property, keeping counts; returns the previous property. */
     pub fn put(&mut self, id: ObjectId, key: Key, prop: Prop) -> Option<Prop> {
+        if let Key::Str(text) | Key::Private(text) = &key {
+            self.track_string(text);
+        }
+        if let Slot::Data(value) = &prop.slot {
+            self.track_value(value);
+        }
         let object = self.objects.get_mut(&id)?;
         let binding = usize::from(holds_bindings(id, object));
         let added = prop.units();
@@ -548,12 +632,12 @@ impl Heap {
                 counts.objects += 1;
             }
             counts.properties += object.property_count();
-            // Boxed strings and regexp sources are internal copies, counted as before.
             counts.units += match &object.class {
                 Class::String(string) => string.len(),
                 Class::RegExp(data) => data.source.len(),
                 // Buffer bytes count against the same budget, two bytes per UTF-16 unit.
                 Class::ArrayBuffer(bytes) => bytes.0.len().div_ceil(2),
+                Class::SparseWasmBuffer(bytes) => bytes.resident().div_ceil(2),
                 Class::SharedArrayBuffer(bytes) => {
                     let count = self.shared_stores.entry((0, bytes.identity())).or_default();
                     *count += 1;
@@ -575,6 +659,19 @@ impl Heap {
                         0
                     }
                 }
+                #[cfg(feature = "conformance")]
+                Class::SharedContainerRoot(root) => {
+                    let identity = root.arena().identity();
+                    let count = self.shared_stores.entry((1, identity)).or_default();
+                    *count += 1;
+                    if *count == 1 {
+                        let units = root.allocated().div_ceil(2);
+                        self.shared_gc_units.insert(identity, units);
+                        units
+                    } else {
+                        0
+                    }
+                }
                 _ => 0,
             };
         }
@@ -585,11 +682,14 @@ impl Heap {
     }
     /** Units of the distinct string contents held in properties, internal data and slots. */
     fn distinct_units<'a>(&'a self) -> usize {
-        let mut distinct: FastSet<&'a [u16]> = FastSet::default();
+        let mut distinct: FastMap<u64, Vec<&'a JsString>> = FastMap::default();
         let mut bigints: FastSet<&'a [u32]> = FastSet::default();
         let mut text = |value: &'a JsValue| match value {
             JsValue::String(string) => {
-                distinct.insert(string.as_units());
+                let bucket = distinct.entry(string_content_hash(string)).or_default();
+                if !bucket.contains(&string) {
+                    bucket.push(string);
+                }
             }
             JsValue::BigIntWide(integer) => {
                 bigints.insert(integer.words());
@@ -614,9 +714,28 @@ impl Heap {
                 bigints.insert(integer.words());
             }
         }
-        distinct.iter().map(|units| units.len()).sum::<usize>()
+        distinct
+            .values()
+            .flatten()
+            .map(|string| string.len())
+            .sum::<usize>()
             + bigints.iter().map(|words| words.len() * 2).sum::<usize>()
     }
+}
+
+/** Hash content without flattening ropes; exact comparisons resolve collisions in the accounting set. */
+fn string_content_hash(string: &JsString) -> u64 {
+    let mut hash = FastHasher::default();
+    if let Some(units) = string.flat_units() {
+        for unit in units {
+            hash.write_u16(*unit);
+        }
+        return hash.finish();
+    }
+    for index in 0..string.len() {
+        hash.write_u16(string.unit_at(index).expect("valid string index"));
+    }
+    hash.finish()
 }
 
 impl Serialize for Props {
@@ -761,6 +880,9 @@ impl<'de> Deserialize<'de> for Heap {
             next_object,
             next_env,
             counts: Counts::default(),
+            last_marked_string_units: 0,
+            last_registered_string_units: 0,
+            string_budget: super::string_budget::StringBudget::default(),
             shared_stores: FastMap::default(),
             shared_gc_units: FastMap::default(),
             collected: 0,

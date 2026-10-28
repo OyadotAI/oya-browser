@@ -131,10 +131,11 @@ fn get_stat(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .and_then(|index| index.parse::<usize>().ok())
             .and_then(|index| span(spans, index)),
     };
-    let units = range
-        .and_then(|(start, end)| text.as_units().get(start..end))
-        .unwrap_or(&[]);
-    Ok(JsValue::String(JsString::from_slice(units)?))
+    let value = match range {
+        Some((start, end)) if start <= end && end <= text.len() => text.slice_range(start, end)?,
+        _ => JsString::empty(),
+    };
+    Ok(JsValue::String(value))
 }
 
 /** Validate offsets when restoring a record, so private state never permits an unchecked slice. */

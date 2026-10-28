@@ -3,6 +3,108 @@
 mod common;
 use mars_v9::{Execution, PageEnvironment};
 
+/** D8 wall time advances during script execution without changing deterministic browser time. */
+#[test]
+fn d8_date_now_advances_in_a_busy_loop() {
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        ..common::environment()
+    };
+    let execution = common::load_with(
+        "const start=Date.now();let now=start;while(now===start)now=Date.now();let r=now>start;",
+        &environment,
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "true");
+}
+
+/** Shell performance and Date share one advancing monotonic origin and mark timeline. */
+#[test]
+fn d8_performance_clock_advances_and_matches_marks() {
+    let environment = PageEnvironment { conformance_d8: true, ..common::environment() };
+    let source = "const start=performance.now();let current=start;while(current===start)current=performance.now();const mark=performance.mark('a');const end=performance.now();const r=[current>start,mark.startTime>=current,mark.startTime<=end,Math.abs(Date.now()-(performance.timeOrigin+performance.now()))<100].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true");
+}
+
+/** A local mutex releases on exceptions and keeps recursive attempts from entering the callback. */
+#[test]
+fn mutex_releases_on_throw_and_rejects_recursive_lock() {
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        ..common::environment()
+    };
+    let execution = common::load_with(
+        "const m=new Atomics.Mutex();let r='';try{Atomics.Mutex.lock(m,()=>{throw 42})}catch(e){r+=e}Atomics.Mutex.lock(m,()=>{try{Atomics.Mutex.lock(m,()=>{})}catch(e){r+=','+(e instanceof Error)}r+=','+Atomics.Mutex.tryLock(m,()=>1).success});r+=','+Atomics.Mutex.lock(m,()=>9);",
+        &environment,
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "42,true,false,9");
+}
+
+/** Timed condition waits release and then restore the caller's mutex ownership. */
+#[test]
+fn condition_timeout_restores_mutex_and_reports_no_notification() {
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        ..common::environment()
+    };
+    let execution = common::load_with(
+        "const m=new Atomics.Mutex(),c=new Atomics.Condition();let r=Atomics.Condition.notify(c);try{Atomics.Condition.wait(c,m,0)}catch(e){r+=','+(e instanceof Error)}Atomics.Mutex.lock(m,()=>{r+=','+Atomics.Condition.wait(c,m,1);r+=','+Atomics.Mutex.tryLock(m,()=>1).success});r+=','+Atomics.Mutex.lock(m,()=>7);",
+        &environment,
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "0,true,false,false,7");
+}
+
+/** File existence is supplied by the test host and preserves argument coercion. */
+#[test]
+fn file_exists_uses_only_explicit_host_answers() {
+    let mut environment = common::environment();
+    environment.conformance_exists.insert("file".into(), true);
+    environment
+        .conformance_exists
+        .insert("directory".into(), true);
+    environment
+        .conformance_exists
+        .insert("missing".into(), false);
+    let execution = common::load_with(
+        "let calls=0,thrown=false,missing=false;const key={toString(){calls++;return 'file'}};try{d8.file.exists({toString(){throw 'coercion'}})}catch(e){thrown=e==='coercion'}try{d8.file.exists()}catch(e){missing=e instanceof Error}const r=[d8.file.exists(key),d8.file.exists('directory'),d8.file.exists('missing'),calls,thrown,missing].join();",
+        &environment,
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,false,1,true,true"
+    );
+}
+
+/** An unknown path is an explicit unsupported capability rather than fabricated absence. */
+#[test]
+fn file_exists_refuses_unknown_paths() {
+    let execution = common::load_with("d8.file.exists('not-supplied')", &common::environment());
+    assert!(!execution.effects.unsupported.is_empty());
+}
+
 /** Build an inert host registry, then run a test against that registry alone. */
 fn run(source: &str, fixtures: &[(&str, &str)]) -> Execution {
     let environment = PageEnvironment {

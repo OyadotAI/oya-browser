@@ -15,6 +15,7 @@ pub(super) fn root(m: &Module, heap: i64) -> Result<Type, Error> {
         -17 | -14 => Type::Extern,
         -25 | -22..=-18 | -15 => Type::Ref(-18, true),
         -23 | -12 => Type::Ref(-23, true),
+        -37 | -36 => Type::Shared(-36, true),
         -32 | -31 | -26 => Type::Ref(heap, false),
         _ => return Err(Error::unsupported("WebAssembly cast reference hierarchy")),
     })
@@ -92,6 +93,10 @@ pub(super) fn signature(
                 }
             } else if field.ty.reference().is_none() || segment >= m.elements.len() {
                 return Err(Error::invalid("invalid array.new_elem segment or storage"));
+            } else if !gc_types::subtype(m, m.elements[segment].ty, field.ty) {
+                return Err(Error::invalid(
+                    "segment type is not a subtype of array element type",
+                ));
             }
             (vec![I32, I32], vec![Ref(i64::from(index), false)])
         }
@@ -99,7 +104,7 @@ pub(super) fn signature(
             let field = gc_types::element(m, index)?;
             if op == 14 {
                 if !field.mutable {
-                    return Err(Error::invalid("array.set requires a mutable element"));
+                    return Err(Error::invalid(&format!("Array type #{index} is immutable")));
                 }
                 (vec![reference, I32, field.ty], vec![])
             } else {
@@ -113,17 +118,17 @@ pub(super) fn signature(
         16 => {
             let field = gc_types::element(m, index)?;
             if !field.mutable {
-                return Err(Error::invalid("array.fill requires a mutable element"));
+                return Err(Error::invalid(&format!("Array type #{index} is immutable")));
             }
             (vec![reference, I32, field.ty, I32], vec![])
         }
         17 => {
             let target = gc_types::element(m, index)?;
             let source = gc_types::element(m, args[1] as u32)?;
-            if !target.mutable
-                || target.packed != source.packed
-                || !gc_types::subtype(m, source.ty, target.ty)
-            {
+            if !target.mutable {
+                return Err(Error::invalid(&format!("Array type #{index} is immutable")));
+            }
+            if target.packed != source.packed || !gc_types::subtype(m, source.ty, target.ty) {
                 return Err(Error::invalid(
                     "array.copy element types or mutability mismatch",
                 ));
@@ -133,7 +138,14 @@ pub(super) fn signature(
         18 | 19 => {
             let field = gc_types::element(m, index)?;
             if !field.mutable {
-                return Err(Error::invalid("array.init requires a mutable element"));
+                let operation = if op == 18 {
+                    "array.init_data"
+                } else {
+                    "array.init_elem"
+                };
+                return Err(Error::invalid(&format!(
+                    "{operation} can only be used with mutable arrays"
+                )));
             }
             if op == 18 {
                 if field.ty.reference().is_some() || args[1] as usize >= m.data.len() {
@@ -144,6 +156,10 @@ pub(super) fn signature(
             } else if field.ty.reference().is_none() || args[1] as usize >= m.elements.len() {
                 return Err(Error::invalid(
                     "array.init_elem storage or segment mismatch",
+                ));
+            } else if !gc_types::subtype(m, m.elements[args[1] as usize].ty, field.ty) {
+                return Err(Error::invalid(
+                    "segment type is not a subtype of array element type",
                 ));
             }
             (vec![reference, I32, I32, I32], vec![])
@@ -156,18 +172,23 @@ pub(super) fn signature(
             }
             let target = if args.get(1) == Some(&1) {
                 Type::Exact(args[0], op % 2 == 1)
+            } else if args.get(2) == Some(&1) {
+                Type::Shared(args[0], op % 2 == 1)
             } else {
                 gc_types::reference(args[0], op % 2 == 1)
             };
             gc_types::check_type(m, target)?;
+            let root = root(m, args[0])?;
+            let root = if gc_types::is_shared(m, target) { let (heap, nullable) = root.reference().unwrap(); Type::Shared(heap, nullable) } else { root };
             (
-                vec![root(m, args[0])?],
+                vec![root],
                 vec![if op <= 21 { I32 } else { target }],
             )
         }
         26 => (vec![Extern], vec![Ref(-18, true)]),
         27 => (vec![Ref(-18, true)], vec![Extern]),
         28 => (vec![I32], vec![Ref(-20, false)]),
+        31 => (vec![I32], vec![Type::Shared(-20, false)]),
         29 | 30 => (vec![Ref(-20, true)], vec![I32]),
         _ => return Err(Error::unsupported("WebAssembly GC instruction")),
     })

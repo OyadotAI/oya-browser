@@ -29,8 +29,11 @@ pub(super) fn function_names(bytes: &[u8]) -> std::collections::BTreeMap<u32, St
                 let count = subsection.count()?;
                 for _ in 0..count {
                     let index = subsection.u32()?;
-                    let name = subsection.name()?;
-                    result.entry(index).or_insert(name);
+                    let length = subsection.u32()? as usize;
+                    let name = subsection.take(length)?;
+                    if let Ok(name) = std::str::from_utf8(name) {
+                        result.entry(index).or_insert_with(|| name.to_owned());
+                    }
                 }
             }
         }
@@ -60,6 +63,7 @@ pub(super) fn opcode(op: u8) -> &'static str {
         0x42 => "i64.const",
         0x43 => "f32.const",
         0x44 => "f64.const",
+        0x94 => "f32.mul",
         0xd0 => "ref.null",
         0xd2 => "ref.func",
         _ => "instruction",
@@ -88,6 +92,15 @@ pub(super) fn gc_opcode(op: u32) -> &'static str {
         35 | 36 => "ref.cast_desc_eq",
         20 | 21 => "ref.test",
         22 | 23 => "ref.cast",
+        0xb0 => "string.new_utf8_array",
+        0xb1 => "string.new_wtf16_array",
+        0xb2 => "string.encode_utf8_array",
+        0xb3 => "string.encode_wtf16_array",
+        0xb4 => "string.new_lossy_utf8_array",
+        0xb5 => "string.new_wtf8_array",
+        0xb6 => "string.encode_lossy_utf8_array",
+        0xb7 => "string.encode_wtf8_array",
+        0xb8 => "string.new_utf8_array_try",
         _ => "gc instruction",
     }
 }
@@ -101,6 +114,9 @@ pub(super) fn producer(instruction: &Instruction) -> &'static str {
         Instruction::Constant(types::Constant::I64(_)) => "i64.const",
         Instruction::Constant(types::Constant::Null(_)) => "ref.null",
         Instruction::Call(_) => "call",
+        Instruction::BranchIf(_) => "br_if",
+        Instruction::BranchNull(0xd5, _) => "br_on_null",
+        Instruction::BranchNull(_, _) => "br_on_non_null",
         Instruction::Gc(op, _) => gc_opcode(*op),
         Instruction::Block(3, ..) => "loop",
         Instruction::Block(4, ..) => "if",

@@ -44,7 +44,12 @@ impl Captured {
                 frame.callee.clone()
             },
             receiver: frame.this.clone(),
-            name: frame.code.name.clone(),
+            name: {
+                #[cfg(feature = "conformance")]
+                { frame.code.name.isolate_code_constant() }
+                #[cfg(not(feature = "conformance"))]
+                { frame.code.name.clone() }
+            },
             file: vm.modules.source_name(pos.offset as usize),
             line: pos.line,
             column: pos.column,
@@ -247,8 +252,9 @@ impl Vm<'_> {
         frames: Vec<Captured>,
     ) -> Result<(), EngineError> {
         let mut values = Vec::with_capacity(frames.len());
+        let mut filenames = std::collections::BTreeMap::new();
         for frame in frames {
-            let id = self.make_callsite(frame)?;
+            let id = self.make_callsite(frame, &mut filenames)?;
             self.pin(JsValue::Object(id));
             values.push(JsValue::Object(id));
         }
@@ -309,7 +315,7 @@ impl Vm<'_> {
         }
     }
     /** Frame data is inaccessible to JavaScript except through the checked CallSite API. */
-    fn make_callsite(&mut self, mut frame: Captured) -> Result<ObjectId, EngineError> {
+    fn make_callsite(&mut self, mut frame: Captured, filenames: &mut std::collections::BTreeMap<String, JsValue>) -> Result<ObjectId, EngineError> {
         let mut wasm_function = JsValue::Null;
         let mut wasm_module = JsValue::Null;
         if frame.wasm {
@@ -333,13 +339,18 @@ impl Vm<'_> {
         let eval_origin = origin.map_or(Ok(JsValue::Undefined), |origin| {
             JsValue::string(origin.display())
         })?;
+        let file = if frame.builtin { JsValue::Undefined } else if let Some(value) = filenames.get(&frame.file) { value.clone() } else {
+            let value = JsValue::string(&frame.file)?;
+            filenames.insert(frame.file.clone(), value.clone());
+            value
+        };
         let source_url = match origin {
             Some(origin) => origin
                 .source_url
                 .as_deref()
                 .map_or(Ok(JsValue::Undefined), JsValue::string)?,
             None if frame.builtin => JsValue::Undefined,
-            None => JsValue::string(&frame.file)?,
+            None => file.clone(),
         };
         let values = [
             (CALLSITE_KEY, JsValue::Number(frame.realm as f64)),
@@ -348,11 +359,7 @@ impl Vm<'_> {
             ("callSiteName", JsValue::String(frame.name)),
             (
                 "callSiteFile",
-                if frame.eval || frame.builtin {
-                    JsValue::Undefined
-                } else {
-                    JsValue::string(&frame.file)?
-                },
+                if frame.eval { JsValue::Undefined } else { file },
             ),
             ("callSiteSourceURL", source_url),
             ("callSiteEvalOrigin", eval_origin),

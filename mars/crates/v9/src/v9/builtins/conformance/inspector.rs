@@ -156,7 +156,10 @@ fn mirror(value: &JsValue) -> Value {
         JsValue::Undefined | JsValue::Hole => json!({"type": "undefined"}),
         JsValue::Null => json!({"type": "object", "subtype": "null", "value": null}),
         JsValue::Boolean(flag) => json!({"type": "boolean", "value": flag}),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => number_mirror(*number),
         JsValue::Number(number) => number_mirror(*number),
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => number_mirror(number.value),
         JsValue::String(text) => json!({"type": "string", "value": text.lossy()}),
         JsValue::Symbol(_) => json!({"type": "symbol"}),
         JsValue::BigInt(_) | JsValue::BigIntWide(_) => json!({"type": "bigint"}),

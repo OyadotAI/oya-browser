@@ -2,19 +2,23 @@
 use super::*;
 use crate::v9::vm::property::Descriptor;
 
+/** Binary64's canonical decimal spelling is shorter than this, including sign and exponent. */
+const MAX_CANONICAL_INDEX_UNITS: usize = 32;
+
 /** CanonicalNumericIndexString recognizes negative zero, infinities and NaN without coercion. */
 pub(in crate::v9) fn numeric_index(key: &Key) -> Option<f64> {
     let Key::Str(text) = key else {
         return None;
     };
-    if text.as_units() == [u16::from(b'-'), u16::from(b'0')] {
+    if text.len() > MAX_CANONICAL_INDEX_UNITS {
+        return None;
+    }
+    if text.code_units().eq([u16::from(b'-'), u16::from(b'0')]) {
         return Some(-0.0);
     }
     let number = crate::v9::value::string_number(&text.lossy());
     let canonical = crate::v9::value::number_to_string(number);
-    text.as_units()
-        .iter()
-        .copied()
+    text.code_units()
         .eq(canonical.encode_utf16())
         .then_some(number)
 }
@@ -57,7 +61,7 @@ pub(in crate::v9) fn set(vm: &mut Vm, id: ObjectId, key: &Key, value: &JsValue) 
     let bytes = encode(vm, view.kind, value)?;
     if let Some(Some(index)) = self::index(vm, id, key) {
         if let Some(current) = view_of(vm, id) {
-            write_bytes(vm, &current, index * element_size(current.kind), &bytes);
+            write_bytes(vm, &current, index * element_size(current.kind), &bytes)?;
         }
     }
     Ok(true)

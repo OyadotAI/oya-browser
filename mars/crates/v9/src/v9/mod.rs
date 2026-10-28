@@ -31,9 +31,9 @@ pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
-    AnimationTarget, ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
-    ImageAdoption, ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
-    SimpleFragmentParser,
+    AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
+    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
+    NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
 };
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
@@ -61,11 +61,103 @@ const HANDLER_OFFSET: usize = 512 * 1024 * 1024;
 
 /// A page's committed engine state: heap, lexical globals and platform state. The app keeps it
 /// between requests and passes it back; it is validated on the way in.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(not(feature = "conformance"), derive(Deserialize, Serialize))]
+#[cfg_attr(not(feature = "conformance"), serde(deny_unknown_fields))]
 pub struct VmState {
     /** Conformance contexts retain distinct globals and intrinsic ownership across requests. */
     #[cfg(feature = "conformance")]
+    #[cfg_attr(not(feature = "conformance"), serde(default))]
+    realms: vm::realms::State,
+    #[cfg_attr(not(feature = "conformance"), serde(default))]
+    globals: Globals,
+    #[cfg_attr(not(feature = "conformance"), serde(default))]
+    heap: Heap,
+    #[cfg_attr(not(feature = "conformance"), serde(default))]
+    symbols: Symbols,
+    #[cfg_attr(
+        not(feature = "conformance"),
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    jobs: Vec<Job>,
+    #[cfg_attr(not(feature = "conformance"), serde(default))]
+    page: platform::PageState,
+    #[cfg_attr(
+        not(feature = "conformance"),
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    dynamic: Vec<vm::DynamicSource>,
+    #[cfg_attr(
+        not(feature = "conformance"),
+        serde(default, skip_serializing_if = "vm::templates::Cache::is_empty")
+    )]
+    templates: vm::templates::Cache,
+    #[cfg_attr(
+        not(feature = "conformance"),
+        serde(default, skip_serializing_if = "modules::ModuleState::is_empty")
+    )]
+    modules: modules::ModuleState,
+    /** Set only on a state this process built and validated itself (`finish`), never on one
+    decoded from a frame, so a state kept resident in the service skips re-validating its
+    heap on the next step (about 170 ms on YouTube) while every state from outside is checked. */
+    #[cfg_attr(not(feature = "conformance"), serde(skip))]
+    verified: bool,
+}
+
+#[cfg(feature = "conformance")]
+fn serialize_state_fields<S: serde::ser::SerializeStruct>(state: &mut S, value: &VmState) -> Result<(), S::Error> {
+    state.serialize_field("realms", &value.realms)?;
+    state.serialize_field("globals", &value.globals)?;
+    state.serialize_field("heap", &value.heap)?;
+    state.serialize_field("symbols", &value.symbols)?;
+    if !value.jobs.is_empty() { state.serialize_field("jobs", &value.jobs)?; }
+    state.serialize_field("page", &value.page)?;
+    if !value.dynamic.is_empty() { state.serialize_field("dynamic", &value.dynamic)?; }
+    if !value.templates.is_empty() { state.serialize_field("templates", &value.templates)?; }
+    if !value.modules.is_empty() { state.serialize_field("modules", &value.modules)?; }
+    Ok(())
+}
+#[cfg(feature = "conformance")]
+struct StateFields<'a>(&'a VmState);
+#[cfg(feature = "conformance")]
+impl Serialize for StateFields<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("VmState", 9)?;
+        serialize_state_fields(&mut state, self.0)?;
+        state.end()
+    }
+}
+#[cfg(feature = "conformance")]
+impl Serialize for VmState {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        crate::v9::value::with_string_identity_encoding(|| {
+            crate::v9::value::with_slice_parents(Default::default(), || {
+                serde_json::to_writer(std::io::sink(), &StateFields(self)).map_err(serde::ser::Error::custom)?;
+                let mut state = serializer.serialize_struct("VmState", 10)?;
+                struct Parents;
+                impl Serialize for Parents {
+                    fn serialize<S: serde::Serializer>(
+                        &self,
+                        serializer: S,
+                    ) -> Result<S::Ok, S::Error> {
+                        crate::v9::value::serialize_slice_parents(serializer)
+                    }
+                }
+                state.serialize_field("$slice_parents", &Parents)?;
+                serialize_state_fields(&mut state, self)?;
+                state.end()
+            })
+        })
+    }
+}
+
+/** The wire helper is decoded under one isolated string identity namespace. */
+#[cfg(feature = "conformance")]
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VmStateWire {
     #[serde(default)]
     realms: vm::realms::State,
     #[serde(default)]
@@ -74,21 +166,236 @@ pub struct VmState {
     heap: Heap,
     #[serde(default)]
     symbols: Symbols,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     jobs: Vec<Job>,
     #[serde(default)]
     page: platform::PageState,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     dynamic: Vec<vm::DynamicSource>,
-    #[serde(default, skip_serializing_if = "vm::templates::Cache::is_empty")]
+    #[serde(default)]
     templates: vm::templates::Cache,
-    #[serde(default, skip_serializing_if = "modules::ModuleState::is_empty")]
+    #[serde(default)]
     modules: modules::ModuleState,
-    /** Set only on a state this process built and validated itself (`finish`), never on one
-    decoded from a frame, so a state kept resident in the service skips re-validating its
-    heap on the next step (about 170 ms on YouTube) while every state from outside is checked. */
-    #[serde(skip)]
-    verified: bool,
+}
+/** Conservatively cover map nodes, array growth, and the temporary input strings. */
+#[cfg(feature = "conformance")]
+const BUFFERED_STATE_ENTRY_BYTES: usize = 128;
+/** Vec growth may temporarily reserve twice as many value slots as it holds. */
+#[cfg(feature = "conformance")]
+const BUFFERED_STATE_ARRAY_ENTRY_BYTES: usize = 2 * std::mem::size_of::<serde_json::Value>();
+#[cfg(feature = "conformance")]
+thread_local! { static BUFFERED_STATE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+#[cfg(feature = "conformance")]
+fn charge_buffered_state<E: serde::de::Error>(bytes: usize) -> Result<(), E> {
+    BUFFERED_STATE_BYTES.with(|used| {
+        let next = used.get().saturating_add(bytes);
+        if next > crate::constants::VM_STATE_BYTES { return Err(E::custom("V9 snapshot decoding buffer limit")); }
+        used.set(next);
+        Ok(())
+    })
+}
+#[cfg(feature = "conformance")]
+fn with_buffered_state_limit<T>(f: impl FnOnce() -> T) -> T {
+    BUFFERED_STATE_BYTES.with(|used| {
+        let previous = used.replace(0);
+        struct Restore<'a>(&'a std::cell::Cell<usize>, usize);
+        impl Drop for Restore<'_> { fn drop(&mut self) { self.0.set(self.1); } }
+        let _restore = Restore(used, previous);
+        f()
+    })
+}
+#[cfg(all(test, feature = "conformance"))]
+mod buffered_state_tests {
+    #[test]
+    fn buffer_charges_are_bounded_and_scoped_to_each_decode() {
+        use super::*;
+        with_buffered_state_limit(|| {
+            charge_buffered_state::<serde_json::Error>(crate::constants::VM_STATE_BYTES).unwrap();
+            assert!(charge_buffered_state::<serde_json::Error>(1).is_err());
+            with_buffered_state_limit(|| charge_buffered_state::<serde_json::Error>(1).unwrap());
+            assert!(charge_buffered_state::<serde_json::Error>(1).is_err());
+        });
+        with_buffered_state_limit(|| charge_buffered_state::<serde_json::Error>(1).unwrap());
+    }
+}
+/** Buffer arbitrary JSON while refusing duplicate keys at every depth. */
+#[cfg(feature = "conformance")]
+struct StrictJson(serde_json::Value);
+#[cfg(feature = "conformance")]
+impl<'de> Deserialize<'de> for StrictJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Value;
+        impl<'de> serde::de::Visitor<'de> for Value {
+            type Value = StrictJson;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(StrictJson(v.into()))
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+                Ok(StrictJson(v.into()))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+                Ok(StrictJson(v.into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Self::Value, E> {
+                serde_json::Number::from_f64(v)
+                    .map(|n| StrictJson(n.into()))
+                    .ok_or_else(|| E::custom("nonfinite JSON number"))
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                charge_buffered_state::<E>(v.len().saturating_mul(2))?;
+                Ok(StrictJson(v.into()))
+            }
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+                charge_buffered_state::<E>(v.capacity().saturating_mul(2))?;
+                Ok(StrictJson(v.into()))
+            }
+            fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(StrictJson(serde_json::Value::Null))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                self.visit_none()
+            }
+            fn visit_some<D: serde::Deserializer<'de>>(
+                self,
+                d: D,
+            ) -> Result<Self::Value, D::Error> {
+                StrictJson::deserialize(d)
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut values = Vec::new();
+                while let Some(value) = seq.next_element::<StrictJson>()? {
+                    charge_buffered_state::<A::Error>(BUFFERED_STATE_ARRAY_ENTRY_BYTES)?;
+                    values.push(value.0);
+                }
+                Ok(StrictJson(values.into()))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+                let mut fields = serde_json::Map::new();
+                while let Some((key, value)) = map.next_entry::<String, StrictJson>()? {
+                    charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)))?;
+                    if fields.insert(key, value.0).is_some() {
+                        return Err(A::Error::custom("duplicate JSON field"));
+                    }
+                }
+                Ok(StrictJson(fields.into()))
+            }
+        }
+        deserializer.deserialize_any(Value)
+    }
+}
+/** Decode directly after the parent table; buffer only fields reordered ahead of it. */
+#[cfg(feature = "conformance")]
+struct StateVisitor;
+/** Validate and bound parent-table entries as they are read, before allocating the next entry. */
+#[cfg(feature = "conformance")]
+struct SliceParentTable(std::collections::BTreeMap<u64, value::JsString>);
+#[cfg(feature = "conformance")]
+impl<'de> Deserialize<'de> for SliceParentTable {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> serde::de::Visitor<'de> for Entries {
+            type Value = SliceParentTable;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("a slice parent table") }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+                let mut parents = std::collections::BTreeMap::new();
+                while let Some((id, parent)) = seq.next_element::<(u64, value::JsString)>()? {
+                    charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES)?;
+                    if id == 0 || parents.insert(id, parent).is_some() { return Err(A::Error::custom("invalid slice parent identity")); }
+                }
+                Ok(SliceParentTable(parents))
+            }
+        }
+        deserializer.deserialize_seq(Entries)
+    }
+}
+#[cfg(feature = "conformance")]
+impl<'de> serde::de::Visitor<'de> for StateVisitor {
+    type Value = VmState;
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("a state object") }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        use serde::de::Error;
+        let mut wire = VmStateWire::default();
+        let mut deferred = serde_json::Map::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut ready = false;
+        while let Some(key) = map.next_key::<String>()? {
+            if !seen.insert(key.clone()) { return Err(A::Error::custom("duplicate state field")); }
+            if key == "$slice_parents" || key == "slice_parents" {
+                if ready { return Err(A::Error::custom("duplicate slice parent table")); }
+                let parents = map.next_value::<SliceParentTable>()?;
+                crate::v9::value::set_slice_parents(parents.0);
+                wire = serde_json::from_value(serde_json::Value::Object(std::mem::take(&mut deferred))).map_err(A::Error::custom)?;
+                ready = true;
+                continue;
+            }
+            if !ready {
+                let value = map.next_value::<StrictJson>()?;
+                charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)))?;
+                deferred.insert(key, value.0);
+                continue;
+            }
+            match key.as_str() {
+                "realms" => wire.realms = map.next_value()?,
+                "globals" => wire.globals = map.next_value()?,
+                "heap" => wire.heap = map.next_value()?,
+                "symbols" => wire.symbols = map.next_value()?,
+                "jobs" => wire.jobs = map.next_value()?,
+                "page" => wire.page = map.next_value()?,
+                "dynamic" => wire.dynamic = map.next_value()?,
+                "templates" => wire.templates = map.next_value()?,
+                "modules" => wire.modules = map.next_value()?,
+                _ => return Err(A::Error::custom("unknown state field")),
+            }
+        }
+        if !ready { wire = serde_json::from_value(serde_json::Value::Object(deferred)).map_err(A::Error::custom)?; }
+        Ok(VmState { realms: wire.realms, globals: wire.globals, heap: wire.heap, symbols: wire.symbols,
+            jobs: wire.jobs, page: wire.page, dynamic: wire.dynamic, templates: wire.templates, modules: wire.modules, verified: false })
+    }
+}
+#[cfg(feature = "conformance")]
+impl<'de> Deserialize<'de> for VmState {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        with_buffered_state_limit(|| crate::v9::value::with_string_identities(||
+            crate::v9::value::with_slice_parents(Default::default(), || deserializer.deserialize_map(StateVisitor))))
+    }
+}
+
+/** Count encoded state bytes without allocating a second complete snapshot. */
+struct StateSizeWriter { bytes: usize, limit: usize, exceeded: bool }
+impl std::io::Write for StateSizeWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let next = self.bytes.saturating_add(bytes.len());
+        if next > self.limit {
+            self.exceeded = true;
+            return Err(std::io::Error::other("V9 state byte limit"));
+        }
+        self.bytes = next;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+#[cfg(test)]
+mod state_size_writer_tests {
+    #[test]
+    fn stops_at_the_exact_encoded_byte_limit() {
+        use std::io::Write;
+        let mut writer = super::StateSizeWriter { bytes: 0, limit: 3, exceeded: false };
+        writer.write_all(b"abc").unwrap();
+        assert!(writer.write_all(b"d").is_err());
+        assert!(writer.exceeded);
+        assert_eq!(writer.bytes, 3);
+    }
 }
 
 impl VmState {
@@ -112,8 +419,20 @@ impl VmState {
     /// resident in the V9 service. Sending a summary back as a step's state would lose the
     /// page's heap, so the app never does.
     pub fn summary(&self) -> Self {
+        let page = {
+            #[cfg(feature = "conformance")]
+            {
+                let mut page = self.page.clone();
+                page.code_constants.clear();
+                page.number_constants.clear();
+                page.interned_strings.clear();
+                page
+            }
+            #[cfg(not(feature = "conformance"))]
+            self.page.clone()
+        };
         Self {
-            page: self.page.clone(),
+            page,
             ..Self::default()
         }
     }
@@ -197,11 +516,9 @@ impl VmState {
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
         self.validate_bounds(limits)?;
-        let bytes = serde_json::to_vec(self)
-            .map_err(|_| EngineError::invalid("Cannot encode V9 state."))?
-            .len();
-        if bytes > limits.state_bytes {
-            return Err(EngineError::limit("V9 state bytes", limits.state_bytes));
+        let mut writer = StateSizeWriter { bytes: 0, limit: limits.state_bytes, exceeded: false };
+        if serde_json::to_writer(&mut writer, self).is_err() {
+            return Err(if writer.exceeded { EngineError::limit("V9 state bytes", limits.state_bytes) } else { EngineError::invalid("Cannot encode V9 state.") });
         }
         Ok(())
     }
@@ -210,6 +527,18 @@ impl VmState {
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        if self.page.interned_strings.len() > limits.units {
+            return Err(EngineError::limit("V9 weak intern entries", limits.units));
+        }
+        #[cfg(feature = "conformance")]
+        if self.page.number_constants.len() > limits.objects || self.page.number_constants.values().fold(0usize, |count, pool| count.saturating_add(pool.values.len())) > limits.objects {
+            return Err(EngineError::limit("V9 numeric constant cells", limits.objects));
+        }
+        #[cfg(feature = "conformance")]
+        if self.page.code_constants.len() > limits.units {
+            return Err(EngineError::limit("V9 code constant cells", limits.units));
+        }
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
@@ -292,7 +621,12 @@ impl VmState {
             || self.page.listeners.len() > platform::events::LISTENERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
-            || self.jobs.len() > limits.jobs
+            || self.jobs.len().saturating_add({
+                #[cfg(feature = "conformance")]
+                { self.realms.custom_job_count() }
+                #[cfg(not(feature = "conformance"))]
+                { 0 }
+            }) > limits.jobs
             || self.dynamic.len() > crate::constants::VM_DYNAMIC_SOURCES
             || self.templates.len() > limits.objects
             || self.symbols.descriptions.len() > crate::constants::VM_SYMBOLS
@@ -349,6 +683,10 @@ pub struct Execution {
     /// (or as failed) with `load_modules`, which runs it and fires the element's event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub script_requests: Vec<ScriptLoadRequest>,
+    /// Frame documents the page's iframes asked for: the app fetches each URL and delivers it
+    /// with `load_modules`, which fires the frame's `load` event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_requests: Vec<FrameRequest>,
 }
 
 /** A `<script src>` a script connected to the document, for the app to fetch the way a browser
@@ -514,7 +852,17 @@ pub(in crate::v9) fn parse_at(
     offset: usize,
     index: Option<usize>,
 ) -> EngineResult<syntax::Program> {
-    parse_with_mode(source, offset, index, false, &[], 0)
+    parse_with_mode(source, offset, index, false, &[], 0, false)
+}
+
+/** A trusted shell fixture uses its own native grammar and retains its original source text. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn parse_native_fixture(
+    source: &str,
+    offset: usize,
+    index: Option<usize>,
+) -> EngineResult<syntax::Program> {
+    parse_with_mode(source, offset, index, false, &[], 0, true)
 }
 
 /** A direct eval's inherited grammar never comes from rewriting the script source. */
@@ -525,6 +873,7 @@ fn parse_with_mode(
     strict: bool,
     private_names: &[syntax::Name],
     grammar: u8,
+    native_fixture: bool,
 ) -> EngineResult<syntax::Program> {
     let mut tokens = lexer::tokenize(source).map_err(|mut error| {
         if let Some(location) = error.location.as_deref_mut() {
@@ -537,6 +886,16 @@ fn parse_with_mode(
         token.location.byte_offset += offset;
         token.end += offset;
     }
+    #[cfg(feature = "conformance")]
+    if native_fixture {
+        return syntax::parse_native_fixture(tokens).map_err(|mut error| {
+            if let Some(location) = error.location.as_deref_mut() {
+                location.script_index = index.map(|index| index + 1);
+            }
+            error
+        });
+    }
+    let _ = native_fixture;
     let result = if !private_names.is_empty() || grammar != 0 {
         syntax::parse_eval(tokens, strict, private_names, grammar)
     } else if strict {
@@ -573,7 +932,7 @@ pub(in crate::v9) fn compile_dynamic(
             if source.len() > SCRIPT_BYTES {
                 return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
             }
-            parse_with_mode(source, base, None, strict, private_names, grammar)
+            parse_with_mode(source, base, None, strict, private_names, grammar, false)
         }),
         None => registry.script(source, base, || on_parse(source, base, false)),
     }
@@ -584,7 +943,7 @@ fn on_parse(source: &str, base: usize, strict: bool) -> EngineResult<syntax::Pro
     if source.len() > SCRIPT_BYTES {
         return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
     }
-    parse_with_mode(source, base, None, strict, &[], 0)
+    parse_with_mode(source, base, None, strict, &[], 0, false)
 }
 
 /** Parse one classic script without running it, the way a page load would read it. */
@@ -653,6 +1012,20 @@ fn session<'h>(
     state: Option<VmState>,
     modules: &ModuleInput,
 ) -> EngineResult<(Vm<'h>, Compiled)> {
+    #[allow(unused_mut)]
+    let mut limits = limits;
+    #[cfg(feature = "conformance")]
+    if environment.conformance_d8 {
+        if let Some(requested) = environment.conformance_operation_limit {
+            const MAX_CONFORMANCE_OPERATIONS: usize = crate::constants::OPERATIONS * 10;
+            if requested < crate::constants::OPERATIONS || requested > MAX_CONFORMANCE_OPERATIONS {
+                return Err(EngineError::invalid(
+                    "Invalid conformance operation budget.",
+                ));
+            }
+            limits.operations = requested;
+        }
+    }
     if let Some(document) = &document {
         document.validate()?;
     }
@@ -662,6 +1035,8 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
+    // Only the first step of a page runs the platform bootstrap; every step compiles it (see below).
+    let fresh = !state.page.initialized;
     let verified = state.verified;
     if !verified {
         state.validate(&limits)?;
@@ -690,10 +1065,28 @@ fn session<'h>(
     builtins::initialize_shared(&mut vm)?;
     builtins::initialize_shared_gc(&mut vm)?;
     #[cfg(feature = "conformance")]
+    builtins::initialize_shared_containers(&mut vm)?;
+    #[cfg(feature = "conformance")]
     {
         vm.realms = state.realms;
     }
     vm.globals = state.globals;
+    vm.register_global_strings();
+    #[cfg(feature = "conformance")]
+    if fresh && vm.page.environment.conformance_d8 {
+        let arguments = vm.page.environment.conformance_script_arguments.clone();
+        if arguments.len() > SCRIPT_COUNT || arguments.iter().fold(0usize, |total, value| total.saturating_add(value.encode_utf16().count())) > crate::constants::JS_STRING_UNITS {
+            return Err(EngineError::limit("d8 script arguments", crate::constants::JS_STRING_UNITS));
+        }
+        let values = arguments.iter().map(|value| crate::v9::value::JsString::from_utf8(value).map(JsValue::String)).collect::<EngineResult<Vec<_>>>()?;
+        let array = vm.new_array(values).map_err(fatal)?;
+        vm.heap.put(vm.global_object(), vm::heap::Key::from("arguments"), vm::heap::Prop::data(JsValue::Object(array)));
+    }
+    #[cfg(feature = "conformance")]
+    if fresh && vm.page.environment.conformance_expose_externalize_string {
+        builtins::install_external_string_lexicals(&mut vm, 0);
+    }
+
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
     initialize_page(&mut vm);
@@ -710,6 +1103,8 @@ fn session<'h>(
     }
     vm.dynamic = state.dynamic;
     vm.templates = state.templates;
+    // The platform bootstrap is not a dynamic source: every step compiles it at its fixed offset, so the heap's closures always find their code.
+    let bootstrap = platform::observable::compile(&mut vm)?;
     if !verified {
         vm.validate_graph()?;
     }
@@ -724,6 +1119,9 @@ fn session<'h>(
     scripts.extend(vm.realm_codes(0).into_iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
     vm.deadline = Some(std::time::Instant::now() + script_deadline());
+    if fresh {
+        platform::observable::run(&mut vm, bootstrap)?;
+    }
     Ok((vm, compiled))
 }
 
@@ -778,12 +1176,7 @@ fn compile_sources(
             // Module scripts and import maps compiled with the module map; never as classic.
             Err(EngineError::invalid("V9 module entry."))
         } else {
-            let key = keys
-                .get(index)
-                .copied()
-                .unwrap_or_else(|| compile::source_key(source));
-            vm.registry
-                .script_keyed(key, source, start, || parse_at(source, start, Some(index)))
+            compile_page_script(vm, source, start, index, keys)
         };
         if !isolated {
             each.push(Ok(result?));
@@ -800,6 +1193,33 @@ fn compile_sources(
                 .collect(),
         )
     })
+}
+
+/** A host-selected native script uses a separate cache key without changing its source. */
+fn compile_page_script(
+    vm: &mut Vm,
+    source: &str,
+    start: usize,
+    index: usize,
+    keys: &[SourceKey],
+) -> EngineResult<std::sync::Arc<compile::Code>> {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8
+        && vm.page.environment.conformance_native_main_source == Some(index)
+    {
+        return vm.registry.script_keyed(
+            compile::native_fixture_key(source),
+            source,
+            start,
+            || parse_native_fixture(source, start, Some(index)),
+        );
+    }
+    let key = keys
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| compile::source_key(source));
+    vm.registry
+        .script_keyed(key, source, start, || parse_at(source, start, Some(index)))
 }
 
 /** Run one script's top-level code, then its microtasks. */
@@ -941,6 +1361,8 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
+    #[cfg(feature = "conformance")]
+    vm.prune_number_constants();
     // Counts only overestimate between collections, so a heap near any bound is collected
     // (and counted exactly) before its bounds are checked. Elsewhere the running counts stand:
     // a bound reached mid-script collects there (`collect_if_needed`), so an overestimate
@@ -948,7 +1370,10 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     if vm.heap.grew_since_collection() || near_bounds(&vm.heap.counts, &vm.limits) {
         vm.collect_snapshot().map_err(fatal)?;
     }
+    #[cfg(feature = "conformance")]
+    vm.save_interned_strings();
     let effects_timer = vm.next_timer();
+    let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
         .page
         .state
@@ -1001,6 +1426,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         effects,
         module_requests,
         script_requests,
+        frame_requests,
     })
 }
 
@@ -1051,6 +1477,7 @@ fn load_isolated(
     }
     if resume {
         platform::scripts::run_delivered(&mut vm)?;
+        platform::frames::run_frames(&mut vm)?;
     }
     run_async_modules(&mut vm, &mut failed, &mut ran);
     if resume {

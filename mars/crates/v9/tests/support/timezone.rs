@@ -40,6 +40,11 @@ fn metadata_value<'a>(source: &'a str, variable: &str) -> Result<Option<&'a str>
     }
     Ok(zone)
 }
+/** A test's declared process locale becomes its page default, without reading the runner's locale. */
+pub(super) fn locale(source: &str) -> Result<Option<String>, String> {
+    let value = metadata_value(source, "LC_ALL")?.or(metadata_value(source, "LANG")?);
+    Ok(value.map(|tag| tag.split('.').next().unwrap_or(tag).replace('_', "-")))
+}
 /** Names cannot select absolute paths, parent directories, symlink escapes or arbitrary host files. */
 fn confined_path(root: &Path, name: &str) -> Result<std::path::PathBuf, String> {
     let name = name.strip_prefix(':').unwrap_or(name);
@@ -96,6 +101,12 @@ mod tests {
             Ok(Some("Asia/Seoul"))
         );
         assert!(requested("// Environment Variables: TZ").is_err());
+    }
+    #[test]
+    /** V8's declared locale reaches Intl without consulting the runner process environment. */
+    fn locale_metadata_removes_encoding_and_uses_the_first_directive() {
+        assert_eq!(locale("const x='LC_ALL=fr-FR'"), Ok(None));
+        assert_eq!(locale("// Environment Variables: LC_ALL=pt-BR.UTF8\n// Environment Variables: LC_ALL=fr-FR"), Ok(Some("pt-BR".into())));
     }
     #[test]
     /** Canonical confinement rejects all lexical escape forms before any host file read. */

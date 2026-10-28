@@ -24,7 +24,8 @@ pub(in crate::v9) fn create(vm: &mut Vm, public: &Key, backing: Key) -> Res<(Obj
     vm.pin(JsValue::Object(setter));
     let name = public_name(vm, public)?;
     for (function, prefix) in [(getter, "get "), (setter, "set ")] {
-        let name = JsString::from_utf8(prefix)?.concat(&name)?;
+        let prefix = JsString::from_utf8(prefix)?;
+        let name = vm.concat_strings(&prefix, &name)?;
         vm.set_name_snapshot(function, FunctionName::flat(JsValue::String(name)))?;
     }
     Ok((getter, setter))

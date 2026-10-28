@@ -21,7 +21,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /** Each case's result slot, filled by whichever worker ran it. */
 type Outcomes = Arc<Mutex<Vec<Option<Result<(), String>>>>>;
@@ -91,6 +91,8 @@ struct Case {
     is_async: bool,
     /** The host loader for tests that load modules from sibling files on disk. */
     host: Option<Host>,
+    /** Discovery failures remain scored failures rather than disappearing. */
+    discovery_error: Option<String>,
 }
 
 /** test262's module host: the test file is the base URL, and module requests read files beside it. */
@@ -130,17 +132,30 @@ fn out_dir() -> PathBuf {
 }
 
 fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            walk(&path, files);
-        } else if path.extension().is_some_and(|e| e == "js") {
-            files.push(path);
-        }
+    let entries = mjsunit_host::confined::walk(dir).expect("confined conformance discovery failed");
+    files.extend(entries.into_iter().map(|path| dir.join(path)));
+}
+
+/** Read a bounded fixture from a trusted root without following replaced path components. */
+fn read_confined(root: &Path, relative: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let file = mjsunit_host::confined::open(root, relative)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "fixture is not a regular file",
+        ));
     }
+    let mut source = String::new();
+    file.take((mars_v9::constants::MODULE_BYTES + 1) as u64)
+        .read_to_string(&mut source)?;
+    if source.len() > mars_v9::constants::MODULE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "fixture exceeds module byte limit",
+        ));
+    }
+    Ok(source)
 }
 
 /** A YAML flow list `[a, b]` or the `- item` lines that follow the key. */
@@ -241,7 +256,9 @@ fn wanted(rel: &str, prefixes: &[String]) -> bool {
 /** Build the test262 cases plus the skip tally. */
 fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
     let harness = root.join("harness");
-    let read = |name: &str| std::fs::read_to_string(harness.join(name)).unwrap_or_default();
+    let read = |name: &str| {
+        read_confined(&harness, Path::new(name)).expect("confined Test262 harness fixture")
+    };
     let base = format!("{PRELUDE}{}\n{}\n", read("assert.js"), read("sta.js"));
     let done = read("doneprintHandle.js");
     let filter = prefixes("TEST262");
@@ -258,8 +275,20 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
         if !wanted(&rel, &filter) {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&file) else {
-            continue;
+        let source = match read_confined(&root.join("test"), Path::new(&rel)) {
+            Ok(source) => source,
+            Err(error) => {
+                cases.push(Case {
+                    group: group(&rel, 2),
+                    rel,
+                    runs: Vec::new(),
+                    negative: None,
+                    is_async: false,
+                    host: None,
+                    discovery_error: Some(format!("source read failed: {error}")),
+                });
+                continue;
+            }
         };
         let meta = meta(&source);
         if let Some(reason) = skip262(&rel, &meta) {
@@ -316,15 +345,24 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
                 prelude,
                 mjsunit: None,
             }),
+            discovery_error: None,
         });
     }
     cases
 }
 
 /** Build the mjsunit cases: mjsunit.js as the harness, sloppy mode, pass means no uncaught error. */
-fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
-    let harness = std::fs::read_to_string(root.join("mjsunit.js")).expect("mjsunit.js");
+fn cases_mjsunit(
+    root: &Path,
+    skips: &mut BTreeMap<String, usize>,
+    exclusions: &mut Vec<Value>,
+) -> Vec<Case> {
+    let harness = read_confined(root, Path::new("mjsunit.js")).expect("confined mjsunit.js");
     let filter = prefixes("MJSUNIT");
+    let admitted = include_mjsunit_dirs();
+    let mut status_skips = unconditional_skips(root);
+    status_skips.extend(simd_status_skips(root));
+    status_skips.extend(non_linux_status_skips(root));
     let mut files = Vec::new();
     walk(root, &mut files);
     files.sort();
@@ -339,25 +377,65 @@ fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> 
             continue;
         }
         let top = rel.split('/').next().unwrap_or("");
-        if rel.contains('/') && MJSUNIT_SKIP_DIRS.contains(&top) {
-            *skips.entry(format!("dir:{top}")).or_default() += 1;
+        if rel.contains('/')
+            && MJSUNIT_SKIP_DIRS.contains(&top)
+            && !admitted.contains(&top.to_string())
+        {
+            skip_case(skips, exclusions, &rel, format!("dir:{top}"));
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&file) else {
-            continue;
+        let source = match read_confined(root, Path::new(&rel)) {
+            Ok(source) => source,
+            Err(error) => {
+                cases.push(Case {
+                    group: group(&rel, 1),
+                    rel,
+                    runs: Vec::new(),
+                    negative: None,
+                    is_async: false,
+                    host: None,
+                    discovery_error: Some(format!("source read failed: {error}")),
+                });
+                continue;
+            }
         };
         let flags: String = source
             .lines()
             .filter(|l| l.starts_with("// Flags:"))
             .collect();
-        if flags.contains("--allow-natives-syntax") {
-            *skips
-                .entry("flag:--allow-natives-syntax".into())
-                .or_default() += 1;
+        let inert_native = std::env::var("MJSUNIT_INCLUDE_INERT_NATIVE_FLAG").as_deref() == Ok("1")
+            && inert_native_syntax_flag(&source);
+        let supported_native = std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref()
+            == Ok("1")
+            && supported_native_intrinsics(&source);
+        if flags.contains("--allow-natives-syntax") && !inert_native && !supported_native {
+            skip_case(
+                skips,
+                exclusions,
+                &rel,
+                "flag:--allow-natives-syntax".into(),
+            );
+            continue;
+        }
+        if status_skips
+            .iter()
+            .any(|pattern| status_matches(pattern, &rel))
+            || (admitted.contains(&top.to_string()) && rel == "wasm/test-wasm-module-builder.js")
+        {
+            skip_case(skips, exclusions, &rel, "upstream:skip".into());
+            continue;
+        }
+        if !supported_mjsunit_flags(&source.replace("--allow-natives-syntax", "")) {
+            skip_case(
+                skips,
+                exclusions,
+                &rel,
+                format!("unsupported-flags:{flags}"),
+            );
             continue;
         }
         if source.lines().any(|l| l.starts_with("// MODULE")) || rel.ends_with(".mjs") {
-            *skips.entry("module".into()).or_default() += 1;
+            skip_case(skips, exclusions, &rel, "module".into());
             continue;
         }
         cases.push(Case {
@@ -373,9 +451,419 @@ fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> 
                     root, &harness, &source, &file,
                 )),
             }),
+            discovery_error: None,
         });
     }
     cases
+}
+
+/** Respect V8's platform-specific exclusions only on non-Linux hosts. */
+fn non_linux_status_skips(root: &Path) -> Vec<String> {
+    let Ok(text) = read_confined(root, Path::new("mjsunit.status")) else { return Vec::new(); };
+    non_linux_status_entries(&text, cfg!(target_os = "linux"))
+}
+
+/** Read the exact upstream non-Linux block rather than interpreting unrelated conditions. */
+fn non_linux_status_entries(text: &str, linux: bool) -> Vec<String> {
+    if linux { return Vec::new(); }
+    let Some((_, tail)) = text.split_once("['system != linux', {") else { return Vec::new(); };
+    let Some((block, _)) = tail.split_once("}],") else { return Vec::new(); };
+    block.lines().filter_map(|line| {
+        let line = line.trim();
+        if !line.contains("[SKIP]") { return None; }
+        line.strip_prefix('\'')?.split_once('\'').map(|(name, _)| name.to_string())
+    }).collect()
+}
+
+/** V9 implements SIMD in software, so upstream's no_simd_hardware condition is false. */
+fn simd_status_skips(root: &Path) -> Vec<String> {
+    let Ok(text) = read_confined(root, Path::new("mjsunit.status")) else {
+        return Vec::new();
+    };
+    simd_status_entries(&text)
+}
+
+/** Read only the exact known condition, never infer unrelated V8 status variables. */
+fn simd_status_entries(text: &str) -> Vec<String> {
+    let Some((_, tail)) = text.split_once("['no_simd_hardware == False', {") else {
+        return Vec::new();
+    };
+    let Some((block, _)) = tail.split_once("}],  # no_simd_hardware == False") else {
+        return Vec::new();
+    };
+    block
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.contains("[SKIP]") {
+                return None;
+            }
+            line.strip_prefix('\'')?
+                .split_once('\'')
+                .map(|(name, _)| name.to_string())
+        })
+        .collect()
+}
+
+/** A native-syntax flag is inert only when no percent token can introduce an intrinsic. */
+fn inert_native_syntax_flag(source: &str) -> bool {
+    !source.contains('%')
+        && source
+            .lines()
+            .filter_map(|line| line.strip_prefix("// Flags:"))
+            .flat_map(str::split_whitespace)
+            .any(|flag| flag == "--allow-natives-syntax")
+}
+
+/** Only tests whose every percent token names an implemented intrinsic are considered for opt-in execution. */
+fn supported_native_intrinsics(source: &str) -> bool {
+    if source.lines().filter_map(|line| line.strip_prefix("// Flags:")).flat_map(str::split_whitespace).any(|flag| flag == "--fuzzing")
+        && (source.contains("%WasmStruct") || source.contains("%WasmArray")) {
+        return false;
+    }
+    if !source
+        .lines()
+        .filter_map(|line| line.strip_prefix("// Flags:"))
+        .flat_map(str::split_whitespace)
+        .any(|flag| flag == "--allow-natives-syntax")
+    {
+        return false;
+    }
+    let mut found = false;
+    for (at, _) in source.match_indices('%') {
+        let tail = source[at + 1..].trim_start();
+        let name_length = tail
+            .bytes()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
+            .count();
+        let name = &tail[..name_length];
+        if name.is_empty() || !tail[name_length..].trim_start().starts_with('(') {
+            continue;
+        }
+        if ![
+            "AbortJS",
+            "PerformMicrotaskCheckpoint",
+            "ArrayBufferDetach",
+            "Is64Bit",
+            "ToLength",
+            "AtomicsSynchronizationPrimitiveNumWaitersForTesting",
+            "IsJSReceiver",
+            "IsArray",
+            "ToBoolean",
+            "Typeof",
+            "ToName",
+            "CreateIterResultObject",
+            "GetWeakCollectionSize",
+            "AtomicsNumWaitersForTesting",
+            "AtomicsNumUnresolvedAsyncPromisesForTesting",
+            "SetAllowAtomicsWait",
+            "IsAtomicsWaitAllowed",
+            "IsSharedString",
+            "IsSameHeapObject",
+            "SharedGC",
+            "GetInitializerFunction",
+            "ArrayBufferDetachForceWasm",
+            "GetWasmExceptionTagId",
+            "GetWasmExceptionValues",
+            "ThrowStackOverflow",
+            "StringMaxLength",
+            "ConstructConsString",
+            "ConstructSlicedString",
+            "FlattenString",
+            "InternalizeString",
+            "ConstructInternalizedString",
+            "ConstructThinString",
+            "AllocateHeapNumber",
+            "MaxSmi",
+            "ArrayBufferMaxByteLength",
+            "WasmStruct",
+            "WasmArray",
+            "IsWasmTrapHandlerEnabled",
+        ]
+        .contains(&name)
+        {
+            return false;
+        }
+        found = true;
+    }
+    found
+}
+
+#[test]
+/** Mixed or unknown private intrinsics stay excluded rather than faking unsupported state. */
+fn native_admission_requires_only_implemented_intrinsics() {
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();"));
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%MaxSmi();%ArrayBufferMaxByteLength();"));
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%WasmStruct();%WasmArray();"));
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%IsWasmTrapHandlerEnabled();"));
+    assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax --fuzzing\n%WasmStruct();"));
+    assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();%IsSmi(0);"));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%InternalizeString('value');"
+    ));
+    assert!(!supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%InternalizeString('value');%OptimizeFunctionOnNextCall(f);"
+    ));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%ArrayBufferDetach(a);%Is64Bit();"
+    ));
+    assert!(!supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%ArrayBufferDetach(a);%OptimizeFunctionOnNextCall(f);"
+    ));
+    assert!(!supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\nlet n=5%2;"
+    ));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\nlet n=5%2;%ToLength(n);"
+    ));
+    assert!(!supported_native_intrinsics("%ArrayBufferDetach(a);"));
+}
+
+#[test]
+/** Percent tokens keep even potentially native syntax out of the inert-flag selection. */
+fn inert_native_flag_requires_no_percent_token() {
+    assert!(inert_native_syntax_flag(
+        "// Flags: --allow-natives-syntax\nlet x = 1;"
+    ));
+    assert!(!inert_native_syntax_flag(
+        "// Flags: --allow-natives-syntax\n%OptimizeFunctionOnNextCall(f);"
+    ));
+    assert!(!inert_native_syntax_flag(
+        "// Flags: --allow-natives-syntax\nlet x = 4 % 2;"
+    ));
+    assert!(!inert_native_syntax_flag("let x = 1;"));
+}
+
+/** Admit only flag combinations actually implemented by the conformance host. */
+fn supported_mjsunit_flags(source: &str) -> bool {
+    for line in source
+        .lines()
+        .filter_map(|line| line.strip_prefix("// Flags:"))
+    {
+        let mut flags = line.split_whitespace();
+        while let Some(flag) = flags.next() {
+            if flag == "--" {
+                break;
+            }
+            if matches!(
+                flag,
+                "--bundle"
+                    | "--expose-externalize-string"
+                    | "--harmony-struct"
+                    | "--expose-gc"
+                    | "--expose-async-hooks"
+                    | "--async-stack-traces"
+                    | "--noasync-stack-traces"
+                    | "--no-async-stack-traces"
+                    | "--ignore-unhandled-promises"
+                    | "--throws"
+                    | "--harmony-shadow-realm"
+                    | "--js-sum-precise"
+                    | "--js-iterator-includes"
+                    | "--js-iterator-join"
+                    | "--enable-queue-microtask"
+                    | "--noincremental-marking"
+                    | "--no-incremental-marking"
+                    | "--shared-string-table"
+                    | "--wasm-test-streaming"
+                    | "--wasm-stringref"
+                    | "--wasm-custom-descriptors"
+                    | "--wasm-acquire-release"
+                    | "--wasm-imported-strings-utf8"
+                    | "--wasm-fp16"
+                    | "--wasm-js-interop"
+                    | "--wasm-wide-arithmetic"
+                    | "--wasm-wasmfx"
+                    | "--wasm-shared"
+                    | "--wasm-compact-imports"
+                    | "--no-wasm-lazy-compilation"
+                    | "--nowasm-lazy-compilation"
+                    | "--no-wasm-inlining"
+                    | "--no-wasm-trap-handler"
+                    | "--wasm-enforce-bounds-checks"
+                    | "--no-wasm-loop-unrolling"
+                    | "--no-wasm-loop-peeling"
+                    | "--no-wasm-opt"
+                    | "--no-wasm-dynamic-tiering"
+                    | "--no-wasm-tier-up"
+                    | "--wasm-num-compilation-tasks=0"
+                    | "--no-wasm-native-module-cache"
+                    | "--wasm-allow-mixed-eh-for-testing"
+            ) {
+                continue;
+            }
+            if flag == "--wasm-num-compilation-tasks" {
+                if flags.next() != Some("0") { return false; }
+                continue;
+            }
+            let numeric = ["--wasm-max-module-size", "--wasm-max-mem-pages", "--wasm-max-table-size"];
+            if numeric.contains(&flag) {
+                if !flags
+                    .next()
+                    .is_some_and(|value| value.parse::<usize>().is_ok())
+                {
+                    return false;
+                }
+                continue;
+            }
+            if numeric.iter().any(|name| {
+                flag.strip_prefix(name)
+                    .and_then(|suffix| suffix.strip_prefix('='))
+                    .is_some_and(|value| value.parse::<usize>().is_ok())
+            }) {
+                continue;
+            }
+            return false;
+        }
+    }
+    true
+}
+
+#[test]
+/** Unsupported flags in any line or combination cannot be admitted as no-ops. */
+fn mjsunit_admission_requires_all_flags_to_be_implemented() {
+    assert!(supported_mjsunit_flags("// Flags: --js-iterator-includes --js-iterator-join\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --js-iterator-includes --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --async-stack-traces --no-async-stack-traces\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --async-stack-traces --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: -- 1 --literal\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --unknown -- 1\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --wasm-enforce-bounds-checks\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --expose-gc --harmony-struct\n// Flags: --wasm-max-module-size=128\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --bundle --wasm-max-module-size 128\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-incremental-marking\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --expose-async-hooks --ignore-unhandled-promises --throws\n"
+    ));
+    assert!(supported_mjsunit_flags("// Flags: --shared-string-table\n"));
+    assert!(supported_mjsunit_flags("// Flags: --js-sum-precise\n"));
+    assert!(supported_mjsunit_flags("// Flags: --expose-externalize-string\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --expose-externalize-string --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-test-streaming\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-stringref\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-custom-descriptors\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-acquire-release\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-imported-strings-utf8\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-fp16\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-js-interop\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-wide-arithmetic\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-wasmfx\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-compact-imports --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-shared --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-inlining --no-wasm-loop-unrolling --no-wasm-loop-peeling --no-wasm-opt --no-wasm-dynamic-tiering --no-wasm-native-module-cache\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-inlining --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-tier-up --wasm-num-compilation-tasks=0\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks 0\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks=1\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-lazy-compilation\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-wasmfx --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-allow-mixed-eh-for-testing\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-allow-mixed-eh-for-testing --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-wide-arithmetic --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-js-interop --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-fp16 --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-imported-strings-utf8 --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-acquire-release --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-custom-descriptors --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-stringref --unknown\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-test-streaming --unknown\n"));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --shared-string-table --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --expose-gc --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-max-module-size=bad\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-max-module-size\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-max-module-size=128 --wasm-shared\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-max-table-size=10\n"
+    ));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=bad\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=10 --unknown\n"));
+}
+
+/** Explicit admission does not change the default discovery profile. */
+fn include_mjsunit_dirs() -> Vec<String> {
+    let requested = prefixes("MJSUNIT_INCLUDE_DIRS");
+    if !requested.is_empty() {
+        assert!(
+            cfg!(feature = "conformance"),
+            "MJSUNIT_INCLUDE_DIRS requires --features conformance"
+        );
+    }
+    for name in &requested {
+        assert!(
+            MJSUNIT_SKIP_DIRS.contains(&name.as_str()),
+            "Unknown MJSUNIT_INCLUDE_DIRS entry {name}; choose wasm, shared-memory, d8, sandbox, or tools."
+        );
+    }
+    requested
+}
+
+/** Count and retain each excluded path so a report can be audited or replayed. */
+fn skip_case(
+    skips: &mut BTreeMap<String, usize>,
+    exclusions: &mut Vec<Value>,
+    path: &str,
+    reason: String,
+) {
+    *skips.entry(reason.clone()).or_default() += 1;
+    exclusions.push(json!({"test":path,"reason":reason}));
+}
+
+/** Honor the pinned status file's unconditional SKIP entries for every discovery profile. */
+fn unconditional_skips(root: &Path) -> Vec<String> {
+    let text = read_confined(root, Path::new("mjsunit.status"))
+        .expect("mjsunit discovery requires its upstream status file");
+    always_status_entries(&text)
+}
+
+/** Parse only unconditional entries; conditional rows inside the block remain unassumed. */
+fn always_status_entries(text: &str) -> Vec<String> {
+    let block = text
+        .split_once("[ALWAYS, {")
+        .expect("mjsunit ALWAYS status block")
+        .1
+        .split_once("}],  # ALWAYS")
+        .expect("mjsunit ALWAYS status end")
+        .0;
+    block
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.contains("[SKIP]") {
+                return None;
+            }
+            line.strip_prefix('\'')?
+                .split_once('\'')
+                .map(|(name, _)| name.to_string())
+        })
+        .collect()
+}
+
+/** Status paths omit .js and use a final star for prefix patterns. */
+fn status_matches(pattern: &str, path: &str) -> bool {
+    let name = path.strip_suffix(".js").unwrap_or(path);
+    pattern
+        .strip_suffix('*')
+        .map_or(name == pattern, |prefix| name.starts_with(prefix))
 }
 
 /** Run one source; Ok(()) on pass, Err(reason) on fail. */
@@ -485,7 +973,11 @@ fn run_hosted(
                 url::Url::parse(&request.url)
                     .ok()
                     .and_then(|u| u.to_file_path().ok())
-                    .and_then(|path| std::fs::read_to_string(path).ok())
+                    .and_then(|path| {
+                        path.strip_prefix(test262_root())
+                            .ok()
+                            .and_then(|relative| read_confined(&test262_root(), relative).ok())
+                    })
             };
             input.sources.push(ModuleSource {
                 url: request.url.clone(),
@@ -585,6 +1077,9 @@ fn bucket(message: &str) -> String {
 
 /** Run every mode of one case; the first failing mode is the reason. */
 fn run_case(case: &Case, timeout: Duration) -> Result<(), String> {
+    if let Some(error) = &case.discovery_error {
+        return Err(error.clone());
+    }
     for (mode, source) in &case.runs {
         run_guarded(
             source.clone(),
@@ -598,13 +1093,50 @@ fn run_case(case: &Case, timeout: Duration) -> Result<(), String> {
     Ok(())
 }
 
+/** Bind each worker request to the path, sources and fixtures discovered by the parent. */
+fn case_identity(case: &Case) -> String {
+    let fixtures = case
+        .host
+        .as_ref()
+        .and_then(|host| host.mjsunit.as_ref())
+        .map(|scripts| scripts.identity())
+        .unwrap_or_default();
+    let text = format!(
+        "{:?}{:?}{:?}{:?}",
+        case.rel, case.runs, case.discovery_error, fixtures
+    );
+    ring::digest::digest(&ring::digest::SHA256, text.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/** A changed or reordered corpus must never be scored as the parent's original test. */
+fn request_matches(case: &Case, request: &Value) -> bool {
+    request["path"] == case.rel && request["identity"] == case_identity(case)
+}
+
 /** Marks the worker's reply lines among libtest's own output. */
 const REPLY: &str = "@@conf ";
 
 /** A worker process: this same test binary running `conf_worker`, so an engine abort (V9 can
 die on a huge allocation) loses one test, not the run. */
-fn spawn_worker(suite: &str) -> Child {
-    Command::new(std::env::current_exe().unwrap())
+struct Worker {
+    child: Child,
+    replies: mpsc::Receiver<Option<Value>>,
+    reader: thread::JoinHandle<()>,
+}
+
+/** A worker response has a bounded outer wait beyond its own case deadline. */
+const WORKER_REPLY_GRACE: Duration = Duration::from_secs(5);
+/** Limit child processes even when an environment variable is malformed or excessive. */
+const MAX_WORKERS: usize = 32;
+/** No single upstream case can hold a worker indefinitely. */
+const MAX_CASE_TIMEOUT_MS: u64 = 300_000;
+
+fn spawn_worker(suite: &str, binary: &Path) -> Worker {
+    let mut child = Command::new(binary)
         .args([
             "conf_worker",
             "--exact",
@@ -617,23 +1149,58 @@ fn spawn_worker(suite: &str) -> Child {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("worker spawns")
+        .expect("worker spawns");
+    let mut output = child.stdout.take().expect("worker stdout");
+    let (send, replies) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        loop {
+            let reply = read_reply(&mut output);
+            let ended = reply.is_none();
+            if send.send(reply).is_err() || ended {
+                break;
+            }
+        }
+    });
+    Worker {
+        child,
+        replies,
+        reader,
+    }
+}
+
+/** Reap a worker before joining its pipe reader, including after timeouts. */
+fn retire(worker: &mut Option<Worker>) {
+    if let Some(mut worker) = worker.take() {
+        let _ = worker.child.kill();
+        let _ = worker.child.wait();
+        let _ = worker.reader.join();
+    }
 }
 
 /** Send case `i` to the worker (spawning one if needed) and read its verdict. */
-fn ask(child: &mut Option<Child>, suite: &str, i: usize) -> Result<(), String> {
-    let worker = child.get_or_insert_with(|| spawn_worker(suite));
-    let reply = writeln!(worker.stdin.as_mut().unwrap(), "{i}")
+fn ask(child: &mut Option<Worker>, suite: &str, binary: &Path, i: usize, case: &Case) -> Result<(), String> {
+    let worker = child.get_or_insert_with(|| spawn_worker(suite, binary));
+    let request = json!({"index":i,"path":case.rel,"identity":case_identity(case)});
+    let reply = writeln!(worker.child.stdin.as_mut().unwrap(), "{request}")
         .ok()
-        .and_then(|_| read_reply(worker.stdout.as_mut().unwrap()));
+        .and_then(|_| {
+            worker
+                .replies
+                .recv_timeout(timeout() + WORKER_REPLY_GRACE)
+                .ok()
+                .flatten()
+        });
     match reply {
-        Some(Value::String(e)) => Err(e),
+        Some(Value::String(e)) => {
+            if e.contains("timeout") {
+                retire(child);
+            }
+            Err(e)
+        }
         Some(_) => Ok(()),
         None => {
-            let _ = worker.kill();
-            let status = worker.wait().ok();
-            *child = None;
-            Err(format!("crash: worker died ({status:?})"))
+            retire(child);
+            Err("worker closed or exceeded its response deadline".into())
         }
     }
 }
@@ -670,7 +1237,7 @@ fn conf_worker() {
     std::panic::set_hook(Box::new(|_| {}));
     let mut skips = BTreeMap::new();
     let cases = if suite == "mjsunit" {
-        cases_mjsunit(&mjsunit_root(), &mut skips)
+        cases_mjsunit(&mjsunit_root(), &mut skips, &mut Vec::new())
     } else {
         cases262(&test262_root(), &mut skips)
     };
@@ -680,10 +1247,18 @@ fn conf_worker() {
         .lines()
         .map_while(Result::ok)
     {
-        let Ok(i) = line.trim().parse::<usize>() else {
+        let Ok(request) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let verdict = match cases.get(i).map(|c| run_case(c, timeout)) {
+        let case = request["index"]
+            .as_u64()
+            .and_then(|i| cases.get(i as usize));
+        let verdict = match case.map(|c| {
+            if !request_matches(c, &request) {
+                return Err("worker discovery differs from parent".into());
+            }
+            run_case(c, timeout)
+        }) {
             Some(Ok(())) => Value::Null,
             Some(Err(e)) => Value::String(e),
             None => Value::String("no such case".into()),
@@ -694,12 +1269,17 @@ fn conf_worker() {
 }
 
 fn timeout() -> Duration {
-    Duration::from_millis(
-        std::env::var("CONF_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(15_000),
-    )
+    let millis = match std::env::var("CONF_TIMEOUT_MS") {
+        Ok(value) => value
+            .parse::<u64>()
+            .expect("CONF_TIMEOUT_MS must be a positive duration"),
+        Err(_) => 15_000,
+    };
+    assert!(
+        (1..=MAX_CASE_TIMEOUT_MS).contains(&millis),
+        "CONF_TIMEOUT_MS must be between 1 and {MAX_CASE_TIMEOUT_MS}"
+    );
+    Duration::from_millis(millis)
 }
 
 fn test262_root() -> PathBuf {
@@ -710,40 +1290,68 @@ fn mjsunit_root() -> PathBuf {
     env_path("MJSUNIT_ROOT", home().join("Dev/upstream/v8/test/mjsunit"))
 }
 
+/** A private executable snapshot keeps every child on the parent's exact case discovery code. */
+struct WorkerBinary(PathBuf);
+
+impl WorkerBinary {
+    /** Cargo may replace its test binary during a long run, so workers execute this stable copy. */
+    fn snapshot(suite: &str) -> Self {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("mars-v9-worker-{suite}-{}-{nonce}", std::process::id()));
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&path).expect("reserve worker binary");
+        std::fs::copy(std::env::current_exe().unwrap(), &path).expect("snapshot worker binary");
+        Self(path)
+    }
+}
+
+impl Drop for WorkerBinary {
+    /** The snapshot is removed only after all worker processes have exited. */
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
+
 /** Run every case in parallel worker processes, print and write the scoreboard. */
-fn score(suite: &'static str, cases: Vec<Case>, skips: BTreeMap<String, usize>) {
+fn score(
+    suite: &'static str,
+    cases: Vec<Case>,
+    skips: BTreeMap<String, usize>,
+    exclusions: Vec<Value>,
+) {
     std::panic::set_hook(Box::new(|_| {}));
     let started = Instant::now();
-    let jobs = std::env::var("CONF_JOBS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| {
-            thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(4)
-        });
+    let jobs = match std::env::var("CONF_JOBS") {
+        Ok(value) => value
+            .parse::<usize>()
+            .expect("CONF_JOBS must be a positive worker count"),
+        Err(_) => thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .min(MAX_WORKERS),
+    };
+    assert!(
+        (1..=MAX_WORKERS).contains(&jobs),
+        "CONF_JOBS must be between 1 and {MAX_WORKERS}"
+    );
+    let binary = Arc::new(WorkerBinary::snapshot(suite));
     let cases = Arc::new(cases);
     let next = Arc::new(AtomicUsize::new(0));
     let outcomes: Outcomes = Arc::new(Mutex::new((0..cases.len()).map(|_| None).collect()));
     let workers: Vec<_> = (0..jobs)
         .map(|_| {
-            let (cases, next, outcomes) = (cases.clone(), next.clone(), outcomes.clone());
+            let (cases, next, outcomes, binary) = (cases.clone(), next.clone(), outcomes.clone(), binary.clone());
             thread::spawn(move || {
-                let mut child: Option<Child> = None;
+                let mut child: Option<Worker> = None;
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     if i >= cases.len() {
                         break;
                     }
-                    let result = ask(&mut child, suite, i);
+                    let result = ask(&mut child, suite, &binary.0, i, &cases[i]);
                     outcomes.lock().unwrap()[i] = Some(result);
                     if i % 2000 == 0 {
                         eprintln!("{suite}: {i}/{}", cases.len());
                     }
                 }
-                if let Some(mut c) = child {
-                    let _ = c.kill();
-                }
+                retire(&mut child);
             })
         })
         .collect();
@@ -766,6 +1374,14 @@ fn score(suite: &'static str, cases: Vec<Case>, skips: BTreeMap<String, usize>) 
         }
     }
     let (pass, fail) = groups.values().fold((0, 0), |a, g| (a.0 + g.0, a.1 + g.1));
+    if suite == "mjsunit" && !include_mjsunit_dirs().is_empty() {
+        let skipped = skips.values().sum::<usize>();
+        println!(
+            "discovered: {}, executed: {}, passed: {pass}, failed: {fail}, skipped: {skipped}",
+            pass + fail + skipped,
+            pass + fail
+        );
+    }
     println!(
         "\n{suite}: {pass} pass, {fail} fail, {} skipped ({:.1}s)",
         skips.values().sum::<usize>(),
@@ -800,11 +1416,14 @@ fn score(suite: &'static str, cases: Vec<Case>, skips: BTreeMap<String, usize>) 
         .map(|(r, n)| json!({"reason": r, "count": n}))
         .collect();
     let file = out.join(format!("results-{suite}.json"));
-    let body = json!({"suite": suite, "pass": pass, "fail": fail, "skipped": skips, "groups": groups, "top_failures": top, "failures": failures});
+    let body = json!({"suite": suite, "pass": pass, "fail": fail, "discovered":pass + fail + skips.values().sum::<usize>(), "executed":pass + fail, "skipped": skips, "exclusions":exclusions, "groups": groups, "top_failures": top, "failures": failures});
     std::fs::write(&file, serde_json::to_string_pretty(&body).unwrap()).unwrap();
     println!("results in {}", file.display());
+    if pass + fail == 0 {
+        println!("No tests executed; check MJSUNIT and MJSUNIT_INCLUDE_DIRS.");
+    }
     require_pass(
-        fail,
+        fail + usize::from(pass + fail == 0),
         std::env::var("CONF_REQUIRE_PASS").as_deref() == Ok("1"),
     );
 }
@@ -827,6 +1446,86 @@ fn strict_gate_reports_case_failures() {
     assert!(std::panic::catch_unwind(|| require_pass(1, true)).is_err());
 }
 
+/** A worker cannot silently report a reordered or edited case as a pass. */
+#[test]
+fn worker_requests_bind_path_and_source() {
+    let mut case = Case {
+        rel: "wasm/a.js".into(),
+        group: "wasm".into(),
+        runs: vec![("sloppy", "1".into())],
+        negative: None,
+        is_async: false,
+        host: None,
+        discovery_error: None,
+    };
+    let request = json!({"path":case.rel,"identity":case_identity(&case)});
+    assert!(request_matches(&case, &request));
+    case.runs[0].1 = "2".into();
+    assert!(!request_matches(&case, &request));
+    case.runs[0].1 = "1".into();
+    case.rel = "wasm/b.js".into();
+    assert!(!request_matches(&case, &request));
+}
+
+/** Upstream status names match standalone files and bounded prefix patterns. */
+#[test]
+fn status_skip_patterns_match_only_their_paths() {
+    assert!(status_matches(
+        "wasm/wasm-module-builder",
+        "wasm/wasm-module-builder.js"
+    ));
+    assert!(status_matches("wasm/fixture*", "wasm/fixture-a.js"));
+    assert!(!status_matches("wasm/fixture*", "wasm/other.js"));
+    let text = "[ALWAYS, {\n 'modules-skip*': [SKIP],\n 'run': [PASS],\n}],  # ALWAYS";
+    let entries = always_status_entries(text);
+    assert!(
+        entries
+            .iter()
+            .any(|pattern| status_matches(pattern, "modules-skip-reset1.js"))
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|pattern| status_matches(pattern, "run.js"))
+    );
+}
+
+
+/** The SIMD condition is read from its exact status block, without admitting other conditions. */
+#[test]
+fn simd_status_skips_only_matching_block() {
+    let status = "['no_simd_hardware == True', {\n  'wasm/keep': [SKIP],\n}],  # no_simd_hardware == True\n['no_simd_hardware == False', {\n  'regress/wasm/regress-1254675': [SKIP],\n  'wasm/prefix-*': [SKIP],\n}],  # no_simd_hardware == False\n";
+    let skips = simd_status_entries(status);
+    assert!(
+        skips
+            .iter()
+            .any(|pattern| status_matches(pattern, "regress/wasm/regress-1254675.js"))
+    );
+    assert!(
+        skips
+            .iter()
+            .any(|pattern| status_matches(pattern, "wasm/prefix-one.js"))
+    );
+    assert!(
+        !skips
+            .iter()
+            .any(|pattern| status_matches(pattern, "wasm/keep.js"))
+    );
+    assert!(simd_status_entries("['other', {'x': [SKIP]}]").is_empty());
+}
+
+/** Platform exclusions apply only when V8's exact non-Linux condition is true. */
+#[test]
+fn non_linux_status_skips_only_matching_platform_and_block() {
+    let status = "['system == linux', {\n 'wasm/linux-only': [SKIP],\n}],\n['system != linux', {\n 'wasm/memory-control': [SKIP],\n 'regress/wasm/regress-493307331': [SKIP],\n 'wasm/keep': [PASS],\n}],\n";
+    assert!(non_linux_status_entries(status, true).is_empty());
+    let skips = non_linux_status_entries(status, false);
+    assert!(skips.iter().any(|name| status_matches(name, "wasm/memory-control.js")));
+    assert!(skips.iter().any(|name| status_matches(name, "regress/wasm/regress-493307331.js")));
+    assert!(!skips.iter().any(|name| status_matches(name, "wasm/linux-only.js")));
+    assert!(!skips.iter().any(|name| status_matches(name, "wasm/keep.js")));
+}
+
 /** tc39 test262 against V9. */
 #[test]
 #[ignore]
@@ -834,7 +1533,7 @@ fn test262() {
     let root = test262_root();
     let mut skips = BTreeMap::new();
     let cases = cases262(&root, &mut skips);
-    score("test262", cases, skips);
+    score("test262", cases, skips, Vec::new());
 }
 
 /** V8's mjsunit against V9. */
@@ -843,8 +1542,9 @@ fn test262() {
 fn mjsunit() {
     let root = mjsunit_root();
     let mut skips = BTreeMap::new();
-    let cases = cases_mjsunit(&root, &mut skips);
-    score("mjsunit", cases, skips);
+    let mut exclusions = Vec::new();
+    let cases = cases_mjsunit(&root, &mut skips, &mut exclusions);
+    score("mjsunit", cases, skips, exclusions);
 }
 
 /** The frontmatter reader handles flow and block lists and the negative block, an unclaimed

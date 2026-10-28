@@ -67,6 +67,7 @@ fn shared_gc_workers_mutate_one_native_record_and_preserve_identity() {
     let session = mars_v9::ConformanceWorkerSession::new();
     let environment = mars_v9::PageEnvironment {
         conformance_d8: true,
+        conformance_wasm_shared: true,
         conformance_workers: Some(session.host()),
         ..common::environment()
     };
@@ -146,6 +147,7 @@ fn shared_gc_collects_native_cycles_under_the_existing_byte_budget() {
     );
     let mut environment = common::environment();
     environment.conformance_d8 = true;
+    environment.conformance_wasm_shared = true;
     let execution = common::load_with(&source, &environment);
     assert!(
         execution.failed.is_empty(),
@@ -229,4 +231,21 @@ fn wasm_memory_buffer_modes_survive_state_transport() {
         common::console(&clicked),
         ["true 65536 131072 131072 42 262144"]
     );
+}
+
+/** A JS shared container retains the actual Wasm node across worker publication and saved state. */
+#[cfg(feature = "conformance")]
+#[test]
+fn js_shared_container_preserves_wasm_node_across_worker_and_snapshot() {
+    let bytes = module();
+    let source = format!("const bytes=new Uint8Array({bytes:?});const mod=new WebAssembly.Module(bytes);const {{make,read}}=new WebAssembly.Instance(mod).exports;const node=make(41),array=SharedArray(1);array[0]=node;const w=new Worker('onmessage=({{data}})=>{{const {{add}}=new WebAssembly.Instance(data.mod).exports;add(data.array[0],1);postMessage(data.array)}}',{{type:'string'}});w.postMessage({{mod,array}});const returned=w.getMessage();w.terminateAndWait();gc();let r='';setTimeout(()=>r=[returned===array,array[0]===node,read(array[0])].join(),0);");
+    let sources = vec![source];
+    let host = common::host();
+    let session = mars_v9::ConformanceWorkerSession::new();
+    let environment = mars_v9::PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_wasm_shared: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state.clone()), loaded.effects.next_timer_ms.unwrap(), 1).unwrap();
+    assert_eq!(common::global(&resumed, "r"), "true,true,42");
+    session.finish().unwrap();
 }

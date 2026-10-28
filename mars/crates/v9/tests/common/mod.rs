@@ -95,6 +95,8 @@ pub fn global(execution: &Execution, name: &str) -> String {
     match &execution.state.globals()[name].value {
         Some(JsValue::String(text)) => text.lossy(),
         Some(JsValue::Number(number)) => number.to_string(),
+        #[cfg(feature = "conformance")]
+        Some(JsValue::Smi(number)) => number.to_string(),
         Some(JsValue::Boolean(flag)) => flag.to_string(),
         Some(JsValue::Undefined) => "undefined".into(),
         Some(JsValue::Null) => "null".into(),

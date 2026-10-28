@@ -5,7 +5,7 @@ mod instant;
 mod iso;
 mod month;
 mod plain;
-mod zone;
+pub(super) mod zone;
 mod zone_rules;
 mod zone_source;
 mod zoned;

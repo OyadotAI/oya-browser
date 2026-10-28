@@ -39,11 +39,25 @@ pub(in crate::v9) fn set_name(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/** document.defaultView: the window of the frame a frame document belongs to, so a frame's
+document reaches its own window and that window's constructors. The page's document reports the
+page's window. A script-made document (DOMParser, createDocument) has no browsing context, so
+it reports null, as the HTML standard says. */
+pub(in crate::v9) fn default_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let document = super::dom::node_of(vm, &call.this);
+    let frame = document.and_then(|node| vm.page.state.document_frames.get(&node).copied());
+    match (document, frame) {
+        (Some(node), Some(frame)) => super::frames::content_window(vm, frame, node),
+        (Some(node), None) if node != super::dom::DOCUMENT => Ok(JsValue::Null),
+        _ => Ok(JsValue::Object(vm.global_object())),
+    }
+}
+
 /** Window getters by registered name. */
 pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
-        "window" | "self" | "globalThis" | "frames" | "top" | "parent" | "defaultView" => {
+        "window" | "self" | "globalThis" | "frames" | "top" | "parent" => {
             JsValue::Object(vm.global_object())
         }
         "document" => JsValue::Object(realm().ids.document),
@@ -64,6 +78,11 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&origin)?
         }
         "opener" | "frameElement" => JsValue::Null,
+        // window.event is the event being dispatched, and undefined outside dispatch.
+        "event" => vm
+            .page
+            .current_event
+            .map_or(JsValue::Undefined, JsValue::Object),
         "name" => JsValue::string("")?,
         "localStorage" => storage_object(vm, true)?,
         "sessionStorage" => storage_object(vm, false)?,
@@ -459,11 +478,32 @@ pub(in crate::v9) fn write_cookie(vm: &mut Vm, field: &str) -> Res<()> {
 /** performance members. */
 pub(in crate::v9) fn performance(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match native_name(&call) {
-        "now" => Ok(JsValue::Number(vm.page.state.clock)),
-        "timeOrigin" => Ok(JsValue::Number(vm.page.state.epoch)),
-        "getEntries" | "getEntriesByType" | "getEntriesByName" => {
-            Ok(JsValue::Object(vm.new_array(Vec::new())?))
+        "now" => Ok(JsValue::Number(super::performance::now(vm))),
+        "timeOrigin" => Ok(JsValue::Number(super::performance::origin(vm))),
+        "getEntries" => super::performance::get_entries(vm, call, None, None),
+        "getEntriesByType" => {
+            super::performance::check_receiver(vm, &call.this)?;
+            if call.args.is_empty() {
+                return Err(vm.type_error("performance.getEntriesByType requires a type"));
+            }
+            let kind = vm.to_text(&call.arg(0))?;
+            super::performance::get_entries(vm, call, Some(&kind), None)
         }
+        "getEntriesByName" => {
+            super::performance::check_receiver(vm, &call.this)?;
+            if call.args.is_empty() {
+                return Err(vm.type_error("performance.getEntriesByName requires a name"));
+            }
+            let name = vm.to_string(&call.arg(0))?;
+            let kind = if call.arg(1) == JsValue::Undefined {
+                None
+            } else {
+                Some(vm.to_text(&call.arg(1))?)
+            };
+            super::performance::get_entries(vm, call, kind.as_deref(), Some(name))
+        }
+        "clearMarks" => super::performance::clear(vm, call, "mark"),
+        "clearMeasures" => super::performance::clear(vm, call, "measure"),
         "timing" => {
             let id = vm.new_object()?;
             let start = vm.page.state.epoch;
@@ -514,10 +554,10 @@ pub(in crate::v9) fn window_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match name {
         "btoa" => {
             let text = vm.to_string(&call.arg(0))?;
-            if text.as_units().iter().any(|unit| *unit > 0xff) {
+            if text.code_units().any(|unit| unit > 0xff) {
                 return Err(vm.throw(crate::v9::vm::error::ErrorKind::Error, "InvalidCharacterError: The string to be encoded contains characters outside of the Latin1 range."));
             }
-            let bytes: Vec<u8> = text.as_units().iter().map(|unit| *unit as u8).collect();
+            let bytes: Vec<u8> = text.code_units().map(|unit| unit as u8).collect();
             JsValue::string(&base64_encode(&bytes)).map_err(Into::into)
         }
         "atob" => {

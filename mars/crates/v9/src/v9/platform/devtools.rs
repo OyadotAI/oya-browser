@@ -775,7 +775,11 @@ fn mirror(vm: &mut Vm, value: &JsValue, options: &Options) -> EngineResult<Value
         JsValue::Null => json!({"type":"object","subtype":"null","value":null}),
         JsValue::Boolean(flag) => json!({"type":"boolean","value":flag}),
         JsValue::String(text) => json!({"type":"string","value":text.lossy()}),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => number_mirror(*number),
         JsValue::Number(number) => number_mirror(*number),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => number_mirror(number.value),
         JsValue::BigInt(big) => {
             json!({"type":"bigint","unserializableValue":format!("{big}n"),"description":format!("{big}n")})
         }
@@ -964,6 +968,15 @@ fn host_mirror(
             interface.clone(),
             format!("{interface}({})", nodes.len()),
         ),
+        HostData::Live(list) => {
+            let count = crate::v9::platform::collections::current(vm, list).len();
+            (
+                "object",
+                Some("array"),
+                interface.clone(),
+                format!("{interface}({count})"),
+            )
+        }
         HostData::Children(node, _) => {
             let count = vm.page.children(*node).len();
             (
@@ -1075,7 +1088,11 @@ fn property_preview(vm: &mut Vm, name: &str, value: &JsValue) -> Value {
         JsValue::Undefined | JsValue::Hole => ("undefined", None, "undefined".into()),
         JsValue::Null => ("object", Some("null"), "null".into()),
         JsValue::Boolean(flag) => ("boolean", None, flag.to_string()),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => ("number", None, number_to_string(*number)),
         JsValue::Number(number) => ("number", None, number_to_string(*number)),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => ("number", None, number_to_string(number.value)),
         JsValue::String(string) => ("string", None, string.lossy()),
         JsValue::BigInt(big) => ("bigint", None, format!("{big}n")),
         JsValue::BigIntWide(big) => ("bigint", None, format!("{}n", big.diagnostic())),
@@ -1125,7 +1142,11 @@ fn to_json(vm: &mut Vm, value: &JsValue, depth: usize, budget: &mut usize) -> Re
         JsValue::Undefined | JsValue::Hole | JsValue::Symbol(_) => Value::Null,
         JsValue::Null => Value::Null,
         JsValue::Boolean(flag) => Value::Bool(*flag),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => json_number(*number),
         JsValue::Number(number) => json_number(*number),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => json_number(number.value),
         JsValue::String(text) => Value::String(text.lossy()),
         JsValue::BigInt(_) | JsValue::BigIntWide(_) => {
             return Err(vm.type_error("BigInt value can't be returned by value"));

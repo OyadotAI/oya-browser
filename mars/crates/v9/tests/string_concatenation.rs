@@ -1,6 +1,25 @@
 /** Concatenation preserves immutable UTF-16 values, conversion order and the existing admission boundary. */
 mod common;
 
+/** Long generated sources retain their contents through many incremental appends. */
+#[test]
+fn generated_source_appends_remain_correct() {
+    let source = "let s='';for(let i=0;i<32000;i++)s+='arg'+i+',';const r=[s.length,s.startsWith('arg0,'),s.endsWith('arg31999,')].join();";
+    assert_eq!(common::eval(source, "r"), "276890,true,true");
+}
+
+/** Large generated functions compile and run both directly and through eval. */
+#[test]
+fn generated_function_many_parameters_executes_in_eval() {
+    let params = (0..32000).map(|i| format!("arg{i}")).collect::<Vec<_>>().join(",");
+    let args = (0..32000).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    let source = format!("(function f({params}){{return arg16000;}})({args})");
+    mars_v9::check(&source).unwrap();
+    assert_eq!(common::eval(&format!("const r={source};"), "r"), "16000");
+    let literal = serde_json::to_string(&source).unwrap();
+    assert_eq!(common::eval(&format!("const r=eval({literal});"), "r"), "16000");
+}
+
 /** Concatenation retains lone surrogates and pairs adjacent halves without rewriting either input. */
 #[test]
 fn concatenation_preserves_exact_code_units_and_input_aliases() {

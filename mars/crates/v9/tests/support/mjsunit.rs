@@ -5,6 +5,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 mod bundle;
+#[path = "mjsunit/confined.rs"]
+pub(super) mod confined;
 mod data_modules;
 #[cfg(feature = "conformance")]
 #[path = "mjsunit/profiles.rs"]
@@ -27,6 +29,12 @@ pub(super) struct Scripts {
     fixtures: BTreeMap<String, String>,
     /** Source and binary fixtures preserve their original byte content independently of text decoding. */
     files: BTreeMap<String, Vec<u8>>,
+    /** Literal paths whose confined existence was checked by the trusted runner. */
+    exists: BTreeMap<String, bool>,
+    /** Literal relative module requests are frozen before parent/worker identity is computed. */
+    module_files: BTreeMap<String, Option<String>>,
+    /** Explicitly denied module URLs cannot masquerade as verified missing files. */
+    module_denied: BTreeSet<String>,
     /** The original test's file URL resolves relative dynamic imports without changing source. */
     test_url: String,
     /** Metadata belongs to the original container even when native bundle parts execute separately. */
@@ -42,6 +50,19 @@ pub(super) struct Scripts {
 }
 
 impl Scripts {
+    /** Fixture content contributes to the worker's corpus identity, including binary inputs. */
+    pub(super) fn identity(&self) -> String {
+        format!(
+            "{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+            self.sources,
+            self.fixtures,
+            self.files,
+            self.exists,
+            self.module_files,
+            self.module_denied,
+            self.metadata_source
+        )
+    }
     /** Mirrors test/mjsunit/testcfg.py's harness, Files, then test order. */
     pub(super) fn new(root: &Path, harness: &str, source: &str) -> Self {
         Self::for_test(root, harness, source, &root.join("test.js"))
@@ -55,6 +76,9 @@ impl Scripts {
             root: checkout.to_path_buf(),
             fixtures: BTreeMap::new(),
             files: BTreeMap::new(),
+            exists: BTreeMap::new(),
+            module_files: BTreeMap::new(),
+            module_denied: BTreeSet::new(),
             test_url: url::Url::from_file_path(file)
                 .map(|url| url.to_string())
                 .unwrap_or_default(),
@@ -68,6 +92,8 @@ impl Scripts {
         };
         scripts.sources = scripts.sources(harness, source);
         scripts.discover(source);
+        scripts.discover_existence(source);
+        scripts.discover_modules(source);
         scripts
     }
 
@@ -115,24 +141,27 @@ impl Scripts {
         Ok(sources)
     }
 
-    /** Canonical paths prevent a fixture or symlink from reading outside the checkout. */
+    /** Descriptor-relative opens prevent symlink swaps from escaping the checkout. */
     fn read(&mut self, name: &str) -> Result<String, String> {
-        let root = self
-            .root
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        let path = root
-            .join(name)
-            .canonicalize()
-            .map_err(|error| format!("fixture {name}: {error}"))?;
-        if !path.starts_with(&root) {
-            return Err(format!("fixture {name} escapes upstream checkout"));
+        let file = confined::open(&self.root, Path::new(name)).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::InvalidInput
+                || error.raw_os_error() == Some(libc::ELOOP)
+            {
+                format!("fixture {name} escapes upstream checkout or uses a symlink")
+            } else {
+                format!("fixture {name}: {error}")
+            }
+        })?;
+        if !file
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err(format!("fixture {name} is not a file"));
         }
         let mut bytes = Vec::new();
         let limit = mars_v9::constants::MODULE_BYTES;
-        std::fs::File::open(path)
-            .map_err(|error| format!("fixture {name}: {error}"))?
-            .take((limit + 1) as u64)
+        file.take((limit + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|error| format!("fixture {name}: {error}"))?;
         let resident: usize = self
@@ -169,6 +198,77 @@ impl Scripts {
         }
     }
 
+    /** Snapshot literal checkout paths; unknown or escaping paths remain unsupported. */
+    fn discover_existence(&mut self, source: &str) {
+        let candidates = if source.contains("d8.file.exists") {
+            existence_literals(source)
+        } else {
+            fixture_names(source)
+        };
+        for name in candidates.into_iter().take(512) {
+            if let Some(found) = confined_exists(&self.root, &name) {
+                self.exists.insert(name, found);
+            }
+        }
+    }
+
+    /** Snapshot literal relative modules recursively; unknown dynamic requests remain explicit failures. */
+    fn discover_modules(&mut self, source: &str) {
+        let mut pending = vec![(self.test_url.clone(), source.to_string())];
+        pending.extend(self.fixtures.iter().filter_map(|(name, source)| {
+            url::Url::from_file_path(self.root.join(name))
+                .ok()
+                .map(|url| (url.to_string(), source.clone()))
+        }));
+        while let Some((base, source)) = pending.pop() {
+            if !source.contains("import") && !source.contains("export") {
+                continue;
+            }
+            for specifier in relative_literals(&source) {
+                if self
+                    .module_files
+                    .len()
+                    .saturating_add(self.module_denied.len())
+                    >= mars_v9::constants::MODULES
+                {
+                    return;
+                }
+                let Ok(url) = url::Url::parse(&base).and_then(|base| base.join(&specifier)) else {
+                    continue;
+                };
+                let key = url.to_string();
+                if self.module_files.contains_key(&key) || self.module_denied.contains(&key) {
+                    continue;
+                }
+                // Absolute d8 paths are rooted in the supplied virtual checkout, never the host root.
+                let virtual_url = if specifier.starts_with('/') {
+                    url::Url::from_file_path(self.root.join(specifier.trim_start_matches('/'))).ok()
+                } else {
+                    Some(url.clone())
+                };
+                let Some(snapshot) = virtual_url.as_ref().and_then(|url| confined_module(&self.root, url)) else {
+                    self.module_denied.insert(key);
+                    continue;
+                };
+                let resident: usize = self
+                    .module_files
+                    .values()
+                    .filter_map(|value| value.as_ref())
+                    .map(String::len)
+                    .sum();
+                if snapshot.as_ref().is_some_and(|value| {
+                    value.len() > mars_v9::constants::MODULE_BYTES.saturating_sub(resident)
+                }) {
+                    continue;
+                }
+                if let Some(text) = &snapshot {
+                    pending.push((key.clone(), text.clone()));
+                }
+                self.module_files.insert(key, snapshot);
+            }
+        }
+    }
+
     /** Run every source exactly as supplied, and surface the first failed Script. */
     pub(super) fn execute(&self) -> Result<(), String> {
         let sources = self.sources.as_ref().map_err(Clone::clone)?;
@@ -184,6 +284,9 @@ impl Scripts {
             &self.metadata_source,
             "disallow-code-generation-from-strings",
         );
+        if let Some(locale) = timezone::locale(&self.metadata_source)? {
+            environment.locale = locale;
+        }
         if let Some(zone) = timezone::load(&self.metadata_source)? {
             environment.timezone_initial_offset_seconds = Some(zone.initial);
             environment.timezone_transitions = zone.transitions;
@@ -193,10 +296,46 @@ impl Scripts {
             environment.timezone_initial_daylight = zone.initial_daylight;
         }
         #[cfg(feature = "conformance")]
+        let operation_limit = std::env::var("MJSUNIT_SLOW_OPERATION_LIMIT").ok()
+            .map(|value| value.parse::<usize>().map_err(|_| "invalid MJSUNIT_SLOW_OPERATION_LIMIT".to_string()))
+            .transpose()?;
+        #[cfg(feature = "conformance")]
         let environment = mars_v9::PageEnvironment {
             conformance_sources: self.fixtures.clone(),
+            conformance_native_async_helper: boolean_flag(
+                &self.metadata_source,
+                "allow-natives-syntax",
+            ),
+            conformance_native_main_source: (std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS")
+                .as_deref()
+                == Ok("1")
+                && boolean_flag(&self.metadata_source, "allow-natives-syntax"))
+            .then(|| self.source_names.len().saturating_sub(1)),
+            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() == Ok("1") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
+            conformance_wasm_stringref: boolean_flag(&self.metadata_source, "wasm-stringref"),
+            conformance_wasm_custom_descriptors: boolean_flag(&self.metadata_source, "wasm-custom-descriptors") || boolean_flag(&self.metadata_source, "wasm-js-interop"),
+            conformance_wasm_acquire_release: boolean_flag(&self.metadata_source, "wasm-acquire-release"),
+            conformance_wasm_imported_strings_utf8: boolean_flag(&self.metadata_source, "wasm-imported-strings-utf8"),
+            conformance_wasm_fp16: boolean_flag(&self.metadata_source, "wasm-fp16"),
+            conformance_wasm_js_interop: boolean_flag(&self.metadata_source, "wasm-js-interop"),
+            conformance_wasm_wide_arithmetic: boolean_flag(&self.metadata_source, "wasm-wide-arithmetic"),
+            conformance_wasm_allow_mixed_eh: boolean_flag(&self.metadata_source, "wasm-allow-mixed-eh-for-testing"),
+            conformance_wasm_wasmfx: boolean_flag(&self.metadata_source, "wasm-wasmfx"),
+            conformance_wasm_shared: boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_wasm_compact_imports: boolean_flag(&self.metadata_source, "wasm-compact-imports"),
+            conformance_wasm_test_streaming: Some(boolean_flag(&self.metadata_source, "wasm-test-streaming")),
+            conformance_operation_limit: operation_limit,
+            conformance_shared_string_table: boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct"),
+            conformance_shared_strings: boolean_flag(&self.metadata_source, "shared-strings") || boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct") || boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_shared_heap: boolean_flag(&self.metadata_source, "shared-heap") || boolean_flag(&self.metadata_source, "shared-strings") || boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct") || boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_expose_externalize_string: boolean_flag(&self.metadata_source, "expose-externalize-string"),
             conformance_files: self.files.clone(),
+            conformance_exists: self.exists.clone(),
             conformance_d8: true,
+            conformance_script_arguments: self.metadata_source.lines().filter_map(|line| line.strip_prefix("// Flags:")).find_map(|line| {
+                let mut fields = line.split_whitespace();
+                fields.find(|field| *field == "--").map(|_| fields.map(str::to_string).collect())
+            }).unwrap_or_default(),
             conformance_allow_unsafe_function_constructor: boolean_flag(
                 &self.metadata_source,
                 "allow-unsafe-function-constructor",
@@ -250,6 +389,10 @@ impl Scripts {
                 &self.metadata_source,
                 "--wasm-max-table-size",
             )?,
+            conformance_wasm_max_memory_pages: numeric_flag_limit(
+                &self.metadata_source,
+                "--wasm-max-mem-pages",
+            )?,
             conformance_expose_statistics: boolean_flag(&self.metadata_source, "expose-statistics"),
             conformance_expose_trigger_failure: boolean_flag(
                 &self.metadata_source,
@@ -281,24 +424,45 @@ impl Scripts {
     }
 
     /** Literal shell data modules and confined checkout files carry real source; other requests fail fetching. */
-    fn module_source(&self, request: &mars_v9::ModuleRequest) -> mars_v9::ModuleSource {
-        let source = data_modules::source(&request.url).or_else(|| {
-            url::Url::parse(&request.url)
-                .ok()
-                .and_then(|url| url.to_file_path().ok())
-                .and_then(|path| path.canonicalize().ok())
-                .filter(|path| {
-                    self.root
-                        .canonicalize()
-                        .is_ok_and(|root| path.starts_with(root))
-                })
-                .and_then(|path| std::fs::read_to_string(path).ok())
-        });
-        mars_v9::ModuleSource {
+    fn module_source(
+        &self,
+        request: &mars_v9::ModuleRequest,
+        strict: bool,
+    ) -> Result<mars_v9::ModuleSource, String> {
+        let source = if let Some(source) = data_modules::source(&request.url) {
+            Some(source)
+        } else if let Some(source) = self.module_files.get(&request.url) {
+            source.clone()
+        } else if self.module_denied.contains(&request.url) && strict {
+            return Err(format!(
+                "unsupported module fixture outside checkout: {}",
+                request.url
+            ));
+        } else if self.module_denied.contains(&request.url) {
+            None
+        } else if url::Url::parse(&request.url)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .is_some_and(|path| !path.starts_with(&self.root))
+        {
+            if strict {
+                return Err(format!(
+                    "unsupported module fixture outside checkout: {}",
+                    request.url
+                ));
+            }
+            None
+        } else {
+            return Err(format!(
+                "unsupported module fixture not supplied by host: {}",
+                request.url
+            ));
+        };
+        Ok(mars_v9::ModuleSource {
             url: request.url.clone(),
             source,
             classic: false,
-        }
+        })
     }
 
     /** Precompiled classic fixture code has stable offsets and source-derived restored globals. */
@@ -314,6 +478,9 @@ impl Scripts {
                     classic: true,
                 })
                 .collect();
+            modules.sources.extend(self.module_files.iter().map(|(url, source)| mars_v9::ModuleSource {
+                url: url.clone(), source: source.clone(), classic: false,
+            }));
         }
         if let Some(bundle) = &self.bundle {
             modules
@@ -344,6 +511,25 @@ impl Scripts {
     }
 }
 
+/** Freeze simple string candidates, including strings inside worker source templates. */
+fn existence_literals(source: &str) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for (at, quote) in source
+        .char_indices()
+        .filter(|(_, c)| *c == '\'' || *c == '"')
+    {
+        let rest = &source[at + 1..];
+        let Some(end) = rest.find(quote) else {
+            continue;
+        };
+        let name = &rest[..end];
+        if !name.is_empty() && !name.contains(['\\', '\n', '\r']) {
+            names.insert(name.to_string());
+        }
+    }
+    names.into_iter().collect()
+}
+
 /** Timers are real V9 callbacks on its virtual clock; no wall-clock sleeps or callback mocks. */
 fn settle(
     scripts: &Scripts,
@@ -361,12 +547,13 @@ fn settle(
             return Err("host event loop time limit exceeded".into());
         }
         if !execution.module_requests.is_empty() {
-            modules.sources.extend(
-                execution
-                    .module_requests
-                    .iter()
-                    .map(|request| scripts.module_source(request)),
-            );
+            let strict = !crate::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty();
+            let supplied = execution
+                .module_requests
+                .iter()
+                .map(|request| scripts.module_source(request, strict))
+                .collect::<Result<Vec<_>, _>>()?;
+            modules.sources.extend(supplied);
             let delivery = mars_v9::PageInput {
                 modules: &modules,
                 ..copy_input(&input)
@@ -435,6 +622,14 @@ fn copy_input<'a>(input: &mars_v9::PageInput<'a>) -> mars_v9::PageInput<'a> {
 
 /** The explicit engine exception channel cannot confuse a console.error call with a throw. */
 fn check(execution: &mars_v9::Execution, expected_throw: bool) -> Result<bool, String> {
+    if !crate::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty()
+        && !execution.effects.unsupported.is_empty()
+    {
+        return Err(format!(
+            "unsupported feature observed: {}",
+            execution.effects.unsupported.join(", ")
+        ));
+    }
     #[cfg(feature = "conformance")]
     if let Some((code, message)) = &execution.effects.conformance_native_error {
         return Err(format!("{code}: {message}"));
@@ -631,6 +826,102 @@ fn fixture_names(source: &str) -> Vec<String> {
         .collect()
 }
 
+/** Find simple quoted module paths, leaving computed or escaped paths unsupplied. */
+fn relative_literals(source: &str) -> Vec<String> {
+    // Snapshot this common computed specifier regardless of import token spacing.
+    let mut found = vec!["[object Object]".into()];
+    for (at, _) in source.match_indices("import") {
+        if at > 0 && (source.as_bytes()[at - 1].is_ascii_alphanumeric() || matches!(source.as_bytes()[at - 1], b'_' | b'$')) { continue; }
+        let Some(rest) = skip_module_trivia(&source[at + "import".len()..]).strip_prefix('(') else { continue };
+        let rest = skip_module_trivia(rest);
+        if let Some(tail) = rest.strip_prefix('/') {
+            if let Some(end) = tail.find('/') {
+                let body = &tail[..end];
+                if !body.contains(['\\', '\n', '\r', '[', ']'])
+                    && skip_module_trivia(&tail[end + 1..]).starts_with(')')
+                {
+                    found.push(format!("/{body}/"));
+                }
+            }
+            continue;
+        }
+        let Some(quote @ ('\'' | '"')) = rest.chars().next() else { continue };
+        let tail = &rest[1..];
+        let Some(end) = tail.find(quote) else { continue };
+        let name = &tail[..end];
+        if !name.contains(['\\', '\n', '\r']) && found.len() < mars_v9::constants::MODULES {
+            found.push(name.to_string());
+        }
+    }
+    for (at, quote) in source
+        .char_indices()
+        .filter(|(_, c)| *c == '\'' || *c == '"')
+    {
+        if found.len() >= mars_v9::constants::MODULES {
+            break;
+        }
+        let rest = &source[at + 1..];
+        let Some(end) = rest.find(quote) else {
+            continue;
+        };
+        let name = &rest[..end];
+        if !name.contains(['\\', '\n', '\r'])
+            && (name.starts_with("./")
+                || name.starts_with("../")
+                || name.ends_with(".mjs")
+                || name.ends_with(".js"))
+        {
+            found.push(name.to_string());
+        }
+    }
+    found
+}
+
+/** Skip ordinary lexical whitespace and comments around a literal import call. */
+fn skip_module_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(comment) = text.strip_prefix("/*") {
+            let Some(end) = comment.find("*/") else { return "" };
+            text = &comment[end + 2..];
+        } else if let Some(comment) = text.strip_prefix("//") {
+            let Some(end) = comment.find('\n') else { return "" };
+            text = &comment[end + 1..];
+        } else { return text; }
+    }
+}
+
+/** Snapshot a known file or verified absence without following a path outside the checkout. */
+fn confined_module(root: &Path, url: &url::Url) -> Option<Option<String>> {
+    let path = url.to_file_path().ok()?;
+    let relative = path.strip_prefix(&root).ok()?.to_str()?;
+    let file = match confined::open(root, Path::new(relative)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
+        Err(_) => return None,
+    };
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take((mars_v9::constants::MODULE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > mars_v9::constants::MODULE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok().map(Some)
+}
+
+/** Descriptor-relative opening refuses symlinks, including dangling ones. */
+fn confined_exists(root: &Path, name: &str) -> Option<bool> {
+    match confined::open(root, Path::new(name)) {
+        Ok(_) => Some(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(false),
+        Err(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,6 +1103,107 @@ mod tests {
         }
     }
 
+    /** The actual intrinsic drains queued promise jobs synchronously and nested checkpoints do not recurse. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn native_async_fixture_checkpoint_drains_real_jobs_once() {
+        let checkout = Checkout::new();
+        std::fs::write(checkout.root().join("test-async.js"), "let order='';Promise.resolve().then(()=>{order+='a';%PerformMicrotaskCheckpoint();order+='b'});Promise.resolve().then(()=>order+='c');%PerformMicrotaskCheckpoint();if(order!=='abc')throw Error(order);").unwrap();
+        let source =
+            "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/test-async.js');";
+        assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
+    }
+
+    /** Native-enabled shell scripts apply the same grammar to their real loaded fixtures. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn native_flag_applies_to_loaded_fixture_scripts() {
+        let checkout = Checkout::new();
+        std::fs::write(checkout.root().join("native-fixture.js"), "if(%MaxSmi()<=0)throw Error('invalid Smi');").unwrap();
+        let source = "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/native-fixture.js');";
+        assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
+    }
+
+    /** The same source remains invalid without the explicit flag, even after a native-mode cache hit. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn native_fixture_grammar_is_gated_and_cache_separated() {
+        let checkout = Checkout::new();
+        std::fs::write(
+            checkout.root().join("test-async.js"),
+            "%PerformMicrotaskCheckpoint();",
+        )
+        .unwrap();
+        let allowed =
+            "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/test-async.js');";
+        assert_eq!(checkout.scripts(allowed, "").execute(), Ok(()));
+        assert!(
+            checkout
+                .scripts("d8.file.execute('test/mjsunit/test-async.js');", "")
+                .execute()
+                .is_err()
+        );
+    }
+
+    /** Abort is an uncatchable host failure, and unknown V8 intrinsics never silently succeed. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn native_fixture_abort_and_unknown_intrinsics_fail_explicitly() {
+        let checkout = Checkout::new();
+        let path = checkout.root().join("test-async.js");
+        let source =
+            "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/test-async.js');";
+        std::fs::write(&path, "try{%AbortJS('fixture abort')}catch(e){};").unwrap();
+        assert!(
+            checkout
+                .scripts(source, "")
+                .execute()
+                .unwrap_err()
+                .contains("fixture abort")
+        );
+        std::fs::write(&path, "%UnknownIntrinsic();").unwrap();
+        assert!(checkout.scripts(source, "").execute().is_err());
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    /** Existence snapshots distinguish files, directories and missing paths without escaping. */
+    fn existence_snapshot_confines_and_distinguishes_paths() {
+        let checkout = Checkout::new();
+        let root = checkout.0.join("checkout").canonicalize().unwrap();
+        std::fs::write(checkout.root().join("file.js"), "").unwrap();
+        assert_eq!(confined_exists(&root, "test/mjsunit/file.js"), Some(true));
+        assert_eq!(confined_exists(&root, "test/mjsunit"), Some(true));
+        assert_eq!(
+            confined_exists(&root, "test/mjsunit/absent.js"),
+            Some(false)
+        );
+        assert_eq!(confined_exists(&root, "test/mjsunit/../../outside"), None);
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/", checkout.root().join("escape")).unwrap();
+            assert_eq!(confined_exists(&root, "test/mjsunit/escape/etc"), None);
+        }
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    /** Computed paths backed by literal worker source are frozen; unknown paths stay unsupported. */
+    fn existence_snapshot_covers_worker_literals_without_allowing_unknown_paths() {
+        let checkout = Checkout::new();
+        let scripts = checkout.scripts(
+            "const worker=`const name='any_file_name'; d8.file.exists({toString:()=>name})`;",
+            "",
+        );
+        assert_eq!(scripts.exists.get("any_file_name"), Some(&false));
+        assert_eq!(scripts.exists.get("other_file_name"), None);
+        let scripts = checkout.scripts(
+            "const o={toString:()=>['unknown','name'].join('_')};d8.file.exists(o)",
+            "",
+        );
+        assert!(scripts.execute().unwrap_err().contains("not supplied"));
+    }
+
     #[test]
     /** Actual module requests recursively deliver unchanged files relative to each importer. */
     fn dynamic_modules_resolve_nested_relative_imports() {
@@ -829,6 +1221,71 @@ mod tests {
         .unwrap();
         let scripts = checkout.scripts("let complete = false; import('./nested/first.mjs').then(module=>{if(module.value!==42)throw Error('wrong export');complete=true});setTimeout(()=>{if(!complete)throw Error('not evaluated')},0);", "");
         assert_eq!(scripts.execute(), Ok(()));
+    }
+
+    #[test]
+    /** Parent and worker identities include nested modules, and execution uses the frozen bytes. */
+    fn module_snapshots_bind_nested_content_before_execution() {
+        let checkout = Checkout::new();
+        std::fs::create_dir_all(checkout.root().join("nested")).unwrap();
+        std::fs::write(
+            checkout.root().join("nested/first.mjs"),
+            "export {value} from './second.mjs';",
+        )
+        .unwrap();
+        let second = checkout.root().join("nested/second.mjs");
+        std::fs::write(&second, "export const value = 42;").unwrap();
+        let source =
+            "import('./nested/first.mjs').then(m=>{if(m.value!==42)throw Error('changed')});";
+        let before = checkout.scripts(source, "");
+        std::fs::write(&second, "export const value = 99;").unwrap();
+        let after = checkout.scripts(source, "");
+        assert_ne!(before.identity(), after.identity());
+        assert_eq!(before.execute(), Ok(()));
+    }
+
+    #[test]
+    /** Literal bare module names can resolve, and verified missing modules reject normally. */
+    fn module_snapshots_include_bare_names_and_known_absence() {
+        let checkout = Checkout::new();
+        std::fs::write(checkout.root().join("mod.mjs"), "export const value=42;").unwrap();
+        let source = "let hit=false,missing=false;import('mod.mjs').then(m=>{hit=m.value===42});import('does_not_exist.mjs').catch(()=>{missing=true});setTimeout(()=>{if(!hit||!missing)throw Error('module')},0);";
+        assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
+    }
+
+    #[cfg(feature = "conformance")]
+    #[test]
+    /** Literal missing bare imports are delivered as verified absence before execution. */
+    fn missing_bare_import_is_delivered_as_verified_absence() {
+        let checkout = Checkout::new();
+        let source = "// Flags: --allow-natives-syntax\nlet rejected=false;import('missing').catch(()=>rejected=true);%PerformMicrotaskCheckpoint();if(!rejected)throw Error('not settled');";
+        let scripts = checkout.scripts(source, "");
+        assert!(relative_literals(source).iter().any(|name| name == "missing"));
+        assert!(relative_literals("import /*comment*/ ( 'bare-name' )").iter().any(|name| name == "bare-name"));
+        assert!(scripts.modules().sources.iter().any(|module| module.url.ends_with("/missing") && module.source.is_none()));
+    }
+
+    #[test]
+    /** Absolute regular-expression imports use the checkout's virtual root and never the host root. */
+    fn regex_imports_snapshot_virtual_root_and_verified_absence() {
+        let checkout = Checkout::new();
+        std::fs::write(checkout.0.join("checkout/present"), "export const value=42;").unwrap();
+        let scripts = checkout.scripts("import('/present');import(/missing/);", "");
+        let modules = scripts.modules();
+        assert!(modules.sources.iter().any(|module| module.url == "file:///present" && module.source.as_deref() == Some("export const value=42;")));
+        assert!(modules.sources.iter().any(|module| module.url == "file:///missing/" && module.source.is_none()));
+    }
+
+    #[test]
+    /** Default object-to-string import names are snapshotted as actual files or verified absence. */
+    fn module_snapshots_include_plain_object_specifiers() {
+        let checkout = Checkout::new();
+        for import in ["import({})", "import ({})", "import /* comment */ ({})"] {
+            let source = format!(
+                "let done=false;{import}.catch(()=>done=true);setTimeout(()=>{{if(!done)throw Error('missing rejection')}},0);"
+            );
+            assert_eq!(checkout.scripts(&source, "").execute(), Ok(()));
+        }
     }
 
     #[test]
@@ -880,6 +1337,18 @@ mod tests {
         .unwrap();
         let scripts = checkout.scripts("let rejected = false; import('./escape.mjs').catch(()=>{rejected=true});setTimeout(()=>{if(!rejected)throw Error('outside source was evaluated')},0);", "");
         assert_eq!(scripts.execute(), Ok(()));
+        let request = mars_v9::ModuleRequest {
+            url: url::Url::from_file_path(checkout.root().join("escape.mjs"))
+                .unwrap()
+                .to_string(),
+            integrity: None,
+        };
+        assert!(
+            scripts
+                .module_source(&request, true)
+                .unwrap_err()
+                .contains("outside checkout")
+        );
     }
 
     #[test]

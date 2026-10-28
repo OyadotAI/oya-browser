@@ -14,6 +14,15 @@ pub(in crate::v9) struct Context {
     pub global: Option<ObjectId>,
     /** Stored lexicals are empty while this context is executing in Vm.globals. */
     pub globals: Globals,
+    /** A realm-owned queue is never drained by the default isolate checkpoint. */
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_microtask_queue: bool,
+    /** Disposing a realm tears down its owned queue even if a foreign reference survives. */
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub microtask_queue_closed: bool,
+    /** Pending custom-queue jobs retain their actual callbacks and arguments. */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_jobs: Vec<crate::v9::vm::data::Job>,
     /** Module instantiation and namespaces belong to their execution context, even for one shared URL. */
     #[serde(
         default,
@@ -51,6 +60,9 @@ impl Default for State {
             contexts: vec![Context {
                 global: Some(GLOBAL),
                 globals: Globals::default(),
+                own_microtask_queue: false,
+                microtask_queue_closed: false,
+                custom_jobs: Vec::new(),
                 modules: Default::default(),
                 token: 0,
                 detached: false,
@@ -71,6 +83,12 @@ impl State {
             .map(|context| context.globals.len())
             .sum()
     }
+    /** Pending custom queues share the isolate's ordinary job limit. */
+    pub(in crate::v9) fn custom_job_count(&self) -> usize {
+        self.contexts.iter().fold(0usize, |total, context| {
+            total.saturating_add(context.custom_jobs.len())
+        })
+    }
     /** Stored context strings are retained values, never an unaccounted host allocation. */
     pub(in crate::v9) fn units(&self) -> usize {
         self.contexts
@@ -89,10 +107,19 @@ impl State {
     ) -> crate::protocol::EngineResult<()> {
         use crate::protocol::EngineError;
         let bad = || EngineError::invalid("Invalid V9 realm state.");
+        if self.contexts.iter().any(|context| {
+            (!context.own_microtask_queue
+                && (context.microtask_queue_closed || !context.custom_jobs.is_empty()))
+                || (context.microtask_queue_closed && !context.custom_jobs.is_empty())
+                || (context.global.is_none() && !context.custom_jobs.is_empty())
+        }) {
+            return Err(bad());
+        }
         if self.contexts.is_empty()
             || self.contexts.len() > crate::v9::vm::realm::banks::REALM_BANKS as usize
             || self.slots.len() > crate::v9::vm::realm::banks::REALM_BANKS as usize
             || self.slots.first() != Some(&Some(0))
+            || self.contexts[0].own_microtask_queue
             || !self.contexts[0].globals.is_empty()
             || !self.contexts[0].modules.is_empty()
             || self.contexts[0].global != Some(GLOBAL)
@@ -196,6 +223,9 @@ impl State {
         {
             marker.object(global);
             if id == global {
+                for job in &context.custom_jobs {
+                    marker.job(job);
+                }
                 for record in context.modules.records.values() {
                     for id in [record.holder, record.namespace, record.meta]
                         .into_iter()
@@ -224,6 +254,7 @@ impl State {
             if context.global.is_some_and(|global| !live.contains(&global)) {
                 context.global = None;
                 context.globals.clear();
+                context.custom_jobs.clear();
                 context.modules = Default::default();
             }
         }

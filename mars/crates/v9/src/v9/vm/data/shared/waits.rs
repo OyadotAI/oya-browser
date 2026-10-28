@@ -25,6 +25,39 @@ pub(in crate::v9) enum WaitResult {
 }
 
 impl SharedBytes {
+    /** Report live pending waiters at an offset without inventing queue entries. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn waiter_count(&self, offset: usize) -> usize {
+        self.lock()
+            .waiters
+            .iter()
+            .filter(|entry| {
+                entry.offset == offset
+                    && !*entry
+                        .signal
+                        .notified
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+            })
+            .count()
+    }
+    /** Notified async entries remain until their owning VM settles the corresponding promise. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn unresolved_async_count(&self, offset: usize) -> usize {
+        self.lock()
+            .waiters
+            .iter()
+            .filter(|entry| {
+                entry.offset == offset
+                    && entry.asynchronous.is_some()
+                    && *entry
+                        .signal
+                        .notified
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+            })
+            .count()
+    }
     /** Value comparison and queue insertion are atomic with respect to every store and notify. */
     pub(in crate::v9) fn wait(
         &self,
@@ -39,11 +72,7 @@ impl SharedBytes {
         });
         {
             let mut state = self.lock();
-            if offset
-                .checked_add(expected.len())
-                .and_then(|end| state.bytes.get(offset..end))
-                != Some(expected)
-            {
+            if state.read(offset, expected.len()).as_deref() != Some(expected) {
                 return Ok(WaitResult::NotEqual);
             }
             if timeout == Some(Duration::ZERO) {

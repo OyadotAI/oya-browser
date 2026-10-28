@@ -184,3 +184,10 @@ fn deep_recursion_fits_the_call_stack() {
         format!("{depth},1000,true,true")
     );
 }
+
+/** Native accessor re-entry reaches a catchable stack bound without exhausting queued jobs. */
+#[test]
+fn recursive_accessors_keep_promise_jobs_bounded() {
+    let source = "let caught=false,n=0;const x={};Object.defineProperty(x,'v',{set(){try{WebAssembly.instantiate().then(()=>{},()=>{});n++;x.v=0}catch(e){caught=e instanceof RangeError}}});x.v=0;const r=[caught,n>1000].join()";
+    assert_eq!(common::eval(source, "r"), "true,true");
+}

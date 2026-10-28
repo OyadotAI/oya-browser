@@ -81,6 +81,8 @@ fn context_for(vm: &mut Vm, this: &JsValue, method: &str) -> Res<u32> {
 /** Primitive labels use value spelling, while objects are never coerced for an error message. */
 fn receiver_label(value: &JsValue) -> String {
     match value {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => number.to_string(),
         JsValue::Number(number) => number.to_string(),
         JsValue::Undefined => "undefined".into(),
         JsValue::Null => "null".into(),

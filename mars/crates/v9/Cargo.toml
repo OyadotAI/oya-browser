@@ -8,6 +8,8 @@ description = "V9: Mars's bounded, Rust-owned JavaScript runtime"
 
 [dependencies]
 mars-core = { path = "../core" }
+# Namespace-aware XML well-formedness for XML and XHTML frame documents; no dependencies.
+mars-xml = { path = "../xml" }
 serde = { version = "=1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 ryu-js = "=1.0.3"
@@ -21,6 +23,10 @@ icu_normalizer = { version = "=2.3.0", default-features = false, features = ["co
 icu_properties = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
+
+[dev-dependencies]
+# The test host opens fixture paths relative to an owned directory descriptor.
+libc = "=0.2.191"
 
 [features]
 # Upstream test hosts only: supplies inert fixture sources without filesystem authority.

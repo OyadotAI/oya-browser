@@ -74,15 +74,33 @@ pub(super) fn install(b: &mut Builder) {
 
 /** `Number(value)` and `new Number(value)`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    // Number(value) is ToNumeric then a BigInt becomes its nearest Number, as specified.
-    let number = if call.args.is_empty() {
-        0.0
+    let primitive = if call.args.is_empty() {
+        JsValue::Number(0.0)
     } else {
-        match vm.to_numeric(&call.arg(0))? {
+        vm.to_primitive(&call.arg(0), crate::v9::vm::convert::Hint::Number)?
+    };
+    #[cfg(feature = "conformance")]
+    if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = &primitive {
+        let numeric = primitive.clone();
+        let mark = vm.pins.len();
+        vm.pin(JsValue::Object(value.root));
+        let result = (|| match &call.new_target {
+            None => Ok(numeric),
+            Some(target) => {
+                let proto = vm.prototype_for(target, realm().ids.number_prototype)?;
+                let id = vm.to_object(&numeric)?;
+                vm.set_proto(id, Some(proto))?;
+                Ok(JsValue::Object(id))
+            }
+        })();
+        vm.pins.remove(mark);
+        return result;
+    }
+    // Number(value) is ToNumeric then a BigInt becomes its nearest Number, as specified.
+    let number = match vm.to_numeric(&primitive)? {
             JsValue::BigInt(big) => big as f64,
             JsValue::BigIntWide(big) => big.to_f64(),
             numeric => vm.to_number(&numeric)?,
-        }
     };
     match &call.new_target {
         None => Ok(JsValue::Number(number)),
@@ -98,25 +116,25 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Number.isFinite. */
 fn is_finite(_: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(
-        matches!(call.arg(0), JsValue::Number(n) if n.is_finite()),
+        call.arg(0).number_value().is_some_and(f64::is_finite),
     ))
 }
 /** Number.isInteger. */
 fn is_integer(_: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(
-        matches!(call.arg(0), JsValue::Number(n) if n.is_finite() && n.fract() == 0.0),
+        call.arg(0).number_value().is_some_and(|n| n.is_finite() && n.fract() == 0.0),
     ))
 }
 /** Number.isNaN. */
 fn is_nan(_: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(
-        matches!(call.arg(0), JsValue::Number(n) if n.is_nan()),
+        call.arg(0).number_value().is_some_and(f64::is_nan),
     ))
 }
 /** Number.isSafeInteger. */
 fn is_safe_integer(_: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(
-        matches!(call.arg(0), JsValue::Number(n) if n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0),
+        call.arg(0).number_value().is_some_and(|n| n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0),
     ))
 }
 
@@ -124,6 +142,10 @@ fn is_safe_integer(_: &mut Vm, call: Call) -> Res<JsValue> {
 fn this_number(vm: &mut Vm, call: &Call) -> Res<f64> {
     match &call.this {
         JsValue::Number(value) => Ok(*value),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(value) => Ok(*value),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => Ok(value.value),
         // Number.prototype is itself a Number object whose [[NumberData]] is +0.
         JsValue::Object(id) if *id == realm().ids.number_prototype => Ok(0.0),
         JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
@@ -280,6 +302,15 @@ pub(in crate::v9) fn locale_number(value: f64) -> String {
 
 /** Number.prototype.valueOf. */
 fn value_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    {
+        if matches!(call.this, JsValue::SharedNumber(_) | JsValue::LocalNumber(_)) { return Ok(call.this); }
+        if let Some(id) = call.this.object() {
+            if let Some(crate::v9::vm::heap::Prop { slot: crate::v9::vm::heap::Slot::Data(value @ (JsValue::SharedNumber(_) | JsValue::LocalNumber(_))), .. }) = vm.heap.get(id).and_then(|object| object.props.get(&crate::v9::vm::heap::Key::private("shared-number-value"))) {
+                if matches!(vm.heap.get(id).map(|object| &object.class), Some(Class::Number(number)) if value.number_value().is_some_and(|shared| shared.to_bits() == number.to_bits())) { return Ok(value.clone()); }
+            }
+        }
+    }
     this_number(vm, &call).map(JsValue::Number)
 }
 

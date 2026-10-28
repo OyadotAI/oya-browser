@@ -1,9 +1,14 @@
+use super::attr_dom;
+use super::collections::{self, live_collection, tag_ns_filter, current, Filter, LiveList};
 use super::components;
 /** The DOM scripts see: node wrappers, the document, and Node/Element/HTMLElement members. */
 pub(in crate::v9) use super::html::{parse_detached, serialize};
 use super::implementation::{self, PROCESSING_INSTRUCTION};
+use super::namespaces::{self, ElementNs, HTML_NAMESPACE, NameError, NameKind};
 use super::nodes::{BODY, HEAD, HTML, VIRTUAL_BASE};
+use super::range_live;
 use super::selector;
+use super::token_list;
 use super::token_set::TokenSet;
 use crate::document::InsertPosition;
 use crate::protocol::EngineError;
@@ -66,7 +71,7 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
         super::frames::DOCTYPE => super::frames::doctype_prototype().unwrap_or(ids.node_prototype),
         components::FRAGMENT => components::ids().fragment,
         components::SHADOW_ROOT => components::ids().shadow_root,
-        _ => super::interfaces::prototype_for(&tag).unwrap_or(ids.html_element_prototype),
+        _ => element_prototype_for(vm, node, &tag),
     };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Node(node))),
@@ -74,6 +79,39 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
     ))?;
     vm.page.state.wrappers.insert(node, id);
     Ok(JsValue::Object(id))
+}
+
+/** The prototype of an element wrapper: an element in the null namespace (made by an XML document
+or createElementNS(null, ...)) is a plain Element, whatever its name; any other takes its interface
+from its tag, as HTML and SVG do. */
+fn element_prototype_for(vm: &Vm, node: usize, tag: &str) -> u32 {
+    let ids = &realm().ids;
+    let null_namespace = vm
+        .page
+        .state
+        .element_ns
+        .get(&node)
+        .is_some_and(|record| record.namespace.is_none());
+    if null_namespace {
+        return ids.element_prototype;
+    }
+    super::interfaces::prototype_for(tag).unwrap_or(ids.html_element_prototype)
+}
+
+/** An element in the null namespace is a plain Element. Its wrapper was made before the namespace
+was recorded, so it is relinked here; a custom element keeps its class, which the wrapper got first. */
+fn relink_null_namespace(vm: &mut Vm, node: usize) -> Res<()> {
+    let null_namespace = vm
+        .page
+        .state
+        .element_ns
+        .get(&node)
+        .is_some_and(|record| record.namespace.is_none());
+    let wrapper = vm.page.state.wrappers.get(&node).copied();
+    if let (true, Some(id)) = (null_namespace, wrapper) {
+        vm.set_proto(id, Some(realm().ids.element_prototype))?;
+    }
+    Ok(())
 }
 
 /** The node a value wraps. */
@@ -99,6 +137,12 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
     if let Some(node) = node_of(vm, &value) {
         return Ok(node);
     }
+    if matches!(super::host_data(vm, &value), Some(HostData::Attr(_))) {
+        return Err(vm.dom_exception(
+            "HierarchyRequestError",
+            "An attribute cannot be a child node.",
+        ));
+    }
     Err(vm.type_error("parameter is not of type 'Node'"))
 }
 
@@ -116,14 +160,12 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
         }
         components::adopt(&mut vm.page, *old, *new);
         super::scripts::adopt(&mut vm.page, *old, *new);
+        super::frames::adopt(&mut vm.page, *old, *new);
         if vm.page.state.focused == Some(*old) {
             vm.page.state.focused = Some(*new);
         }
-        for listener in &mut vm.page.state.listeners {
-            if listener.target == super::Target::Node(*old) {
-                listener.target = super::Target::Node(*new);
-            }
-        }
+        vm.page.state.listeners.renumber_node(*old, *new);
+        range_live::renumber(vm, *old, *new);
     }
     Ok(())
 }
@@ -139,9 +181,14 @@ pub(in crate::v9) fn node_list(vm: &mut Vm, nodes: Vec<usize>) -> Res<JsValue> {
 
 /** A live list of a node's children (or element children). */
 fn live_children(vm: &mut Vm, node: usize, elements: bool) -> Res<JsValue> {
+    let prototype = if elements {
+        realm().ids.html_collection_prototype
+    } else {
+        realm().ids.node_list_prototype
+    };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Children(node, elements))),
-        Some(realm().ids.node_list_prototype),
+        Some(prototype),
     ))?;
     Ok(JsValue::Object(id))
 }
@@ -161,6 +208,7 @@ fn list_nodes(vm: &mut Vm, data: &HostData) -> Vec<usize> {
                 children
             }
         }
+        HostData::Live(list) => current(vm, list).to_vec(),
         _ => Vec::new(),
     }
 }
@@ -171,6 +219,7 @@ fn list_count(vm: &mut Vm, data: &HostData) -> usize {
     match data {
         HostData::NodeList(nodes) => nodes.len(),
         HostData::Children(node, elements) => vm.page.child_count(*node, *elements),
+        HostData::Live(list) => current(vm, list).len(),
         _ => 0,
     }
 }
@@ -182,6 +231,7 @@ fn list_item(vm: &mut Vm, call: &Call, data: &HostData) -> Res<JsValue> {
         _ if index < 0.0 => None,
         HostData::NodeList(nodes) => nodes.get(index as usize).copied(),
         HostData::Children(node, elements) => vm.page.child_at(*node, *elements, index as usize),
+        HostData::Live(list) => current(vm, list).get(index as usize).copied(),
         _ => None,
     };
     wrap_option(vm, found)
@@ -194,6 +244,21 @@ fn href_in_document_encoding(vm: &Vm, href: &str) -> String {
         Some(encoding) if encoding.name() != UTF_8 => encode_url_query(href, encoding),
         _ => href.to_string(),
     }
+}
+
+/** A live list's own index or `length`, read from its current answer so a mutation shows at once. */
+fn live_own(vm: &mut Vm, list: &LiveList, key: &Key) -> Res<Option<Prop>> {
+    if let Some(index) = key.index() {
+        return match current(vm, list).get(index as usize).copied() {
+            Some(node) => Ok(Some(data_prop(wrap(vm, node)?))),
+            None => Ok(None),
+        };
+    }
+    if matches!(key, Key::Str(name) if name.is("length")) {
+        let count = current(vm, list).len();
+        return Ok(Some(data_prop(JsValue::Number(count as f64))));
+    }
+    Ok(None)
 }
 
 /** A static NodeList's own index or `length`. The values come from the list's own vector, read
@@ -269,6 +334,9 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             }
             Ok(None)
         }
+        HostData::Live(list) => live_own(vm, list, key),
+        HostData::ClassList(node) => token_own(vm, *node, "class", key),
+        HostData::TokenList(node, attribute) => token_own(vm, *node, attribute, key),
         HostData::Style(node) => {
             let text = name.lossy();
             if !style_property(&text) {
@@ -362,7 +430,7 @@ pub(super) fn host_write(
             super::window::storage_set(vm, local, property, text)?;
             Ok(Some(true))
         }
-        HostData::NodeList(_) | HostData::Children(..)
+        HostData::NodeList(_) | HostData::Children(..) | HostData::Live(_)
             if key.index().is_some() || name.is("length") =>
         {
             Ok(Some(false))
@@ -404,7 +472,7 @@ pub(super) fn host_keys(vm: &mut Vm, id: ObjectId) -> Res<Vec<Key>> {
     };
     let data = (**data).clone();
     let keys: Vec<String> = match &data {
-        HostData::NodeList(_) | HostData::Children(..) => {
+        HostData::NodeList(_) | HostData::Children(..) | HostData::Live(_) => {
             let count = list_count(vm, &data);
             (0..count).map(|index| index.to_string()).collect()
         }
@@ -978,12 +1046,18 @@ fn owner_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
     if node == DOCUMENT || vm.page.tag(node) == super::frames::DOCUMENT_NODE {
         return Ok(JsValue::Null);
     }
+    let owner = owning_document_id(vm, node);
+    wrap(vm, owner)
+}
+
+/** The document a node belongs to: its tree's document node, else the document recorded for a
+detached root, else the page document. Each step is a map lookup or the ancestor walk. */
+fn owning_document_id(vm: &mut Vm, node: usize) -> usize {
     let root = vm.page.ancestors(node).last().copied().unwrap_or(node);
     if vm.page.tag(root) == super::frames::DOCUMENT_NODE {
-        return wrap(vm, root);
+        return root;
     }
-    let owner = vm.page.state.owners.get(&root).copied().unwrap_or(DOCUMENT);
-    wrap(vm, owner)
+    vm.page.state.owners.get(&root).copied().unwrap_or(DOCUMENT)
 }
 
 /** An attribute a node keeps for its own sake (a doctype's name, a processing instruction's
@@ -1084,15 +1158,10 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if node != DOCUMENT {
         let tag = vm.page.tag(node);
         if tag.starts_with('#') && tag != components::FRAGMENT && tag != components::SHADOW_ROOT {
-            let old = vm.page.text_content(node);
-            vm.page
-                .set_text(node, &text)
-                .map_err(|error| dom_error(vm, error))?;
-            vm.page
-                .mutations
-                .push(components::Mutation::Text { node, old });
+            set_data(vm, node, &text)?;
         } else {
             let removed = vm.page.children(node);
+            clear_children_hooks(vm, node)?;
             vm.page
                 .set_text(node, &text)
                 .map_err(|error| dom_error(vm, error))?;
@@ -1103,20 +1172,42 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
-/** Replace a character data node's text, queueing the characterData record. */
-fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
+/** Replace a character data node's whole text (the data setter's replace-data over all of it). */
+pub(super) fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
+    let length = vm.page.text_content(node).encode_utf16().count();
+    replace_data(vm, node, 0, length, text)
+}
+
+/**
+ * Replace `count` UTF-16 units of a character data node at `offset` with `data`, queueing the
+ * characterData record and moving the live range points inside the span as the standard does.
+ * Callers keep offset and count within the node's length.
+ */
+pub(super) fn replace_data(
+    vm: &mut Vm,
+    node: usize,
+    offset: usize,
+    count: usize,
+    data: &str,
+) -> Res<()> {
+    let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
+    let tail = (offset + count).min(units.len());
+    let mut next = units[..offset.min(units.len())].to_vec();
+    next.extend(data.encode_utf16());
+    next.extend_from_slice(&units[tail..]);
     let old = vm.page.text_content(node);
     vm.page
-        .set_text(node, text)
+        .set_text(node, &String::from_utf16_lossy(&next))
         .map_err(|error| dom_error(vm, error))?;
     vm.page
         .mutations
         .push(components::Mutation::Text { node, old });
-    Ok(())
+    let inserted = data.encode_utf16().count();
+    range_live::replaced(vm, node, offset, count, inserted)
 }
 
 /** A WebIDL `unsigned long` argument: ToNumber, then modulo 2^32. */
-fn unsigned_long(vm: &mut Vm, value: &JsValue) -> Res<usize> {
+pub(super) fn unsigned_long(vm: &mut Vm, value: &JsValue) -> Res<usize> {
     let number = vm.to_number(value)?;
     if !number.is_finite() {
         return Ok(0);
@@ -1152,9 +1243,8 @@ pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error(&format!("{required} arguments required.")));
     }
     if name == "appendData" {
-        let mut text = String::from_utf16_lossy(&units);
-        text.push_str(&vm.to_text(&call.arg(0))?);
-        set_data(vm, node, &text)?;
+        let data = vm.to_text(&call.arg(0))?;
+        replace_data(vm, node, length, 0, &data)?;
         return Ok(JsValue::Undefined);
     }
     let offset = unsigned_long(vm, &call.arg(0))?;
@@ -1168,41 +1258,75 @@ pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "insertData" | "splitText" => 0,
         _ => unsigned_long(vm, &call.arg(1))?.min(length - offset),
     };
-    let tail = &units[offset + count..];
     match name {
         "substringData" => {
             JsValue::string(&String::from_utf16_lossy(&units[offset..offset + count]))
                 .map_err(Into::into)
         }
-        "splitText" => split_text(vm, node, &units, offset),
+        "splitText" => {
+            let created = split_text_node(vm, node, offset)?;
+            wrap(vm, created)
+        }
         _ => {
             let inserted = match name {
                 "insertData" => vm.to_text(&call.arg(1))?,
                 "replaceData" => vm.to_text(&call.arg(2))?,
                 _ => String::new(),
             };
-            let mut text = String::from_utf16_lossy(&units[..offset]);
-            text.push_str(&inserted);
-            text.push_str(&String::from_utf16_lossy(tail));
-            set_data(vm, node, &text)?;
+            replace_data(vm, node, offset, count, &inserted)?;
             Ok(JsValue::Undefined)
         }
     }
 }
 
-/** Text.splitText: the data after `offset` moves into a new text node placed after this one. */
-fn split_text(vm: &mut Vm, node: usize, units: &[u16], offset: usize) -> Res<JsValue> {
+/**
+ * Text.splitText as the DOM standard runs it: the data from `offset` moves into a new text node
+ * placed after this one. The insertion moves the live points after it; the points past the split
+ * then follow the data, and the data leaves this node through replaceData. Returns the new node.
+ */
+pub(super) fn split_text_node(vm: &mut Vm, node: usize, offset: usize) -> Res<usize> {
+    let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
+    let length = units.len();
+    if offset > length {
+        return Err(vm.dom_exception(
+            "IndexSizeError",
+            "Failed to execute 'splitText' on 'Text': The offset is larger than the Text node's length.",
+        ));
+    }
     let rest = String::from_utf16_lossy(&units[offset..]);
     let created = vm
         .page
         .create("#text", Some(rest))
         .map_err(|error| dom_error(vm, error))?;
-    if let Some(parent) = traverse_parent(vm, node) {
+    let parent = traverse_parent(vm, node);
+    let index = parent.map_or(0, |parent| index_of(vm, parent, node));
+    if let Some(parent) = parent {
         let next = sibling(vm, node, 1, false);
         insert(vm, parent, created, next)?;
     }
-    set_data(vm, node, &String::from_utf16_lossy(&units[..offset]))?;
-    wrap(vm, created)
+    range_live::split(vm, node, offset, created, parent, index)?;
+    replace_data(vm, node, offset, length - offset, "")?;
+    Ok(created)
+}
+
+/** The index of `node` among `parent`'s children, or 0 when it is not one of them. */
+pub(super) fn index_of(vm: &mut Vm, parent: usize, node: usize) -> usize {
+    vm.page
+        .children(parent)
+        .iter()
+        .position(|child| *child == node)
+        .unwrap_or(0)
+}
+
+/**
+ * The live-range step of a replace-all: each child leaves at index 0 in turn, which moves the
+ * points inside it to the parent's start and pulls points past the start back to it.
+ */
+pub(super) fn clear_children_hooks(vm: &mut Vm, parent: usize) -> Res<()> {
+    for child in vm.page.children(parent) {
+        range_live::removed(vm, parent, 0, child)?;
+    }
+    Ok(())
 }
 
 /** Queue a child list change of `parent` for reactions and observers. */
@@ -1223,6 +1347,10 @@ pub(super) fn children_changed(vm: &mut Vm, parent: usize, added: Vec<usize>, re
 pub(in crate::v9) fn remove_node(vm: &mut Vm, node: usize) -> Res<()> {
     let parent = vm.page.parent(node);
     let siblings = parent.map(|parent| vm.page.children(parent));
+    if let Some(parent) = parent {
+        let index = index_of(vm, parent, node);
+        range_live::removed(vm, parent, index, node)?;
+    }
     vm.page.remove(node).map_err(|error| dom_error(vm, error))?;
     if let (Some(parent), Some(siblings)) = (parent, siblings) {
         let position = siblings.iter().position(|child| *child == node);
@@ -1315,6 +1443,16 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Number(compare_position(vm, node, other)))
         }
         "isSameNode" => Ok(JsValue::Boolean(node_of(vm, &call.arg(0)) == Some(node))),
+        "lookupNamespaceURI" => {
+            let prefix = optional_string_arg(vm, &call, 0)?;
+            optional_string(lookup_context(vm, node, prefix.as_deref()))
+        }
+        "isDefaultNamespace" => {
+            let namespace = optional_string_arg(vm, &call, 0)?;
+            Ok(JsValue::Boolean(
+                namespace == lookup_context(vm, node, None),
+            ))
+        }
         "isEqualNode" => {
             let Some(other) = node_of(vm, &call.arg(0)) else {
                 return Ok(JsValue::Boolean(false));
@@ -1329,6 +1467,82 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
+/** The namespace a lookup from a node finds for a prefix: an element searches itself, a document
+searches its root, a doctype or fragment finds none, and any other node searches its parent. */
+fn lookup_context(vm: &mut Vm, node: usize, prefix: Option<&str>) -> Option<String> {
+    match node_type(vm, node) {
+        1 => vm.page.lookup_namespace(node, prefix),
+        9 => vm.page.lookup_namespace(HTML, prefix),
+        10 | 11 => None,
+        _ => {
+            let parent = vm.page.parent(node)?;
+            vm.page.lookup_namespace(parent, prefix)
+        }
+    }
+}
+
+/** createElement and createElementNS. createElement lowercases the name and puts it in the HTML
+namespace; createElementNS validates and extracts the namespace and qualified name. Either way
+the element's namespace record is kept, so its namespaceURI and tagName are the DOM's. */
+/** How createElement treats its name and namespace on the document it is called on, per the DOM:
+an HTML document lowercases the name and uses the HTML namespace, an XHTML document keeps the name
+and uses the HTML namespace, and any other XML document keeps the name in the null namespace. */
+fn create_element_rules(vm: &Vm, call: &Call) -> (bool, Option<&'static str>) {
+    let media = match node_of(vm, &call.this) {
+        Some(document) => super::frames::content_type_of(vm, document),
+        None => super::frames::HTML_TYPE.to_string(),
+    };
+    match media.as_str() {
+        super::frames::HTML_TYPE => (true, Some(HTML_NAMESPACE)),
+        super::frames::XHTML_TYPE => (false, Some(HTML_NAMESPACE)),
+        _ => (false, None),
+    }
+}
+
+/** createElement and createElementNS. createElement lowercases the name and puts it in the HTML
+namespace; createElementNS validates and extracts the namespace and qualified name. Either way
+the element's namespace record is kept, so its namespaceURI and tagName are the DOM's. */
+fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValue> {
+    let (qualified, record, options) = if namespaced {
+        let namespace = optional_string_arg(vm, call, 0)?;
+        let qualified = vm.to_text(&call.arg(1))?;
+        let qname =
+            namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Element)
+                .map_err(|error| name_error(vm, error))?;
+        let record = ElementNs {
+            namespace,
+            prefix: qname.prefix,
+            local: qname.local,
+        };
+        (qualified, record, call.arg(2))
+    } else {
+        let (lowercase, namespace) = create_element_rules(vm, call);
+        let given = vm.to_text(&call.arg(0))?;
+        let qualified = if lowercase {
+            given.to_ascii_lowercase()
+        } else {
+            given
+        };
+        namespaces::validate_local_name(&qualified, NameKind::Element)
+            .map_err(|error| name_error(vm, error))?;
+        let record = ElementNs {
+            namespace: namespace.map(str::to_string),
+            prefix: None,
+            local: qualified.clone(),
+        };
+        (qualified, record, call.arg(1))
+    };
+    let value = components::create_element(vm, &qualified, &options)?;
+    if let Some(node) = node_of(vm, &value) {
+        vm.page.set_element_namespace(node, record);
+        relink_null_namespace(vm, node)?;
+        if let Some(document) = node_of(vm, &call.this).filter(|document| *document != DOCUMENT) {
+            vm.page.state.owners.insert(node, document);
+        }
+    }
+    Ok(value)
+}
+
 /** The DOM standard's "equals": same type, same name and attributes (or data), and equal
 children in order. */
 fn equal_nodes(vm: &mut Vm, a: usize, b: usize) -> bool {
@@ -1336,6 +1550,11 @@ fn equal_nodes(vm: &mut Vm, a: usize, b: usize) -> bool {
         return true;
     }
     if node_type(vm, a) != node_type(vm, b) || vm.page.tag(a) != vm.page.tag(b) {
+        return false;
+    }
+    if vm.page.element_namespace(a) != vm.page.element_namespace(b)
+        || vm.page.element_prefix(a) != vm.page.element_prefix(b)
+    {
         return false;
     }
     let (left, right) = (vm.page.view(a), vm.page.view(b));
@@ -1361,34 +1580,34 @@ fn equal_nodes(vm: &mut Vm, a: usize, b: usize) -> bool {
 /** Node.normalize: drop empty text nodes and merge each run of adjacent text nodes into its
 first, through the whole subtree. */
 fn normalize(vm: &mut Vm, node: usize) -> Res<()> {
-    let mut run: Option<(usize, String)> = None;
+    let mut first: Option<usize> = None;
     for child in traverse_children(vm, node) {
         if node_type(vm, child) != 3 {
-            flush_text_run(vm, run.take())?;
+            first = None;
             normalize(vm, child)?;
             continue;
         }
-        let data = vm.page.text_content(child);
-        match run.as_mut() {
-            Some((_, text)) => {
-                text.push_str(&data);
-                remove_node(vm, child)?;
-            }
-            None if data.is_empty() => remove_node(vm, child)?,
-            None => run = Some((child, data)),
+        match first {
+            Some(text) => merge_text(vm, text, child)?,
+            None if vm.page.text_content(child).is_empty() => remove_node(vm, child)?,
+            None => first = Some(child),
         }
     }
-    flush_text_run(vm, run)
+    Ok(())
 }
 
-/** Write a merged text run back into the first node of the run, if it grew. */
-fn flush_text_run(vm: &mut Vm, run: Option<(usize, String)>) -> Res<()> {
-    if let Some((first, text)) = run
-        && vm.page.text_content(first) != text
-    {
-        set_data(vm, first, &text)?;
-    }
-    Ok(())
+/**
+ * normalize folds the text node `child` into `first`, the text node before it: `child`'s data is
+ * appended, the points in `child` move to `first` past the old text, and the node is removed.
+ */
+fn merge_text(vm: &mut Vm, first: usize, child: usize) -> Res<()> {
+    let length = vm.page.text_content(first).encode_utf16().count();
+    let parent = vm.page.parent(child);
+    let index = parent.map_or(0, |parent| index_of(vm, parent, child));
+    let data = vm.page.text_content(child);
+    replace_data(vm, first, length, 0, &data)?;
+    range_live::merged(vm, first, child, parent, index, length)?;
+    remove_node(vm, child)
 }
 
 /** DOCUMENT_POSITION bits for compareDocumentPosition. */
@@ -1586,6 +1805,30 @@ fn replace_child(vm: &mut Vm, parent: usize, new: usize, old: usize) -> Res<()> 
     insert(vm, parent, new, reference)
 }
 
+/**
+ * Take `node` out of the parent it is in before an insertion. A fragment's children leave the
+ * fragment silently in the child list log (the fragment itself was logged), but still move their
+ * live range points out as a removal does.
+ */
+fn leave_current_parent(vm: &mut Vm, node: usize, from_fragment: bool) -> Res<()> {
+    let Some(old) = vm.page.parent(node) else {
+        return Ok(());
+    };
+    if !from_fragment {
+        children_changed(vm, old, Vec::new(), vec![node]);
+    }
+    let index = index_of(vm, old, node);
+    range_live::removed(vm, old, index, node)
+}
+
+/** The child index an insertion before `reference` (or at the end) lands at. */
+fn insertion_index(vm: &mut Vm, parent: usize, reference: Option<usize>) -> usize {
+    let siblings = vm.page.children(parent);
+    reference
+        .and_then(|reference| siblings.iter().position(|id| *id == reference))
+        .unwrap_or(siblings.len())
+}
+
 /** Insert a node (fragments insert their children), adopting new identities. */
 pub(in crate::v9) fn insert(
     vm: &mut Vm,
@@ -1613,13 +1856,13 @@ pub(in crate::v9) fn insert(
     }
     let mut added = Vec::with_capacity(children.len());
     for node in children {
-        if let Some(old) = vm.page.parent(node).filter(|_| tag != components::FRAGMENT) {
-            children_changed(vm, old, Vec::new(), vec![node]);
-        }
+        leave_current_parent(vm, node, tag == components::FRAGMENT)?;
+        let index = insertion_index(vm, parent, reference);
         let mapping = vm
             .page
             .insert(parent, node, reference)
             .map_err(|error| dom_error(vm, error))?;
+        range_live::inserted(vm, parent, index, 1)?;
         adopt(vm, &mapping)?;
         added.push(
             mapping
@@ -1677,6 +1920,8 @@ pub(super) fn clone_tree(vm: &mut Vm, node: usize, deep: bool) -> Res<usize> {
     if let Some(record) = vm.page.state.detached.get_mut(&copy) {
         record.attributes = view.attributes.clone();
     }
+    vm.page.copy_namespaces(node, copy);
+    super::frames::copy_document_kind(vm, node, copy);
     if let Some(value) = view.value {
         vm.page.state.values.insert(copy, value);
     }
@@ -1704,9 +1949,11 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match name {
         "tagName" => JsValue::string(&qualified_name(vm, node)).map_err(Into::into),
         "localName" => {
-            let tag = vm.page.tag(node);
-            JsValue::string(&tag).map_err(Into::into)
+            let local = vm.page.element_local_name(node);
+            JsValue::string(&local).map_err(Into::into)
         }
+        "namespaceURI" => optional_string(vm.page.element_namespace(node)),
+        "prefix" => optional_string(vm.page.element_prefix(node)),
         "className" => JsValue::string(&attribute("class").unwrap_or_default()).map_err(Into::into),
         "children" => live_children(vm, node, true),
         "childElementCount" => {
@@ -1745,21 +1992,13 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let html = serialize(&mut vm.page, node, true);
             JsValue::string(&html).map_err(Into::into)
         }
-        "classList" => host_object(
-            vm,
-            HostData::ClassList(node),
-            realm().ids.class_list_prototype,
-        ),
+        "classList" => token_list_object(vm, node, "class"),
         "dataset" => host_object(vm, HostData::Dataset(node), realm().ids.dataset_prototype),
         "sheet" => super::sheets::element_sheet(vm, node),
         "contentDocument" | "contentWindow" => super::frames::frame_get(vm, node, name),
         "sandbox" | "relList" | "part" => {
             let attribute = if name == "relList" { "rel" } else { name };
-            host_object(
-                vm,
-                HostData::TokenList(node, attribute.into()),
-                realm().ids.class_list_prototype,
-            )
+            token_list_object(vm, node, attribute)
         }
         "pathname" | "host" | "hostname" | "protocol" | "search" | "hash" | "origin" | "port"
         | "username" | "password" => {
@@ -1799,23 +2038,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "willValidate" => Ok(JsValue::Boolean(true)),
         "validationMessage" => JsValue::string("").map_err(Into::into),
         "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
-        "attributes" => {
-            let list = vm.new_array(Vec::new())?;
-            let mut named = Vec::new();
-            for (key, value) in view.map(|view| view.attributes).unwrap_or_default() {
-                let item = vm.new_object()?;
-                vm.put(item, "name", JsValue::string(&key)?)?;
-                vm.put(item, "value", JsValue::string(&value)?)?;
-                vm.put(item, "nodeName", JsValue::string(&key)?)?;
-                vm.put(item, "specified", JsValue::Boolean(true))?;
-                vm.array_append(&JsValue::Object(list), JsValue::Object(item))?;
-                named.push((key, item));
-            }
-            // A NamedNodeMap: an array of Attr records with the map's lookups on its prototype.
-            vm.set_proto(list, Some(realm().ids.named_node_map_prototype))?;
-            named_attributes(vm, list, named)?;
-            Ok(JsValue::Object(list))
-        }
+        "attributes" => attr_dom::named_node_map(vm, node),
         "value" => {
             let value = view
                 .as_ref()
@@ -1953,8 +2176,12 @@ fn element_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .map_err(|error| dom_error(vm, error))?;
         }
         // Assigning a token list sets its attribute, as the IDL's PutForwards=value says.
-        name @ ("sandbox" | "relList" | "part") => {
-            let attribute = if name == "relList" { "rel" } else { name };
+        name @ ("sandbox" | "relList" | "part" | "classList") => {
+            let attribute = match name {
+                "relList" => "rel",
+                "classList" => "class",
+                other => other,
+            };
             let text = vm.to_text(&value)?;
             vm.page
                 .set_attribute(node, attribute, Some(&text))
@@ -2027,6 +2254,7 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
         node
     };
     let removed = vm.page.children(node);
+    clear_children_hooks(vm, node)?;
     replace_html(vm, node, html)?;
     let added = vm.page.children(node);
     for child in &added {
@@ -2068,7 +2296,11 @@ fn replace_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
  * shadow an index or a member on the chain (`length`, `item`). jQuery 1.x's feature probe reads
  * `div.attributes['onfocusin'].expando` and throws on load without it.
  */
-fn named_attributes(vm: &mut Vm, list: ObjectId, named: Vec<(String, ObjectId)>) -> Res<()> {
+pub(super) fn named_attributes(
+    vm: &mut Vm,
+    list: ObjectId,
+    named: Vec<(String, ObjectId)>,
+) -> Res<()> {
     for (name, item) in named {
         let key = Key::from(name.as_str());
         if key.index().is_some() || vm.has_property(list, &key)? {
@@ -2250,27 +2482,63 @@ fn reflected(name: &str) -> (&str, Reflect) {
 }
 
 /** Element methods. */
-/** The attribute a namespaced read names by its local name (the second argument): one stored
-under exactly that name, or under a prefix and that name (`xlink:href` for `href`). */
+/** A JavaScript string for a present value, or null for an absent one. */
+fn optional_string(value: Option<String>) -> Res<JsValue> {
+    match value {
+        Some(text) => JsValue::string(&text).map_err(Into::into),
+        None => Ok(JsValue::Null),
+    }
+}
+
+/** A string argument read as an optional one: null, undefined and the empty string all mean
+none, which is how the namespace and prefix arguments of the DOM read them. */
+pub(super) fn optional_string_arg(vm: &mut Vm, call: &Call, index: usize) -> Res<Option<String>> {
+    let value = call.arg(index);
+    if value.nullish() {
+        return Ok(None);
+    }
+    let text = vm.to_text(&value)?;
+    Ok(namespaces::non_empty(&text))
+}
+
+/** Turns a rejected name into the DOMException the DOM standard names for it. */
+pub(super) fn name_error(vm: &mut Vm, error: NameError) -> Thrown {
+    vm.dom_exception(error.name, &error.message)
+}
+
+/** The attribute a namespace-aware read names: the namespace and local name arguments find the
+stored name, and the POPOVER marker, an engine-only attribute, is never reported. */
 fn namespaced_attribute(vm: &mut Vm, node: usize, call: &Call) -> Res<Option<(String, String)>> {
+    let namespace = optional_string_arg(vm, call, 0)?;
     let local = vm.to_text(&call.arg(1))?;
+    let Some(name) = vm
+        .page
+        .namespaced_attribute_name(node, namespace.as_deref(), &local)
+    else {
+        return Ok(None);
+    };
+    if name == crate::document::POPOVER_OPEN_ATTRIBUTE {
+        return Ok(None);
+    }
     Ok(vm
         .page
-        .with_element(node, |_, attributes| {
-            attributes
-                .get_key_value(&local)
-                .filter(|(name, _)| name.as_str() != crate::document::POPOVER_OPEN_ATTRIBUTE)
-                .or_else(|| {
-                    attributes.iter().find(|(name, _)| {
-                        !name.starts_with(char::is_control)
-                            && name
-                                .split_once(':')
-                                .is_some_and(|(_, after)| after == local)
-                    })
-                })
-                .map(|(name, value)| (name.clone(), value.clone()))
-        })
-        .flatten())
+        .attribute_value(node, &name)
+        .map(|value| (name, value)))
+}
+
+/** setAttributeNS: the name is validated and extracted, then stored with its namespace, keeping
+its case, since a namespace-aware write is not lowercased the way setAttribute's is. */
+fn set_namespaced_attribute(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+    let namespace = optional_string_arg(vm, call, 0)?;
+    let qualified = vm.to_text(&call.arg(1))?;
+    let value = vm.to_text(&call.arg(2))?;
+    let qname =
+        namespaces::validate_and_extract(namespace.as_deref(), &qualified, NameKind::Attribute)
+            .map_err(|error| name_error(vm, error))?;
+    vm.page
+        .set_namespaced_attribute(node, namespace.as_deref(), &qname, &qualified, &value)
+        .map_err(|error| dom_error(vm, error))?;
+    Ok(JsValue::Undefined)
 }
 
 /** Runs the steps below, then the custom element reactions and records they queued. */
@@ -2282,18 +2550,7 @@ pub(in crate::v9) fn element_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = this_node(vm, &call)?;
     match native_name(&call) {
-        // Attributes carry no namespace here, so the namespaced forms work on the qualified
-        // name: `setAttributeNS(xlink, 'xlink:href', v)` stores `xlink:href`, as a browser's
-        // getAttribute('xlink:href') reads it, and the other forms find a name by its local
-        // part. YouTube's player builds its SVG icons this way.
-        "setAttributeNS" => {
-            let name = vm.to_text(&call.arg(1))?;
-            let value = vm.to_text(&call.arg(2))?;
-            vm.page
-                .set_attribute(node, &name, Some(&value))
-                .map_err(|error| dom_error(vm, error))?;
-            Ok(JsValue::Undefined)
-        }
+        "setAttributeNS" => set_namespaced_attribute(vm, node, &call),
         "getAttributeNS" => match namespaced_attribute(vm, node, &call)? {
             Some((_, value)) => JsValue::string(&value).map_err(Into::into),
             None => Ok(JsValue::Null),
@@ -2304,7 +2561,7 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "removeAttributeNS" => {
             if let Some((name, _)) = namespaced_attribute(vm, node, &call)? {
                 vm.page
-                    .set_attribute(node, &name, None)
+                    .set_named_attribute(node, &name, None)
                     .map_err(|error| dom_error(vm, error))?;
             }
             Ok(JsValue::Undefined)
@@ -2391,37 +2648,18 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
             Ok(JsValue::Boolean(wanted))
         }
+        "getAttributeNode"
+        | "getAttributeNodeNS"
+        | "setAttributeNode"
+        | "setAttributeNodeNS"
+        | "removeAttributeNode" => attr_dom::element_attr_method(vm, node, &call),
         "querySelector" | "querySelectorAll" => query(vm, node, &call),
-        "getElementsByTagName" => {
-            let tag = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
-            let found = search(vm, node, |page, id| {
-                page.is_element(id) && (tag == "*" || page.tag(id) == tag)
-            });
-            node_list(vm, found)
-        }
-        "getElementsByClassName" => {
-            let wanted: Vec<String> = vm
-                .to_text(&call.arg(0))?
-                .split_ascii_whitespace()
-                .map(String::from)
-                .collect();
-            let found = search(vm, node, |page, id| {
-                let classes = page
-                    .view(id)
-                    .and_then(|view| view.attributes.get("class").cloned())
-                    .unwrap_or_default();
-                !wanted.is_empty()
-                    && wanted
-                        .iter()
-                        .all(|class| classes.split_ascii_whitespace().any(|c| c == class))
-            });
-            node_list(vm, found)
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
+            live_elements(vm, node, &call)
         }
         "matches" | "webkitMatchesSelector" | "msMatchesSelector" => {
             let text = vm.to_text(&call.arg(0))?;
-            let list = selector::parse(&text).map_err(|message| {
-                vm.syntax_error(&format!("Failed to execute 'matches': {message}"))
-            })?;
+            let list = parse_selector(vm, "matches", &text)?;
             Ok(JsValue::Boolean(selector::matches(
                 &mut vm.page,
                 &vm.heap,
@@ -2432,9 +2670,7 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "closest" => {
             let text = vm.to_text(&call.arg(0))?;
-            let list = selector::parse(&text).map_err(|message| {
-                vm.syntax_error(&format!("Failed to execute 'closest': {message}"))
-            })?;
+            let list = parse_selector(vm, "closest", &text)?;
             let mut candidates = vec![node];
             candidates.extend(vm.page.ancestors(node));
             let found = candidates
@@ -2456,6 +2692,13 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let html = vm.to_text(&call.arg(1))?;
             vm.page
                 .insert_html(node, position, &html)
+                .map_err(|error| dom_error(vm, error))?;
+            Ok(JsValue::Undefined)
+        }
+        "appendHTMLUnsafe" | "prependHTMLUnsafe" | "beforeHTMLUnsafe" | "afterHTMLUnsafe" => {
+            let html = vm.to_text(&call.arg(0))?;
+            vm.page
+                .insert_html(node, unsafe_position(native_name(&call)), &html)
                 .map_err(|error| dom_error(vm, error))?;
             Ok(JsValue::Undefined)
         }
@@ -2527,6 +2770,16 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** insertAdjacent* positions. */
+/** The insertion point each HTML partial-update method names: append and prepend go inside the element, before and after beside it. */
+fn unsafe_position(method: &str) -> InsertPosition {
+    match method {
+        "prependHTMLUnsafe" => InsertPosition::AfterBegin,
+        "beforeHTMLUnsafe" => InsertPosition::BeforeBegin,
+        "afterHTMLUnsafe" => InsertPosition::AfterEnd,
+        _ => InsertPosition::BeforeEnd,
+    }
+}
+
 fn position(vm: &mut Vm, value: &JsValue) -> Res<InsertPosition> {
     let text = vm.to_text(value)?.to_ascii_lowercase();
     Ok(match text.as_str() {
@@ -2678,15 +2931,45 @@ pub(super) fn search(
         .collect()
 }
 
+/** Parse a selector for `method`. A bad selector is the DOM's SyntaxError DOMException (code 12),
+which scripts test by name, not the JavaScript SyntaxError class. */
+fn parse_selector(vm: &mut Vm, method: &str, text: &str) -> Res<selector::SelectorList> {
+    selector::parse(text).map_err(|message| {
+        vm.dom_exception(
+            "SyntaxError",
+            &format!("Failed to execute '{method}' on 'Document': {message}"),
+        )
+    })
+}
+
+/** getElementsByTagName, getElementsByTagNameNS and getElementsByClassName: a live list rooted at `root`. The filter comes from the method and its arguments; `live_collection` keeps the answer current. */
+fn live_elements(vm: &mut Vm, root: usize, call: &Call) -> Res<JsValue> {
+    let filter = match native_name(call) {
+        "getElementsByClassName" => Filter::Class(class_names(vm, &call.arg(0))?),
+        "getElementsByTagNameNS" => {
+            let namespace = collections::namespace_arg(vm, &call.arg(0))?;
+            let local = vm.to_text(&call.arg(1))?;
+            tag_ns_filter(&namespace, &local)
+        }
+        _ => Filter::Tag(vm.to_text(&call.arg(0))?.to_ascii_lowercase()),
+    };
+    live_collection(vm, root, filter)
+}
+
+/** The whitespace-separated class names a getElementsByClassName call asks for, in order. */
+fn class_names(vm: &mut Vm, value: &JsValue) -> Res<Vec<String>> {
+    Ok(vm
+        .to_text(value)?
+        .split_ascii_whitespace()
+        .map(String::from)
+        .collect())
+}
+
 /** querySelector and querySelectorAll. */
 pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     let all = native_name(call) == "querySelectorAll";
     let text = vm.to_text(&call.arg(0))?;
-    let list = selector::parse(&text).map_err(|message| {
-        vm.syntax_error(&format!(
-            "Failed to execute 'querySelector' on 'Document': {message}"
-        ))
-    })?;
+    let list = parse_selector(vm, "querySelector", &text)?;
     let scope = (node != DOCUMENT).then_some(node);
     vm.charge(
         vm.page
@@ -2857,7 +3140,10 @@ pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .unwrap_or_else(|| vm.page.environment.title.clone());
             JsValue::string(&title).map_err(Into::into)
         }
-        "URL" | "documentURI" => JsValue::string(&vm.page.state.href).map_err(Into::into),
+        "URL" | "documentURI" | "baseURI" => {
+            JsValue::string(&vm.page.state.href).map_err(Into::into)
+        }
+        "contentType" => JsValue::string(super::frames::HTML_TYPE).map_err(Into::into),
         "referrer" => JsValue::string(&vm.page.environment.referrer).map_err(Into::into),
         "domain" => {
             let host = super::net::parse_url(&vm.page.state.href)
@@ -2911,6 +3197,9 @@ pub(in crate::v9) fn document_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => {
             let key = vm.to_text(&call.arg(0))?;
+            if key.is_empty() {
+                return Ok(JsValue::Null);
+            }
             let found = elements.into_iter().find(|id| {
                 let view = vm.page.view(*id);
                 view.is_some_and(|view| {
@@ -2927,6 +3216,20 @@ pub(in crate::v9) fn document_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
 what it holds, short of a foreignObject), as Chromium gives it. Icon loaders compare it. */
 fn qualified_name(vm: &mut Vm, node: usize) -> String {
     let tag = vm.page.tag(node);
+    // A script-created element's tag is its qualified name, and only HTML elements upper-case it.
+    if let Some(record) = vm.page.state.element_ns.get(&node) {
+        // Only an HTML-namespace element in an HTML document upper-cases its name; an XHTML
+        // document keeps the case the script gave.
+        let html_element = record.namespace.as_deref() == Some(HTML_NAMESPACE);
+        let document = owning_document_id(vm, node);
+        let html_document =
+            super::frames::content_type_of(vm, document) == super::frames::HTML_TYPE;
+        return if html_element && html_document {
+            tag.to_ascii_uppercase()
+        } else {
+            tag
+        };
+    }
     let mut cursor = Some(node);
     let mut depth = 0;
     while let Some(current) = cursor {
@@ -3011,42 +3314,30 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             });
             node_list(vm, found)
         }
-        "getElementsByTagName"
-        | "getElementsByClassName"
-        | "querySelector"
-        | "querySelectorAll" => {
-            if name.starts_with("query") {
-                return query(vm, DOCUMENT, &call);
-            }
-            let this = call.this.clone();
-            let html = JsValue::Object(match wrap(vm, HTML)? {
-                JsValue::Object(id) => id,
-                _ => return Ok(JsValue::Null),
-            });
-            let _ = this;
-            let method = vm.get(&html, &Key::from(name))?;
-            vm.call(method, html, call.args.to_vec())
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
+            live_elements(vm, DOCUMENT, &call)
         }
-        "createElement" | "createElementNS" => {
-            let tag = if name == "createElementNS" {
-                vm.to_text(&call.arg(1))?
-            } else {
-                vm.to_text(&call.arg(0))?
-            };
-            let tag = tag.to_ascii_lowercase();
-            if tag.is_empty()
-                || !tag
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':')
-            {
-                return Err(vm.throw(
-                    crate::v9::vm::error::ErrorKind::Error,
-                    "InvalidCharacterError: The tag name provided is not a valid name.",
+        "querySelector" | "querySelectorAll" => query(vm, DOCUMENT, &call),
+        "createElement" => create_element_call(vm, &call, false),
+        "createElementNS" => create_element_call(vm, &call, true),
+        "createCDATASection" => {
+            // The page document refuses CDATA as HTML does; another document (`new Document()`)
+            // takes it. ponytail: a CDATA section is kept as a text node, so its nodeType is 3.
+            if this_node(vm, &call)? == DOCUMENT {
+                return Err(vm.dom_exception(
+                    "NotSupportedError",
+                    "CDATA sections are not supported in HTML documents.",
                 ));
             }
-            let options = call.arg(if name == "createElementNS" { 2 } else { 1 });
-            components::create_element(vm, &tag, &options)
+            let text = vm.to_text(&call.arg(0))?;
+            let node = vm
+                .page
+                .create("#text", Some(text))
+                .map_err(|error| dom_error(vm, error))?;
+            wrap(vm, node)
         }
+        "createAttribute" => attr_dom::create_attribute(vm, &call, false),
+        "createAttributeNS" => attr_dom::create_attribute(vm, &call, true),
         "createTextNode" | "createComment" => {
             let text = vm.to_text(&call.arg(0))?;
             let tag = if name == "createTextNode" {
@@ -3099,6 +3390,9 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "importNode" | "adoptNode" => {
             let node = arg_node(vm, &call, 0)?;
             if name == "adoptNode" {
+                if vm.page.parent(node).is_some() {
+                    remove_node(vm, node)?;
+                }
                 return Ok(call.arg(0));
             }
             let copy = clone_node(vm, node, call.arg(1).truthy())?;
@@ -3153,22 +3447,24 @@ fn token_iteration(vm: &mut Vm, call: &Call, name: &str, set: &TokenSet) -> Res<
     vm.call(method, array, Vec::new())
 }
 
-/** The class_list steps themselves: read the token set, run the method on it, and write the
-attribute back only when the set changed. */
+/** The class_list steps themselves: read the token set, run the method on it, and when the method
+mutates the set, run the update steps: write the attribute back if it exists or the set is not empty. */
 fn class_list_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (node, attribute) = match super::host_data(vm, &call.this) {
-        Some(HostData::ClassList(node)) => (node, "class".to_string()),
-        Some(HostData::TokenList(node, attribute)) => (node, attribute),
-        _ => return Err(vm.type_error("Illegal invocation")),
+    let Some((node, attribute)) = token_list_target(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
     };
     let mut arguments = Vec::new();
     for value in call.args {
         arguments.push(vm.to_text(value)?);
     }
     let name = native_name(&call).to_string();
-    let mut set = token_set_for(vm, node, &attribute);
-    let (result, changed) = token_method(vm, &call, &name, &arguments, &mut set)?;
-    if changed {
+    let current = vm.page.attribute_value(node, &attribute);
+    let present = current.is_some();
+    let mut set = token_set_for(vm, node, &attribute, current.as_deref().unwrap_or(""));
+    let tag = vm.page.tag(node);
+    let supported = token_list::supported_tokens(&tag, &attribute);
+    let (result, updated) = token_method(vm, &call, &name, &arguments, &mut set, supported)?;
+    if updated && (present || !set.is_empty()) {
         let text = set.serialize();
         vm.page
             .set_attribute(node, &attribute, Some(&text))
@@ -3179,75 +3475,169 @@ fn class_list_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(result)
 }
 
-/** The token set of an element's attribute: the one this request kept while the attribute still
-holds the text it was read from, otherwise one parsed from the attribute as it is now. */
-fn token_set_for(vm: &mut Vm, node: usize, attribute: &str) -> TokenSet {
-    let current = vm.page.attribute_value(node, attribute).unwrap_or_default();
-    match vm.page.token_sets.remove(&(node, attribute.to_string())) {
-        Some(set) if set.source() == current => set,
-        _ => TokenSet::parse(&current),
+/** The node and attribute a token list object stands for, or None for any other value. */
+fn token_list_target(vm: &Vm, value: &JsValue) -> Option<(usize, String)> {
+    match super::host_data(vm, value)? {
+        HostData::ClassList(node) => Some((node, "class".to_string())),
+        HostData::TokenList(node, attribute) => Some((node, attribute)),
+        _ => None,
     }
 }
 
-/** Runs one DOMTokenList method over its set. Returns the method's value and whether the set
-changed, so the caller writes the attribute only when it must. */
+/** The DOMTokenList an element hands out for an attribute. The same object comes back on every read,
+as the DOM standard requires, so `el.classList === el.classList`; the cache is weak, as node wrappers are. */
+fn token_list_object(vm: &mut Vm, node: usize, attribute: &str) -> Res<JsValue> {
+    if let Some(id) = vm
+        .page
+        .state
+        .token_lists
+        .get(&node)
+        .and_then(|by_attribute| by_attribute.get(attribute))
+        && vm.heap.get(*id).is_some()
+    {
+        return Ok(JsValue::Object(*id));
+    }
+    let data = if attribute == "class" {
+        HostData::ClassList(node)
+    } else {
+        HostData::TokenList(node, attribute.to_string())
+    };
+    let proto = realm().ids.class_list_prototype;
+    let id = vm.alloc(Object::new(Class::Host(Box::new(data)), Some(proto)))?;
+    vm.page
+        .state
+        .token_lists
+        .entry(node)
+        .or_default()
+        .insert(attribute.to_string(), id);
+    Ok(JsValue::Object(id))
+}
+
+/** The `value` setter: assigning a token list's value writes its attribute, as the IDL says. */
+pub(in crate::v9) fn class_list_value_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| class_list_value_steps(vm, call))
+}
+
+/** The value setter's steps: the attribute takes the text as it is given. */
+fn class_list_value_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some((node, attribute)) = token_list_target(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    let text = vm.to_text(&call.arg(0))?;
+    vm.page
+        .set_attribute(node, &attribute, Some(&text))
+        .map_err(|error| dom_error(vm, error))?;
+    Ok(JsValue::Undefined)
+}
+
+/** The token set of an attribute: the one this request kept while the attribute still holds the
+text it was read from, otherwise one parsed from `current` now. */
+/** An indexed read of a token list (`classList[0]`): the token at that rank, found in O(log n) through
+the cached set. Other keys belong to no token list, so they are left to the object. */
+fn token_own(vm: &mut Vm, node: usize, attribute: &str, key: &Key) -> Res<Option<Prop>> {
+    let Some(index) = key.index() else {
+        return Ok(None);
+    };
+    let current = vm.page.attribute_value(node, attribute);
+    let set = token_set_for(vm, node, attribute, current.as_deref().unwrap_or(""));
+    let token = set.nth(index as usize).map(str::to_string);
+    vm.page
+        .token_sets
+        .insert((node, attribute.to_string()), set);
+    match token {
+        Some(token) => Ok(Some(Prop {
+            slot: Slot::Data(JsValue::String(JsString::from_utf8(&token)?)),
+            attrs: crate::v9::vm::heap::ENUMERABLE,
+        })),
+        None => Ok(None),
+    }
+}
+
+/** The token set an attribute's text parses to, reused from the cache while the text matches. */
+fn token_set_for(vm: &mut Vm, node: usize, attribute: &str, current: &str) -> TokenSet {
+    match vm.page.token_sets.remove(&(node, attribute.to_string())) {
+        Some(set) if set.source() == current => set,
+        _ => TokenSet::parse(current),
+    }
+}
+
+/** Runs one DOMTokenList method over its set. Returns its value and whether it runs the update
+steps: add and remove always do, while toggle and replace do only when they change the set. The
+arguments a method needs are counted first, and the tokens a mutating method adds or removes are
+checked before the set changes. */
 fn token_method(
     vm: &mut Vm,
     call: &Call,
     name: &str,
     arguments: &[String],
     set: &mut TokenSet,
+    supported: Option<&[&str]>,
 ) -> Res<(JsValue, bool)> {
-    let first = arguments.first().map_or("", String::as_str);
+    let required = token_list::required_arguments(name);
+    if arguments.len() < required {
+        let message =
+            format!("Failed to execute '{name}' on 'DOMTokenList': {required} argument required.");
+        return Err(vm.type_error(&message));
+    }
+    if token_list::MUTATING_METHODS.contains(&name) {
+        let checked = match name {
+            "add" | "remove" => arguments,
+            _ => &arguments[..required],
+        };
+        token_list::check_tokens(checked).map_err(|error| name_error(vm, error))?;
+    }
+    let value = |value: JsValue| Ok((value, false));
     match name {
-        "contains" => {
-            let found = arguments.first().is_some_and(|wanted| set.contains(wanted));
-            Ok((JsValue::Boolean(found), false))
-        }
-        "item" => Ok((item_value(vm, call, set)?, false)),
-        "length" => Ok((JsValue::Number(set.len() as f64), false)),
-        "value" | "toString" => Ok((JsValue::string(set.source())?, false)),
+        "contains" => value(JsValue::Boolean(set.contains(&arguments[0]))),
+        "item" => value(item_value(vm, call, set)?),
+        "length" => value(JsValue::Number(set.len() as f64)),
+        "value" | "toString" => value(JsValue::string(set.source())?),
         // DOMTokenList is iterable over its ordered token set, as in browsers: YouTube spreads
         // and for-of loops classList, and a TypeError there stopped its rendering.
-        "values" | "keys" | "entries" | "forEach" => {
-            Ok((token_iteration(vm, call, name, set)?, false))
-        }
-        "supports" => Err(vm.type_error("DOMTokenList has no supported tokens.")),
+        "values" | "keys" | "entries" | "forEach" => value(token_iteration(vm, call, name, set)?),
+        "supports" => match supported {
+            Some(list) => value(JsValue::Boolean(token_list::is_supported(
+                list,
+                &arguments[0],
+            ))),
+            None => Err(vm.type_error("DOMTokenList has no supported tokens.")),
+        },
         "add" => {
-            let mut changed = false;
             for token in arguments {
-                changed |= set.insert(token);
+                set.insert(token);
             }
-            Ok((JsValue::Undefined, changed))
+            Ok((JsValue::Undefined, true))
         }
         "remove" => {
-            let mut changed = false;
             for token in arguments {
-                changed |= set.remove(token);
+                set.remove(token);
             }
-            Ok((JsValue::Undefined, changed))
+            Ok((JsValue::Undefined, true))
         }
-        "toggle" => {
-            let present = set.contains(first);
-            let wanted = if call.args.len() > 1 {
-                call.arg(1).truthy()
-            } else {
-                !present
-            };
-            let changed = if wanted {
-                set.insert(first)
-            } else {
-                set.remove(first)
-            };
-            Ok((JsValue::Boolean(wanted), changed))
-        }
+        "toggle" => toggle(call, set, &arguments[0]),
         "replace" => {
-            let new = arguments.get(1).map_or("", String::as_str);
-            let found = set.replace(first, new);
+            let found = set.replace(&arguments[0], &arguments[1]);
             Ok((JsValue::Boolean(found), found))
         }
-        _ => Ok((JsValue::Undefined, false)),
+        _ => value(JsValue::Undefined),
     }
+}
+
+/** toggle(token, force): a force that is given decides the outcome; otherwise the token flips.
+Returns the outcome and whether the set changed, since only a change runs the update steps. */
+fn toggle(call: &Call, set: &mut TokenSet, token: &str) -> Res<(JsValue, bool)> {
+    let forced = !matches!(call.arg(1), JsValue::Undefined);
+    let wanted = if forced {
+        call.arg(1).truthy()
+    } else {
+        !set.contains(token)
+    };
+    let changed = if wanted {
+        set.insert(token)
+    } else {
+        set.remove(token)
+    };
+    Ok((JsValue::Boolean(wanted), changed))
 }
 
 /** DOMTokenList.item(index): the token at that index, or null past the end or below zero. */

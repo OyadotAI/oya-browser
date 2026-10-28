@@ -290,6 +290,37 @@ bindings to macOS Security.framework for the default desktop cookie profile.
 They are licensed MIT OR Apache-2.0; their license texts ship with Cargo
 dependencies.
 
+## Unicode 17 emoji data extracted from Test262
+
+The generated `crates/v9/src/v9/regexp/emoji17.txt` derives from Test262's Unicode 17
+generated regular-expression property lists. Those files carry Copyright 2025 Mathias
+Bynens and the Test262 BSD license below. The underlying Unicode data is Copyright
+© 2025 Unicode, Inc. and covered by the Unicode License V3 reproduced below.
+
+Copyright (C) 2012 Ecma International
+Copyright (C) 2025 Mathias Bynens
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list
+   of conditions and the following disclaimer in the documentation and/or other materials
+   provided with the distribution.
+3. Neither the name of the authors nor Ecma International may be used to endorse or
+   promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE ECMA INTERNATIONAL "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ECMA INTERNATIONAL BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 ## ICU4X Unicode data
 
 V9 uses pinned ICU4X `icu_normalizer` and `icu_properties` 2.3.0 for

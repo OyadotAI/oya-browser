@@ -9,6 +9,21 @@ use crate::{
     v9::source::whitespace,
 };
 impl JsString {
+    /** Iterate UTF-16 units without requiring a contiguous backing allocation. */
+    pub fn code_units(&self) -> impl Iterator<Item = u16> + '_ {
+        let flat = self.flat_units();
+        (0..self.len()).map(move |index| match flat {
+            Some(units) => units[index],
+            None => self.unit_at(index).expect("valid string index"),
+        })
+    }
+    /** Borrow code-point slices only when their contiguous backing fits the string bound. */
+    pub fn try_code_points(&self) -> EngineResult<CodePointCursor<'_>> {
+        Ok(CodePointCursor {
+            units: self.try_as_units()?,
+            offset: 0,
+        })
+    }
     /** Default string iteration borrows code-point slices while preserving unmatched surrogates. */
     pub fn code_points(&self) -> CodePointCursor<'_> {
         CodePointCursor {
@@ -22,16 +37,13 @@ impl JsString {
     }
     /// Only ECMAScript edge whitespace is removed; surrogate and interior units remain unchanged.
     pub fn trimmed(&self) -> EngineResult<Self> {
-        let units = self.as_units();
-        let start = units
-            .iter()
-            .position(|unit| !space(*unit))
+        let start = (0..self.len())
+            .position(|index| !space(self.unit_at(index).expect("valid string index")))
             .unwrap_or(self.len());
-        let end = units
-            .iter()
-            .rposition(|unit| !space(*unit))
+        let end = (start..self.len())
+            .rfind(|index| !space(self.unit_at(*index).expect("valid string index")))
             .map_or(start, |index| index + 1);
-        Self::from_units(units[start..end].to_vec())
+        self.slice_range(start, end)
     }
     /// Literal splitting follows requested limits while rejecting only an actual excess output field.
     pub fn split_literal(&self, separator: Option<&Self>, limit: u32) -> EngineResult<Vec<Self>> {
@@ -52,31 +64,33 @@ impl JsString {
         if count > VM_ARRAY_LENGTH {
             return Err(split_limit());
         }
-        self.as_units()
-            .iter()
-            .take(count)
-            .map(|unit| Self::from_units(vec![*unit]))
+        (0..count)
+            .map(|index| self.slice_range(index, index + 1))
             .collect()
     }
     /** Prefix fallback keeps exact literal matching linear even for repeated near-matching text. */
     fn split_matches(&self, separator: &Self, limit: u32) -> EngineResult<Vec<Self>> {
-        let units = self.as_units();
-        let separator = separator.as_units();
+        let separator = separator.try_as_units()?;
         let prefix = prefix_lengths(separator);
         let (mut parts, mut matched, mut start) = (Vec::new(), 0, 0);
-        for (index, unit) in units.iter().enumerate() {
-            matched = next_match(separator, &prefix, matched, *unit);
+        for index in 0..self.len() {
+            matched = next_match(
+                separator,
+                &prefix,
+                matched,
+                self.unit_at(index).expect("valid string index"),
+            );
             if matched != separator.len() {
                 continue;
             }
-            push_part(&mut parts, &units[start..index + 1 - separator.len()])?;
+            push_part(&mut parts, self, start, index + 1 - separator.len())?;
             if parts.len() == limit as usize {
                 return Ok(parts);
             }
             start = index + 1;
             matched = 0;
         }
-        push_part(&mut parts, &units[start..])?;
+        push_part(&mut parts, self, start, self.len())?;
         Ok(parts)
     }
 }
@@ -125,11 +139,16 @@ fn next_match(pattern: &[u16], prefix: &[usize], mut matched: usize, unit: u16) 
     matched
 }
 /** Budget failure happens before copying or allocating an excess output field. */
-fn push_part(parts: &mut Vec<JsString>, units: &[u16]) -> EngineResult<()> {
+fn push_part(
+    parts: &mut Vec<JsString>,
+    text: &JsString,
+    start: usize,
+    end: usize,
+) -> EngineResult<()> {
     if parts.len() >= VM_ARRAY_LENGTH {
         return Err(split_limit());
     }
-    parts.push(JsString::from_units(units.to_vec())?);
+    parts.push(text.slice_range(start, end)?);
     Ok(())
 }
 /** Literal output and heap arrays share the same named element cap. */

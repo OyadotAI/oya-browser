@@ -91,7 +91,7 @@ impl Vm<'_> {
     pub(super) fn render_name_snapshot(&mut self, name: &FunctionName) -> Res<JsValue> {
         // V8 resolves a wrapped name by native recursion, so the chain gets the native bound.
         let available = crate::constants::VM_NESTING_DEPTH
-            .saturating_sub(self.frames.len() + self.native_depth);
+            .saturating_sub(self.stack_capacity_used());
         if name.wrapped as usize >= available && name.wrapped != 0 {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
@@ -117,7 +117,7 @@ impl Vm<'_> {
         for _ in 0..name.prefixes {
             units.extend_from_slice(super::data::BOUND_PREFIX)
         }
-        units.extend_from_slice(tail.as_units());
+        units.extend(tail.code_units());
         Ok(JsValue::String(JsString::from_units(units)?))
     }
     /** Tail accounting follows the same existing unit budget as ordinary own string properties. */

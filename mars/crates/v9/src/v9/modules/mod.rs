@@ -342,7 +342,7 @@ impl Modules {
                 .push((offset, offset + length, module.url.clone()));
             if module.classic {
                 let code = match &module.source {
-                    Some(source) => compile_classic(vm, source, offset),
+                    Some(source) => compile_classic(vm, source, offset, &module.url),
                     None => Err(unavailable(&module.url)),
                 };
                 modules.loaded.insert(module.url.clone(), code);
@@ -507,7 +507,7 @@ fn inline_key(index: usize) -> String {
 fn unavailable(url: &str) -> EngineError {
     EngineError::new(
         "module_unavailable",
-        format!("Failed to load module script {url}."),
+        format!("Failed to load module script {url}"),
         "Check that the module is reachable and served as JavaScript.",
     )
 }
@@ -547,7 +547,30 @@ fn validate(input: &ModuleInput, sources: usize) -> EngineResult<()> {
 type ModuleCompilation = Result<(Arc<Code>, Arc<ModuleInfo>), EngineError>;
 
 /** Compile a delivered classic script at its fixed offset, through the process code cache. */
-fn compile_classic(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<Arc<Code>> {
+fn compile_classic(
+    vm: &mut Vm,
+    source: &str,
+    offset: usize,
+    path: &str,
+) -> EngineResult<Arc<Code>> {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8
+        && (vm.page.environment.conformance_native_main_source.is_some()
+            || vm.page.environment.conformance_native_async_helper
+            || (vm
+                .page
+                .environment
+                .conformance_native_wasm_exceptions_helper
+                && path == "test/mjsunit/wasm/exceptions-utils.js"))
+    {
+        return vm.registry.script_keyed(
+            super::compile::native_fixture_key(source),
+            source,
+            offset,
+            || super::parse_native_fixture(source, offset, None),
+        );
+    }
+    let _ = path;
     vm.registry
         .script(source, offset, || super::parse_at(source, offset, None))
 }

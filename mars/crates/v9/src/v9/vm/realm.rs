@@ -141,6 +141,9 @@ pub(in crate::v9) struct Ids {
     pub regexp_iterator_prototype: ObjectId,
     pub iterator_prototype: ObjectId,
     pub window_prototype: ObjectId,
+    /** Shell globals have a distinct prototype rather than sharing Object.prototype. */
+    #[cfg(feature = "conformance")]
+    pub shell_global_prototype: ObjectId,
     pub array_values: ObjectId,
     /** %ThrowTypeError%: the frozen thrower behind restricted `caller`, `arguments` and `callee`. */
     pub throw_type_error: ObjectId,
@@ -150,18 +153,24 @@ pub(in crate::v9) struct Ids {
     pub html_element_prototype: ObjectId,
     pub text_prototype: ObjectId,
     pub document_prototype: ObjectId,
+    /** XMLDocument.prototype: the prototype of documents createDocument makes, an XML document. */
+    pub xml_document_prototype: ObjectId,
     pub document: ObjectId,
     /** The page's `document.implementation`, and the prototype script-made ones share. */
     pub implementation: ObjectId,
     pub implementation_prototype: ObjectId,
     /** `document.all`: the one object with [[IsHTMLDDA]], falsy and typeof "undefined". */
     pub document_all: ObjectId,
+    /** The prototype of every frame window: it holds the page's interface constructors and
+    DOMException, so a frame's window reaches them without a copy per frame. */
+    pub window_interfaces: ObjectId,
     pub event_prototype: ObjectId,
     pub custom_event_prototype: ObjectId,
     pub style_prototype: ObjectId,
     pub class_list_prototype: ObjectId,
     pub dataset_prototype: ObjectId,
     pub node_list_prototype: ObjectId,
+    pub html_collection_prototype: ObjectId,
     pub xhr_prototype: ObjectId,
     pub response_prototype: ObjectId,
     pub headers_prototype: ObjectId,
@@ -177,7 +186,10 @@ pub(in crate::v9) struct Ids {
     pub abort_signal_prototype: ObjectId,
     pub idle_deadline_prototype: ObjectId,
     pub range_prototype: ObjectId,
+    pub static_range_prototype: ObjectId,
     pub named_node_map_prototype: ObjectId,
+    /** The Attr prototype: an Attr is a Node whose members are its name, value and owner. */
+    pub attr_prototype: ObjectId,
     pub style_sheet_prototype: ObjectId,
     pub request_prototype: ObjectId,
     pub selection_prototype: ObjectId,
@@ -337,6 +349,15 @@ impl Builder {
     }
     /** Add or replace a static property. */
     pub fn put(&mut self, target: ObjectId, key: Key, value: Static, attrs: u8) {
+        #[cfg(feature = "conformance")]
+        {
+            if let Key::Str(text) = &key {
+                text.mark_old();
+            }
+            if let Static::Value(JsValue::String(text)) = &value {
+                text.mark_old();
+            }
+        }
         let def = self.def(target);
         if let Some(index) = def.index.get(&key) {
             def.props[*index] = (key, value, attrs);
@@ -419,14 +440,20 @@ impl Builder {
         getter: Option<NativeFn>,
         setter: Option<NativeFn>,
     ) {
+        self.builtin_accessor_with_attrs(target, name, getter, setter, super::heap::CONFIGURABLE);
+    }
+    /** Some legacy APIs expose enumerable accessors while retaining native getter identity. */
+    pub fn builtin_accessor_with_attrs(
+        &mut self,
+        target: ObjectId,
+        name: &'static str,
+        getter: Option<NativeFn>,
+        setter: Option<NativeFn>,
+        attrs: u8,
+    ) {
         let get = getter.map(|function| self.accessor_function(name, 0, "get", function));
         let set = setter.map(|function| self.accessor_function(name, 1, "set", function));
-        self.put(
-            target,
-            Key::from(name),
-            Static::Accessor(get, set),
-            super::heap::CONFIGURABLE,
-        );
+        self.put(target, Key::from(name), Static::Accessor(get, set), attrs);
     }
     /** Display labels retain the accessor prefix without changing existing dispatch names or leaking static strings. */
     fn accessor_function(
@@ -445,11 +472,6 @@ impl Builder {
     pub fn global(&mut self, name: &'static str, value: ObjectId) {
         self.globals.push((name, JsValue::Object(value)));
     }
-    /** Expose a primitive constant, such as a host-declared length, as a global binding. */
-    #[cfg(feature = "conformance")]
-    pub fn global_value(&mut self, name: &'static str, value: JsValue) {
-        self.globals.push((name, value));
-    }
     /** Alias an existing value under another name. */
     pub fn alias(&mut self, target: ObjectId, name: &str, value: ObjectId) {
         self.value(target, name, JsValue::Object(value), HIDDEN_ATTRS);
@@ -458,7 +480,21 @@ impl Builder {
 
 /** A string value from builder text. */
 pub(in crate::v9) fn string(text: &str) -> JsValue {
-    JsValue::String(JsString::from_utf8(text).expect("builtin text fits"))
+    let value = JsString::from_utf8(text).expect("builtin text fits");
+    #[cfg(feature = "conformance")]
+    value.mark_old();
+    JsValue::String(value)
+}
+
+/** Gathers every global the builder exposed onto one object, the prototype of frame windows. It runs
+after all installs, so it sees every interface; each frame window then reaches the constructors
+through its prototype chain in O(1), and nothing is copied per frame. */
+fn install_window_interfaces(builder: &mut Builder) {
+    let interfaces = builder.object(Some(builder.ids.object_prototype));
+    for (name, value) in builder.globals.clone() {
+        builder.value(interfaces, name, value, HIDDEN_ATTRS);
+    }
+    builder.ids.window_interfaces = interfaces;
 }
 
 /** Build every intrinsic. */
@@ -474,6 +510,11 @@ fn build() -> Realm {
     let shell_globals = builder.globals.clone();
     super::super::platform::install(&mut builder);
     super::super::modules::install(&mut builder);
+    install_window_interfaces(&mut builder);
+    #[cfg(feature = "conformance")]
+    {
+        builder.ids.shell_global_prototype = builder.object(Some(builder.ids.object_prototype));
+    }
     Realm {
         objects: builder.objects,
         natives: builder.natives,

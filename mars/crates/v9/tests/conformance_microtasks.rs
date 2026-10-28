@@ -170,3 +170,16 @@ fn callback_context_and_native_captures_survive_gc_after_request_transport() {
     );
     assert_eq!(common::global(&execution, "r"), "41");
 }
+
+/** Timer exceptions report to the callback's creation realm after state transport. */
+#[test]
+fn timer_exception_uses_callback_realm_and_preserves_original_value() {
+    let source = "const other=Realm.createAllowCrossRealmAccess();Realm.shared={calls:[]};Realm.eval(other,`globalThis.onerror=(message,source,line,column,error)=>{Realm.shared.calls.push(Realm.current()+':'+error.message);return true};setTimeout(()=>{throw Error('foreign')},0)`);onerror=()=>{Realm.shared.calls.push('root');return true};let r;setTimeout(()=>r=Realm.shared.calls.join(),0);";
+    let sources = vec![source.to_string()];
+    let host = common::host();
+    let environment = environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 10).unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::global(&resumed, "r"), "1:foreign");
+}

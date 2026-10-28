@@ -29,7 +29,7 @@ pub(super) enum Reason {
 /** Formatting only reads parser-owned units and never repeats the input's authored ToString operation. */
 pub(super) fn error(
     vm: &mut Vm,
-    units: &[u16],
+    units: Input<'_>,
     position: usize,
     reason: Reason,
 ) -> crate::v9::vm::Thrown {
@@ -41,7 +41,7 @@ pub(super) fn error(
 }
 
 /** Specific grammar failures carry their original source position even at end of input. */
-fn located(units: &[u16], position: usize, reason: Reason) -> String {
+fn located(units: Input<'_>, position: usize, reason: Reason) -> String {
     let description = match reason {
         Reason::UnterminatedString => "Unterminated string in JSON",
         Reason::ControlCharacter => "Bad control character in string literal in JSON",
@@ -64,12 +64,15 @@ fn located(units: &[u16], position: usize, reason: Reason) -> String {
 }
 
 /** Only CR and LF delimit JSON diagnostic lines; a CRLF pair contributes one break. */
-fn coordinates(units: &[u16], position: usize) -> (usize, usize) {
+fn coordinates(units: Input<'_>, position: usize) -> (usize, usize) {
     let end = position.min(units.len());
     let (mut cursor, mut line, mut line_start) = (0, 1, 0);
     while cursor < end {
-        if matches!(units[cursor], 0x0a | 0x0d) {
-            if units[cursor] == 0x0d && cursor + 1 < end && units[cursor + 1] == 0x0a {
+        if matches!(units.get(cursor), Some(0x0a | 0x0d)) {
+            if units.get(cursor) == Some(0x0d)
+                && cursor + 1 < end
+                && units.get(cursor + 1) == Some(0x0a)
+            {
                 cursor += 1;
             }
             line += 1;
@@ -81,21 +84,28 @@ fn coordinates(units: &[u16], position: usize) -> (usize, usize) {
 }
 
 /** Generic token failures include bounded original text; special common coercion results avoid repeating the token. */
-fn unexpected(units: &[u16], position: usize) -> String {
+fn unexpected(units: Input<'_>, position: usize) -> String {
     let Some(token) = units.get(position) else {
         return "Unexpected end of JSON input".into();
     };
-    let token = String::from_utf16_lossy(&[*token]);
+    let token = String::from_utf16_lossy(&[token]);
     if ["undefined", "NaN", "Infinity", "[object Object]"]
         .iter()
-        .any(|text| units.iter().copied().eq(text.encode_utf16()))
+        .any(|text| {
+            (0..units.len())
+                .filter_map(|index| units.get(index))
+                .eq(text.encode_utf16())
+        })
     {
-        return format!("\"{}\" is not valid JSON", String::from_utf16_lossy(units));
+        return format!(
+            "\"{}\" is not valid JSON",
+            String::from_utf16_lossy(&units.range(0, units.len()))
+        );
     }
     let (start, end) = context_range(units.len(), position);
     let prefix = if start > 0 { "..." } else { "" };
     let suffix = if end < units.len() { "..." } else { "" };
-    let context = String::from_utf16_lossy(&units[start..end]);
+    let context = String::from_utf16_lossy(&units.range(start, end));
     format!("Unexpected token '{token}', {prefix}\"{context}\"{suffix} is not valid JSON")
 }
 

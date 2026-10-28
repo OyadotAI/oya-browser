@@ -1,5 +1,7 @@
 /** js-prototypes imports decode actual setup bytes and install real receiver/constructor wrappers. */
 use super::*;
+/** V8 bounds property dictionaries before allocating them from untrusted setup bytes. */
+const MAX_CONFIGURE_PROPERTIES: u32 = 100_000;
 
 /** Method and constructor dispatchers retain only traced Wasm function captures. */
 pub(super) fn install(b: &mut Builder) -> (u32, u32) {
@@ -71,6 +73,10 @@ impl Setup<'_> {
     fn prototype(&mut self, vm: &mut Vm) -> Res<JsValue> {
         let value = gc::interop_read(vm, &self.prototypes, self.prototype_index)?;
         self.prototype_index += 1;
+        #[cfg(feature = "conformance")]
+        if value.object().is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id)) {
+            return Err(trap(vm, "illegal cast"));
+        }
         if value.object().is_none() && value != JsValue::Null {
             return Err(prototype_error(vm, &value));
         }
@@ -246,12 +252,18 @@ pub(super) fn configure(vm: &mut Vm, call: Call) -> Res<JsValue> {
         if has_constructor == 1 {
             let constructor = setup.constructor(vm, &prototype, &call.arg(3))?;
             let statics = setup.integer(vm)?;
+            if statics > MAX_CONFIGURE_PROPERTIES {
+                return Err(vm.range_error("Out of memory: too many constructor properties in configureAll"));
+            }
             for _ in 0..statics {
                 vm.charge(1)?;
                 setup.member(vm, &constructor, true)?
             }
         }
         let methods = setup.integer(vm)?;
+        if methods > MAX_CONFIGURE_PROPERTIES {
+            return Err(vm.range_error("Out of memory: too many methods in configureAll"));
+        }
         for _ in 0..methods {
             vm.charge(1)?;
             setup.member(vm, &prototype, false)?

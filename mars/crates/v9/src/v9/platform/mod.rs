@@ -8,6 +8,7 @@ pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 mod channel;
+pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;
 mod console;
 /** DevTools evaluation (Runtime.evaluate and friends) over the page's realm; new entry points only. */
@@ -18,25 +19,38 @@ mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
 mod form_submit;
-mod frames;
+pub(in crate::v9) mod frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
 mod implementation;
 mod install;
 mod interfaces;
 mod keyboard;
+mod xml_frames;
+mod xml_serializer;
 pub(in crate::v9) use keyboard::press_key;
+mod attr;
+mod attr_dom;
+mod listener_store;
+mod namespaces;
 mod net;
 mod nodes;
+pub(in crate::v9) mod observable;
 mod offsets;
+mod performance;
+mod pseudo_attributes;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) mod random;
 mod range;
+mod range_contents;
+mod range_index;
+mod range_live;
 pub(in crate::v9) mod scripts;
 mod scrolling;
 mod selector;
 mod sheets;
 mod timers;
+mod token_list;
 mod token_set;
 mod url_bindings;
 mod url_parser;
@@ -182,7 +196,7 @@ use crate::constants::{VM_CONSOLE_BYTES, VM_CONSOLE_ENTRIES};
 use crate::document::{DomChange, FragmentParser, ScriptChange, ScriptDocument};
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Which change log the app's document engine replays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +215,8 @@ pub enum DomLevel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageEnvironment {
+    /// Host locale used when an Intl constructor receives no explicit locale.
+    pub locale: String,
     /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
     pub regexp_buffer_boundaries: bool,
     /// The document URL; `location` reports it.
@@ -260,6 +276,11 @@ pub struct PageEnvironment {
     /// Metadata elements Eye keeps out of layout, in source order; V9 makes each a head
     /// element at load so scripts find and read them.
     pub metadata: Vec<crate::document::MetadataElement>,
+    /// Frame documents the app fetched, keyed by the URL the frame asked for. A frame whose
+    /// `src` resolves to one shows that document to scripts; an entry without a source records a
+    /// refusal, so the frame's load event still fires with no document.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub frame_documents: BTreeMap<String, FrameDocument>,
     /// The `<html>` element's own attributes, which the document engine keeps apart from its
     /// nodes; `document.documentElement` shows them under what scripts set since.
     pub html_attributes: BTreeMap<String, String>,
@@ -301,15 +322,101 @@ pub struct PageEnvironment {
     /// The engine cannot read files; d8.file only sees exactly this host-owned registry.
     #[cfg(feature = "conformance")]
     pub conformance_sources: BTreeMap<String, String>,
+    /** Allow the explicitly supplied async helper to use the implemented shell intrinsics. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_native_async_helper: bool,
+    /** Only this host-selected classic script receives the approved native intrinsic grammar. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_native_main_source: Option<usize>,
+    /// Permit the exact bundled Wasm exception helper to parse native introspection syntax.
+    #[cfg(feature = "conformance")]
+    pub conformance_native_wasm_exceptions_helper: bool,
+    /// Enable experimental Wasm stringref types only when the shell flag requests them.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_stringref: bool,
+    /// Enable custom descriptors in shell tests only when the actual proposal flag is present.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_custom_descriptors: bool,
+    /// Enable non-sequentially-consistent Wasm atomic encodings in shell tests.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_acquire_release: bool,
+    /** Enable the optional UTF-8 Wasm compile-time imports in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_imported_strings_utf8: bool,
+    /** Enable binary16 Wasm instructions in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_fp16: bool,
+    /** Enable custom descriptor JavaScript interop in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_js_interop: bool,
+    /** Enable 128-bit wide arithmetic instructions in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_wide_arithmetic: bool,
+    /** Permit mixed legacy and modern Wasm exception instructions in test shells. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_allow_mixed_eh: bool,
+    /** Enable experimental Wasm stack-switching binary forms in the shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_wasmfx: bool,
+    /// Enable the experimental shared-everything Wasm feature in the shell.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_shared: bool,
+    /** Enables decoding grouped import encodings only when explicitly requested by d8. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_compact_imports: bool,
+    /// Shell test metadata can select whether its Wasm streaming callback is installed.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_test_streaming: Option<bool>,
+    /// Explicit shell-test work budget; production requests retain their ordinary operation limit.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_operation_limit: Option<usize>,
+    /// Share interned literal backing only when the d8 shared string table flag is enabled.
+    #[cfg(feature = "conformance")]
+    pub conformance_shared_string_table: bool,
+    /// Opt into the shell's shared heap used by shared values and workers.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_shared_heap: bool,
+    /// Permit explicit string sharing without requiring every literal to be interned.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_shared_strings: bool,
+    /// Install the external-string extension only when the d8 host requests its flag.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_expose_externalize_string: bool,
     /// Exact fixture bytes are inert host input; binary reads do not grant engine filesystem access.
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_files: BTreeMap<String, Vec<u8>>,
+    /// Host-verified file and directory existence; absent keys grant no filesystem access.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_exists: BTreeMap<String, bool>,
     /// Run with an ordinary d8 shell global instead of browser Window accessors.
     /// This opt-in host choice keeps browser pages unchanged in conformance builds.
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_d8: bool,
+    /// Script arguments supplied after the shell's `--` delimiter.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_script_arguments: Vec<String>,
     /// The actual unsafe-constructor shell flag bypasses dynamic Function security-token checks.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -370,6 +477,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_max_table_entries: Option<usize>,
+    /// Cap logical Wasm memory pages for a conformance shell session.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_max_memory_pages: Option<usize>,
     /// Native worker authority is scoped by the embedding test and is never serialized into page facts.
     #[cfg(feature = "conformance")]
     #[serde(skip)]
@@ -416,6 +527,7 @@ impl Default for PageEnvironment {
     /** A blank desktop page. */
     fn default() -> Self {
         Self {
+            locale: "en-US".into(),
             regexp_buffer_boundaries: false,
             url: "about:blank".into(),
             referrer: String::new(),
@@ -444,6 +556,7 @@ impl Default for PageEnvironment {
             scripts: Vec::new(),
             script_attributes: Vec::new(),
             metadata: Vec::new(),
+            frame_documents: BTreeMap::new(),
             html_attributes: BTreeMap::new(),
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
@@ -457,9 +570,53 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_sources: BTreeMap::new(),
             #[cfg(feature = "conformance")]
+            conformance_native_async_helper: false,
+            #[cfg(feature = "conformance")]
+            conformance_native_main_source: None,
+            #[cfg(feature = "conformance")]
+            conformance_native_wasm_exceptions_helper: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_stringref: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_custom_descriptors: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_acquire_release: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_imported_strings_utf8: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_fp16: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_js_interop: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_wide_arithmetic: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_allow_mixed_eh: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_wasmfx: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_shared: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_compact_imports: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_test_streaming: None,
+            #[cfg(feature = "conformance")]
+            conformance_operation_limit: None,
+            #[cfg(feature = "conformance")]
+            conformance_shared_string_table: false,
+            #[cfg(feature = "conformance")]
+            conformance_shared_heap: false,
+            #[cfg(feature = "conformance")]
+            conformance_shared_strings: false,
+            #[cfg(feature = "conformance")]
+            conformance_expose_externalize_string: false,
+            #[cfg(feature = "conformance")]
             conformance_files: BTreeMap::new(),
             #[cfg(feature = "conformance")]
+            conformance_exists: BTreeMap::new(),
+            #[cfg(feature = "conformance")]
             conformance_d8: false,
+            #[cfg(feature = "conformance")]
+            conformance_script_arguments: Vec::new(),
             #[cfg(feature = "conformance")]
             conformance_allow_unsafe_function_constructor: false,
             #[cfg(feature = "conformance")]
@@ -494,6 +651,8 @@ impl Default for PageEnvironment {
             conformance_wasm_max_module_bytes: None,
             #[cfg(feature = "conformance")]
             conformance_wasm_max_table_entries: None,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_max_memory_pages: None,
             #[cfg(feature = "conformance")]
             conformance_workers: None,
             #[cfg(feature = "conformance")]
@@ -705,7 +864,7 @@ pub(in crate::v9) struct Timer {
 }
 
 /** Where a listener is registered. */
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::v9) enum Target {
     Node(usize),
@@ -723,6 +882,12 @@ pub(in crate::v9) struct Listener {
     pub callback: JsValue,
     pub capture: bool,
     pub once: bool,
+    /** Passive listeners cannot cancel: preventDefault and returnValue writes are ignored. */
+    #[serde(default)]
+    pub passive: bool,
+    /** The AbortSignal whose abort removes this listener; absent for listeners without one. */
+    #[serde(default)]
+    pub signal: Option<JsValue>,
 }
 
 /** A node created by script and not (yet) in the document. */
@@ -754,6 +919,28 @@ pub(in crate::v9) enum ReadyState {
     Complete,
 }
 
+/** A frame's document as the app fetched it. `source` is None when the app refused the frame or
+could not fetch it: the frame then shows no document, and its load event still fires. */
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameDocument {
+    /// The absolute URL the frame asked for, which is its key in `PageEnvironment`.
+    pub address: String,
+    /// The media type the response declared, after any fallback the app applied.
+    pub media_type: String,
+    /// The document's text, or None when the frame has no document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/** A frame document V9 asks the app to fetch: the absolute URL an iframe's `src` names. */
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameRequest {
+    /// The absolute URL to fetch.
+    pub url: String,
+}
+
 /** One script element a script connected to the document. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -781,10 +968,49 @@ const fn default_cpu_profile_interval() -> u64 {
     1_000
 }
 
+/** Heap-number constants belong to one compiled code site and source. */
+#[cfg(feature = "conformance")]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::v9) struct NumberConstantPool {
+    pub source: [u8; 32],
+    pub values: BTreeMap<u64, JsValue>,
+}
+
 /** Page state that survives between requests, inside VmState. */
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** Permanent per-isolate read-only roots for one-byte iterator characters. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub character_roots: BTreeMap<u8, crate::v9::value::JsString>,
+    /** Current isolate continuation data, retained across state transport. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_data: Option<JsValue>,
+    /** Per-isolate code constant cells preserve literal identity without sharing mutable metadata between isolates. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub code_constants: BTreeMap<u64, crate::v9::value::JsString>,
+    /** Actual old heap-number constants, deduplicated within one compiled source site. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub number_constants: BTreeMap<u32, NumberConstantPool>,
+    /** Weak intern entries are temporarily carried between VM lifetimes, then restored as weak handles. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interned_strings: Vec<crate::v9::value::JsString>,
+
+    /** Installed shell debug delegate and bounded event counters for this isolate. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "crate::v9::builtins::DebugState::is_empty")]
+    pub debug_delegate: crate::v9::builtins::DebugState,
+
+    /** A d8 test can forbid blocking waits for this agent across state transport. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub atomics_wait_disallowed: bool,
     /** The isolate's real unnamed session and callback survive requests without native thread handles. */
     #[cfg(feature = "conformance")]
     #[serde(
@@ -811,12 +1037,24 @@ pub(in crate::v9) struct PageState {
     pub active_animations: Vec<ObjectId>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
-    pub listeners: Vec<Listener>,
+    pub listeners: listener_store::ListenerStore,
     pub next_listener: u32,
     /** Node wrappers by node id, so identity survives requests. */
     pub wrappers: BTreeMap<usize, ObjectId>,
     pub detached: BTreeMap<usize, Detached>,
     pub next_detached: usize,
+    /** Namespace, prefix and local name of each script-created element, by node. Projected
+    elements have no record and take their namespace from their tag. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub element_ns: BTreeMap<usize, namespaces::ElementNs>,
+    /** Namespace of each attribute set through a namespace-aware method, by node and then by
+    stored name. Null-namespace attributes have no record. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_ns: BTreeMap<usize, BTreeMap<String, namespaces::AttrNs>>,
+    /** Stored name of a namespaced attribute, by node, then namespace, then local name, so a
+    namespace-aware read finds it without scanning the node's attributes. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_index: BTreeMap<usize, BTreeMap<String, BTreeMap<String, String>>>,
     pub pending: Vec<Pending>,
     pub next_request: u32,
     pub ready: ReadyState,
@@ -847,9 +1085,19 @@ pub(in crate::v9) struct PageState {
     pub initialized: bool,
     /** The page's Selection object, once a script asked for it; its ranges stay reachable. */
     pub selection: Option<ObjectId>,
+    /** Live Range objects, whose boundary points move with the tree. Held weakly: the sweep drops
+    any the heap collected, so a script's unreferenced ranges do not stay alive here. */
+    pub live_ranges: range_index::LiveRanges,
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
+    /** Iframes scripts connected whose documents the app has not answered yet, by element: the
+    URL each asked for. The answer fires the element's `load` event and leaves the list. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub frame_loads: BTreeMap<usize, String>,
+    /** Frame documents the step asked the app to fetch, delivered with the step's result. */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_requests: Vec<FrameRequest>,
     /** The focused element (`document.activeElement`), set by `focus()`, typing and clicks. */
     pub focused: Option<usize>,
     /** Custom element definitions, shadow and template bookkeeping, mutation observers. */
@@ -858,12 +1106,22 @@ pub(in crate::v9) struct PageState {
     pub frames: BTreeMap<usize, usize>,
     /** Each iframe's contentWindow object. */
     pub frame_windows: BTreeMap<usize, ObjectId>,
+    /** The reverse of `frames`: the iframe a frame document belongs to, so defaultView finds
+    the frame's window without scanning every frame. */
+    pub document_frames: BTreeMap<usize, usize>,
     /** Markup written to an open document, parsed when it closes. */
     pub writes: BTreeMap<usize, String>,
     /** The document a script-made root node belongs to (a doctype or processing instruction
     from DOMImplementation or createProcessingInstruction), for ownerDocument. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub owners: BTreeMap<usize, usize>,
+    /** The media type of each script-made document that is not text/html (XML documents). */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub content_types: BTreeMap<usize, String>,
+    /** The documents DOMParser made. They share the page's URL, where a script-made document
+    is about:blank. */
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub parsed_documents: BTreeSet<usize>,
     /** Each script-made document's DOMImplementation object, by the implementation. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub implementations: BTreeMap<ObjectId, usize>,
@@ -871,6 +1129,22 @@ pub(in crate::v9) struct PageState {
     identity holds across reads. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub implementation_of: BTreeMap<usize, ObjectId>,
+    /** Attr records by id: each Attr object's owner, name, namespace and detached value. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_nodes: BTreeMap<u64, attr::AttrNode>,
+    /** The attached Attr of each element attribute, by node and then by stored name, so one
+    attribute has one Attr object. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_of: BTreeMap<usize, BTreeMap<String, u64>>,
+    /** The next Attr id; ids only grow, so none is reused. */
+    #[serde(default)]
+    pub next_attr: u64,
+    /** Attr wrapper objects by id, so an Attr keeps its identity across reads. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attr_wrappers: BTreeMap<u64, ObjectId>,
+    /** DOMTokenList objects by node and then attribute, so classList reads return one object. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub token_lists: BTreeMap<usize, BTreeMap<String, ObjectId>>,
 }
 
 /** Runtime platform state for one request. */
@@ -897,11 +1171,15 @@ pub(in crate::v9) struct Page<'h> {
     pub attribute_slots: std::collections::BTreeMap<(usize, String), usize>,
     /** Events this request created, which give each one its own timestamp tick. */
     pub event_ticks: u64,
+    /** The event being dispatched, which `window.event` reads; restored when dispatch nests. */
+    pub current_event: Option<ObjectId>,
     pub fragment_bytes: usize,
     pub next_id: usize,
     /** Values seen by legacy getElementById(...).value reads. */
     pub legacy: bool,
     pub tree: Option<nodes::Tree>,
+    /** The tree's change generation: bumped by every mutation, so a live collection rescans only after one. */
+    pub generation: u64,
     /** The script element of the script running now. */
     pub current_script: Option<usize>,
     /** Legacy-log InsertHtml entries this execution made: change index, root, subtree. */
@@ -964,10 +1242,12 @@ impl<'h> Page<'h> {
             change_bytes: 0,
             attribute_slots: std::collections::BTreeMap::new(),
             event_ticks: 0,
+            current_event: None,
             fragment_bytes: 0,
             next_id,
             legacy: false,
             tree: None,
+            generation: nodes::next_generation(),
             inserted: Vec::new(),
             current_script: None,
             mutations: Vec::new(),
@@ -1011,6 +1291,8 @@ impl<'h> Page<'h> {
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
         #[cfg(feature = "conformance")]
+        out.extend(self.state.number_constants.values().flat_map(|pool| pool.values.values().cloned()));
+        #[cfg(feature = "conformance")]
         if let Some(listener) = self.state.cpu_profile.listener {
             out.push(JsValue::Object(listener));
         }
@@ -1029,8 +1311,9 @@ impl<'h> Page<'h> {
             out.push(timer.callback.clone());
             out.extend(timer.args.iter().cloned());
         }
-        for listener in &self.state.listeners {
+        for listener in self.state.listeners.iter() {
             out.push(listener.callback.clone());
+            out.extend(listener.signal.clone());
             if let Target::Object(id) = listener.target {
                 out.push(JsValue::Object(id));
             }
@@ -1044,6 +1327,12 @@ impl<'h> Page<'h> {
         if let Some(value) = &self.state.history_state {
             out.push(value.clone());
         }
+        #[cfg(feature = "conformance")]
+        if let Some(value) = &self.state.continuation_data {
+            out.push(value.clone());
+        }
+        #[cfg(feature = "conformance")]
+        out.extend(self.state.character_roots.values().cloned().map(JsValue::String));
         out.extend(self.state.selection.map(JsValue::Object));
         out.extend(self.joining.iter().cloned());
         out.extend(self.unhandled.iter().map(|id| JsValue::Object(*id)));
@@ -1052,8 +1341,13 @@ impl<'h> Page<'h> {
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         self.state.active_animations.retain(|id| live.contains(id));
+        self.state.live_ranges.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
+        self.state.attr_wrappers.retain(|_, id| live.contains(id));
+        for by_attribute in self.state.token_lists.values_mut() {
+            by_attribute.retain(|_, id| live.contains(id));
+        }
     }
 }
 
@@ -1137,7 +1431,9 @@ pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> 
         HostData::Style(_) | HostData::Computed(_) => "CSSStyleDeclaration".into(),
         HostData::ClassList(_) => "DOMTokenList".into(),
         HostData::Dataset(_) => "DOMStringMap".into(),
-        HostData::NodeList(_) | HostData::Children(..) => "NodeList".into(),
+        HostData::NodeList(_) | HostData::Children(_, false) => "NodeList".into(),
+        HostData::Children(_, true) => "HTMLCollection".into(),
+        HostData::Live(_) => "HTMLCollection".into(),
         HostData::Xhr(_) => "XMLHttpRequest".into(),
         HostData::Response(_) => "Response".into(),
         HostData::Headers(_) => "Headers".into(),
@@ -1152,6 +1448,7 @@ pub(in crate::v9) fn interface_tag(vm: &mut Vm, id: ObjectId) -> Option<String> 
         HostData::BreakIterator(_) => "Intl.v8BreakIterator".into(),
         HostData::StyleSheet(_) => "CSSStyleSheet".into(),
         HostData::TokenList(..) => "DOMTokenList".into(),
+        HostData::Attr(_) => "Attr".into(),
         HostData::Request(_) => "Request".into(),
     })
 }

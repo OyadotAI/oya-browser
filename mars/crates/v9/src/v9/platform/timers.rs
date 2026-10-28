@@ -171,8 +171,33 @@ impl Vm<'_> {
         self.page.state.clock = self.page.state.clock.max(now);
         Ok(ran)
     }
+    /** Shell callbacks report thrown values while their actual creation context is entered. */
+    #[cfg(feature = "conformance")]
+    fn fire_shell_timer(&mut self, timer: &Timer) -> Res<()> {
+        let bank = crate::v9::builtins::shell_callback_realm(self, &timer.callback)?;
+        let depth = self.realm_entries.len();
+        self.realm_entries.push(bank);
+        let result = self.with_realm(bank, |vm| {
+            let args = if timer.frame {
+                vec![JsValue::Number(vm.page.state.clock)]
+            } else {
+                timer.args.clone()
+            };
+            match vm.call(timer.callback.clone(), JsValue::Undefined, args) {
+                Ok(_) => Ok(()),
+                Err(Thrown::Value(error)) => crate::v9::builtins::report_shell_exception(vm, error),
+                Err(fatal) => Err(fatal),
+            }
+        });
+        self.realm_entries.truncate(depth);
+        result
+    }
     /** Run one timer callback; its exceptions go to the console. */
     fn fire_timer(&mut self, timer: &Timer) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        if self.page.environment.conformance_d8 && self.is_callable(&timer.callback) {
+            return self.fire_shell_timer(timer);
+        }
         let result = match &timer.callback {
             JsValue::String(source) => {
                 crate::v9::builtins::evaluate_source(self, source.lossy()).map(|_| ())

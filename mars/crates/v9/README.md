@@ -82,7 +82,46 @@ Wasm, shared-memory, sandbox and tools directories. Report skipped cases separat
 they do not count as passes. `CONF_REQUIRE_PASS=1` makes any executed failure fail
 the command after writing the complete JSON report.
 
-The opt-in `conformance` feature supplies test-host `d8.file.execute/read`, `load`
+To inspect previously excluded top-level directories, explicitly admit them and use
+`MJSUNIT` to select cases, for example:
+
+```sh
+MJSUNIT_INCLUDE_DIRS=wasm,shared-memory,d8 MJSUNIT=wasm/memory-size.js,shared-memory/value-serializer.js,d8/files/exists.js CONF_OUT=/tmp/v9-extra CONF_REQUIRE_PASS=1 cargo test --release --offline -p mars-v9 --features conformance --test test262_runner -- --ignored --nocapture --exact mjsunit
+```
+
+Opt-in discovery records each excluded path and reason in the JSON report. Set
+`MJSUNIT_INCLUDE_INERT_NATIVE_FLAG=1` to admit tests that request native syntax but contain
+no percent character and use only other supported flags. Set `MJSUNIT_INCLUDE_NATIVE_INTRINSICS=1`
+to also admit tests whose percent tokens name only the implemented `%AbortJS`,
+`%PerformMicrotaskCheckpoint`, `%ArrayBufferDetach`, `%Is64Bit`, `%ToLength`, and
+`%AtomicsSynchronizationPrimitiveNumWaitersForTesting`, `%IsJSReceiver`, `%IsArray`, and
+`%ToBoolean`, `%Typeof`, `%ToName`, `%CreateIterResultObject`, `%GetWeakCollectionSize`,
+`%AtomicsNumWaitersForTesting`, `%AtomicsNumUnresolvedAsyncPromisesForTesting`, and
+`%SetAllowAtomicsWait`, `%IsAtomicsWaitAllowed`, `%IsSharedString`, `%IsSameHeapObject`,
+`%SharedGC`, `%GetInitializerFunction`, `%ArrayBufferDetachForceWasm`,
+`%GetWasmExceptionTagId`, `%GetWasmExceptionValues`, `%ThrowStackOverflow`, and `%StringMaxLength`
+operations. `--noincremental-marking` is supported because V9's collector already completes
+marking in one stop-the-world pass.
+`--shared-string-table` enables the bounded shared literal table used by worker transfers.
+The equivalent `--no-incremental-marking` spelling, `--expose-async-hooks`,
+`--ignore-unhandled-promises`, `--throws`, `--harmony-shadow-realm`, and
+`--enable-queue-microtask` use their
+corresponding implemented host behavior.
+`%SharedGC` coordinates live workers at safepoints; it reports unsupported if a concurrent
+collection or a native path cannot reach one within two seconds.
+Every discovered test is excluded when it requires an unsupported flag, including default-suite
+tests; exclusions record the full flag line so the reported pass rate does not imply coverage.
+The scan is conservative, so percent signs in comments or ordinary modulo expressions can keep
+a case excluded; unknown native intrinsics are never treated as successful operations. Original
+source is parsed directly under an opt-in shell grammar with a separate code-cache namespace.
+The same opt-in applies to the exact upstream Wasm exception helper fixture; other fixture paths
+do not gain native syntax.
+Unconditional upstream skips and tests whose flags the host has not verified stay
+excluded. An empty strict selection fails. Workers verify the parent’s case
+identity and are terminated and reaped when their response deadline expires. Literal relative
+module fixtures are snapshotted recursively; an unsupplied computed fixture fails explicitly.
+
+The opt-in `conformance` feature supplies test-host `d8.file.execute/read/exists`, `load`
 and binary `readbuffer` over host-provided fixtures, synchronous and scheduled major/minor collection,
 and uncatchable host termination. The runner opts into ordinary shell globals,
 so browser properties such as `Window.top` do not interfere with test bindings.

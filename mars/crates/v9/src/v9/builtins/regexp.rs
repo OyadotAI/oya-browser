@@ -1,11 +1,12 @@
 /** RegExp objects over V9's own engine: exec, test, flags, and the string protocol methods. */
 use super::*;
-use crate::protocol::EngineError;
+use crate::protocol::{EngineError, EngineResult};
 use crate::v9::regexp::{self, Captures, MatchError};
 use crate::v9::vm::data::{Class, IterState, RegExpData};
 use crate::v9::vm::heap::{Object, Prop, Slot, WRITABLE};
 use crate::v9::vm::realm::Static;
 use crate::v9::vm::realm::{realm, symbol};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -152,16 +153,24 @@ impl Vm<'_> {
             return Ok(program.clone());
         }
         let program = regexp::compile(
-            source.as_units(),
+            self.materialize_string(&source)?,
             flags,
             self.page.environment.regexp_buffer_boundaries,
         )
         .map_err(|error| {
-            let message = format!(
-                "Invalid regular expression: /{}/{flags}: {}",
-                source.lossy(),
-                error.0
-            );
+            let message = if error.is_engine_gap() {
+                format!(
+                    "Invalid regular expression: {}: /{}/{flags}",
+                    error.0,
+                    source.lossy()
+                )
+            } else {
+                format!(
+                    "Invalid regular expression: /{}/{flags}: {}",
+                    source.lossy(),
+                    error.0
+                )
+            };
             self.syntax_error(&message)
         })?;
         let program = Rc::new(program);
@@ -187,9 +196,13 @@ impl Vm<'_> {
         start: usize,
     ) -> Res<Option<Captures>> {
         self.charge(text.len().saturating_sub(start) / crate::constants::JS_STRING_SCAN_UNITS + 1)?;
-        regexp::exec(program, text.as_units(), start, self.deadline).map_err(|MatchError::Limit| {
-            self.range_error("Maximum regular expression steps exceeded")
-        })
+        regexp::exec(
+            program,
+            self.materialize_string(text)?,
+            start,
+            self.deadline,
+        )
+        .map_err(|MatchError::Limit| self.range_error("Maximum regular expression steps exceeded"))
     }
     /** RegExpBuiltinExec: lastIndex is always read through ToLength (it is observable), but only
     global and sticky patterns start from it or write it back. */
@@ -229,15 +242,7 @@ impl Vm<'_> {
     ) -> Res<JsValue> {
         let (_, data) = self.regexp_data(&JsValue::Object(id))?;
         let program = self.regexp_compile(&data.source, &data.flags)?;
-        let mut elements = Vec::with_capacity(captures.len());
-        for capture in captures {
-            elements.push(match capture {
-                Some((start, end)) => {
-                    JsValue::String(JsString::from_slice(&text.as_units()[*start..*end])?)
-                }
-                None => JsValue::Undefined,
-            });
-        }
+        let elements = capture_values(text, captures)?;
         let array = self.new_array(elements.clone())?;
         self.pin(JsValue::Object(array));
         let index = captures[0].map_or(0, |(start, _)| start);
@@ -352,13 +357,31 @@ impl Vm<'_> {
     }
 }
 
+/** Equal capture spans share immutable string storage across the result array. */
+fn capture_values(text: &JsString, captures: &Captures) -> EngineResult<Vec<JsValue>> {
+    let mut cache: BTreeMap<(usize, usize), JsString> = BTreeMap::new();
+    captures.iter().map(|capture| match capture {
+        None => Ok(JsValue::Undefined),
+        Some((start, end)) => {
+            let span = (*start, *end);
+            let value = match cache.get(&span) {
+                Some(value) => value.clone(),
+                None => { let value = text.slice_range(*start, *end)?; cache.insert(span, value.clone()); value }
+            };
+            Ok(JsValue::String(value))
+        }
+    }).collect()
+}
+
 /** The index after `index`, stepping over a surrogate pair in unicode mode. */
 pub(in crate::v9) fn advance(text: &JsString, index: usize, unicode: bool) -> usize {
-    let units = text.as_units();
     if unicode
-        && index + 1 < units.len()
-        && (0xd800..=0xdbff).contains(&units[index])
-        && (0xdc00..=0xdfff).contains(&units[index + 1])
+        && text
+            .unit_at(index)
+            .is_some_and(|unit| (0xd800..=0xdbff).contains(&unit))
+        && text
+            .unit_at(index + 1)
+            .is_some_and(|unit| (0xdc00..=0xdfff).contains(&unit))
     {
         return index + 2;
     }
@@ -537,9 +560,9 @@ fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let flags = vm.get(&rx, &key("flags"))?;
     let flags = vm.to_string(&flags)?;
     let mut out = vec![u16::from(b'/')];
-    out.extend_from_slice(source.as_units());
+    out.extend((0..source.len()).filter_map(|index| source.unit_at(index)));
     out.push(u16::from(b'/'));
-    out.extend_from_slice(flags.as_units());
+    out.extend((0..flags.len()).filter_map(|index| flags.unit_at(index)));
     Ok(JsValue::String(JsString::from_units(out)?))
 }
 
@@ -576,8 +599,8 @@ fn recompile(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** EscapeRegExpPattern: `/` outside a class and line terminators are escaped so the source
 reparses as a literal; the empty pattern reads `(?:)`. */
-fn escape_source(source: &JsString) -> Res<JsString> {
-    let units = source.as_units();
+fn escape_source(vm: &mut Vm, source: &JsString) -> Res<JsString> {
+    let units = vm.materialize_string(source)?;
     if units.is_empty() {
         return Ok(JsString::from_utf8("(?:)")?);
     }
@@ -622,7 +645,7 @@ fn source(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return text(vm, "(?:)");
     }
     let (_, data) = vm.regexp_data(&call.this)?;
-    Ok(JsValue::String(escape_source(&data.source)?))
+    Ok(JsValue::String(escape_source(vm, &data.source)?))
 }
 
 /** RegExp.prototype.flags: generic, reading each flag getter in the spec's order. */
@@ -698,8 +721,7 @@ pub(in crate::v9) fn expand(
     captures: &[JsValue],
     groups: &JsValue,
 ) -> Res<Vec<u16>> {
-    let units = template.as_units();
-    let source = text.as_units();
+    let units = vm.materialize_string(template)?;
     let mut out = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
@@ -716,16 +738,16 @@ pub(in crate::v9) fn expand(
                 index += 2;
             }
             0x26 => {
-                out.extend_from_slice(matched.as_units());
+                out.extend((0..matched.len()).filter_map(|index| matched.unit_at(index)));
                 index += 2;
             }
             0x60 => {
-                out.extend_from_slice(&source[..position.min(source.len())]);
+                out.extend((0..position.min(text.len())).filter_map(|index| text.unit_at(index)));
                 index += 2;
             }
             0x27 => {
-                let end = (position + matched.len()).min(source.len());
-                out.extend_from_slice(&source[end..]);
+                let end = (position + matched.len()).min(text.len());
+                out.extend((end..text.len()).filter_map(|index| text.unit_at(index)));
                 index += 2;
             }
             0x30..=0x39 => {
@@ -740,7 +762,7 @@ pub(in crate::v9) fn expand(
                 };
                 if group >= 1 && group <= captures.len() {
                     if let JsValue::String(value) = &captures[group - 1] {
-                        out.extend_from_slice(value.as_units());
+                        out.extend((0..value.len()).filter_map(|index| value.unit_at(index)));
                     }
                     index += width;
                 } else {
@@ -757,7 +779,8 @@ pub(in crate::v9) fn expand(
                         let name = String::from_utf16_lossy(&units[index + 2..index + 2 + close]);
                         let value = vm.get(groups, &key(&name))?;
                         if value != JsValue::Undefined {
-                            out.extend_from_slice(vm.to_string(&value)?.as_units());
+                            let text = vm.to_string(&value)?;
+                            out.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
                         }
                         index += close + 3;
                     }
@@ -773,24 +796,16 @@ pub(in crate::v9) fn expand(
             }
         }
         if out.len() > crate::constants::JS_STRING_UNITS {
-            return Err(EngineError::limit(
-                "JavaScript string UTF-16 units",
-                crate::constants::JS_STRING_UNITS,
-            )
-            .into());
+            return Err(vm.range_error("Invalid string length"));
         }
     }
     Ok(out)
 }
 
 /** The string-length guard every replacement builder checks. */
-fn check_length(out: &[u16]) -> Res<()> {
+fn check_length(vm: &mut Vm, out: &[u16]) -> Res<()> {
     if out.len() > crate::constants::JS_STRING_UNITS {
-        return Err(EngineError::limit(
-            "JavaScript string UTF-16 units",
-            crate::constants::JS_STRING_UNITS,
-        )
-        .into());
+        return Err(vm.range_error("Invalid string length"));
     }
     Ok(())
 }
@@ -828,7 +843,7 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             advance_last_index(vm, &rx, &text, unicode)?;
         }
     }
-    let source = text.as_units();
+    let source = vm.materialize_string(&text)?;
     let mut out: Vec<u16> = Vec::new();
     let mut next = 0;
     for result in results {
@@ -855,8 +870,17 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if groups != JsValue::Undefined {
                 args.push(groups.clone());
             }
+            if args.len() > super::function::MAX_BOUND_ARGUMENTS {
+                return Err(vm.range_error(&format!(
+                    "Too many arguments in function call (only {} allowed)",
+                    super::function::MAX_BOUND_ARGUMENTS
+                )));
+            }
             let value = vm.call(replacement.clone(), JsValue::Undefined, args)?;
-            vm.to_string(&value)?.as_units().to_vec()
+            let text = vm.to_string(&value)?;
+            (0..text.len())
+                .filter_map(|index| text.unit_at(index))
+                .collect()
         } else {
             let groups = if groups == JsValue::Undefined {
                 groups
@@ -870,11 +894,12 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             out.extend_from_slice(&replaced);
             next = (position + matched.len()).min(source.len());
         }
-        check_length(&out)?;
+        check_length(vm, &out)?;
     }
     if next < source.len() {
         out.extend_from_slice(&source[next..]);
     }
+    check_length(vm, &out)?;
     Ok(JsValue::String(JsString::from_units(out)?))
 }
 
@@ -934,7 +959,7 @@ fn symbol_split(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Ok(result);
     }
     let fast = fast_splitter(vm, &ctor, &splitter)?;
-    let units = text.as_units();
+    let units = vm.materialize_string(&text)?;
     let (mut p, mut q, mut count) = (0usize, 0usize, 0u32);
     while q < size {
         let (end, captures) = match &fast {

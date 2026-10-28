@@ -2,6 +2,18 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** Foreign dates remain valid across repeated evaluation in their owning realm. */
+#[test]
+fn foreign_dates_can_be_repeatedly_constructed() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_wasm_test_streaming = Some(false);
+    let source = "const realm=Realm.create();const a=Realm.eval(realm,\"new Date('Thu, 29 Aug 2013 00:00:00 UTC')\");new Date('Thu, 29 Aug 2013 00:00:01 UTC');const b=Realm.eval(realm,\"new Date('Thu, 29 Aug 2013 00:00:00 UTC')\");const r=[a.getTime()===b.getTime(),typeof WebAssembly.compileStreaming,Realm.eval(realm,'typeof WebAssembly.compileStreaming')].join();";
+    let result = common::load_with(source, &environment);
+    assert!(result.failed.is_empty(), "{:?}", common::failure(&result));
+    assert_eq!(common::global(&result, "r"), "true,undefined,undefined");
+}
+
 /** Lazy formatting runs once using the Error creation context, even when another realm reads it. */
 #[test]
 fn foreign_error_preparation_uses_owner_and_caches_values() {
@@ -50,7 +62,7 @@ fn shell_globals_are_ordinary_and_opt_in() {
     assert!(shell.failed.is_empty(), "{:?}", common::failure(&shell));
     assert_eq!(
         common::console(&shell),
-        ["3 shell 1 foreign true undefined undefined undefined"]
+        ["3 shell 1 foreign false undefined undefined undefined"]
     );
 }
 
@@ -282,4 +294,83 @@ fn cross_origin_global_reads_only_hide_well_known_symbols() {
 fn cross_origin_global_tags_do_not_leak_through_prototypes() {
     let source = "const other=Realm.create(),global=Realm.global(other);Realm.eval(other,`delete globalThis[Symbol.toStringTag];Object.prototype[Symbol.toStringTag]='secret'`);const r=Object.prototype.toString.call(global);";
     assert_eq!(common::eval(source, "r"), "[object Object]");
+}
+
+/** A custom queue keeps its callback jobs across saved state while default checkpoints continue. */
+#[test]
+fn custom_microtask_queue_is_isolated_and_survives_state_transport() {
+    let sources=vec!["let reads=0;const foreign=Realm.create({get create_own_microtask_queue(){reads++;return true}});Realm.shared=[];const callback=Realm.eval(foreign,\"()=>Realm.shared.push('custom')\");Promise.resolve().then(callback.bind(null));Promise.resolve().then(()=>Realm.shared.push('default'));let r='';setTimeout(()=>r=[reads,Realm.shared.join()].join(':'),0);".to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let wire = serde_json::to_value(&loaded.state).unwrap();
+    assert_eq!(
+        wire["realms"]["contexts"][1]["custom_jobs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let state = common::round_trip(loaded.state);
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        state,
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::global(&resumed, "r"), "1:default");
+}
+
+/** Disposed unreferenced realms do not keep their custom queue and its captured graph alive. */
+#[test]
+fn disposed_realm_releases_custom_microtask_queue() {
+    let source = "const foreign=Realm.create({create_own_microtask_queue:true});Realm.eval(foreign,\"Promise.resolve().then(()=>42)\");Realm.dispose(foreign);gc();let r='done';";
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let execution = common::load_with(source, &environment);
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    let wire = serde_json::to_value(execution.state).unwrap();
+    assert!(wire["realms"]["contexts"][1].get("custom_jobs").is_none());
+}
+
+/** A retained callback cannot resurrect the custom queue after its realm is disposed. */
+#[test]
+fn disposed_custom_queue_drops_jobs_even_when_callback_survives() {
+    let source = "Realm.shared=[];const foreign=Realm.create({create_own_microtask_queue:true});const callback=Realm.eval(foreign,\"()=>Realm.shared.push('bad')\");Realm.dispose(foreign);Promise.resolve().then(callback);Promise.resolve().then(()=>Realm.shared.push('default'));let r='';setTimeout(()=>r=Realm.shared.join(),0);";
+    let sources = vec![source.to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::global(&resumed, "r"), "default");
+}
+
+/** Custom and default queues must consume one aggregate isolate job budget. */
+#[test]
+fn custom_and_default_microtasks_share_one_job_limit() {
+    let source = "const foreign=Realm.create({create_own_microtask_queue:true});const callback=Realm.eval(foreign,'()=>{}');const local=()=>{};for(let i=0;i<2048;i++){queueMicrotask(callback);queueMicrotask(local)}queueMicrotask(callback);";
+    let sources = vec![source.to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let result = mars_v9::load_page(common::input(&sources, &host, &environment));
+    let execution = result.unwrap();
+    assert!(common::failure(&execution).is_some_and(|message| message.contains("V9 pending jobs")), "unexpected failure: {:?}", common::failure(&execution));
 }

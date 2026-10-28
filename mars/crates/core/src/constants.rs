@@ -498,6 +498,8 @@ pub const SVG_USE_DEPTH: usize = 1;
 /// thousand): YouTube's ad and result rendering recursed past 512 and its results never got
 /// their data. Frames live on V9's own stack; native recursion through them fits V9_STACK_BYTES.
 pub const VM_CALL_DEPTH: usize = 10_000;
+/// A native re-entry retains both its caller and host bridge on the native stack.
+pub const VM_NATIVE_FRAME_WEIGHT: usize = 2;
 /// Nesting that recurses natively without a bytecode frame (bound-function chains, WebAssembly
 /// calls, structured-clone graphs), kept at the bound V8's native stack gives such chains.
 pub const VM_NESTING_DEPTH: usize = 512;
@@ -536,8 +538,8 @@ pub const REGEXP_DEPTH: usize = 50_000;
 pub const REGEXP_DEADLINE_STEPS: usize = 4096;
 /// Nodes in one compiled regular expression.
 pub const REGEXP_NODES: usize = 16_384;
-/// Capture groups in one regular expression.
-pub const REGEXP_GROUPS: usize = 256;
+/// Capture groups in one regular expression; their slots remain bounded in each match result.
+pub const REGEXP_GROUPS: usize = 16_384;
 /// Virtual milliseconds between animation frames, as on a 60 Hz display.
 pub const ANIMATION_FRAME_MS: f64 = 16.0;
 /// Browsers clamp repeating and deeply nested timers to this delay in milliseconds.

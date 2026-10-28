@@ -24,6 +24,9 @@ pub(super) fn signature(
 
 /** Casts preserve the function, external, exception and internal reference hierarchy boundaries. */
 pub(super) fn same_hierarchy(m: &Module, a: Type, b: Type) -> Result<bool, Error> {
+    if gc_types::is_shared(m, a) != gc_types::is_shared(m, b) {
+        return Ok(false);
+    }
     let a = a
         .reference()
         .ok_or_else(|| Error::invalid("cast source must be a reference"))?
@@ -37,17 +40,28 @@ pub(super) fn same_hierarchy(m: &Module, a: Type, b: Type) -> Result<bool, Error
 
 /** GC opcodes retain checked type/field/segment indices or a signed heap-type immediate. */
 pub(super) fn decode(r: &mut binary::Reader) -> Result<Instruction, Error> {
-    let op = r.u32()?;
+    let op = r.prefixed_opcode()?;
+    if (32..=38).contains(&op) && !r.custom_descriptors_enabled {
+        return Err(Error::invalid("custom descriptor instruction requires --wasm-custom-descriptors"));
+    }
+    if op == 31 && !r.shared_enabled {
+        return Err(Error::invalid("shared i31 instruction requires --wasm-shared"));
+    }
     if op > u8::MAX as u32 {
-        return Err(Error::invalid("Invalid prefixed opcode"));
+        return Err(Error::invalid(&format!("invalid stringref opcode: fb{op:x}")));
     }
     if op >= 0x80 {
+        if !r.stringref_enabled {
+            return Err(Error::invalid(
+                "stringref instruction requires --wasm-stringref",
+            ));
+        }
         return strings::decode(r, op);
     }
     let count = match op {
         0 | 1 | 6 | 7 | 11..=14 | 16 | 32..=34 => 1,
         2..=5 | 8..=10 | 17..=19 => 2,
-        15 | 26..=30 => 0,
+        15 | 26..=31 => 0,
         20..=23 | 35 | 36 => {
             let ty = gc_types::heap(r, false)?.with_nullability(if op <= 23 {
                 op % 2 == 1
@@ -57,7 +71,7 @@ pub(super) fn decode(r: &mut binary::Reader) -> Result<Instruction, Error> {
             let (heap, _) = ty.reference().unwrap();
             return Ok(Instruction::Gc(
                 op,
-                vec![heap, i64::from(matches!(ty, Type::Exact(..)))],
+                vec![heap, i64::from(matches!(ty, Type::Exact(..))), i64::from(matches!(ty, Type::Shared(..)))],
             ));
         }
         24 | 25 | 37 | 38 => {
@@ -90,36 +104,45 @@ pub(super) fn coerce(vm: &mut Vm, ty: Type, value: &JsValue) -> Res<JsValue> {
         return if nullable {
             Ok(JsValue::Null)
         } else {
-            Err(vm.type_error("non-null WebAssembly reference required"))
+            Err(vm.type_error("type incompatibility when transforming from/to JS"))
         };
     }
-    if heap == -17 {
+    if heap == -17 && !matches!(ty, Type::Shared(..)) {
         return Ok(value.clone());
     }
     let valid = if matches!(ty, Type::Shared(..)) {
         if heap == -17 {
-            matches!(
-                value,
-                JsValue::Undefined
-                    | JsValue::Boolean(_)
-                    | JsValue::Number(_)
-                    | JsValue::BigInt(_)
-                    | JsValue::BigIntWide(_)
-                    | JsValue::String(_)
-            ) || shared::handle(vm, value).is_some()
+            shared_extern(vm, value)
         } else if let Some(root) = shared::handle(vm, value) {
-            let array = root.metadata()?.2;
-            matches!(heap, -18 | -19) || heap == -21 && !array || heap == -22 && array
+            let (metadata, _, array, _) = root.metadata()?;
+            if metadata.as_ref() == shared::WAIT_QUEUE_META {
+                heap == -36
+            } else {
+                matches!(heap, -18 | -19) || heap == -21 && !array || heap == -22 && array
+            }
         } else {
-            matches!(heap, -18 | -19 | -20) && i31(value)
+            (heap == -18 && shared_extern(vm, value))
+                || matches!(heap, -18 | -19 | -20) && i31(value)
         }
     } else {
         reference_allowed(vm, heap, value)
     };
     if valid {
+        if matches!(ty, Type::Shared(..)) && matches!(heap, -17 | -18) {
+            #[cfg(feature = "conformance")]
+            if let JsValue::String(text) = value {
+                return Ok(JsValue::String(vm.share_string(text)?));
+            }
+            #[cfg(feature = "conformance")]
+            if !i31(value) {
+                if let Some(number) = value.number_value() {
+                    return crate::v9::builtins::new_shared_number(vm, number);
+                }
+            }
+        }
         Ok(value.clone())
     } else {
-        Err(vm.type_error("WebAssembly reference type mismatch"))
+        Err(vm.type_error("type incompatibility when transforming from/to JS"))
     }
 }
 /** Testing a reference performs no error allocation and cannot hide a fatal allocation failure. */
@@ -131,6 +154,7 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
                 .object()
                 .is_some_and(|id| get(vm, id, "wasm.gc.module").is_some());
     }
+    if matches!(heap, -19 | -21 | -22) && shared::handle(vm, value).is_some() { return false; }
     match heap {
         -17 | -18 => true,
         -19 => i31(value) || kind(vm, value).is_some(),
@@ -138,6 +162,7 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
         -21 => kind(vm, value) == Some(false),
         -22 => kind(vm, value) == Some(true),
         -23 => exceptions::is_reference(vm, value),
+        -24 => value.object().is_some_and(|id| get(vm, id, "wasm.cont.function").is_some()),
         -26 | -32 | -25 => matches!(value, JsValue::String(_)),
         -31 => value
             .object()
@@ -146,9 +171,27 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
         _ => false,
     }
 }
+/** Shared extern references must contain values that can cross an agent boundary. */
+fn shared_extern(vm: &Vm, value: &JsValue) -> bool {
+    if value.number_value().is_some() || matches!(value, JsValue::Undefined | JsValue::Boolean(_) | JsValue::String(_)) || shared::handle(vm, value).is_some() {
+        return true;
+    }
+    #[cfg(feature = "conformance")]
+    if value.object().is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id)) {
+        return true;
+    }
+    false
+}
 /** The immediate i31 representation preserves value identity and cannot allocate a foreign object. */
 fn i31(value: &JsValue) -> bool {
-    matches!(value,JsValue::Number(n)if n.fract()==0.0&&*n>=-1_073_741_824.0&&*n<1_073_741_824.0)
+    value.number_value().is_some_and(|n| n.fract()==0.0&&(n!=0.0||!n.is_sign_negative())&&n>=-1_073_741_824.0&&n<1_073_741_824.0)
+}
+/** Crossing back into JavaScript exposes the original externref inside any.convert_extern. */
+pub(super) fn expose(vm: &Vm, value: JsValue) -> JsValue {
+    value
+        .object()
+        .and_then(|id| get(vm, id, "wasm.gc.extern"))
+        .unwrap_or(value)
 }
 /** Objects record whether their inaccessible fields implement a struct or an array. */
 fn kind(vm: &Vm, value: &JsValue) -> Option<bool> {
@@ -170,27 +213,26 @@ pub(super) fn matches(vm: &mut Vm, m: &Module, ty: Type, value: &JsValue) -> Res
         return Ok(nullable);
     }
     if let Some(root) = shared::handle(vm, value) {
+        if matches!(heap, -17 | -18) && !gc_types::is_shared(m, ty) {
+            return Ok(true);
+        }
         return shared::matches(vm, m, ty, &root);
     }
     if gc_types::is_shared(m, ty) {
         return Ok(if heap == -17 {
-            matches!(
-                value,
-                JsValue::Undefined
-                    | JsValue::Boolean(_)
-                    | JsValue::Number(_)
-                    | JsValue::BigInt(_)
-                    | JsValue::BigIntWide(_)
-                    | JsValue::String(_)
-            )
+            shared_extern(vm, value)
         } else {
-            matches!(heap, -18 | -19 | -20) && i31(value)
+            (heap == -18 && shared_extern(vm, value))
+                || matches!(heap, -18 | -19 | -20) && i31(value)
         });
     }
     if heap < 0 {
         return Ok(reference_allowed(vm, heap, value));
     }
     if instance::is_function(vm, value) {
+        if matches!(ty, Type::Exact(..)) {
+            return instance::function_exact(vm, m, heap as u32, value);
+        }
         return instance::function_matches(vm, m, heap as u32, value);
     }
     let Some(id) = value.object() else {
@@ -305,7 +347,7 @@ fn allocate(
     allocate_record(vm, module, index, array, fields)
 }
 /** Field storage remains opaque and traced for both Wasm instructions and native string encoders. */
-fn allocate_record(
+pub(in crate::v9::builtins::wasm) fn allocate_record(
     vm: &mut Vm,
     module: JsValue,
     index: u32,
@@ -371,7 +413,7 @@ pub(super) fn run(
         return Ok(());
     }
     if op >= 0x80 {
-        return strings::run(vm, instance, op, args, stack);
+        return strings::run(vm, instance, m, op, args, stack);
     }
     if matches!(op, 9 | 10 | 18 | 19) {
         return segments::run(vm, instance, m, op, args, stack);
@@ -461,6 +503,8 @@ pub(super) fn run(
             let value = numeric::pop(stack)?;
             let target = if args.get(1) == Some(&1) {
                 Type::Exact(args[0], op % 2 == 1)
+            } else if args.get(2) == Some(&1) {
+                Type::Shared(args[0], op % 2 == 1)
             } else {
                 gc_types::reference(args[0], op % 2 == 1)
             };
@@ -475,7 +519,11 @@ pub(super) fn run(
         }
         26 => {
             let value = numeric::pop(stack)?;
-            if value == JsValue::Null || i31(&value) || kind(vm, &value).is_some() {
+            #[cfg(feature = "conformance")]
+            let shared_number = matches!(value, JsValue::SharedNumber(_));
+            #[cfg(not(feature = "conformance"))]
+            let shared_number = false;
+            if matches!(value, JsValue::Null | JsValue::Undefined | JsValue::Boolean(_) | JsValue::BigInt(_) | JsValue::BigIntWide(_)) || i31(&value) || shared_number || matches!(value, JsValue::String(_)) || kind(vm, &value).is_some() {
                 stack.push(value)
             } else {
                 let object = vm.new_object()?;
@@ -492,7 +540,7 @@ pub(super) fn run(
                     .unwrap_or(value),
             )
         }
-        28 => {
+        28 | 31 => {
             let value = numeric::i32_value(&numeric::pop(stack)?)?;
             stack.push(JsValue::Number(f64::from(value.wrapping_shl(1) >> 1)))
         }
@@ -552,12 +600,13 @@ fn copy(vm: &mut Vm, m: &Module, args: &[i64], stack: &mut Vec<JsValue>) -> Res<
     let to = numeric::i32_value(&numeric::pop(stack)?)? as u32 as usize;
     let target = numeric::pop(stack)?;
     check(vm, m, &target, args[0] as u32)?;
-    check(vm, m, &source, args[1] as u32)?;
     let target_len = length(vm, &target)?;
+    if to.checked_add(count).is_none_or(|end| end > target_len) {
+        return Err(trap(vm, "array element access out of bounds"));
+    }
+    check(vm, m, &source, args[1] as u32)?;
     let source_len = length(vm, &source)?;
-    if to.checked_add(count).is_none_or(|end| end > target_len)
-        || from.checked_add(count).is_none_or(|end| end > source_len)
-    {
+    if from.checked_add(count).is_none_or(|end| end > source_len) {
         return Err(trap(vm, "array element access out of bounds"));
     }
     vm.charge(count)?;
@@ -571,7 +620,7 @@ fn copy(vm: &mut Vm, m: &Module, args: &[i64], stack: &mut Vec<JsValue>) -> Res<
 }
 
 /** String imports accept only owned mutable packed arrays and check the complete requested range. */
-fn string_storage(vm: &mut Vm, value: &JsValue, bits: u8) -> Res<usize> {
+pub(super) fn string_storage(vm: &mut Vm, value: &JsValue, bits: u8, mutable: bool) -> Res<usize> {
     let Some(id) = value.object() else {
         return if *value == JsValue::Null {
             Err(trap(vm, "dereferencing a null pointer"))
@@ -579,12 +628,20 @@ fn string_storage(vm: &mut Vm, value: &JsValue, bits: u8) -> Res<usize> {
             Err(vm.type_error("expected a packed Wasm array"))
         };
     };
+    if let Some(root) = shared::handle(vm, value) {
+        let (bytes, index, array, length) = root.metadata()?;
+        let module = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+        if !array || !matches!(module.definitions.get(index as usize).map(|d| &d.kind), Some(Kind::Array(f)) if f.packed == Some(bits) && (!mutable || f.mutable)) {
+            return Err(vm.type_error("expected a packed Wasm array"));
+        }
+        return Ok(length);
+    }
     let source = get(vm, id, "wasm.gc.module")
         .ok_or_else(|| vm.type_error("expected a packed Wasm array"))?;
     let (_, m) = module(vm, &source)?;
     let index = type_index(vm, id)?;
     if kind(vm, value) != Some(true)
-        || !matches!(m.definitions.get(index as usize).map(|d|&d.kind),Some(Kind::Array(f))if f.packed==Some(bits)&&f.mutable)
+        || !matches!(m.definitions.get(index as usize).map(|d|&d.kind),Some(Kind::Array(f))if f.packed==Some(bits)&&(!mutable||f.mutable))
     {
         return Err(vm.type_error("expected a packed Wasm array"));
     }
@@ -598,7 +655,7 @@ pub(super) fn string_array(
     end: usize,
     bits: u8,
 ) -> Res<Vec<u16>> {
-    let length = string_storage(vm, value, bits)?;
+    let length = string_storage(vm, value, bits, false)?;
     if start > end || end > length {
         return Err(trap(vm, "array element access out of bounds"));
     }
@@ -615,7 +672,7 @@ pub(super) fn write_string_array(
     units: &[u16],
     bits: u8,
 ) -> Res<()> {
-    let length = string_storage(vm, value, bits)?;
+    let length = string_storage(vm, value, bits, true)?;
     if start > length || units.len() > length - start {
         return Err(trap(vm, "array element access out of bounds"));
     }

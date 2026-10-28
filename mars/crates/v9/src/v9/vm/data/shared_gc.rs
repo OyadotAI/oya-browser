@@ -4,12 +4,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 mod snapshot;
 mod storage;
+#[cfg(feature = "conformance")]
+mod waits;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use waits::WaitFailure;
 
 /** One arena stays within the same existing native byte, object and field budgets as ordinary heaps. */
 const NODE_BYTES: usize = std::mem::size_of::<SharedGcRecord>()
     + std::mem::size_of::<u64>()
     + 16 * std::mem::size_of::<usize>();
 const MAX_BYTES: usize = 2 * crate::constants::JS_STRING_UNITS;
+/** Weak intern entries are bounded separately and never retain a string by themselves. */
+const MAX_INTERN_ENTRIES: usize = 16_384;
+const INTERN_PURGE_INTERVAL: usize = 256;
 /** A shared record's references identify nodes in this arena, not ordinary VM objects. */
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::v9) enum SharedGcValue {
@@ -17,10 +24,15 @@ pub(in crate::v9) enum SharedGcValue {
     Null,
     Boolean(bool),
     Number(u64),
+    #[cfg(feature = "conformance")]
+    Smi(i32),
     BigInt(i128),
     BigIntWide(crate::v9::value::BigInteger),
     Vector([u8; 16]),
     String(Arc<[u16]>),
+    /** D8 shared fields retain the actual shared string cell, including an external resource. */
+    #[cfg(feature = "conformance")]
+    SharedString(crate::v9::value::JsString),
     Reference(u64),
 }
 impl SharedGcValue {
@@ -28,6 +40,8 @@ impl SharedGcValue {
     fn dynamic_bytes(&self) -> usize {
         match self {
             Self::String(v) => v.len() * 2,
+            #[cfg(feature = "conformance")]
+            Self::SharedString(v) => v.len() * 2,
             Self::BigIntWide(v) => v.units() * 2,
             _ => 0,
         }
@@ -76,8 +90,18 @@ struct State {
     roots: BTreeMap<u64, Weak<Root>>,
     bytes: usize,
     dirty: bool,
+    interned: BTreeMap<u64, Vec<Weak<[u16]>>>,
+    intern_operations: usize,
+    intern_entries: usize,
+    #[cfg(feature = "conformance")]
+    waiters: Vec<waits::Waiter>,
 }
 impl SharedGcArena {
+    /** Reclaim all nodes unreachable from native roots while holding the arena lock. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn collect(&self) {
+        self.lock().sweep();
+    }
     /** New arenas use unpredictable identities only as data; recovering authority always requires an Arc grant. */
     pub(in crate::v9) fn new() -> EngineResult<Self> {
         use ring::rand::SecureRandom;

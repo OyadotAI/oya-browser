@@ -282,6 +282,9 @@ pub(in crate::v9) enum ExprKind {
     String(JsString),
     /** A literal the scanner could not hold (BigInt, an overlong string); evaluating it fails. */
     Opaque(&'static str),
+    /** Approved shell-only runtime intrinsics, never ordinary global property lookups. */
+    #[cfg(feature = "conformance")]
+    NativeIntrinsic(u8, Vec<Element>),
     /** Legacy call assignment targets evaluate the call then throw before accessing a property. */
     InvalidReference(&'static str),
     /** A BigInt literal. */

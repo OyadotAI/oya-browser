@@ -4,7 +4,6 @@ pub(super) const PAGE_BYTES: usize = 65_536;
 pub(super) const BUFFER_BYTES: usize = crate::constants::JS_STRING_UNITS * 2;
 pub(super) const MAX_PAGES: usize = BUFFER_BYTES / PAGE_BYTES;
 pub(super) const MAX_WASM_PAGES: u32 = 65_536;
-pub(super) const MAX_TABLE: usize = crate::constants::VM_ARRAY_LENGTH;
 pub(super) const MAX_LOCALS: usize = crate::constants::VM_BINDINGS;
 pub(super) const MAX_DEPTH: usize = crate::constants::VM_NESTING_DEPTH;
 pub(super) const MODULE: &str = "wasm.module";
@@ -25,3 +24,16 @@ pub(super) const MAX_BRANCH_TABLE: usize = 65_520;
 
 /** Declared table minima follow the pinned engine's binary implementation limit; live allocation stays smaller. */
 pub(super) const MAX_DECLARED_TABLE_MINIMUM: u64 = 10_000_000;
+
+/** The pinned V8 type graph allows at most 63 declared supertype edges. */
+pub(super) const MAX_SUBTYPE_DEPTH: usize = 63;
+/** V8 bounds each function signature to one thousand arguments and results. */
+pub(super) const MAX_WASM_PARAMS: usize = 1_000;
+pub(super) const MAX_WASM_RESULTS: usize = 1_000;
+/** IEEE-754 binary64 quiet bit; explicit promotion must quiet signaling NaNs. */
+pub(super) const F64_QUIET_NAN_BIT: u64 = 1 << 51;
+/** User-controlled export names are bounded in compiler diagnostics. */
+pub(super) const MAX_EXPORT_DIAGNOSTIC_BYTES: usize = 50;
+
+/** Leave half of the resident budget available for live non-memory values. */
+pub(super) const SPARSE_MEMORY_PRESSURE_DIVISOR: usize = 2;

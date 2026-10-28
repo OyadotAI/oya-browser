@@ -6,7 +6,8 @@
 use super::{observer, registry, shadow, template, traversal};
 use crate::v9::platform::dom;
 use crate::v9::value::JsValue;
-use crate::v9::vm::realm::{Builder, NativeFn};
+use crate::v9::vm::heap::{CONFIGURABLE, Key};
+use crate::v9::vm::realm::{Builder, NativeFn, Static, string, symbol};
 use crate::v9::vm::{Call, Res, Vm};
 use std::sync::OnceLock;
 
@@ -213,6 +214,17 @@ fn registry_object(b: &mut Builder) {
     b.global("customElements", registry);
 }
 
+/** Symbol.toStringTag on a prototype, so `String(walker)` reads `[object TreeWalker]` as the
+WebIDL interface name requires. */
+fn tag_as(b: &mut Builder, target: u32, name: &'static str) {
+    b.put(
+        target,
+        Key::Sym(symbol::TO_STRING_TAG),
+        Static::Value(string(name)),
+        CONFIGURABLE,
+    );
+}
+
 /** NodeFilter, TreeWalker, NodeIterator and the document factories. */
 fn traversals(b: &mut Builder) -> (u32, u32) {
     let filter = b.object(Some(b.ids.object_prototype));
@@ -254,6 +266,7 @@ fn traversals(b: &mut Builder) -> (u32, u32) {
         ],
         traversal::walker_method,
     );
+    tag_as(b, walker, "TreeWalker");
     let ctor = b.constructor("TreeWalker", 0, dom::illegal_constructor, walker, None);
     b.global("TreeWalker", ctor);
     let iterator = b.object(Some(b.ids.object_prototype));
@@ -276,6 +289,7 @@ fn traversals(b: &mut Builder) -> (u32, u32) {
         traversal::iterator_method,
     );
     b.method(iterator, "detach", 0, traversal::detach);
+    tag_as(b, iterator, "NodeIterator");
     let ctor = b.constructor("NodeIterator", 0, dom::illegal_constructor, iterator, None);
     b.global("NodeIterator", ctor);
     (walker, iterator)

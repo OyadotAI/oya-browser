@@ -66,10 +66,49 @@ fn shared_struct_accepts_declared_fields() {
     assert_eq!(common::global(&execution, "r"), "4");
 }
 
-/** Adding a property outside the declared layout throws; the object keeps its fixed fields. */
+/** An undeclared property is ignored in sloppy code and rejected in strict code. */
 #[test]
 fn shared_struct_refuses_undeclared_properties() {
-    let source = "const T = new SharedStructType(['x']); const o = new T(); let message = ''; try { o.y = 2; } catch (e) { message = e.message; } const r = message;";
+    let source = "const T = new SharedStructType(['x']); const o = new T(); o.y=2; let strict=false;try{(function(){'use strict';o.z=3})()}catch(e){strict=e instanceof TypeError}const r=[o.y===undefined,o.z===undefined,strict].join();";
+    let execution = common::load_with(source, &shared_environment());
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "true,true,true");
+}
+
+/** Shared objects reject private fields while ordinary sealed objects retain ECMAScript behavior. */
+#[test]
+fn private_fields_are_refused_only_for_shared_objects() {
+    let source = "function stamp(o){class B{constructor(){return o}}class C extends B{#x=1}try{new C;return true}catch(e){return false}}const T=SharedStructType(['x']);const r=[stamp(new SharedArray(1)),stamp(T()),stamp(Object.seal({}))].join();";
+    let execution = common::load_with(source, &shared_environment());
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "false,false,true");
+}
+
+/** Writable shared fields cannot be frozen or redefined as read-only. */
+#[test]
+fn shared_fields_remain_writable_after_rejected_freeze() {
+    let source = "const T=SharedStructType(['x']);const s=T();let r='';try{Object.defineProperty(s,'x',{writable:false})}catch(e){r+='d'}try{Object.freeze(s)}catch(e){r+='f'}s.x=42;r+=s.x;";
+    let execution = common::load_with(source, &shared_environment());
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "df42");
+}
+
+/** Shared containers have null prototypes while struct instance checks retain type identity. */
+#[test]
+fn shared_container_prototypes_and_type_identity_are_distinct() {
+    let source = "const A=SharedStructType(['x']),B=SharedStructType(['x']),a=A(),array=SharedArray(1);const r=[A.prototype===null,SharedArray.prototype===null,Object.getPrototypeOf(a)===null,Object.getPrototypeOf(array)===null,a instanceof A,a instanceof B,array instanceof SharedArray].join();";
     let execution = common::load_with(source, &shared_environment());
     assert!(
         execution.failed.is_empty(),
@@ -78,6 +117,6 @@ fn shared_struct_refuses_undeclared_properties() {
     );
     assert_eq!(
         common::global(&execution, "r"),
-        "Cannot add property y, object has fixed layout"
+        "true,true,true,true,true,false,true"
     );
 }

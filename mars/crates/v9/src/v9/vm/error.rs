@@ -24,6 +24,25 @@ pub(in crate::v9) enum ErrorKind {
 name nor forge it. */
 pub(in crate::v9) const TRACE_KEY: &str = "errorTrace";
 impl Vm<'_> {
+    /** Inspect ordinary prototype data for a diagnostic without invoking accessors or proxy traps. */
+    pub(in crate::v9) fn inert_constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
+        let constructor = Key::from("constructor");
+        for _ in 0..PEEK_DEPTH {
+            let object = self.heap.get(id)?;
+            if !matches!(object.class, Class::Plain) { return None; }
+            let next = object.proto;
+            if let Some(prop) = object.props.get(&constructor) {
+                let Slot::Data(JsValue::Object(ctor)) = prop.slot else { return None; };
+                if self.heap.get(ctor).and_then(|object| object.function()).is_none() { return None; }
+                return match self.own(ctor, &Key::from("name")).ok().flatten()?.slot {
+                    Slot::Data(JsValue::String(name)) => Some(name.lossy()),
+                    _ => None,
+                };
+            }
+            id = next?;
+        }
+        None
+    }
     /** Only the exact thrown unsupported value carries native-failure provenance into callback diagnostics. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn note_conformance_native_error(&mut self, value: &JsValue) {

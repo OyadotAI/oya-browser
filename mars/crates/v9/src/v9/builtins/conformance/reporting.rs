@@ -11,7 +11,7 @@ pub(super) use terminal::is_failed_exit;
 pub(in crate::v9) use terminal::terminal;
 
 /** Assertion/native provenance remains a scoring failure even though ordinary callback reporting is caught. */
-pub(super) fn exception(vm: &mut Vm, error: JsValue) -> Res<()> {
+pub(in crate::v9) fn exception(vm: &mut Vm, error: JsValue) -> Res<()> {
     detail(vm, error).map(|_| ())
 }
 

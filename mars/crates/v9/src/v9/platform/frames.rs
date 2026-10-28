@@ -1,3 +1,4 @@
+use super::FrameRequest;
 /**
  * Documents beyond the page's own: the same-origin document of an `about:blank` or `srcdoc`
  * iframe (Blink's HTMLFrameOwnerElement::contentDocument and contentWindow), a script-made one
@@ -16,6 +17,8 @@
  */
 use super::dom::{self, dom_error, native_name, wrap, wrap_option};
 use super::html::{Parsed, parse_tree};
+use super::xml_frames;
+use crate::protocol::EngineResult;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
@@ -28,6 +31,8 @@ use std::sync::OnceLock;
 pub(super) const DOCUMENT_NODE: &str = "#document";
 /** The tag of a doctype node; its name and ids are attributes. */
 pub(super) const DOCTYPE: &str = "#doctype";
+/** Iframes scripts connected whose documents V9 has asked the app for and not heard back on. */
+const FRAME_REQUESTS_PENDING: usize = 64;
 /** Elements the in-head insertion mode keeps in the head. */
 const HEAD_CONTENT: [&str; 11] = [
     "base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template",
@@ -87,6 +92,12 @@ fn doctype_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The wrapper of a document node: Document.prototype over `HostData::Document`. */
 pub(super) fn wrap_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
+    wrap_document_as(vm, node, realm().ids.document_prototype)
+}
+
+/** A document's wrapper object over `proto`: Document for HTML documents, XMLDocument for the
+documents createDocument makes. A node keeps the wrapper it was first given. */
+pub(super) fn wrap_document_as(vm: &mut Vm, node: usize, proto: u32) -> Res<JsValue> {
     if let Some(id) = vm.page.state.wrappers.get(&node)
         && vm.heap.get(*id).is_some()
     {
@@ -94,10 +105,36 @@ pub(super) fn wrap_document(vm: &mut Vm, node: usize) -> Res<JsValue> {
     }
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Document(node))),
-        Some(realm().ids.document_prototype),
+        Some(proto),
     ))?;
     vm.page.state.wrappers.insert(node, id);
     Ok(JsValue::Object(id))
+}
+
+/** The media type a script-made document reports: the one its creator recorded, else text/html. */
+pub(super) fn content_type_of(vm: &Vm, document: usize) -> String {
+    vm.page
+        .state
+        .content_types
+        .get(&document)
+        .map_or_else(|| HTML_TYPE.to_string(), String::clone)
+}
+
+/** Record the media type of a script-made document that is not HTML (XML documents). */
+pub(super) fn set_content_type(vm: &mut Vm, document: usize, media_type: &str) {
+    vm.page
+        .state
+        .content_types
+        .insert(document, media_type.to_string());
+}
+
+/** `document.location` of a script-made or frame document: null, since it has no browsing
+context of its own. The page's document keeps the window's location. */
+pub(super) fn location_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    match super::host_data(vm, &call.this) {
+        Some(HostData::Document(_)) => Ok(JsValue::Null),
+        _ => super::window::window_get(vm, call),
+    }
 }
 
 /** A new detached node of `tag`, as a script error on failure. */
@@ -180,7 +217,8 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
         src.is_empty() || src.eq_ignore_ascii_case("about:blank")
     });
     if srcdoc.is_none() && !blank {
-        return Ok(None);
+        let src = attribute("src").unwrap_or_default();
+        return source_document(vm, frame, &src);
     }
     let document = match srcdoc {
         Some(markup) => {
@@ -190,8 +228,98 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
         }
         None => blank_document(vm)?.0,
     };
-    vm.page.state.frames.insert(frame, document);
+    remember_frame_document(vm, frame, document);
     Ok(Some(document))
+}
+
+/** Records that `document` is the document `frame` shows, both ways, so the frame's contentDocument
+and a frame document's defaultView each find the other in O(log n). */
+fn remember_frame_document(vm: &mut Vm, frame: usize, document: usize) {
+    vm.page.state.frames.insert(frame, document);
+    vm.page.state.document_frames.insert(document, frame);
+}
+
+/** The document of a frame whose `src` the app answered: built from the source it fetched, as its
+media type says, or None when the app refused the frame or has not answered. */
+fn source_document(vm: &mut Vm, frame: usize, src: &str) -> Res<Option<usize>> {
+    let Some(address) = super::net::resolve(vm, src) else {
+        return Ok(None);
+    };
+    let Some(loaded) = vm.page.environment.frame_documents.get(&address).cloned() else {
+        return Ok(None);
+    };
+    let Some(source) = loaded.source else {
+        return Ok(None);
+    };
+    let document = create(vm, DOCUMENT_NODE, None)?;
+    xml_frames::build_source(vm, document, &loaded.media_type, &source)?;
+    remember_frame_document(vm, frame, document);
+    Ok(Some(document))
+}
+
+/** An iframe a script connected asks the app for its document, once, as a browser loads a frame
+when it is inserted. A frame with no source, an `about:blank` source or a `srcdoc` loads nothing
+of its own. */
+pub(in crate::v9) fn connected(vm: &mut Vm, node: usize) -> Res<()> {
+    let Some(src) = vm.page.attribute_value(node, "src") else {
+        return Ok(());
+    };
+    let src = src.trim();
+    let inert = src.is_empty()
+        || src.eq_ignore_ascii_case("about:blank")
+        || vm.page.attribute_value(node, "srcdoc").is_some();
+    let pending = vm.page.state.frame_loads.contains_key(&node)
+        || vm.page.state.frame_loads.len() >= FRAME_REQUESTS_PENDING;
+    if inert || pending {
+        return Ok(());
+    }
+    let Some(url) = super::net::resolve(vm, src) else {
+        return Ok(());
+    };
+    vm.page.state.frame_loads.insert(node, url.clone());
+    vm.page.state.frame_requests.push(FrameRequest { url });
+    Ok(())
+}
+
+/** Fire `load` on each frame whose answer has arrived, with a document or a refusal. A frame that
+left the document meanwhile fires nothing, as a removed frame does not load. */
+pub(in crate::v9) fn run_frames(vm: &mut Vm) -> EngineResult<()> {
+    let answered: Vec<usize> = vm
+        .page
+        .state
+        .frame_loads
+        .iter()
+        .filter(|(_, url)| vm.page.environment.frame_documents.contains_key(*url))
+        .map(|(element, _)| *element)
+        .collect();
+    for element in answered {
+        vm.page.state.frame_loads.remove(&element);
+        if vm.page.connected(element) {
+            fire_load(vm, element)?;
+        }
+    }
+    Ok(())
+}
+
+/** Fire one frame's `load`; an uncaught error in its handler goes to the console. */
+fn fire_load(vm: &mut Vm, element: usize) -> EngineResult<()> {
+    let fired =
+        super::fire(vm, super::Target::Node(element), "load", false).and_then(|_| vm.drain_jobs());
+    match fired {
+        Ok(()) => Ok(()),
+        Err(crate::v9::vm::Thrown::Value(error)) => {
+            vm.report_error(&error);
+            Ok(())
+        }
+        Err(crate::v9::vm::Thrown::Fatal(error)) => Err(error),
+    }
+}
+
+/** A frame element the document re-identified keeps its pending answer. */
+pub(in crate::v9) fn adopt(page: &mut super::Page, old: usize, new: usize) {
+    if let Some(url) = page.state.frame_loads.remove(&old) {
+        page.state.frame_loads.insert(new, url);
+    }
 }
 
 /** HTMLIFrameElement's contentDocument and contentWindow. */
@@ -205,15 +333,18 @@ pub(super) fn frame_get(vm: &mut Vm, frame: usize, name: &str) -> Res<JsValue> {
     content_window(vm, frame, document)
 }
 
-/** The frame's window: its document, the frame element, and the page as parent and top. It
-carries no globals of its own; the frame has no realm of its own. */
-fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
+/** The frame's window: its document, the frame element, and the page as parent and top. It shares
+the page's realm, so its interface constructors and DOMException come from its prototype, and its
+own members shadow the page's. Created once per frame and kept, so identity holds. */
+pub(super) fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
     if let Some(id) = vm.page.state.frame_windows.get(&frame)
         && vm.heap.get(*id).is_some()
     {
         return Ok(JsValue::Object(*id));
     }
-    let id = vm.new_object()?;
+    let interfaces = vm.intrinsic_id(realm().ids.window_interfaces);
+    vm.materialize(interfaces)?;
+    let id = vm.alloc(Object::new(Class::Plain, Some(interfaces)))?;
     let document = wrap_document(vm, document)?;
     let element = wrap(vm, frame)?;
     vm.put(id, "document", document)?;
@@ -225,6 +356,37 @@ fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<JsValue> {
     vm.put(id, "self", JsValue::Object(id))?;
     vm.page.state.frame_windows.insert(frame, id);
     Ok(JsValue::Object(id))
+}
+
+/** The media type of an HTML document, which the page and every HTML document report. */
+pub(super) const HTML_TYPE: &str = "text/html";
+/** The media type of an XHTML document, which createDocument gives the HTML namespace. */
+pub(super) const XHTML_TYPE: &str = "application/xhtml+xml";
+/** The media type of an SVG document, which createDocument gives the SVG namespace. */
+pub(super) const SVG_TYPE: &str = "image/svg+xml";
+/** The media type of every other XML document: a new Document and the rest of createDocument. */
+pub(super) const XML_TYPE: &str = "application/xml";
+/** The URL of a document with no address of its own: script-made and frame documents. */
+pub(super) const ABOUT_BLANK: &str = "about:blank";
+
+/** Give a clone of a document the media type and URL its source had, as cloneNode keeps both. */
+pub(super) fn copy_document_kind(vm: &mut Vm, from: usize, to: usize) {
+    if let Some(media) = vm.page.state.content_types.get(&from).cloned() {
+        vm.page.state.content_types.insert(to, media);
+    }
+    if vm.page.state.parsed_documents.contains(&from) {
+        vm.page.state.parsed_documents.insert(to);
+    }
+}
+
+/** The URL a document reports: a DOMParser document has the page's address, and every other
+script-made or frame document is about:blank. */
+pub(super) fn document_url(vm: &Vm, document: usize) -> String {
+    if vm.page.state.parsed_documents.contains(&document) {
+        vm.page.state.href.clone()
+    } else {
+        ABOUT_BLANK.to_string()
+    }
 }
 
 /** The document's element child and the html child named `tag` (head or body). */
@@ -257,6 +419,10 @@ pub(super) fn document_get(vm: &mut Vm, document: usize, call: Call) -> Res<JsVa
         "childNodes" | "firstChild" | "lastChild" => dom::node_get(vm, call),
         "children" | "firstElementChild" | "lastElementChild" => dom::element_get(vm, call),
         "readyState" => JsValue::string("complete").map_err(Into::into),
+        "contentType" => JsValue::string(&content_type_of(vm, document)).map_err(Into::into),
+        "URL" | "documentURI" | "baseURI" => {
+            JsValue::string(&document_url(vm, document)).map_err(Into::into)
+        }
         "title" => {
             let title = dom::search(vm, document, |page, id| page.tag(id) == "title");
             let text = title
@@ -315,7 +481,7 @@ pub(super) fn document_method(vm: &mut Vm, document: usize, call: &Call) -> Res<
             wrap_option(vm, found.first().copied())?
         }
         "querySelector" | "querySelectorAll" => dom::query(vm, document, call)?,
-        "getElementsByTagName" | "getElementsByClassName" => {
+        "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName" => {
             let Some(root) = document_part(vm, document, "html") else {
                 return dom::node_list(vm, Vec::new()).map(Some);
             };
@@ -362,13 +528,7 @@ fn close(vm: &mut Vm, document: usize) -> Res<()> {
         return Ok(());
     };
     build(vm, document, &markup)?;
-    let frame = vm
-        .page
-        .state
-        .frames
-        .iter()
-        .find(|(_, owned)| **owned == document)
-        .map(|(frame, _)| *frame);
+    let frame = vm.page.state.document_frames.get(&document).copied();
     if let Some(frame) = frame {
         super::fire(vm, super::Target::Node(frame), "load", false)?;
     }

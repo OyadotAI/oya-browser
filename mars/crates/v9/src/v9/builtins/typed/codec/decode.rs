@@ -26,7 +26,7 @@ pub(super) fn parse(
     while result.bytes.len() < capacity {
         let mut chunk = Vec::with_capacity(4);
         while chunk.len() < 4 && cursor < input.len() {
-            let unit = input.as_units()[cursor];
+            let unit = input.unit_at(cursor).expect("valid input index");
             cursor += 1;
             vm.charge(1)?;
             if !whitespace(unit) {
@@ -48,7 +48,7 @@ pub(super) fn parse(
                     break;
                 }
                 if padded {
-                    while cursor < input.len() && whitespace(input.as_units()[cursor]) {
+                    while cursor < input.len() && input.unit_at(cursor).is_some_and(whitespace) {
                         cursor += 1;
                     }
                     if cursor < input.len() {

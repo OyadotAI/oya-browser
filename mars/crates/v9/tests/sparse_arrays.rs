@@ -6,6 +6,161 @@ use mars_v9::VmState;
 const SMALL_SNAPSHOT: usize = 64 * 1024;
 
 #[test]
+/** Oversized calls evaluate later arguments and finish the native iterator before failing. */
+fn oversized_hole_spread_preserves_call_evaluation_order() {
+    assert_eq!(
+        common::eval(
+            "let side=0, caught=false; let iterator=Array(300000)[Symbol.iterator](); let source={[Symbol.iterator](){return iterator}}; try {(function(){})(...source,side++)} catch(e){caught=e instanceof RangeError} let result=[side,caught,iterator.next().done].join(':');",
+            "result"
+        ),
+        "1:true:true"
+    );
+}
+
+#[test]
+/** A large array spread produces present undefined entries without materializing them all. */
+fn hole_array_spread_preserves_present_elements() {
+    assert_eq!(
+        common::eval(
+            "let a=[...Array(300000)]; a[1]=5; delete a[2]; let result=[a.length,0 in a,a[0],a[1],2 in a,299999 in a].join(':');",
+            "result"
+        ),
+        "300000:true::5:false:true"
+    );
+}
+
+#[cfg(feature = "conformance")]
+fn eval_d8(source: &str, name: &str) -> String {
+    let sources = [source.to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    common::global(&execution, name)
+}
+
+#[cfg(feature = "conformance")]
+#[test]
+/** A large one-byte character spread retains ordinary element and deletion behavior. */
+fn large_character_spread_preserves_indexed_semantics() {
+    assert_eq!(
+        eval_d8(
+            "let a=[...'abc'.repeat(100000)]; a[1]='x'; delete a[2]; a.length=5; a.length=7; const result=[a.length,a[0],a[1],2 in a,a[3],5 in a].join(':');",
+            "result"
+        ),
+        "7:a:x:false:a:false"
+    );
+}
+
+#[cfg(feature = "conformance")]
+#[test]
+/** A user iterator is still observed instead of being replaced by the compact path. */
+fn character_spread_observes_overridden_iterator() {
+    assert_eq!(
+        eval_d8(
+            "let calls=0; String.prototype[Symbol.iterator]=function*(){calls++;yield 'z';}; let a=[...'abc'.repeat(5000)]; const result=calls+':'+a.join(',');",
+            "result"
+        ),
+        "1:z"
+    );
+}
+
+#[cfg(feature = "conformance")]
+#[test]
+/** Compact elements share the isolate's real permanent character root. */
+fn character_spread_uses_canonical_readonly_roots() {
+    assert_eq!(
+        eval_d8(
+            "let a=[...'ab'.repeat(3000)]; let result=[%IsSameHeapObject(a[0], 'a'),%IsSameHeapObject(a[0],a[2]),%InYoungGeneration(a[0])].join(':');",
+            "result"
+        ),
+        "true:true:false"
+    );
+}
+
+#[cfg(feature = "conformance")]
+#[test]
+/** Character roots, source and edited positions survive real state transport. */
+fn character_spread_survives_page_state_transport() {
+    let sources = ["let result; let a=[...'abc'.repeat(100000)]; a[1]='x'; delete a[2]; setTimeout(()=>{result=[a.length,a[0],a[1],2 in a,a[3]].join(':')},0);".to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let clicked = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        1,
+    )
+    .unwrap();
+    assert!(clicked.failed.is_empty(), "{:?}", common::failure(&clicked));
+    assert_eq!(common::global(&clicked, "result"), "300000:a:x:false:a");
+}
+
+#[test]
+/** Large repeated arrays keep normal indexed mutation and length semantics. */
+fn repeated_concat_supports_edits_deletes_and_truncation() {
+    assert_eq!(
+        common::eval(
+            "let a=['a','b']; for(let i=0;i<18;i++) a=a.concat(a); a[0]='x'; delete a[1]; a.length=3; a.length=5; const result=[a.length,a[0],1 in a,a[2],3 in a].join(':');",
+            "result"
+        ),
+        "5:x:false:a:false"
+    );
+}
+
+#[test]
+/** Extending a compact array adds sparse holes without scanning its logical length. */
+fn repeated_concat_extension_keeps_sparse_key_enumeration_bounded() {
+    assert_eq!(
+        common::eval(
+            "let a=[1,2]; a=a.concat(a); a.length=4294967295; a[4000000000]=3; const result=[a.length,Object.keys(a).join(',')].join(':');",
+            "result"
+        ),
+        "4294967295:0,1,2,3,4000000000"
+    );
+}
+
+#[test]
+/** Species and spreadability hooks still run in order when a fast copy is unavailable. */
+fn repeated_concat_observes_user_hooks() {
+    assert_eq!(
+        common::eval(
+            "let log=''; let a=[1,2]; Object.defineProperty(a, Symbol.isConcatSpreadable, {get(){log+='s';return true}}); let b=a.concat(a); const result=log+':'+b.join(',');",
+            "result"
+        ),
+        "ss:1,2,1,2"
+    );
+}
+
+#[test]
+/** Compact repeated values and overlay holes survive real page state transport. */
+fn repeated_concat_survives_state_transport() {
+    let sources = ["let a=[{n:7},'x']; for(let i=0;i<18;i++) a=a.concat(a); a[0]={n:8}; delete a[1]; document.getElementById('go').addEventListener('click',()=>console.log([a.length,a[0].n,1 in a,a[2].n].join(':')));".to_string()];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    assert!(serde_json::to_vec(&loaded.state).unwrap().len() < SMALL_SNAPSHOT);
+    let clicked = mars_v9::click_page(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        3,
+    )
+    .unwrap();
+    assert!(clicked.failed.is_empty(), "{:?}", common::failure(&clicked));
+    assert_eq!(common::console(&clicked), ["524288:8:false:7"]);
+}
+
+#[test]
 /** The last legal index grows length to uint32::MAX while the next key is an ordinary property. */
 fn high_indices_preserve_array_length_rules() {
     assert_eq!(

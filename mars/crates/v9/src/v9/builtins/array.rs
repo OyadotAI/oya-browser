@@ -129,11 +129,13 @@ fn unsupported_group(vm: &mut Vm, _: Call) -> Res<JsValue> {
 
 /** `Array(n)` and `Array(a, b, ...)`. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let id = if let [JsValue::Number(length)] = call.args {
-        if *length < 0.0 || length.fract() != 0.0 || *length > f64::from(u32::MAX) {
+    let id = if let [value] = call.args
+        && let Some(length) = value.number_value()
+    {
+        if length < 0.0 || length.fract() != 0.0 || length > f64::from(u32::MAX) {
             return Err(vm.range_error("Invalid array length"));
         }
-        vm.new_array_length(*length as usize)?
+        vm.new_array_length(length as usize)?
     } else {
         vm.new_array(call.args.to_vec())?
     };
@@ -217,6 +219,13 @@ fn index_key(index: usize) -> Res<Key> {
 
 /** Element `index` of an array-like (fast for arrays). */
 pub(in crate::v9) fn get_index(vm: &mut Vm, object: &JsValue, index: usize) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    if object
+        .object()
+        .is_some_and(|id| super::shared_container_active(vm, id))
+    {
+        return vm.get(object, &index_key(index)?);
+    }
     if let JsValue::Object(id) = object
         && let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class)
         && let Some(value) = elements.get(index)
@@ -569,15 +578,18 @@ pub(in crate::v9) fn join_values(
     let mut units: Vec<u16> = Vec::new();
     for index in 0..length {
         if index > 0 {
-            units.extend_from_slice(separator.as_units());
+            if separator.len() > crate::constants::JS_STRING_UNITS.saturating_sub(units.len()) {
+                return Err(vm.range_error("Invalid string length"));
+            }
+            units.extend((0..separator.len()).filter_map(|index| separator.unit_at(index)));
         }
         let value = get_index(vm, object, index)?;
         if !value.nullish() {
             let text = vm.to_string(&value)?;
-            units.extend_from_slice(text.as_units());
-        }
-        if units.len() > crate::constants::JS_STRING_UNITS {
-            break;
+            if text.len() > crate::constants::JS_STRING_UNITS.saturating_sub(units.len()) {
+                return Err(vm.range_error("Invalid string length"));
+            }
+            units.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
         }
         vm.charge(1)?;
     }
@@ -638,7 +650,8 @@ pub(super) fn locale_elements(
                 return Err(vm.type_error(&message));
             }
             let result = vm.call(method, value, vec![call.arg(0), call.arg(1)])?;
-            units.extend_from_slice(vm.to_string(&result)?.as_units());
+            let text = vm.to_string(&result)?;
+            units.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
         }
         if units.len() > crate::constants::JS_STRING_UNITS {
             return Err(vm.range_error("Invalid string length"));
@@ -881,7 +894,7 @@ fn compare(vm: &mut Vm, comparator: &JsValue, a: &JsValue, b: &JsValue) -> Res<s
     }
     let a = vm.to_string(a)?;
     let b = vm.to_string(b)?;
-    Ok(a.as_units().cmp(b.as_units()))
+    Ok(a.cmp(&b))
 }
 
 /** A stable merge sort whose comparisons may run script code. */

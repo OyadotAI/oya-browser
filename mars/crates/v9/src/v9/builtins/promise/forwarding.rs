@@ -1,5 +1,5 @@
 /** Stack capture may follow a genuine unresolved native resolve/reject pair without invoking either callback or any property getter. */
-use super::{Class, JsValue, ObjectId, PromiseState, Vm, natives};
+use super::{Class, JsValue, ObjectId, PromiseState, RESOLVER_TARGET, Vm, natives};
 use crate::v9::vm::{
     data::FunctionKind,
     heap::{Key, Slot},
@@ -53,6 +53,10 @@ fn resolver(vm: &Vm, function: &JsValue, expected: u32) -> Option<(ObjectId, Obj
         return None;
     }
     match slots.as_slice() {
+        [JsValue::Object(flag)] => match &vm.heap.get(*flag)?.props.get(&Key::private(RESOLVER_TARGET))?.slot {
+            Slot::Data(JsValue::Object(promise)) => Some((*promise, *flag)),
+            _ => None,
+        },
         [JsValue::Object(promise), JsValue::Object(flag)] => Some((*promise, *flag)),
         _ => None,
     }

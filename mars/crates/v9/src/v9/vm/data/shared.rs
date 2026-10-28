@@ -66,10 +66,45 @@ struct Store {
 /** Revisions make independently serialized aliases coherent even while another worker writes. */
 struct State {
     bytes: Vec<u8>,
+    sparse: Option<super::SparseBuffer>,
     maximum: Option<usize>,
     revision: u64,
     waiters: Vec<waits::Entry>,
     next_ticket: u64,
+}
+
+impl State {
+    fn len(&self) -> usize {
+        self.sparse.as_ref().map_or(self.bytes.len(), |s| s.length)
+    }
+    fn read(&self, start: usize, length: usize) -> Option<Vec<u8>> {
+        if let Some(sparse) = &self.sparse {
+            return sparse.read(start, length);
+        }
+        self.bytes
+            .get(start..start.checked_add(length)?)
+            .map(<[u8]>::to_vec)
+    }
+    fn write(&mut self, start: usize, bytes: &[u8]) -> bool {
+        if let Some(sparse) = &mut self.sparse {
+            return sparse.write(start, bytes);
+        }
+        let Some(target) = start
+            .checked_add(bytes.len())
+            .and_then(|end| self.bytes.get_mut(start..end))
+        else {
+            return false;
+        };
+        target.copy_from_slice(bytes);
+        true
+    }
+    fn resize(&mut self, length: usize) {
+        if let Some(sparse) = &mut self.sparse {
+            sparse.length = length;
+        } else {
+            self.bytes.resize(length, 0);
+        }
+    }
 }
 
 impl SharedBytes {
@@ -104,7 +139,11 @@ impl SharedBytes {
     }
     /** Broker validation and Wasm growth operate on the whole backing, independently of JS windows. */
     pub(in crate::v9) fn backing_len(&self) -> usize {
-        self.lock().bytes.len()
+        self.lock().len()
+    }
+    /** Sparse stores reserve the ordinary shared-buffer budget independently of logical size. */
+    pub(in crate::v9) fn is_sparse(&self) -> bool {
+        self.lock().sparse.is_some()
     }
     /** A fixed Wasm wrapper hides growth capability but continues to share its original bytes. */
     pub(in crate::v9) fn fixed_view(&self, length: usize) -> Option<Self> {
@@ -174,7 +213,11 @@ impl SharedBytes {
     /** Reserved bytes count once per backing identity in the VM heap budget. */
     pub(in crate::v9) fn allocated(&self) -> usize {
         let state = self.lock();
-        state.maximum.unwrap_or(state.bytes.len())
+        if state.sparse.is_some() {
+            MAX_BYTES
+        } else {
+            state.maximum.unwrap_or(state.bytes.len())
+        }
     }
     /** Memory reporting includes real reserved bytes, waiter vectors and individual signal allocations. */
     #[cfg(feature = "conformance")]
@@ -184,6 +227,7 @@ impl SharedBytes {
         std::mem::size_of::<Store>()
             + arc_header
             + state.bytes.capacity()
+            + state.sparse.as_ref().map_or(0, |s| s.resident())
             + state.waiters.capacity() * std::mem::size_of::<waits::Entry>()
             + state.waiters.len() * (std::mem::size_of::<waits::Signal>() + arc_header)
     }
@@ -199,10 +243,7 @@ impl SharedBytes {
         {
             return None;
         }
-        self.lock()
-            .bytes
-            .get(start..start.checked_add(length)?)
-            .map(<[u8]>::to_vec)
+        self.lock().read(start, length)
     }
     /** A shared write is one lock-protected memory event and advances the snapshot revision. */
     pub(in crate::v9) fn write(&self, start: usize, bytes: &[u8]) -> bool {
@@ -213,10 +254,9 @@ impl SharedBytes {
         if self.visible.is_some_and(|visible| end > visible) {
             return false;
         }
-        let Some(target) = state.bytes.get_mut(start..end) else {
+        if !state.write(start, bytes) {
             return false;
-        };
-        target.copy_from_slice(bytes);
+        }
         state.revision = state.revision.wrapping_add(1);
         true
     }
@@ -241,7 +281,16 @@ impl SharedBytes {
     ) -> Option<T> {
         Self::ordered(|| {
             let mut state = self.lock();
-            let result = operation(state.bytes.get_mut(start..start.checked_add(length)?)?);
+            let result = if state.sparse.is_some() {
+                let mut bytes = state.read(start, length)?;
+                let result = operation(&mut bytes);
+                if write && !state.write(start, &bytes) {
+                    return None;
+                }
+                result
+            } else {
+                operation(state.bytes.get_mut(start..start.checked_add(length)?)?)
+            };
             if write {
                 state.revision = state.revision.wrapping_add(1)
             }
@@ -259,18 +308,18 @@ impl SharedBytes {
         let mut state = self.lock();
         if self.visible.is_some()
             || state.maximum.is_none_or(|max| length > max)
-            || length < state.bytes.len()
+            || length < state.len()
         {
             return false;
         }
-        state.bytes.resize(length, 0);
+        state.resize(length);
         state.revision = state.revision.wrapping_add(1);
         true
     }
     /** Wasm memory growth adds pages atomically so simultaneous workers cannot lose an increment. */
     pub(in crate::v9) fn grow_by(&self, delta: usize, maximum: usize) -> Option<usize> {
         let mut state = self.lock();
-        let old = state.bytes.len();
+        let old = state.len();
         let length = old.checked_add(delta)?;
         if self.visible.is_some()
             || length > maximum
@@ -278,7 +327,7 @@ impl SharedBytes {
         {
             return None;
         }
-        state.bytes.resize(length, 0);
+        state.resize(length);
         state.revision = state.revision.wrapping_add(1);
         Some(old)
     }
@@ -295,5 +344,29 @@ impl std::fmt::Debug for SharedBytes {
             .field("id", &self.identity())
             .field("length", &self.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod sparse_tests {
+    use super::*;
+
+    /** Quota exhaustion rejects an atomic write without modifying either page or revision. */
+    #[test]
+    fn sparse_atomic_quota_failure_does_not_commit() {
+        let bytes = SharedBytes::new_sparse_wasm(64 * 1024 * 1024, 64 * 1024 * 1024).unwrap();
+        for index in 0..(MAX_BYTES / super::super::sparse_buffer::PAGE_COST) {
+            assert!(bytes.write(index * super::super::sparse_buffer::PAGE, &[1]));
+        }
+        let revision = bytes.revision();
+        assert_eq!(
+            bytes.atomic(MAX_BYTES, 1, true, |value| {
+                value[0] = 2;
+            }),
+            None
+        );
+        assert_eq!(bytes.read(MAX_BYTES, 1), Some(vec![0]));
+        assert_eq!(bytes.revision(), revision);
+        assert_eq!(bytes.allocated(), MAX_BYTES);
     }
 }

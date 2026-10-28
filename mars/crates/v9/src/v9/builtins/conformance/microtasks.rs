@@ -28,7 +28,7 @@ pub(in crate::v9) fn enqueue(vm: &mut Vm, callback: JsValue) -> Res<()> {
 }
 
 /** Revoked callable proxies have no target realm and use the enqueuing context, matching GetContextForMicrotask. */
-fn relevant_realm(vm: &mut Vm, callback: &JsValue) -> Res<u32> {
+pub(in crate::v9) fn relevant_realm(vm: &mut Vm, callback: &JsValue) -> Res<u32> {
     let mut id = callback
         .object()
         .ok_or_else(|| EngineError::invalid("Invalid callable microtask."))?;

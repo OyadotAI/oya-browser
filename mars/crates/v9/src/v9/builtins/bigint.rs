@@ -34,7 +34,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("BigInt is not a constructor"));
     }
     let primitive = vm.to_primitive(&call.arg(0), Hint::Number)?;
-    if let JsValue::Number(number) = primitive {
+    if let Some(number) = primitive.number_value() {
         if number.trunc() != number || !number.is_finite() {
             let text = vm.to_text(&primitive)?;
             return Err(vm.range_error(&format!(

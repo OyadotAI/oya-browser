@@ -5,11 +5,13 @@
  * document it belongs to, so ownerDocument answers with the document the call came from.
  */
 use super::dom::{self, DOCUMENT, node_of, wrap};
-use super::frames::{self, DOCTYPE, DOCUMENT_NODE};
+use super::frames::{self, DOCTYPE, DOCUMENT_NODE, SVG_TYPE, XHTML_TYPE, XML_TYPE};
+use super::namespaces::{self, ElementNs, HTML_NAMESPACE, NameKind, QName, SVG_NAMESPACE};
+use super::pseudo_attributes as pseudo;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::Object;
-use crate::v9::vm::realm::{Builder, realm};
+use crate::v9::vm::realm::{Builder, NativeFn, realm};
 use crate::v9::vm::{Call, Res, Thrown, Vm};
 use std::sync::OnceLock;
 
@@ -90,11 +92,26 @@ pub(super) fn install_prototype(b: &mut Builder) {
     b.ids.implementation = page;
 }
 
+/** The attribute methods ProcessingInstruction carries beside Element's (which it does not
+inherit), with the lengths they report. */
+const PI_METHODS: [(&str, u32, NativeFn); 7] = [
+    ("getAttribute", 1, pseudo::get_attribute),
+    ("setAttribute", 2, pseudo::set_attribute),
+    ("removeAttribute", 1, pseudo::remove_attribute),
+    ("hasAttribute", 1, pseudo::has_attribute),
+    ("hasAttributes", 0, pseudo::has_attributes),
+    ("getAttributeNames", 0, pseudo::get_attribute_names),
+    ("toggleAttribute", 1, pseudo::toggle_attribute),
+];
+
 /** Install ProcessingInstruction and the DOMImplementation and Document constructors that
 scripts reach through instanceof; neither constructs anything from script (Document does). */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.text_prototype));
     b.getter(proto, "target", target_get);
+    for (name, length, method) in PI_METHODS {
+        b.method(proto, name, length, method);
+    }
     let ctor = b.constructor(
         "ProcessingInstruction",
         0,
@@ -167,14 +184,6 @@ fn require_args(vm: &mut Vm, call: &Call, count: usize) -> Res<()> {
         return Err(vm.type_error("Not enough arguments"));
     }
     Ok(())
-}
-
-/** A DOMString argument where null or undefined stands for the empty string. */
-fn nullable_text(vm: &mut Vm, value: &JsValue) -> Res<String> {
-    if value.nullish() {
-        return Ok(String::new());
-    }
-    vm.to_text(value)
 }
 
 /** The DOM's InvalidCharacterError, naming the rejected text. */
@@ -251,26 +260,76 @@ fn attach_doctype(vm: &mut Vm, document: usize, doctype: usize) -> Res<()> {
     Ok(())
 }
 
-/** DOMImplementation.createDocument(namespace, qualifiedName, doctype): an XML document with the
-optional doctype and, for a non-empty qualified name, a root element of that name. Namespaces
-are not stored in the node model, so the root carries its qualified name but no namespace. */
-fn create_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    owner_of(vm, &call)?;
-    require_args(vm, &call, CREATE_DOCUMENT_ARGS)?;
-    let qualified = nullable_text(vm, &call.arg(1))?;
-    let doctype = optional_doctype(vm, &call.arg(2))?;
-    if !qualified.is_empty() && !lax_name(&qualified) {
-        return Err(invalid_character(vm, &qualified));
+/** The media type createDocument gives a document, from its namespace: HTML is XHTML, SVG is SVG,
+and anything else (including the null namespace) is plain XML, as the DOM standard says. */
+fn create_document_type_for(namespace: Option<&str>) -> &'static str {
+    match namespace {
+        Some(HTML_NAMESPACE) => XHTML_TYPE,
+        Some(SVG_NAMESPACE) => SVG_TYPE,
+        _ => XML_TYPE,
     }
-    let document = frames::create(vm, DOCUMENT_NODE, None)?;
+}
+
+/** createDocument's qualifiedName: null names no root element (WebIDL's nullable argument), while
+undefined is the text "undefined" like any other value. */
+fn qualified_name_arg(vm: &mut Vm, value: &JsValue) -> Res<String> {
+    if matches!(value, JsValue::Null) {
+        return Ok(String::new());
+    }
+    vm.to_text(value)
+}
+
+/** The root element name createDocument makes, validated for `namespace`. An empty qualified name
+makes no root; any other must pass the DOM's name and prefix rules, or the call throws. */
+fn root_name(vm: &mut Vm, namespace: Option<&str>, qualified: &str) -> Res<Option<QName>> {
+    if qualified.is_empty() {
+        return Ok(None);
+    }
+    namespaces::validate_and_extract(namespace, qualified, NameKind::Element)
+        .map(Some)
+        .map_err(|error| dom::name_error(vm, error))
+}
+
+/** Put the optional doctype and the root element into a new document, the root carrying its
+namespace so namespaceURI and localName answer as the DOM does. */
+fn populate(
+    vm: &mut Vm,
+    document: usize,
+    doctype: Option<usize>,
+    root: Option<(&str, Option<String>, QName)>,
+) -> Res<()> {
     if let Some(doctype) = doctype {
         attach_doctype(vm, document, doctype)?;
     }
-    if !qualified.is_empty() {
-        let root = frames::create(vm, &qualified, None)?;
-        frames::append(vm, document, root)?;
+    if let Some((qualified, namespace, qname)) = root {
+        let node = frames::create(vm, qualified, None)?;
+        let record = ElementNs {
+            namespace,
+            prefix: qname.prefix,
+            local: qname.local,
+        };
+        vm.page.set_element_namespace(node, record);
+        frames::append(vm, document, node)?;
     }
-    frames::wrap_document(vm, document)
+    Ok(())
+}
+
+/** DOMImplementation.createDocument(namespace, qualifiedName, doctype): an XML document with the
+optional doctype and, for a non-empty qualified name, a root element in `namespace`. The
+document's media type and prototype (XMLDocument) follow the namespace, as the DOM says. */
+fn create_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    owner_of(vm, &call)?;
+    require_args(vm, &call, CREATE_DOCUMENT_ARGS)?;
+    let namespace = dom::optional_string_arg(vm, &call, 0)?;
+    let qualified = qualified_name_arg(vm, &call.arg(1))?;
+    let doctype = optional_doctype(vm, &call.arg(2))?;
+    let root = root_name(vm, namespace.as_deref(), &qualified)?;
+    let media_type = create_document_type_for(namespace.as_deref());
+    let document = frames::create(vm, DOCUMENT_NODE, None)?;
+    let root = root.map(|qname| (qualified.as_str(), namespace, qname));
+    populate(vm, document, doctype, root)?;
+    frames::set_content_type(vm, document, media_type);
+    frames::wrap_document_as(vm, document, realm().ids.xml_document_prototype)
 }
 
 /** `new Document()`: an empty document, with no doctype, root element or children. */
@@ -279,6 +338,7 @@ pub(super) fn construct_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Failed to construct 'Document': Please use the 'new' operator."));
     }
     let node = frames::create(vm, DOCUMENT_NODE, None)?;
+    frames::set_content_type(vm, node, XML_TYPE);
     frames::wrap_document(vm, node)
 }
 

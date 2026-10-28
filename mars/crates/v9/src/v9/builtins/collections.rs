@@ -258,6 +258,8 @@ fn map_set(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     let (key_value, value) = (call.arg(0), call.arg(1));
     table_of(vm, &call, kind)?;
     check_weak(vm, kind, &key_value)?;
+    vm.heap.track_value(&key_value);
+    vm.heap.track_value(&value);
     let units = (key_value.string_units() + value.string_units()) as isize;
     let added = table(vm, &call)
         .map(|(_, table, _)| table.set(key_value, value))
@@ -271,6 +273,7 @@ fn set_add(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     let value = call.arg(0);
     table_of(vm, &call, kind)?;
     check_weak(vm, kind, &value)?;
+    vm.heap.track_value(&value);
     let units = value.string_units() as isize;
     let added = table(vm, &call)
         .map(|(_, table, _)| table.set(value, JsValue::Undefined))

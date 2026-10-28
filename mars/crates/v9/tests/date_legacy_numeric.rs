@@ -1,6 +1,18 @@
 /** Legacy numeric date strings support explicit GMT and validated numeric calendar fields. */
 mod common;
 
+/** A UTC designator on an extended signed date must preserve the sign and full year. */
+#[test]
+fn signed_extended_dates_with_utc_designator_keep_the_year() {
+    assert_eq!(
+        common::eval(
+            "const r=[Date.parse('-000040-01-01Z'),Date.parse('+001972Z'),Date.parse('0040-01-01Z')].join();",
+            "r"
+        ),
+        "-63429523200000,63072000000,-60904915200000"
+    );
+}
+
 /** GMT follows year-first numeric dates without changing the date into local time. */
 #[test]
 fn year_first_gmt_numeric_dates_parse() {

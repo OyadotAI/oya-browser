@@ -1356,7 +1356,7 @@ fn compile_diagnostics_report_real_section_offsets() {
             &bytes,
             "let r='';try{new WebAssembly.Module(bytes)}catch(e){r=e.message}WebAssembly.compile(bytes).catch(e=>{r+='|'+e.message});"
         ),
-        "WebAssembly.Module(): expected 6 bytes, fell off end @+10|WebAssembly.compile(): expected 6 bytes, fell off end @+10"
+        "WebAssembly.Module(): section (code 1, \"Type\") extends past end of the module (length 6, remaining bytes 1) @+8|WebAssembly.compile(): section (code 1, \"Type\") extends past end of the module (length 6, remaining bytes 1) @+8"
     );
 }
 
@@ -1403,6 +1403,115 @@ fn table_address_descriptors_preserve_getter_and_coercion_order() {
         ),
         "eastringim,0"
     );
+}
+
+/** Table64 JS indices and lengths retain their BigInt contract and exact logical maximum. */
+#[test]
+fn table64_javascript_access_uses_bigints_and_bounded_growth() {
+    assert_eq!(
+        common::eval(
+            "const t=new WebAssembly.Table({element:'externref',address:'i64',initial:1n,maximum:18446744073709551615n},'a');let r=[typeof t.length,t.get(0n),t.grow(1n,'b'),t.get(1n),t.length].join();try{t.get(0)}catch(e){r+=','+(e instanceof TypeError)}try{t.grow(18446744073709551615n)}catch(e){r+=','+(e instanceof RangeError)}r+=','+t.length;",
+            "r"
+        ),
+        "bigint,a,1,b,2,true,true,2"
+    );
+}
+
+/** An invalid index wins over reference conversion for both table address widths. */
+#[test]
+fn table_set_checks_bounds_before_converting_the_value() {
+    assert_eq!(
+        common::eval(
+            "let r='';for(const [address,initial,index] of [['i32',0,0],['i64',0n,0n]]){const t=new WebAssembly.Table({element:'anyfunc',address,initial});try{t.set(index,{})}catch(e){r+=(e instanceof RangeError)+','}}",
+            "r"
+        ),
+        "true,true,"
+    );
+}
+
+/** A missing table.set value defaults to null for funcref and undefined for externref. */
+#[test]
+fn table_set_missing_value_uses_reference_default() {
+    assert_eq!(
+        common::eval(
+            "const f=new WebAssembly.Table({element:'anyfunc',initial:1});const e=new WebAssembly.Table({element:'externref',initial:1},'value');f.set(0);e.set(0);let r=[f.get(0)===null,e.get(0)===undefined].join();",
+            "r"
+        ),
+        "true,true"
+    );
+}
+
+/** Invalid fill values are rejected before a table growth capacity failure. */
+#[test]
+fn table_grow_converts_fill_before_rejecting_large_growth() {
+    assert_eq!(
+        common::eval(
+            "let r='';for(const [address,initial,delta] of [['i32',0,1],['i64',0n,4294967296n]]){const t=new WebAssembly.Table({element:'anyfunc',address,initial,maximum:initial});try{t.grow(delta,{})}catch(e){r+=(e instanceof TypeError)+','}}",
+            "r"
+        ),
+        "true,true,"
+    );
+}
+
+/** Binary table64 loads use i64 addresses and trap rather than truncating high bits. */
+#[test]
+fn table64_binary_get_checks_full_i64_address() {
+    let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+    section(&mut bytes, 1, &[1, 0x60, 1, 0x7e, 1, 0x6f]);
+    section(&mut bytes, 3, &[1, 0]);
+    section(&mut bytes, 4, &[1, 0x6f, 4, 1]);
+    section(&mut bytes, 7, &[1, 1, b'f', 0, 0]);
+    section(&mut bytes, 10, &[1, 6, 0, 0x20, 0, 0x25, 0, 0x0b]);
+    assert_eq!(
+        eval(
+            &bytes,
+            "const f=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.f;let r=String(f(0n));try{f(4294967296n)}catch(e){r+=','+(e instanceof WebAssembly.RuntimeError)}"
+        ),
+        "null,true"
+    );
+}
+
+/** Large logical tables keep range defaults, explicit writes, and object identity without dense allocation. */
+#[test]
+fn table64_large_sparse_growth_retains_each_fill_and_override() {
+    assert_eq!(
+        common::eval(
+            "const a={},b={},c={};const t=new WebAssembly.Table({element:'externref',address:'i64',initial:1n,maximum:10000000n},a);t.grow(9999998n,b);t.grow(1n,c);t.set(5000000n,a);let r=[t.length===10000000n,t.get(0n)===a,t.get(1n)===b,t.get(5000000n)===a,t.get(9999998n)===b,t.get(9999999n)===c].join();",
+            "r"
+        ),
+        "true,true,true,true,true,true"
+    );
+}
+
+/** An out-of-range logical maximum identifies the offending descriptor property. */
+#[test]
+fn table64_maximum_reports_full_unsigned_range_error() {
+    assert_eq!(
+        common::eval(
+            "let r='';try{new WebAssembly.Table({element:'externref',address:'i64',initial:0n,maximum:18446744073709551616n})}catch(e){r=e.message}",
+            "r"
+        ),
+        "WebAssembly.Table(): Property 'maximum' must be in u64 range"
+    );
+}
+
+/** Sparse ranges and overwritten references remain intact after a page-state round trip. */
+#[test]
+fn table64_sparse_ranges_survive_state_serialization() {
+    let sources = ["const a={},b={};const t=new WebAssembly.Table({element:'externref',address:'i64',initial:1n},a);t.grow(9999999n,b);t.set(5000000n,a);let r='';setTimeout(()=>{r=[t.length===10000000n,t.get(0n)===a,t.get(1n)===b,t.get(5000000n)===a].join()},1)".to_string()];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let state = common::round_trip(loaded.state);
+    let execution =
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 2.0, 1).unwrap();
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true");
 }
 
 /** A paired descriptor graph exposes construction, descriptor identity and identity-based casts. */
@@ -1670,7 +1779,7 @@ fn gc_array_atomic_or_returns_the_previous_integer() {
     );
 }
 
-/** Packed get sign extension is supported while immutable/packed arithmetic writes are invalid. */
+/** Packed atomic arithmetic is allowed only for mutable integer storage. */
 #[test]
 fn gc_atomic_storage_contracts_are_checked_at_compile_time() {
     let bytes = gc_function(
@@ -1684,7 +1793,9 @@ fn gc_atomic_storage_contracts_are_checked_at_compile_time() {
         ),
         "-1"
     );
-    for storage in [[0x7f, 0], [0x78, 1], [0x7d, 1]] {
+    let packed = gc_function(&[0x5f, 1, 0x78, 1], &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0]);
+    assert_eq!(eval(&packed, "let r=WebAssembly.validate(bytes);"), "true");
+    for storage in [[0x7f, 0], [0x7d, 1]] {
         let bytes = gc_function(
             &[0x5f, 1, storage[0], storage[1]],
             &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0],
@@ -1915,7 +2026,7 @@ fn wasm_shared_buffer_conversions_preserve_live_and_fixed_windows() {
     );
 }
 
-/** A declared maximum does not waive the native byte cap, and conversion requires an actual maximum. */
+/** Shared sparse growth respects its declared maximum, and conversion requires an actual maximum. */
 #[test]
 fn wasm_buffer_conversions_enforce_maximum_and_native_limits() {
     assert_eq!(
@@ -1923,7 +2034,7 @@ fn wasm_buffer_conversions_enforce_maximum_and_native_limits() {
             "const m=new WebAssembly.Memory({initial:1,maximum:128,shared:true}),g=m.toResizableBuffer();let errors=0;try{g.grow(8388608)}catch(e){errors+=e instanceof RangeError}const n=new WebAssembly.Memory({initial:1}),old=n.buffer;try{n.toResizableBuffer()}catch(e){errors+=e instanceof TypeError}try{WebAssembly.Memory.prototype.toFixedLengthBuffer.call({})}catch(e){errors+=e instanceof TypeError}let r=[g.maxByteLength,g.byteLength,old===n.buffer,errors].join();",
             "r"
         ),
-        "8388608,65536,true,3"
+        "8388608,8388608,true,2"
     );
 }
 
@@ -1978,9 +2089,9 @@ fn wide_bigint_memory_indices_are_range_checked_before_narrowing() {
     );
 }
 
-/** Shared externref fields preserve arbitrary-width immutable integers without truncating or foreign IDs. */
+/** Shared externref rejects wide BigInts, which cannot be published to a shared heap. */
 #[test]
-fn shared_gc_externref_fields_preserve_wide_bigints() {
+fn shared_gc_externref_rejects_unshareable_wide_bigints() {
     let mut bytes = b"\0asm\x01\0\0\0".to_vec();
     section(
         &mut bytes,
@@ -2008,7 +2119,7 @@ fn shared_gc_externref_fields_preserve_wide_bigints() {
     assert_eq!(
         eval(
             &bytes,
-            "const {make,read}=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;const big=(1n<<200n)+123n,node=make(big);let r=read(node)===big;"
+            "const {make}=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;const big=(1n<<200n)+123n;let r=false;try{make(big)}catch(e){r=e instanceof TypeError}"
         ),
         "true"
     );

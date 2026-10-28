@@ -5,7 +5,7 @@ pub(super) fn add_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
     let mut sum = 0.0;
     for index in 0..6 {
-        if let JsValue::Number(value) = call.arg(index) {
+        if let Some(value) = call.arg(index).number_value() {
             sum += match index {
                 0 => crate::v9::value::to_int32(value) as f64,
                 1 => crate::v9::value::to_uint32(value) as f64,
@@ -23,7 +23,7 @@ pub(super) fn add_ints(vm: &mut Vm, call: Call) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
     let mut sum = 0.0;
     for index in 0..6 {
-        if let JsValue::Number(value) = call.arg(index) {
+        if let Some(value) = call.arg(index).number_value() {
             sum += if index < 3 {
                 crate::v9::value::to_int32(value) as f64
             } else {
@@ -32,13 +32,11 @@ pub(super) fn add_ints(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
     }
     if call.args.len() > 7
-        && matches!(
-            (call.arg(6), call.arg(7)),
-            (JsValue::Number(_), JsValue::Number(_))
-        )
+        && call.arg(6).number_value().is_some()
+        && call.arg(7).number_value().is_some()
     {
         for index in [6, 7] {
-            if let JsValue::Number(value) = call.arg(index) {
+            if let Some(value) = call.arg(index).number_value() {
                 sum += crate::v9::value::to_uint32(value) as f64;
             }
         }

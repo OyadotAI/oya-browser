@@ -109,8 +109,8 @@ pub(super) fn install(b: &mut Builder, intl: u32) {
     b.value(intl, "DisplayNames", JsValue::Object(ctor), HIDDEN_ATTRS);
 }
 
-/** The resolved locale: the first requested tag without its `-u-` keywords, or en-US. */
-pub(super) fn resolve_locale(list: &[String]) -> String {
+/** The resolved locale: the first requested tag without its `-u-` keywords, or the host default. */
+pub(super) fn resolve_locale(list: &[String], default: &str) -> String {
     list.first()
         .and_then(|t| tag::parse(t))
         .map(|mut t| {
@@ -118,7 +118,7 @@ pub(super) fn resolve_locale(list: &[String]) -> String {
             t.keywords.clear();
             tag::to_text(&t)
         })
-        .unwrap_or_else(|| "en-US".into())
+        .unwrap_or_else(|| default.into())
 }
 
 /** GetOptionsObject: undefined gives an empty object, other non-objects a TypeError. */
@@ -171,7 +171,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     let data = IntlData {
         kind: "DisplayNames".into(),
-        locale: resolve_locale(&list),
+        locale: resolve_locale(&list, &vm.page.environment.locale),
         options: kept,
     };
     let id = vm.alloc(Object::new(

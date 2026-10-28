@@ -182,6 +182,8 @@ impl Vm<'_> {
     fn async_yield_star_result(&mut self) -> Res<Flow> {
         let result = self.pop();
         let step = match self.pop() {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(step) => step,
             JsValue::Number(step) => step,
             _ => return Err(EngineError::invalid("Invalid V9 delegation step.").into()),
         };

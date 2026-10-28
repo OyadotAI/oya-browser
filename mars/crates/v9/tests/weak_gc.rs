@@ -6,6 +6,14 @@ use mars_v9::{Execution, PageEnvironment};
 /** A finite task allowance makes an accidental rescheduling loop fail visibly. */
 const TASK_LIMIT: usize = 128;
 
+#[test]
+/** A repeated backing releases a target after every logical occurrence is overwritten. */
+fn repeated_array_releases_fully_shadowed_target() {
+    drive(
+        "let reference; let array = (() => { let target = {}; reference = new WeakRef(target); let source = [target]; return source.concat(source); })(); array[0] = null; array[1] = null; setTimeout(() => { gc(); if (reference.deref() !== undefined) throw Error('retained shadowed target'); }, 0);",
+    );
+}
+
 /** Use the same public page/timer APIs the app uses, including a wire round trip per task. */
 fn drive(source: &str) -> Execution {
     let source = source.replace(
@@ -72,6 +80,24 @@ fn nonregistered_symbol_targets_are_collected() {
     drive(
         "let reference; (() => { reference = new WeakRef(Symbol('temporary')); })(); (async () => { await gc({type:'minor', execution:'async'}); if (reference.deref() !== undefined) throw Error('symbol retained strongly'); })();",
     );
+}
+
+#[test]
+/** A weak map must not retain an otherwise unreachable symbol key during async GC. */
+fn weak_map_does_not_retain_symbol_keys() {
+    drive("let reference;const map=new WeakMap();(()=>{const key=Symbol('temporary');map.set(key,1);reference=new WeakRef(key)})();(async () => { await gc({type:'major', execution:'async'}); if(reference.deref() !== undefined) throw Error('weak map retained symbol'); })();");
+}
+
+#[test]
+/** Nested async closures keep the surviving symbol but not a completed inner call's key. */
+fn weak_map_does_not_retain_inner_symbol_across_nested_async_closure() {
+    drive("let reference;let map;(()=>{map=new WeakMap();const outer=Symbol('outer');map.set(outer,1);(()=>{const inner=Symbol('inner');map.set(inner,2);if(!map.has(inner)||map.get(inner)!==2)throw Error('not inserted');reference=new WeakRef(inner)})();(async () => { await gc({type:'major', execution:'async'}); if (!map.has(outer)) throw Error('outer missing'); if(reference.deref() !== undefined) throw Error('inner retained'); })()})();");
+}
+
+#[test]
+/** A losing pending input does not retain the value of an already settled race. */
+fn settled_promise_race_releases_its_payload() {
+    drive("let reference;const pending=new Promise(()=>{});(async () => { await (async function(){const value={};reference=new WeakRef(value);await Promise.race([pending,Promise.resolve(value)])})();await gc({type:'major',execution:'async'});if(reference.deref()!==undefined)throw Error('settled race retained value')})();");
 }
 
 #[test]

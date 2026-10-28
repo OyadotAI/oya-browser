@@ -6,6 +6,94 @@ const TAG: &str = "wasm.tag.types";
 const PAYLOAD: &str = "wasm.exception.payload";
 const OWNER: &str = "wasm.exception.tag";
 
+/** Return the actual index of an exception's tag in this instance's tag space. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn exception_tag_id(
+    vm: &mut Vm,
+    exception: &JsValue,
+    instance: &JsValue,
+) -> Res<JsValue> {
+    let id = brand(vm, exception, OWNER)?;
+    let tag = get(vm, id, OWNER).ok_or_else(|| vm.type_error("Invalid Wasm exception"))?;
+    let instance = brand(vm, instance, TAGS)?;
+    let tags = get(vm, instance, TAGS)
+        .and_then(|value| value.object())
+        .and_then(|id| vm.heap.get(id))
+        .and_then(|object| match &object.class {
+            Class::Array(values) => Some(values.iter().cloned().collect::<Vec<_>>()),
+            _ => None,
+        })
+        .ok_or_else(|| vm.type_error("Invalid Wasm instance tags"))?;
+    let index = tags
+        .iter()
+        .position(|candidate| candidate == &tag)
+        .ok_or_else(|| vm.type_error("Exception tag is not in this instance"))?;
+    Ok(JsValue::Number(index as f64))
+}
+
+/** Expose the actual exception payload in V8's raw high-to-low 16-bit word representation. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn exception_values(vm: &mut Vm, exception: &JsValue) -> Res<JsValue> {
+    let id = brand(vm, exception, OWNER)?;
+    let tag = get(vm, id, OWNER).ok_or_else(|| vm.type_error("Invalid Wasm exception"))?;
+    let types = parameters(vm, &tag)?;
+    let payload = payload(vm, exception, &tag)?
+        .ok_or_else(|| vm.type_error("Invalid Wasm exception payload"))?;
+    if types.len() != payload.len() {
+        return Err(vm.type_error("Invalid Wasm exception payload length"));
+    }
+    let mut values = Vec::new();
+    for (ty, value) in types.into_iter().zip(payload) {
+        encode_exception_value(vm, ty, value, &mut values)?;
+    }
+    Ok(JsValue::Object(vm.new_array(values)?))
+}
+
+/** Numeric scalar payloads preserve their exact bit pattern; references remain real JS values. */
+#[cfg(feature = "conformance")]
+fn encode_exception_value(
+    vm: &mut Vm,
+    ty: types::Type,
+    value: JsValue,
+    out: &mut Vec<JsValue>,
+) -> Res<()> {
+    let (bits, words) = match ty {
+        types::Type::I32 => (vm.to_number(&value)? as i32 as u32 as u64, 2),
+        types::Type::I64 => (
+            super::super::bigint::to_bigint(vm, &value)? as i64 as u64,
+            4,
+        ),
+        types::Type::F32 | types::Type::F64 => {
+            let number = vm.to_number(&value)?;
+            if number.is_nan() {
+                return Err(vm.unsupported_error("V8 raw NaN exception payload bits"));
+            }
+            if ty == types::Type::F32 {
+                ((number as f32).to_bits() as u64, 2)
+            } else {
+                (number.to_bits(), 4)
+            }
+        }
+        types::Type::V128 => {
+            let bytes = super::simd::vector(&value)?;
+            for lane in bytes.chunks_exact(4) {
+                let bits = u32::from_le_bytes(lane.try_into().expect("SIMD lane width"));
+                out.push(JsValue::Number((bits >> 16) as f64));
+                out.push(JsValue::Number((bits & 0xffff) as f64));
+            }
+            return Ok(());
+        }
+        _ => {
+            out.push(value);
+            return Ok(());
+        }
+    };
+    for index in (0..words).rev() {
+        out.push(JsValue::Number(((bits >> (index * 16)) & 0xffff) as f64));
+    }
+    Ok(())
+}
+
 /** Install actual tags, exception payload accessors and the singleton JavaScript exception tag. */
 pub(super) fn install(b: &mut Builder, namespace: ObjectId) -> (ObjectId, ObjectId, ObjectId) {
     let tag = b.object(Some(b.ids.object_prototype));
@@ -16,10 +104,21 @@ pub(super) fn install(b: &mut Builder, namespace: ObjectId) -> (ObjectId, Object
     b.alias(namespace, "Exception", ctor);
     b.method(exception, "getArg", 2, get_arg);
     b.method(exception, "is", 1, is);
+    b.builtin_accessor(exception, "stack", Some(exception_stack), None);
     let js_tag = b.object(Some(tag));
-    b.alias(namespace, "JSTag", js_tag);
+    b.value(
+        namespace,
+        "JSTag",
+        JsValue::Object(js_tag),
+        crate::v9::vm::heap::CONFIGURABLE,
+    );
 
     (tag, exception, js_tag)
+}
+/** Untraced exceptions expose an undefined stack but still enforce their native receiver brand. */
+fn exception_stack(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    brand(vm, &call.this, OWNER)?;
+    Ok(JsValue::Undefined)
 }
 /** A tag signature uses zero result values, including when defined with a nominal function subtype. */
 pub(super) fn tag_types(m: &Module) -> Vec<u32> {
@@ -38,6 +137,12 @@ pub(super) fn signature(m: &Module, index: u32) -> Result<&types::Signature, Err
         .get(index as usize)
         .and_then(|i| m.types.get(*i as usize))
         .ok_or_else(|| Error::invalid("unknown WebAssembly tag"))
+}
+/** Exception handlers cannot use effect tags with result values. */
+pub(super) fn exception_signature(m: &Module, index: u32) -> Result<&types::Signature, Error> {
+    let signature = signature(m, index)?;
+    if !signature.results.is_empty() { return Err(Error::invalid("exception tag must have no results")); }
+    Ok(signature)
 }
 /** Internal native tags retain source bytes and an exact type index for canonical linking. */
 pub(super) fn create(vm: &mut Vm, module: ObjectId, index: u32) -> Res<JsValue> {
@@ -80,13 +185,19 @@ fn tag_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let descriptor = call.arg(0);
     if descriptor.object().is_none() {
-        return Err(vm.type_error("WebAssembly.Tag descriptor must be an object"));
+        return Err(vm.type_error("Argument 0 must be a tag type"));
     }
     let params = vm.get(&descriptor, &key("parameters"))?;
     if params.object().is_none() {
-        return Err(vm.type_error("WebAssembly.Tag parameters must be an object"));
+        return Err(vm.type_error("Argument 0 must be a tag type with 'parameters'"));
     }
-    let length = vm.length_of(&params)?;
+    let length = vm.get(&params, &key("length"))?;
+    if length == JsValue::Undefined {
+        return Err(vm.type_error("Argument 0 contains parameters without 'length'"));
+    }
+    let length = vm
+        .to_integer(&length)?
+        .clamp(0.0, crate::constants::VM_MAX_SAFE_LENGTH) as usize;
     if length > MAX_LOCALS {
         return Err(vm.range_error("WebAssembly.Tag parameters exceed V9 limit"));
     }
@@ -94,7 +205,17 @@ fn tag_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     for index in 0..length {
         vm.charge(1)?;
         let value = vm.get(&params, &key(&index.to_string()))?;
-        let ty = global::value_type(vm, &value)?;
+        let text = vm.to_text(&value)?;
+        let value = JsValue::string(&text)?;
+        let ty = match global::value_type(vm, &value) {
+            Ok(ty) => ty,
+            Err(Thrown::Value(_)) => {
+                return Err(vm.type_error(&format!(
+                    "Argument 0 parameter type at index #{index} must be a value type"
+                )));
+            }
+            Err(fatal) => return Err(fatal),
+        };
         types.push(global::type_value(ty)?)
     }
     let proto = vm.prototype_for(target, ids(vm).tag)?;
@@ -140,18 +261,35 @@ fn exception_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if is_js_tag(vm, &tag) {
         return Err(vm.type_error("Argument 0 cannot be WebAssembly.JSTag"));
     }
+    match tag_brand(vm, &tag) {
+        Ok(_) => (),
+        Err(Thrown::Value(_)) => return Err(vm.type_error("Argument 0 must be a WebAssembly tag")),
+        Err(fatal) => return Err(fatal),
+    }
     let types = parameters(vm, &tag)?;
     let args = call.arg(1);
     if args.object().is_none() {
         return Err(vm.type_error("WebAssembly.Exception payload must be an object"));
     }
-    let length = vm.length_of(&args)?;
+    let length = vm.get(&args, &key("length"))?;
+    if length == JsValue::Undefined {
+        return Err(vm.type_error("Exception values argument has no length"));
+    }
+    let length = vm
+        .to_integer(&length)?
+        .clamp(0.0, crate::constants::VM_MAX_SAFE_LENGTH) as usize;
     if length != types.len() {
-        return Err(vm.type_error("WebAssembly.Exception payload length mismatch"));
+        return Err(vm.type_error("Number of exception values does not match signature length"));
     }
     let mut payload = Vec::new();
     for (index, ty) in types.iter().enumerate() {
         let value = vm.get(&args, &key(&index.to_string()))?;
+        if *ty == types::Type::Func && value != JsValue::Null && !instance::is_function(vm, &value)
+        {
+            return Err(vm.type_error(
+                "Exception value must be null (if nullable) or a Wasm function object",
+            ));
+        }
         if !ty.js_compatible() {
             return Err(vm.type_error("Invalid type v128"));
         }
@@ -169,7 +307,7 @@ fn exception_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else if matches!(options, JsValue::Undefined | JsValue::Null) {
         false
     } else {
-        return Err(vm.type_error("WebAssembly.Exception options must be an object"));
+        return Err(vm.type_error("Argument 2 is not an object"));
     };
     let proto = vm.prototype_for(target, ids(vm).exception)?;
     let value = create_exception(vm, tag, payload, proto)?;
@@ -210,7 +348,13 @@ pub(super) fn catchable(vm: &Vm, value: &JsValue) -> bool {
 }
 /** Receiver branding happens before comparing the supplied tag. */
 fn is(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let exception = brand(vm, &call.this, OWNER)?;
+    let exception = match brand(vm, &call.this, OWNER) {
+        Ok(exception) => exception,
+        Err(Thrown::Value(_)) => {
+            return Err(vm.type_error("Receiver is not a WebAssembly.Exception"));
+        }
+        Err(fatal) => return Err(fatal),
+    };
     let tag = tag_brand(vm, &call.arg(0))?;
     Ok(JsValue::Boolean(
         get(vm, exception, OWNER) == Some(JsValue::Object(tag)),
@@ -220,22 +364,33 @@ fn is(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn get_arg(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let exception = brand(vm, &call.this, OWNER)?;
     let tag = call.arg(0);
-    let _ = tag_brand(vm, &tag)?;
+    match tag_brand(vm, &tag) {
+        Ok(_) => (),
+        Err(Thrown::Value(_)) => return Err(vm.type_error("Argument 0 must be a WebAssembly.Tag")),
+        Err(fatal) => return Err(fatal),
+    }
     if get(vm, exception, OWNER) != Some(tag.clone()) {
-        return Err(vm.type_error("WebAssembly.Exception tag mismatch"));
+        return Err(vm.type_error("First argument does not match the exception tag"));
+    }
+    if call.arg(1) == JsValue::Undefined {
+        return Err(vm.type_error("Index must be convertible to a valid number"));
     }
     let index = memory::index(vm, &call.arg(1))? as usize;
-    if parameters(vm, &tag)?
-        .get(index)
-        .is_some_and(|ty| !ty.js_compatible())
-    {
-        return Err(vm.type_error("Invalid type v128"));
+    if let Some(ty) = parameters(vm, &tag)?.get(index).copied() {
+        let mut compatible = ty.js_compatible();
+        if compatible && ty.reference().is_some_and(|(heap, _)| heap >= 0) {
+            if let Some(source) = tag.object().and_then(|id| get(vm, id, "wasm.tag.module")) {
+                let (_, m) = super::module(vm, &source)?;
+                compatible = gc_types::js_compatible(&m, ty);
+            }
+        }
+        if !compatible { return Err(vm.type_error("invalid type for WebAssembly exception argument")); }
     }
     let values = payload(vm, &call.this, &tag)?.unwrap();
     values
         .get(index)
         .cloned()
-        .ok_or_else(|| vm.range_error("WebAssembly.Exception argument index out of range"))
+        .ok_or_else(|| vm.range_error("Index out of range"))
 }
 
 /** The static JavaScript tag is branded by its immutable realm identity. */

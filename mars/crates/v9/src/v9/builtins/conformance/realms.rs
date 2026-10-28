@@ -32,7 +32,7 @@ pub(super) fn install(builder: &mut Builder) {
 }
 /** Read an exact live public Realm index without coercing arbitrary objects. */
 fn index(vm: &mut Vm, call: &Call) -> Res<usize> {
-    let JsValue::Number(number) = call.arg(0) else {
+    let Some(number) = call.arg(0).number_value() else {
         return Err(vm.type_error("Invalid realm index"));
     };
     if !number.is_finite()
@@ -90,8 +90,21 @@ fn global(vm: &mut Vm, call: Call) -> Res<JsValue> {
     ))
 }
 /** A fresh context receives a distinct security token. */
-fn create(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    create_context(vm, None, None).map(|index| JsValue::Number(index as f64))
+fn create(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let options = call.arg(0);
+    let own_queue = if matches!(options, JsValue::Object(_)) {
+        vm.get(
+            &options,
+            &crate::v9::vm::heap::Key::from("create_own_microtask_queue"),
+        )?
+        .truthy()
+    } else {
+        false
+    };
+    let index = create_context(vm, None, None)?;
+    let bank = vm.realms.slots[index].expect("new realm");
+    vm.realms.contexts[bank as usize].own_microtask_queue = own_queue;
+    Ok(JsValue::Number(index as f64))
 }
 /** A same-origin context shares the entered context's security token, never its globals. */
 fn create_shared(vm: &mut Vm, _: Call) -> Res<JsValue> {
@@ -116,13 +129,19 @@ pub(super) fn create_bank(vm: &mut Vm, token: Option<u32>) -> Res<u32> {
     if bank >= banks::REALM_BANKS {
         return Err(EngineError::limit("V9 realm contexts", banks::REALM_BANKS as usize).into());
     }
-    let mut object = Object::new(Class::Plain, Some(banks::bank(bank).ids.object_prototype));
+    let mut object = Object::new(
+        Class::Plain,
+        Some(banks::bank(bank).ids.shell_global_prototype),
+    );
     object.realm = bank;
     object.global = true;
     let global = vm.alloc(object)?;
     vm.realms.contexts.push(Context {
         global: Some(global),
         globals: Default::default(),
+        own_microtask_queue: false,
+        microtask_queue_closed: false,
+        custom_jobs: Vec::new(),
         modules: Default::default(),
         token: token.unwrap_or(bank),
         detached: false,
@@ -199,7 +218,16 @@ fn dispose(vm: &mut Vm, call: Call) -> Res<JsValue> {
     crate::v9::builtins::cancel_finalizers_for_realm(vm, bank);
     vm.realms.slots[slot] = None;
     vm.realms.contexts[bank as usize].detached = true;
+    close_custom_queue(vm, bank);
     Ok(JsValue::Undefined)
+}
+/** Close and release only an independently owned microtask queue. */
+fn close_custom_queue(vm: &mut Vm, bank: u32) {
+    let context = &mut vm.realms.contexts[bank as usize];
+    if context.own_microtask_queue {
+        context.custom_jobs.clear();
+        context.microtask_queue_closed = true;
+    }
 }
 /** Detaching removes global-owner exposure without discarding the creation context. */
 fn detach(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -220,6 +248,7 @@ fn navigate_context(vm: &mut Vm, call: Call, same: bool) -> Res<JsValue> {
     let (slot, bank) = restricted(vm, &call)?;
     let token = same.then_some(vm.realms.contexts[bank as usize].token);
     vm.realms.contexts[bank as usize].detached = true;
+    close_custom_queue(vm, bank);
     create_context(vm, token, Some(slot))?;
     Ok(JsValue::Undefined)
 }

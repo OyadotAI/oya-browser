@@ -35,6 +35,11 @@ enum Behavior {
 }
 
 impl Vm<'_> {
+    /** Native re-entry retains a host bridge in addition to its bytecode frame. */
+    pub(super) fn stack_capacity_used(&self) -> usize {
+        self.frames.len().saturating_add(self.native_depth.saturating_mul(crate::constants::VM_NATIVE_FRAME_WEIGHT))
+    }
+
     /** What calling this value would do, if it is callable. */
     fn behavior(&self, value: &JsValue) -> Option<Behavior> {
         let JsValue::Object(id) = value else {
@@ -187,7 +192,7 @@ impl Vm<'_> {
         construct: Option<JsValue>,
         boundary: bool,
     ) -> Res<Invoked> {
-        if self.frames.len() + self.native_depth >= self.limits.frames {
+        if self.stack_capacity_used() >= self.limits.frames {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         let Some(behavior) = self.behavior(&function) else {
@@ -299,7 +304,7 @@ impl Vm<'_> {
         new_target: Option<JsValue>,
     ) -> Res<JsValue> {
         self.charge(1)?;
-        if self.frames.len() + self.native_depth >= self.limits.frames {
+        if self.stack_capacity_used() >= self.limits.frames {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         let def = &realm().natives[index as usize];
@@ -556,7 +561,11 @@ impl Vm<'_> {
             JsValue::Undefined | JsValue::Hole => "undefined".into(),
             JsValue::Null => "null".into(),
             JsValue::String(_) => "a string".into(),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) => "a number".into(),
             JsValue::Number(_) => "a number".into(),
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => "a number".into(),
             JsValue::Boolean(_) => "a boolean".into(),
             JsValue::Symbol(_) => "a symbol".into(),
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => "a bigint".into(),
@@ -672,7 +681,7 @@ impl Vm<'_> {
         if saved.pc as usize > code.ops.len() || saved.regs.len() != code.registers as usize {
             return Err(EngineError::invalid("Invalid V9 suspended frame.").into());
         }
-        if self.frames.len() + self.native_depth >= self.limits.frames {
+        if self.stack_capacity_used() >= self.limits.frames {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         self.frames.push(Frame {

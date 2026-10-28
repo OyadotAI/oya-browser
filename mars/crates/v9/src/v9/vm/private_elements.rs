@@ -24,6 +24,10 @@ impl Vm<'_> {
     /** PrivateFieldAdd ignores extensibility but refuses a second initialization. */
     pub(super) fn add_private_field(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<()> {
         self.guard_realm_global(id)?;
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::is_shared_object(self, id) {
+            return Err(self.type_error("Cannot add private fields to shared objects"));
+        }
         if self
             .heap
             .get(id)
@@ -101,6 +105,10 @@ impl Vm<'_> {
             return Err(self.type_error("Cannot initialize private methods on a non-object"));
         };
         self.guard_realm_global(id)?;
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::is_shared_object(self, id) {
+            return Err(self.type_error("Cannot add private methods to shared objects"));
+        }
         let methods: Vec<_> = self
             .heap
             .get(template)

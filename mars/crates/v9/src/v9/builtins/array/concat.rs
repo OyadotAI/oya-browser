@@ -60,6 +60,9 @@ fn data(
         if let Some(object) = vm.heap.get(id) {
             match &object.class {
                 Class::Array(elements) => {
+                    if elements.logical_present() > vm.limits.array_length {
+                        return None;
+                    }
                     for (index, value) in elements
                         .resident_entries()
                         .filter(|(index, _)| *index < length)
@@ -146,14 +149,123 @@ fn spread(vm: &mut Vm, result: ObjectId, item: &JsValue, offset: usize, length: 
     Ok(())
 }
 
+/** Only ordinary, data-only chains can skip all spreadability and indexed lookups. */
+fn inert_chain(vm: &Vm, source: ObjectId, target: ObjectId) -> bool {
+    let mut current = Some(source);
+    for _ in 0..vm.limits.frames {
+        let Some(id) = current else {
+            return true;
+        };
+        if id == target || global(vm, id) {
+            return false;
+        }
+        if let Some(object) = vm.heap.get(id) {
+            if !matches!(object.class, Class::Array(_) | Class::Plain) {
+                return false;
+            }
+            if object.props.iter().any(|(key, _)| {
+                integer(key).is_some() || *key == Key::Sym(symbol::IS_CONCAT_SPREADABLE)
+            }) {
+                return false;
+            }
+            current = object.proto;
+        } else {
+            let Some(definition) = vm.object_intrinsics(id).object(id) else {
+                return false;
+            };
+            if definition.props.iter().any(|(key, _, _)| {
+                integer(key).is_some() || *key == Key::Sym(symbol::IS_CONCAT_SPREADABLE)
+            }) {
+                return false;
+            }
+            current = definition.proto;
+        }
+    }
+    false
+}
+
+/** Share a dense repeated pattern only after every observable lookup has been proven inert. */
+fn compact(
+    vm: &mut Vm,
+    target: ObjectId,
+    original: &JsValue,
+    args: &[JsValue],
+    fresh: bool,
+) -> Res<bool> {
+    let Some(source) = original.object() else {
+        return Ok(false);
+    };
+    if !fresh
+        || args.is_empty()
+        || args.iter().any(|item| item.object() != Some(source))
+        || !inert_chain(vm, source, target)
+    {
+        return Ok(false);
+    }
+    let Some(Class::Array(elements)) = vm.heap.get(source).map(|object| &object.class) else {
+        return Ok(false);
+    };
+    if !elements.fully_present() {
+        return Ok(false);
+    }
+    let count = args.len() + 1;
+    if elements
+        .len()
+        .checked_mul(count)
+        .is_none_or(|length| length > u32::MAX as usize)
+    {
+        return Err(vm.range_error("Invalid array length"));
+    }
+    // Reserve for the pattern before cloning it; later collections cannot make a
+    // temporary allocation that exceeds the live heap budgets retroactively safe.
+    let slots = elements.resident_len().saturating_add(1);
+    let units = elements
+        .resident_values()
+        .map(JsValue::string_units)
+        .sum::<usize>();
+    if slots > vm.limits.array_length
+        || vm.heap.counts.properties.saturating_add(slots) > vm.limits.properties
+        || vm.heap.counts.units.saturating_add(units) > vm.limits.units
+    {
+        return Ok(false);
+    }
+    let Some(repeated) =
+        crate::v9::vm::array_elements::ArrayElements::repeated_copy(elements, count)
+    else {
+        return Ok(false);
+    };
+    if repeated.resident_len() > vm.limits.array_length {
+        return Ok(false);
+    }
+    let units = repeated
+        .resident_values()
+        .map(JsValue::string_units)
+        .sum::<usize>();
+    let slots = repeated.resident_len();
+    for value in repeated.resident_values() {
+        vm.heap.track_value(value);
+    }
+    let Some(Class::Array(elements)) = vm.heap.get_mut(target).map(|object| &mut object.class)
+    else {
+        return Ok(false);
+    };
+    *elements = repeated;
+    vm.heap.adjust(slots as isize, units as isize);
+    Ok(true)
+}
+
 /** Length overflow is checked before source reads, and final Set obeys the result's true brand. */
 pub(super) fn run(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let original = JsValue::Object(this_object(vm, &call, "Array.prototype.concat")?);
-    let result = JsValue::Object(species::create(vm, &original, 0)?);
+    let (created, fresh) = species::create_with_fresh(vm, &original, 0)?;
+    let result = JsValue::Object(created);
     vm.pin(result.clone());
     let target = result
         .object()
         .ok_or_else(|| vm.type_error("Array species did not create an object"))?;
+    if compact(vm, target, &original, &call.args, fresh)? {
+        return Ok(result);
+    }
     let mut items = vec![original];
     items.extend(call.args.iter().cloned());
     let mut count = 0usize;

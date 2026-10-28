@@ -1,6 +1,9 @@
 /** Literal pattern escaping preserves UTF-16 and checks expansion before allocating output. */
 use super::*;
-use crate::constants::JS_STRING_UNITS;
+use crate::constants::{
+    JS_STRING_UNITS, UTF16_HIGH_SURROGATE_END, UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END,
+    UTF16_LOW_SURROGATE_START,
+};
 use crate::v9::source::whitespace;
 
 /** Only these punctuation characters admit a grammar-independent backslash escape. */
@@ -32,7 +35,8 @@ pub(super) fn escape(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let length = output_length(vm, &input)?;
     let mut output = Vec::with_capacity(length);
-    for (index, point) in input.code_points().enumerate() {
+    for (index, (units, length)) in points(&input).enumerate() {
+        let point = &units[..length];
         vm.charge(point.len())?;
         append(&mut output, point, encoding(point, index == 0));
     }
@@ -42,7 +46,8 @@ pub(super) fn escape(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Both the exact output size and all scanning work stay within the existing engine budgets. */
 fn output_length(vm: &mut Vm, input: &JsString) -> Res<usize> {
     let mut length = 0usize;
-    for (index, point) in input.code_points().enumerate() {
+    for (index, (units, point_length)) in points(input).enumerate() {
+        let point = &units[..point_length];
         vm.charge(point.len())?;
         let size = encoded_length(point, encoding(point, index == 0));
         length = length
@@ -51,6 +56,22 @@ fn output_length(vm: &mut Vm, input: &JsString) -> Res<usize> {
             .ok_or_else(|| EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS))?;
     }
     Ok(length)
+}
+
+/** Read code points across rope boundaries without forcing a contiguous source allocation. */
+fn points(input: &JsString) -> impl Iterator<Item = ([u16; 2], usize)> + '_ {
+    let mut offset = 0;
+    std::iter::from_fn(move || {
+        let first = input.unit_at(offset)?;
+        let second = input.unit_at(offset + 1);
+        let paired = (UTF16_HIGH_SURROGATE_START..=UTF16_HIGH_SURROGATE_END).contains(&first)
+            && second.is_some_and(|unit| {
+                (UTF16_LOW_SURROGATE_START..=UTF16_LOW_SURROGATE_END).contains(&unit)
+            });
+        let length = if paired { 2 } else { 1 };
+        offset += length;
+        Some(([first, second.unwrap_or_default()], length))
+    })
 }
 
 /** Leading ASCII alphanumerics cannot merge with an adjoining decimal or control escape. */

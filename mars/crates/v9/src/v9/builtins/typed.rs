@@ -14,6 +14,8 @@ mod buffer_state;
 mod immutable;
 mod resizable;
 mod shared;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use shared::waiter_count;
 mod storage;
 mod transfer;
 #[cfg(feature = "conformance")]
@@ -27,11 +29,12 @@ pub(in crate::v9) use shared::{
     import_shared_buffer, initialize as initialize_shared, is_poll as is_shared_poll,
     notify_shared, validate as validate_shared,
 };
-use storage::{read_range, storage_len, write_range};
+pub(in crate::v9) use storage::{read_range, storage_len, write_range};
 mod codec;
 mod copy;
 mod indexed;
 mod integrity;
+mod iteration;
 pub(super) use integrity::{can_prevent_extensions, integrity_status, restrict_named_properties};
 mod search;
 mod species;
@@ -43,6 +46,10 @@ pub(in crate::v9) use indexed::{
 
 /** Most bytes one ArrayBuffer holds: the size of the longest string V9 allows. */
 const BUFFER_BYTES: usize = 2 * crate::constants::JS_STRING_UNITS;
+
+/** The actual maximum allocation for author-created ArrayBuffer backings. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn array_buffer_max_allocation() -> usize { BUFFER_BYTES }
 
 /** Typed array kinds, constructor names and element sizes, in `ElementKind` order. */
 const KINDS: [(ElementKind, &str, usize); 12] = [
@@ -102,7 +109,15 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
             );
         }
     }
+    // The standard deliberately shares Array.prototype.toString's function identity.
+    let array = &b.objects[(b.ids.array_prototype - crate::v9::vm::heap::INTRINSIC_BASE) as usize];
+    if let Some((key, value, attrs)) = array.get(&key("toString")).cloned() {
+        b.put(typed, key, value, attrs);
+    }
+    iteration::install(b, typed);
     b.method(typed, "includes", 1, search::includes);
+    b.method(typed, "indexOf", 1, search::index_of);
+    b.method(typed, "lastIndexOf", 1, search::last_index_of);
     let methods: [(&'static str, u32, NativeFn); 10] = [
         ("toLocaleString", 0, typed_to_locale_string),
         ("toReversed", 0, typed_to_reversed),
@@ -286,20 +301,12 @@ fn is_view(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(view.is_some()))
 }
 
-/** The bytes of a buffer object. */
-fn buffer_bytes<'a>(vm: &'a Vm<'_>, id: ObjectId) -> Option<&'a Vec<u8>> {
-    match vm.heap.get(id).map(|object| &object.class) {
-        Some(Class::ArrayBuffer(bytes)) => Some(&bytes.0),
-        _ => None,
-    }
-}
-
 /** The receiver's buffer, or a TypeError. */
 fn this_buffer(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
     match call
         .this
         .object()
-        .filter(|id| buffer_bytes(vm, *id).is_some())
+        .filter(|id| matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))))
     {
         Some(id) => Ok(id),
         None => Err(vm.type_error("Receiver is not an ArrayBuffer")),
@@ -310,7 +317,7 @@ fn this_buffer(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
 fn buffer_length(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_buffer(vm, &call)?;
     Ok(JsValue::Number(
-        buffer_bytes(vm, id).map_or(0, Vec::len) as f64
+        storage_len(vm, id).unwrap_or(0) as f64
     ))
 }
 
@@ -343,6 +350,17 @@ fn this_typed(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ViewData)> {
         );
     }
     Ok((id, view))
+}
+
+/** Native array iterators inspect typed backing length, never a shadowing JavaScript property. */
+pub(in crate::v9) fn iterator_length(vm: &mut Vm, id: ObjectId) -> Res<Option<usize>> {
+    let Some(view) = view_of(vm, id).filter(|view| view.kind != ElementKind::DataView) else {
+        return Ok(None);
+    };
+    if view.invalid {
+        return Err(vm.type_error("Cannot iterate a detached or out-of-bounds typed array"));
+    }
+    Ok(Some(view.length))
 }
 
 /** length, byteLength, byteOffset and buffer of a view. */
@@ -502,7 +520,7 @@ fn construct_typed(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn elements_of(vm: &mut Vm, source: &JsValue) -> Res<Vec<JsValue>> {
     let iterator = vm.get(source, &Key::Sym(symbol::ITERATOR))?;
     if !iterator.nullish() {
-        return vm.iterate_to_vec(source);
+        return vm.iterate_to_vec_with_method(source, iterator);
     }
     let length = vm.length_of(source)?;
     if length > vm.limits.array_length {
@@ -610,18 +628,22 @@ pub(in crate::v9) fn store(vm: &mut Vm, id: ObjectId, index: usize, value: &JsVa
     };
     let encoded = encode(vm, view.kind, value)?;
     immutable::writable(vm, view.buffer)?;
-    write_bytes(vm, &view, index * element_size(view.kind), &encoded);
-    Ok(())
+    write_bytes(vm, &view, index * element_size(view.kind), &encoded)
 }
 
 /** Copy `bytes` into a view at a byte position inside it, if they fit. */
-fn write_bytes(vm: &mut Vm, view: &ViewData, at: usize, bytes: &[u8]) {
+fn write_bytes(vm: &mut Vm, view: &ViewData, at: usize, bytes: &[u8]) -> Res<()> {
     let limit = view.length * element_size(view.kind);
     if at + bytes.len() > limit {
-        return;
+        return Ok(());
     }
     let start = view.offset + at;
-    write_range(vm, view.buffer, start, bytes);
+    if !write_range(vm, view.buffer, start, bytes)
+        && (matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SparseWasmBuffer(_)))
+            || matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SharedArrayBuffer(buffer)) if buffer.is_sparse())) {
+        return Err(crate::protocol::EngineError::limit("V9 buffer resident bytes", 2 * crate::constants::JS_STRING_UNITS).into());
+    }
+    Ok(())
 }
 
 /** Every element of a typed array, in order. */
@@ -718,12 +740,16 @@ fn typed_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => JsValue::Number(vm.to_number(&call.arg(1))?),
     };
-    let length = view_of(vm, id).map_or(0, |view| view.length);
-    if !(0.0..length as f64).contains(&actual) {
+    let current_length = view_of(vm, id).map_or(0, |view| view.length);
+    if !(0.0..current_length as f64).contains(&actual) {
         return Err(vm.range_error("Invalid typed array index"));
     }
-    let mut values = values_of(vm, id, length);
-    values[actual as usize] = value;
+    let mut values: Vec<_> = (0..view.length)
+        .map(|index| load(vm, id, index).unwrap_or(JsValue::Undefined))
+        .collect();
+    if let Some(slot) = values.get_mut(actual as usize) {
+        *slot = value;
+    }
     Ok(JsValue::Object(typed_from_values(
         vm, view.kind, &values, None,
     )?))
@@ -918,7 +944,7 @@ fn data_view_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         bytes.reverse();
     }
     let view = data_view_witness(vm, &call, kind, at)?;
-    write_bytes(vm, &view, at, &bytes);
+    write_bytes(vm, &view, at, &bytes)?;
     Ok(JsValue::Undefined)
 }
 
@@ -960,7 +986,7 @@ pub(in crate::v9) fn random_values(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 "The operating system random source is unavailable to V9.",
             )
         })?;
-    write_bytes(vm, &view, 0, &bytes);
+    write_bytes(vm, &view, 0, &bytes)?;
     Ok(target)
 }
 
@@ -991,6 +1017,6 @@ pub(in crate::v9) fn fill_uint8(vm: &mut Vm, value: &JsValue, bytes: &[u8]) -> R
         .ok_or_else(|| vm.type_error("TextEncoder destination is not an attached Uint8Array"))?;
     immutable::writable(vm, view.buffer)?;
     let count = bytes.len().min(view.length);
-    write_bytes(vm, &view, 0, &bytes[..count]);
+    write_bytes(vm, &view, 0, &bytes[..count])?;
     Ok(count)
 }

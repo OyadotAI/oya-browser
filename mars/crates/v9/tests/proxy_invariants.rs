@@ -25,6 +25,13 @@ fn get_traps_respect_frozen_data_values() {
     );
 }
 
+/** Invariant errors describe real data and getter-less accessors without invoking user hooks. */
+#[test]
+fn get_invariant_messages_do_not_coerce_author_objects() {
+    let source = "let calls=0;const a={toString(){calls++;throw 1}},b={toString(){calls++;throw 1}};const target={};Object.defineProperty(target,'x',{value:53});Object.defineProperty(target,'y',{set(v){}});Object.defineProperty(target,'z',{value:a});const p=new Proxy(target,{get(t,k){return k==='x'?42:k==='y'?1:b}});const out=[];for(const k of ['x','y','z'])try{p[k]}catch(e){out.push(e.message)}const r=[out[0].includes(\"expected '53' but got '42'\"),out[1].includes(\"does not have a getter function\"),out[2].includes(\"#<Object>\"),calls].join();";
+    assert_eq!(common::eval(source, "r"), "true,true,true,0");
+}
+
 /** A fixed accessor with no getter can only report undefined. */
 #[test]
 fn get_traps_respect_missing_fixed_getters() {

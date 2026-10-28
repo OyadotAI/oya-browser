@@ -5,6 +5,7 @@
  * as browsers throw, so libraries fall back to their own engines.
  */
 use super::Page;
+use super::namespaces::HTML_NAMESPACE;
 use crate::v9::vm::heap::Heap;
 
 /** A comma-separated selector list. */
@@ -59,6 +60,8 @@ enum Pseudo {
     Not(SelectorList),
     Is(SelectorList),
     Has(SelectorList),
+    /** `:lang(...)`: the element's language matches one of these RFC 4647 ranges. */
+    Lang(Vec<String>),
     Empty,
     Root,
     Scope,
@@ -150,8 +153,19 @@ impl Parser {
         }
         Ok(Complex(parts))
     }
+    /** Whether the text at the cursor is a digit, or a hyphen then a digit: neither may start an
+    identifier (CSS Syntax 3), so `#-123` and `.1a` are SyntaxErrors. */
+    fn at_digit_start(&self) -> bool {
+        let digit = |c: Option<&char>| c.is_some_and(char::is_ascii_digit);
+        digit(self.chars.get(self.position))
+            || (self.chars.get(self.position) == Some(&'-')
+                && digit(self.chars.get(self.position + 1)))
+    }
     /** An identifier with CSS escapes. */
     fn ident(&mut self) -> Result<String, String> {
+        if self.at_digit_start() {
+            return Err("expected an identifier in selector".into());
+        }
         let mut out = String::new();
         while let Some(c) = self.peek() {
             if c == '\\' {
@@ -167,9 +181,11 @@ impl Parser {
                         self.position += 1;
                     }
                 } else {
+                    // CSS Syntax 4: a zero, surrogate or out-of-range escape is U+FFFD.
                     out.push(
                         u32::from_str_radix(&hex, 16)
                             .ok()
+                            .filter(|code| *code != 0)
                             .and_then(char::from_u32)
                             .unwrap_or('\u{fffd}'),
                     );
@@ -198,7 +214,7 @@ impl Parser {
                 self.position += 1;
             }
             Some(c) if c.is_alphabetic() || c == '\\' || c == '_' || c == '-' => {
-                compound.tag = Some(self.ident()?.to_ascii_lowercase());
+                compound.tag = Some(self.ident()?);
             }
             _ => {}
         }
@@ -360,6 +376,7 @@ impl Parser {
             ("not", true) => Pseudo::Not(self.list()?),
             ("is" | "where" | "matches" | "any", true) => Pseudo::Is(self.list()?),
             ("has", true) => Pseudo::Has(self.list()?),
+            ("lang", true) => Pseudo::Lang(self.language_ranges()),
             _ => return Err(format!("unsupported pseudo-class :{name}")),
         };
         if functional {
@@ -370,6 +387,21 @@ impl Parser {
             self.position += 1;
         }
         Ok(pseudo)
+    }
+    /** The comma-separated language ranges of `:lang(...)`, with quotes removed and case kept; the closing paren is left for the caller. */
+    fn language_ranges(&mut self) -> Vec<String> {
+        let mut text = String::new();
+        while let Some(c) = self.peek() {
+            if c == ')' {
+                break;
+            }
+            text.push(c);
+            self.position += 1;
+        }
+        text.split(',')
+            .map(|range| range.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+            .filter(|range| !range.is_empty())
+            .collect()
     }
     /** `an+b`, `odd`, `even`. */
     fn an_plus_b(&mut self) -> Result<(i64, i64), String> {
@@ -482,6 +514,24 @@ fn element_siblings(page: &mut Page, node: usize, before: bool) -> Vec<usize> {
         .collect()
 }
 
+/** Whether an element is the root of its document: the child of a document node. An XML
+document's root is its first element, so :root must find it there as well as on the page. */
+fn is_document_element(page: &mut Page, node: usize) -> bool {
+    page.parent(node)
+        .is_some_and(|parent| page.tag(parent) == super::frames::DOCUMENT_NODE)
+}
+
+/** Whether an element's local name answers to a type selector's name. An HTML element matches
+without regard to case, since HTML names are case-insensitive; an element in any other namespace
+(an XML document's, or SVG's) matches exactly, and a prefix is not part of its name. */
+fn tag_matches(page: &mut Page, node: usize, wanted: &str) -> bool {
+    let local = page.element_local_name(node);
+    match page.element_namespace(node).as_deref() {
+        Some(HTML_NAMESPACE) => local.eq_ignore_ascii_case(wanted),
+        _ => local == wanted,
+    }
+}
+
 /** Whether a node matches one compound. */
 fn compound_matches(
     page: &mut Page,
@@ -496,7 +546,9 @@ fn compound_matches(
     if view.tag.starts_with('#') {
         return false;
     }
-    if compound.tag.as_ref().is_some_and(|tag| *tag != view.tag) {
+    if let Some(wanted) = compound.tag.as_deref()
+        && !tag_matches(page, node, wanted)
+    {
         return false;
     }
     let id = view.attributes.get("id").map(String::as_str).unwrap_or("");
@@ -594,7 +646,11 @@ fn pseudo_matches(
             page.tag(*child) == "#comment"
                 || page.tag(*child) == "#text" && page.text_content(*child).is_empty()
         }),
-        Pseudo::Root => node == super::HTML,
+        Pseudo::Root => node == super::HTML || is_document_element(page, node),
+        Pseudo::Lang(ranges) => {
+            let language = nearest_language(page, node);
+            ranges.iter().any(|range| language_matches(&language, range))
+        }
         Pseudo::Scope => scope.map_or(node == super::HTML, |scope| scope == node),
         Pseudo::PopoverOpen => super::interfaces::popover::matches_open(page, heap, node),
         Pseudo::Checked => {
@@ -609,4 +665,30 @@ fn pseudo_matches(
         }
         Pseudo::Never => false,
     }
+}
+
+/** The language an element is in: the `lang` of the nearest ancestor-or-self that sets one. An empty value means the language is unknown and matches nothing. */
+fn nearest_language(page: &mut super::Page, node: usize) -> String {
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if let Some(lang) = page.view(id).and_then(|view| view.attributes.get("lang").cloned()) {
+            return lang;
+        }
+        current = page.parent(id);
+    }
+    String::new()
+}
+
+/** RFC 4647 basic filtering: a range matches a language equal to it, or extending it past a hyphen. `*` matches any known language. */
+fn language_matches(language: &str, range: &str) -> bool {
+    if language.is_empty() {
+        return false;
+    }
+    if range == "*" {
+        return true;
+    }
+    let prefix = language.as_bytes().get(..range.len());
+    let is_prefix = prefix.is_some_and(|bytes| bytes.eq_ignore_ascii_case(range.as_bytes()));
+    language.len() == range.len()
+        || (is_prefix && language.as_bytes().get(range.len()) == Some(&b'-'))
 }

@@ -353,6 +353,7 @@ impl Runtime {
             effects,
             module_requests,
             script_requests,
+            frame_requests,
             changes,
             script_changes,
             ..
@@ -411,6 +412,7 @@ impl Runtime {
             .modules
             .pending_scripts
             .extend(script_requests);
+        page.scripting.modules.frame_requests.extend(frame_requests);
         let mut step = Step { changed, failed };
         if kind != "modules" {
             self.follow_modules(page, &mut step)?;

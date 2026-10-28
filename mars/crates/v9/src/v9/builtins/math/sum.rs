@@ -30,7 +30,7 @@ fn add(vm: &mut Vm, sum: &mut ExactSum, count: &mut u64, value: JsValue) -> Res<
         return Err(vm.range_error("Math.sumPrecise input exceeds the maximum safe integer"));
     }
     *count += 1;
-    let JsValue::Number(number) = value else {
+    let Some(number) = value.number_value() else {
         return Err(vm.type_error("Math.sumPrecise requires Number elements"));
     };
     sum.add(number);

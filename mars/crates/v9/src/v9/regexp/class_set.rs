@@ -5,12 +5,39 @@
  * Under the i flag every leaf is case-closed before any operator runs, so K, k and U+212A behave
  * as one character in `[K--k]`, and strings are keyed by canonical characters.
  */
-use std::cmp::Reverse;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
-use super::{
-    Node, PatternError, PatternParser, UNSUPPORTED_STRING_PROPERTY, case, class_escape, invert,
-};
+use super::{Node, PatternError, PatternParser, Property, case, class_escape, invert};
+
+/** Unicode 17 sequence data generated from Test262; see UPSTREAM.md for provenance. */
+const EMOJI_DATA: &str = include_str!("emoji17.txt");
+/** Immutable data is parsed once and shared across compiled patterns. */
+static EMOJI_SETS: OnceLock<BTreeMap<String, ClassSet>> = OnceLock::new();
+
+/** Parse the checked-in scalar lists into the same set representation as class syntax. */
+fn emoji_sets() -> BTreeMap<String, ClassSet> {
+    let mut sets = BTreeMap::new();
+    let mut current = String::new();
+    for line in EMOJI_DATA.lines() {
+        if let Some(name) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            current = name.into();
+            sets.insert(current.clone(), ClassSet::default());
+        } else if !line.starts_with('#') && !line.is_empty() {
+            let word = line
+                .split_whitespace()
+                .map(|n| u32::from_str_radix(n, 16).expect("generated Unicode scalar"))
+                .collect();
+            sets.get_mut(&current)
+                .expect("generated property header")
+                .absorb(word_set(word));
+        }
+    }
+    for set in sets.values_mut() {
+        set.maybe_strings = true;
+    }
+    sets
+}
 
 /** Characters that must be escaped to appear as members (ClassSetSyntaxCharacter). */
 const SYNTAX: &str = "()[]{}/-|";
@@ -143,23 +170,56 @@ fn complement(set: ClassSet) -> Result<ClassSet, PatternError> {
     Ok(ClassSet::from_ranges(invert(&set.ranges)))
 }
 
-/** The pattern node for a settled set: strings longest first, then the single characters, then
-the empty string, so that `[\q{W|}a-c]` matches `a` before it matches nothing. */
+/** One shared-prefix step of a finite string set. */
+#[derive(Clone, Debug, Default)]
+pub(super) struct TrieNode {
+    pub edges: BTreeMap<u32, usize>,
+    pub terminal: bool,
+}
+
+/** Forward and backward tries preserve alternatives under lookbehind and backtracking. */
+#[derive(Clone, Debug)]
+pub(super) struct SetMatcher {
+    pub ranges: Vec<(u32, u32)>,
+    pub forward: Vec<TrieNode>,
+    pub backward: Vec<TrieNode>,
+}
+
+/** Insert each sequence once; reverse traversal supports lookbehind. */
+fn trie(strings: &BTreeSet<Vec<u32>>, backward: bool) -> Vec<TrieNode> {
+    let mut nodes = vec![TrieNode::default()];
+    for word in strings {
+        let points: Vec<_> = if backward {
+            word.iter().rev().copied().collect()
+        } else {
+            word.clone()
+        };
+        let mut current = 0;
+        for point in points {
+            current = if let Some(index) = nodes[current].edges.get(&point) {
+                *index
+            } else {
+                let index = nodes.len();
+                nodes.push(TrieNode::default());
+                nodes[current].edges.insert(point, index);
+                index
+            };
+        }
+        nodes[current].terminal = true;
+    }
+    nodes
+}
+
+/** A settled set matches longer strings first, then characters, then the empty string. */
 fn set_node(set: ClassSet) -> Node {
     if set.strings.is_empty() {
         return Node::Class(set.ranges, false);
     }
-    let mut words: Vec<&Vec<u32>> = set.strings.iter().filter(|word| !word.is_empty()).collect();
-    words.sort_by_key(|word| Reverse(word.len()));
-    let mut alternatives: Vec<Node> = words
-        .into_iter()
-        .map(|word| Node::Concat(word.iter().map(|point| Node::Char(*point)).collect()))
-        .collect();
-    alternatives.push(Node::Class(set.ranges, false));
-    if set.strings.contains(&Vec::new()) {
-        alternatives.push(Node::Empty);
-    }
-    Node::Alt(alternatives)
+    Node::StringSet(Box::new(SetMatcher {
+        ranges: set.ranges,
+        forward: trie(&set.strings, false),
+        backward: trie(&set.strings, true),
+    }))
 }
 
 /** The error for a class that never reaches its closing bracket. */
@@ -190,6 +250,30 @@ fn word_set(word: Vec<u32>) -> ClassSet {
 }
 
 impl PatternParser<'_> {
+    /** Charge every generated alternative and scalar before copying it into a pattern. */
+    fn emoji_class(&mut self, name: &str) -> Result<ClassSet, PatternError> {
+        let set = EMOJI_SETS
+            .get_or_init(emoji_sets)
+            .get(name)
+            .expect("known Unicode property");
+        let cost = set.strings.iter().map(|word| word.len() + 1).sum::<usize>() + 2;
+        if self.nodes.saturating_add(cost) > super::REGEXP_NODES {
+            self.emoji_expansion_limit = true;
+            return Ok(ClassSet {
+                maybe_strings: true,
+                ..ClassSet::default()
+            });
+        }
+        for _ in 0..cost {
+            self.count()?;
+        }
+        Ok(self.settle(set.clone()))
+    }
+
+    /** A standalone property uses the same longest-first alternatives as a class operand. */
+    pub(super) fn emoji_node(&mut self, name: &str) -> Result<Node, PatternError> {
+        Ok(set_node(self.emoji_class(name)?))
+    }
     /** The unit `offset` places ahead of the cursor, as a char. */
     fn unit_char(&self, offset: usize) -> Option<char> {
         self.units
@@ -369,13 +453,9 @@ impl PatternParser<'_> {
 
     /** `\p{...}` or `\P{...}`. A property of strings cannot be negated, so `\P` of one is an early error. */
     fn property_set(&mut self, negated: bool) -> Result<ClassSet, PatternError> {
-        match self.property(false) {
-            Ok(Node::Class(set, _)) => Ok(self.escape_class(set, negated)),
-            Err(error) if negated && error.0.starts_with(UNSUPPORTED_STRING_PROPERTY) => {
-                Err(bad_character())
-            }
-            Err(error) => Err(error),
-            Ok(_) => Err(bad_character()),
+        match self.read_property(negated)? {
+            Property::Strings(name) => self.emoji_class(&name),
+            Property::CodePoints(set) => Ok(self.escape_class(set, negated)),
         }
     }
 

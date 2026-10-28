@@ -36,11 +36,8 @@ fn function(vm: &Vm, id: ObjectId) -> String {
         ..
     }) = dynamic
     {
-        let units = source.as_units();
-        return shorten(
-            units.iter().copied(),
-            &units[units.len().saturating_sub(SOURCE_SUFFIX)..],
-        );
+        let suffix = source.copy_range(source.len().saturating_sub(SOURCE_SUFFIX), source.len());
+        return shorten(source.code_units(), &suffix);
     }
     if let Some(source) = object
         .and_then(|object| object.function())
@@ -107,7 +104,11 @@ fn primitive(vm: &Vm, value: &JsValue) -> String {
         JsValue::Null => "null".into(),
         JsValue::String(value) => value.lossy(),
         JsValue::Boolean(value) => value.to_string(),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(value) => crate::v9::value::number_to_string(*value),
         JsValue::Number(value) => crate::v9::value::number_to_string(*value),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => crate::v9::value::number_to_string(value.value),
         JsValue::BigInt(value) => value.to_string(),
         JsValue::BigIntWide(value) => value.diagnostic(),
         JsValue::Symbol(id) => format!("Symbol({})", super::super::symbol_text(vm, *id)),
