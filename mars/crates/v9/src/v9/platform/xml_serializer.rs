@@ -49,22 +49,28 @@ fn serialize_to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
         ));
     };
     let mut out = String::new();
-    write_node(&mut vm.page, node, &None, &mut out);
+    write_node(&mut vm.page, node, &None, 0, &mut out);
     Ok(JsValue::String(JsString::from_utf8(&out)?))
 }
 
+/** How deep the writer descends: the bound the HTML serializer uses, so a deep tree cannot exhaust the stack. */
+const MAX_DEPTH: usize = crate::constants::DOCUMENT_DEPTH * 4;
+
 /** Write one node and its subtree. `inherited` is the namespace the enclosing element set. */
-fn write_node(page: &mut Page, id: usize, inherited: &Namespace, out: &mut String) {
+fn write_node(page: &mut Page, id: usize, inherited: &Namespace, depth: usize, out: &mut String) {
     let Some(view) = page.view(id) else {
         return;
     };
+    if depth > MAX_DEPTH {
+        return;
+    }
     match view.tag.as_str() {
         "#text" => escape_text(view.text.as_deref().unwrap_or(""), out),
         "#comment" => push_wrapped(out, "<!--", view.text.as_deref().unwrap_or(""), "-->"),
         PROCESSING_INSTRUCTION => write_processing_instruction(&view, out),
         DOCTYPE => write_doctype(&view, out),
-        DOCUMENT_NODE | FRAGMENT => write_children(page, id, &None, out),
-        _ => write_element(page, id, &view.tag, &view.attributes, inherited, out),
+        DOCUMENT_NODE | FRAGMENT => write_children(page, id, &None, depth, out),
+        _ => write_element(page, id, &view.tag, &view.attributes, inherited, depth, out),
     }
 }
 
@@ -101,6 +107,7 @@ fn write_element(
     tag: &str,
     attributes: &std::collections::BTreeMap<String, String>,
     inherited: &Namespace,
+    depth: usize,
     out: &mut String,
 ) {
     let (namespace, name) = element_name(page, id, tag);
@@ -119,7 +126,7 @@ fn write_element(
         return;
     }
     out.push('>');
-    write_children(page, id, &namespace, out);
+    write_children(page, id, &namespace, depth, out);
     push_wrapped(out, "</", &name, ">");
 }
 
@@ -150,9 +157,9 @@ fn write_namespace_declaration(namespace: &Namespace, inherited: &Namespace, out
 }
 
 /** Write every child of a node in order, each in the namespace its parent element set. */
-fn write_children(page: &mut Page, id: usize, namespace: &Namespace, out: &mut String) {
+fn write_children(page: &mut Page, id: usize, namespace: &Namespace, depth: usize, out: &mut String) {
     for child in page.children(id) {
-        write_node(page, child, namespace, out);
+        write_node(page, child, namespace, depth + 1, out);
     }
 }
 
