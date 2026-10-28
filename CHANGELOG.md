@@ -8,6 +8,9 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added V9 WebAssembly table64 support with BigInt JavaScript indices, 64-bit binary operations, and bounded growth.
+- Added opt-in V8 conformance runs for previously excluded directories, with explicit exclusion reports and confined `d8.file.exists` fixture snapshots.
+- Expanded V9 conformance coverage for supported shell flags and tests that request native syntax without using percent tokens; unsupported flags and intrinsics remain explicit.
 - Renamed the independent Rust browser to **Mars**, with separately reusable **Eye** document/rendering, **V9** JavaScript and **Relay** networking libraries in a Cargo workspace. Each engine owns its implementation and uses shared value contracts without depending on the desktop application. Existing agent protocols, saved-data identities and compatibility limits remain in force.
 - Added automatic semicolon insertion in the supported classic-script grammar of Rust V9. Completed statements accept optional punctuation at permitted boundaries while continued expressions and restricted line-break rules keep their meaning. The option demo now uses semicolonless page source; unsupported grammar and full browser compatibility remain unfinished.
 - Added bounded Rust V9 array-literal spread for owned arrays and primitive strings. Copied references keep their identities, sparse entries become explicit undefined values, and string iteration preserves UTF-16 code points and lone surrogates. The option demo now composes its real model with spread; general iterators and full browser compatibility remain unfinished.
@@ -35,6 +38,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Corrected V9 typed-array `map` to recheck same-kind species destinations after callbacks and value conversion.
+- Corrected V9 Intl time-zone name validation, alias resolution and formatting at the requested instant.
+- Corrected V9 Unicode-set early errors for invalid negated string properties and malformed expressions.
+- Added Unicode 17 emoji string-property matching to V9 regular expressions, including set operations and longest-match ordering.
+- Corrected V9 strict global assignment through inherited properties, preserving setter and proxy behavior.
+- Corrected V9 Arabic number parts and numbering-system selection so page scripts receive localized digits and directional marks.
 - Corrected Mars V9 argument aliases, bound-function metadata, private brands, string protocols and normalization, numeric formatting, JSON revivers and proxy invariants. Added sparse array storage and species behavior, exact summation, Set algebra, Float16 storage, resizable buffers, genuine weak collection and isolated conformance realms. WebAssembly now validates and executes owned scalar, SIMD, GC, exception and atomic instructions. The optional V8 conformance runner now executes unchanged upstream scripts with their declared fixtures and asynchronous callbacks, records failures accurately, and can fail its command when any case fails; full V8 compatibility remains unfinished.
 - Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
 
