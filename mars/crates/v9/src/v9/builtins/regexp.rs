@@ -1,11 +1,12 @@
 /** RegExp objects over V9's own engine: exec, test, flags, and the string protocol methods. */
 use super::*;
-use crate::protocol::EngineError;
+use crate::protocol::{EngineError, EngineResult};
 use crate::v9::regexp::{self, Captures, MatchError};
 use crate::v9::vm::data::{Class, IterState, RegExpData};
 use crate::v9::vm::heap::{Object, Prop, Slot, WRITABLE};
 use crate::v9::vm::realm::Static;
 use crate::v9::vm::realm::{realm, symbol};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -241,13 +242,7 @@ impl Vm<'_> {
     ) -> Res<JsValue> {
         let (_, data) = self.regexp_data(&JsValue::Object(id))?;
         let program = self.regexp_compile(&data.source, &data.flags)?;
-        let mut elements = Vec::with_capacity(captures.len());
-        for capture in captures {
-            elements.push(match capture {
-                Some((start, end)) => JsValue::String(text.slice_range(*start, *end)?),
-                None => JsValue::Undefined,
-            });
-        }
+        let elements = capture_values(text, captures)?;
         let array = self.new_array(elements.clone())?;
         self.pin(JsValue::Object(array));
         let index = captures[0].map_or(0, |(start, _)| start);
@@ -360,6 +355,22 @@ impl Vm<'_> {
         }
         Ok(Some(result))
     }
+}
+
+/** Equal capture spans share immutable string storage across the result array. */
+fn capture_values(text: &JsString, captures: &Captures) -> EngineResult<Vec<JsValue>> {
+    let mut cache: BTreeMap<(usize, usize), JsString> = BTreeMap::new();
+    captures.iter().map(|capture| match capture {
+        None => Ok(JsValue::Undefined),
+        Some((start, end)) => {
+            let span = (*start, *end);
+            let value = match cache.get(&span) {
+                Some(value) => value.clone(),
+                None => { let value = text.slice_range(*start, *end)?; cache.insert(span, value.clone()); value }
+            };
+            Ok(JsValue::String(value))
+        }
+    }).collect()
 }
 
 /** The index after `index`, stepping over a surrogate pair in unicode mode. */
@@ -785,24 +796,16 @@ pub(in crate::v9) fn expand(
             }
         }
         if out.len() > crate::constants::JS_STRING_UNITS {
-            return Err(EngineError::limit(
-                "JavaScript string UTF-16 units",
-                crate::constants::JS_STRING_UNITS,
-            )
-            .into());
+            return Err(vm.range_error("Invalid string length"));
         }
     }
     Ok(out)
 }
 
 /** The string-length guard every replacement builder checks. */
-fn check_length(out: &[u16]) -> Res<()> {
+fn check_length(vm: &mut Vm, out: &[u16]) -> Res<()> {
     if out.len() > crate::constants::JS_STRING_UNITS {
-        return Err(EngineError::limit(
-            "JavaScript string UTF-16 units",
-            crate::constants::JS_STRING_UNITS,
-        )
-        .into());
+        return Err(vm.range_error("Invalid string length"));
     }
     Ok(())
 }
@@ -891,11 +894,12 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             out.extend_from_slice(&replaced);
             next = (position + matched.len()).min(source.len());
         }
-        check_length(&out)?;
+        check_length(vm, &out)?;
     }
     if next < source.len() {
         out.extend_from_slice(&source[next..]);
     }
+    check_length(vm, &out)?;
     Ok(JsValue::String(JsString::from_units(out)?))
 }
 

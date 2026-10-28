@@ -104,7 +104,7 @@ pub(in crate::v9) fn intern(value: &JsString) -> EngineResult<JsString> {
     }
     let shared = match &value.0 {
         super::Storage::Shared(cell) => cell.clone(),
-        _ => Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte: value.is_latin1(), external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), forward: std::sync::OnceLock::new() }),
+        _ => Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte: value.is_latin1(), external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), read_only: false, forward: std::sync::OnceLock::new() }),
     };
     table
         .buckets
@@ -130,7 +130,7 @@ pub(in crate::v9) fn intern_noncanonical_two_byte(value: &JsString) -> EngineRes
         table.count = table.buckets.values().map(Vec::len).sum();
         if table.count >= MAX_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_ENTRIES)); }
     }
-    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte:false, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), forward: std::sync::OnceLock::new() });
+    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte:false, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), read_only: false, forward: std::sync::OnceLock::new() });
     table.buckets.entry(hash).or_default().push(Arc::downgrade(&shared)); table.count += 1;
     Ok(JsString(super::Storage::Shared(shared), false))
 }
@@ -157,7 +157,7 @@ pub(in crate::v9) fn intern_internalized(value: &JsString) -> EngineResult<JsStr
         table.count = table.buckets.values().map(Vec::len).sum();
         if table.count >= MAX_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_ENTRIES)); }
     }
-    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(true), forward: std::sync::OnceLock::new() });
+    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(true), read_only: false, forward: std::sync::OnceLock::new() });
     table.buckets.entry(hash).or_default().push(Arc::downgrade(&shared));
     table.count += 1;
     Ok(JsString(super::Storage::Shared(shared), one_byte))

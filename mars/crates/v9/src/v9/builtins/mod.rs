@@ -68,6 +68,8 @@ pub(in crate::v9) use wasm::trace_metadata as wasm_trace_metadata;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::wasm_force_detach;
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use wasm::wasm_intrinsic_object;
+#[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::wasm_worker_restore_shared_gc;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::{

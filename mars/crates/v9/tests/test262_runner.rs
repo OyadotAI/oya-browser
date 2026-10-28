@@ -517,6 +517,10 @@ fn inert_native_syntax_flag(source: &str) -> bool {
 
 /** Only tests whose every percent token names an implemented intrinsic are considered for opt-in execution. */
 fn supported_native_intrinsics(source: &str) -> bool {
+    if source.lines().filter_map(|line| line.strip_prefix("// Flags:")).flat_map(str::split_whitespace).any(|flag| flag == "--fuzzing")
+        && (source.contains("%WasmStruct") || source.contains("%WasmArray")) {
+        return false;
+    }
     if !source
         .lines()
         .filter_map(|line| line.strip_prefix("// Flags:"))
@@ -572,6 +576,9 @@ fn supported_native_intrinsics(source: &str) -> bool {
             "AllocateHeapNumber",
             "MaxSmi",
             "ArrayBufferMaxByteLength",
+            "WasmStruct",
+            "WasmArray",
+            "IsWasmTrapHandlerEnabled",
         ]
         .contains(&name)
         {
@@ -587,6 +594,9 @@ fn supported_native_intrinsics(source: &str) -> bool {
 fn native_admission_requires_only_implemented_intrinsics() {
     assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();"));
     assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%MaxSmi();%ArrayBufferMaxByteLength();"));
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%WasmStruct();%WasmArray();"));
+    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%IsWasmTrapHandlerEnabled();"));
+    assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax --fuzzing\n%WasmStruct();"));
     assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();%IsSmi(0);"));
     assert!(supported_native_intrinsics(
         "// Flags: --allow-natives-syntax\n%InternalizeString('value');"
@@ -632,6 +642,9 @@ fn supported_mjsunit_flags(source: &str) -> bool {
     {
         let mut flags = line.split_whitespace();
         while let Some(flag) = flags.next() {
+            if flag == "--" {
+                break;
+            }
             if matches!(
                 flag,
                 "--bundle"
@@ -639,10 +652,15 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                     | "--harmony-struct"
                     | "--expose-gc"
                     | "--expose-async-hooks"
+                    | "--async-stack-traces"
+                    | "--noasync-stack-traces"
+                    | "--no-async-stack-traces"
                     | "--ignore-unhandled-promises"
                     | "--throws"
                     | "--harmony-shadow-realm"
                     | "--js-sum-precise"
+                    | "--js-iterator-includes"
+                    | "--js-iterator-join"
                     | "--enable-queue-microtask"
                     | "--noincremental-marking"
                     | "--no-incremental-marking"
@@ -657,13 +675,28 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                     | "--wasm-wide-arithmetic"
                     | "--wasm-wasmfx"
                     | "--wasm-shared"
+                    | "--wasm-compact-imports"
                     | "--no-wasm-lazy-compilation"
                     | "--nowasm-lazy-compilation"
+                    | "--no-wasm-inlining"
+                    | "--no-wasm-trap-handler"
+                    | "--wasm-enforce-bounds-checks"
+                    | "--no-wasm-loop-unrolling"
+                    | "--no-wasm-loop-peeling"
+                    | "--no-wasm-opt"
+                    | "--no-wasm-dynamic-tiering"
+                    | "--no-wasm-tier-up"
+                    | "--wasm-num-compilation-tasks=0"
+                    | "--no-wasm-native-module-cache"
                     | "--wasm-allow-mixed-eh-for-testing"
             ) {
                 continue;
             }
-            let numeric = ["--wasm-max-module-size", "--wasm-max-mem-pages"];
+            if flag == "--wasm-num-compilation-tasks" {
+                if flags.next() != Some("0") { return false; }
+                continue;
+            }
+            let numeric = ["--wasm-max-module-size", "--wasm-max-mem-pages", "--wasm-max-table-size"];
             if numeric.contains(&flag) {
                 if !flags
                     .next()
@@ -689,6 +722,14 @@ fn supported_mjsunit_flags(source: &str) -> bool {
 #[test]
 /** Unsupported flags in any line or combination cannot be admitted as no-ops. */
 fn mjsunit_admission_requires_all_flags_to_be_implemented() {
+    assert!(supported_mjsunit_flags("// Flags: --js-iterator-includes --js-iterator-join\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --js-iterator-includes --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --async-stack-traces --no-async-stack-traces\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --async-stack-traces --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: -- 1 --literal\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --unknown -- 1\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --wasm-enforce-bounds-checks\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --unknown\n"));
     assert!(supported_mjsunit_flags(
         "// Flags: --expose-gc --harmony-struct\n// Flags: --wasm-max-module-size=128\n"
     ));
@@ -715,8 +756,15 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags("// Flags: --wasm-wide-arithmetic\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-wasmfx\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-compact-imports --unknown\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-shared --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-inlining --no-wasm-loop-unrolling --no-wasm-loop-peeling --no-wasm-opt --no-wasm-dynamic-tiering --no-wasm-native-module-cache\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-inlining --unknown\n"));
+    assert!(supported_mjsunit_flags("// Flags: --no-wasm-tier-up --wasm-num-compilation-tasks=0\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks 0\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks=1\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-lazy-compilation\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-wasmfx --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-allow-mixed-eh-for-testing\n"));
@@ -744,9 +792,11 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags(
         "// Flags: --wasm-max-module-size=128 --wasm-shared\n"
     ));
-    assert!(!supported_mjsunit_flags(
+    assert!(supported_mjsunit_flags(
         "// Flags: --wasm-max-table-size=10\n"
     ));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=bad\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=10 --unknown\n"));
 }
 
 /** Explicit admission does not change the default discovery profile. */

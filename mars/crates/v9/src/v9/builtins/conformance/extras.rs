@@ -24,11 +24,16 @@ const NAME_LENGTH_ERROR: &str = "Trace event name must not be an empty string.";
 static TRACE: OnceLock<u32> = OnceLock::new();
 /** The category query is a separate native so its arity and errors match `isTraceCategoryEnabled`. */
 static CATEGORY: OnceLock<u32> = OnceLock::new();
+/** Accessors for data preserved across actual promise continuations. */
+static GET_CONTINUATION: OnceLock<u32> = OnceLock::new();
+static SET_CONTINUATION: OnceLock<u32> = OnceLock::new();
 
 /** Registers the binding accessor on the d8 namespace and the two natives it hands out. */
 pub(super) fn install(builder: &mut Builder, d8: ObjectId) {
     let _ = TRACE.set(builder.native("trace", 5, trace));
     let _ = CATEGORY.set(builder.native("isTraceCategoryEnabled", 1, is_enabled));
+    let _ = GET_CONTINUATION.set(builder.native("getContinuationPreservedEmbedderData", 0, get_continuation));
+    let _ = SET_CONTINUATION.set(builder.native("setContinuationPreservedEmbedderData", 1, set_continuation));
     builder.method(d8, "getExtrasBindingObject", 0, binding);
 }
 
@@ -50,6 +55,8 @@ fn binding(vm: &mut Vm, _call: Call) -> Res<JsValue> {
     for (name, index) in [
         ("trace", *TRACE.get().unwrap()),
         ("isTraceCategoryEnabled", *CATEGORY.get().unwrap()),
+        ("getContinuationPreservedEmbedderData", *GET_CONTINUATION.get().unwrap()),
+        ("setContinuationPreservedEmbedderData", *SET_CONTINUATION.get().unwrap()),
     ] {
         let function = vm.native_closure(index, Vec::new())?;
         vm.heap.put(
@@ -65,6 +72,18 @@ fn binding(vm: &mut Vm, _call: Call) -> Res<JsValue> {
     );
     vm.check_heap_bounds()?;
     Ok(JsValue::Object(object))
+}
+
+/** Read the current isolate data without coercion or cloning its identity. */
+fn get_continuation(vm: &mut Vm, _call: Call) -> Res<JsValue> {
+    Ok(vm.page.state.continuation_data.clone().unwrap_or(JsValue::Undefined))
+}
+
+/** Replace the current isolate data; pending continuations retain their captured values. */
+fn set_continuation(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let value = call.arg(0);
+    vm.page.state.continuation_data = (!matches!(value, JsValue::Undefined)).then_some(value);
+    Ok(JsValue::Undefined)
 }
 
 /** Reads the realm's stored binding without invoking any script-visible accessor. */

@@ -161,13 +161,35 @@ fn units(units: Vec<u16>) -> Res<JsValue> {
     Ok(JsValue::String(JsString::from_units(units)?))
 }
 
+/** Single Latin-1 results use the shell isolate's permanent character root. */
+fn string_units(vm: &mut Vm, value: Vec<u16>) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 && value.len() == 1 && value[0] <= 255 {
+        return Ok(JsValue::String(vm.character_root(value[0] as u8)?));
+    }
+    let _ = vm;
+    units(value)
+}
+
+/** One-byte substring results use the same read-only root as character iteration. */
+fn string_slice(vm: &mut Vm, text: &JsString, start: usize, end: usize) -> Res<JsString> {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 && end == start.saturating_add(1)
+        && let Some(unit) = text.unit_at(start).filter(|unit| *unit <= 255)
+    {
+        return vm.character_root(unit as u8);
+    }
+    let _ = vm;
+    Ok(text.slice_range(start, end)?)
+}
+
 /** String.fromCharCode. */
 fn from_char_code(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut out = Vec::with_capacity(call.args.len());
     for value in call.args {
         out.push(crate::v9::value::to_uint32(vm.to_number(value)?) as u16);
     }
-    units(out)
+    string_units(vm, out)
 }
 
 /** String.fromCodePoint. */
@@ -180,7 +202,7 @@ fn from_code_point(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         push_point(&mut out, number as u32);
     }
-    units(out)
+    string_units(vm, out)
 }
 
 /** Append a code point as UTF-16. */
@@ -239,7 +261,7 @@ fn at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::Undefined);
     }
-    units(vec![
+    string_units(vm, vec![
         text.unit_at(index as usize).expect("checked string index"),
     ])
 }
@@ -251,7 +273,7 @@ fn char_at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::String(JsString::empty()));
     }
-    units(vec![
+    string_units(vm, vec![
         text.unit_at(index as usize).expect("checked string index"),
     ])
 }
@@ -626,7 +648,7 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let start = vm.relative_index(&call.arg(0), text.len(), 0)?;
     let end = vm.relative_index(&call.arg(1), text.len(), text.len())?;
-    Ok(JsValue::String(text.slice_range(start, end.max(start))?))
+    Ok(JsValue::String(string_slice(vm, &text, start, end.max(start))?))
 }
 
 /** String.prototype.split. */
@@ -652,19 +674,19 @@ fn split(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut parts = Vec::new();
     if separator.is_empty() {
         for index in 0..text.len().min(limit) {
-            parts.push(JsValue::String(text.slice_range(index, index + 1)?));
+            parts.push(JsValue::String(string_slice(vm, &text, index, index + 1)?));
         }
     } else {
         let mut start = 0;
         while let Some(found) = find_string(&text, &separator, start) {
-            parts.push(JsValue::String(text.slice_range(start, found)?));
+            parts.push(JsValue::String(string_slice(vm, &text, start, found)?));
             start = found + separator.len();
             if parts.len() >= limit {
                 break;
             }
         }
         if parts.len() < limit {
-            parts.push(JsValue::String(text.slice_range(start, text.len())?));
+            parts.push(JsValue::String(string_slice(vm, &text, start, text.len())?));
         }
     }
     for part in parts {
@@ -692,7 +714,7 @@ fn substring(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.to_integer(&call.arg(1))?.clamp(0.0, length) as usize
     };
     let (low, high) = (start.min(end), start.max(end));
-    Ok(JsValue::String(text.slice_range(low, high)?))
+    Ok(JsValue::String(string_slice(vm, &text, low, high)?))
 }
 
 /** String.prototype.substr. */
@@ -704,7 +726,7 @@ fn substr(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         (vm.to_integer(&call.arg(1))?.max(0.0) as usize).min(text.len() - start)
     };
-    Ok(JsValue::String(text.slice_range(start, start + count)?))
+    Ok(JsValue::String(string_slice(vm, &text, start, start + count)?))
 }
 
 /** Case mapping over code points; unpaired surrogates stay. Locale variants also validate their locales argument. */
@@ -859,7 +881,7 @@ fn trim_with(vm: &mut Vm, call: &Call, start: bool, end: bool) -> Res<JsValue> {
     if low == 0 && high == text.len() {
         return Ok(JsValue::String(text));
     }
-    Ok(JsValue::String(text.slice_range(low, high)?))
+    Ok(JsValue::String(string_slice(vm, &text, low, high)?))
 }
 
 /** String.prototype.trim. */

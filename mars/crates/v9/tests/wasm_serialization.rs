@@ -173,3 +173,29 @@ fn sparse_table32_values_survive_state_restoration() {
     assert!(result.failed.is_empty(), "{:?}", common::failure(&result));
     assert_eq!(common::global(&result, "r"), "300005,true,true,true");
 }
+
+/** The configured table cap is enforced during validation and module construction. */
+#[test]
+fn explicit_table_capacity_limits_module_decoding() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_wasm_max_table_entries = Some(3);
+    let source = "const h=[0,97,115,109,1,0,0,0,4,4,1,112,0],ok=new Uint8Array([...h,3]),bad=new Uint8Array([...h,4]);let r=[WebAssembly.validate(ok),WebAssembly.validate(bad)];try{new WebAssembly.Module(bad)}catch(e){r.push(e instanceof WebAssembly.CompileError,/implementation limit \\(3 elements\\)/.test(e.message))}r=r.join()";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,false,true,true");
+}
+
+/** Many untouched memories share the resident budget while preserving view, grow and detach semantics. */
+#[test]
+fn many_zero_memories_use_bounded_sparse_backing() {
+    let source = "const memories=Array.from({length:600},()=>new WebAssembly.Memory({initial:1,maximum:2})),m=memories[599],old=m.buffer,v=new Uint8Array(old);v[123]=42;const before=v[123],pages=m.grow(1),detached=old.byteLength===0,next=new Uint8Array(m.buffer);let r=[before,pages,detached,next[123],next[65536]].join()";
+    assert_eq!(common::eval(source, "r"), "42,1,true,42,0");
+}
+
+/** Repeated calls and alternating modules retain their own validated code and copied source. */
+#[test]
+fn repeated_module_calls_preserve_copied_source_identity() {
+    let source = "const a=new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,5,1,1,102,0,0,10,6,1,4,0,65,42,11]),b=a.slice();b[b.length-2]=7;const x=new WebAssembly.Instance(new WebAssembly.Module(a)).exports,y=new WebAssembly.Instance(new WebAssembly.Module(b)).exports;a.fill(0);b.fill(0);let r=[x.f(),x.f(),y.f(),x.f(),y.f()].join()";
+    assert_eq!(run(source), "42,42,7,42,7");
+}

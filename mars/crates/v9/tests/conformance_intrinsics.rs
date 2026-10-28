@@ -2,6 +2,93 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** Compact large spreads retain the canonical character identity across GC and saved state. */
+#[test]
+fn large_string_spread_roots_survive_gc_and_snapshot() {
+    let sources = vec!["let a=[...'ab'.repeat(150000)];let same=%IsSameHeapObject(a[0],'a')&&%IsSameHeapObject(a[1],'b');gc();setTimeout(()=>console.log(a.length,same,%IsSameHeapObject(a[299998],'a')),0);".into()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::console(&resumed), ["300000 true true"]);
+}
+
+/** One-byte iterator results use an isolate-owned read-only cell that survives saved state. */
+#[test]
+fn one_byte_iterator_roots_keep_identity_through_gc_and_snapshot() {
+    let sources = vec!["let a='ab'[Symbol.iterator]().next().value,b='ac'[Symbol.iterator]().next().value;let same=[b,'a','ab'[0],Object('ab')[0],String.fromCharCode(97),String.fromCodePoint(97),'ab'.at(0),'ab'.charAt(0),'ab'.slice(0,1),'ab'.substring(0,1),'ab'.substr(0,1),'a b'.split(' ')[0],' a '.trim()].every(x=>%IsSameHeapObject(a,x));gc();setTimeout(()=>console.log(same,%IsSameHeapObject(a,'ax'[Symbol.iterator]().next().value),%InYoungGeneration(a)),0);".into()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::console(&resumed), ["true true false"]);
+}
+
+/** Saved character roots cannot be relabeled to grant a forged read-only identity. */
+#[test]
+fn one_byte_iterator_roots_reject_forged_unit() {
+    let sources = vec!["let a='ab'[Symbol.iterator]().next().value;setTimeout(()=>{},0);".into()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    let mut state = serde_json::to_value(loaded.state).unwrap();
+    let roots = state["page"]["character_roots"].as_object_mut().unwrap();
+    let root = roots.remove("97").unwrap();
+    roots.insert("98".into(), root);
+    let forged = serde_json::from_value(state).unwrap();
+    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), forged, 1.0, 1).is_err());
+}
+
+/** Shell arguments remain strings and retain the same mutable array through state transport. */
+#[test]
+fn shell_arguments_survive_state_transport() {
+    let sources = vec!["arguments.push('later');setTimeout(()=>console.log(arguments.join(',')),0);".into()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_script_arguments = vec!["1".into(), "--literal".into()];
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::console(&resumed), ["1,--literal,later"]);
+}
+
+/** A pending reaction retains its captured isolate value across collection and state transport. */
+#[test]
+fn continuation_data_survives_gc_and_pending_reaction_snapshot() {
+    let sources = vec!["const {getContinuationPreservedEmbedderData:get,setContinuationPreservedEmbedderData:set}=d8.getExtrasBindingObject();let resolve;const p=new Promise(r=>resolve=r);let obj={value:42};set(obj);p.then(()=>console.log(get().value));set('outer');obj=null;gc();setTimeout(()=>{resolve();console.log(get())},0);".into()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
+    assert_eq!(common::console(&resumed), ["outer", "42"]);
+}
+
+/** Queueing a callback captures its data, including undefined, and restores its caller afterward. */
+#[test]
+fn continuation_data_follows_queued_microtasks() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "const {getContinuationPreservedEmbedderData:get,setContinuationPreservedEmbedderData:set}=d8.getExtrasBindingObject();let values=[];queueMicrotask(()=>values.push(get()));set('captured');queueMicrotask(()=>{values.push(get());set('inside')});set('outer');%PerformMicrotaskCheckpoint();let r=[values[0]===undefined,values[1],get()].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,captured,outer");
+}
+
 /** A checkpoint drains reactions queued by async callbacks before returning to script. */
 #[test]
 fn checkpoint_drains_async_rejections_created_by_reactions() {

@@ -3,8 +3,17 @@ use super::*;
 
 /** A foreign intrinsic Array defaults to the caller's Array, while author constructors remain visible. */
 pub(super) fn create(vm: &mut Vm, original: &JsValue, length: usize) -> Res<ObjectId> {
+    create_with_fresh(vm, original, length).map(|(result, _)| result)
+}
+
+/** Tell callers when ArraySpeciesCreate used a known fresh intrinsic allocation. */
+pub(super) fn create_with_fresh(
+    vm: &mut Vm,
+    original: &JsValue,
+    length: usize,
+) -> Res<(ObjectId, bool)> {
     if !builtin_subclassing(vm) {
-        return vm.new_array_length(length);
+        return vm.new_array_length(length).map(|result| (result, true));
     }
     let mut constructor = JsValue::Undefined;
     if is_array_checked(vm, original)? {
@@ -22,6 +31,10 @@ pub(super) fn create(vm: &mut Vm, original: &JsValue, length: usize) -> Res<Obje
             }
         }
     }
+    let fresh = constructor == JsValue::Undefined
+        || constructor
+            .object()
+            .is_some_and(|id| id == vm.object_intrinsics(id).ids.array);
     let result = if constructor == JsValue::Undefined {
         vm.new_array_length(length)?
     } else {
@@ -33,7 +46,7 @@ pub(super) fn create(vm: &mut Vm, original: &JsValue, length: usize) -> Res<Obje
             .ok_or_else(|| vm.type_error("Array species did not create an object"))?
     };
     vm.pin(JsValue::Object(result));
-    Ok(result)
+    Ok((result, fresh))
 }
 
 /** CreateDataProperty never invokes a prototype setter, and refusal must throw. */

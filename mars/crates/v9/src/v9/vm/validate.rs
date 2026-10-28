@@ -88,6 +88,23 @@ impl Vm<'_> {
         crate::v9::platform::random::validate(self)?;
         crate::v9::platform::animations::validate(self)?;
         let marker = self.mark_everything();
+        #[cfg(feature = "conformance")]
+        {
+            if !self.page.environment.conformance_d8 && !self.page.state.character_roots.is_empty() {
+                return Err(forged("character roots outside d8"));
+            }
+            for (unit, value) in &self.page.state.character_roots {
+                if !value.is_read_only_root() || value.unit_at(0) != Some(u16::from(*unit)) || value.len() != 1 {
+                    return Err(forged("invalid character root"));
+                }
+            }
+            for value in marker.strings.iter().filter(|value| value.is_read_only_root()) {
+                let Some(unit) = value.unit_at(0).and_then(|unit| u8::try_from(unit).ok()) else { return Err(forged("invalid read-only character")); };
+                if !self.page.state.character_roots.get(&unit).is_some_and(|root| root.same_backing(value)) {
+                    return Err(forged("unregistered read-only character"));
+                }
+            }
+        }
         if !marker.objects.iter().all(|id| self.resolves(*id))
             || !marker.envs.iter().all(|id| self.heap.envs.contains_key(id))
         {

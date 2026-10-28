@@ -545,6 +545,9 @@ impl Parser {
                     "AllocateHeapNumberWithValue" => (44, 1),
                     "MaxSmi" => (46, 0),
                     "ArrayBufferMaxByteLength" => (47, 0),
+                    "WasmStruct" => (48, 0),
+                    "WasmArray" => (49, 0),
+                    "IsWasmTrapHandlerEnabled" => (50, 0),
                     _ => {
                         return Err(crate::protocol::EngineError::unsupported(&format!(
                             "V8 native intrinsic %{name}"

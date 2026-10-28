@@ -23,11 +23,7 @@ pub(super) fn empty(vm: &mut Vm, object: &JsValue, length: usize) -> Res<Option<
         }
         let text = vm.to_string(&value)?;
         if text.len() > crate::constants::JS_STRING_UNITS.saturating_sub(units.len()) {
-            return Err(EngineError::limit(
-                "JavaScript string UTF-16 units",
-                crate::constants::JS_STRING_UNITS,
-            )
-            .into());
+            return Err(vm.range_error("Invalid string length"));
         }
         units.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
     }

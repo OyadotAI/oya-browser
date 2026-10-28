@@ -578,15 +578,18 @@ pub(in crate::v9) fn join_values(
     let mut units: Vec<u16> = Vec::new();
     for index in 0..length {
         if index > 0 {
+            if separator.len() > crate::constants::JS_STRING_UNITS.saturating_sub(units.len()) {
+                return Err(vm.range_error("Invalid string length"));
+            }
             units.extend((0..separator.len()).filter_map(|index| separator.unit_at(index)));
         }
         let value = get_index(vm, object, index)?;
         if !value.nullish() {
             let text = vm.to_string(&value)?;
+            if text.len() > crate::constants::JS_STRING_UNITS.saturating_sub(units.len()) {
+                return Err(vm.range_error("Invalid string length"));
+            }
             units.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
-        }
-        if units.len() > crate::constants::JS_STRING_UNITS {
-            break;
         }
         vm.charge(1)?;
     }

@@ -373,6 +373,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_shared: bool,
+    /** Enables decoding grouped import encodings only when explicitly requested by d8. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_compact_imports: bool,
     /// Shell test metadata can select whether its Wasm streaming callback is installed.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -409,6 +413,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_d8: bool,
+    /// Script arguments supplied after the shell's `--` delimiter.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_script_arguments: Vec<String>,
     /// The actual unsafe-constructor shell flag bypasses dynamic Function security-token checks.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -588,6 +596,8 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_wasm_shared: false,
             #[cfg(feature = "conformance")]
+            conformance_wasm_compact_imports: false,
+            #[cfg(feature = "conformance")]
             conformance_wasm_test_streaming: None,
             #[cfg(feature = "conformance")]
             conformance_operation_limit: None,
@@ -605,6 +615,8 @@ impl Default for PageEnvironment {
             conformance_exists: BTreeMap::new(),
             #[cfg(feature = "conformance")]
             conformance_d8: false,
+            #[cfg(feature = "conformance")]
+            conformance_script_arguments: Vec::new(),
             #[cfg(feature = "conformance")]
             conformance_allow_unsafe_function_constructor: false,
             #[cfg(feature = "conformance")]
@@ -969,6 +981,14 @@ pub(in crate::v9) struct NumberConstantPool {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** Permanent per-isolate read-only roots for one-byte iterator characters. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub character_roots: BTreeMap<u8, crate::v9::value::JsString>,
+    /** Current isolate continuation data, retained across state transport. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_data: Option<JsValue>,
     /** Per-isolate code constant cells preserve literal identity without sharing mutable metadata between isolates. */
     #[cfg(feature = "conformance")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1307,6 +1327,12 @@ impl<'h> Page<'h> {
         if let Some(value) = &self.state.history_state {
             out.push(value.clone());
         }
+        #[cfg(feature = "conformance")]
+        if let Some(value) = &self.state.continuation_data {
+            out.push(value.clone());
+        }
+        #[cfg(feature = "conformance")]
+        out.extend(self.state.character_roots.values().cloned().map(JsValue::String));
         out.extend(self.state.selection.map(JsValue::Object));
         out.extend(self.joining.iter().cloned());
         out.extend(self.unhandled.iter().map(|id| JsValue::Object(*id)));

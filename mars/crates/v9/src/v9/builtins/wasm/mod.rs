@@ -538,6 +538,22 @@ fn shared_enabled(vm: &Vm) -> bool {
     #[cfg(not(feature = "conformance"))]
     { let _ = vm; true }
 }
+/** The shell enables compact grouped imports only under its proposal flag. */
+fn compact_imports_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    { return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_compact_imports; }
+    #[cfg(not(feature = "conformance"))]
+    { let _ = vm; true }
+}
+/** Host test limits can only lower the native table declaration bound. */
+fn table_limit(vm: &Vm) -> u64 {
+    #[cfg(feature = "conformance")]
+    if let Some(limit) = vm.page.environment.conformance_wasm_max_table_entries {
+        return (limit as u64).min(MAX_DECLARED_TABLE_MINIMUM);
+    }
+    let _ = vm;
+    MAX_DECLARED_TABLE_MINIMUM
+}
 /** Copied inputs and inert options are the only accepted module construction state. */
 fn finish_module(
     vm: &mut Vm,
@@ -556,6 +572,8 @@ fn finish_module(
         allow_mixed_eh(vm),
         wasmfx_enabled(vm),
         shared_enabled(vm),
+        table_limit(vm),
+        compact_imports_enabled(vm),
     )
     .map_err(|e| compile_failure(vm, e))?;
     let proto = match new_target {
@@ -574,6 +592,21 @@ fn finish_module(
     imports::store(vm, object, options)?;
     imports::validate(vm, object, &parsed)?;
     Ok(object)
+}
+/** Fuzzing intrinsics create the same typed one-element i64 Wasm GC records as V8. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn wasm_intrinsic_object(vm: &mut Vm, array: bool) -> Res<JsValue> {
+    const STRUCT: &[u8] = &[0,97,115,109,1,0,0,0,1,7,1,80,0,95,1,126,0];
+    const ARRAY: &[u8] = &[0,97,115,109,1,0,0,0,1,6,1,80,0,94,126,0];
+    const PAYLOAD: i128 = 0x7aad_f00d_baad_f00d;
+    let mark = vm.pins.len();
+    let result = (|| {
+        let module = finish_module(vm, if array { ARRAY } else { STRUCT }.to_vec(), (vec![], None), None)?;
+        vm.pin(JsValue::Object(module));
+        gc::allocate_record(vm, JsValue::Object(module), 0, array, vec![JsValue::BigInt(PAYLOAD)])
+    })();
+    vm.pins.truncate(mark);
+    result
 }
 /** new WebAssembly.Module consumes a BufferSource, never a JS iterable masquerading as bytes. */
 fn module_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -602,6 +635,8 @@ fn validate_api(vm: &mut Vm, call: Call) -> Res<JsValue> {
         allow_mixed_eh(vm),
         wasmfx_enabled(vm),
         shared_enabled(vm),
+        table_limit(vm),
+        compact_imports_enabled(vm),
     ) {
         Ok(m) => {
             let object = vm.new_object()?;

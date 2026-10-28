@@ -347,7 +347,7 @@ fn allocate(
     allocate_record(vm, module, index, array, fields)
 }
 /** Field storage remains opaque and traced for both Wasm instructions and native string encoders. */
-fn allocate_record(
+pub(in crate::v9::builtins::wasm) fn allocate_record(
     vm: &mut Vm,
     module: JsValue,
     index: u32,

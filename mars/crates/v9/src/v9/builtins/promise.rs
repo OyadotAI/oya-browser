@@ -79,6 +79,11 @@ impl Vm<'_> {
     /** Queue a microtask. */
     pub fn enqueue(&mut self, job: Job) -> Res<()> {
         #[cfg(feature = "conformance")]
+        let job = match job {
+            Job::Callback(callback) => Job::CallbackWithData { callback, continuation_data: self.page.state.continuation_data.clone() },
+            job => job,
+        };
+        #[cfg(feature = "conformance")]
         let custom_count = self.realms.custom_job_count();
         #[cfg(not(feature = "conformance"))]
         let custom_count = 0;
@@ -99,6 +104,7 @@ impl Vm<'_> {
     fn custom_job_realm(&self, job: &Job) -> Option<u32> {
         let callback = match job {
             Job::Callback(callback) => callback.object(),
+            Job::CallbackWithData { callback, .. } => callback.object(),
             Job::Thenable { then, .. } => then.object(),
             Job::Reaction { reaction, .. } => match &reaction.handler {
                 ReactionHandler::Function(callback) => callback.object().or(reaction.target),
@@ -207,6 +213,8 @@ impl Vm<'_> {
             return self.settle(promise, PromiseState::Fulfilled(value));
         }
         self.enqueue(Job::Thenable {
+            #[cfg(feature = "conformance")]
+            continuation_data: self.page.state.continuation_data.clone(),
             promise,
             thenable: value,
             then,
@@ -238,11 +246,15 @@ impl Vm<'_> {
     ) -> Res<()> {
         let reactions = [
             Reaction {
+                #[cfg(feature = "conformance")]
+                continuation_data: self.page.state.continuation_data.clone(),
                 reject: false,
                 handler: fulfilled,
                 target,
             },
             Reaction {
+                #[cfg(feature = "conformance")]
+                continuation_data: self.page.state.continuation_data.clone(),
                 reject: true,
                 handler: rejected,
                 target,
@@ -362,10 +374,16 @@ impl Vm<'_> {
         let mark = self.pins.len();
         match &job {
             Job::Callback(function) => self.pins.push(function.clone()),
+            #[cfg(feature = "conformance")]
+            Job::CallbackWithData { callback, continuation_data } => {
+                self.pins.push(callback.clone());
+                if let Some(value) = continuation_data { self.pins.push(value.clone()); }
+            }
             Job::Thenable {
                 promise,
                 thenable,
                 then,
+                ..
             } => self
                 .pins
                 .extend([JsValue::Object(*promise), thenable.clone(), then.clone()]),
@@ -382,6 +400,15 @@ impl Vm<'_> {
         }
         #[cfg(feature = "conformance")]
         let resource = super::async_hook_resource(self, &job);
+        #[cfg(feature = "conformance")]
+        let previous_data = match &job {
+            Job::Reaction { reaction, .. } => Some(reaction.continuation_data.clone()),
+            Job::Thenable { continuation_data, .. } => Some(continuation_data.clone()),
+            Job::Callback(_) => Some(None),
+            Job::CallbackWithData { continuation_data, .. } => Some(continuation_data.clone()),
+        }.map(|data| std::mem::replace(&mut self.page.state.continuation_data, data));
+        #[cfg(feature = "conformance")]
+        if let Some(Some(value)) = &previous_data { self.pins.push(value.clone()); }
         let result = (|| -> Res<()> {
             #[cfg(feature = "conformance")]
             if let Some(resource) = resource {
@@ -401,6 +428,8 @@ impl Vm<'_> {
             }
             result
         })();
+        #[cfg(feature = "conformance")]
+        if let Some(previous) = previous_data { self.page.state.continuation_data = previous; }
         self.pins.truncate(mark);
         result
     }
@@ -411,10 +440,16 @@ impl Vm<'_> {
                 self.call(function, JsValue::Undefined, Vec::new())?;
                 Ok(())
             }
+            #[cfg(feature = "conformance")]
+            Job::CallbackWithData { callback, .. } => {
+                self.call(callback, JsValue::Undefined, Vec::new())?;
+                Ok(())
+            }
             Job::Thenable {
                 promise,
                 thenable,
                 then,
+                ..
             } => {
                 let (resolve, reject) = self.resolving_functions(promise)?;
                 match self.call(

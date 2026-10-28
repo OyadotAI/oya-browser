@@ -20,6 +20,13 @@ fn oversized_pattern_reports_its_engine_limit() {
     );
 }
 
+/** Long plain patterns use bounded literal storage and match forward and through lookbehind. */
+#[test]
+fn long_literal_runs_do_not_consume_structural_regex_nodes() {
+    let result = run("const text='a'.repeat(20000);const direct=new RegExp('^'+text+'$');const behind=/(?<=abc)d/;r=[direct.test(text),direct.test(text+'b'),behind.test('abcd')].join(',');");
+    assert_eq!(result, "true,false,true");
+}
+
 /** Replacement reads every capture before rejecting a callback argument list that exceeds V8's call ceiling. */
 #[test]
 fn replacement_rejects_oversized_callback_arguments_after_capture_getters() {
@@ -174,4 +181,11 @@ fn class_k_escape_is_an_error_only_with_named_groups() {
         "let out=[];try{new RegExp('[\\\\k](?<a>)');out.push(false)}catch(e){out.push(e instanceof SyntaxError)}out.push(new RegExp('[\\\\k]').test('k'));r=out.join();",
     );
     assert_eq!(r, "true,true");
+}
+
+/** Global replacement reports an oversized result as a catchable RangeError. */
+#[test]
+fn global_replace_overflow_is_a_range_error() {
+    let result = run("const piece='b'.repeat(32769);let a,b;try{'a'.repeat(32).replace(/a/g,piece)}catch(e){a=e instanceof RangeError}try{'a'.repeat(32).replace(/a/g,()=>piece)}catch(e){b=e instanceof RangeError}r=a+','+b;");
+    assert_eq!(result, "true,true");
 }

@@ -364,6 +364,10 @@ fn encode_string<S: Serializer>(
     }
     let _ = (include_age, include_intern);
     #[cfg(feature = "conformance")]
+    if value.is_read_only_root() {
+        return single(serializer, "C", &value.unit_at(0).expect("one-byte character root"));
+    }
+    #[cfg(feature = "conformance")]
     if let Some(target) = value.thin_target() {
         return single(serializer, "I", &target);
     }
@@ -796,6 +800,12 @@ impl<'de> Visitor<'de> for ValueVisitor {
                     return Err(A::Error::custom("invalid young string"));
                 }
                 JsValue::String(identity_value::<A::Error>(id, value)?)
+            }
+            #[cfg(feature = "conformance")]
+            "C" => {
+                let unit: u16 = map.next_value()?;
+                let unit = u8::try_from(unit).map_err(|_| A::Error::custom("invalid character root"))?;
+                JsValue::String(bounded_decoded_new::<A::Error>(1, || Ok(JsString::character_root(unit)))?)
             }
             #[cfg(feature = "conformance")]
             "i" => {

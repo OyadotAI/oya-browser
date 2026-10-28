@@ -313,6 +313,11 @@ impl JsString {
     }
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn is_interned(&self) -> bool { self.0.interned() }
+    /** Construct one permanent, old, internalized one-byte character cell. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn character_root(unit: u8) -> Self { Self(Storage::character_root(unit), true) }
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn is_read_only_root(&self) -> bool { self.0.is_read_only_root() }
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn can_intern_in_place(&self) -> bool { self.0.can_intern_in_place() }
     #[cfg(feature = "conformance")]

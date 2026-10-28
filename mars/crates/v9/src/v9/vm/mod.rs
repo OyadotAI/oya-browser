@@ -377,6 +377,21 @@ impl<'h> Vm<'h> {
         self.page.state.code_constants.insert(key, value.clone());
         value
     }
+    /** Return the isolate's permanent read-only canonical cell for one Latin-1 character. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn character_root(&mut self, unit: u8) -> Res<JsString> {
+        if let Some(value) = self.page.state.character_roots.get(&unit) { return Ok(value.clone()); }
+        let value = JsString::character_root(unit);
+        self.track_string(&value);
+        self.check_heap_bounds()?;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        let (_, weak) = value.weak_registration();
+        self.code_constant_index.entry(hasher.finish()).or_default().push((weak, true));
+        self.page.state.character_roots.insert(unit, value.clone());
+        Ok(value)
+    }
     /** Reuse one old heap allocation for each numeric literal in one bytecode constant pool. */
     #[cfg(feature = "conformance")]
     pub(super) fn number_literal(&mut self, site: u32, source: &std::sync::Arc<str>, number: f64) -> Res<JsValue> {
@@ -530,7 +545,10 @@ impl<'h> Vm<'h> {
     /** Reserve a flat concatenation's peak backing before either input can be copied. */
     pub(in crate::v9) fn concat_strings(&mut self, left: &JsString, right: &JsString) -> Res<JsString> {
         let length = left.len().saturating_add(right.len());
-        if length > crate::constants::JS_STRING_UNITS || !left.concat_will_flatten(right) {
+        if length > crate::constants::JS_STRING_UNITS {
+            return Err(self.range_error("Invalid string length"));
+        }
+        if !left.concat_will_flatten(right) {
             return Ok(left.concat(right)?);
         }
         self.track_string(right);
@@ -572,7 +590,7 @@ impl<'h> Vm<'h> {
         for text in strings { self.track_string(&text); }
         #[cfg(feature = "conformance")]
         {
-            let constants: Vec<_> = self.page.state.code_constants.values().cloned().collect();
+            let constants: Vec<_> = self.page.state.code_constants.values().chain(self.page.state.character_roots.values()).cloned().collect();
             for text in constants { self.track_string(&text); }
         }
     }
@@ -584,7 +602,7 @@ impl<'h> Vm<'h> {
         let code_constant_index = {
             use std::hash::{Hash, Hasher};
             let mut index: FastMap<u64, Vec<(crate::v9::value::WeakString, bool)>> = FastMap::default();
-            for value in page.state.code_constants.values().chain(page.state.interned_strings.iter()) {
+            for value in page.state.code_constants.values().chain(page.state.interned_strings.iter()).chain(page.state.character_roots.values()) {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 value.hash(&mut hasher);
                 let (_, weak) = value.weak_registration();

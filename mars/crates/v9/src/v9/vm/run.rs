@@ -1,6 +1,9 @@
 /** The instruction loop: one bytecode op at a time, with explicit unwinding and suspension. */
 /** Activations a throw trace keeps; the innermost ones say where an error came from. */
 const THROW_TRACE_FRAMES: usize = 8;
+/** Short spreads cost less to store directly than the fixed character-root table. */
+#[cfg(feature = "conformance")]
+const MIN_COMPACT_STRING_LENGTH: usize = 4096;
 use super::call::Invoked;
 use super::data::{Class, Function, FunctionKind, Handler};
 use super::heap::{CONFIGURABLE, ENUMERABLE, Key, Object, Prop, Slot, WRITABLE};
@@ -17,6 +20,7 @@ use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
 mod asyncgen;
 mod declarations;
 mod eval;
+mod hole_spread;
 mod super_update;
 mod with;
 
@@ -356,7 +360,9 @@ impl Vm<'_> {
             Op::String(index) => {
                 let value = self.constant(index);
                 #[cfg(feature = "conformance")]
-                let value = if self.page.environment.conformance_shared_string_table {
+                let value = if self.page.environment.conformance_d8 && value.len() == 1 && value.unit_at(0).is_some_and(|unit| unit <= 255) {
+                    self.character_root(value.unit_at(0).expect("one character") as u8)?
+                } else if self.page.environment.conformance_shared_string_table {
                     self.share_string(&value)?
                 } else {
                     value
@@ -762,6 +768,11 @@ impl Vm<'_> {
                     self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: 0.0, root: id })));
                 }
                 46 => self.push(JsValue::Smi(f64::from(crate::v9::value::SMI_MAX))),
+                48 | 49 => {
+                    let value = builtins::wasm_intrinsic_object(self, intrinsic == 49)?;
+                    self.push(value);
+                }
+                50 => self.push(JsValue::Boolean(false)),
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
@@ -1093,6 +1104,15 @@ impl Vm<'_> {
                 let array = self.peek(1);
                 let iterator = self.get_iterator(&iterable)?;
                 self.push(JsValue::Object(iterator));
+                if self.compact_hole_spread(&array, iterator)? {
+                    self.drop_n(2);
+                    return Ok(Flow::Next);
+                }
+                #[cfg(feature = "conformance")]
+                if self.compact_character_spread(&array, iterator)? {
+                    self.drop_n(2);
+                    return Ok(Flow::Next);
+                }
                 while let Some(value) = self.iter_step(iterator)? {
                     self.array_append(&array, value)?;
                 }
@@ -2341,11 +2361,42 @@ impl Vm<'_> {
         }
         let index = *index as usize;
         // Creating an element must consult inherited setters and readonly data properties.
-        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index < u32::MAX as usize && elements.get(index).is_some_and(|value| *value != JsValue::Hole));
+        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if !elements.is_repeated() && index < u32::MAX as usize && elements.get(index).is_some_and(|value| *value != JsValue::Hole));
         if fits {
             self.array_store(*id, index, value.clone());
         }
         fits
+    }
+    /** Retain a one-byte native string iterator as bounded canonical character storage. */
+    #[cfg(feature = "conformance")]
+    fn compact_character_spread(&mut self, array: &JsValue, iterator: u32) -> Res<bool> {
+        use super::data::IterState;
+        if !self.page.environment.conformance_d8 { return Ok(false); }
+        let Some(id) = array.object() else { return Ok(false); };
+        if !matches!(self.heap.get(id).map(|object| &object.class), Some(Class::Array(elements)) if elements.is_empty()) { return Ok(false); }
+        let text = match self.heap.get(iterator).map(|object| &object.class) {
+            Some(Class::Iter(state)) => match state.as_ref() {
+                IterState::String { text, index: 0, done: false } if text.is_latin1() && text.len() >= MIN_COMPACT_STRING_LENGTH => text.clone(),
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        if text.len() > u32::MAX as usize || self.heap.counts.properties.saturating_add(258) > self.limits.properties
+            || self.heap.counts.units.saturating_add(text.len()).saturating_add(256) > self.limits.units { return Ok(false); }
+        self.charge(text.len())?;
+        let mut roots = Vec::with_capacity(256);
+        for unit in 0..=u8::MAX { roots.push(JsValue::String(self.character_root(unit)?)); }
+        let Some(elements) = super::array_elements::ArrayElements::character_copy(JsValue::String(text.clone()), roots) else { return Ok(false); };
+        let slots = elements.resident_len();
+        if slots > self.limits.array_length { return Ok(false); }
+        let units = elements.resident_values().map(JsValue::string_units).sum::<usize>();
+        for value in elements.resident_values() { self.heap.track_value(value); }
+        let Some(Class::Array(target)) = self.heap.get_mut(id).map(|object| &mut object.class) else { return Ok(false); };
+        *target = elements;
+        self.heap.adjust(slots as isize, units as isize);
+        if let Some(Class::Iter(state)) = self.heap.get_mut(iterator).map(|object| &mut object.class)
+            && let IterState::String { index, done, .. } = state.as_mut() { *index = text.len() as u32; *done = true; }
+        Ok(true)
     }
     /** Append to an array literal under construction. */
     pub fn array_append(&mut self, array: &JsValue, value: JsValue) -> Res<()> {
@@ -2379,9 +2430,7 @@ impl Vm<'_> {
                 _ => 0,
             };
             if length > self.limits.array_length {
-                return Err(
-                    EngineError::limit("V9 call arguments", self.limits.array_length).into(),
-                );
+                return Err(self.range_error("Maximum call stack size exceeded"));
             }
             return (0..length)
                 .map(|index| self.get(array, &Key::from(index.to_string().as_str())))
@@ -2393,7 +2442,7 @@ impl Vm<'_> {
             .map(|object| &object.class)
         {
             Some(Class::Array(elements)) if elements.len() > self.limits.array_length => {
-                Err(EngineError::limit("V9 call arguments", self.limits.array_length).into())
+                Err(self.range_error("Maximum call stack size exceeded"))
             }
             Some(Class::Array(elements)) => Ok(elements
                 .iter()

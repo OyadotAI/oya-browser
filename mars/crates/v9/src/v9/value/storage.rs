@@ -91,6 +91,7 @@ pub(super) struct FlatData {
     pub(super) survivals: AtomicU8,
     pub(super) id: u64,
     pub(super) interned: AtomicBool,
+    pub(super) read_only: bool,
     pub(super) forward: OnceLock<Storage>,
 }
 /** Synchronize publication so competing aliases do not consume duplicate quota. */
@@ -341,6 +342,7 @@ impl Storage {
     }
     #[cfg(feature = "conformance")]
     pub(super) fn forward_to(&self, target: &Self) -> bool {
+        if self.is_read_only_root() { return self.same(target); }
         let Some(slot) = self.forwarding_slot() else { return false };
         if !target.interned() || target.forwarding_target().is_some() { return false; }
         if self.same(target) { return true; }
@@ -436,6 +438,7 @@ impl Storage {
             survivals: AtomicU8::new(0),
             id: Self::next_id(),
             interned: AtomicBool::new(false),
+            read_only: false,
             forward: OnceLock::new(),
         }))
     }
@@ -450,13 +453,30 @@ impl Storage {
             survivals: AtomicU8::new(0),
             id: Self::next_id(),
             interned: AtomicBool::new(false),
+            read_only: false,
             forward: OnceLock::new(),
         }))
+    }
+
+    /** A permanent one-byte root has immutable backing and starts old and internalized. */
+    #[cfg(feature = "conformance")]
+    pub(super) fn character_root(unit: u8) -> Self {
+        Self::Flat(Arc::new(FlatData {
+            units: Arc::from([u16::from(unit)]), one_byte: true,
+            external: ExternalSlot::default(), old: AtomicBool::new(true),
+            survivals: AtomicU8::new(0), id: Self::next_id(),
+            interned: AtomicBool::new(true), read_only: true, forward: OnceLock::new(),
+        }))
+    }
+    #[cfg(feature = "conformance")]
+    pub(super) fn is_read_only_root(&self) -> bool {
+        matches!(self, Self::Flat(cell) if cell.read_only)
     }
 
     /** Publish an actual owned external allocation without changing code units or alias identity. */
     #[cfg(feature = "conformance")]
     pub(super) fn externalize(&self, one_byte: bool) -> crate::protocol::EngineResult<()> {
+        if self.is_read_only_root() { return Err(crate::protocol::EngineError::invalid("Cannot externalize a read-only string.")); }
         if let Some(target) = self.forwarding_target() { return target.externalize(one_byte); }
         let target = match self {
             Self::Flat(cell) | Self::Shared(cell) => &cell.external,
@@ -850,7 +870,8 @@ impl Storage {
             _ => {}
         }
         match (self, other) {
-            (Self::Flat(_), Self::Flat(_)) | (Self::Shared(_), Self::Shared(_))
+            (Self::Flat(left), Self::Flat(right)) => left.read_only == right.read_only,
+            (Self::Shared(_), Self::Shared(_))
             | (Self::Cons(_), Self::Cons(_)) | (Self::Repeat(_), Self::Repeat(_)) => true,
             (Self::Slice(left), Self::Slice(right)) => {
                 left.start == right.start && left.length == right.length && left.parent.same(&right.parent)
@@ -904,7 +925,7 @@ impl Storage {
         let missing = identity.get().is_none();
         let flat = identity.get_or_init(|| {
             let units = match self { Self::Cons(node) => node.flat.get().expect("flattened"), Self::Repeat(node) => node.flat.get().expect("flattened"), _ => unreachable!() };
-            Arc::new(FlatData { units: units.clone(), one_byte, external: ExternalSlot::default(), old: AtomicBool::new(false), survivals: AtomicU8::new(0), id: Self::next_id(), interned: AtomicBool::new(false), forward: OnceLock::new() })
+            Arc::new(FlatData { units: units.clone(), one_byte, external: ExternalSlot::default(), old: AtomicBool::new(false), survivals: AtomicU8::new(0), id: Self::next_id(), interned: AtomicBool::new(false), read_only: false, forward: OnceLock::new() })
         });
         if missing { materialized(); }
         Self::Flat(flat.clone())
@@ -1126,6 +1147,18 @@ fn report_external(external: &Arc<External>, visit: &mut impl FnMut(bool, usize,
 
 #[cfg(all(test, feature = "conformance"))]
 mod tests {
+    /** Read-only character roots retain their explicit brand across standalone wire transport. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn character_root_is_old_internalized_and_cannot_be_externalized() {
+        let value = super::super::JsString::character_root(b'a');
+        assert!(value.is_read_only_root() && value.is_old() && value.is_interned());
+        assert!(value.externalize().is_err());
+        let wire = serde_json::to_string(&value).unwrap();
+        let restored: super::super::JsString = serde_json::from_str(&wire).unwrap();
+        assert!(restored.is_read_only_root() && restored.is_old() && restored.is_interned());
+        assert_eq!(restored.unit_at(0), Some(u16::from(b'a')));
+    }
     use super::*;
     use std::collections::BTreeMap;
 

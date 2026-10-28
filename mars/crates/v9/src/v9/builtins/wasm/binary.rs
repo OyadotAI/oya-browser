@@ -13,6 +13,8 @@ pub(super) struct Reader<'a> {
     pub(super) wide_arithmetic_enabled: bool,
     pub(super) wasmfx_enabled: bool,
     pub(super) shared_enabled: bool,
+    pub(super) table_limit: u64,
+    pub(super) compact_imports_enabled: bool,
 }
 impl<'a> Reader<'a> {
     /** A fresh section or body reader. */
@@ -28,6 +30,8 @@ impl<'a> Reader<'a> {
             wide_arithmetic_enabled: true,
             wasmfx_enabled: true,
             shared_enabled: true,
+            table_limit: MAX_DECLARED_TABLE_MINIMUM,
+            compact_imports_enabled: true,
         }
     }
     /** Nested readers retain absolute binary offsets without reading outside their own section. */
@@ -44,6 +48,8 @@ impl<'a> Reader<'a> {
             wide_arithmetic_enabled: self.wide_arithmetic_enabled,
             wasmfx_enabled: self.wasmfx_enabled,
             shared_enabled: self.shared_enabled,
+            table_limit: self.table_limit,
+            compact_imports_enabled: self.compact_imports_enabled,
         })
     }
     /** One byte, failing at the actual end of this section. */
@@ -211,8 +217,8 @@ impl<'a> Reader<'a> {
         } else {
             u64::from(u32::MAX)
         };
-        if !memory && min > MAX_DECLARED_TABLE_MINIMUM {
-            return Err(Error::invalid(&format!("initial table size ({min} elements) is larger than implementation limit ({MAX_DECLARED_TABLE_MINIMUM} elements)")).at(limit_offset));
+        if !memory && min > self.table_limit {
+            return Err(Error::invalid(&format!("initial table size ({min} elements) is larger than implementation limit ({} elements)", self.table_limit)).at(limit_offset));
         }
         if memory && min > bound {
             return Err(Error::invalid(&format!("initial memory size ({min} pages) is larger than implementation limit ({bound} pages)")).at(limit_offset));
@@ -672,7 +678,7 @@ impl<'a> Reader<'a> {
 
 /** Validate the envelope, decode sections in order, then apply full supported-subset typing. */
 pub(super) fn parse(bytes: &[u8]) -> Result<Module, Error> {
-    parse_with_features(bytes, true, true, true, true, true, true, true, true)
+    parse_with_features(bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, true)
 }
 /** Compilation applies the optional proposal state selected by the current embedding. */
 pub(super) fn parse_with_features(
@@ -685,6 +691,8 @@ pub(super) fn parse_with_features(
     allow_mixed_eh: bool,
     wasmfx_enabled: bool,
     shared_enabled: bool,
+    table_limit: u64,
+    compact_imports_enabled: bool,
 ) -> Result<Module, Error> {
     if bytes.len() > BUFFER_BYTES {
         return Err(Error::invalid("WebAssembly binary exceeds V9 buffer limit"));
@@ -700,6 +708,8 @@ pub(super) fn parse_with_features(
     reader.wide_arithmetic_enabled = wide_arithmetic_enabled;
     reader.wasmfx_enabled = wasmfx_enabled;
     reader.shared_enabled = shared_enabled;
+    reader.table_limit = table_limit.min(MAX_DECLARED_TABLE_MINIMUM);
+    reader.compact_imports_enabled = compact_imports_enabled;
     let header = reader.take(MAGIC.len())?;
     if header[..4] != MAGIC[..4] {
         return Err(Error::invalid("expected magic word").at(0));
@@ -820,6 +830,58 @@ pub(super) fn parse_with_features(
     Ok(module)
 }
 
+/** Decode one import type once, including exact-function and descriptor validation. */
+fn import_kind(r: &mut Reader, code: u8) -> Result<External, Error> {
+    if code == 32 && !r.custom_descriptors_enabled { return Err(Error::invalid("exact function imports require --wasm-custom-descriptors")); }
+    Ok(match code {
+        0 | 32 => External::Function(r.u32()?),
+        1 => { let (ty, limits) = r.table_type()?; External::Table(ty, limits) },
+        2 => External::Memory(r.limits(true)?),
+        3 => { let (ty, mutable) = r.global_type()?; External::Global(ty, mutable) },
+        4 => { if r.byte()? != 0 { return Err(Error::invalid("invalid tag attribute")); } External::Tag(r.u32()?) },
+        _ => return Err(Error::invalid("invalid WebAssembly import kind")),
+    })
+}
+/** Append one expanded import while bounding the cumulative grouped count. */
+fn append_import(m: &mut Module, offset: usize, owner: String, name: String, code: u8, kind: External) -> Result<(), Error> {
+    Module::check_count(m.imports.len().saturating_add(1))?;
+    m.imports.push(Import { offset, exact_function: code == 32, module: owner, name, kind });
+    Ok(())
+}
+/** Grouped forms preserve the exact import order and never expose their encoding to linking. */
+fn read_import(m: &mut Module, r: &mut Reader) -> Result<(), Error> {
+    let offset = r.base + r.at;
+    let owner = r.name()?;
+    let name = r.name()?;
+    let code = r.byte()?;
+    if !matches!(code, 0x7e | 0x7f) || !name.is_empty() {
+        let kind = import_kind(r, code)?;
+        return append_import(m, offset, owner, name, code, kind);
+    }
+    if !r.compact_imports_enabled { return Err(Error::invalid("compact imports require --wasm-compact-imports")); }
+    if code == 0x7f {
+        let count = r.count()?;
+        Module::check_count(m.imports.len().saturating_add(count))?;
+        for _ in 0..count {
+            let offset = r.base + r.at;
+            let name = r.name()?;
+            let kind_code = r.byte()?;
+            let kind = import_kind(r, kind_code)?;
+            append_import(m, offset, owner.clone(), name, kind_code, kind)?;
+        }
+    } else {
+        let kind_code = r.byte()?;
+        let kind = import_kind(r, kind_code)?;
+        let count = r.count()?;
+        Module::check_count(m.imports.len().saturating_add(count))?;
+        for _ in 0..count {
+            let offset = r.base + r.at;
+            let name = r.name()?;
+            append_import(m, offset, owner.clone(), name, kind_code, kind.clone())?;
+        }
+    }
+    Ok(())
+}
 /** Section parsing owns only inert values and never instantiates or calls imported JavaScript. */
 fn section_data(module: &mut Module, id: u8, r: &mut Reader) -> Result<(), Error> {
     if id == 0 {
@@ -874,43 +936,7 @@ fn section_data(module: &mut Module, id: u8, r: &mut Reader) -> Result<(), Error
     for _ in 0..count {
         match id {
             1 => super::gc_types::read_group(module, r)?,
-            2 => {
-                let offset = r.base + r.at;
-                let owner = r.name()?;
-                let name = r.name()?;
-                let code = r.byte()?;
-                if code == 32 && !r.custom_descriptors_enabled {
-                    return Err(Error::invalid(
-                        "exact function imports require --wasm-custom-descriptors",
-                    ));
-                }
-                let kind = match code {
-                    0 | 32 => External::Function(r.u32()?),
-                    1 => {
-                        let (t, l) = r.table_type()?;
-                        External::Table(t, l)
-                    }
-                    2 => External::Memory(r.limits(true)?),
-                    3 => {
-                        let (t, m) = r.global_type()?;
-                        External::Global(t, m)
-                    }
-                    4 => {
-                        if r.byte()? != 0 {
-                            return Err(Error::invalid("invalid tag attribute"));
-                        }
-                        External::Tag(r.u32()?)
-                    }
-                    _ => return Err(Error::unsupported("WebAssembly import kind")),
-                };
-                module.imports.push(Import {
-                    offset,
-                    exact_function: code == 32,
-                    module: owner,
-                    name,
-                    kind,
-                })
-            }
+            2 => read_import(module, r)?,
             3 => module.functions.push(r.u32()?),
             4 => {
                 let initialized = if r.bytes.get(r.at) == Some(&0x40) {

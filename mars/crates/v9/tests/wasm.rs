@@ -1779,7 +1779,7 @@ fn gc_array_atomic_or_returns_the_previous_integer() {
     );
 }
 
-/** Packed get sign extension is supported while immutable/packed arithmetic writes are invalid. */
+/** Packed atomic arithmetic is allowed only for mutable integer storage. */
 #[test]
 fn gc_atomic_storage_contracts_are_checked_at_compile_time() {
     let bytes = gc_function(
@@ -1793,7 +1793,9 @@ fn gc_atomic_storage_contracts_are_checked_at_compile_time() {
         ),
         "-1"
     );
-    for storage in [[0x7f, 0], [0x78, 1], [0x7d, 1]] {
+    let packed = gc_function(&[0x5f, 1, 0x78, 1], &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0]);
+    assert_eq!(eval(&packed, "let r=WebAssembly.validate(bytes);"), "true");
+    for storage in [[0x7f, 0], [0x7d, 1]] {
         let bytes = gc_function(
             &[0x5f, 1, storage[0], storage[1]],
             &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0],
@@ -2087,9 +2089,9 @@ fn wide_bigint_memory_indices_are_range_checked_before_narrowing() {
     );
 }
 
-/** Shared externref fields preserve arbitrary-width immutable integers without truncating or foreign IDs. */
+/** Shared externref rejects wide BigInts, which cannot be published to a shared heap. */
 #[test]
-fn shared_gc_externref_fields_preserve_wide_bigints() {
+fn shared_gc_externref_rejects_unshareable_wide_bigints() {
     let mut bytes = b"\0asm\x01\0\0\0".to_vec();
     section(
         &mut bytes,
@@ -2117,7 +2119,7 @@ fn shared_gc_externref_fields_preserve_wide_bigints() {
     assert_eq!(
         eval(
             &bytes,
-            "const {make,read}=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;const big=(1n<<200n)+123n,node=make(big);let r=read(node)===big;"
+            "const {make}=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;const big=(1n<<200n)+123n;let r=false;try{make(big)}catch(e){r=e instanceof TypeError}"
         ),
         "true"
     );

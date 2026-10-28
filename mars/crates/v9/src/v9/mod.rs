@@ -1073,6 +1073,16 @@ fn session<'h>(
     vm.globals = state.globals;
     vm.register_global_strings();
     #[cfg(feature = "conformance")]
+    if fresh && vm.page.environment.conformance_d8 {
+        let arguments = vm.page.environment.conformance_script_arguments.clone();
+        if arguments.len() > SCRIPT_COUNT || arguments.iter().fold(0usize, |total, value| total.saturating_add(value.encode_utf16().count())) > crate::constants::JS_STRING_UNITS {
+            return Err(EngineError::limit("d8 script arguments", crate::constants::JS_STRING_UNITS));
+        }
+        let values = arguments.iter().map(|value| crate::v9::value::JsString::from_utf8(value).map(JsValue::String)).collect::<EngineResult<Vec<_>>>()?;
+        let array = vm.new_array(values).map_err(fatal)?;
+        vm.heap.put(vm.global_object(), vm::heap::Key::from("arguments"), vm::heap::Prop::data(JsValue::Object(array)));
+    }
+    #[cfg(feature = "conformance")]
     if fresh && vm.page.environment.conformance_expose_externalize_string {
         builtins::install_external_string_lexicals(&mut vm, 0);
     }

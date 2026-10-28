@@ -34,3 +34,6 @@ pub(super) const MAX_WASM_RESULTS: usize = 1_000;
 pub(super) const F64_QUIET_NAN_BIT: u64 = 1 << 51;
 /** User-controlled export names are bounded in compiler diagnostics. */
 pub(super) const MAX_EXPORT_DIAGNOSTIC_BYTES: usize = 50;
+
+/** Leave half of the resident budget available for live non-memory values. */
+pub(super) const SPARSE_MEMORY_PRESSURE_DIVISOR: usize = 2;

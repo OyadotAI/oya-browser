@@ -458,6 +458,10 @@ pub(in crate::v9) enum PromiseState {
 /** Work to run when a promise settles. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(in crate::v9) struct Reaction {
+    /** The isolate data captured when this continuation was registered. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_data: Option<JsValue>,
     /** True for the rejection branch. */
     pub reject: bool,
     pub handler: ReactionHandler,
@@ -486,12 +490,19 @@ pub(in crate::v9) enum Job {
     },
     /** Adopt a thenable's state into a promise. */
     Thenable {
+        /** Data captured when the thenable adoption job was created. */
+        #[cfg(feature = "conformance")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        continuation_data: Option<JsValue>,
         promise: ObjectId,
         thenable: JsValue,
         then: JsValue,
     },
     /** queueMicrotask. */
     Callback(JsValue),
+    /** Callback microtasks preserve the isolate data that was current at registration. */
+    #[cfg(feature = "conformance")]
+    CallbackWithData { callback: JsValue, continuation_data: Option<JsValue> },
 }
 
 /** One exception handler in a frame. */

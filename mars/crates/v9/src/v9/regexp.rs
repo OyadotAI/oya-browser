@@ -50,6 +50,8 @@ impl Program {
 enum Node {
     Empty,
     Char(u32),
+    /** Adjacent literal atoms share one node and match without recursive callbacks. */
+    Literal(Vec<u32>),
     Any,
     Class(Vec<(u32, u32)>, bool),
     /** Finite strings share prefix paths and retain longest-first backtracking. */
@@ -217,7 +219,8 @@ enum Property {
 }
 
 /** Pattern nesting the parser follows before refusing. */
-const PATTERN_DEPTH: usize = 256;
+/** Recursive parser frames remain bounded while supporting V8's 500-level capture case. */
+const PATTERN_DEPTH: usize = 512;
 
 impl PatternParser<'_> {
     /** Peek a unit. */
@@ -322,7 +325,7 @@ impl PatternParser<'_> {
                 break;
             }
             let atom = self.term()?;
-            terms.push(atom);
+            self.append_term(&mut terms, atom)?;
         }
         Ok(match terms.len() {
             0 => Node::Empty,
@@ -330,9 +333,20 @@ impl PatternParser<'_> {
             _ => Node::Concat(terms),
         })
     }
+    /** Merge literal runs before charging structural nodes against the bounded regex tree. */
+    fn append_term(&mut self, terms: &mut Vec<Node>, atom: Node) -> Result<(), PatternError> {
+        match (terms.last_mut(), atom) {
+            (Some(Node::Literal(points)), Node::Char(point)) => points.push(point),
+            (Some(last @ Node::Char(_)), Node::Char(point)) => {
+                let Node::Char(first) = *last else { unreachable!() };
+                *last = Node::Literal(vec![first, point]);
+            }
+            (_, atom) => { self.count()?; terms.push(atom); }
+        }
+        Ok(())
+    }
     /** An atom with an optional quantifier. */
     fn term(&mut self) -> Result<Node, PatternError> {
-        self.count()?;
         let before = self.groups;
         let atom = match self.peek_char() {
             Some('^') => {
@@ -1164,6 +1178,7 @@ impl<'a> Matcher<'a> {
                 Some((point, end)) if self.same(point, *expected) => next(self, end),
                 _ => false,
             },
+            Node::Literal(points) => self.literal(points, position, next),
             Node::Any => match self.atom(position) {
                 Some((point, end)) if self.modes.dot_all || !line_terminator(point) => {
                     next(self, end)
@@ -1243,6 +1258,19 @@ impl<'a> Matcher<'a> {
                 next,
             ),
         }
+    }
+    /** A literal run consumes points in execution order, including reversed lookbehinds. */
+    fn literal(&mut self, points: &[u32], position: usize, next: Next<'_, 'a>) -> bool {
+        let mut cursor = position;
+        for offset in 0..points.len() {
+            self.steps += 1;
+            if self.steps > self.budget || self.expired() { self.exceeded = true; return false; }
+            let index = if self.backward { points.len() - offset - 1 } else { offset };
+            let Some((point, end)) = self.atom(cursor) else { return false; };
+            if !self.same(point, points[index]) { return false; }
+            cursor = end;
+        }
+        next(self, cursor)
     }
     /** Match nodes in order. */
     fn sequence(&mut self, nodes: &[Node], position: usize, next: Next<'_, 'a>) -> bool {

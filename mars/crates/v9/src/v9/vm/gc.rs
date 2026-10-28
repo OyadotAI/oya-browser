@@ -39,7 +39,7 @@ pub(super) struct Marker {
     pub shared_numbers: Vec<(ObjectId, u64)>,
     #[cfg(feature = "conformance")]
     pub local_numbers: Vec<(ObjectId, u64)>,
-    strings: Vec<crate::v9::value::JsString>,
+    pub(super) strings: Vec<crate::v9::value::JsString>,
     pub envs: FastSet<EnvId>,
     /** Symbols participate in weak liveness even though their identity ledger is not recycled. */
     pub symbols: FastSet<u32>,
@@ -120,6 +120,8 @@ impl Marker {
     pub(super) fn job(&mut self, job: &Job) {
         match job {
             Job::Reaction { reaction, argument } => {
+                #[cfg(feature = "conformance")]
+                if let Some(value) = &reaction.continuation_data { self.value(value); }
                 self.reaction_handler(&reaction.handler);
                 if let Some(target) = reaction.target {
                     self.object(target);
@@ -130,12 +132,20 @@ impl Marker {
                 promise,
                 thenable,
                 then,
+                ..
             } => {
+                #[cfg(feature = "conformance")]
+                if let Job::Thenable { continuation_data: Some(value), .. } = job { self.value(value); }
                 self.object(*promise);
                 self.value(thenable);
                 self.value(then);
             }
             Job::Callback(function) => self.value(function),
+            #[cfg(feature = "conformance")]
+            Job::CallbackWithData { callback, continuation_data } => {
+                self.value(callback);
+                if let Some(value) = continuation_data { self.value(value); }
+            }
         }
     }
     /** Queue a reaction handler. */
@@ -443,6 +453,8 @@ fn trace_class(class: &Class, marker: &mut Marker) {
                 PromiseState::Pending => {}
             }
             for reaction in &data.reactions {
+                #[cfg(feature = "conformance")]
+                if let Some(value) = &reaction.continuation_data { marker.value(value); }
                 marker.reaction_handler(&reaction.handler);
                 if let Some(target) = reaction.target {
                     marker.object(target);

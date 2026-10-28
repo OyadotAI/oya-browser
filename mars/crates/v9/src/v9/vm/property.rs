@@ -254,8 +254,14 @@ impl Vm<'_> {
             Class::String(text) => {
                 if let Some(index) = key.index() {
                     if let Some(unit) = text.unit_at(index as usize) {
+                        #[cfg(feature = "conformance")]
+                        let value = if self.page.environment.conformance_d8 && unit <= 255 {
+                            self.character_root(unit as u8)?
+                        } else { JsString::from_slice(&[unit])? };
+                        #[cfg(not(feature = "conformance"))]
+                        let value = JsString::from_slice(&[unit])?;
                         return Ok(Some(Prop {
-                            slot: Slot::Data(JsValue::String(JsString::from_slice(&[unit])?)),
+                            slot: Slot::Data(JsValue::String(value)),
                             attrs: ENUMERABLE,
                         }));
                     }
@@ -460,6 +466,10 @@ impl Vm<'_> {
             JsValue::String(text) => {
                 if let Some(index) = key.index() {
                     if let Some(unit) = text.unit_at(index as usize) {
+                        #[cfg(feature = "conformance")]
+                        if self.page.environment.conformance_d8 && unit <= 255 {
+                            return Ok(JsValue::String(self.character_root(unit as u8)?));
+                        }
                         return Ok(JsValue::String(JsString::from_slice(&[unit])?));
                     }
                 } else if key_is(key, "length") {
@@ -739,12 +749,22 @@ impl Vm<'_> {
     /** Create or update an own data property as assignment does. */
     pub fn write_own(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
         #[cfg(feature = "conformance")]
-        if let Some(result) = crate::v9::builtins::check_shared_store(self, id, &key, &value)? { return Ok(result); }
+        if let Some(result) = crate::v9::builtins::check_shared_store(self, id, &key, &value)? {
+            return Ok(result);
+        }
         #[cfg(feature = "conformance")]
         let value = if crate::v9::builtins::is_shared_object(self, id) {
             let number = match &value {
                 JsValue::LocalNumber(number) => Some(number.value),
-                JsValue::Number(number) if !number.is_finite() || number.fract() != 0.0 || *number < -(1_i64 << 30) as f64 || *number >= (1_i64 << 30) as f64 || (*number == 0.0 && number.is_sign_negative()) => Some(*number),
+                JsValue::Number(number)
+                    if !number.is_finite()
+                        || number.fract() != 0.0
+                        || *number < -(1_i64 << 30) as f64
+                        || *number >= (1_i64 << 30) as f64
+                        || (*number == 0.0 && number.is_sign_negative()) =>
+                {
+                    Some(*number)
+                }
                 _ => None,
             };
             if let Some(number) = number {
@@ -753,8 +773,12 @@ impl Vm<'_> {
                 let result = crate::v9::builtins::new_shared_number(self, number);
                 self.pins.truncate(mark);
                 result?
-            } else { value }
-        } else { value };
+            } else {
+                value
+            }
+        } else {
+            value
+        };
         #[cfg(feature = "conformance")]
         if matches!(value, JsValue::SharedNumber(_)) {
             let mark = self.pins.len();
@@ -850,7 +874,12 @@ impl Vm<'_> {
                     if object.props.get(key).is_some() {
                         return Ok(None);
                     }
-                    if elements.resident_len() >= limit && !resident {
+                    if *value != JsValue::Hole
+                        && elements
+                            .resident_len()
+                            .saturating_add(elements.set_charge(index))
+                            > limit
+                    {
                         return Err(EngineError::limit("V9 resident array elements", limit).into());
                     }
                     self.array_store(id, index, value.clone());
@@ -898,6 +927,8 @@ impl Vm<'_> {
         else {
             return;
         };
+        let before = elements.resident_len();
+        let before_units = elements.repeated_units();
         let (mut properties, mut units) = (0isize, 0isize);
         let old = elements.set(index, value);
         let new = &elements[index];
@@ -907,7 +938,25 @@ impl Vm<'_> {
             properties -= 1;
         }
         units += new.string_units() as isize - old.string_units() as isize;
+        if let Some(before_units) = before_units {
+            properties = elements.resident_len() as isize - before as isize;
+            units = elements.repeated_units().unwrap_or(0) as isize - before_units as isize;
+        }
         self.heap.adjust(properties, units);
+    }
+    /** Sparse overlays consume physical storage even when replacing an existing logical slot. */
+    fn check_array_overlay(&self, id: ObjectId, index: usize) -> Res<()> {
+        if let Some(Class::Array(elements)) = self.heap.get(id).map(|object| &object.class)
+            && elements
+                .resident_len()
+                .saturating_add(elements.set_charge(index))
+                > self.limits.array_length
+        {
+            return Err(
+                EngineError::limit("V9 resident array elements", self.limits.array_length).into(),
+            );
+        }
+        Ok(())
     }
     /** ArraySetLength observes both ToUint32 and ToNumber conversions before validating equality. */
     fn array_length_value(&mut self, value: &JsValue) -> Res<usize> {
@@ -930,6 +979,8 @@ impl Vm<'_> {
         else {
             return Ok(done);
         };
+        let before = elements.resident_len();
+        let before_units = elements.repeated_units();
         let removed: Vec<JsValue> = if length < elements.len() {
             elements.truncate_collect(length)
         } else {
@@ -941,6 +992,14 @@ impl Vm<'_> {
             .filter(|value| **value != JsValue::Hole)
             .count() as isize;
         let units = removed.iter().map(JsValue::string_units).sum::<usize>() as isize;
+        let (properties, units) = if let Some(before_units) = before_units {
+            (
+                before as isize - elements.resident_len() as isize,
+                before_units as isize - elements.repeated_units().unwrap_or(0) as isize,
+            )
+        } else {
+            (properties, units)
+        };
         self.heap.adjust(-properties, -units);
         Ok(done)
     }
@@ -1026,6 +1085,7 @@ impl Vm<'_> {
         if is_array && let Some(index) = key.index() {
             // The element moves to the property list; its indexed slot becomes a hole that still
             // counts toward the length.
+            self.check_array_overlay(id, index as usize)?;
             self.array_store(id, index as usize, JsValue::Hole);
         }
         if let Some(Class::Host(_)) = self.heap.get(id).map(|object| &object.class)
@@ -1123,6 +1183,7 @@ impl Vm<'_> {
                 .get(index)
                 .is_some_and(|value| *value != JsValue::Hole)
         {
+            self.check_array_overlay(id, index)?;
             self.array_store(id, index, JsValue::Hole);
             return Ok(true);
         }
@@ -1190,6 +1251,11 @@ impl Vm<'_> {
         let mut keys = Vec::new();
         match &object.class {
             Class::Array(elements) => {
+                if elements.logical_present() > self.limits.array_length {
+                    return Err(
+                        EngineError::limit("V9 array own keys", self.limits.array_length).into(),
+                    );
+                }
                 keys.extend(elements.resident_entries().map(|(index, _)| {
                     Key::Str(JsString::from_utf8(&index.to_string()).expect("index"))
                 }));

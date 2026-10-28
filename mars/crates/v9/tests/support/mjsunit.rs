@@ -322,6 +322,7 @@ impl Scripts {
             conformance_wasm_allow_mixed_eh: boolean_flag(&self.metadata_source, "wasm-allow-mixed-eh-for-testing"),
             conformance_wasm_wasmfx: boolean_flag(&self.metadata_source, "wasm-wasmfx"),
             conformance_wasm_shared: boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_wasm_compact_imports: boolean_flag(&self.metadata_source, "wasm-compact-imports"),
             conformance_wasm_test_streaming: Some(boolean_flag(&self.metadata_source, "wasm-test-streaming")),
             conformance_operation_limit: operation_limit,
             conformance_shared_string_table: boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct"),
@@ -331,6 +332,10 @@ impl Scripts {
             conformance_files: self.files.clone(),
             conformance_exists: self.exists.clone(),
             conformance_d8: true,
+            conformance_script_arguments: self.metadata_source.lines().filter_map(|line| line.strip_prefix("// Flags:")).find_map(|line| {
+                let mut fields = line.split_whitespace();
+                fields.find(|field| *field == "--").map(|_| fields.map(str::to_string).collect())
+            }).unwrap_or_default(),
             conformance_allow_unsafe_function_constructor: boolean_flag(
                 &self.metadata_source,
                 "allow-unsafe-function-constructor",
@@ -1106,6 +1111,16 @@ mod tests {
         std::fs::write(checkout.root().join("test-async.js"), "let order='';Promise.resolve().then(()=>{order+='a';%PerformMicrotaskCheckpoint();order+='b'});Promise.resolve().then(()=>order+='c');%PerformMicrotaskCheckpoint();if(order!=='abc')throw Error(order);").unwrap();
         let source =
             "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/test-async.js');";
+        assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
+    }
+
+    /** Native-enabled shell scripts apply the same grammar to their real loaded fixtures. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn native_flag_applies_to_loaded_fixture_scripts() {
+        let checkout = Checkout::new();
+        std::fs::write(checkout.root().join("native-fixture.js"), "if(%MaxSmi()<=0)throw Error('invalid Smi');").unwrap();
+        let source = "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/native-fixture.js');";
         assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
     }
 

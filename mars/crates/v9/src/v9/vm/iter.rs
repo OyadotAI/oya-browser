@@ -198,6 +198,10 @@ impl Vm<'_> {
                         point.push(low);
                     }
                     self.set_index(id, index + point.len() as u32);
+                    #[cfg(feature = "conformance")]
+                    if self.page.environment.conformance_d8 && point.len() == 1 && high <= 255 {
+                        return Ok(Some(JsValue::String(self.character_root(high as u8)?)));
+                    }
                     Some(JsValue::String(JsString::from_units(point)?))
                 }
             }

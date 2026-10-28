@@ -103,7 +103,7 @@ pub(super) fn create(vm: &mut Vm, limits: types::Limits, proto: ObjectId) -> Res
     let memory = vm.alloc(Object::new(Class::Plain, Some(proto)))?;
     let storage = if limits.shared {
         shared_memory::create(vm, limits)?
-    } else if length > BUFFER_BYTES {
+    } else if length > BUFFER_BYTES || (length > 0 && vm.heap.counts.units.saturating_add(length.div_ceil(2)) > vm.limits.units / SPARSE_MEMORY_PRESSURE_DIVISOR) {
         let sparse = crate::v9::vm::data::SparseBuffer::new(length);
         let storage = vm.alloc(Object::new(
             Class::SparseWasmBuffer(sparse),
@@ -243,7 +243,7 @@ pub(super) fn resize(vm: &mut Vm, memory: &JsValue, delta: u32) -> Res<u32> {
         return shared_memory::grow(vm, object, old, delta, maximum);
     }
     if next > maximum {
-        let message = if address::is64(vm, object) { "WebAssembly.Memory.grow(): Unable to grow instance memory" } else { "WebAssembly.Memory.grow(): Maximum memory size exceeded" };
+        let message = if address::is64(vm, object) && get(vm, object, MAXIMUM) == Some(JsValue::Undefined) { "WebAssembly.Memory.grow(): Unable to grow instance memory" } else { "WebAssembly.Memory.grow(): Maximum memory size exceeded" };
         return Err(vm.range_error(message));
     }
     if next > MAX_PAGES

@@ -555,8 +555,8 @@ fn compile_classic(
 ) -> EngineResult<Arc<Code>> {
     #[cfg(feature = "conformance")]
     if vm.page.environment.conformance_d8
-        && ((vm.page.environment.conformance_native_async_helper
-            && path == "test/mjsunit/test-async.js")
+        && (vm.page.environment.conformance_native_main_source.is_some()
+            || vm.page.environment.conformance_native_async_helper
             || (vm
                 .page
                 .environment

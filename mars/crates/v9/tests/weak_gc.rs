@@ -6,6 +6,14 @@ use mars_v9::{Execution, PageEnvironment};
 /** A finite task allowance makes an accidental rescheduling loop fail visibly. */
 const TASK_LIMIT: usize = 128;
 
+#[test]
+/** A repeated backing releases a target after every logical occurrence is overwritten. */
+fn repeated_array_releases_fully_shadowed_target() {
+    drive(
+        "let reference; let array = (() => { let target = {}; reference = new WeakRef(target); let source = [target]; return source.concat(source); })(); array[0] = null; array[1] = null; setTimeout(() => { gc(); if (reference.deref() !== undefined) throw Error('retained shadowed target'); }, 0);",
+    );
+}
+
 /** Use the same public page/timer APIs the app uses, including a wire round trip per task. */
 fn drive(source: &str) -> Execution {
     let source = source.replace(
