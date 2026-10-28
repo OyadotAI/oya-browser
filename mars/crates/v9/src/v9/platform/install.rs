@@ -13,7 +13,7 @@ const IDLE_FRAMES: f64 = 3.0;
 
 /** `Node.ELEMENT_NODE` and the other node type and position constants, on the prototype and
 on the `Node` constructor itself, where DOM polyfills compare `nodeType` against them. */
-const NODE_CONSTANTS: [(&str, f64); 17] = [
+const NODE_CONSTANTS: [(&str, f64); 18] = [
     ("ELEMENT_NODE", 1.0),
     ("ATTRIBUTE_NODE", 2.0),
     ("TEXT_NODE", 3.0),
@@ -31,6 +31,7 @@ const NODE_CONSTANTS: [(&str, f64); 17] = [
     ("DOCUMENT_POSITION_FOLLOWING", 4.0),
     ("DOCUMENT_POSITION_CONTAINS", 8.0),
     ("DOCUMENT_POSITION_CONTAINED_BY", 16.0),
+    ("DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", 32.0),
 ];
 
 /** Install the platform into the realm. */
