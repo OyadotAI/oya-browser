@@ -1205,7 +1205,7 @@ pub(super) fn replace_data(
 }
 
 /** A WebIDL `unsigned long` argument: ToNumber, then modulo 2^32. */
-fn unsigned_long(vm: &mut Vm, value: &JsValue) -> Res<usize> {
+pub(super) fn unsigned_long(vm: &mut Vm, value: &JsValue) -> Res<usize> {
     let number = vm.to_number(value)?;
     if !number.is_finite() {
         return Ok(0);

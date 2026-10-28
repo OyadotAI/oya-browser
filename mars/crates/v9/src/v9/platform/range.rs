@@ -362,7 +362,7 @@ fn range_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut data = range_data(vm, &call.this)?;
     match name {
         "setStart" | "setEnd" => {
-            let offset = vm.to_integer(&call.arg(1))?.max(0.0) as usize;
+            let offset = dom::unsigned_long(vm, &call.arg(1))?;
             set_boundary(vm, &mut data, name == "setStart", call.arg(0), offset)?;
         }
         "setStartBefore" | "setStartAfter" | "setEndBefore" | "setEndAfter" => {
@@ -501,7 +501,7 @@ fn point_queries(vm: &mut Vm, data: &RangeData, call: &Call, name: &str) -> Res<
         }
         return Ok(JsValue::Boolean(false));
     }
-    let offset = vm.to_integer(&call.arg(1))?.max(0.0) as usize;
+    let offset = dom::unsigned_long(vm, &call.arg(1))?;
     if offset > node_length(vm, node) {
         return Err(vm.dom_exception(
             "IndexSizeError",
@@ -803,7 +803,7 @@ fn selection_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if call.arg(0).nullish() {
                 ranges.clear();
             } else {
-                let offset = vm.to_integer(&call.arg(1))?.max(0.0) as usize;
+                let offset = dom::unsigned_long(vm, &call.arg(1))?;
                 let mut data = collapsed_data();
                 set_boundary(vm, &mut data, true, call.arg(0), offset)?;
                 collapse(&mut data, true);
@@ -823,14 +823,14 @@ fn selection_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 return Err(vm.dom_exception("InvalidStateError", "The selection has no range."));
             };
             let mut data = range_data(vm, &range)?;
-            let offset = vm.to_integer(&call.arg(1))?.max(0.0) as usize;
+            let offset = dom::unsigned_long(vm, &call.arg(1))?;
             set_boundary(vm, &mut data, false, call.arg(0), offset)?;
             ranges = vec![range_object(vm, data)?];
         }
         "setBaseAndExtent" => {
             let mut data = collapsed_data();
-            let anchor = vm.to_integer(&call.arg(1))?.max(0.0) as usize;
-            let focus = vm.to_integer(&call.arg(3))?.max(0.0) as usize;
+            let anchor = dom::unsigned_long(vm, &call.arg(1))?;
+            let focus = dom::unsigned_long(vm, &call.arg(3))?;
             set_boundary(vm, &mut data, true, call.arg(0), anchor)?;
             set_boundary(vm, &mut data, false, call.arg(2), focus)?;
             ranges = vec![range_object(vm, data)?];
