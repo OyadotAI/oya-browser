@@ -499,6 +499,30 @@ impl Vm<'_> {
         };
         self.get_from(start, key, base)
     }
+    /** Measurement only (`V9_TRACE_MISSING=1`): prints a property a page read that does not
+    exist on the global object or a platform object, to find the APIs a page probes that V9
+    lacks (Google's BotGuard rejected Mars without saying which). */
+    #[cfg(feature = "measure")]
+    fn trace_missing(&self, start: ObjectId, key: &Key) {
+        if std::env::var_os("V9_TRACE_MISSING").is_none() {
+            return;
+        }
+        let global = self.global_object();
+        let named = |name: &str| match self.heap.get(global).and_then(|o| o.props.get(&Key::from(name))) {
+            Some(prop) => matches!(&prop.slot, Slot::Data(JsValue::Object(id)) if *id == start),
+            None => false,
+        };
+        let owner = if start == global {
+            Some("window")
+        } else {
+            ["navigator", "document", "screen", "performance", "location", "history"]
+                .into_iter()
+                .find(|name| named(name))
+        };
+        if let Some(owner) = owner {
+            eprintln!("MISSING {owner}.{}", key_text(key));
+        }
+    }
     /** [[Get]] starting at an object with an explicit receiver for getters. */
     pub fn get_from(&mut self, start: ObjectId, key: &Key, receiver: &JsValue) -> Res<JsValue> {
         let mut id = start;
@@ -538,7 +562,11 @@ impl Vm<'_> {
             }
             match self.proto_of(id) {
                 Some(proto) => id = proto,
-                None => return Ok(JsValue::Undefined),
+                None => {
+                    #[cfg(feature = "measure")]
+                    self.trace_missing(start, key);
+                    return Ok(JsValue::Undefined);
+                }
             }
         }
         Err(EngineError::limit("V9 prototype chain", CHAIN_STEPS).into())

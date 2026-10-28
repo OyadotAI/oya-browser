@@ -268,6 +268,8 @@ pub(in crate::v9) fn ua_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     let mut fields = low;
     for index in 0..vm.length_of(&hints)? {
+        // Each element costs an operation, so a huge array-like length runs out the budget.
+        vm.charge(1)?;
         let hint = vm.get(&hints, &crate::v9::vm::heap::Key::from(&index.to_string()))?;
         let hint = vm.to_text(&hint)?;
         if let Some(value) = high_entropy(vm, &hint)? {

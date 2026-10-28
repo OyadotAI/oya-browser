@@ -35,7 +35,10 @@ fn main() {
         .map(|path| std::fs::read_to_string(path).unwrap_or_default())
         .collect();
     let mut environment = PageEnvironment {
-        url: "https://example.com/".into(),
+        url: std::env::var("PAGE_URL").unwrap_or_else(|_| "https://example.com/".into()),
+        time_origin_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0),
         dom_level: level,
         ..PageEnvironment::default()
     };
@@ -57,6 +60,9 @@ fn main() {
         );
         for entry in &execution.effects.console {
             println!("[{}] {}", entry.level, entry.text);
+        }
+        if execution.effects.navigation.is_some() || !execution.effects.cookies.is_empty() {
+            println!("navigation {:?} cookies {:?}", execution.effects.navigation, execution.effects.cookies);
         }
         for failure in &execution.failed {
             println!("FAILED script {}: {}", failure.index, failure.error.message);
@@ -86,7 +92,7 @@ fn main() {
     steps.extend(std::iter::repeat_n(None, 20));
     let mut now = 0.0;
     for step in steps {
-        let result = match step {
+        let result = match step.clone() {
             Some(event) => mars_v9::measure::page_event_scaled(
                 input(&sources, &document_now, &host, &environment),
                 state.clone(),
@@ -110,7 +116,7 @@ fn main() {
         };
         if step.is_some() || !execution.effects.console.is_empty() || !execution.failed.is_empty() {
             report(
-                &step.map_or_else(|| format!("timers @{now}"), |event| format!("{event:?}")),
+                &step.clone().map_or_else(|| format!("timers @{now}"), |event| format!("{event:?}")),
                 &execution,
             );
         }

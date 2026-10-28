@@ -7,6 +7,7 @@
 pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
+mod chrome_env;
 mod channel;
 pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;

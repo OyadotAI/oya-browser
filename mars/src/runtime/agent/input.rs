@@ -214,11 +214,10 @@ impl Runtime {
             && input.modifiers.is_empty()
             && let Some(node_id) = input.node_id.as_deref()
         {
-            if let Some(handled) = self.press_enter(&input.page_id, revision, node_id)? {
-                return Ok(handled);
+            match self.press_enter(&input.page_id, revision, node_id)? {
+                Ok(handled) => return Ok(handled),
+                Err(native) => revision = native,
             }
-            // The handlers' commit moved the revision; the native action applies to that page.
-            revision = self.current()?.revision;
         }
         let (op, mut params) = self.key_operation(&input, &key)?;
         params["page_id"] = json!(input.page_id);

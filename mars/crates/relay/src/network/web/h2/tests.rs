@@ -479,7 +479,7 @@ fn header_lists_over_the_advertised_limit_end_the_connection() {
         let (stream, _) = peer.request();
         let big = "v".repeat(crate::network::constants::H2_FRAME_BYTES - 64);
         let mut block = Vec::new();
-        for _ in 0..(crate::network::constants::H2_HEADER_LIST_BYTES / big.len() + 2) {
+        while block.len() <= crate::network::constants::H2_HEADER_LIST_BYTES {
             block.extend(encode(&[("x-big", big.as_str())]));
         }
         let mut chunks = block.chunks(crate::network::constants::H2_FRAME_BYTES);
