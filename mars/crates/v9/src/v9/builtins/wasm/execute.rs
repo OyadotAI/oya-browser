@@ -138,6 +138,17 @@ fn activation(
                 "type incompatibility when transforming from/to JS: unsupported value type",
             ));
         }
+        let math_enabled = {
+            #[cfg(feature = "conformance")]
+            { vm.page.environment.conformance_wasm_math_intrinsics.unwrap_or(true) }
+            #[cfg(not(feature = "conformance"))]
+            { true }
+        };
+        if math_enabled && signature.results == [Type::F64] && signature.params.iter().all(|ty| *ty == Type::F64) {
+            if let Some(value) = super::super::math::wasm_intrinsic(vm, &function, &args) {
+                return Ok(Flow::Return(vec![value]));
+            }
+        }
         let value = if jspi::is_suspending(vm, &function) {
             jspi::call(vm, instance, &function, args)?
         } else {

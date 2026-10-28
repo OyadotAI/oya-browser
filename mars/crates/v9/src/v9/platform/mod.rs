@@ -385,6 +385,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_ref_cast_nop: bool,
+    /** Selects V8's Math import optimization; absent metadata retains its enabled default. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_math_intrinsics: Option<bool>,
     /// Shell test metadata can select whether its Wasm streaming callback is installed.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -609,6 +613,8 @@ impl Default for PageEnvironment {
             conformance_wasm_testing_opcode: false,
             #[cfg(feature = "conformance")]
             conformance_wasm_ref_cast_nop: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_math_intrinsics: None,
             #[cfg(feature = "conformance")]
             conformance_wasm_test_streaming: None,
             #[cfg(feature = "conformance")]

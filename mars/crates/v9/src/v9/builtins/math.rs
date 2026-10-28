@@ -134,6 +134,28 @@ fn pow(vm: &mut Vm, call: Call) -> Res<JsValue> {
     )))
 }
 
+/** Recognize only genuine Math builtins and operate directly on already-converted Wasm f64 values. */
+pub(in crate::v9) fn wasm_intrinsic(vm: &Vm, function: &JsValue, args: &[JsValue]) -> Option<JsValue> {
+    let id = function.object()?;
+    let native = crate::v9::vm::realm::realm_for(id).native(id)?;
+    if let Some(object) = vm.heap.get(id) {
+        let function = object.function()?;
+        if !matches!(function.kind, crate::v9::vm::data::FunctionKind::Native { id: index, .. } if index == crate::v9::vm::realm::native_index(id)) { return None; }
+    }
+    let unary: &[(NativeFn, fn(f64) -> f64)] = &[(acos, f64::acos), (asin, f64::asin), (atan, f64::atan), (cos, f64::cos), (sin, f64::sin), (tan, f64::tan), (exp, f64::exp), (log, f64::ln), (sqrt, f64::sqrt)];
+    if let [value] = args {
+        let value = value.number_value()?;
+        for (builtin, operation) in unary {
+            if std::ptr::fn_addr_eq(native.function, *builtin) { return Some(JsValue::Number(operation(value))); }
+        }
+    }
+    if let [a, b] = args {
+        let (a, b) = (a.number_value()?, b.number_value()?);
+        if std::ptr::fn_addr_eq(native.function, atan2 as NativeFn) { return Some(JsValue::Number(a.atan2(b))); }
+        if std::ptr::fn_addr_eq(native.function, pow as NativeFn) { return Some(JsValue::Number(crate::v9::vm::run::js_power(a, b))); }
+    }
+    None
+}
 /** Math.imul. */
 fn imul(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let a = crate::v9::value::to_int32(arg_number(vm, &call, 0)?);

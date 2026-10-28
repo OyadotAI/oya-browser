@@ -2,6 +2,18 @@
 #![cfg(feature = "conformance")]
 mod common;
 
+/** V8's numeric hole-NaN test value preserves its bits without becoming a V9 missing element. */
+#[test]
+fn native_hole_nan_preserves_bits_without_becoming_a_hole() {
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_native_main_source = Some(0);
+    let source = "let n=%GetHoleNaN(),a=[n],v=new DataView(new ArrayBuffer(8));v.setFloat64(0,n,false);let r=[Number.isNaN(a[0]),0 in a,v.getUint32(0,false)===%GetHoleNaNUpper(),v.getUint32(4,false)===%GetHoleNaNLower(),%IsSmi(n)].join();";
+    let execution = common::load_with(source, &environment);
+    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert_eq!(common::global(&execution, "r"), "true,true,true,true,false");
+}
+
 /** Internalized-string tests inspect actual backing and distinguish thin aliases. */
 #[test]
 fn native_internalized_string_test_reads_real_representation() {

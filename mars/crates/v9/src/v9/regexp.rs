@@ -1021,6 +1021,8 @@ struct Matcher<'a> {
     /** Current scoped flags are restored before the enclosing continuation runs. */
     modes: Modes,
     input: &'a [u16],
+    /** The whole subject has no unit outside Latin-1. */
+    latin1_input: bool,
     captures: Captures,
     steps: usize,
     /** Steps this search may take: REGEXP_STEPS, or REGEXP_STEPS_PER_UNIT per input unit. */
@@ -1237,6 +1239,9 @@ impl<'a> Matcher<'a> {
                 })
             }
             Node::Look(inner, ahead, negative) => {
+                if self.latin1_input && !latin1_possible(inner, self.modes, self.program.unicode) {
+                    return *negative && next(self, position);
+                }
                 self.look(inner, *ahead, *negative, position, next)
             }
             Node::Back(index) => self.back(*index, position, next),
@@ -1247,6 +1252,11 @@ impl<'a> Matcher<'a> {
             Node::Concat(nodes) => self.sequence(nodes, position, next),
             Node::Alt(alternatives) => {
                 for alternative in alternatives {
+                    if self.latin1_input
+                        && !latin1_possible(alternative, self.modes, self.program.unicode)
+                    {
+                        continue;
+                    }
                     if self.node(alternative, position, next) {
                         return true;
                     }
@@ -1463,9 +1473,8 @@ pub(super) fn exec(
     start: usize,
     deadline: Option<std::time::Instant>,
 ) -> Result<Option<Captures>, MatchError> {
-    if !program.latin1_possible
-        && input.iter().all(|unit| *unit <= u16::from(u8::MAX))
-    {
+    let latin1_input = input.iter().all(|unit| *unit <= u16::from(u8::MAX));
+    if !program.latin1_possible && latin1_input {
         return Ok(None);
     }
     let mut steps = 0;
@@ -1496,6 +1505,7 @@ pub(super) fn exec(
             program,
             modes: Modes::from_program(program),
             input,
+            latin1_input,
             captures: vec![None; program.groups + 1],
             steps,
             budget,

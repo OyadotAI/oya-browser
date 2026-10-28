@@ -7,6 +7,34 @@ use mars_v9::{Execution, PageEnvironment};
 const TASK_LIMIT: usize = 128;
 
 #[test]
+/** The interpreter stack keeps a custom for-of iterator live during reentrant collection. */
+fn for_of_iterator_survives_collection_inside_next() {
+    drive(
+        "let total=0;let source={[Symbol.iterator](){let i=0;return {next(){gc();return i<2?{value:++i,done:false}:{done:true}}}}};for(let value of source)total+=value;if(total!==3)throw Error('iterator lost');",
+    );
+}
+
+#[test]
+/** Iterator setup failures keep their thrown object alive through unwinding and collection. */
+fn iterator_setup_error_survives_collection() {
+    drive(
+        "let result=0;let source={[Symbol.iterator](){throw {marker:17}}};try{[...source]}catch(error){gc();result+=error.marker}try{for(let value of source){}}catch(error){gc();result+=error.marker}if(result!==34)throw Error('lost thrown value');",
+    );
+}
+
+#[test]
+/** A completed for-of iterator must release its source before later work exhausts the budget. */
+fn completed_for_of_releases_resident_strings_during_same_execution() {
+    let sources = ["let result=0; {let x=new Map();for(let i=0;i<125000;i++)x.set(i,String(i));for(let value of x.values())result++} {let x=new Map();for(let i=0;i<125000;i++)x.set(i,String(i));for(let value of x.values())result++}".to_string()];
+    let host = common::host();
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    let execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert_clean(&execution);
+    assert_eq!(common::global(&execution, "result"), "250000");
+}
+
+#[test]
 /** A finished spread must release its source before a later block consumes the resident budget. */
 fn completed_spread_releases_resident_strings_during_the_same_execution() {
     let sources = ["let result=0; {let x=new Map();for(let i=0;i<130000;i++)x.set(i,String(i));let a=[...x.values()];result+=a.length} {let x=new Map();for(let i=0;i<130000;i++)x.set(i,String(i));let a=[...x.keys()];result+=a.length}".to_string()];

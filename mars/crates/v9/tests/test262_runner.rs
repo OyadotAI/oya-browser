@@ -590,6 +590,9 @@ fn supported_native_intrinsics(source: &str) -> bool {
             "ToString",
             "ToNumeric",
             "ConstructDouble",
+            "GetHoleNaN",
+            "GetHoleNaNUpper",
+            "GetHoleNaNLower",
         ]
         .contains(&name)
         {
@@ -688,8 +691,12 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                     | "--wasm-shared"
                     | "--wasm-compact-imports"
                     | "--wasm-ref-cast-nop"
+                    | "--wasm-math-intrinsics"
+                    | "--no-wasm-math-intrinsics"
                     | "--enable-testing-opcode-in-wasm"
                     | "--no-wasm-lazy-compilation"
+                    | "--no-maglev"
+                    | "--no-turbofan"
                     | "--nowasm-lazy-compilation"
                     | "--no-wasm-inlining"
                     | "--no-enable-avx"
@@ -739,6 +746,9 @@ fn supported_mjsunit_flags(source: &str) -> bool {
 #[test]
 /** Unsupported flags in any line or combination cannot be admitted as no-ops. */
 fn mjsunit_admission_requires_all_flags_to_be_implemented() {
+    // V9 has neither optimizer; only disabling them describes its actual execution state.
+    assert!(supported_mjsunit_flags("// Flags: --no-maglev --no-turbofan\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --no-maglev --turbofan\n"));
     assert!(supported_mjsunit_flags("// Flags: --js-iterator-includes --js-iterator-join\n"));
     assert!(!supported_mjsunit_flags("// Flags: --js-iterator-includes --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --async-stack-traces --no-async-stack-traces\n"));
@@ -775,6 +785,8 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop\n"));
+    assert!(supported_mjsunit_flags("// Flags: --wasm-math-intrinsics --no-wasm-math-intrinsics\n"));
+    assert!(!supported_mjsunit_flags("// Flags: --wasm-math-intrinsics --unknown\n"));
     assert!(!supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop --unknown\n"));
     assert!(supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm\n"));
     assert!(!supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm --unknown\n"));

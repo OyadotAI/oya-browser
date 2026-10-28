@@ -200,6 +200,6 @@ fn leading_interval_quantifier_is_invalid() {
 /** An impossible non-Latin-1 continuation prunes nested loops without losing optional branches. */
 #[test]
 fn non_latin1_literals_prune_latin1_subjects() {
-    let result = run("const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/K/ui.test('k')].join();");
-    assert_eq!(result, "false,false,true,true,true");
+    let result = run("const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/(?!(((.*)*)*x)Ā)foo/.test('foo'),/(a|(((.*)*)*x)ă|(((.*)*)*x)Ā)/.test('z'),/K/ui.test('k')].join();");
+    assert_eq!(result, "false,false,true,true,true,false,true");
 }

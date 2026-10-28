@@ -834,6 +834,19 @@ impl Vm<'_> {
                     };
                     self.push(JsValue::Boolean(result));
                 }
+                63..=65 => {
+                    if cfg!(target_arch = "mips64") {
+                        return Err(self.unsupported_error("V8 MIPS hole NaN encoding"));
+                    }
+                    const HOLE_NAN_WORD: u32 = 0xfff7_ffff;
+                    let number = if intrinsic == 63 {
+                        f64::from_bits((u64::from(HOLE_NAN_WORD) << 32) | u64::from(HOLE_NAN_WORD))
+                    } else {
+                        f64::from(HOLE_NAN_WORD)
+                    };
+                    let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
+                    self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root })));
+                }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
                     self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
@@ -1167,6 +1180,9 @@ impl Vm<'_> {
                 let iterator = match self.get_iterator(&iterable) {
                     Ok(iterator) => iterator,
                     Err(error) => {
+                        if let Thrown::Value(value) = &error {
+                            self.push(value.clone());
+                        }
                         self.pins.truncate(roots);
                         return Err(error);
                     }
@@ -1889,9 +1905,20 @@ impl Vm<'_> {
             Op::Class(site, has_super) => self.class_op(site, has_super)?,
             Op::GetIterator => {
                 let value = self.peek(0);
-                let iterator = self.get_iterator(&value)?;
+                let roots = self.pins.len();
+                let iterator = match self.get_iterator(&value) {
+                    Ok(iterator) => iterator,
+                    Err(error) => {
+                        if let Thrown::Value(value) = &error {
+                            self.push(value.clone());
+                        }
+                        self.pins.truncate(roots);
+                        return Err(error);
+                    }
+                };
                 self.pop();
                 self.push(JsValue::Object(iterator));
+                self.pins.truncate(roots);
             }
             Op::IterNext(target) => {
                 let iterator = self.peek(0);
