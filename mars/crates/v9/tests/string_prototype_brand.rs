@@ -78,7 +78,10 @@ fn string_prototype_payload_is_immutable_across_state_transport() {
         .as_array_mut()
         .unwrap()
         .iter_mut()
-        .find(|entry| entry[1]["c"].get("string") == Some(&serde_json::json!("")))
+        .find(|entry| {
+            let payload = &entry[1]["c"]["string"];
+            payload == "" || payload["k"][1] == ""
+        })
         .expect("actual materialized empty wrapper in compact heap record");
     entry[1]["c"]["string"] = serde_json::json!("forged payload");
     let forged = serde_json::from_value(forged).unwrap();

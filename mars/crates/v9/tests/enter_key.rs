@@ -26,10 +26,10 @@ fn enter(source: &str) -> mars_v9::Execution {
 #[test]
 fn enter_fires_keydown_keypress_keyup_with_key_code_13() {
     let after = enter(
-        "let seen=[];for(const t of ['keydown','keypress','keyup'])document.addEventListener(t,e=>seen.push(t+':'+e.key+':'+e.keyCode+':'+e.charCode+':'+(document.activeElement.id||'')));",
+        "let seen=[],out='';for(const t of ['keydown','keypress','keyup'])document.addEventListener(t,e=>{seen.push(t+':'+e.key+':'+e.keyCode+':'+e.charCode+':'+(document.activeElement.id||''));out=seen.join(' ')});",
     );
     assert_eq!(
-        common::global(&after, "seen").replace(',', " "),
+        common::global(&after, "out"),
         "keydown:Enter:13:0:first keypress:Enter:13:13:first keyup:Enter:13:0:first"
     );
     assert!(after.effects.key_default);

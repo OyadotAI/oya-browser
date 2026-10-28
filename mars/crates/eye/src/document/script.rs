@@ -29,10 +29,18 @@ fn first_ids(document: &Document) -> BTreeMap<&str, usize> {
     first
 }
 
+/** A value scripts never see: a password field's, which a person types. A hidden input's value
+is the page's own data, which Chrome lets scripts read; withholding it emptied Google's search
+tokens (ei, iflsig, sxsrf) in the URL its script builds, and Google answered "unusual traffic".
+Agent and DevTools views still hide both (`Node::secret`). */
+fn typed_secret(node: &Node) -> bool {
+    node.tag == "input" && node.input_type() == "password"
+}
+
 /** Explicit author identifiers cannot expose the parser's synthetic private targeting IDs. */
 pub(super) fn project_node(first: &BTreeMap<&str, usize>, node: &Node) -> ScriptNode {
     let mut attributes = node.attributes.clone();
-    if node.secret() {
+    if typed_secret(node) {
         attributes.remove("value");
     }
     // Over-long names are inert to scripts; dropping them keeps such pages loadable.
@@ -48,7 +56,7 @@ pub(super) fn project_node(first: &BTreeMap<&str, usize>, node: &Node) -> Script
             .cloned()
             .unwrap_or_default(),
         parent: node.parent,
-        value: (["input", "textarea"].contains(&node.tag.as_str()) && !node.secret())
+        value: (["input", "textarea"].contains(&node.tag.as_str()) && !typed_secret(node))
             .then(|| node.value.clone()),
         text_writable: text_writable(node)
             && first.get(node.html_id.as_str()) == Some(&node.local_id),

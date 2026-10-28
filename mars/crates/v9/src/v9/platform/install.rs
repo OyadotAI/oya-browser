@@ -961,6 +961,10 @@ fn singletons(b: &mut Builder) {
     getters(b, ua_data, &["brands", "mobile", "platform"], window::ua_data_get);
     methods(b, ua_data, &["getHighEntropyValues", "toJSON"], window::ua_data_method);
     b.alias(navigator, "userAgentData", ua_data);
+    // As in Chrome, the members live on Navigator.prototype and `navigator` owns none.
+    let navigator_proto = navigator;
+    let navigator = b.object(Some(navigator_proto));
+    super::chrome_env::navigator(b, navigator_proto);
     b.global("navigator", navigator);
     let screen = b.object(Some(object_prototype));
     getters(
@@ -1070,6 +1074,7 @@ fn singletons(b: &mut Builder) {
         &["timeOrigin", "timing", "navigation"],
         window::performance,
     );
+    super::chrome_env::performance(b, performance);
     b.global("performance", performance);
     let crypto = b.object(Some(object_prototype));
     methods(b, crypto, &["randomUUID"], window::window_method);

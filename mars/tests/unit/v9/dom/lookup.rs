@@ -52,10 +52,10 @@ fn cached_input_references_observe_current_nonsecret_field_values() {
     }
 }
 
-/** Password and hidden field values never reach scripts: value, attribute and serialization all omit them. */
+/** Password field values never reach scripts: value, attribute and serialization all omit them. */
 #[test]
 fn protected_field_values_are_never_readable() {
-    for kind in ["password", "hidden"] {
+    for kind in ["password"] {
         let html = format!("<input id=secret type={kind} value=private><p id=out></p>");
         let source = "const s=document.getElementById('secret');document.getElementById('out').textContent=[s.value,s.getAttribute('value'),s.defaultValue,s.outerHTML,document.body.innerHTML].join('|');";
         let executed = load(source, &document(&html));
