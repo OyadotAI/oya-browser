@@ -691,11 +691,21 @@ fn zone(vm: &Vm, time: f64) -> String {
     format!("GMT{sign}{:02}{:02} ({name})", minutes / 60, minutes % 60)
 }
 
+/** The year as DateString prints it: the magnitude padded to four digits, then a `-` for years
+before 1 BCE. Rust's `{:04}` counts the sign in the width, giving `-001` where the spec has `-0001`. */
+fn year_text(year: f64) -> String {
+    let sign = if year < 0.0 { "-" } else { "" };
+    format!("{sign}{:04}", year.abs() as i64)
+}
+
 /** The date portion: `Tue Jan 01 2020`. */
 fn date_part(p: &Parts) -> String {
     format!(
-        "{} {} {:02} {:04}",
-        DAYS[p.day as usize], MONTHS[p.month as usize], p.date as i64, p.year as i64
+        "{} {} {:02} {}",
+        DAYS[p.day as usize],
+        MONTHS[p.month as usize],
+        p.date as i64,
+        year_text(p.year)
     )
 }
 
@@ -754,11 +764,11 @@ fn to_utc_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     text(
         vm,
         &format!(
-            "{}, {:02} {} {:04} {} GMT",
+            "{}, {:02} {} {} {} GMT",
             DAYS[p.day as usize],
             p.date as i64,
             MONTHS[p.month as usize],
-            p.year as i64,
+            year_text(p.year),
             time_part(&p)
         ),
     )

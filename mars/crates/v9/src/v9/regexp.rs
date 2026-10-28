@@ -189,12 +189,31 @@ pub(super) fn compile(
     if parser.emoji_expansion_limit {
         return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
     }
+    let mut root = root;
+    settle_classes(&mut root);
     program.latin1_possible = latin1_possible(&root, Modes::from_program(&program), program.unicode);
     program.root = root;
     program.groups = parser.groups;
     program.names = parser.group_names.entries;
     program.name_slots = parser.group_names.slots;
     Ok(program)
+}
+
+/** Sorts and merges every class's ranges once at compile time, so matching can binary search
+them; without it each character scanned every range, which made `\p{Alphabetic}` loops quadratic. */
+fn settle_classes(node: &mut Node) {
+    match node {
+        Node::Class(ranges, _) => *ranges = class_set::merge(std::mem::take(ranges)),
+        Node::StringSet(set) => set.ranges = class_set::merge(std::mem::take(&mut set.ranges)),
+        Node::Group(inner, _)
+        | Node::Scoped(inner, _)
+        | Node::Look(inner, ..)
+        | Node::Repeat(inner, ..) => {
+            settle_classes(inner);
+        }
+        Node::Concat(nodes) | Node::Alt(nodes) => nodes.iter_mut().for_each(settle_classes),
+        _ => {}
+    }
 }
 
 /** Recursive-descent pattern parser. */
@@ -1094,9 +1113,12 @@ impl<'a> Matcher<'a> {
     fn same(&self, a: u32, b: u32) -> bool {
         a == b || self.modes.ignore_case && case::same(a, b, self.program.unicode)
     }
-    /** Whether a set contains a point. */
+    /** Whether a set contains a point; `ranges` are disjoint and ascending (`settle_classes`). */
     fn in_set(&self, ranges: &[(u32, u32)], point: u32) -> bool {
-        let contains = |p: u32| ranges.iter().any(|(low, high)| (*low..=*high).contains(&p));
+        let contains = |p: u32| {
+            let after = ranges.partition_point(|(low, _)| *low <= p);
+            after > 0 && p <= ranges[after - 1].1
+        };
         contains(point)
             || self.modes.ignore_case
                 && case::equivalents(point, self.program.unicode).any(contains)

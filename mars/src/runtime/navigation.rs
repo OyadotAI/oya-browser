@@ -18,9 +18,14 @@ use std::time::Instant;
 /** History retains the internal destination without exposing protected queries. */
 #[derive(Clone)]
 pub(super) struct HistoryEntry {
-    url: String,
-    sensitive: bool,
-    replayable: bool,
+    pub(super) url: String,
+    pub(super) sensitive: bool,
+    pub(super) replayable: bool,
+    /// The `Page::generation` of the document that made this entry; entries pushState added
+    /// share their document's, so moving between them needs no reload.
+    pub(super) document: u64,
+    /// The state pushState saved as JSON, for `popstate`; None for a load or hash change.
+    pub(super) state: Option<String>,
 }
 /** Navigation never accepts request headers or policy overrides. */
 #[derive(Deserialize)]
@@ -80,9 +85,10 @@ enum History {
 }
 
 impl Runtime {
-    /** A committed same-document URL change (pushState, a hash) updates the current history
-    entry in place, never fetching. */
+    /** A committed page's pushState, replaceState and hash changes enter history (see
+    `same_document`), then the current entry follows the page's URL, never fetching. */
     pub(super) fn sync_history_url(&mut self) {
+        self.adopt_history_records();
         let (Some(index), Some(page)) = (self.history_cursor, self.page.as_ref()) else {
             return;
         };
@@ -105,6 +111,9 @@ impl Runtime {
     }
     /** Revisit never changes the cursor on a failed load or replay refusal. */
     pub(super) fn revisit(&mut self, index: usize) -> EngineResult<Value> {
+        if self.same_document(index) {
+            return self.traverse_same_document(index);
+        }
         let entry = &self.history[index];
         if !entry.replayable {
             return Err(replay());
@@ -224,7 +233,12 @@ impl Runtime {
                     url: page.url.clone(),
                     sensitive: page.sensitive,
                     replayable: page.replayable,
+                    document: page.generation,
+                    state: None,
                 };
+                // ponytail: history calls made while the page loaded fold into its one entry
+                // (page.url is already their last URL); Chrome adds an entry per pushState.
+                page.scripting.history_records.clear();
                 match history {
                     History::New => {
                         let keep = runtime.history_cursor.map(|i| i + 1).unwrap_or_default();

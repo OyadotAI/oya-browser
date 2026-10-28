@@ -159,7 +159,7 @@ pub(in crate::v9) use conformance::{
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use function::to_string as function_to_string;
-#[cfg(feature = "conformance")]
+/** JSON.stringify for engine callers: conformance workers, and history entries saving their state. */
 pub(in crate::v9) use json::stringify as json_stringify;
 
 /** Install every builtin, in dependency order. Prototypes come first so constructors can link them. */

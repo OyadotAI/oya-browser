@@ -113,6 +113,7 @@ fn background_rect_and_sliced_shadow_clip_paint() {
         spread: 0.0,
         color: "red".into(),
         inset: false,
+        text: false,
     }];
     let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
     canvas.item(&shadowed, BLACK, None);

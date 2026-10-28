@@ -34,6 +34,14 @@ pub(super) fn apply(
             }
         }
         "box-shadow" => style.shadows = super::paint::shadows(value, style, context)?,
+        // The box-shadow grammar without `inset` or a spread, which text shadows do not have.
+        "text-shadow" => {
+            let shadows = super::paint::shadows(value, style, context)?;
+            if shadows.iter().any(|shadow| shadow.inset || shadow.spread != 0.0) {
+                return Err(unsupported());
+            }
+            style.text_shadows = shadows;
+        }
         "background-image" => {
             style.backgrounds = super::paint::backgrounds(value, style, context, diagnostics)?;
             style.background_geometry.slots = super::paint::slots(value, style, context);
@@ -41,6 +49,14 @@ pub(super) fn apply(
         "transform" => {
             (style.transform, style.translate_percent) =
                 super::paint::transform(value, style.font_size, context)?
+        }
+        // Validated here; `compute` composes them over `transform` once the cascade is done.
+        "translate" | "rotate" | "scale" => {
+            super::individual::matrix(key, value, style.font_size, context)?;
+        }
+        "transform-origin" => {
+            style.transform_origin =
+                Some(super::individual::origin(value, style.font_size, context)?)
         }
         "text-decoration" | "text-decoration-line" => {
             let none = value.split_whitespace().any(|part| part == "none");

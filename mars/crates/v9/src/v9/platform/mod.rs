@@ -160,6 +160,16 @@ pub(in crate::v9) fn fire(vm: &mut Vm, target: Target, kind: &str, bubbles: bool
     events::fire(vm, target, kind, bubbles, kind == "click")
 }
 
+/** A trusted `popstate` at the window whose `state` is the entry's restored state. */
+pub(in crate::v9) fn fire_pop_state(vm: &mut Vm, state: JsValue) -> Res<bool> {
+    events::fire_with_state(vm, Target::Window, "popstate", state)
+}
+
+/** A saved history state parsed back into a value, or None when it no longer parses. */
+pub(in crate::v9) fn json_value(vm: &mut Vm, json: &str) -> Option<JsValue> {
+    crate::v9::builtins::json_parse_text(vm, json).ok()
+}
+
 /** An unprevented click on (or inside) a link asks the app to navigate. */
 pub(in crate::v9) fn follow_link(vm: &mut Vm, target: usize) {
     let mut candidates = vec![target];
@@ -790,6 +800,10 @@ pub struct HistoryRecord {
     pub url: String,
     /// The title argument.
     pub title: String,
+    /// The state argument as JSON, handed back by `popstate` when the person returns to this
+    /// entry. None for a hash change or a state of null or undefined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
 }
 
 /// What the app must do after an execution besides committing state and changes.

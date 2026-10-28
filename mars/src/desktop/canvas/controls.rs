@@ -161,6 +161,7 @@ impl Canvas {
                 if let Some(color) = text_color(item, styled) {
                     field.setTextColor(Some(&color));
                 }
+                place_text(field, item, styled);
                 let focused = self
                     .window()
                     .and_then(|w| w.firstResponder())
@@ -355,4 +356,16 @@ impl Canvas {
             }
         }
     }
+}
+
+/** A page-styled textarea's text starts where CSS puts it: inside the element's padding and
+border (Google's search box sets `padding-top: 14px` to center its one line). An unstyled one
+keeps the native look. ponytail: AppKit's own five-point line padding stays, as the binding for
+NSTextContainer is not enabled; text sits that much right of CSS. */
+fn place_text(field: &NSTextView, item: &DisplayItem, styled: bool) {
+    let (left, top) = match (styled, item.content_box) {
+        (true, Some([x, y, _, _])) => ((x - item.x).max(0.0), (y - item.y).max(0.0)),
+        _ => (0.0, 0.0),
+    };
+    field.setTextContainerInset(objc2_foundation::NSSize::new(left, top));
 }

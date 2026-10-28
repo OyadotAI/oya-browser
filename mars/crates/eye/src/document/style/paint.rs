@@ -403,9 +403,9 @@ fn adjacent(token: &str) -> Vec<&str> {
     parts
 }
 /** The identity affine matrix. */
-const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+pub(super) const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 /** `m1 × m2` for affine matrices in (a, b, c, d, e, f) order. */
-fn multiply(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
+pub(super) fn multiply(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
     [
         m[0] * n[0] + m[2] * n[1],
         m[1] * n[0] + m[3] * n[1],
@@ -449,10 +449,23 @@ fn transform_function(
         super::values::signed_number(arg)
     };
     let tan = |degrees: f64| degrees.to_radians().tan();
-    Ok(match name.trim() {
-        "translate" | "translate3d" => {
+    Ok(match name.trim().to_ascii_lowercase().as_str() {
+        "translate" => {
             let ((x, px), (y, py)) = (offset(0)?, offset(1)?);
             ([1.0, 0.0, 0.0, 1.0, x, y], [px, py])
+        }
+        "translate3d" if args.len() == 3 => {
+            let ((x, px), (y, py), (_, z_percent)) = (offset(0)?, offset(1)?, offset(2)?);
+            if z_percent != 0.0 {
+                return Err(unsupported());
+            }
+            ([1.0, 0.0, 0.0, 1.0, x, y], [px, py])
+        }
+        "translatez" if args.len() == 1 => {
+            if offset(0)?.1 != 0.0 {
+                return Err(unsupported());
+            }
+            (IDENTITY, [0.0; 2])
         }
         "translatex" => {
             let (x, px) = offset(0)?;

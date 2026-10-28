@@ -66,3 +66,45 @@ fn increment(result: String) -> String {
     bytes.insert(usize::from(bytes.first() == Some(&b'-')), b'1');
     String::from_utf8(bytes).expect("formatted numbers are ASCII")
 }
+
+/** Significant digits that hold any binary64 value's exact decimal expansion (at most 767). */
+const EXACT_DIGITS: usize = 800;
+
+/** Exponential notation with `fraction` digits after the point, as `toExponential` and
+`toPrecision` print it. Rust's `{:e}` rounds exact ties to even (`1.25` to `1.2e0`) and keeps the
+sign of zero; the spec picks the larger magnitude on a tie and prints `-0` as `0`. So this rounds
+the exact expansion half-up itself. */
+pub(super) fn exponential(value: f64, fraction: usize) -> String {
+    let exact = format!("{:.EXACT_DIGITS$e}", value.abs());
+    let (mantissa, exponent) = exact.split_once('e').expect("exponent form");
+    let digits: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).collect();
+    let mut exponent: i32 = exponent.parse().expect("integer exponent");
+    let mut kept = digits[..=fraction].to_vec();
+    if digits[fraction + 1] >= b'5' && round_up(&mut kept) {
+        exponent += 1;
+    }
+    let sign = if value < 0.0 { "-" } else { "" };
+    format!("{sign}{}", exponent_form(&kept, exponent))
+}
+
+/** Adds one in the last kept digit; true when it carried out of the first (9.99 to 10.0). */
+fn round_up(digits: &mut [u8]) -> bool {
+    for digit in digits.iter_mut().rev() {
+        if *digit < b'9' {
+            *digit += 1;
+            return false;
+        }
+        *digit = b'0';
+    }
+    digits[0] = b'1';
+    true
+}
+
+/** `d.ddde+x` from significant digits and a decimal exponent. */
+fn exponent_form(digits: &[u8], exponent: i32) -> String {
+    let (first, rest) = digits.split_at(1);
+    let point = if rest.is_empty() { "" } else { "." };
+    let sign = if exponent < 0 { "-" } else { "+" };
+    let text = |part: &[u8]| String::from_utf8(part.to_vec()).expect("ASCII digits");
+    format!("{}{point}{}e{sign}{}", text(first), text(rest), exponent.abs())
+}

@@ -56,6 +56,10 @@ pub struct DisplayShadow {
     /// Paints inside the padding box instead of outside the border box.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub inset: bool,
+    /// A `text-shadow`: cast by the item's text runs, never by its box. Kept in the same list
+    /// so the many display item builders need no new field; box painters skip these.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text: bool,
 }
 
 /// A shadow shape's corner `[rx, ry]` of a `size` box grown by `spread` (shrunk when negative),

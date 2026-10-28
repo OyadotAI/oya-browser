@@ -592,16 +592,13 @@ impl Canvas {
         {
             return;
         }
-        paint_text(
-            item,
-            alpha,
-            TextPaint {
-                display,
-                dirty,
-                index,
-            },
-            painted,
-        );
+        let text = || TextPaint {
+            display,
+            dirty,
+            index,
+        };
+        painter.text_shadows(item, alpha, || paint_text(item, alpha, text(), painted));
+        paint_text(item, alpha, text(), painted);
     }
 }
 /** The deferred item an echo at `index` paints: the k-th deferred item of its identity for the

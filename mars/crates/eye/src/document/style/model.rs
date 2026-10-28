@@ -192,6 +192,9 @@ pub struct ComputedStyle {
     /// Box shadows in paint order, bounded.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shadows: Vec<BoxShadow>,
+    /// Inherited `text-shadow` layers, first on top; never inset.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub text_shadows: Vec<BoxShadow>,
     /// Background image layers, first on top, bounded; the color stays in `background`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backgrounds: Vec<BackgroundLayer>,
@@ -621,6 +624,10 @@ pub struct ComputedStyle {
     /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
     #[serde(skip_serializing_if = "default")]
     pub translate_percent: [f64; 2],
+    /// `transform-origin` as [x px, x percent, y px, y percent] of the border box; None is
+    /// the initial center.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_origin: Option<[f64; 4]>,
     /// Pixel part of a mixed `calc()` width such as `calc(70% - 12px)`, added once the
     /// percentage in `width` resolves; 0 for a plain width. Without it the whole declaration
     /// was refused and a two-column row stacked.
@@ -845,6 +852,7 @@ impl Default for ComputedStyle {
             overflow_y: Overflow::Visible,
             radius: [0.0; 4],
             shadows: Vec::new(),
+            text_shadows: Vec::new(),
             backgrounds: Vec::new(),
             transform: None,
             text_decoration_none: false,
@@ -975,6 +983,7 @@ impl Default for ComputedStyle {
             radius_px: [0.0; 4],
             radius_y: [None; 4],
             translate_percent: [0.0; 2],
+            transform_origin: None,
             width_offset: 0.0,
             width_stretch: false,
             width_fit: false,

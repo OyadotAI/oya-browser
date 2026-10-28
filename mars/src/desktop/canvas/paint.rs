@@ -315,7 +315,12 @@ impl Painter {
     /// The blurred shape is the box grown by its spread: CoreGraphics, like CSS, keeps the blur's 50%
     /// line on the shape's edge, so shrinking it by half the blur would hide most of the shadow.
     pub fn outer_shadows(&self, shape: &Shape, item: &DisplayItem, alpha: f64) {
-        for shadow in item.shadows.iter().rev().filter(|shadow| !shadow.inset) {
+        for shadow in item
+            .shadows
+            .iter()
+            .rev()
+            .filter(|shadow| !shadow.inset && !shadow.text)
+        {
             let Some(color) = shadow_color(&shadow.color, alpha) else {
                 continue;
             };
@@ -335,6 +340,21 @@ impl Painter {
             );
             (cast.x, cast.width) = (x, width);
             self.fill(&cast, &color);
+            CGContext::restore_g_state(self.cg());
+        }
+    }
+    /// Text shadows, last listed painted first: `draw` paints the item's text SHADOW_REACH to the
+    /// left with a CoreGraphics shadow cast back by the same distance plus the shadow's offset, so
+    /// only the blurred shadow lands on the page, as `outer_shadows` does for boxes.
+    pub fn text_shadows(&self, item: &DisplayItem, alpha: f64, mut draw: impl FnMut()) {
+        for shadow in item.shadows.iter().rev().filter(|shadow| shadow.text) {
+            let Some(color) = shadow_color(&shadow.color, alpha) else {
+                continue;
+            };
+            CGContext::save_g_state(self.cg());
+            CGContext::translate_ctm(self.cg(), shadow.x - SHADOW_REACH, shadow.y);
+            self.cast_from_afar(shadow.blur, &color);
+            draw();
             CGContext::restore_g_state(self.cg());
         }
     }

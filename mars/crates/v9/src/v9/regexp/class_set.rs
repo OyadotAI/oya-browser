@@ -113,7 +113,7 @@ impl ClassSet {
 }
 
 /** Sort and merge ranges so that they are disjoint and ascending. */
-fn merge(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+pub(super) fn merge(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     ranges.sort_unstable();
     let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
     for (low, high) in ranges {

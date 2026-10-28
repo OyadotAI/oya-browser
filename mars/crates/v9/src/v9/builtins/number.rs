@@ -209,13 +209,12 @@ fn to_exponential(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !value.is_finite() {
         return text(vm, &number_to_string(value));
     }
-    let rust = if call.arg(0) == JsValue::Undefined {
-        format!("{value:e}")
-    } else {
+    if call.arg(0) != JsValue::Undefined {
         let fraction = digit_range(vm, fraction, 0.0, 100.0, "toExponential")?;
-        format!("{value:.fraction$e}")
-    };
-    text(vm, &exponent_text(&rust))
+        return text(vm, &format::exponential(value, fraction));
+    }
+    // The shortest round-tripping digits; `+ 0.0` turns -0 into 0, which prints unsigned.
+    text(vm, &exponent_text(&format!("{:e}", value + 0.0)))
 }
 
 /** Number.prototype.toPrecision. */
@@ -237,13 +236,13 @@ fn to_precision(vm: &mut Vm, call: Call) -> Res<JsValue> {
         };
         return text(vm, &zeros);
     }
-    let rust = format!("{:.*e}", precision - 1, value);
-    let exponent: i32 = rust
+    let exponential = format::exponential(value, precision - 1);
+    let exponent: i32 = exponential
         .split_once('e')
         .and_then(|(_, e)| e.parse().ok())
         .unwrap_or(0);
     let result = if exponent < -6 || exponent >= precision as i32 {
-        exponent_text(&rust)
+        exponential
     } else {
         let fraction = (precision as i32 - 1 - exponent).max(0) as usize;
         fixed(value, fraction)
