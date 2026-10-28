@@ -60,6 +60,8 @@ enum Pseudo {
     Not(SelectorList),
     Is(SelectorList),
     Has(SelectorList),
+    /** `:lang(...)`: the element's language matches one of these RFC 4647 ranges. */
+    Lang(Vec<String>),
     Empty,
     Root,
     Scope,
@@ -374,6 +376,7 @@ impl Parser {
             ("not", true) => Pseudo::Not(self.list()?),
             ("is" | "where" | "matches" | "any", true) => Pseudo::Is(self.list()?),
             ("has", true) => Pseudo::Has(self.list()?),
+            ("lang", true) => Pseudo::Lang(self.language_ranges()),
             _ => return Err(format!("unsupported pseudo-class :{name}")),
         };
         if functional {
@@ -384,6 +387,21 @@ impl Parser {
             self.position += 1;
         }
         Ok(pseudo)
+    }
+    /** The comma-separated language ranges of `:lang(...)`, with quotes removed and case kept; the closing paren is left for the caller. */
+    fn language_ranges(&mut self) -> Vec<String> {
+        let mut text = String::new();
+        while let Some(c) = self.peek() {
+            if c == ')' {
+                break;
+            }
+            text.push(c);
+            self.position += 1;
+        }
+        text.split(',')
+            .map(|range| range.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+            .filter(|range| !range.is_empty())
+            .collect()
     }
     /** `an+b`, `odd`, `even`. */
     fn an_plus_b(&mut self) -> Result<(i64, i64), String> {
@@ -629,6 +647,10 @@ fn pseudo_matches(
                 || page.tag(*child) == "#text" && page.text_content(*child).is_empty()
         }),
         Pseudo::Root => node == super::HTML || is_document_element(page, node),
+        Pseudo::Lang(ranges) => {
+            let language = nearest_language(page, node);
+            ranges.iter().any(|range| language_matches(&language, range))
+        }
         Pseudo::Scope => scope.map_or(node == super::HTML, |scope| scope == node),
         Pseudo::PopoverOpen => super::interfaces::popover::matches_open(page, heap, node),
         Pseudo::Checked => {
@@ -643,4 +665,30 @@ fn pseudo_matches(
         }
         Pseudo::Never => false,
     }
+}
+
+/** The language an element is in: the `lang` of the nearest ancestor-or-self that sets one. An empty value means the language is unknown and matches nothing. */
+fn nearest_language(page: &mut super::Page, node: usize) -> String {
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if let Some(lang) = page.view(id).and_then(|view| view.attributes.get("lang").cloned()) {
+            return lang;
+        }
+        current = page.parent(id);
+    }
+    String::new()
+}
+
+/** RFC 4647 basic filtering: a range matches a language equal to it, or extending it past a hyphen. `*` matches any known language. */
+fn language_matches(language: &str, range: &str) -> bool {
+    if language.is_empty() {
+        return false;
+    }
+    if range == "*" {
+        return true;
+    }
+    let prefix = language.as_bytes().get(..range.len());
+    let is_prefix = prefix.is_some_and(|bytes| bytes.eq_ignore_ascii_case(range.as_bytes()));
+    language.len() == range.len()
+        || (is_prefix && language.as_bytes().get(range.len()) == Some(&b'-'))
 }
