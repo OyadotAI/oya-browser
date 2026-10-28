@@ -2693,6 +2693,13 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .map_err(|error| dom_error(vm, error))?;
             Ok(JsValue::Undefined)
         }
+        "appendHTMLUnsafe" | "prependHTMLUnsafe" | "beforeHTMLUnsafe" | "afterHTMLUnsafe" => {
+            let html = vm.to_text(&call.arg(0))?;
+            vm.page
+                .insert_html(node, unsafe_position(native_name(&call)), &html)
+                .map_err(|error| dom_error(vm, error))?;
+            Ok(JsValue::Undefined)
+        }
         "insertAdjacentElement" | "insertAdjacentText" => {
             let position = position(vm, &call.arg(0))?;
             let inserted = if native_name(&call) == "insertAdjacentText" {
@@ -2761,6 +2768,16 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** insertAdjacent* positions. */
+/** The insertion point each HTML partial-update method names: append and prepend go inside the element, before and after beside it. */
+fn unsafe_position(method: &str) -> InsertPosition {
+    match method {
+        "prependHTMLUnsafe" => InsertPosition::AfterBegin,
+        "beforeHTMLUnsafe" => InsertPosition::BeforeBegin,
+        "afterHTMLUnsafe" => InsertPosition::AfterEnd,
+        _ => InsertPosition::BeforeEnd,
+    }
+}
+
 fn position(vm: &mut Vm, value: &JsValue) -> Res<InsertPosition> {
     let text = vm.to_text(value)?.to_ascii_lowercase();
     Ok(match text.as_str() {
