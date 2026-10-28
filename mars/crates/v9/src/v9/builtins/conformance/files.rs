@@ -4,6 +4,22 @@ use crate::v9::vm::data::{Bytes, Class};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::realm;
 
+/** Answer only paths whose existence the host explicitly supplied; the VM never stats files. */
+pub(super) fn exists(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.args.is_empty() {
+        let error = vm.make_error(
+            crate::v9::vm::error::ErrorKind::Error,
+            "exists() takes one argument",
+        )?;
+        return Err(crate::v9::vm::Thrown::Value(JsValue::Object(error)));
+    }
+    let path = arg_string(vm, &call, 0)?.lossy();
+    match vm.page.environment.conformance_exists.get(&path) {
+        Some(found) => Ok(JsValue::Boolean(*found)),
+        None => Err(vm.unsupported_error("d8.file.exists path not supplied by the test host")),
+    }
+}
+
 /** Legacy shell functions are genuine constructible FunctionTemplates with ordinary per-function prototypes. */
 pub(super) fn install(builder: &mut Builder) {
     for (name, function) in [

@@ -78,6 +78,8 @@ pub(super) fn install(b: &mut Builder) {
         ("getYear", |vm, call| {
             let year = field(vm, call, Field::Year, true)?;
             Ok(match year {
+                #[cfg(feature = "conformance")]
+                JsValue::Smi(year) => JsValue::Number(year - 1900.0),
                 JsValue::Number(year) => JsValue::Number(year - 1900.0),
                 other => other,
             })
@@ -160,7 +162,33 @@ pub(super) fn install(b: &mut Builder) {
 
 /** The page's virtual time in milliseconds. */
 pub(in crate::v9) fn now_ms(vm: &Vm) -> f64 {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 {
+        return d8_now_ms();
+    }
     (vm.page.state.epoch + vm.page.state.clock).floor()
+}
+
+/** D8 reads a process-wide monotonic clock so busy loops advance without wall-clock jumps. */
+#[cfg(feature = "conformance")]
+fn d8_now_ms() -> f64 {
+    let (epoch, elapsed) = d8_time_origin_and_elapsed();
+    (epoch + elapsed).floor()
+}
+
+/** One process anchor keeps shell Date and performance time coherent across isolated workers. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn d8_time_origin_and_elapsed() -> (f64, f64) {
+    static CLOCK: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
+    let (anchor, epoch) = CLOCK.get_or_init(|| {
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        (std::time::Instant::now(), epoch)
+    });
+    (*epoch as f64, anchor.elapsed().as_secs_f64() * 1000.0)
 }
 
 /** The local timezone offset in milliseconds (UTC plus this is local). */
@@ -378,7 +406,7 @@ fn parse_iso(text: &str) -> Option<(f64, bool)> {
     if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
         return None;
     }
-    if index == bytes.len() {
+    if index == bytes.len() || (index + 1 == bytes.len() && matches!(bytes.get(index), Some(b'Z' | b'z'))) {
         return Some((make_date(year, month - 1.0, day, 0.0, 0.0, 0.0, 0.0), true));
     }
     if !matches!(bytes.get(index), Some(b'T' | b't' | b' ')) {
@@ -641,7 +669,7 @@ fn to_iso(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Date.prototype.toJSON. */
 fn to_json(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let time = vm.to_primitive(&call.this, crate::v9::vm::convert::Hint::Number)?;
-    if matches!(time, JsValue::Number(n) if !n.is_finite()) {
+    if time.number_value().is_some_and(|n| !n.is_finite()) {
         return Ok(JsValue::Null);
     }
     let method = vm.get(&call.this, &key("toISOString"))?;

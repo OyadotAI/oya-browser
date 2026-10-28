@@ -12,7 +12,11 @@ pub(super) fn reject_apply(vm: &mut Vm, value: JsValue) -> Res<JsValue> {
         JsValue::Undefined | JsValue::Hole => "undefined",
         JsValue::Null => "null",
         JsValue::Boolean(_) => "a boolean",
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(_) => "a number",
         JsValue::Number(_) => "a number",
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => "a number",
         JsValue::String(_) => "a string",
         JsValue::Symbol(_) => "a symbol",
         JsValue::BigInt(_) | JsValue::BigIntWide(_) => "a bigint",
@@ -52,14 +56,14 @@ fn object(vm: &mut Vm, id: ObjectId) -> Res<String> {
             && vm.proxy_of(ctor).is_none()
             && vm.is_callable(&JsValue::Object(ctor))
             && let JsValue::String(name) = data(vm, ctor, &key("name"))?
-            && !name.as_units().is_empty()
+            && !name.is_empty()
         {
             return Ok(format!("#<{}>", name.lossy()));
         }
     }
     let tag = match data(vm, id, &Key::Sym(symbol::TO_STRING_TAG))? {
         JsValue::String(tag) => {
-            String::from_utf16_lossy(&tag.as_units()[..tag.len().min(TAG_UNITS)])
+            String::from_utf16_lossy(&tag.copy_range(0, tag.len().min(TAG_UNITS)))
         }
         _ => brand(vm, id).to_owned(),
     };

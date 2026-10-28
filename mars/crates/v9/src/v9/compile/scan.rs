@@ -308,6 +308,8 @@ impl Walker {
                     self.expr(value);
                 }
             }
+            #[cfg(feature = "conformance")]
+            ExprKind::NativeIntrinsic(_, args) => self.elements(args),
             ExprKind::Yield(value, _) => {
                 if let Some(value) = value {
                     self.expr(value);

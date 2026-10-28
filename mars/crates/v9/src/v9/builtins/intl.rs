@@ -5,7 +5,7 @@
  * outright when `Intl` is absent, so a small faithful English implementation beats none; other
  * locales format as English, which is what the persona reports anyway.
  */
-use super::date::{local_offset, parts};
+use super::date::parts;
 use crate::v9::platform::native_name;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData, IntlData};
@@ -29,6 +29,7 @@ mod locale_info;
 mod number_format;
 mod segmentation;
 mod tag;
+mod time_zone;
 
 /** The formatter kinds, each a constructor on `Intl`. */
 const KINDS: [&str; 7] = [
@@ -86,7 +87,6 @@ const ONE_ARGUMENT: u32 = 1;
 /** Two arguments. */
 const TWO_ARGUMENTS: u32 = 2;
 /** The locale every formatter resolves to. */
-pub(super) const LOCALE: &str = "en-US";
 /** Fraction digits a plain number keeps at most. */
 const DEFAULT_FRACTION_DIGITS: usize = 3;
 /** Fraction digits a currency amount keeps. */
@@ -270,22 +270,11 @@ fn locale_list(vm: &mut Vm, value: &JsValue) -> Res<Vec<String>> {
  * RangeError as V8 does instead of formatting in an unknown zone. */
 fn option_text(vm: &mut Vm, name: &str, value: &JsValue) -> Res<String> {
     let text = vm.to_text(value)?;
-    if name == "timeZone" && !plausible_time_zone(&text) {
-        return Err(vm.range_error(&format!("Invalid time zone specified: {text}")));
+    if name == "timeZone" {
+        return time_zone::canonical(&text)
+            .ok_or_else(|| vm.range_error(&format!("Invalid time zone specified: {text}")));
     }
     Ok(text)
-}
-
-/** Whether a timeZone names something Mars can format: UTC, a fixed offset, or an `Area/Location`
- * identifier. Mars has no zone database, so the location part is not checked.
- * ponytail: no tz database; unknown Area/Location names format as local time. Add the database
- * when Intl must reject a misspelt zone. */
-fn plausible_time_zone(name: &str) -> bool {
-    name.eq_ignore_ascii_case("UTC")
-        || name.starts_with(['+', '-'])
-        || name
-            .split_once('/')
-            .is_some_and(|(area, _)| area.starts_with(|c: char| c.is_ascii_alphabetic()))
 }
 
 /** `new Intl.X(locales, options)`, also callable without `new`. */
@@ -298,11 +287,14 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .into_iter()
         .next()
         .filter(|tag| !tag.is_empty())
-        .unwrap_or_else(|| LOCALE.into());
+        .unwrap_or_else(|| vm.page.environment.locale.clone());
     let init = call.arg(1);
     let mut options = BTreeMap::new();
     if matches!(init, JsValue::Object(_)) {
         for name in OPTIONS {
+            if name == "timeZone" && kind != "DateTimeFormat" {
+                continue;
+            }
             let value = vm.get(&init, &Key::from(name))?;
             if value != JsValue::Undefined {
                 options.insert(name.to_string(), option_text(vm, name, &value)?);
@@ -349,7 +341,7 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         ("formatToParts", "DateTimeFormat") => {
             let time = time_value(vm, &call.arg(0))?;
-            let formatted = format_date(vm, time, &data.options);
+            let formatted = format_date(vm, time, &data.options)?;
             single_part(vm, "literal", &formatted)
         }
         ("formatRange", "DateTimeFormat") => {
@@ -357,8 +349,8 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let to = time_value(vm, &call.arg(1))?;
             let joined = format!(
                 "{} \u{2013} {}",
-                format_date(vm, from, &data.options),
-                format_date(vm, to, &data.options)
+                format_date(vm, from, &data.options)?,
+                format_date(vm, to, &data.options)?
             );
             text(vm, &joined)
         }
@@ -755,18 +747,18 @@ fn time_value(vm: &mut Vm, value: &JsValue) -> Res<f64> {
 }
 
 /** Format a date the way en-US does for the fields the options name; "M/D/YYYY" by default. */
-pub(in crate::v9) fn format_date(vm: &Vm, time: f64, options: &BTreeMap<String, String>) -> String {
+pub(in crate::v9) fn format_date(
+    vm: &mut Vm,
+    time: f64,
+    options: &BTreeMap<String, String>,
+) -> Res<String> {
     if time.is_nan() {
-        return "Invalid Date".into();
+        return Ok("Invalid Date".into());
     }
-    let utc = options
-        .get("timeZone")
-        .is_some_and(|zone| zone.eq_ignore_ascii_case("UTC"));
-    let p = parts(if utc {
-        time
-    } else {
-        time + local_offset(vm, time)
-    });
+    let zone = options.get("timeZone").map_or("UTC", String::as_str);
+    let offset = time_zone::offset_ms(zone, time)
+        .ok_or_else(|| vm.range_error("Invalid stored time zone."))?;
+    let p = parts(time + offset);
     let get = |name: &str| options.get(name).map(String::as_str);
     let date_style = get("dateStyle");
     let time_style = get("timeStyle");
@@ -852,7 +844,8 @@ pub(in crate::v9) fn format_date(vm: &Vm, time: f64, options: &BTreeMap<String, 
             format!("{weekday}, {date_text}")
         };
     }
-    let time_text = any_time.then(|| {
+    let zone_name = get("timeZoneName").is_some() || matches!(time_style, Some("long" | "full"));
+    let time_text = (any_time || zone_name).then(|| {
         let twelve = get("hour12").is_none_or(|flag| flag != "false")
             && get("hourCycle").is_none_or(|cycle| cycle == "h12" || cycle == "h11");
         let hours = p.hours as i64;
@@ -878,14 +871,17 @@ pub(in crate::v9) fn format_date(vm: &Vm, time: f64, options: &BTreeMap<String, 
         if hour.is_some() && twelve {
             text.push_str(if hours < 12 { " AM" } else { " PM" });
         }
-        if get("timeZoneName").is_some() {
-            text.push_str(" UTC");
+        if zone_name {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&time_zone::label(offset));
         }
         text
     });
-    match (date_text.is_empty(), time_text) {
+    Ok(match (date_text.is_empty(), time_text) {
         (false, Some(time)) => format!("{date_text}, {time}"),
         (true, Some(time)) => time,
         _ => date_text,
-    }
+    })
 }

@@ -12,11 +12,14 @@ mod conformance;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
     ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state,
+    DebugEvent, DebugState, debug_event, install_external_string_lexicals,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
-    check_define as check_shared_define, check_store as check_shared_store,
-    pause_point as loop_stack_check,
+    activate_shared_container, atomic_shared_container, check_define as check_shared_define, existing_js_arena,
+    check_store as check_shared_store, collect_shared, define_shared_container,
+    initialize_shared_containers, is_shared_object, pause_point as loop_stack_check,
+    read_shared_container, shared_container_active, write_shared_container, new_shared_number, materialize_shared_object, resolve_shared_js_reference, validate_shared_js_record,
 };
 /** The wasm loop stack check. Only the conformance host has a debugger to pause here; other builds run straight through. */
 #[cfg(not(feature = "conformance"))]
@@ -24,6 +27,8 @@ pub(in crate::v9) fn loop_stack_check(_vm: &mut crate::v9::vm::Vm) -> crate::v9:
     Ok(())
 }
 mod date;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use date::d8_time_origin_and_elapsed;
 pub(in crate::v9) use date::validate_timezone;
 mod disposal;
 pub(in crate::v9) use disposal::{
@@ -57,13 +62,21 @@ mod temporal;
 pub(in crate::v9) mod typed;
 mod wasm;
 mod weak;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use wasm::forced_stack_overflow;
 pub(in crate::v9) use wasm::trace_metadata as wasm_trace_metadata;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use wasm::wasm_force_detach;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::wasm_worker_restore_shared_gc;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::{
-    WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_module, wasm_worker_opaque,
-    wasm_worker_restore, wasm_worker_restore_memory,
+    WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_memory_buffer,
+    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore, wasm_worker_restore_memory,
+};
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use wasm::{
+    exception_tag_id as wasm_exception_tag_id, exception_values as wasm_exception_values,
 };
 pub(in crate::v9) use wasm::{initialize_shared_gc, validate_shared_gc};
 
@@ -79,6 +92,11 @@ pub(in crate::v9) use integrity::{
 };
 pub(in crate::v9) use json::{is_raw_json, json_parse_text};
 pub(in crate::v9) use object::{from_descriptor, to_descriptor};
+pub(in crate::v9) use typed::iterator_length as typed_iterator_length;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use typed::array_buffer_max_allocation;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use typed::waiter_count as atomics_waiter_count;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use typed::{buffer_detachable, buffer_detached};
 pub(in crate::v9) use typed::{
@@ -113,6 +131,8 @@ use super::vm::{Call, Res, Vm};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::enqueue_shell_microtask;
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{report_shell_exception, shell_callback_realm};
+#[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::mark_host_api;
@@ -121,11 +141,14 @@ pub(in crate::v9) use conformance::measure_memory;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::report_terminal_exception;
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::synchronization_waiter_count;
+#[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{WorkerGraph, worker_activate, worker_decode};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
     async_hook_after, async_hook_before, async_hook_init, async_hook_resolve, async_hook_resource,
-    async_hook_unwind, conformance_host_object, expose_async_hooks, expose_conformance_globals,
+    async_hook_unwind, conformance_host_object, conformance_local_condition,
+    conformance_local_mutex, expose_async_hooks, expose_conformance_globals,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
@@ -208,3 +231,6 @@ pub(in crate::v9) fn text(vm: &mut Vm, text: &str) -> Res<JsValue> {
 pub(in crate::v9) fn key(name: &str) -> Key {
     Key::from(name)
 }
+
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use wasm::validate_shared_wasm_arena;

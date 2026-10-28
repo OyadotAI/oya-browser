@@ -73,7 +73,11 @@ pub(super) fn direct(vm: &mut Vm, object: &JsValue) -> Res<ObjectId> {
 fn to_skip(vm: &mut Vm, value: &JsValue) -> Res<f64> {
     let number = match value {
         JsValue::Undefined => return Ok(0.0),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => *number,
         JsValue::Number(number) => *number,
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => number.value,
         _ => return Err(vm.type_error("skippedElements must be a number")),
     };
     if number == f64::INFINITY {
@@ -125,12 +129,12 @@ fn join(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut first = true;
     while let Some(value) = vm.iter_step(record)? {
         if !first {
-            units.extend_from_slice(separator.as_units());
+            units.extend((0..separator.len()).filter_map(|index| separator.unit_at(index)));
         }
         first = false;
         if !value.nullish() {
             match vm.to_string(&value) {
-                Ok(text) => units.extend_from_slice(text.as_units()),
+                Ok(text) => units.extend((0..text.len()).filter_map(|index| text.unit_at(index))),
                 Err(error) => return Err(close_with(vm, &object, error)),
             }
         }

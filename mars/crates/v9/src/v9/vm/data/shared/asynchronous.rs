@@ -140,11 +140,7 @@ impl SharedBytes {
         callback: ObjectId,
     ) -> EngineResult<AsyncWait> {
         let mut state = self.lock();
-        if offset
-            .checked_add(expected.len())
-            .and_then(|end| state.bytes.get(offset..end))
-            != Some(expected)
-        {
+        if state.read(offset, expected.len()).as_deref() != Some(expected) {
             return Ok(AsyncWait::Immediate(WaitResult::NotEqual));
         }
         if zero_timeout {

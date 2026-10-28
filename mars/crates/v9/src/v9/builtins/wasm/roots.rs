@@ -60,6 +60,10 @@ impl Roots {
         self.values = values;
         vm.collect_if_needed()
     }
+    /** The stable root slot bounds cleanup of temporary pins in resumable drivers. */
+    pub(super) fn pin_floor(&self) -> usize {
+        self.object.map_or(0, |(_, pin)| pin + 1)
+    }
     /** Clear only this scope's pin, preserving roots owned by callbacks and enclosing native calls. */
     pub(super) fn release(&mut self, vm: &mut Vm) {
         if let Some((_, pin)) = self.object.take() {

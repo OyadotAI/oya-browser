@@ -18,7 +18,7 @@ pub(super) fn install(builder: &mut Builder, prototype: ObjectId) {
 fn transfer(vm: &mut Vm, call: Call, preserve: bool, immutable: bool) -> Res<JsValue> {
     let id = this_buffer(vm, &call)?;
     let length = if matches!(call.arg(0), JsValue::Undefined) {
-        buffer_bytes(vm, id).map_or(0, Vec::len)
+        storage_len(vm, id).unwrap_or(0)
     } else {
         to_index(vm, &call.arg(0), "ArrayBuffer transfer length")?
     };
@@ -32,7 +32,9 @@ fn transfer(vm: &mut Vm, call: Call, preserve: bool, immutable: bool) -> Res<JsV
     if length > BUFFER_BYTES || maximum.is_some_and(|maximum| length > maximum) {
         return Err(vm.range_error("Invalid ArrayBuffer transfer length"));
     }
-    let mut bytes = buffer_bytes(vm, id).cloned().unwrap_or_default();
+    let existing = storage_len(vm, id).unwrap_or(0).min(length);
+    let mut bytes = read_range(vm, id, 0, existing)
+        .ok_or_else(|| vm.range_error("Invalid ArrayBuffer transfer length"))?;
     bytes.resize(length, 0);
     let output = new_buffer(vm, bytes)?;
     if let Some(maximum) = maximum {

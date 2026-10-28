@@ -13,6 +13,8 @@ mod compile_limits;
 mod constants;
 mod diagnostics;
 mod exceptions;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use exceptions::{exception_tag_id, exception_values};
 mod execute;
 mod gc;
 mod gc_types;
@@ -21,6 +23,8 @@ mod imports;
 mod instance;
 mod jspi;
 mod memory;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use memory::force_detach as wasm_force_detach;
 mod numeric;
 mod prototypes;
 mod roots;
@@ -43,8 +47,8 @@ use constants::*;
 use types::{Error, Module, Type};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use worker::{
-    WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_module, wasm_worker_opaque,
-    wasm_worker_restore, wasm_worker_restore_memory,
+    WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_memory_buffer,
+    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore, wasm_worker_restore_memory,
 };
 
 /** Static identities do not hold page objects or authority. */
@@ -115,12 +119,24 @@ pub(super) fn install(b: &mut Builder) {
         ("exports", 1, module_exports),
         ("customSections", 2, custom_sections),
     ] {
-        b.method(ctor, name, arity, body);
+        let method = b.method(ctor, name, arity, body);
+        b.value(
+            ctor,
+            name,
+            JsValue::Object(method),
+            HIDDEN_ATTRS | crate::v9::vm::heap::ENUMERABLE,
+        );
     }
     let instance = b.object(Some(b.ids.object_prototype));
     let ctor = b.constructor("Instance", 1, instance::construct, instance, None);
     b.alias(namespace, "Instance", ctor);
-    b.builtin_accessor(instance, "exports", Some(instance::exports), None);
+    b.builtin_accessor_with_attrs(
+        instance,
+        "exports",
+        Some(instance::exports),
+        None,
+        crate::v9::vm::heap::CONFIGURABLE | crate::v9::vm::heap::ENUMERABLE,
+    );
     let memory = memory::install(b, namespace);
     let table = table::install(b, namespace);
     let global = global::install(b, namespace);
@@ -149,7 +165,13 @@ pub(super) fn install(b: &mut Builder) {
         ("compile", 1, compile_api),
         ("instantiate", 1, instantiate_api),
     ] {
-        b.method(namespace, name, arity, body);
+        let method = b.method(namespace, name, arity, body);
+        b.value(
+            namespace,
+            name,
+            JsValue::Object(method),
+            HIDDEN_ATTRS | crate::v9::vm::heap::ENUMERABLE,
+        );
     }
     let _ = IDS.set(Ids {
         module,
@@ -261,6 +283,15 @@ fn trap(vm: &mut Vm, message: &str) -> Thrown {
     }
     error
 }
+/** The test intrinsic throws a real stack overflow that Wasm catch_all cannot intercept. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn forced_stack_overflow(vm: &mut Vm) -> Thrown {
+    let error = vm.range_error("Maximum call stack size exceeded");
+    if let Thrown::Value(JsValue::Object(id)) = &error {
+        set(vm, *id, "wasm.trap", JsValue::Boolean(true));
+    }
+    error
+}
 /** Import failures are link errors; user getter exceptions are propagated before this helper. */
 fn link(vm: &mut Vm, message: &str) -> Thrown {
     failure(vm, ids(vm).link_error, message)
@@ -298,15 +329,17 @@ fn brand(vm: &mut Vm, value: &JsValue, name: &str) -> Res<ObjectId> {
 /** BufferSource accepts actual buffers and actual views, preserving their byte offset and size. */
 fn bytes(vm: &mut Vm, value: &JsValue) -> Res<Vec<u8>> {
     let Some(id) = value.object() else {
-        return Err(vm.type_error("WebAssembly requires an ArrayBuffer or typed array"));
+        return Err(buffer_source_error(vm));
     };
     let range = match vm.heap.get(id).map(|o| &o.class) {
         Some(Class::ArrayBuffer(bytes)) => return Ok(bytes.0.clone()),
+        Some(Class::SparseWasmBuffer(bytes)) => {
+            return bytes.read(0, bytes.length).ok_or_else(|| {
+                crate::protocol::EngineError::limit("V9 buffer resident bytes", BUFFER_BYTES).into()
+            });
+        }
         Some(Class::View(_)) => {
             let view = super::view_of(vm, id).unwrap();
-            if view.kind == crate::v9::vm::data::ElementKind::DataView {
-                return Err(vm.type_error("WebAssembly requires an ArrayBuffer or typed array"));
-            }
             if view.invalid {
                 return Ok(vec![]);
             }
@@ -319,7 +352,7 @@ fn bytes(vm: &mut Vm, value: &JsValue) -> Res<Vec<u8>> {
         _ => None,
     };
     let Some((buffer, offset, length)) = range else {
-        return Err(vm.type_error("WebAssembly requires an ArrayBuffer or typed array"));
+        return Err(buffer_source_error(vm));
     };
     match vm.heap.get(buffer).map(|o| &o.class) {
         Some(Class::ArrayBuffer(bytes)) => bytes
@@ -330,8 +363,19 @@ fn bytes(vm: &mut Vm, value: &JsValue) -> Res<Vec<u8>> {
         Some(Class::SharedArrayBuffer(bytes)) => bytes
             .read(offset, length)
             .ok_or_else(|| vm.type_error("out-of-bounds WebAssembly input buffer")),
+        Some(Class::SparseWasmBuffer(bytes)) => bytes.read(offset, length).ok_or_else(|| {
+            crate::protocol::EngineError::limit("V9 buffer resident bytes", BUFFER_BYTES).into()
+        }),
         _ => Err(vm.type_error("invalid WebAssembly input buffer")),
     }
+}
+/** Native argument failures get their own API prefix without rewriting authored exceptions. */
+fn buffer_source_error(vm: &mut Vm) -> Thrown {
+    let error = vm.type_error("Argument 0 must be a buffer source");
+    if let Thrown::Value(JsValue::Object(id)) = &error {
+        set(vm, *id, "wasm.compile.native", JsValue::Boolean(true));
+    }
+    error
 }
 /** Byte buffers use the same concrete type and quota as every JS typed array. */
 fn buffer(vm: &mut Vm, bytes: Vec<u8>) -> Res<ObjectId> {
@@ -348,7 +392,8 @@ fn module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
     let object = brand(vm, value, MODULE)?;
     let record = get(vm, object, MODULE).unwrap();
     let bytes = bytes(vm, &record)?;
-    let module = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+    let mut module = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+    module.wasmfx_enabled = get(vm, object, "wasm.feature.wasmfx") == Some(JsValue::Boolean(true));
     Ok((object, module))
 }
 /** Construct one immutable module from a byte copy, retaining no compiled code in page state. */
@@ -370,6 +415,129 @@ fn make_module(
     let options = imports::options(vm, options)?;
     finish_module(vm, bytes, options, new_target)
 }
+/** Shell conformance uses the test's explicit experimental feature flags. */
+fn stringref_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_stringref;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** The d8 proposal is enabled only by its feature flag or an implying interop flag. */
+fn custom_descriptors_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_custom_descriptors;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** Shell test metadata controls acquire/release binary encodings. */
+fn acquire_release_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_acquire_release;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** Shell metadata controls scalar and SIMD binary16 instructions. */
+fn fp16_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_fp16;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** Interop is independently gated from custom descriptor binary syntax. */
+fn js_interop_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_js_interop;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** Shell metadata controls the wide-integer Wasm proposal. */
+fn wide_arithmetic_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_wide_arithmetic;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
+}
+/** Mixed exception encodings are available only under the testing flag. */
+fn allow_mixed_eh(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return vm.page.environment.conformance_d8
+            && vm.page.environment.conformance_wasm_allow_mixed_eh;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        false
+    }
+}
+/** Stack-switching forms are experimental and remain disabled outside the test host. */
+fn wasmfx_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_wasmfx;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        false
+    }
+}
+/** Instance behavior follows the module's saved proposal state even after host restoration. */
+fn wasmfx_instance_enabled(vm: &Vm, instance: ObjectId) -> bool {
+    get(vm, instance, INSTANCE)
+        .and_then(|value| value.object())
+        .and_then(|module| get(vm, module, "wasm.feature.wasmfx"))
+        == Some(JsValue::Boolean(true))
+}
+/** A reentrant JS call must also observe an active WasmFX stack owned by another instance. */
+fn wasmfx_active(vm: &Vm) -> bool {
+    vm.native_activations.iter().any(|entry| match entry.kind {
+        crate::v9::vm::NativeKind::Wasm { instance, .. } => wasmfx_instance_enabled(vm, instance),
+        _ => false,
+    })
+}
+/** Shared-everything syntax is controlled by the shell feature, distinct from ordinary shared memory. */
+fn shared_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    { return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_shared; }
+    #[cfg(not(feature = "conformance"))]
+    { let _ = vm; true }
+}
 /** Copied inputs and inert options are the only accepted module construction state. */
 fn finish_module(
     vm: &mut Vm,
@@ -378,7 +546,18 @@ fn finish_module(
     new_target: Option<&JsValue>,
 ) -> Res<ObjectId> {
     compile_limits::check(vm, bytes.len(), false)?;
-    let parsed = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+    let parsed = binary::parse_with_features(
+        &bytes,
+        stringref_enabled(vm),
+        custom_descriptors_enabled(vm),
+        acquire_release_enabled(vm),
+        fp16_enabled(vm),
+        wide_arithmetic_enabled(vm),
+        allow_mixed_eh(vm),
+        wasmfx_enabled(vm),
+        shared_enabled(vm),
+    )
+    .map_err(|e| compile_failure(vm, e))?;
     let proto = match new_target {
         Some(t) => vm.prototype_for(t, ids(vm).module)?,
         None => ids(vm).module,
@@ -386,6 +565,12 @@ fn finish_module(
     let object = vm.alloc(Object::new(Class::Plain, Some(proto)))?;
     let bytes = buffer(vm, bytes)?;
     set(vm, object, MODULE, JsValue::Object(bytes));
+    set(
+        vm,
+        object,
+        "wasm.feature.wasmfx",
+        JsValue::Boolean(parsed.wasmfx_enabled),
+    );
     imports::store(vm, object, options)?;
     imports::validate(vm, object, &parsed)?;
     Ok(object)
@@ -407,7 +592,17 @@ fn validate_api(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     vm.charge(bytes.len())?;
     let options = imports::options(vm, &call.arg(1))?;
-    match binary::parse(&bytes) {
+    match binary::parse_with_features(
+        &bytes,
+        stringref_enabled(vm),
+        custom_descriptors_enabled(vm),
+        acquire_release_enabled(vm),
+        fp16_enabled(vm),
+        wide_arithmetic_enabled(vm),
+        allow_mixed_eh(vm),
+        wasmfx_enabled(vm),
+        shared_enabled(vm),
+    ) {
         Ok(m) => {
             let object = vm.new_object()?;
             imports::store(vm, object, options)?;
@@ -444,7 +639,7 @@ fn instantiate_api(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Exports retain the binary's declaration order. */
 fn module_exports(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, m) = module(vm, &call.arg(0))?;
+    let (_, m) = introspection_module(vm, &call.arg(0))?;
     let mut values = Vec::new();
     for export in m.exports {
         let object = vm.new_object()?;
@@ -457,7 +652,7 @@ fn module_exports(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Imports describe the actual module/name/kind triples the linker will resolve. */
 fn module_imports(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (module_id, m) = module(vm, &call.arg(0))?;
+    let (module_id, m) = introspection_module(vm, &call.arg(0))?;
     let mut values = Vec::new();
     for import in m.imports {
         if imports::selected(vm, module_id, &import) {
@@ -483,13 +678,32 @@ fn module_imports(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Custom section payloads are fresh ArrayBuffers, never aliases of the module's private bytes. */
 fn custom_sections(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, m) = module(vm, &call.arg(0))?;
+    if !call
+        .arg(0)
+        .object()
+        .is_some_and(|id| get(vm, id, MODULE).is_some())
+    {
+        return Err(vm.type_error(
+            "WebAssembly.Module.customSections(): Argument 0 must be a WebAssembly.Module",
+        ));
+    }
+    let (_, m) = introspection_module(vm, &call.arg(0))?;
     let name = arg_string(vm, &call, 1)?.lossy();
     let mut values = Vec::new();
     for (_, bytes) in m.custom.into_iter().filter(|(n, _)| *n == name) {
         values.push(JsValue::Object(buffer(vm, bytes)?))
     }
     Ok(JsValue::Object(vm.new_array(values)?))
+}
+/** Static introspection checks its module argument without consulting authored properties. */
+fn introspection_module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
+    if !value
+        .object()
+        .is_some_and(|id| get(vm, id, MODULE).is_some())
+    {
+        return Err(vm.type_error("Argument 0 must be a WebAssembly.Module"));
+    }
+    module(vm, value)
 }
 /** External kind names are shared by introspection and exports. */
 fn kind_name(kind: u8) -> &'static str {
@@ -543,6 +757,11 @@ pub(in crate::v9) fn validate_shared_gc(
     heap: &crate::v9::vm::heap::Heap,
 ) -> crate::protocol::EngineResult<()> {
     gc::shared::validate(heap)
+}
+/** Mixed shared arenas validate every Wasm record before cross-domain restoration. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn validate_shared_wasm_arena(arena: &crate::v9::vm::data::SharedGcArena) -> crate::protocol::EngineResult<()> {
+    gc::shared::validate_arena(arena)
 }
 /** Native sharing is restored only through grants; all other decoded graphs remain owned inert copies. */
 pub(in crate::v9) fn initialize_shared_gc(vm: &mut Vm) -> crate::protocol::EngineResult<()> {

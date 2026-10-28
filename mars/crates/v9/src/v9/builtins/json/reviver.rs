@@ -1,5 +1,5 @@
 /** JSON.parse reviver traversal and the immutable source snapshot behind each context. */
-use super::{Descriptor, FastMap, JsString, JsValue, Key, ObjectId, Res, Vm};
+use super::{Descriptor, FastMap, Input, JsValue, Key, ObjectId, Res, Vm};
 
 /** A parsed value and its exact token span, before any reviver can change the graph. */
 #[derive(Clone)]
@@ -19,7 +19,7 @@ pub(super) struct Snapshot {
 /** A bottom-up reviver walk and the unmodified source facts each callback may observe. */
 pub(super) struct Reviver<'a> {
     pub(super) function: JsValue,
-    pub(super) units: &'a [u16],
+    pub(super) units: Input<'a>,
     pub(super) snapshot: Snapshot,
 }
 
@@ -50,7 +50,7 @@ impl Reviver<'_> {
         }
         let context = vm.new_object()?;
         if let Some(parsed) = parsed.filter(|_| !matches!(value, JsValue::Object(_))) {
-            let source = JsString::from_units(self.units[parsed.start..parsed.end].to_vec())?;
+            let source = self.units.string_range(parsed.start, parsed.end)?;
             vm.put(context, "source", JsValue::String(source))?;
         }
         vm.call(

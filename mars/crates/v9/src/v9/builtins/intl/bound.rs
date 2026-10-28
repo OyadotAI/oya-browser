@@ -110,7 +110,8 @@ fn target(vm: &mut Vm, call: &Call, kind: &str) -> Res<IntlData> {
 fn bound_date_format(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let data = target(vm, &call, "DateTimeFormat")?;
     let time = super::time_value(vm, &call.arg(0))?;
-    super::text(vm, &super::format_date(vm, time, &data.options))
+    let formatted = super::format_date(vm, time, &data.options)?;
+    super::text(vm, &formatted)
 }
 
 /** The bound Collator `compare`: orders two strings with the collator's options. */

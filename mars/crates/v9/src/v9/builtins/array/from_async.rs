@@ -157,6 +157,8 @@ fn continue_with(
 /** The loop index. */
 fn index(state: &[JsValue]) -> f64 {
     match state[INDEX] {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(n) => n,
         JsValue::Number(n) => n,
         _ => 0.0,
     }
@@ -278,6 +280,8 @@ fn on_closed(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Array-like step: finish at the length, else read element k and await it. */
 fn step_value(vm: &mut Vm, state: Vec<JsValue>) -> Res<()> {
     let length = match state[LENGTH] {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(n) => n,
         JsValue::Number(n) => n,
         _ => 0.0,
     };

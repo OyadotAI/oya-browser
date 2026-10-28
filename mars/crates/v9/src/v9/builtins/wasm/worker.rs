@@ -40,6 +40,11 @@ pub(in crate::v9) fn wasm_worker_restore(vm: &mut Vm, packet: &WasmModulePacket)
         .transpose()?;
     finish_module(vm, packet.bytes.clone(), (selected, namespace), None).map(JsValue::Object)
 }
+/** Non-shared Wasm GC references have V8's inert ordinary-object diagnostic. */
+pub(in crate::v9) fn wasm_worker_nonshared_gc(vm: &Vm, value: &JsValue) -> bool {
+    value.object().is_some_and(|id| get(vm, id, "wasm.gc.module").is_some())
+}
+
 /** Other opaque wrappers cannot silently degrade to an empty ordinary object during structured cloning. */
 pub(in crate::v9) fn wasm_worker_opaque(vm: &Vm, value: &JsValue) -> bool {
     value.object().is_some_and(|id| {
@@ -93,6 +98,12 @@ pub(in crate::v9) fn wasm_worker_memory(vm: &Vm, value: &JsValue) -> Option<Wasm
         growable: matches!(vm.heap.get(storage).map(|o|&o.class),Some(Class::SharedArrayBuffer(bytes)) if bytes.wasm_maximum().is_some()),
     })
 }
+/** Retrieve the actual memory buffer without consulting user-overridable properties. */
+pub(in crate::v9) fn wasm_worker_memory_buffer(vm: &mut Vm, value: &JsValue) -> Res<ObjectId> {
+    let memory = value.object().ok_or_else(|| vm.type_error("invalid WebAssembly memory"))?;
+    let storage = super::memory::storage(vm, value)?;
+    shared_memory::refresh(vm, memory, storage)
+}
 /** Imported memory wrappers retain broker-authorized backing identity and normal receiver brands. */
 pub(in crate::v9) fn wasm_worker_restore_memory(
     vm: &mut Vm,
@@ -117,7 +128,7 @@ pub(in crate::v9) fn wasm_worker_restore_memory(
         packet.backing.fixed_view(packet.backing.backing_len())
     }
     .ok_or_else(|| vm.type_error("invalid shared Wasm memory window"))?;
-    let storage = super::super::import_shared_buffer(vm, visible)?;
+    let storage = shared_memory::wrapper(vm, visible)?;
     let memory = vm.alloc(Object::new(Class::Plain, Some(ids(vm).memory)))?;
     set(vm, memory, MEMORY, JsValue::Object(storage));
     address::mark(vm, memory, packet.address64);

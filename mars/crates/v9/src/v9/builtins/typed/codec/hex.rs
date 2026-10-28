@@ -10,8 +10,11 @@ fn decode(vm: &mut Vm, input: &JsString, capacity: usize) -> Res<(Vec<u8>, bool)
         return Err(vm.syntax_error("Invalid hexadecimal string"));
     }
     let mut output = Vec::with_capacity(capacity.min(input.len() / 2));
-    for pair in input.as_units().chunks_exact(2).take(capacity) {
-        let (Some(high), Some(low)) = (digit(pair[0]), digit(pair[1])) else {
+    for index in 0..capacity.min(input.len() / 2) {
+        let (Some(high), Some(low)) = (
+            input.unit_at(index * 2).and_then(digit),
+            input.unit_at(index * 2 + 1).and_then(digit),
+        ) else {
             return Ok((output, false));
         };
         output.push(high * 16 + low);

@@ -497,6 +497,87 @@ impl Parser {
         let token = self.peek().clone();
         self.strict_literal(&token)?;
         let kind = match token.kind {
+            #[cfg(feature = "conformance")]
+            Kind::Operator(crate::v9::operator::Operator::Remainder) if self.native_fixture => {
+                self.next();
+                let name = self.next();
+                let Kind::Name(name) = name.kind else {
+                    return Err(self.unexpected());
+                };
+                let (intrinsic, count) = match name.as_str() {
+                    "AbortJS" => (0, 1),
+                    "PerformMicrotaskCheckpoint" => (1, 0),
+                    "ArrayBufferDetach" => (2, 1),
+                    "Is64Bit" => (3, 0),
+                    "ToLength" => (4, 1),
+                    "AtomicsSynchronizationPrimitiveNumWaitersForTesting" => (5, 1),
+                    "IsJSReceiver" => (6, 1),
+                    "IsArray" => (7, 1),
+                    "ToBoolean" => (8, 1),
+                    "Typeof" => (9, 1),
+                    "ToName" => (10, 1),
+                    "CreateIterResultObject" => (11, 2),
+                    "GetWeakCollectionSize" => (13, 1),
+                    "AtomicsNumWaitersForTesting" => (14, 2),
+                    "AtomicsNumUnresolvedAsyncPromisesForTesting" => (15, 2),
+                    "SetAllowAtomicsWait" => (16, 1),
+                    "IsAtomicsWaitAllowed" => (17, 0),
+                    "IsSharedString" => (18, 1),
+                    "IsSameHeapObject" => (19, 2),
+                    "SharedGC" => (20, 0),
+                    "GetInitializerFunction" => (21, 1),
+                    "ArrayBufferDetachForceWasm" => (22, 1),
+                    "GetWasmExceptionTagId" => (23, 2),
+                    "GetWasmExceptionValues" => (24, 1),
+                    "ThrowStackOverflow" => (25, 0),
+                    "StringMaxLength" => (26, 0),
+                    "ShareObject" => (27, 1),
+                    "IsInWritableSharedSpace" => (28, 1),
+                    "ConstructConsString" => (31, 2),
+                    "ConstructSlicedString" => (32, 2),
+                    "FlattenString" => (35, 1),
+                    "InYoungGeneration" => (36, 1),
+                    "InternalizeString" => (37, 1),
+                    "ConstructInternalizedString" => (38, 1),
+                    "ConstructThinString" => (39, 1),
+                    "AllocateHeapNumber" => (42, 0),
+                    "IsSmi" => (43, 1),
+                    "AllocateHeapNumberWithValue" => (44, 1),
+                    "MaxSmi" => (46, 0),
+                    "ArrayBufferMaxByteLength" => (47, 0),
+                    _ => {
+                        return Err(crate::protocol::EngineError::unsupported(&format!(
+                            "V8 native intrinsic %{name}"
+                        )));
+                    }
+                };
+                let args = self.arguments()?;
+                let intrinsic = if intrinsic == 44 && args.len() != 1 {
+                    45
+                } else if intrinsic == 38 && args.len() != 1 {
+                    41
+                } else if intrinsic == 39 && args.len() != 1 {
+                    40
+                } else if intrinsic == 31 && args.len() != 2 {
+                    33
+                } else if intrinsic == 32 && args.len() != 2 {
+                    34
+                } else if intrinsic == 27 && args.is_empty() {
+                    29
+                } else if intrinsic == 27 && args.len() > 1 {
+                    30
+                } else if intrinsic == 2 && args.len() == 2 {
+                    12
+                } else {
+                    intrinsic
+                };
+                if (args.len() != count && !matches!(intrinsic, 12 | 29 | 30 | 33 | 34 | 40 | 41 | 45))
+                    || args.iter().any(|arg| !matches!(arg, Element::Value(_)))
+                {
+                    return Err(self.error_at(pos, "Invalid V8 intrinsic arguments"));
+                }
+                ExprKind::NativeIntrinsic(intrinsic, args)
+            }
             Kind::Number(value) => {
                 self.next();
                 ExprKind::Number(value)

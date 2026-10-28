@@ -100,6 +100,8 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             data(vm, id, "callSitePromiseAll") == JsValue::Boolean(true),
         )),
         "getPromiseIndex" => Ok(match data(vm, id, "callSitePromiseIndex") {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(index) => JsValue::Number(index),
             JsValue::Number(index) => JsValue::Number(index),
             _ => JsValue::Null,
         }),
@@ -141,7 +143,7 @@ fn nullable_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
         return Ok(JsValue::String(name));
     }
     match data(vm, id, "callSiteName") {
-        JsValue::String(name) if !name.as_units().is_empty() => Ok(JsValue::String(name)),
+        JsValue::String(name) if !name.is_empty() => Ok(JsValue::String(name)),
         _ if data(vm, id, "callSiteEval") == JsValue::Boolean(true) => Ok(JsValue::string("eval")?),
         _ => Ok(data(vm, id, "callSiteFunction")
             .object()
@@ -294,6 +296,8 @@ fn installs(slot: &Slot, callee: ObjectId) -> bool {
 /** Default formatting uses the same actual source coordinates exposed by the numeric accessors. */
 fn render(vm: &Vm, id: ObjectId) -> String {
     let number = |key| match data(vm, id, key) {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(value) => Some(value as u32),
         JsValue::Number(value) => Some(value as u32),
         _ => None,
     };
@@ -309,6 +313,8 @@ fn render(vm: &Vm, id: ObjectId) -> String {
     }
     if data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
         let index = match data(vm, id, "callSiteFunction") {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(index) => index as u32,
             JsValue::Number(index) => index as u32,
             _ => 0,
         };

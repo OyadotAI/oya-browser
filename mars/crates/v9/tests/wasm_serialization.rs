@@ -95,6 +95,20 @@ fn streaming_source_rejections_preserve_error_identity() {
     );
 }
 
+/** The shell exposes streaming only when its embedder callback is installed. */
+#[test]
+fn streaming_methods_follow_shell_callback_configuration() {
+    let source = "let r=[typeof WebAssembly.compileStreaming,typeof WebAssembly.instantiateStreaming].join()";
+    let mut environment = common::environment();
+    environment.conformance_d8 = true;
+    environment.conformance_wasm_test_streaming = Some(false);
+    let disabled = common::load_with(source, &environment);
+    assert_eq!(common::global(&disabled, "r"), "undefined,undefined");
+    environment.conformance_wasm_test_streaming = Some(true);
+    let enabled = common::load_with(source, &environment);
+    assert_eq!(common::global(&enabled, "r"), "function,function");
+}
+
 /** Original shell flags may reduce capacity without changing table brands or runtime return conventions. */
 #[test]
 fn explicit_table_capacity_limits_actual_growth() {
@@ -113,14 +127,14 @@ fn explicit_table_capacity_limits_actual_growth() {
     assert_eq!(common::global(&execution, "r"), "1,true,3");
 }
 
-/** A larger requested table limit cannot raise the engine's existing resident-array ceiling. */
+/** A larger shell flag cannot raise the bounded logical table ceiling. */
 #[test]
 fn explicit_table_capacity_cannot_raise_native_limits() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     environment.conformance_wasm_max_table_entries = Some(usize::MAX);
     let execution = common::load_with(
-        "let r=false;try{new WebAssembly.Table({element:'externref',initial:262145})}catch(e){r=e instanceof RangeError}",
+        "let r=false;try{new WebAssembly.Table({element:'externref',initial:10000001})}catch(e){r=e instanceof RangeError}",
         &environment,
     );
     assert!(
@@ -129,4 +143,33 @@ fn explicit_table_capacity_cannot_raise_native_limits() {
         common::failure(&execution)
     );
     assert_eq!(common::global(&execution, "r"), "true");
+}
+
+/** Sparse table slots still obey the ordinary resident-array quota. */
+#[test]
+fn sparse_table_writes_cannot_exceed_resident_array_limit() {
+    let execution = common::load(
+        "const table=new WebAssembly.Table({element:'externref',initial:300000});for(let i=0;i<262145;i++)table.set(i,i)",
+    );
+    let failure = common::failure(&execution).unwrap_or_default();
+    assert!(failure.contains("V9 resident array elements"), "{failure}");
+}
+
+/** Large table32 ranges retain fill identity and sparse overrides after state restoration. */
+#[test]
+fn sparse_table32_values_survive_state_restoration() {
+    let sources = ["const value={},other={},t=new WebAssembly.Table({element:'externref',initial:300000},value);t.set(200000,other);t.grow(5,other);let r='';setTimeout(()=>{r=[t.length,t.get(1)===value,t.get(200000)===other,t.get(300004)===other].join()},1)".to_string()];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let result = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        2.0,
+        1,
+    )
+    .unwrap();
+    assert!(result.failed.is_empty(), "{:?}", common::failure(&result));
+    assert_eq!(common::global(&result, "r"), "300005,true,true,true");
 }

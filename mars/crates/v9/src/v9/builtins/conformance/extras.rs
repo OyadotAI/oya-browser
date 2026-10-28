@@ -98,7 +98,7 @@ fn trace(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Phase, name, id and name length are checked before the data argument is serialized. */
 fn check_event(vm: &mut Vm, call: &Call) -> Res<()> {
-    if !matches!(call.arg(0), JsValue::Number(_)) {
+    if call.arg(0).number_value().is_none() {
         return Err(vm.type_error(PHASE_ERROR));
     }
     let JsValue::String(name) = call.arg(2) else {

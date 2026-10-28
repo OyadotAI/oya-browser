@@ -53,6 +53,18 @@ fn values(
             return Err(vm.type_error("invalid array data storage"));
         }
         let bytes = super::super::segments::data(vm, instance, m, args[1] as u32)?;
+        if op == 9 {
+            super::super::segments::range(
+                vm,
+                offset,
+                0,
+                bytes.len(),
+                "data segment out of bounds",
+            )?;
+            if count > vm.limits.array_length {
+                return Err(trap(vm, "requested new array is too large"));
+            }
+        }
         let length = count
             .checked_mul(size)
             .ok_or_else(|| trap(vm, "data segment out of bounds"))?;
@@ -69,19 +81,17 @@ fn values(
             .map(|b| decode(field, b))
             .collect()
     } else {
-        let elements = super::super::segments::elements(vm, instance, m, args[1] as u32)?;
-        let range = super::super::segments::range(
+        let (cache, range) = super::super::segments::element_range(
             vm,
+            instance,
+            m,
+            args[1] as u32,
             offset,
             count,
-            elements.len(),
-            "element segment is out of bounds",
+            "element segment out of bounds",
         )?;
         vm.charge(count)?;
-        elements[range]
-            .iter()
-            .map(|c| instance::constant_value(vm, instance, c))
-            .collect()
+        super::super::segments::element_values(vm, cache, range)
     }
 }
 /** new_data/new_elem allocate only after the complete initializer range has validated. */
@@ -96,6 +106,9 @@ pub(super) fn run(
     let count = numeric::i32_value(&numeric::pop(stack)?)? as u32 as usize;
     let source = numeric::i32_value(&numeric::pop(stack)?)? as u32 as usize;
     if op == 9 || op == 10 {
+        if op == 10 && count > vm.limits.array_length {
+            return Err(trap(vm, "requested new array is too large"));
+        }
         let values = values(vm, instance, m, op, args, source, count)?;
         stack.push(allocate(vm, instance, args[0] as u32, true, values)?)
     } else {

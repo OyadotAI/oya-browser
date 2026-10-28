@@ -1,5 +1,5 @@
 /** Structural and stack typing for every instruction the owned Wasm interpreter accepts. */
-use super::{gc_types, types::*};
+use super::{constants::MAX_EXPORT_DIAGNOSTIC_BYTES, gc_types, types::*};
 
 /** Operand typing within one control frame; unreachable code has a polymorphic empty stack. */
 #[derive(Clone)]
@@ -9,14 +9,18 @@ struct Stack<'a> {
     caught: Vec<usize>,
     values: Vec<Type>,
     producers: Vec<&'static str>,
+    offsets: Vec<Option<usize>>,
     current: &'static str,
     last: &'static str,
+    current_offset: Option<usize>,
+    last_offset: Option<usize>,
     unreachable: bool,
 }
 impl Stack<'_> {
     /** Pop a typed value, preserving polymorphism only after an unconditional transfer. */
     fn pop(&mut self) -> Result<Option<Type>, Error> {
         self.last = self.producers.pop().unwrap_or("expression");
+        self.last_offset = self.offsets.pop().flatten();
         match self.values.pop() {
             Some(t) => Ok(Some(t)),
             None if self.unreachable => Ok(None),
@@ -28,6 +32,24 @@ impl Stack<'_> {
         if let Some(got) = self.pop()?
             && !gc_types::subtype(self.module, got, ty)
         {
+            if matches!(ty, Type::Exact(index, _) if index >= 0 && matches!(self.module.definitions.get(index as usize).map(|d| &d.kind), Some(gc_types::Kind::Continuation(_))))
+            {
+                return Err(Error::invalid(&format!(
+                    "type error: expected {}, got {}",
+                    ty.display(),
+                    got.display()
+                )));
+            }
+            if matches!(got, Type::Shared(..)) || matches!(ty, Type::Shared(..)) {
+                return Err(Error::invalid(&format!("expected {}, got {}", ty.display(), got.display())));
+            }
+            if self.last == "block parameter" {
+                return Err(Error::invalid(&format!(
+                    "expected {}, got {}",
+                    ty.display(),
+                    got.display()
+                )));
+            }
             return Err(Error::invalid(&format!(
                 "expected type {}, found {} of type {}",
                 ty.display(),
@@ -40,7 +62,8 @@ impl Stack<'_> {
     /** Every operand records the instruction that actually produced it. */
     fn push(&mut self, ty: Type) {
         self.values.push(ty);
-        self.producers.push(self.current)
+        self.producers.push(self.current);
+        self.offsets.push(self.current_offset)
     }
     /** Block signatures and call results share the same provenance-preserving append path. */
     fn extend<I>(&mut self, values: I)
@@ -53,11 +76,20 @@ impl Stack<'_> {
             self.push(*ty)
         }
     }
-    /** Branch operands retain their declared order in diagnostics, including unreachable polymorphism. */
-    fn branch(&mut self, types: &[Type]) -> Result<(), Error> {
+    /** Each br_table target inspects the untouched stack without copying large local state. */
+    fn check_branch(&self, types: &[Type]) -> Result<(), Error> {
         for (index, ty) in types.iter().enumerate().rev() {
-            if let Some(got) = self.pop()?
-                && !gc_types::subtype(self.module, got, *ty)
+            let position = types.len() - 1 - index;
+            let got = self
+                .values
+                .len()
+                .checked_sub(position + 1)
+                .and_then(|at| self.values.get(at));
+            if got.is_none() && !self.unreachable {
+                return Err(Error::invalid("WebAssembly operand stack underflow"));
+            }
+            if let Some(got) = got
+                && !gc_types::subtype(self.module, *got, *ty)
             {
                 return Err(Error::invalid(&format!(
                     "type error in branch[{index}] (expected {}, got {})",
@@ -89,13 +121,17 @@ impl Stack<'_> {
     fn stop(&mut self) {
         self.values.clear();
         self.producers.clear();
+        self.offsets.clear();
         self.unreachable = true;
     }
 }
 
 /** All declarations and bodies are checked before any start function or import can execute. */
-pub(super) fn module(m: &Module) -> Result<(), Error> {
+pub(super) fn module(m: &Module, allow_mixed_eh: bool) -> Result<(), Error> {
     gc_types::validate(m)?;
+    if !allow_mixed_eh {
+        validate_exception_modes(m)?;
+    }
     if m.data_count.is_some_and(|n| n as usize != m.data.len()) {
         return Err(Error::invalid("data count and data section lengths differ"));
     }
@@ -112,7 +148,7 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
         }
     }
     for index in super::exceptions::tag_types(m) {
-        if !matches!(m.definitions.get(index as usize).map(|d|&d.kind),Some(gc_types::Kind::Function(sig))if sig.results.is_empty())
+        if !matches!(m.definitions.get(index as usize).map(|d|&d.kind),Some(gc_types::Kind::Function(sig))if m.wasmfx_enabled || sig.results.is_empty())
         {
             return Err(Error::invalid(
                 "tag type must be a function without results",
@@ -124,7 +160,9 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
     let memories = memory_count(m);
     for (ty, _, value) in &m.tables {
         match value {
-            Some(value) if !gc_types::subtype(m, constant_type(m, value, true)?, *ty) => {
+            Some(value)
+                if !gc_types::subtype(m, constant_type(m, value, Some(usize::MAX))?, *ty) =>
+            {
                 return Err(Error::invalid("table initializer type mismatch"));
             }
             None if !gc_types::defaultable(*ty) => {
@@ -144,16 +182,61 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
         if element.ty.reference().is_none() {
             return Err(Error::invalid("element segment requires a reference type"));
         }
+        if let Some(table) = element.table {
+            let ty = *tables
+                .get(table as usize)
+                .ok_or_else(|| Error::invalid("unknown element table"))?;
+            if !gc_types::subtype(m, element.ty, ty) {
+                return Err(Error::invalid(
+                    "Element segment type is not a subtype of referenced table",
+                ));
+            }
+        }
         for value in &element.values {
-            if !gc_types::subtype(m, constant_type(m, value, true)?, element.ty) {
-                return Err(Error::invalid("element initializer type mismatch"));
+            let actual = constant_type(m, value, Some(usize::MAX))?;
+            if !gc_types::subtype(m, actual, element.ty) {
+                let display = match actual {
+                    Type::Exact(heap, nullable) => Type::Ref(heap, nullable),
+                    other => other,
+                };
+                return Err(Error::invalid(&format!(
+                    "expected {}, got {}",
+                    element.ty.display(),
+                    display.display()
+                )));
             }
         }
     }
-    let mut names = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeMap::new();
     for export in &m.exports {
-        if !names.insert(&export.name) {
-            return Err(Error::invalid("duplicate export name"));
+        if let Some(previous) = names.insert(&export.name, export) {
+            let mut end = MAX_EXPORT_DIAGNOSTIC_BYTES
+                .saturating_sub(3)
+                .min(export.name.len());
+            while !export.name.is_char_boundary(end) {
+                end -= 1;
+            }
+            let name = if export.name.len() > MAX_EXPORT_DIAGNOSTIC_BYTES {
+                format!("{}...", &export.name[..end])
+            } else {
+                export.name.clone()
+            };
+            let kind = |k| match k {
+                0 => "function",
+                1 => "table",
+                2 => "memory",
+                3 => "global",
+                4 => "tag",
+                _ => "unknown",
+            };
+            return Err(Error::invalid(&format!(
+                "Duplicate export name '{name}' for {} {} and {} {}",
+                kind(previous.kind),
+                previous.index,
+                kind(export.kind),
+                export.index
+            ))
+            .at(export.name_offset));
         }
         let bound = match export.kind {
             0 => function_types.len(),
@@ -167,8 +250,13 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
             return Err(Error::invalid("unknown export index"));
         }
     }
+    let imported_globals = m
+        .imports
+        .iter()
+        .filter(|i| matches!(i.kind, External::Global(..)))
+        .count();
     for (i, (ty, _, value)) in m.globals.iter().enumerate() {
-        let t = constant_type(m, value, true)?;
+        let t = constant_type(m, value, Some(imported_globals + i))?;
         if !gc_types::subtype(m, t, *ty) {
             return Err(Error::invalid("global initializer type mismatch"));
         }
@@ -190,7 +278,7 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
             if data
                 .offset
                 .as_ref()
-                .map(|v| constant_type(m, v, true))
+                .map(|v| constant_type(m, v, Some(usize::MAX)))
                 .transpose()?
                 != Some(super::address::ty(m, memory)?)
             {
@@ -209,14 +297,16 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
             if element
                 .offset
                 .as_ref()
-                .map(|v| constant_type(m, v, true))
+                .map(|v| constant_type(m, v, Some(usize::MAX)))
                 .transpose()?
-                != Some(Type::I32)
+                != Some(super::table::address_type(m, table)?)
             {
-                return Err(Error::invalid("element offset must be i32"));
+                return Err(Error::invalid(
+                    "element offset must match table address type",
+                ));
             }
             for value in &element.values {
-                if !gc_types::subtype(m, constant_type(m, value, true)?, ty) {
+                if !gc_types::subtype(m, constant_type(m, value, Some(usize::MAX))?, ty) {
                     return Err(Error::invalid("element initializer type mismatch"));
                 }
             }
@@ -238,8 +328,11 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
             caught: vec![],
             values: Vec::new(),
             producers: vec![],
+            offsets: vec![],
             current: "expression",
             last: "expression",
+            current_offset: None,
+            last_offset: None,
             unreachable: false,
         };
         let mut labels = vec![sig.results.clone()];
@@ -251,7 +344,16 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
             &sig.results,
             &mut stack,
         )
-        .and_then(|()| stack.finish(&sig.results));
+        .and_then(|()| {
+            if !stack.unreachable && stack.values.len() < sig.results.len() {
+                return Err(Error::invalid(&format!(
+                    "expected {} elements on the stack for fallthru, found {}",
+                    sig.results.len(),
+                    stack.values.len()
+                )));
+            }
+            stack.finish(&sig.results)
+        });
         let function = (m.imported_functions() + index) as u32;
         result.map_err(|error| {
             error
@@ -260,6 +362,71 @@ pub(super) fn module(m: &Module) -> Result<(), Error> {
         })?;
     }
     Ok(())
+}
+
+/** The module cannot combine legacy exception constructs with exnref instructions. */
+fn validate_exception_modes(m: &Module) -> Result<(), Error> {
+    fn has_exnref(ty: Type) -> bool {
+        ty.reference()
+            .is_some_and(|(heap, _)| matches!(heap, -23 | -12))
+    }
+    fn signature(sig: &Signature) -> bool {
+        sig.params
+            .iter()
+            .chain(&sig.results)
+            .copied()
+            .any(has_exnref)
+    }
+    fn visit(code: &[Instruction], legacy: &mut bool, modern: &mut bool) {
+        for instruction in code {
+            match instruction {
+                Instruction::Located(_, inner) => {
+                    visit(std::slice::from_ref(inner.as_ref()), legacy, modern)
+                }
+                Instruction::Try(sig, body, handlers) => {
+                    *legacy = true;
+                    *modern |= signature(sig);
+                    visit(body, legacy, modern);
+                    for (_, body) in handlers {
+                        visit(body, legacy, modern);
+                    }
+                }
+                Instruction::Delegate(sig, body, _) => {
+                    *legacy = true;
+                    *modern |= signature(sig);
+                    visit(body, legacy, modern);
+                }
+                Instruction::Rethrow(_) => *legacy = true,
+                Instruction::ThrowRef => *modern = true,
+                Instruction::TryTable(sig, _, body) => {
+                    *modern = true;
+                    *modern |= signature(sig);
+                    visit(body, legacy, modern);
+                }
+                Instruction::Block(_, sig, body, otherwise) => {
+                    *modern |= signature(sig);
+                    visit(body, legacy, modern);
+                    visit(otherwise, legacy, modern);
+                }
+                Instruction::Constant(Constant::Null(ty)) | Instruction::Select(ty) => {
+                    *modern |= has_exnref(*ty)
+                }
+                _ => (),
+            }
+        }
+    }
+    let (mut legacy, mut modern) = (false, false);
+    for body in &m.bodies {
+        modern |= body.locals.iter().copied().any(has_exnref);
+        visit(&body.code, &mut legacy, &mut modern);
+    }
+    if legacy && modern {
+        Err(Error::invalid(
+            "module uses a mix of legacy and new exception handling instructions",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /** Global index space is imported globals followed by declared globals. */
@@ -292,8 +459,8 @@ pub(super) fn memory_count(m: &Module) -> usize {
         .count()
         + m.memories.len()
 }
-/** Constant global reads may only reference imported immutable globals. */
-fn constant_type(m: &Module, value: &Constant, initializer: bool) -> Result<Type, Error> {
+/** Initializers may only read immutable globals already constructed in the current instance. */
+fn constant_type(m: &Module, value: &Constant, initializer: Option<usize>) -> Result<Type, Error> {
     Ok(match value {
         Constant::Expression(code) => constant_expression_type(m, code, initializer)?,
         Constant::I32(_) => Type::I32,
@@ -307,21 +474,24 @@ fn constant_type(m: &Module, value: &Constant, initializer: bool) -> Result<Type
         }
         Constant::Function(i) => {
             m.signature(*i)?;
-            Type::Ref(i64::from(m.function_type(*i)?), false)
+            let ty = i64::from(m.function_type(*i)?);
+            if m.exact_function(*i) {
+                Type::Exact(ty, false)
+            } else {
+                Type::Ref(ty, false)
+            }
         }
         Constant::Global(i) => {
             let globals = global_types(m);
             let (t, mutable) = *globals
                 .get(*i as usize)
                 .ok_or_else(|| Error::invalid("unknown initializer global"))?;
-            let imported = m
-                .imports
-                .iter()
-                .filter(|i| matches!(i.kind, External::Global(..)))
-                .count();
-            if initializer && (*i as usize >= imported || mutable) {
+            if initializer.is_some_and(|limit| *i as usize >= limit) {
+                return Err(Error::invalid("initializer global must already be defined"));
+            }
+            if initializer.is_some() && mutable {
                 return Err(Error::invalid(
-                    "initializer global must be imported and immutable",
+                    "mutable globals cannot be used in constant expressions",
                 ));
             }
             t
@@ -353,25 +523,41 @@ fn sequence(
             s.current = super::diagnostics::producer(instruction)
         }
         match instruction {
-            Instruction::Located(position, inner) => sequence(
-                m,
-                std::slice::from_ref(inner.as_ref()),
-                locals,
-                labels,
-                returns,
-                s,
-            )
-            .map_err(|error| error.at(*position))?,
-            Instruction::Constant(c) => s.push(constant_type(m, c, false)?),
+            Instruction::Located(position, inner) => {
+                s.current_offset = Some(*position);
+                sequence(
+                    m,
+                    std::slice::from_ref(inner.as_ref()),
+                    locals,
+                    labels,
+                    returns,
+                    s,
+                )
+                .map_err(|error| error.at(*position))?;
+            }
+            Instruction::Constant(c) => s.push(constant_type(m, c, None)?),
             Instruction::Local(op, index) => {
-                let t = *locals
-                    .get(*index as usize)
-                    .ok_or_else(|| Error::invalid(&format!("invalid local index: {index}")))?;
+                let t = *locals.get(*index as usize).ok_or_else(|| {
+                    let mut error = Error::invalid(&format!("invalid local index: {index}"));
+                    if let Some(offset) = s.current_offset {
+                        error = error.at(offset + 1);
+                    }
+                    error
+                })?;
                 if *op == 0x20 && !s.initialized[*index as usize] {
                     return Err(Error::invalid("non-defaultable local is not initialized"));
                 }
                 if *op != 0x20 {
-                    s.expect(t)?
+                    s.expect(t).map_err(|mut error| {
+                        if matches!(s.last, "br_if" | "br_on_null" | "br_on_non_null" | "block") {
+                            error.message =
+                                format!("{}[0] {}", super::diagnostics::opcode(*op), error.message);
+                            if let Some(offset) = s.last_offset {
+                                error = error.at(offset);
+                            }
+                        }
+                        error
+                    })?
                 }
                 if *op != 0x20 {
                     s.initialized[*index as usize] = true;
@@ -418,7 +604,7 @@ fn sequence(
                     ));
                 }
                 tail_results(m, sig, returns)?;
-                s.expect(Type::I32)?;
+                s.expect(super::table::address_type(m, *table)?)?;
                 s.take(&sig.params)?;
                 s.stop()
             }
@@ -464,7 +650,7 @@ fn sequence(
                 {
                     return Err(Error::invalid("call_indirect requires a function table"));
                 }
-                s.expect(Type::I32)?;
+                s.expect(super::table::address_type(m, *table)?)?;
                 s.take(&sig.params)?;
                 s.extend(&sig.results)
             }
@@ -514,7 +700,18 @@ fn sequence(
                 } else {
                     !gc_types::subtype(m, *target, *source)
                 } {
-                    return Err(Error::invalid("br_on_cast source and target type mismatch"));
+                    let name = match *op {
+                        24 => "br_on_cast",
+                        25 => "br_on_cast_fail",
+                        37 => "br_on_cast_desc_eq",
+                        38 => "br_on_cast_desc_eq_fail",
+                        _ => "br_on_cast",
+                    };
+                    return Err(Error::invalid(&format!(
+                        "invalid types for {name}: source type {} and target type {} must be in the same reference type hierarchy",
+                        source.display(),
+                        target.display()
+                    )));
                 }
                 s.expect(*source)?;
                 let (_sh, sn) = source
@@ -551,16 +748,17 @@ fn sequence(
             Instruction::BranchTable(depths, default) => {
                 s.expect(Type::I32)?;
                 let types = label(labels, *default)?;
-                s.branch(&types)?;
-                for d in depths {
-                    if label(labels, *d)? != types {
-                        return Err(Error::invalid("br_table label types differ"));
+                for d in depths.iter().chain(std::iter::once(default)) {
+                    let target = label(labels, *d)?;
+                    if target.len() != types.len() {
+                        return Err(Error::invalid("br_table label arity differs"));
                     }
+                    s.check_branch(&target)?;
                 }
                 s.stop()
             }
             Instruction::Throw(index) => {
-                let sig = super::exceptions::signature(m, *index)?;
+                let sig = super::exceptions::exception_signature(m, *index)?;
                 s.take(&sig.params)?;
                 s.stop()
             }
@@ -600,15 +798,20 @@ fn sequence(
                     caught: s.caught.clone(),
                     values: sig.params.clone(),
                     producers: vec!["block parameter"; sig.params.len()],
+                    offsets: vec![None; sig.params.len()],
                     current: "expression",
                     last: "expression",
+                    current_offset: None,
+                    last_offset: None,
                     unreachable: false,
                 };
                 sequence(m, body, locals, labels, returns, &mut inner)?;
                 inner.finish(&sig.results)?;
                 for (tag, code) in handlers {
                     let values = match tag {
-                        Some(index) => super::exceptions::signature(m, *index)?.params.clone(),
+                        Some(index) => super::exceptions::exception_signature(m, *index)?
+                            .params
+                            .clone(),
                         None => vec![],
                     };
                     let mut inner = Stack {
@@ -616,8 +819,11 @@ fn sequence(
                         initialized: s.initialized.clone(),
                         caught: s.caught.clone(),
                         producers: vec!["catch parameter"; values.len()],
+                        offsets: vec![None; values.len()],
                         current: "expression",
                         last: "expression",
+                        current_offset: None,
+                        last_offset: None,
                         values,
                         unreachable: false,
                     };
@@ -631,7 +837,9 @@ fn sequence(
             Instruction::TryTable(sig, handlers, body) => {
                 for arm in handlers {
                     let mut values = match arm.tag {
-                        Some(index) => super::exceptions::signature(m, index)?.params.clone(),
+                        Some(index) => super::exceptions::exception_signature(m, index)?
+                            .params
+                            .clone(),
                         None => vec![],
                     };
                     if arm.reference {
@@ -672,8 +880,11 @@ fn sequence(
                     caught: s.caught.clone(),
                     values: sig.params.clone(),
                     producers: vec!["block parameter"; sig.params.len()],
+                    offsets: vec![None; sig.params.len()],
                     current: "expression",
                     last: "expression",
+                    current_offset: None,
+                    last_offset: None,
                     unreachable: false,
                 };
                 sequence(m, body, locals, labels, returns, &mut inner)?;
@@ -685,8 +896,11 @@ fn sequence(
                         caught: s.caught.clone(),
                         values: sig.params.clone(),
                         producers: vec!["block parameter"; sig.params.len()],
+                        offsets: vec![None; sig.params.len()],
                         current: "expression",
                         last: "expression",
+                        current_offset: None,
+                        last_offset: None,
                         unreachable: false,
                     };
                     sequence(m, other, locals, labels, returns, &mut inner)?;
@@ -694,6 +908,204 @@ fn sequence(
                 }
                 labels.pop();
                 s.extend(&sig.results)
+            }
+            Instruction::Continuation(op, index) => {
+                let target = match m.definitions.get(*index as usize).map(|d| &d.kind) {
+                    Some(gc_types::Kind::Continuation(target)) => *target,
+                    _ => {
+                        return Err(Error::invalid(
+                            "continuation instruction requires a continuation type",
+                        ));
+                    }
+                };
+                let sig = &m.types[target as usize];
+                if *op == 0xe0 {
+                    s.expect(gc_types::reference(i64::from(target), true))?;
+                    s.push(if m.custom_descriptors_enabled {
+                        Type::Exact(i64::from(*index), false)
+                    } else {
+                        gc_types::reference(i64::from(*index), false)
+                    });
+                } else {
+                    s.expect(gc_types::reference(i64::from(*index), true))?;
+                    s.take(&sig.params)?;
+                    s.extend(&sig.results);
+                }
+            }
+            Instruction::ContinuationBind(source, target) => {
+                let signature =
+                    |index: u32| match m.definitions.get(index as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(function)) => {
+                            Ok(&m.types[*function as usize])
+                        }
+                        _ => Err(Error::invalid(
+                            "continuation bind requires continuation types",
+                        )),
+                    };
+                let old = signature(*source)?;
+                let new = signature(*target)?;
+                let prefix = old
+                    .params
+                    .len()
+                    .checked_sub(new.params.len())
+                    .ok_or_else(|| {
+                        Error::invalid("continuation bind has too many target parameters")
+                    })?;
+                if old.results.len() != new.results.len()
+                    || !old
+                        .results
+                        .iter()
+                        .zip(&new.results)
+                        .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                    || !new
+                        .params
+                        .iter()
+                        .zip(&old.params[prefix..])
+                        .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                {
+                    return Err(Error::invalid("continuation bind signature mismatch"));
+                }
+                s.expect(gc_types::reference(i64::from(*source), true))?;
+                s.take(&old.params[..prefix])?;
+                s.push(if m.custom_descriptors_enabled {
+                    Type::Exact(i64::from(*target), false)
+                } else {
+                    gc_types::reference(i64::from(*target), false)
+                });
+            }
+            Instruction::Resume(index, handlers) | Instruction::ResumeThrow(index, _, handlers) => {
+                let signature =
+                    |index: u32| match m.definitions.get(index as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(function)) => {
+                            Ok(&m.types[*function as usize])
+                        }
+                        _ => Err(Error::invalid("resume requires a continuation type")),
+                    };
+                let original = signature(*index)?;
+                s.expect(gc_types::reference(i64::from(*index), true))?;
+                match instruction {
+                    Instruction::ResumeThrow(_, Some(tag), _) => {
+                        s.take(&super::exceptions::exception_signature(m, *tag)?.params)?
+                    }
+                    Instruction::ResumeThrow(_, None, _) => s.expect(Type::Ref(-23, true))?,
+                    _ => s.take(&original.params)?,
+                }
+                for handler in handlers {
+                    let tag = super::exceptions::signature(m, handler.tag)?;
+                    if handler.switch {
+                        if !tag.params.is_empty()
+                            || tag.results.len() != original.results.len()
+                            || !tag.results.iter().zip(&original.results).all(|(a, b)| {
+                                gc_types::subtype(m, *a, *b) && gc_types::subtype(m, *b, *a)
+                            })
+                        {
+                            return Err(Error::invalid(
+                                "Type mismatch between tag returns and cont returns for switch handler",
+                            ));
+                        }
+                        continue;
+                    }
+                    let label = labels
+                        .iter()
+                        .rev()
+                        .nth(handler.depth as usize)
+                        .ok_or_else(|| Error::invalid("invalid effect handler label"))?;
+                    if label.len() != tag.params.len() + 1
+                        || !tag
+                            .params
+                            .iter()
+                            .zip(label)
+                            .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                    {
+                        return Err(Error::invalid(
+                            "effect handler payload does not match label",
+                        ));
+                    }
+                    let (heap, _) = label
+                        .last()
+                        .and_then(|ty| ty.reference())
+                        .ok_or_else(|| Error::invalid("effect handler requires a continuation"))?;
+                    if heap < 0 {
+                        return Err(Error::invalid(
+                            "effect handler requires a concrete continuation",
+                        ));
+                    }
+                    let resumed = signature(heap as u32)?;
+                    if resumed.params.len() != tag.results.len()
+                        || resumed.results.len() != original.results.len()
+                        || !resumed
+                            .params
+                            .iter()
+                            .zip(&tag.results)
+                            .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                        || !original
+                            .results
+                            .iter()
+                            .zip(&resumed.results)
+                            .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                    {
+                        return Err(Error::invalid(
+                            "effect handler continuation signature mismatch",
+                        ));
+                    }
+                }
+                s.extend(&original.results);
+            }
+            Instruction::Suspend(index) => {
+                let sig = super::exceptions::signature(m, *index)?;
+                s.take(&sig.params)?;
+                s.extend(&sig.results);
+            }
+            Instruction::Switch(index, tag) => {
+                let signature =
+                    |index: u32| match m.definitions.get(index as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(function)) => {
+                            Ok(&m.types[*function as usize])
+                        }
+                        _ => Err(Error::invalid("switch requires a continuation type")),
+                    };
+                let target = signature(*index)?;
+                let tag_index = *tag;
+                let tag = super::exceptions::signature(m, tag_index)?;
+                if !tag.params.is_empty()
+                    || target.results.len() != tag.results.len()
+                    || !target
+                        .results
+                        .iter()
+                        .zip(&tag.results)
+                        .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                {
+                    return Err(Error::invalid(
+                        "return(s) from continuation type do not match tag",
+                    ));
+                }
+                let (heap, _) = target
+                    .params
+                    .last()
+                    .and_then(|ty| ty.reference())
+                    .ok_or_else(|| {
+                        Error::invalid("switch target requires a continuation parameter")
+                    })?;
+                if heap < 0 {
+                    return Err(Error::invalid(
+                        "switch target requires a concrete continuation parameter",
+                    ));
+                }
+                let returned = signature(heap as u32)?;
+                if returned.results.len() != tag.results.len()
+                    || !tag
+                        .results
+                        .iter()
+                        .zip(&returned.results)
+                        .all(|(a, b)| gc_types::subtype(m, *a, *b))
+                {
+                    return Err(Error::invalid(&format!(
+                        "tag {tag_index}\x27s return types should be a subtype of return continuation {heap}\x27s return types"
+                    )));
+                }
+                s.expect(gc_types::reference(i64::from(*index), true))?;
+                s.take(&target.params[..target.params.len() - 1])?;
+                s.extend(&returned.params);
             }
             Instruction::Memory(op, align, index, _) => {
                 let address = super::address::ty(m, *index)?;
@@ -727,7 +1139,7 @@ fn sequence(
                 if *op == 0x26 {
                     s.expect(ty)?
                 }
-                s.expect(Type::I32)?;
+                s.expect(super::table::address_type(m, *index)?)?;
                 if *op == 0x25 {
                     s.push(ty)
                 }
@@ -755,11 +1167,47 @@ fn sequence(
             }
             Instruction::Gc(op, args) => {
                 let input = s.values.last().copied();
-                let (params, mut results) = super::gc::signature(m, *op, args)?;
+                let (mut params, mut results) = super::gc::signature(m, *op, args)?;
+                if matches!(op, 26 | 27) && input.is_some_and(|ty| gc_types::is_shared(m, ty)) {
+                    params[0] = Type::Shared(if *op == 26 { -17 } else { -18 }, true);
+                    results[0] = Type::Shared(if *op == 26 { -18 } else { -17 }, true);
+                }
+                if matches!(op, 15 | 29 | 30) && input.is_some_and(|ty| gc_types::is_shared(m, ty)) {
+                    params[0] = Type::Shared(if *op == 15 { -22 } else { -20 }, true);
+                }
+                let available = s.values.len().min(params.len());
+                if (0xb0..=0xb8).contains(op) && s.values.len() >= params.len() {
+                    let index = if matches!(op, 0xb2 | 0xb3 | 0xb6 | 0xb7) {
+                        1
+                    } else {
+                        0
+                    };
+                    let at = s.values.len() - params.len() + index;
+                    if !super::strings::array_operand(m, *op, s.values[at]) {
+                        let bits = if matches!(op, 0xb1 | 0xb3) {
+                            "i16"
+                        } else {
+                            "i8"
+                        };
+                        let mutable = if index == 1 { "mutable " } else { "" };
+                        let mut error = Error::invalid(&format!(
+                            "{}[{index}] expected array of {mutable}{bits}, found {} of type {}",
+                            super::diagnostics::gc_opcode(*op),
+                            s.producers[at],
+                            s.values[at].display()
+                        ));
+                        if let Some(offset) = s.offsets[at] {
+                            error = error.at(offset);
+                        }
+                        return Err(error);
+                    }
+                }
                 for (index, ty) in params.iter().enumerate().rev() {
                     let found = s.values.last().copied();
                     s.expect(*ty).map_err(|mut error| {
-                        error.message = if matches!(op, 20..=23) {
+                        error.message = if found.is_none() && error.message == "WebAssembly operand stack underflow" {
+                            format!("{}: not enough arguments (need {}, got {available})", super::diagnostics::gc_opcode(*op), params.len())
+                        } else if matches!(op, 20..=23) {
                             format!("{} operand of type {} has to be in the same reference type hierarchy: {}",super::diagnostics::gc_opcode(*op),found.map(|ty:Type|ty.name()).unwrap_or("bottom"),error.message)
                         } else {
                             format!(
@@ -772,14 +1220,24 @@ fn sequence(
                     })?;
                 }
                 if *op == 34 {
-                    if let Some(Type::Exact(heap, _)) = input
-                        && heap == args[0]
-                    {
+                    let exact = matches!(input, Some(Type::Exact(heap, _)) if heap == args[0])
+                        || input.is_none() && s.unreachable
+                        || input
+                            .is_some_and(|ty| ty.reference().is_some_and(|(heap, _)| heap == -15));
+                    if exact {
                         results[0] = results[0].with_nullability(false);
                         if let Some((heap, _)) = results[0].reference() {
                             results[0] = Type::Exact(heap, false)
                         }
                     }
+                }
+                if matches!(op, 26 | 27)
+                    && (input.is_none() && s.unreachable
+                        || input.is_some_and(|ty| {
+                            ty.reference().is_some_and(|(_, nullable)| !nullable)
+                        }))
+                {
+                    results[0] = results[0].with_nullability(false);
                 }
                 if matches!(op, 20..=23)
                     && args
@@ -844,17 +1302,17 @@ pub(super) fn memory_type(op: u8) -> Option<(Type, u32, bool)> {
     let t = match op {
         0x28 | 0x2c..=0x2f | 0x36 | 0x3a..=0x3b => I32,
         0x29 | 0x30..=0x35 | 0x37 | 0x3c..=0x3e => I64,
-        0x2a | 0x38 => F32,
+        0x2a | 0x38 | 0xc5 | 0xc6 => F32,
         0x2b | 0x39 => F64,
         _ => return None,
     };
     let size = match op {
         0x2c | 0x2d | 0x30 | 0x31 | 0x3a | 0x3c => 1,
-        0x2e | 0x2f | 0x32 | 0x33 | 0x3b | 0x3d => 2,
+        0x2e | 0x2f | 0x32 | 0x33 | 0x3b | 0x3d | 0xc5 | 0xc6 => 2,
         0x28 | 0x2a | 0x34 | 0x35 | 0x36 | 0x38 | 0x3e => 4,
         _ => 8,
     };
-    Some((t, size, op >= 0x36))
+    Some((t, size, op == 0xc6 || (0x36..=0x3e).contains(&op)))
 }
 /** Non-immediate stack instructions retain unreachable polymorphism. */
 fn simple(op: u8, returns: &[Type], s: &mut Stack) -> Result<(), Error> {
@@ -920,8 +1378,36 @@ fn simple(op: u8, returns: &[Type], s: &mut Stack) -> Result<(), Error> {
         _ => {
             let (input, count, output) =
                 numeric_type(op).ok_or_else(|| Error::invalid("unknown numeric opcode"))?;
-            for _ in 0..count {
-                s.expect(input)?
+            let name = super::diagnostics::opcode(op);
+            if name != "instruction" && s.values.len() >= count {
+                let start = s.values.len() - count;
+                for index in 0..count {
+                    let at = start + index;
+                    if !gc_types::subtype(s.module, s.values[at], input) {
+                        let mut error = Error::invalid(&format!(
+                            "{name}[{index}] expected type {}, found {} of type {}",
+                            input.display(),
+                            s.producers[at],
+                            s.values[at].display()
+                        ));
+                        if let Some(offset) = s.offsets[at] {
+                            error = error.at(offset);
+                        }
+                        return Err(error);
+                    }
+                }
+            }
+            for index in 0..count {
+                s.expect(input).map_err(|mut error| {
+                    let name = super::diagnostics::opcode(op);
+                    if name != "instruction" && error.message.starts_with("expected type ") {
+                        error.message = format!("{name}[{index}] {}", error.message);
+                        if let Some(offset) = s.last_offset {
+                            error = error.at(offset);
+                        }
+                    }
+                    error
+                })?
             }
             s.push(output)
         }
@@ -1017,7 +1503,7 @@ fn tail_results(m: &Module, sig: &Signature, returns: &[Type]) -> Result<(), Err
 fn constant_expression_type(
     m: &Module,
     code: &[Instruction],
-    initializer: bool,
+    initializer: Option<usize>,
 ) -> Result<Type, Error> {
     let mut stack = Stack {
         module: m,
@@ -1025,8 +1511,11 @@ fn constant_expression_type(
         caught: vec![],
         values: vec![],
         producers: vec![],
+        offsets: vec![],
         current: "expression",
         last: "expression",
+        current_offset: None,
+        last_offset: None,
         unreachable: false,
     };
     for instruction in code {
@@ -1039,9 +1528,15 @@ fn constant_expression_type(
                 stack.expect(ty)?;
                 stack.push(ty)
             }
+            Instruction::Atomic(7, _, _) => stack.push(Type::Shared(-36, false)),
             Instruction::Gc(op, args) => {
                 let (params, results) = super::gc::signature(m, *op, args)?;
-                stack.take(&params)?;
+                stack.take(&params).map_err(|mut error| {
+                    if *op == 28 {
+                        error.message = format!("ref.i31[0] {}", error.message);
+                    }
+                    error
+                })?;
                 stack.extend(results)
             }
             _ => return Err(Error::invalid("invalid constant instruction")),
@@ -1059,7 +1554,7 @@ fn constant_expression_type(
 pub(super) fn suspended_stack_path(
     m: &Module,
     index: u32,
-    path: &[(usize, u8)],
+    path: &[(usize, usize)],
 ) -> Result<(Vec<Type>, Vec<bool>, Vec<usize>), Error> {
     let sig = m.signature(index)?;
     let body = m
@@ -1076,8 +1571,11 @@ pub(super) fn suspended_stack_path(
         caught: vec![],
         values: vec![],
         producers: vec![],
+        offsets: vec![],
         current: "expression",
         last: "expression",
+        current_offset: None,
+        last_offset: None,
         unreachable: false,
     };
     let mut labels = vec![sig.results.clone()];
@@ -1106,6 +1604,31 @@ pub(super) fn suspended_stack_path(
                     .ok_or_else(|| Error::invalid("invalid continuation call type"))?
                     .results
                     .clone(),
+                Instruction::Resume(index, _) | Instruction::ResumeThrow(index, _, _) => {
+                    let function = match m.definitions.get(*index as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(i)) => *i,
+                        _ => return Err(Error::invalid("invalid resumed continuation")),
+                    };
+                    m.types[function as usize].results.clone()
+                }
+                Instruction::Suspend(tag) => super::exceptions::signature(m, *tag)?.results.clone(),
+                Instruction::Switch(target, _) => {
+                    let function = match m.definitions.get(*target as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(i)) => *i,
+                        _ => return Err(Error::invalid("invalid switched continuation")),
+                    };
+                    let heap = m.types[function as usize]
+                        .params
+                        .last()
+                        .and_then(|ty| ty.reference())
+                        .map(|(h, _)| h)
+                        .ok_or_else(|| Error::invalid("invalid switch return type"))?;
+                    let function = match m.definitions.get(heap as usize).map(|d| &d.kind) {
+                        Some(gc_types::Kind::Continuation(i)) => *i,
+                        _ => return Err(Error::invalid("invalid switch return continuation")),
+                    };
+                    m.types[function as usize].params.clone()
+                }
                 _ => return Err(Error::invalid("continuation position is not a call")),
             };
             sequence(
@@ -1129,29 +1652,80 @@ pub(super) fn suspended_stack_path(
                 &sig.results,
                 &mut stack,
             )?;
-            let Instruction::Block(kind, signature, body, otherwise) = instruction else {
-                return Err(Error::invalid(
-                    "continuation ancestor is not a control scope",
-                ));
+            let (kind, signature, selected, initial, is_catch) = match instruction {
+                Instruction::Block(kind, signature, body, otherwise)
+                    if *branch == 0 || *branch == 1 && *kind == 4 =>
+                {
+                    (
+                        *kind,
+                        signature,
+                        if *branch == 0 {
+                            body.as_slice()
+                        } else {
+                            otherwise.as_slice()
+                        },
+                        signature.params.clone(),
+                        false,
+                    )
+                }
+                Instruction::TryTable(signature, _, body) if *branch == 0 => (
+                    2,
+                    signature,
+                    body.as_slice(),
+                    signature.params.clone(),
+                    false,
+                ),
+                Instruction::Delegate(signature, body, _) if *branch == 0 => (
+                    7,
+                    signature,
+                    body.as_slice(),
+                    signature.params.clone(),
+                    false,
+                ),
+                Instruction::Try(signature, body, _) if *branch == 0 => (
+                    6,
+                    signature,
+                    body.as_slice(),
+                    signature.params.clone(),
+                    false,
+                ),
+                Instruction::Try(signature, _, handlers) if *branch > 0 => {
+                    let (tag, code) = handlers
+                        .get(*branch - 1)
+                        .ok_or_else(|| Error::invalid("invalid continuation catch path"))?;
+                    let values = match tag {
+                        Some(tag) => super::exceptions::exception_signature(m, *tag)?
+                            .params
+                            .clone(),
+                        None => vec![],
+                    };
+                    (6, signature, code.as_slice(), values, true)
+                }
+                _ => {
+                    return Err(Error::invalid(
+                        "continuation ancestor is not a control scope",
+                    ));
+                }
             };
-            if *branch > 1 || *branch == 1 && *kind != 4 {
-                return Err(Error::invalid("invalid continuation branch path"));
-            }
-            if *kind == 4 {
+            if kind == 4 {
                 stack.expect(Type::I32)?;
             }
             stack.take(&signature.params)?;
             heights.push(prefixes.iter().map(Vec::len).sum::<usize>() + stack.values.len());
             prefixes.push(std::mem::take(&mut stack.values));
-            stack.values = signature.params.clone();
+            stack.values = initial;
             stack.producers = vec!["block parameter"; stack.values.len()];
+            stack.offsets = vec![None; stack.values.len()];
             stack.unreachable = false;
-            labels.push(if *kind == 3 {
+            labels.push(if kind == 3 {
                 signature.params.clone()
             } else {
                 signature.results.clone()
             });
-            code = if *branch == 0 { body } else { otherwise };
+            if is_catch {
+                stack.caught.push(labels.len() - 1);
+            }
+            code = selected;
         }
     }
     let mut values = prefixes.into_iter().flatten().collect::<Vec<_>>();

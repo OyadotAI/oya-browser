@@ -44,7 +44,12 @@ impl Captured {
                 frame.callee.clone()
             },
             receiver: frame.this.clone(),
-            name: frame.code.name.clone(),
+            name: {
+                #[cfg(feature = "conformance")]
+                { frame.code.name.isolate_code_constant() }
+                #[cfg(not(feature = "conformance"))]
+                { frame.code.name.clone() }
+            },
             file: vm.modules.source_name(pos.offset as usize),
             line: pos.line,
             column: pos.column,

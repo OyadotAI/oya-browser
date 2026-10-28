@@ -131,7 +131,11 @@ impl BigInt {
             top += 1;
         }
         let number = top as f64 * 2f64.powi(dropped as i32);
-        if self.negative { -number } else { number }
+        if self.negative {
+            -number
+        } else {
+            number
+        }
     }
     /** Every finite integral Number has an exact binary integer representation, including values above i128. */
     pub(in crate::v9) fn from_f64(number: f64) -> Option<Self> {

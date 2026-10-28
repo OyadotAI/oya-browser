@@ -156,7 +156,14 @@ impl Vm<'_> {
                 if done {
                     return Ok(None);
                 }
-                let length = self.length_of(&object)?;
+                let typed = match object.object() {
+                    Some(object) => crate::v9::builtins::typed_iterator_length(self, object)?,
+                    None => None,
+                };
+                let length = match typed {
+                    Some(length) => length,
+                    None => self.length_of(&object)?,
+                };
                 if index as usize >= length {
                     None
                 } else {
@@ -179,13 +186,19 @@ impl Vm<'_> {
                 if done {
                     return Ok(None);
                 }
-                let units = text.as_units();
-                if index as usize >= units.len() {
+                if index as usize >= text.len() {
                     None
                 } else {
-                    let point = text.code_points_from(index as usize);
+                    let high = text.unit_at(index as usize).expect("checked string index");
+                    let mut point = vec![high];
+                    if let Some(low) = text.unit_at(index as usize + 1)
+                        && (0xd800..=0xdbff).contains(&high)
+                        && (0xdc00..=0xdfff).contains(&low)
+                    {
+                        point.push(low);
+                    }
                     self.set_index(id, index + point.len() as u32);
-                    Some(JsValue::String(JsString::from_slice(point)?))
+                    Some(JsValue::String(JsString::from_units(point)?))
                 }
             }
             IterState::Table {
@@ -390,6 +403,15 @@ impl Vm<'_> {
     /** Collect an iterable's values. */
     pub fn iterate_to_vec(&mut self, value: &JsValue) -> Res<Vec<JsValue>> {
         let iterator = self.get_iterator(value)?;
+        self.collect_iterator(iterator)
+    }
+    /** Collect using the already observed iterator method without repeating its getter. */
+    pub(in crate::v9) fn iterate_to_vec_with_method(&mut self, value: &JsValue, method: JsValue) -> Res<Vec<JsValue>> {
+        let iterator = self.iterator_from_method(value, method)?;
+        self.collect_iterator(iterator)
+    }
+    /** Preserve the existing bounds and rooting for either iterator entry path. */
+    fn collect_iterator(&mut self, iterator: ObjectId) -> Res<Vec<JsValue>> {
         self.pin(JsValue::Object(iterator));
         let mut out = Vec::new();
         while let Some(item) = self.iter_step(iterator)? {
@@ -405,20 +427,3 @@ impl Vm<'_> {
 
 /** Prototype levels for-in walks. */
 const FOR_IN_DEPTH: usize = 64;
-
-impl JsString {
-    /** The code point starting at a unit offset (one or two units). */
-    pub fn code_points_from(&self, offset: usize) -> &[u16] {
-        let units = self.as_units();
-        let end = if (0xd800..=0xdbff).contains(&units[offset])
-            && units
-                .get(offset + 1)
-                .is_some_and(|unit| (0xdc00..=0xdfff).contains(unit))
-        {
-            offset + 2
-        } else {
-            offset + 1
-        };
-        &units[offset..end]
-    }
-}

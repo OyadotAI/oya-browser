@@ -601,6 +601,11 @@ pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
                 settle_thrown(vm, promise, error)?;
                 continue;
             }
+            Graph::Failed(error) if error.code == "module_unavailable" => {
+                let thrown = vm.throw(crate::v9::vm::error::ErrorKind::Error, &error.message);
+                settle_thrown(vm, promise, thrown)?;
+                continue;
+            }
             Graph::Failed(error) => {
                 reject_type_error(vm, promise, &error.message)?;
                 continue;

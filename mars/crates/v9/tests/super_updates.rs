@@ -1,6 +1,69 @@
 /** Super-property updates retain one receiver, base and canonical key through conversion, cleanup and suspension. */
 mod common;
 
+/** A returned arrow retains the original constructor, new.target, receiver and field initialization. */
+#[test]
+fn returned_arrow_initializes_its_lexical_constructor() {
+    let source = "let seen;class Base{constructor(x){seen=new.target;this.x=x}}class Derived extends Base{field=this.x+1;constructor(x){return ()=>super(x)}}const run=new Derived(4);const obj=run();let twice=false;try{run()}catch(e){twice=e instanceof ReferenceError}const r=[obj.x,obj.field,seen===Derived,twice].join();";
+    assert_eq!(common::eval(source, "r"), "4,5,true,true");
+}
+
+/** Reentrant parent construction checks the captured receiver only after the parent returns. */
+#[test]
+fn lexical_super_checks_for_reentrant_initialization_after_parent_returns() {
+    let source = "let run,n=0,inner;class Base{constructor(){n++;if(n===1)inner=run()}}class Derived extends Base{field=7;constructor(){return ()=>super()}}run=new Derived();let failed=false;try{run()}catch(e){failed=e instanceof ReferenceError}const r=[n,inner.field,failed].join();";
+    assert_eq!(common::eval(source, "r"), "2,7,true");
+}
+
+/** A lexical arrow invoked while its constructor is active initializes that constructor's receiver. */
+#[test]
+fn lexical_super_updates_an_active_constructor() {
+    let source = "class Base{constructor(){this.x=3}}class Derived extends Base{field=this.x+1;constructor(){ {let run=()=>super();run()} this.y=eval('this.x')}}const obj=new Derived();const r=[obj.x,obj.field,obj.y].join();";
+    assert_eq!(common::eval(source, "r"), "3,4,3");
+}
+
+/** Direct eval inside a returned arrow retains the same lexical constructor environment. */
+#[test]
+fn delayed_eval_super_uses_its_lexical_constructor() {
+    let source = "class Base{constructor(){this.x=3}}class Derived extends Base{field=4;constructor(){return ()=>eval('super()')}}const run=new Derived();const obj=run();const r=[obj.x,obj.field].join();";
+    assert_eq!(common::eval(source, "r"), "3,4");
+}
+
+/** Captured constructor state remains available after page state is serialized and restored. */
+#[test]
+fn returned_async_super_arrow_survives_state_transport() {
+    let sources = vec!["class Base{constructor(x){this.x=x}}class Derived extends Base{field=this.x+1;constructor(x){return async()=>super(x)}}const run=new Derived(4);document.getElementById('go').addEventListener('click',()=>run().then(x=>console.log(x.x,x.field)));".into()];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    let clicked = mars_v9::click_page(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        3,
+    )
+    .unwrap();
+    assert!(clicked.failed.is_empty(), "{:?}", common::failure(&clicked));
+    assert_eq!(common::console(&clicked), ["4 5"]);
+}
+
+/** Compound assignments retain their receiver, base, key and getter/setter ordering. */
+#[test]
+fn super_compound_assignment_keeps_one_captured_reference() {
+    let source = "let keys=0;const log=[];const later={set x(v){throw Error('wrong')}};const base={get x(){log.push('get');Object.setPrototypeOf(home,later);return 4},set x(v){log.push('set');this.result=v}};const key={[Symbol.toPrimitive](){keys++;return 'x'}};const home={__proto__:base,m(){return super[key]+=(log.push('rhs'),3)}};const result=home.m();const r=[result,home.result,keys,log.join(':')].join();";
+    assert_eq!(common::eval(source, "r"), "7,7,1,get:rhs:set");
+}
+
+/** Logical assignments skip RHS and setter when appropriate, without leaking reference operands. */
+#[test]
+fn super_logical_assignments_short_circuit_and_keep_one_reference() {
+    let source = "const log=[];let current=0;const base={get x(){log.push('get');return current},set x(v){log.push('set');current=v}};const key={[Symbol.toPrimitive](){log.push('key');return 'x'}};const home={__proto__:base,m(){const a=super[key]&&=(log.push('bad'),1);const b=super[key]||=(log.push('rhs'),3);const c=super[key]??=(log.push('bad2'),4);return [a,b,c]}};const values=home.m();const r=[values.join(':'),current,log.join(':')].join('|');";
+    assert_eq!(
+        common::eval(source, "r"),
+        "0:3:3|3|key:get:key:get:rhs:set:key:get"
+    );
+}
+
 /** Named and computed postfix updates write on the actual receiver while leaving inherited data unchanged. */
 #[test]
 fn super_updates_use_the_method_receiver_for_accessors_and_data() {
@@ -53,11 +116,39 @@ fn super_updates_preserve_strict_and_sloppy_write_failures() {
     assert_eq!(common::eval(source, "r"), "2,1,false,1,true");
 }
 
-/** A null super base is still captured before key conversion, whose own exception has precedence. */
+/** Rendering a failed super write must never invoke an author-controlled constructor getter. */
+#[test]
+fn failed_super_write_diagnostic_does_not_call_constructor_getter() {
+    let source = "let calls=0;const proto={};Object.defineProperty(proto,'constructor',{get(){calls++;throw 1}});const receiver=Object.create(proto);Object.defineProperty(receiver,'x',{value:1});const home={__proto__:{},m(){'use strict';super.x=2}};let type=false;try{home.m.call(receiver)}catch(e){type=e instanceof TypeError}const r=[type,calls,receiver.x].join();";
+    assert_eq!(common::eval(source, "r"), "true,0,1");
+}
+
+/** A null captured super base throws before converting its key. */
 #[test]
 fn null_super_bases_keep_computed_key_conversion_order() {
     let source = "let keys=0;const marker={};const key={[Symbol.toPrimitive](){keys++;throw marker}};const home={__proto__:null,m(k){return super[k]++}};let same=false,type=false;try{home.m(key)}catch(error){same=error===marker}try{home.m({toString(){keys++;return 'x'}})}catch(error){type=error instanceof TypeError}const r=[same,type,keys].join();";
-    assert_eq!(common::eval(source, "r"), "true,true,2");
+    assert_eq!(common::eval(source, "r"), "false,true,0");
+}
+
+/** Simple super assignment captures the base before the RHS and coerces the key afterwards. */
+#[test]
+fn simple_super_assignment_captures_base_and_defers_key_coercion() {
+    let source = "const log=[];const first={set x(v){log.push('first:'+v)}},later={set x(v){log.push('later:'+v)}};const key={toString(){log.push('key');return 'x'}};const home={__proto__:first,m(){super[key]=(Object.setPrototypeOf(home,later),log.push('rhs'),7)}};home.m();const r=log.join();";
+    assert_eq!(common::eval(source, "r"), "rhs,key,first:7");
+}
+
+/** A simple super read captures its base before coercion and checks null before the key. */
+#[test]
+fn simple_super_read_captures_base_before_key_coercion() {
+    let source = "let count=0;const first={x:1},later={x:9};const key={toString(){count++;Object.setPrototypeOf(home,later);return 'x'}};const home={__proto__:first,m(){return super[key]}};const result=home.m();const empty={__proto__:null,m(){return super[key]}};let type=false;try{empty.m()}catch(e){type=e instanceof TypeError}const r=[result,count,type].join();";
+    assert_eq!(common::eval(source, "r"), "1,1,true");
+}
+
+/** Deleting a super reference evaluates its key expression but never coerces the key. */
+#[test]
+fn delete_super_reference_throws_after_key_expression_without_coercion() {
+    let source = "let expressions=0,coercions=0;const key={toString(){coercions++;throw 1}};class C{m(){delete super[(expressions++,key)]}}Object.setPrototypeOf(C.prototype,null);let reference=false;try{C.prototype.m()}catch(e){reference=e instanceof ReferenceError}const r=[reference,expressions,coercions].join();";
+    assert_eq!(common::eval(source, "r"), "true,1,0");
 }
 
 /** Uninitialized derived this is rejected before evaluating a computed key or invoking a super constructor. */

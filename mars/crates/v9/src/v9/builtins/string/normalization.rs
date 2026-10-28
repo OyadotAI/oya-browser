@@ -79,9 +79,19 @@ fn append_units(output: &mut Vec<u16>, units: &[u16]) -> Res<()> {
 pub(super) fn normalize(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let form = Form::read(vm, call.arg(0))?;
+    if text.len() > JS_STRING_UNITS {
+        return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
+    }
     let mut output = Vec::with_capacity(text.len());
     let mut segment = Vec::new();
-    for decoded in char::decode_utf16(text.as_units().iter().copied()) {
+    let flat = text.flat_units();
+    let units = (0..text.len()).map(|index| {
+        flat.map_or_else(
+            || text.unit_at(index).expect("valid string index"),
+            |units| units[index],
+        )
+    });
+    for decoded in char::decode_utf16(units) {
         vm.charge(1)?;
         match decoded {
             Ok(character) => segment.push(character),

@@ -26,7 +26,8 @@ pub(super) fn value_type(vm: &mut Vm, value: &JsValue) -> Res<Type> {
         "structref" => Type::Ref(-21, true),
         "arrayref" => Type::Ref(-22, true),
         "exnref" => Type::Ref(-23, true),
-        _ => return Err(vm.type_error("invalid WebAssembly value type")),
+        "stringref" => Type::Ref(-25, true),
+        _ => return Err(vm.type_error("'value' must be a WebAssembly type")),
     })
 }
 /** Conversion happens exactly once at the JS/Wasm boundary. */
@@ -44,7 +45,7 @@ pub(super) fn convert(vm: &mut Vm, ty: Type, value: &JsValue) -> Res<JsValue> {
         Type::Ref(_, _) | Type::Exact(..) | Type::Shared(..) => gc::coerce(vm, ty, value)?,
         Type::Func => {
             if *value != JsValue::Null && !instance::is_function(vm, value) {
-                return Err(vm.type_error("WebAssembly funcref requires a Wasm function or null"));
+                return Err(vm.type_error("type incompatibility when transforming from/to JS"));
             }
             value.clone()
         }
@@ -89,12 +90,29 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     let mutable = vm.get(&descriptor, &key("mutable"))?.truthy();
     let value = vm.get(&descriptor, &key("value"))?;
-    let ty = value_type(vm, &value)?;
-    if ty == Type::V128 {
-        return Err(vm.type_error("WebAssembly.Global v128 is not a JavaScript value type"));
+    let value = JsValue::String(vm.to_string(&value)?);
+    let ty = match value_type(vm, &value) {
+        Ok(ty) => ty,
+        Err(Thrown::Value(_)) => return Err(vm.type_error("WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type")),
+        Err(error) => return Err(error),
+    };
+    if ty == Type::Ref(-25, true) && !super::stringref_enabled(vm) {
+        return Err(vm.type_error("WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type"));
+    }
+    if !ty.js_compatible() {
+        return Err(vm.type_error("WebAssembly.Global value type is not a JavaScript value type"));
     }
     let value = if call.args.len() > 1 {
-        call.arg(1)
+        let value = call.arg(1);
+        if value == JsValue::Undefined
+            && matches!(ty, Type::I32 | Type::I64 | Type::F32 | Type::F64)
+        {
+            default(ty)
+        } else {
+            value
+        }
+    } else if ty == Type::Extern {
+        JsValue::Undefined
     } else {
         default(ty)
     };
@@ -136,7 +154,7 @@ pub(super) fn record_type(vm: &mut Vm, value: &JsValue) -> Res<Type> {
         if fields.len() == 2
             && matches!(fields[1], "0" | "1")
             && let Ok(heap) = fields[0].parse::<i64>()
-            && matches!(heap, -22..=-13)
+            && matches!(heap, -37 | -36 | -22..=-17 | -15 | -14)
         {
             return Ok(Type::Shared(heap, fields[1] == "1"));
         }
@@ -189,19 +207,17 @@ pub(super) fn write(vm: &mut Vm, receiver: &JsValue, value: &JsValue) -> Res<()>
 }
 /** value and valueOf share the same brand and typed read. */
 fn value_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !ty(vm, &call.this)?.1.js_compatible() {
-        return Err(vm.type_error(
-            "type incompatibility when transforming from/to JS: unsupported value type",
-        ));
+    let (object, ty, _) = ty(vm, &call.this)?;
+    if !type_context::js_compatible(vm, object, ty)? {
+        return Err(vm.type_error("invalid type for JavaScript WebAssembly global"));
     }
-    read(vm, &call.this)
+    read(vm, &call.this).map(|value| gc::expose(vm, value))
 }
 /** The setter returns undefined after the typed store. */
 fn value_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !ty(vm, &call.this)?.1.js_compatible() {
-        return Err(vm.type_error(
-            "type incompatibility when transforming from/to JS: unsupported value type",
-        ));
+    let (object, ty, _) = ty(vm, &call.this)?;
+    if !type_context::js_compatible(vm, object, ty)? {
+        return Err(vm.type_error("invalid type for JavaScript WebAssembly global"));
     }
     write(vm, &call.this, &call.arg(0))?;
     Ok(JsValue::Undefined)

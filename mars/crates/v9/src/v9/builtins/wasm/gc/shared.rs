@@ -3,6 +3,11 @@ use super::*;
 use crate::v9::vm::data::{SharedGc, SharedGcArena, SharedGcValue};
 mod snapshot;
 pub(in crate::v9::builtins::wasm) use snapshot::{initialize, validate};
+#[cfg(feature = "conformance")]
+pub(in crate::v9::builtins::wasm) use snapshot::validate_arena;
+
+/** This inert metadata brands a real arena-owned wait queue independently of Wasm module bytes. */
+pub(in crate::v9::builtins::wasm) const WAIT_QUEUE_META: &[u8] = b"wasm-wait-queue-v1";
 
 /** Only the distinct native class carries a shared root; authored private-looking properties cannot forge it. */
 pub(in crate::v9::builtins::wasm) fn handle(vm: &Vm, value: &JsValue) -> Option<SharedGc> {
@@ -17,6 +22,8 @@ fn arena(vm: &Vm) -> crate::protocol::EngineResult<SharedGcArena> {
     if let Some(host) = &vm.page.environment.conformance_workers {
         return host.shared_gc_arena();
     }
+    #[cfg(feature = "conformance")]
+    if let Some(arena) = crate::v9::builtins::existing_js_arena(vm) { return Ok(arena); }
     vm.heap
         .objects
         .values()
@@ -27,6 +34,22 @@ fn arena(vm: &Vm) -> crate::protocol::EngineResult<SharedGcArena> {
         .map(Ok)
         .unwrap_or_else(SharedGcArena::new)
 }
+/** A queue is a branded arena node, so all workers observe one bounded waiter list. */
+pub(in crate::v9::builtins::wasm) fn new_wait_queue(vm: &mut Vm) -> Res<JsValue> {
+    let arena = arena(vm)?;
+    let root = arena.allocate(WAIT_QUEUE_META, 0, false, vec![])?;
+    let result = wrap(vm, &root)?;
+    vm.heap.refresh_shared_gc(&arena);
+    Ok(result)
+}
+/** Only branded queue nodes may wake registered waiters. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9::builtins::wasm) fn notify_queue(vm: &mut Vm, queue: &JsValue, count: u32) -> Res<u32> {
+    if *queue == JsValue::Null { return Err(trap(vm, "dereferencing a null pointer")); }
+    let root = handle(vm, queue).ok_or_else(|| vm.type_error("invalid Wasm wait queue"))?;
+    if root.metadata()?.0.as_ref() != WAIT_QUEUE_META { return Err(vm.type_error("invalid Wasm wait queue")); }
+    Ok(root.notify_waiters(count as usize) as u32)
+}
 /** Converting a reference validates its actual backing capability before storing its arena-local node number. */
 fn value(vm: &mut Vm, arena: &SharedGcArena, ty: Type, value: &JsValue) -> Res<SharedGcValue> {
     if ty == Type::V128 {
@@ -36,13 +59,32 @@ fn value(vm: &mut Vm, arena: &SharedGcArena, ty: Type, value: &JsValue) -> Res<S
         JsValue::Undefined => SharedGcValue::Undefined,
         JsValue::Null => SharedGcValue::Null,
         JsValue::Boolean(v) => SharedGcValue::Boolean(*v),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(v) => SharedGcValue::Number(v.to_bits()),
         JsValue::Number(v) => SharedGcValue::Number(v.to_bits()),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(v) | JsValue::LocalNumber(v) => SharedGcValue::Number(v.to_bits()),
         JsValue::BigInt(v) => SharedGcValue::BigInt(*v),
         JsValue::BigIntWide(v) => SharedGcValue::BigIntWide(v.clone()),
+        #[cfg(feature = "conformance")]
+        JsValue::String(v) => SharedGcValue::SharedString(vm.share_string(v)?),
+        #[cfg(not(feature = "conformance"))]
         JsValue::String(v) => SharedGcValue::String(v.as_units().into()),
-        JsValue::Object(_) => {
-            let shared = handle(vm, value)
-                .ok_or_else(|| vm.type_error("shared Wasm storage requires a shared reference"))?;
+        JsValue::Object(id) => {
+            let shared = if let Some(shared) = handle(vm, value) {
+                shared
+            } else {
+                #[cfg(feature = "conformance")]
+                {
+                    vm.pin(value.clone());
+                    crate::v9::builtins::activate_shared_container(vm, *id)?
+                }
+                #[cfg(not(feature = "conformance"))]
+                {
+                    let _ = id;
+                    return Err(vm.type_error("shared Wasm storage requires a shared reference"));
+                }
+            };
             if !arena.same_store(&shared.arena()) {
                 return Err(
                     vm.unsupported_error("shared GC references between unrelated agent families")
@@ -61,6 +103,13 @@ pub(super) fn allocate(
     index: u32,
     array: bool,
     fields: Vec<JsValue>,
+) -> Res<JsValue> {
+    allocate_described(vm, source, m, index, array, fields, None)
+}
+/** A described shared record stores its descriptor as a traced arena edge after its normal fields. */
+pub(super) fn allocate_described(
+    vm: &mut Vm, source: &JsValue, m: &Module, index: u32, array: bool,
+    fields: Vec<JsValue>, descriptor: Option<JsValue>,
 ) -> Res<JsValue> {
     let object = source
         .object()
@@ -87,11 +136,15 @@ pub(super) fn allocate(
             .map(|f| f.ty)
             .collect()
     };
-    let values = types
+    let mut values: Vec<SharedGcValue> = types
         .into_iter()
         .zip(fields)
         .map(|(ty, v)| value(vm, &arena, ty, &v))
         .collect::<Res<Vec<_>>>()?;
+    if let Some(descriptor) = descriptor {
+        let target = m.definitions[index as usize].descriptor.ok_or_else(|| vm.type_error("missing shared descriptor type"))?;
+        values.push(value(vm, &arena, Type::Exact(i64::from(target), false), &descriptor)?);
+    }
     let root = match arena.allocate(&bytes, index, array, values.clone()) {
         Ok(root) => root,
         Err(error) if error.code == "limit_exceeded" => {
@@ -138,13 +191,21 @@ fn from_value(
         SharedGcValue::Null => JsValue::Null,
         SharedGcValue::Boolean(v) => JsValue::Boolean(v),
         SharedGcValue::Number(v) => JsValue::Number(f64::from_bits(v)),
+        #[cfg(feature = "conformance")]
+        SharedGcValue::Smi(v) => JsValue::Smi(f64::from(v)),
         SharedGcValue::BigInt(v) => JsValue::BigInt(v),
         SharedGcValue::BigIntWide(v) => JsValue::bigint(v),
         SharedGcValue::Vector(v) => simd::value(v)?,
         SharedGcValue::String(v) => JsValue::String(JsString::from_units(v.to_vec())?),
+        #[cfg(feature = "conformance")]
+        SharedGcValue::SharedString(v) => JsValue::String(v),
         SharedGcValue::Reference(_) => {
             let reference =
                 reference.ok_or_else(|| vm.type_error("missing shared GC read root"))?;
+            #[cfg(feature = "conformance")]
+            if let Some(value) = crate::v9::builtins::resolve_shared_js_reference(vm, &reference)? {
+                return Ok(value);
+            }
             return wrap(vm, &reference);
         }
     })
@@ -184,6 +245,9 @@ pub(super) fn matches(vm: &mut Vm, m: &Module, ty: Type, root: &SharedGc) -> Res
     }
     let (bytes, index, array, _) = root.metadata()?;
     let (heap, _) = ty.reference().unwrap();
+    if bytes.as_ref() == WAIT_QUEUE_META {
+        return Ok(heap == -36);
+    }
     if heap < 0 {
         return Ok(match heap {
             -18 | -19 | -17 => true,
@@ -193,6 +257,7 @@ pub(super) fn matches(vm: &mut Vm, m: &Module, ty: Type, root: &SharedGc) -> Res
         });
     }
     let actual = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
+    if matches!(ty, Type::Exact(..)) { return Ok(gc_types::equivalent(&actual, index, m, heap as u32)); }
     let mut current = Some(index);
     for _ in 0..=actual.definitions.len() {
         let Some(index) = current else {
@@ -214,7 +279,7 @@ pub(super) fn atomic(
     root: &SharedGc,
     index: usize,
     action: u32,
-    ty: Type,
+    field: &Field,
     stored: Option<JsValue>,
     expected: Option<JsValue>,
 ) -> Res<JsValue> {
@@ -224,11 +289,11 @@ pub(super) fn atomic(
     let arena = root.arena();
     let stored = stored
         .as_ref()
-        .map(|v| value(vm, &arena, ty, v))
+        .map(|v| packed(vm, field, v).and_then(|v| value(vm, &arena, field.ty, &v)))
         .transpose()?;
     let expected = expected
         .as_ref()
-        .map(|v| value(vm, &arena, ty, v))
+        .map(|v| packed(vm, field, v).and_then(|v| value(vm, &arena, field.ty, &v)))
         .transpose()?;
 
     let old = root.update(index, |old| {
@@ -258,6 +323,7 @@ pub(super) fn atomic(
                     8 => a ^ b,
                     _ => a,
                 };
+                let result = field.packed.map_or(result, |bits| result & ((1u32 << bits) - 1));
                 SharedGcValue::Number((result as i32 as f64).to_bits())
             }
             (SharedGcValue::BigInt(a), SharedGcValue::BigInt(b)) => {

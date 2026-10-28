@@ -32,17 +32,12 @@ pub(super) fn pop(stack: &mut Vec<JsValue>) -> Res<JsValue> {
 }
 /** i32 values remain exact signed Numbers throughout interpretation. */
 pub(super) fn i32_value(value: &JsValue) -> Res<i32> {
-    match value {
-        JsValue::Number(n)
-            if n.is_finite()
-                && n.fract() == 0.0
-                && *n >= i32::MIN as f64
-                && *n <= i32::MAX as f64 =>
-        {
-            Ok(*n as i32)
-        }
-        _ => Err(crate::protocol::EngineError::invalid("Invalid WebAssembly i32 value.").into()),
+    if let Some(n) = value.number_value()
+        && n.is_finite() && n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64
+    {
+        return Ok(n as i32);
     }
+    Err(crate::protocol::EngineError::invalid("Invalid WebAssembly i32 value.").into())
 }
 /** i64 values use the existing compact BigInt representation. */
 pub(super) fn i64_value(value: &JsValue) -> Res<i64> {
@@ -54,6 +49,8 @@ pub(super) fn i64_value(value: &JsValue) -> Res<i64> {
 /** Wasm floating values never coerce objects or invoke JavaScript. */
 fn number(value: &JsValue) -> Res<f64> {
     match value {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(n) => Ok(*n),
         JsValue::Number(n) => Ok(*n),
         _ => Err(crate::protocol::EngineError::invalid("Invalid WebAssembly float value.").into()),
     }
@@ -170,10 +167,17 @@ pub(super) fn run(vm: &mut Vm, op: u8, stack: &mut Vec<JsValue>) -> Res<()> {
 /** i32 division has two distinct traps; remainder of MIN/-1 is defined as zero. */
 fn integer32(vm: &mut Vm, op: u8, a: i32, b: i32) -> Res<i32> {
     if matches!(op, 0x6d..=0x70) && b == 0 {
-        return Err(trap(vm, "divide by zero"));
+        return Err(trap(
+            vm,
+            if op >= 0x6f {
+                "remainder by zero"
+            } else {
+                "divide by zero"
+            },
+        ));
     }
     if op == 0x6d && a == i32::MIN && b == -1 {
-        return Err(trap(vm, "integer overflow"));
+        return Err(trap(vm, "divide result unrepresentable"));
     }
     Ok(match op {
         0x6a => a.wrapping_add(b),
@@ -196,10 +200,17 @@ fn integer32(vm: &mut Vm, op: u8, a: i32, b: i32) -> Res<i32> {
 /** i64 arithmetic uses explicit wrapping and unsigned views of the same bits. */
 fn integer64(vm: &mut Vm, op: u8, a: i64, b: i64) -> Res<i64> {
     if matches!(op, 0x7f..=0x82) && b == 0 {
-        return Err(trap(vm, "divide by zero"));
+        return Err(trap(
+            vm,
+            if op >= 0x81 {
+                "remainder by zero"
+            } else {
+                "divide by zero"
+            },
+        ));
     }
     if op == 0x7f && a == i64::MIN && b == -1 {
-        return Err(trap(vm, "integer overflow"));
+        return Err(trap(vm, "divide result unrepresentable"));
     }
     Ok(match op {
         0x7c => a.wrapping_add(b),
@@ -313,7 +324,14 @@ fn conversion(vm: &mut Vm, op: u8, value: JsValue) -> Res<JsValue> {
         0xb8 => JsValue::Number(f64::from(i32_value(&value)? as u32)),
         0xb9 => JsValue::Number(i64_value(&value)? as f64),
         0xba => JsValue::Number((i64_value(&value)? as u64) as f64),
-        0xbb => JsValue::Number(number(&value)?),
+        0xbb => {
+            let number = number(&value)?;
+            JsValue::Number(if number.is_nan() {
+                f64::from_bits(number.to_bits() | F64_QUIET_NAN_BIT)
+            } else {
+                number
+            })
+        }
         0xbc => JsValue::Number((f32_bits(number(&value)?) as i32) as f64),
         0xbd => JsValue::BigInt((number(&value)?.to_bits() as i64) as i128),
         0xbe => JsValue::Number(promote_f32(i32_value(&value)? as u32)),
@@ -350,6 +368,7 @@ pub(super) fn load(op: u8, bytes: &[u8]) -> JsValue {
         _ => unsigned as i64,
     };
     match op {
+        0xc5 => JsValue::Number(crate::v9::value::decode_f16(unsigned as u16)),
         0x2a => JsValue::Number(promote_f32(unsigned as u32)),
         0x2b => JsValue::Number(f64::from_bits(unsigned)),
         0x28 | 0x2c | 0x2e => JsValue::Number((signed as i32) as f64),
@@ -361,6 +380,7 @@ pub(super) fn load(op: u8, bytes: &[u8]) -> JsValue {
 /** Store width is validated by the opcode table before a slice is taken. */
 pub(super) fn store(op: u8, value: &JsValue) -> Res<[u8; 8]> {
     Ok(match op {
+        0xc6 => u64::from(crate::v9::value::encode_f16(number(value)?)),
         0x38 => f32_bits(number(value)?) as u64,
         0x39 => number(value)?.to_bits(),
         0x36 | 0x3a | 0x3b => i32_value(value)? as u32 as u64,

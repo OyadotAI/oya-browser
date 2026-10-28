@@ -22,7 +22,7 @@ fn maximum(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let maximum = if buffer_state::detached(vm, id) {
         0
     } else {
-        buffer_state::maximum(vm, id).unwrap_or_else(|| buffer_bytes(vm, id).map_or(0, Vec::len))
+        buffer_state::maximum(vm, id).unwrap_or_else(|| storage_len(vm, id).unwrap_or(0))
     };
     Ok(JsValue::Number(maximum as f64))
 }

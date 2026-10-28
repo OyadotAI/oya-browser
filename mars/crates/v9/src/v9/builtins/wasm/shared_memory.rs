@@ -8,13 +8,21 @@ pub(super) fn create(vm: &mut Vm, limits: types::Limits) -> Res<ObjectId> {
         .max
         .ok_or_else(|| vm.type_error("Shared WebAssembly memory requires a maximum"))?;
     let length = limits.min as usize * PAGE_BYTES;
-    let capacity = (maximum as usize).min(MAX_PAGES) * PAGE_BYTES;
-    let backing = SharedBytes::new(length, Some(capacity))?;
+    let capacity = (maximum as usize).min(super::memory::page_limit(vm, limits.address64))
+        .checked_mul(PAGE_BYTES)
+        .ok_or_else(|| vm.range_error("WebAssembly memory allocation failed"))?;
+    let backing = if capacity > BUFFER_BYTES {
+        SharedBytes::new_sparse_wasm(length, capacity)?
+    } else {
+        SharedBytes::new(length, Some(capacity))?
+    };
     wrapper(vm, backing.fixed_view(length).unwrap())
 }
 /** Native imports pass through the same broker grant boundary as SharedArrayBuffer cloning. */
-fn wrapper(vm: &mut Vm, backing: SharedBytes) -> Res<ObjectId> {
-    super::super::import_shared_buffer(vm, backing)
+pub(super) fn wrapper(vm: &mut Vm, backing: SharedBytes) -> Res<ObjectId> {
+    let storage = super::super::import_shared_buffer(vm, backing)?;
+    super::super::object::freeze_object(vm, storage)?;
+    Ok(storage)
 }
 /** Access to the full backing belongs only to native memory instructions, never old fixed JS wrappers. */
 pub(super) fn backing(vm: &Vm, storage: ObjectId) -> Option<SharedBytes> {
@@ -46,11 +54,12 @@ pub(super) fn grow(
 ) -> Res<u32> {
     let bytes =
         backing(vm, storage).ok_or_else(|| vm.type_error("invalid shared memory backing"))?;
+    if delta == 0 {
+        refresh(vm, memory, storage)?;
+        return Ok((bytes.backing_len() / PAGE_BYTES) as u32);
+    }
     let old = bytes
-        .grow_by(
-            delta as usize * PAGE_BYTES,
-            maximum.min(MAX_PAGES) * PAGE_BYTES,
-        )
+        .grow_by(delta as usize * PAGE_BYTES, maximum * PAGE_BYTES)
         .ok_or_else(|| {
             vm.range_error("WebAssembly.Memory.grow exceeds maximum or V9 buffer limit")
         })?;
@@ -58,7 +67,6 @@ pub(super) fn grow(
     {
         return Ok((old / PAGE_BYTES) as u32);
     }
-    // grow(0) also refreshes the current memory buffer's wrapper identity.
     let next = wrapper(vm, bytes.fixed_view(bytes.len()).unwrap())?;
     set(vm, memory, MEMORY, JsValue::Object(next));
     Ok((old / PAGE_BYTES) as u32)

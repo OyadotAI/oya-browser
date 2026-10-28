@@ -13,7 +13,10 @@ pub(super) fn limits(m: &Module, index: u32) -> Result<types::Limits, Error> {
         })
         .chain(m.memories.iter().copied())
         .nth(index as usize)
-        .ok_or_else(|| Error::invalid("unknown memory index"))
+        .ok_or_else(|| {
+            let count = m.imports.iter().filter(|import| matches!(import.kind, types::External::Memory(_))).count() + m.memories.len();
+            Error::invalid(&format!("memory index {index} exceeds number of declared memories ({count})"))
+        })
 }
 /** Memory operands have the same width as their selected memory's declared index space. */
 pub(super) fn ty(m: &Module, index: u32) -> Result<Type, Error> {
@@ -48,12 +51,30 @@ pub(super) fn descriptor(vm: &mut Vm, value: &JsValue) -> Res<bool> {
 }
 /** JS index conversion enforces the original unsigned range before narrowing to the page quota. */
 pub(super) fn index(vm: &mut Vm, value: &JsValue, address64: bool) -> Res<u64> {
+    index_with_range(
+        vm,
+        value,
+        address64,
+        "WebAssembly index must be an unsigned 64-bit BigInt",
+    )
+}
+/** A descriptor can name the property whose converted BigInt is outside the supported range. */
+pub(super) fn index_with_range(
+    vm: &mut Vm,
+    value: &JsValue,
+    address64: bool,
+    range_message: &str,
+) -> Res<u64> {
     if !address64 {
         return memory::index(vm, value).map(u64::from);
     }
+    if value.number_value().is_some() {
+        let value = vm.to_text(value)?;
+        return Err(vm.type_error(&format!("Cannot convert {value} to a BigInt")));
+    }
     let value = super::super::bigint::to_bigint_full(vm, value)?.to_i128();
     let Some(value) = value.filter(|value| (0..=u64::MAX as i128).contains(value)) else {
-        return Err(vm.type_error("WebAssembly index must be an unsigned 64-bit BigInt"));
+        return Err(vm.type_error(range_message));
     };
     Ok(value as u64)
 }
@@ -69,7 +90,7 @@ pub(super) fn read_limits(
     }
     let initial = vm.get(value, &key("initial"))?;
     if initial == JsValue::Undefined {
-        return Err(vm.type_error("WebAssembly descriptor requires initial"));
+        return Err(vm.type_error("WebAssembly descriptor 'initial' is required"));
     }
     let min = index(vm, &initial, address64)?;
     let maximum = vm.get(value, &key("maximum"))?;
@@ -78,12 +99,15 @@ pub(super) fn read_limits(
     } else {
         Some(index(vm, &maximum, address64)?)
     };
-    if min > u64::from(bound) || max.is_some_and(|max| max > u64::from(bound) || max < min) {
-        return Err(vm.range_error("WebAssembly descriptor has invalid limits"));
+    if min > u64::from(bound) || max.is_some_and(|max| max > u64::from(bound)) {
+        return Err(vm.range_error("WebAssembly descriptor limit is above the upper bound"));
+    }
+    if max.is_some_and(|max| max < min) {
+        return Err(vm.range_error("WebAssembly descriptor maximum is below the lower bound"));
     }
     Ok(types::Limits {
-        min: min as u32,
-        max: max.map(|v| v as u32),
+        min,
+        max,
         shared: false,
         address64,
     })
@@ -106,7 +130,7 @@ pub(super) fn effective(vm: &mut Vm, memory: &JsValue, value: &JsValue, offset: 
 }
 /** JS growth failures are RangeErrors; Wasm callers translate them into the typed minus-one result. */
 pub(super) fn grow(vm: &mut Vm, memory: &JsValue, delta: u64) -> Res<u32> {
-    if delta > MAX_PAGES as u64 {
+    if delta > u64::from(u32::MAX) {
         return Err(vm.range_error("WebAssembly.Memory.grow(): Unable to grow instance memory"));
     }
     memory::resize(vm, memory, delta as u32)

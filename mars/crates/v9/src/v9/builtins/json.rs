@@ -8,8 +8,10 @@ use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{Static, string, symbol};
 
 mod diagnostics;
+mod input;
 mod raw;
 use diagnostics::Reason;
+use input::Input;
 pub(in crate::v9) use raw::branded as is_raw_json;
 mod reviver;
 use reviver::{Parsed, Reviver, Snapshot};
@@ -31,7 +33,7 @@ pub(super) fn install(b: &mut Builder) {
 
 /** A JSON text parser building heap values directly. */
 struct Reader<'a> {
-    units: &'a [u16],
+    units: Input<'a>,
     position: usize,
     depth: usize,
     /** Retain source spans only when a callable reviver can observe them. */
@@ -81,7 +83,7 @@ impl Reader<'_> {
             Some(0x74) => self.word(vm, "true", JsValue::Boolean(true)),
             Some(0x66) => self.word(vm, "false", JsValue::Boolean(false)),
             Some(0x6e) => self.word(vm, "null", JsValue::Null),
-            Some(unit) if *unit == 0x2d || (0x30..=0x39).contains(unit) => self.number(vm),
+            Some(unit) if unit == 0x2d || (0x30..=0x39).contains(&unit) => self.number(vm),
             _ => Err(self.error(vm)),
         };
         self.depth -= 1;
@@ -99,7 +101,7 @@ impl Reader<'_> {
     /** A literal word. */
     fn word(&mut self, vm: &mut Vm, word: &str, value: JsValue) -> Res<JsValue> {
         for character in word.bytes() {
-            if self.units.get(self.position) != Some(&u16::from(character)) {
+            if self.units.get(self.position) != Some(u16::from(character)) {
                 return Err(self.error(vm));
             }
             self.position += 1;
@@ -109,7 +111,7 @@ impl Reader<'_> {
     /** A number in JSON's stricter grammar. */
     fn number(&mut self, vm: &mut Vm) -> Res<JsValue> {
         let start = self.position;
-        if self.units.get(self.position) == Some(&0x2d) {
+        if self.units.get(self.position) == Some(0x2d) {
             self.position += 1;
         }
         let digits = |reader: &mut Self| {
@@ -117,25 +119,25 @@ impl Reader<'_> {
             while reader
                 .units
                 .get(reader.position)
-                .is_some_and(|u| (0x30..=0x39).contains(u))
+                .is_some_and(|u| (0x30..=0x39).contains(&u))
             {
                 reader.position += 1;
             }
             reader.position > begin
         };
-        if self.units.get(self.position) == Some(&0x30) {
+        if self.units.get(self.position) == Some(0x30) {
             self.position += 1;
             if self
                 .units
                 .get(self.position)
-                .is_some_and(|unit| (0x30..=0x39).contains(unit))
+                .is_some_and(|unit| (0x30..=0x39).contains(&unit))
             {
                 return Err(self.failure(vm, Reason::UnexpectedNumber));
             }
         } else if !digits(self) {
             return Err(self.failure(vm, Reason::NumberAfterMinus));
         }
-        if self.units.get(self.position) == Some(&0x2e) {
+        if self.units.get(self.position) == Some(0x2e) {
             self.position += 1;
             if !digits(self) {
                 return Err(self.failure(vm, Reason::Fraction));
@@ -150,7 +152,12 @@ impl Reader<'_> {
                 return Err(self.failure(vm, Reason::Exponent));
             }
         }
-        let text = String::from_utf16_lossy(&self.units[start..self.position]);
+        if self.position - start > JS_STRING_UNITS {
+            return Err(
+                EngineError::limit("JSON numeric token UTF-16 units", JS_STRING_UNITS).into(),
+            );
+        }
+        let text = String::from_utf16_lossy(&self.units.range(start, self.position));
         Ok(JsValue::Number(text.parse().unwrap_or(f64::NAN)))
     }
     /** A quoted string. */
@@ -158,14 +165,14 @@ impl Reader<'_> {
         self.position += 1;
         let mut out = Vec::new();
         loop {
-            let Some(unit) = self.units.get(self.position).copied() else {
+            let Some(unit) = self.units.get(self.position) else {
                 return Err(self.failure(vm, Reason::UnterminatedString));
             };
             self.position += 1;
             match unit {
                 0x22 => break,
                 0x5c => {
-                    let Some(escape) = self.units.get(self.position).copied() else {
+                    let Some(escape) = self.units.get(self.position) else {
                         return Err(self.error(vm));
                     };
                     self.position += 1;
@@ -206,7 +213,7 @@ impl Reader<'_> {
             let digit = self
                 .units
                 .get(self.position)
-                .and_then(|unit| char::from_u32(u32::from(*unit)))
+                .and_then(|unit| char::from_u32(u32::from(unit)))
                 .and_then(|character| character.to_digit(16));
             let Some(digit) = digit else {
                 return Err(self.failure(vm, Reason::UnicodeEscape));
@@ -221,7 +228,7 @@ impl Reader<'_> {
         self.position += 1;
         let array = vm.new_array(Vec::new())?;
         self.skip();
-        if self.units.get(self.position) == Some(&0x5d) {
+        if self.units.get(self.position) == Some(0x5d) {
             self.position += 1;
             return Ok(JsValue::Object(array));
         }
@@ -247,14 +254,14 @@ impl Reader<'_> {
         self.position += 1;
         let object = vm.new_object()?;
         self.skip();
-        if self.units.get(self.position) == Some(&0x7d) {
+        if self.units.get(self.position) == Some(0x7d) {
             self.position += 1;
             return Ok(JsValue::Object(object));
         }
         let mut first = true;
         loop {
             self.skip();
-            if self.units.get(self.position) != Some(&0x22) {
+            if self.units.get(self.position) != Some(0x22) {
                 return Err(self.failure(
                     vm,
                     if first {
@@ -266,7 +273,7 @@ impl Reader<'_> {
             }
             let name = self.string(vm)?;
             self.skip();
-            if self.units.get(self.position) != Some(&0x3a) {
+            if self.units.get(self.position) != Some(0x3a) {
                 return Err(self.failure(vm, Reason::Colon));
             }
             self.position += 1;
@@ -291,11 +298,11 @@ impl Reader<'_> {
 
 /** Parse JSON text from units into heap values. */
 pub(in crate::v9) fn json_parse_units(vm: &mut Vm, units: &[u16]) -> Res<JsValue> {
-    read_json(vm, units, false).map(|(value, _)| value)
+    read_json(vm, Input::Units(units), false).map(|(value, _)| value)
 }
 
 /** Parse once, optionally preserving source records for JSON.parse's reviver context. */
-fn read_json(vm: &mut Vm, units: &[u16], capture: bool) -> Res<(JsValue, Snapshot)> {
+fn read_json(vm: &mut Vm, units: Input<'_>, capture: bool) -> Res<(JsValue, Snapshot)> {
     let mut reader = Reader {
         units,
         position: 0,
@@ -322,7 +329,8 @@ fn parse(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
     let reviver = call.arg(1);
     let callable = vm.is_callable(&reviver);
-    let (value, snapshot) = read_json(vm, text.as_units(), callable)?;
+    let input = Input::from_string(&text);
+    let (value, snapshot) = read_json(vm, input, callable)?;
     if !callable {
         return Ok(value);
     }
@@ -330,7 +338,7 @@ fn parse(vm: &mut Vm, call: Call) -> Res<JsValue> {
     vm.put(root, "", value)?;
     let visitor = Reviver {
         function: reviver,
-        units: text.as_units(),
+        units: input,
         snapshot,
     };
     visitor.visit(
@@ -356,11 +364,16 @@ impl Writer {
         self.out.extend(text.bytes().map(u16::from));
     }
     /** Append a quoted JSON string. */
-    fn quote(&mut self, text: &[u16]) {
+    fn quote(&mut self, text: &JsString) {
         self.out.push(0x22);
         let mut index = 0;
+        let flat = text.flat_units();
+        let unit_at = |index| match flat {
+            Some(units) => units.get(index).copied(),
+            None => text.unit_at(index),
+        };
         while index < text.len() {
-            let unit = text[index];
+            let unit = unit_at(index).expect("valid string index");
             match unit {
                 0x22 => self.ascii("\\\""),
                 0x5c => self.ascii("\\\\"),
@@ -371,12 +384,11 @@ impl Writer {
                 0x09 => self.ascii("\\t"),
                 unit if unit < 0x20 => self.ascii(&format!("\\u{unit:04x}")),
                 0xd800..=0xdbff
-                    if text
-                        .get(index + 1)
-                        .is_some_and(|low| (0xdc00..=0xdfff).contains(low)) =>
+                    if unit_at(index + 1).is_some_and(|low| (0xdc00..=0xdfff).contains(&low)) =>
                 {
                     self.out.push(unit);
-                    self.out.push(text[index + 1]);
+                    self.out
+                        .push(unit_at(index + 1).expect("checked low surrogate"));
                     index += 1;
                 }
                 0xd800..=0xdfff => self.ascii(&format!("\\u{unit:04x}")),
@@ -440,10 +452,20 @@ fn serialize_property(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: 
         }
         JsValue::Null => writer.ascii("null"),
         JsValue::Boolean(flag) => writer.ascii(if *flag { "true" } else { "false" }),
-        JsValue::String(text) => writer.quote(text.as_units()),
+        JsValue::String(text) => writer.quote(&text),
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => writer.ascii(&crate::v9::value::number_to_string(*number)),
         JsValue::Number(number) => {
             if number.is_finite() {
                 writer.ascii(&crate::v9::value::number_to_string(*number));
+            } else {
+                writer.ascii("null");
+            }
+        }
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => {
+            if number.is_finite() {
+                writer.ascii(&crate::v9::value::number_to_string(number.value));
             } else {
                 writer.ascii("null");
             }
@@ -453,7 +475,9 @@ fn serialize_property(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: 
                 if writer.out.len().saturating_add(source.len()) > JS_STRING_UNITS {
                     return Err(vm.range_error("Invalid string length"));
                 }
-                writer.out.extend_from_slice(source.as_units());
+                writer
+                    .out
+                    .extend((0..source.len()).filter_map(|index| source.unit_at(index)));
                 return Ok(true);
             }
             if writer.stack.contains(id) {
@@ -521,7 +545,7 @@ fn serialize_object(vm: &mut Vm, writer: &mut Writer, value: &JsValue) -> Res<()
         }
         writer.indent();
         if let Key::Str(text) = &name {
-            writer.quote(text.as_units());
+            writer.quote(text);
         }
         writer.out.push(0x3a);
         if !writer.gap.is_empty() {
@@ -562,8 +586,14 @@ pub(in crate::v9) fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
         None
     };
     let gap: Vec<u16> = match spacing_value(vm, call.arg(2))? {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(count) => vec![0x20; count.clamp(0.0, MAX_GAP as f64) as usize],
         JsValue::Number(count) => vec![0x20; count.clamp(0.0, MAX_GAP as f64) as usize],
-        JsValue::String(text) => text.as_units().iter().take(MAX_GAP).copied().collect(),
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(count) | JsValue::LocalNumber(count) => vec![0x20; count.value.clamp(0.0, MAX_GAP as f64) as usize],
+        JsValue::String(text) => (0..text.len().min(MAX_GAP))
+            .filter_map(|index| text.unit_at(index))
+            .collect(),
         _ => Vec::new(),
     };
     let mut writer = Writer {
@@ -592,6 +622,8 @@ pub(in crate::v9) fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn replacer_name(vm: &Vm, value: &JsValue) -> bool {
     match value {
         JsValue::String(_) | JsValue::Number(_) => true,
+        #[cfg(feature = "conformance")]
+        JsValue::SharedNumber(_) | JsValue::LocalNumber(_) | JsValue::Smi(_) => true,
         JsValue::Object(id) => matches!(
             vm.heap.get(*id).map(|object| &object.class),
             Some(Class::String(_) | Class::Number(_))

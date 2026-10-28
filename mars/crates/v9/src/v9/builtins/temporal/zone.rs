@@ -64,7 +64,7 @@ fn build() -> Option<Index> {
 
 /** A resolved named zone: the shared index and the zone's slot in it. */
 #[derive(Clone, Copy)]
-pub(super) struct Zone {
+pub(in crate::v9::builtins) struct Zone {
     /** The index that owns the zone's data. */
     index: &'static Index,
     /** The zone's position in the index. */
@@ -72,7 +72,7 @@ pub(super) struct Zone {
 }
 
 /** The shipped zone a name refers to; names match ignoring ASCII case, and links resolve to their zone. */
-pub(super) fn lookup(name: &str) -> Option<Zone> {
+pub(in crate::v9::builtins) fn lookup(name: &str) -> Option<Zone> {
     let index = INDEX.get_or_init(build).as_ref()?;
     let key = name.to_ascii_lowercase();
     let at = index

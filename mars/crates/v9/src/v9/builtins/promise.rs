@@ -9,6 +9,9 @@ use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{Static, realm, string, symbol};
 pub(in crate::v9) use forwarding::{forwarding_promise, resolving_promise};
 
+/** Shared resolver state holds the pending target only until the first claim. */
+const RESOLVER_TARGET: &str = "promise-resolver-target";
+
 /** Native slots for the resolving functions and combinators. */
 struct Natives {
     resolve: u32,
@@ -62,6 +65,7 @@ impl Vm<'_> {
         ))?;
         #[cfg(feature = "conformance")]
         {
+            super::debug_event(self, super::DebugEvent::PromiseCreated);
             let mark = self.pins.len();
             self.pins.push(JsValue::Object(promise));
             let result = super::async_hook_init(self, promise, parent);
@@ -74,11 +78,50 @@ impl Vm<'_> {
     }
     /** Queue a microtask. */
     pub fn enqueue(&mut self, job: Job) -> Res<()> {
-        if self.jobs.len() >= self.limits.jobs {
+        #[cfg(feature = "conformance")]
+        let custom_count = self.realms.custom_job_count();
+        #[cfg(not(feature = "conformance"))]
+        let custom_count = 0;
+        if self.jobs.len().saturating_add(custom_count) >= self.limits.jobs {
             return Err(EngineError::limit("V9 pending jobs", self.limits.jobs).into());
+        }
+        #[cfg(feature = "conformance")]
+        if let Some(bank) = self.custom_job_realm(&job) {
+            let context = &mut self.realms.contexts[bank as usize];
+            if !context.microtask_queue_closed { context.custom_jobs.push(job); }
+            return Ok(());
         }
         self.jobs.push_back(job);
         Ok(())
+    }
+    /** V8 chooses the callback's creation realm, rather than the caller that settles the promise. */
+    #[cfg(feature = "conformance")]
+    fn custom_job_realm(&self, job: &Job) -> Option<u32> {
+        let callback = match job {
+            Job::Callback(callback) => callback.object(),
+            Job::Thenable { then, .. } => then.object(),
+            Job::Reaction { reaction, .. } => match &reaction.handler {
+                ReactionHandler::Function(callback) => callback.object().or(reaction.target),
+                ReactionHandler::Resume(holder) => Some(*holder),
+            },
+        };
+        let bank = callback.and_then(|id| self.job_callback_realm(id)).unwrap_or(self.active_realm);
+        self.realms.contexts.get(bank as usize).filter(|context| context.own_microtask_queue && context.global.is_some()).map(|_| bank)
+    }
+    /** Bound functions and live proxies inherit the target's realm; revoked proxies use the current context. */
+    #[cfg(feature = "conformance")]
+    fn job_callback_realm(&self, mut id: ObjectId) -> Option<u32> {
+        for _ in 0..self.limits.frames {
+            match self.heap.get(id).map(|object| &object.class) {
+                Some(Class::Proxy(proxy)) => id = proxy.target?,
+                Some(Class::Function(function)) => match &function.kind {
+                    crate::v9::vm::data::FunctionKind::Bound { target, .. } => id = *target,
+                    _ => return Some(self.object_realm(id)),
+                },
+                _ => return Some(self.object_realm(id)),
+            }
+        }
+        None
     }
     /** Settle a pending promise and schedule its reactions. */
     pub fn settle(&mut self, promise: ObjectId, state: PromiseState) -> Res<()> {
@@ -112,6 +155,8 @@ impl Vm<'_> {
             PromiseState::Rejected(value) => (true, value),
             PromiseState::Pending => return Ok(()),
         };
+        #[cfg(feature = "conformance")]
+        super::debug_event(self, super::DebugEvent::PromiseSettled);
         if rejected && !handled {
             self.page.unhandled.push(promise);
         }
@@ -247,6 +292,16 @@ impl Vm<'_> {
     }
     /** Run queued microtasks until the queue is empty. */
     pub fn drain_jobs(&mut self) -> Res<()> {
+        if self.draining_jobs {
+            return Ok(());
+        }
+        self.draining_jobs = true;
+        let result = self.drain_jobs_inner();
+        self.draining_jobs = false;
+        result
+    }
+    /** One checkpoint owns the queue and always releases its reentrancy guard on failure. */
+    fn drain_jobs_inner(&mut self) -> Res<()> {
         loop {
             self.charge(1)?;
             if self.expired() {
@@ -413,7 +468,8 @@ impl Vm<'_> {
     /** A resolve/reject pair sharing one already-resolved flag. */
     pub fn resolving_functions(&mut self, promise: ObjectId) -> Res<(ObjectId, ObjectId)> {
         let flag = self.new_object()?;
-        let slots = vec![JsValue::Object(promise), JsValue::Object(flag)];
+        self.heap.put(flag, Key::private(RESOLVER_TARGET), crate::v9::vm::heap::Prop::data(JsValue::Object(promise)));
+        let slots = vec![JsValue::Object(flag)];
         let resolve = self.native_closure(natives().resolve, slots.clone())?;
         let reject = self.native_closure(natives().reject, slots)?;
         Ok((resolve, reject))
@@ -423,16 +479,23 @@ impl Vm<'_> {
 /** Claim a resolving function's shared flag; false if already used. */
 fn claim(vm: &mut Vm, call: &Call) -> Res<Option<ObjectId>> {
     let slots = vm.slots(call.callee);
-    let (Some(JsValue::Object(promise)), Some(flag)) = (slots.first(), slots.get(1)) else {
-        return Ok(None);
+    let (promise, flag, shared) = match slots.as_slice() {
+        [JsValue::Object(flag)] => {
+            let target = vm.heap.get(*flag).and_then(|object| object.props.get(&Key::private(RESOLVER_TARGET))).and_then(|prop| match &prop.slot { crate::v9::vm::heap::Slot::Data(JsValue::Object(target)) => Some(*target), _ => None });
+            let Some(target) = target else { return Ok(None); };
+            (target, JsValue::Object(*flag), true)
+        }
+        [JsValue::Object(promise), flag] => (*promise, flag.clone(), false),
+        _ => return Ok(None),
     };
-    if vm.get(flag, &key("done"))?.truthy() {
+    if vm.get(&flag, &key("done"))?.truthy() {
         return Ok(None);
     }
     if let JsValue::Object(flag) = flag {
-        vm.put(*flag, "done", JsValue::Boolean(true))?;
+        vm.put(flag, "done", JsValue::Boolean(true))?;
+        if shared { vm.heap.put(flag, Key::private(RESOLVER_TARGET), crate::v9::vm::heap::Prop::data(JsValue::Undefined)); }
     }
-    Ok(Some(*promise))
+    Ok(Some(promise))
 }
 
 /** A promise's resolve function. */

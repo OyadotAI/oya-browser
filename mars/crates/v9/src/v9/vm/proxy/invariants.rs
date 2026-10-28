@@ -35,16 +35,31 @@ impl Vm<'_> {
         if prop.attrs & CONFIGURABLE != 0 {
             return Ok(());
         }
-        let valid = match prop.slot {
-            Slot::Data(value) => prop.attrs & WRITABLE != 0 || result.same_value(&value),
-            Slot::Accessor(None, _) => *result == JsValue::Undefined,
-            _ => true,
-        };
-        if valid {
-            Ok(())
-        } else {
-            Err(self.type_error("Proxy get trap contradicts a non-configurable target property"))
+        match prop.slot {
+            Slot::Data(value) if prop.attrs & WRITABLE == 0 && !result.same_value(&value) => {
+                let name = self.proxy_invariant_key(key);
+                let expected = self.proxy_invariant_value(&value);
+                let actual = self.proxy_invariant_value(result);
+                Err(self.type_error(&format!("'get' on proxy: property '{name}' is a read-only and non-configurable data property on the proxy target but the proxy did not return its actual value (expected '{expected}' but got '{actual}')")))
+            }
+            Slot::Accessor(None, _) if *result != JsValue::Undefined => {
+                let name = self.proxy_invariant_key(key);
+                let actual = self.proxy_invariant_value(result);
+                Err(self.type_error(&format!("'get' on proxy: property '{name}' is a non-configurable accessor property on the proxy target and does not have a getter function, but the trap did not return 'undefined' (got '{actual}')")))
+            }
+            _ => Ok(()),
         }
+    }
+    /** Property names are rendered from inert key data, without calling script. */
+    fn proxy_invariant_key(&self, key: &Key) -> String {
+        match key {
+            Key::Sym(id) => format!("Symbol({})", crate::v9::builtins::symbol_text(self, *id)),
+            _ => crate::v9::vm::property::key_text(key),
+        }
+    }
+    /** Describe values without invoking authored getters or conversion methods. */
+    fn proxy_invariant_value(&self, value: &JsValue) -> String {
+        if matches!(value, JsValue::Object(_)) { "#<Object>".into() } else { self.iterator_value_description(value) }
     }
     /** A truthy set trap still cannot claim a forbidden write to a fixed target property. */
     pub(super) fn check_set(&mut self, target: ObjectId, key: &Key, value: &JsValue) -> Res<()> {

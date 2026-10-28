@@ -117,7 +117,7 @@ impl Vm<'_> {
         for _ in 0..name.prefixes {
             units.extend_from_slice(super::data::BOUND_PREFIX)
         }
-        units.extend_from_slice(tail.as_units());
+        units.extend(tail.code_units());
         Ok(JsValue::String(JsString::from_units(units)?))
     }
     /** Tail accounting follows the same existing unit budget as ordinary own string properties. */

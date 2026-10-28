@@ -1,6 +1,42 @@
 /** Shared graph mutation is synchronized and checked before any record or field becomes visible. */
 use super::*;
 impl State {
+    /** Intern equal shared string contents while retaining only weak table references. */
+    fn intern(&mut self, value: SharedGcValue) -> EngineResult<SharedGcValue> {
+        use std::hash::{Hash, Hasher};
+        let SharedGcValue::String(text) = value else { return Ok(value) };
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hasher);
+        let hash = hasher.finish();
+        if let Some(existing) = self.interned.get(&hash).and_then(|entries| entries.iter().filter_map(Weak::upgrade).find(|existing| **existing == *text)) {
+            return Ok(SharedGcValue::String(existing));
+        }
+        self.intern_operations += 1;
+        if self.intern_operations >= INTERN_PURGE_INTERVAL || self.interned.len() >= MAX_INTERN_ENTRIES {
+            self.interned.retain(|_, entries| { entries.retain(|entry| entry.strong_count() != 0); !entries.is_empty() });
+            self.intern_operations = 0;
+            self.intern_entries = self.interned.values().map(Vec::len).sum();
+        }
+        if self.intern_entries >= MAX_INTERN_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_INTERN_ENTRIES)); }
+        self.interned.entry(hash).or_default().push(Arc::downgrade(&text));
+        self.intern_entries += 1;
+        Ok(SharedGcValue::String(text))
+    }
+
+    /** Rebuild the weak table when inert snapshots are decoded or merged. */
+    pub(super) fn intern_all(&mut self) -> EngineResult<()> {
+        let mut records = std::mem::take(&mut self.records);
+        self.interned.clear();
+        self.intern_entries = 0;
+        self.intern_operations = 0;
+        for record in records.values_mut() {
+            for value in &mut record.values {
+                *value = self.intern(value.clone())?;
+            }
+        }
+        self.records = records;
+        Ok(())
+    }
     /** Root reachability collects cyclic records without retaining them through Rust Arc field edges. */
     pub(super) fn sweep(&mut self) {
         self.roots.retain(|_, root| root.strong_count() != 0);
@@ -49,6 +85,8 @@ impl State {
         match value {
             SharedGcValue::Reference(id) => self.records.contains_key(id),
             SharedGcValue::String(s) => s.len() <= crate::constants::JS_STRING_UNITS,
+            #[cfg(feature = "conformance")]
+            SharedGcValue::SharedString(s) => s.len() <= crate::constants::JS_STRING_UNITS,
             _ => true,
         }
     }
@@ -60,12 +98,13 @@ impl SharedGcArena {
         module: &[u8],
         ty: u32,
         array: bool,
-        values: Vec<SharedGcValue>,
+        mut values: Vec<SharedGcValue>,
     ) -> EngineResult<SharedGc> {
         let mut state = self.lock();
         if state.dirty {
             state.sweep();
         }
+        for value in &mut values { *value = state.intern(value.clone())?; }
         if module.len() > MAX_BYTES
             || values.len() > crate::constants::VM_ARRAY_LENGTH
             || state.records.len() >= crate::constants::VM_OBJECTS
@@ -128,6 +167,15 @@ impl SharedGc {
         index: usize,
         step: impl FnOnce(&SharedGcValue) -> SharedGcValue,
     ) -> EngineResult<(SharedGcValue, Option<SharedGc>)> {
+        self.update_with_number(index, &[], |old, _| step(old))
+    }
+    /** Resolve an immutable numeric node under the same lock as compare-exchange. */
+    pub(in crate::v9) fn update_with_number(
+        &self,
+        index: usize,
+        marker: &[u8],
+        step: impl FnOnce(&SharedGcValue, Option<u64>) -> SharedGcValue,
+    ) -> EngineResult<(SharedGcValue, Option<SharedGc>)> {
         super::super::SharedBytes::ordered(|| {
             let mut state = self.root.arena.lock();
             let old = state
@@ -136,7 +184,10 @@ impl SharedGc {
                 .and_then(|r| r.values.get(index))
                 .cloned()
                 .ok_or_else(invalid)?;
-            let next = step(&old);
+            let number = if !marker.is_empty() && let SharedGcValue::Reference(node) = old {
+                state.records.get(&node).filter(|record| state.modules.get(record.module as usize).is_some_and(|module| module.as_ref() == marker)).and_then(|record| match record.values.first() { Some(SharedGcValue::Number(bits)) => Some(*bits), _ => None })
+            } else { None };
+            let next = state.intern(step(&old, number))?;
             if !state.valid_value(&next) {
                 return Err(invalid());
             }
@@ -184,5 +235,60 @@ impl SharedGc {
             };
             Ok((value, reference))
         })
+    }
+}
+
+#[cfg(all(test, feature = "conformance"))]
+mod tests {
+    use super::*;
+
+    /** Explicit collection preserves live roots and reclaims an unreachable cycle. */
+    #[test]
+    fn explicit_collection_traces_live_roots_and_reclaims_cycles() {
+        let arena = SharedGcArena::new().unwrap();
+        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Null]).unwrap();
+        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Reference(first.node())]).unwrap();
+        first.update(0, |_| SharedGcValue::Reference(second.node())).unwrap();
+        let first_id = first.node();
+        let second_id = second.node();
+        drop(second);
+        arena.collect();
+        assert!(arena.contains(first_id) && arena.contains(second_id));
+        drop(first);
+        arena.collect();
+        assert!(!arena.contains(first_id) && !arena.contains(second_id));
+    }
+
+    /** Equal live strings share native storage without the intern table keeping dead strings alive. */
+    #[test]
+    fn equal_strings_are_interned_with_weak_lifetimes() {
+        let arena = SharedGcArena::new().unwrap();
+        let left: Arc<[u16]> = Arc::from([65, 66]);
+        let right: Arc<[u16]> = Arc::from([65, 66]);
+        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(left)]).unwrap();
+        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(right)]).unwrap();
+        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else { panic!("string") };
+        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else { panic!("string") };
+        assert!(Arc::ptr_eq(&a, &b));
+        let weak = Arc::downgrade(&a);
+        drop((a, b, first, second));
+        assert!(arena.is_empty());
+        assert!(weak.upgrade().is_none());
+    }
+
+    /** Restoring a graph reconstructs its shared string table rather than duplicating live backing. */
+    #[test]
+    fn snapshot_restore_reinterns_shared_string_values() {
+        let arena = SharedGcArena::new().unwrap();
+        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(Arc::from([65, 66]))]).unwrap();
+        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(Arc::from([65, 66]))]).unwrap();
+        let parent = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Reference(first.node()), SharedGcValue::Reference(second.node())]).unwrap();
+        let bytes = serde_json::to_vec(&parent).unwrap();
+        let restored: SharedGc = serde_json::from_slice(&bytes).unwrap();
+        let (_, Some(first)) = restored.read(0).unwrap() else { panic!("first child") };
+        let (_, Some(second)) = restored.read(1).unwrap() else { panic!("second child") };
+        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else { panic!("first string") };
+        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else { panic!("second string") };
+        assert!(Arc::ptr_eq(&a, &b));
     }
 }

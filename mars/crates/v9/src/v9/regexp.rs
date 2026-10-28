@@ -52,6 +52,8 @@ enum Node {
     Char(u32),
     Any,
     Class(Vec<(u32, u32)>, bool),
+    /** Finite strings share prefix paths and retain longest-first backtracking. */
+    StringSet(Box<class_set::SetMatcher>),
     Start,
     End,
     /** Proposal assertions depend only on buffer boundaries, regardless of multiline mode. */
@@ -70,7 +72,7 @@ enum Node {
     Repeat(Box<Node>, u32, Option<u32>, bool, (usize, usize)),
 }
 
-/** Properties of strings (v mode) need emoji sequence data that V9 does not carry yet. */
+/** Unicode properties of strings recognized by the v-mode grammar. */
 pub(super) const STRING_PROPERTIES: [&str; 7] = [
     "Basic_Emoji",
     "Emoji_Keycap_Sequence",
@@ -80,11 +82,9 @@ pub(super) const STRING_PROPERTIES: [&str; 7] = [
     "RGI_Emoji_Tag_Sequence",
     "RGI_Emoji_ZWJ_Sequence",
 ];
-/** The message for a property of strings V9 cannot match yet; a literal carrying one still parses, and fails when it runs. */
-pub(super) const UNSUPPORTED_STRING_PROPERTY: &str = "Unsupported property of strings";
 
 /** The message for a pattern over a size or nesting bound V9 enforces; ECMAScript has no such early error, so a literal carrying one still parses. */
-pub(super) const ENGINE_LIMIT: &str = "Regular expression exceeds an engine limit";
+pub(super) const ENGINE_LIMIT: &str = "Regular expression too large for engine limit";
 
 /** A pattern or flag error, reported to scripts as a SyntaxError. */
 #[derive(Debug)]
@@ -93,7 +93,7 @@ pub(super) struct PatternError(pub String);
 impl PatternError {
     /** True when the error is V9's own gap (an unsupported construct or a size bound), not an ECMAScript early error; parse-time checks defer these to the runtime. */
     pub(super) fn is_engine_gap(&self) -> bool {
-        self.0.starts_with(UNSUPPORTED_STRING_PROPERTY) || self.0.starts_with(ENGINE_LIMIT)
+        self.0.starts_with(ENGINE_LIMIT)
     }
 }
 
@@ -171,6 +171,7 @@ pub(super) fn compile(
         buffer_boundaries,
         depth: 0,
         named_groups: declares_named_groups(pattern),
+        emoji_expansion_limit: false,
     };
     parser.count_groups();
     parser.group_names.open_frame();
@@ -179,6 +180,9 @@ pub(super) fn compile(
         return Err(PatternError(
             "Invalid regular expression: unmatched ')'".into(),
         ));
+    }
+    if parser.emoji_expansion_limit {
+        return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
     }
     program.root = root;
     program.groups = parser.groups;
@@ -202,6 +206,14 @@ struct PatternParser<'a> {
     depth: usize,
     /// Whether any `(?<name>` group exists; decided once, since it changes how `\k` reads.
     named_groups: bool,
+    /** Oversized sets still finish static validation before compilation is refused. */
+    emoji_expansion_limit: bool,
+}
+
+/** A property denotes code points or a Unicode set of strings. */
+enum Property {
+    CodePoints(Vec<(u32, u32)>),
+    Strings(String),
 }
 
 /** Pattern nesting the parser follows before refusing. */
@@ -757,6 +769,15 @@ impl PatternParser<'_> {
     }
     /** Property escapes validate their closing delimiter and complement sets before Unicode case closure. */
     fn property(&mut self, negated: bool) -> Result<Node, PatternError> {
+        match self.read_property(negated)? {
+            Property::CodePoints(ranges) => {
+                Ok(Node::Class(self.complemented(ranges, negated), false))
+            }
+            Property::Strings(name) => self.emoji_node(&name),
+        }
+    }
+    /** Read a property name before its enclosing set decides how to combine it. */
+    fn read_property(&mut self, negated: bool) -> Result<Property, PatternError> {
         if !self.eat('{') {
             return Err(PatternError("Invalid property name".into()));
         }
@@ -776,13 +797,14 @@ impl PatternParser<'_> {
         let ranges = match property_ranges(&name) {
             Some(ranges) => ranges,
             None if STRING_PROPERTIES.contains(&name.as_str()) => {
-                return Err(PatternError(format!(
-                    "{UNSUPPORTED_STRING_PROPERTY} {name}"
-                )));
+                if !self.unicode_sets || negated {
+                    return Err(PatternError(format!("Invalid property name {name}")));
+                }
+                return Ok(Property::Strings(name));
             }
             None => return Err(PatternError(format!("Invalid property name {name}"))),
         };
-        Ok(Node::Class(self.complemented(ranges, negated), false))
+        Ok(Property::CodePoints(ranges))
     }
     /** Under v and i a negated property is the complement of its case closure, so \P{ASCII} excludes K and its Kelvin-sign equivalent alike. */
     fn complemented(&self, ranges: Vec<(u32, u32)>, negated: bool) -> Vec<(u32, u32)> {
@@ -1052,6 +1074,56 @@ impl<'a> Matcher<'a> {
             || self.modes.ignore_case
                 && case::equivalents(point, self.program.unicode).any(contains)
     }
+    /** Traverse one finite set once, then try its accepted endpoints longest first. */
+    fn string_set(
+        &mut self,
+        set: &class_set::SetMatcher,
+        position: usize,
+        next: Next<'_, 'a>,
+    ) -> bool {
+        let trie = if self.backward {
+            &set.backward
+        } else {
+            &set.forward
+        };
+        let (mut node, mut cursor) = (0, position);
+        let mut endpoints = Vec::new();
+        while let Some((point, end)) = self.atom(cursor) {
+            self.steps += 1;
+            if self.steps > self.budget || self.expired() {
+                self.exceeded = true;
+                return false;
+            }
+            let key = if self.modes.ignore_case {
+                case::canonical(point)
+            } else {
+                point
+            };
+            let Some(index) = trie[node].edges.get(&key) else {
+                break;
+            };
+            node = *index;
+            cursor = end;
+            if trie[node].terminal {
+                endpoints.push(end);
+            }
+        }
+        for end in endpoints.into_iter().rev() {
+            if next(self, end) {
+                return true;
+            }
+            if self.exceeded {
+                return false;
+            }
+        }
+        if let Some((point, end)) = self.atom(position)
+            && self.in_set(&set.ranges, point)
+            && next(self, end)
+        {
+            return true;
+        }
+        !self.exceeded && trie[0].terminal && next(self, position)
+    }
     /** Whether a word character sits at a position. */
     fn word_at(&self, position: usize) -> bool {
         self.input.get(position).is_some_and(|unit| {
@@ -1102,6 +1174,7 @@ impl<'a> Matcher<'a> {
                 Some((point, end)) if self.in_set(ranges, point) != *negated => next(self, end),
                 _ => false,
             },
+            Node::StringSet(set) => self.string_set(set, position, next),
             Node::Start => {
                 (position == 0
                     || self.modes.multiline && line_terminator(u32::from(self.input[position - 1])))

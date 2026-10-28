@@ -22,6 +22,32 @@ impl Compiler {
                 let index = self.name(feature)?;
                 self.emit(Op::Unsupported(index));
             }
+            #[cfg(feature = "conformance")]
+            ExprKind::NativeIntrinsic(intrinsic, args) => {
+                if *intrinsic == 29 {
+                    self.emit(Op::Undefined);
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    if let Element::Value(value) = arg {
+                        self.expr(value)?;
+                        if (*intrinsic == 30 && index > 0)
+                            || (matches!(*intrinsic, 31..=34) && index > 1)
+                            || (matches!(*intrinsic, 40 | 41 | 45) && index > 0)
+                        {
+                            self.emit(Op::Pop);
+                        }
+                    }
+                }
+                if matches!(*intrinsic, 40 | 41 | 45) && args.is_empty() {
+                    self.emit(Op::Undefined);
+                }
+                if matches!(*intrinsic, 31..=34) {
+                    for _ in args.len().min(2)..2 {
+                        self.emit(Op::Undefined);
+                    }
+                }
+                self.emit(Op::NativeIntrinsic(*intrinsic));
+            }
             ExprKind::InvalidReference(message) => {
                 let index = self.name(message)?;
                 self.emit(Op::ThrowReference(index));
@@ -359,6 +385,11 @@ impl Compiler {
     }
     /** `super(...)` binds `this`. */
     fn super_call(&mut self, args: &[Element], pos: Pos) -> EngineResult<()> {
+        if self.resolve("%constructor").is_some()
+            && matches!(self.resolve("this"), Some((Place::Env(_), _, _)))
+        {
+            return self.lexical_super_call(args, pos);
+        }
         if spreads(args) {
             self.spread_array(args)?;
             self.at(pos);
@@ -374,6 +405,26 @@ impl Compiler {
             self.initialize(&Name::from("this"), pos)?;
         }
         self.emit(Op::InitializeDerivedFields);
+        Ok(())
+    }
+    /** Retain the enclosing constructor across suspension and bind its captured receiver after construction. */
+    fn lexical_super_call(&mut self, args: &[Element], pos: Pos) -> EngineResult<()> {
+        self.load_name(&Name::from("%constructor"), pos)?;
+        self.load_name(&Name::from("new.target"), pos)?;
+        if spreads(args) {
+            self.spread_array(args)?;
+            self.emit(Op::LexicalSuperCallSpread);
+        } else {
+            for arg in args {
+                self.element_value(arg)?;
+            }
+            self.emit(Op::LexicalSuperCall(count(args)?));
+        }
+        self.load_name(&Name::from("%constructor"), pos)?;
+        match self.resolve("this") {
+            Some((Place::Env(slot), _, hops)) => self.emit(Op::BindLexicalSuper(hops, slot)),
+            _ => return Err(self.error(pos, "Missing lexical constructor environment")),
+        };
         Ok(())
     }
     /** A plain list element's value. */
@@ -450,10 +501,13 @@ impl Compiler {
                     self.emit(Op::DefineField(index));
                     self.release(mark);
                 }
-                PropDef::Shorthand(name, pos) | PropDef::ShorthandDefault(name, pos, _) => {
+                PropDef::Shorthand(name, pos) => {
                     let index = self.name(name)?;
                     self.load_name(name, *pos)?;
                     self.emit(Op::DefineField(index));
+                }
+                PropDef::ShorthandDefault(_, pos, _) => {
+                    return Err(self.error(*pos, "Invalid shorthand property initializer"));
                 }
                 PropDef::Method(key, func) => self.literal_method(key, func, METHOD)?,
                 PropDef::Getter(key, func) => self.literal_method(key, func, GETTER)?,
@@ -615,6 +669,22 @@ impl Compiler {
     fn delete(&mut self, operand: &Expr) -> EngineResult<()> {
         match &operand.kind {
             ExprKind::Member(object, prop, optional) => {
+                if matches!(object.kind, ExprKind::Super) {
+                    self.load_this()?;
+                    match prop {
+                        MemberProp::Computed(key) => { self.expr(key)?; self.emit(Op::Pop); }
+                        MemberProp::Name(_) => {}
+                        MemberProp::Private(_) => return Err(self.error(operand.pos, "Private fields can not be deleted")),
+                    }
+                    self.load_home()?;
+                    self.emit(Op::CaptureSuperBase);
+                    self.emit(Op::Pop);
+                    self.emit(Op::Pop);
+                    let message = self.name("Unsupported reference to 'super'")?;
+                    self.at(operand.pos);
+                    self.emit(Op::ThrowReference(message));
+                    return Ok(());
+                }
                 self.member_object(object, *optional)?;
                 match prop {
                     MemberProp::Name(name) => {
@@ -779,16 +849,20 @@ impl Compiler {
         let is_super = matches!(object.kind, ExprKind::Super);
         if is_super {
             self.load_this()?;
+            self.super_update_key(prop, member.pos)?;
             self.load_home()?;
+            self.emit(Op::CaptureSuperBase);
+            self.emit(Op::Swap);
+            value(self)?;
+            self.at(member.pos);
+            self.emit(Op::WriteSuperReference);
+            return Ok(());
         } else {
             self.expr(object)?;
         }
         match prop {
             MemberProp::Computed(key) => {
                 self.expr(key)?;
-                if is_super {
-                    self.emit(Op::ToPropertyKey);
-                }
                 value(self)?;
                 self.at(member.pos);
                 self.emit(if is_super {
@@ -831,8 +905,16 @@ impl Compiler {
             return Err(self.error(member.pos, "Invalid assignment target"));
         };
         if matches!(object.kind, ExprKind::Super) {
-            let index = self.name("compound assignment to super properties")?;
-            self.emit(Op::Unsupported(index));
+            self.load_this()?;
+            self.super_update_key(prop, member.pos)?;
+            self.load_home()?;
+            self.emit(Op::CaptureSuperBase);
+            self.emit(Op::Swap);
+            self.emit(Op::ReadSuperReference);
+            self.expr(value)?;
+            self.emit(binary(op));
+            self.at(member.pos);
+            self.emit(Op::WriteSuperReference);
             return Ok(());
         }
         self.expr(object)?;
@@ -868,8 +950,27 @@ impl Compiler {
             return Err(self.error(member.pos, "Invalid assignment target"));
         };
         if matches!(object.kind, ExprKind::Super) {
-            let index = self.name("logical assignment to super properties")?;
-            self.emit(Op::Unsupported(index));
+            let mark = self.f().registers;
+            let old = self.temp()?;
+            self.load_this()?;
+            self.super_update_key(prop, member.pos)?;
+            self.load_home()?;
+            self.emit(Op::CaptureSuperBase);
+            self.emit(Op::Swap);
+            self.emit(Op::ReadSuperReference);
+            let skip = self.emit(logical(op));
+            self.expr(value)?;
+            self.at(member.pos);
+            self.emit(Op::WriteSuperReference);
+            let done = self.emit(Op::Jump(0));
+            self.patch(skip);
+            self.emit(Op::SetReg(old));
+            for _ in 0..4 {
+                self.emit(Op::Pop);
+            }
+            self.emit(Op::GetReg(old));
+            self.patch(done);
+            self.release(mark);
             return Ok(());
         }
         let mark = self.f().registers;

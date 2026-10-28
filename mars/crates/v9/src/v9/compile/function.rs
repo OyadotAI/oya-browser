@@ -225,7 +225,12 @@ impl Compiler {
             self.emit(Op::Pop);
         }
         for (used, name, op) in [
-            (uses.new_target, "new.target", Op::LoadNewTarget),
+            (
+                uses.new_target || func.flags.derived,
+                "new.target",
+                Op::LoadNewTarget,
+            ),
+            (func.flags.derived, "%constructor", Op::LoadCallee),
             (uses.home, "%home", Op::LoadHome),
         ] {
             if used {
@@ -748,7 +753,7 @@ fn has_strict_directive(func: &Func) -> bool {
             }) => Some(text),
             _ => None,
         })
-        .any(|text| text.as_units() == "use strict".encode_utf16().collect::<Vec<_>>())
+        .any(|text| text.code_units().eq("use strict".encode_utf16()))
 }
 
 /** Bindings that need dead-zone checks. */

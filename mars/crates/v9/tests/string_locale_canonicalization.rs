@@ -1,6 +1,16 @@
 /** String locale case methods canonicalize their locales argument, while the plain case methods ignore it. */
 mod common;
 
+/** Greek final sigma follows cased context across case-ignorable characters. */
+#[test]
+fn lower_case_applies_contextual_final_sigma() {
+    let source = "const r=['ΚΟΣΜΟΣ ΚΟΣΜΟΣ'.toLowerCase(),'Σ'.toLowerCase(),'ΟΣ\\u0301Α'.toLowerCase(),'ΟΣ\\u0301 '.toLowerCase(),'AΣ\\ud800'.toLowerCase(),'AΣ\\u0345'.toLowerCase(),'\\u0345Σ'.toLowerCase()].join('|');";
+    assert_eq!(
+        common::eval(source, "r"),
+        "κοσμος κοσμος|σ|οσ́α|ος́ |aς�|aςͅ|ͅσ"
+    );
+}
+
 /** Public results are the observable boundary, so each check reports a string the tests compare. */
 fn eval(source: &str) -> String {
     common::eval(source, "r")

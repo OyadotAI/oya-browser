@@ -53,11 +53,15 @@ impl Vm<'_> {
     /** ToNumber. */
     pub fn to_number(&mut self, value: &JsValue) -> Res<f64> {
         Ok(match value {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => *value,
             JsValue::Number(value) => *value,
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => value.value,
             JsValue::Undefined | JsValue::Hole => f64::NAN,
             JsValue::Null => 0.0,
             JsValue::Boolean(value) => f64::from(u8::from(*value)),
-            JsValue::String(text) => string_to_number(text),
+            JsValue::String(text) => string_to_number(self.materialize_string(text)?),
             JsValue::Symbol(_) => {
                 return Err(self.type_error("Cannot convert a Symbol value to a number"));
             }
@@ -72,9 +76,13 @@ impl Vm<'_> {
     }
     /** ToString. */
     pub fn to_string(&mut self, value: &JsValue) -> Res<JsString> {
-        Ok(match value {
+        let text = match value {
             JsValue::String(text) => text.clone(),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => JsString::from_utf8(&number_to_string(*value))?,
             JsValue::Number(value) => JsString::from_utf8(&number_to_string(*value))?,
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => JsString::from_utf8(&number_to_string(value.value))?,
             JsValue::Boolean(true) => JsString::from_utf8("true")?,
             JsValue::Boolean(false) => JsString::from_utf8("false")?,
             JsValue::Null => JsString::from_utf8("null")?,
@@ -91,11 +99,14 @@ impl Vm<'_> {
                 let primitive = self.to_primitive(value, Hint::String)?;
                 return self.to_string(&primitive);
             }
-        })
+        };
+        self.track_string(&text);
+        Ok(text)
     }
     /** ToString as Rust text, replacing lone surrogates. */
     pub fn to_text(&mut self, value: &JsValue) -> Res<String> {
-        Ok(self.to_string(value)?.lossy())
+        let text = self.to_string(value)?;
+        Ok(String::from_utf16_lossy(self.materialize_string(&text)?))
     }
     /** ToPropertyKey. */
     pub fn to_key(&mut self, value: &JsValue) -> Res<Key> {
@@ -123,13 +134,40 @@ impl Vm<'_> {
                 return Err(self.type_error("Cannot convert undefined or null to object"));
             }
             JsValue::Boolean(value) => (Class::Boolean(*value), ids.boolean_prototype),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => (Class::Number(*value), ids.number_prototype),
             JsValue::Number(value) => (Class::Number(*value), ids.number_prototype),
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => (Class::Number(value.value), ids.number_prototype),
             JsValue::String(text) => (Class::String(text.clone()), ids.string_prototype),
             JsValue::Symbol(id) => (Class::Symbol(*id), ids.symbol_prototype),
             JsValue::BigInt(value) => (Class::BigInt(*value), ids.bigint_prototype),
             JsValue::BigIntWide(value) => (Class::BigIntWide(value.clone()), ids.bigint_prototype),
         };
-        self.alloc(Object::new(class, Some(proto)))
+        #[cfg(feature = "conformance")]
+        let mark = self.pins.len();
+        #[cfg(feature = "conformance")]
+        let pinned_shared = if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = value {
+            self.pin(JsValue::Object(value.root));
+            true
+        } else {
+            false
+        };
+        let allocated = self.alloc(Object::new(class, Some(proto)));
+        #[cfg(feature = "conformance")]
+        if pinned_shared {
+            self.pins.remove(mark);
+        }
+        let id = allocated?;
+        #[cfg(feature = "conformance")]
+        if matches!(value, JsValue::SharedNumber(_) | JsValue::LocalNumber(_)) {
+            self.heap.put(
+                id,
+                Key::private("shared-number-value"),
+                super::heap::Prop::data(value.clone()),
+            );
+        }
+        Ok(id)
     }
     /** ToIntegerOrInfinity. */
     pub fn to_integer(&mut self, value: &JsValue) -> Res<f64> {
@@ -155,7 +193,11 @@ impl Vm<'_> {
             JsValue::Undefined | JsValue::Hole => "undefined",
             JsValue::Null => "object",
             JsValue::Boolean(_) => "boolean",
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) => "number",
             JsValue::Number(_) => "number",
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => "number",
             JsValue::String(_) => "string",
             JsValue::Symbol(_) => "symbol",
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => "bigint",
@@ -171,6 +213,17 @@ impl Vm<'_> {
     }
     /** Abstract (loose) equality. */
     pub fn loose_equal(&mut self, left: &JsValue, right: &JsValue) -> Res<bool> {
+        #[cfg(feature = "conformance")]
+        {
+            if let JsValue::Smi(value) = left { return self.loose_equal(&JsValue::Number(*value), right); }
+            if let JsValue::Smi(value) = right { return self.loose_equal(left, &JsValue::Number(*value)); }
+            if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = left {
+                return self.loose_equal(&JsValue::Number(value.value), right);
+            }
+            if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = right {
+                return self.loose_equal(left, &JsValue::Number(value.value));
+            }
+        }
         use JsValue::*;
         Ok(match (left, right) {
             (Undefined | Null | Hole, Undefined | Null | Hole) => true,
@@ -237,7 +290,7 @@ impl Vm<'_> {
             (left, right)
         };
         if let (JsValue::String(left), JsValue::String(right)) = (&left, &right) {
-            return Ok(Some(left.as_units() < right.as_units()));
+            return Ok(Some(left < right));
         }
         if left.is_bigint() || right.is_bigint() {
             return self.bigint_less_than(&left, &right);
@@ -255,14 +308,14 @@ impl Vm<'_> {
             return Ok(JsValue::Number(left + right));
         }
         if let (JsValue::String(left), JsValue::String(right)) = (left, right) {
-            return Ok(JsValue::String(left.concat(right)?));
+            return Ok(JsValue::String(self.concat_strings(left, right)?));
         }
         let left = self.to_primitive(left, Hint::Default)?;
         let right = self.to_primitive(right, Hint::Default)?;
         if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
             let left = self.to_string(&left)?;
             let right = self.to_string(&right)?;
-            return Ok(JsValue::String(left.concat(&right)?));
+            return Ok(JsValue::String(self.concat_strings(&left, &right)?));
         }
         if left.is_bigint() || right.is_bigint() {
             return self.bigint_binary(super::super::compile::Op::Add, &left, &right);
@@ -289,8 +342,8 @@ impl Vm<'_> {
 }
 
 /** StringToNumber over UTF-16. */
-pub(in crate::v9) fn string_to_number(text: &JsString) -> f64 {
-    match String::from_utf16(text.as_units()) {
+pub(in crate::v9) fn string_to_number(units: &[u16]) -> f64 {
+    match String::from_utf16(units) {
         Ok(text) => string_number(&text),
         Err(_) => f64::NAN,
     }

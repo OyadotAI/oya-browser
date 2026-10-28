@@ -6,7 +6,11 @@ mod weak;
 pub(in crate::v9) use weak::{FinalizationCell, FinalizationData};
 mod shared;
 mod shared_gc;
+mod sparse_buffer;
+pub(in crate::v9) use sparse_buffer::SparseBuffer;
 pub(in crate::v9) use shared_gc::{SharedGc, SharedGcArena, SharedGcRecord, SharedGcValue};
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use shared_gc::WaitFailure as SharedWaitFailure;
 mod function_name;
 pub(in crate::v9) use function_name::{BOUND_PREFIX, FunctionName};
 #[cfg(feature = "conformance")]
@@ -25,6 +29,8 @@ mod num {
     /** Deserialize a number value. */
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
         match JsValue::deserialize(deserializer)? {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => Ok(value),
             JsValue::Number(value) => Ok(value),
             _ => Err(serde::de::Error::custom("expected a number")),
         }
@@ -86,10 +92,15 @@ pub(in crate::v9) enum Class {
     Host(Box<HostData>),
     /** An ArrayBuffer's bytes. */
     ArrayBuffer(Bytes),
+    /** A large logical Wasm memory stores only the bounded pages that have been written. */
+    SparseWasmBuffer(SparseBuffer),
     /** A distinct SAB wrapper owns synchronized, natively shareable backing storage. */
     SharedArrayBuffer(SharedBytes),
     /** Opaque shared graph root; its graph contains no isolate-local object identities. */
     WasmShared(SharedGc),
+    /** Opaque conformance-only traced shared-container root; never a Wasm reference. */
+    #[cfg(feature = "conformance")]
+    SharedContainerRoot(SharedGc),
     /** A typed array or DataView over an ArrayBuffer. */
     View(Box<ViewData>),
     /** A Proxy; both fields are None once revoked. */
@@ -259,8 +270,11 @@ impl Class {
                 .sum(),
             Class::RegExp(data) => data.source.len(),
             Class::ArrayBuffer(bytes) => bytes.0.len().div_ceil(2),
+            Class::SparseWasmBuffer(bytes) => bytes.resident().div_ceil(2),
             Class::SharedArrayBuffer(bytes) => bytes.allocated().div_ceil(2),
             Class::WasmShared(value) => value.allocated().div_ceil(2),
+            #[cfg(feature = "conformance")]
+            Class::SharedContainerRoot(value) => value.allocated().div_ceil(2),
             _ => 0,
         }
     }
@@ -329,6 +343,10 @@ impl TableKey {
             JsValue::Undefined | JsValue::Hole => Self::Undefined,
             JsValue::Null => Self::Null,
             JsValue::Boolean(value) => Self::Bool(*value),
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => Self::of(&JsValue::Number(value.value)),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => Self::of(&JsValue::Number(*value)),
             JsValue::Number(value) => Self::Number(if *value == 0.0 {
                 0
             } else if value.is_nan() {
@@ -367,7 +385,7 @@ impl Table {
     }
     /** Insert or replace; returns true when a new entry was added. */
     pub fn set(&mut self, key: JsValue, value: JsValue) -> bool {
-        let key = if matches!(key, JsValue::Number(n) if n == 0.0) {
+        let key = if key.number_value().is_some_and(|n| n == 0.0) {
             JsValue::Number(0.0)
         } else {
             key

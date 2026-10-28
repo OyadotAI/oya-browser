@@ -47,12 +47,15 @@ fn convert(vm: &mut Vm, value: &JsValue, resizable: bool) -> Res<JsValue> {
         } else {
             bytes.fixed_view(bytes.backing_len()).unwrap()
         };
-        let next = super::super::super::import_shared_buffer(vm, bytes)?;
+        let next = shared_memory::wrapper(vm, bytes)?;
         set(vm, memory, MEMORY, JsValue::Object(next));
         return Ok(JsValue::Object(next));
     }
     if super::super::super::buffer_maximum(vm, old).is_some() == resizable {
         return Ok(JsValue::Object(old));
+    }
+    if matches!(vm.heap.get(old).map(|o| &o.class), Some(Class::SparseWasmBuffer(_))) {
+        return Err(vm.unsupported_error("sparse resizable WebAssembly memory"));
     }
     let Some(Class::ArrayBuffer(bytes)) = vm.heap.get(old).map(|o| &o.class) else {
         return Err(vm.type_error("invalid memory buffer"));

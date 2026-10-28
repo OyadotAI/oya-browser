@@ -110,6 +110,8 @@ fn walk(vm: &mut Vm, this: &JsValue) -> Res<Walk> {
         return Err(vm.type_error("Illegal invocation"));
     };
     let show = match get_slot(vm, this, "show") {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(number) => number as u32,
         JsValue::Number(number) => number as u32,
         _ => SHOW_ALL,
     };

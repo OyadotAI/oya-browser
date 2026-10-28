@@ -32,6 +32,13 @@ pub(super) fn install(builder: &mut Builder) {
 
 /** The receiver must be an attached, in-bounds integer typed array; waitable kinds are narrower. */
 fn view(vm: &mut Vm, value: &JsValue, waitable: bool) -> Res<(ObjectId, ViewData)> {
+    #[cfg(feature = "conformance")]
+    if value
+        .object()
+        .is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id))
+    {
+        return Err(vm.unsupported_error("Atomics operations on shared containers"));
+    }
     let candidate = value
         .object()
         .and_then(|id| view_of(vm, id).map(|view| (id, view)));
@@ -74,6 +81,24 @@ fn access(
     }
     Ok((id, view, index))
 }
+/** Expose the actual shared backing's indexed wait queue to opted-in V8 fixtures. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn waiter_count(
+    vm: &mut Vm,
+    value: &JsValue,
+    index: &JsValue,
+    unresolved: bool,
+) -> Res<JsValue> {
+    let (_, target, index) = access(vm, value, index, true)?;
+    let buffer = shared_buffer(vm, &JsValue::Object(target.buffer))
+        .ok_or_else(|| vm.type_error("Atomics waiter count requires a shared buffer"))?;
+    let offset = target.offset + index * element_size(target.kind);
+    Ok(JsValue::Number(if unresolved {
+        buffer.unresolved_async_count(offset)
+    } else {
+        buffer.waiter_count(offset)
+    } as f64))
+}
 /** Store returns ToIntegerOrInfinity/ToBigInt before element-width wrapping, as the specification requires. */
 fn converted(vm: &mut Vm, kind: ElementKind, value: &JsValue) -> Res<JsValue> {
     if matches!(kind, ElementKind::BigInt64 | ElementKind::BigUint64) {
@@ -85,6 +110,17 @@ fn converted(vm: &mut Vm, kind: ElementKind, value: &JsValue) -> Res<JsValue> {
 /** Values are converted before any memory lock is acquired, so user code never runs under it. */
 fn operation(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = callee_name(&call);
+    #[cfg(feature = "conformance")]
+    if call
+        .arg(0)
+        .object()
+        .is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id))
+    {
+        if matches!(name, "load" | "store" | "exchange" | "compareExchange") {
+            return crate::v9::builtins::atomic_shared_container(vm, &call, name);
+        }
+        return Err(vm.unsupported_error("Atomics arithmetic on shared containers"));
+    }
     if name != "load" {
         let (_, initial) = view(vm, &call.arg(0), false)?;
         immutable::writable(vm, initial.buffer)?;
@@ -123,6 +159,22 @@ fn operation(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         old
     };
+    if matches!(
+        vm.heap.get(target.buffer).map(|object| &object.class),
+        Some(Class::SparseWasmBuffer(_))
+    ) {
+        let mut current = read_range(vm, target.buffer, start, size)
+            .ok_or_else(|| vm.type_error("Atomic backing storage is unavailable"))?;
+        let old = update(&mut current);
+        if name != "load" && !write_range(vm, target.buffer, start, &current) {
+            return Err(crate::protocol::EngineError::limit(
+                "V9 buffer resident bytes",
+                BUFFER_BYTES,
+            )
+            .into());
+        }
+        return Ok(if name == "store" { operand } else { old });
+    }
     let old = match vm
         .heap
         .get_mut(target.buffer)
@@ -134,7 +186,13 @@ fn operation(vm: &mut Vm, call: Call) -> Res<JsValue> {
         Some(Class::ArrayBuffer(buffer)) => buffer.0.get_mut(start..start + size).map(update),
         _ => None,
     }
-    .ok_or_else(|| vm.type_error("Atomic backing storage is unavailable"))?;
+    .ok_or_else(|| {
+        if matches!(vm.heap.get(target.buffer).map(|o| &o.class), Some(Class::SharedArrayBuffer(bytes)) if bytes.is_sparse()) {
+            crate::protocol::EngineError::limit("V9 buffer resident bytes", BUFFER_BYTES).into()
+        } else {
+            vm.type_error("Atomic backing storage is unavailable")
+        }
+    })?;
     Ok(if name == "store" { operand } else { old })
 }
 /** Little-endian integer bits permit exact width-specific modular operations without floating-point loss. */
@@ -178,6 +236,10 @@ fn timeout(vm: &mut Vm, value: &JsValue) -> Res<Option<Duration>> {
 }
 /** Comparison/registration and notification use one store mutex, eliminating lost wakeups. */
 fn wait(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    if vm.page.state.atomics_wait_disallowed {
+        return Err(vm.type_error("Atomics wait is not allowed"));
+    }
     let (_, initial) = view(vm, &call.arg(0), true)?;
     if shared_buffer(vm, &JsValue::Object(initial.buffer)).is_none() {
         return Err(vm.type_error("Atomics.wait requires shared storage"));
@@ -189,9 +251,29 @@ fn wait(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let expected = encode(vm, target.kind, &expected)?;
     let timeout = timeout(vm, &call.arg(3))?;
     let offset = target.offset + index * element_size(target.kind);
-    let result = buffer
-        .wait(offset, &expected, timeout, || vm.expired())
-        .map_err(|()| crate::v9::platform::timeout())?;
+    #[cfg(feature = "conformance")]
+    let mut poll_error = None;
+    let result = buffer.wait(offset, &expected, timeout, || {
+        #[cfg(feature = "conformance")]
+        {
+            return match vm.wait_safepoint() {
+                Ok(expired) => expired,
+                Err(error) => {
+                    poll_error = Some(error);
+                    true
+                }
+            };
+        }
+        #[cfg(not(feature = "conformance"))]
+        {
+            vm.expired()
+        }
+    });
+    #[cfg(feature = "conformance")]
+    if let Some(error) = poll_error {
+        return Err(error);
+    }
+    let result = result.map_err(|()| crate::v9::platform::timeout())?;
     text(
         vm,
         match result {

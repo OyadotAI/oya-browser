@@ -48,3 +48,17 @@ fn target_validation_precedes_mapping_and_later_stores_recheck_bounds() {
         "2,true,0"
     );
 }
+
+/** TypedArray construction calls the captured iterator method without reading its getter twice. */
+#[test]
+fn typed_array_constructor_reads_iterator_method_once() {
+    let source = "let reads=0;const source={get [Symbol.iterator](){reads++;if(reads>1)throw Error('re-read');return function*(){yield 3;yield 5}}};const out=new Uint8Array(source);let r=[reads,out.join()].join('|');";
+    assert_eq!(common::eval(source, "r"), "1|3,5");
+}
+
+/** A non-callable iterator method fails before any array-like access. */
+#[test]
+fn typed_array_constructor_rejects_noncallable_iterator_before_length() {
+    let source = "let reads=0;const source={get [Symbol.iterator](){return 1},get length(){reads++;return 1}};let error=false;try{new Uint8Array(source)}catch(e){error=e instanceof TypeError}let r=[error,reads].join();";
+    assert_eq!(common::eval(source, "r"), "true,0");
+}

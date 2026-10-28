@@ -73,7 +73,7 @@ fn own_entries(vm: &Vm, id: ObjectId) -> Vec<(Key, JsValue)> {
 /** A native constructor's registered name is its own data `name`, used when the frame has no compiled name. */
 pub(super) fn static_name(vm: &Vm, function: ObjectId) -> Option<JsString> {
     match own_data(vm, function, &Key::from("name"))? {
-        JsValue::String(name) if !name.as_units().is_empty() => Some(name),
+        JsValue::String(name) if !name.is_empty() => Some(name),
         _ => None,
     }
 }
@@ -85,7 +85,7 @@ pub(super) fn function_name(vm: &Vm, id: ObjectId) -> Option<String> {
         _ => own_data(vm, id, &Key::from("name"))?,
     };
     match own {
-        JsValue::String(name) if !name.as_units().is_empty() => Some(name.lossy()),
+        JsValue::String(name) if !name.is_empty() => Some(name.lossy()),
         _ => None,
     }
 }
@@ -102,9 +102,7 @@ pub(super) fn own_name(vm: &Vm, function: ObjectId) -> Option<JsString> {
         return None;
     }
     match own_data(vm, function, &Key::from("name"))? {
-        JsValue::String(name)
-            if !name.as_units().is_empty() && !dynamic_default(vm, function, &name) =>
-        {
+        JsValue::String(name) if !name.is_empty() && !dynamic_default(vm, function, &name) => {
             Some(name)
         }
         _ => None,
@@ -125,6 +123,8 @@ fn dynamic_default(vm: &Vm, function: ObjectId, name: &JsString) -> bool {
 /** Wrapper types name primitive receivers the way V8 names their boxed constructors. */
 fn primitive_type(value: &JsValue) -> Option<&'static str> {
     match value {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(_) => Some("Number"),
         JsValue::Number(_) => Some("Number"),
         JsValue::String(_) => Some("String"),
         JsValue::Boolean(_) => Some("Boolean"),

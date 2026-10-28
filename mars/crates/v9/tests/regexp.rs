@@ -8,6 +8,40 @@ fn run(body: &str) -> String {
     eval(&format!("let r;{body}"), "r")
 }
 
+/** Oversized regular expressions report the capacity reason instead of a misleading syntax error. */
+#[test]
+fn oversized_pattern_reports_its_engine_limit() {
+    let message = run(
+        "let p='a';for(let i=0;i<1000;i++)p='('+p+')';try{new RegExp(p)}catch(e){r=String(e)};",
+    );
+    assert!(
+        message.contains("Regular expression too large"),
+        "{message}"
+    );
+}
+
+/** Replacement reads every capture before rejecting a callback argument list that exceeds V8's call ceiling. */
+#[test]
+fn replacement_rejects_oversized_callback_arguments_after_capture_getters() {
+    assert_eq!(
+        run(
+            "const re=/./g;let calls=0,read=0;re.exec=()=>calls++?null:{length:65536,get 65535(){read++;return 'x'}};try{''.replace(re,()=>{r='called'})}catch(e){r=[e instanceof RangeError,read].join(',')};"
+        ),
+        "true,1"
+    );
+}
+
+/** The largest supported replacement callback argument list remains callable. */
+#[test]
+fn replacement_accepts_callback_arguments_at_the_ceiling() {
+    assert_eq!(
+        run(
+            "const re=/./g;let calls=0;re.exec=()=>calls++?null:{length:65523};''.replace(re,function(){r=arguments.length});"
+        ),
+        "65525"
+    );
+}
+
 /** The flags getter is generic and reads each flag getter in spec order. */
 #[test]
 fn flags_getter_reads_each_flag_in_order() {

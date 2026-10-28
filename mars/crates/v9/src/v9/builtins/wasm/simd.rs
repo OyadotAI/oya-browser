@@ -25,7 +25,7 @@ pub(super) fn vector(value: &JsValue) -> Res<[u8; 16]> {
         );
     }
     let mut bytes = [0; 16];
-    for (i, unit) in units.as_units().iter().enumerate() {
+    for (i, unit) in units.code_units().enumerate() {
         bytes[i * 2..i * 2 + 2].copy_from_slice(&unit.to_le_bytes())
     }
     Ok(bytes)
@@ -47,7 +47,10 @@ fn signed(bits: u64, size: usize) -> i64 {
 }
 /** Decode only implemented SIMD operations, retaining immediate lane bounds and memory alignment. */
 pub(super) fn decode(r: &mut binary::Reader, m: &Module) -> Result<Instruction, Error> {
-    let op = r.u32()?;
+    let op = r.prefixed_opcode()?;
+    if half::signature(op).is_some() && !r.fp16_enabled {
+        return Err(Error::invalid("f16 SIMD instructions require --wasm-fp16"));
+    }
     if op == 12 {
         return Ok(Instruction::Constant(Constant::V128(
             r.take(16)?.try_into().unwrap(),
@@ -329,12 +332,16 @@ fn scalar_bits(op: u32, value: &JsValue) -> Res<(usize, u64)> {
             }
         },
         19 => match value {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(n) => (4, u64::from((*n as f32).to_bits())),
             JsValue::Number(n) => (4, u64::from((*n as f32).to_bits())),
             _ => {
                 return Err(crate::protocol::EngineError::invalid("Invalid f32 SIMD lane.").into());
             }
         },
         _ => match value {
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(n) => (8, n.to_bits()),
             JsValue::Number(n) => (8, n.to_bits()),
             _ => {
                 return Err(crate::protocol::EngineError::invalid("Invalid f64 SIMD lane.").into());

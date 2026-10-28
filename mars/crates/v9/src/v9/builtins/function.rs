@@ -263,7 +263,7 @@ fn apply(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Pinned V8's uint16 call-input representation reserves ten slots and excludes its upper bound for bound captures. */
-const MAX_BOUND_ARGUMENTS: usize = 65_525;
+pub(super) const MAX_BOUND_ARGUMENTS: usize = 65_525;
 
 /** Function.prototype.bind. */
 fn bind(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -326,8 +326,8 @@ fn bound_length(vm: &mut Vm, target: ObjectId, count: usize) -> Res<f64> {
     if vm.own(target, &length)?.is_none() {
         return Ok(0.0);
     }
-    match vm.get(&JsValue::Object(target), &length)? {
-        JsValue::Number(number) if !number.is_nan() => Ok((number.trunc() - count as f64).max(0.0)),
+    match vm.get(&JsValue::Object(target), &length)?.number_value() {
+        Some(number) if !number.is_nan() => Ok((number.trunc() - count as f64).max(0.0)),
         _ => Ok(0.0),
     }
 }

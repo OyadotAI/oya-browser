@@ -540,6 +540,7 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
  "idna",
+ "libc",
  "mars-core",
  "mars-xml",
  "ring",

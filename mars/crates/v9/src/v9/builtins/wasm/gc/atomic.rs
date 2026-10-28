@@ -11,7 +11,8 @@ pub(in crate::v9::builtins::wasm) fn decode(
     r: &mut binary::Reader,
     op: u32,
 ) -> Result<Instruction, Error> {
-    if r.byte()? > 1 {
+    let ordering = r.byte()?;
+    if ordering > 1 {
         return Err(Error::invalid("invalid atomic memory ordering"));
     }
     let index = r.u32()?;
@@ -38,7 +39,7 @@ pub(in crate::v9::builtins::wasm) fn signature(
 ) -> Result<(Vec<Type>, Vec<Type>), Error> {
     let field = field(m, op, index, slot)?;
     let action = operation(op);
-    let numeric = matches!(field.ty, Type::I32 | Type::I64) && field.packed.is_none();
+    let numeric = matches!(field.ty, Type::I32 | Type::I64);
     let heap = if action == 10 { -19 } else { -18 };
     let expected = if gc_types::is_shared(m, field.ty) {
         Type::Shared(heap, true)
@@ -48,7 +49,8 @@ pub(in crate::v9::builtins::wasm) fn signature(
     let reference = gc_types::subtype(m, field.ty, expected);
     let allowed = match action {
         1 | 2 => field.packed.is_some(),
-        0 | 3 | 9 | 10 => numeric || reference,
+        0 => numeric && field.packed.is_none() || reference,
+        3 | 9 | 10 => numeric || reference,
         4..=8 => numeric,
         _ => false,
     };
@@ -140,7 +142,7 @@ pub(in crate::v9::builtins::wasm) fn run(
     check(vm, m, &object, index)?;
     let field = field(m, op, index, slot).map_err(|e| compile_failure(vm, e))?;
     if let Some(root) = shared::handle(vm, &object) {
-        let old = shared::atomic(vm, &root, position, action, field.ty, value, expected)?;
+        let old = shared::atomic(vm, &root, position, action, field, value, expected)?;
         if action != 3 {
             stack.push(unpack(action == 1, field, old)?);
         }

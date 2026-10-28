@@ -44,23 +44,22 @@ impl Writer<'_> {
     }
     /** Strings select a valid compact Latin-1 wire encoding independently of the engine's UTF-16 backing. */
     fn string(&mut self, text: &JsString) -> Result<()> {
-        let units = text.as_units();
-        if units.iter().all(|unit| *unit <= 255) {
+        if text.code_units().all(|unit| unit <= 255) {
             self.tag(b'"')?;
-            self.var(units.len() as u64)?;
-            for unit in units {
-                self.tag(*unit as u8)?;
+            self.var(text.len() as u64)?;
+            for unit in text.code_units() {
+                self.tag(unit as u8)?;
             }
             return Ok(());
         }
-        let length = units.len() * 2;
+        let length = text.len() * 2;
         let varbytes = (usize::BITS - length.max(1).leading_zeros()).div_ceil(7) as usize;
         if (self.bytes.len() + 1 + varbytes) % 2 != 0 {
             self.tag(0)?;
         }
         self.tag(b'c')?;
         self.var(length as u64)?;
-        for unit in units {
+        for unit in text.code_units() {
             self.raw(&unit.to_le_bytes())?;
         }
         Ok(())
@@ -97,7 +96,10 @@ impl Writer<'_> {
             JsValue::Null => self.tag(b'0'),
             JsValue::Boolean(true) => self.tag(b'T'),
             JsValue::Boolean(false) => self.tag(b'F'),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => self.number(*value),
             JsValue::Number(value) => self.number(*value),
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => self.number(value.value),
             JsValue::String(value) => self.string(value),
             JsValue::BigInt(value) => {
                 self.tag(b'Z')?;
@@ -118,6 +120,7 @@ impl Writer<'_> {
         match atom {
             Atom::Primitive(value) => self.primitive(value),
             Atom::Reference(index) => self.object(*index, depth + 1),
+            Atom::SharedNumber(_) => Err(Failure::Refused),
         }
     }
     /** Property keys are data strings, so native decoding can define them without invoking author setters. */

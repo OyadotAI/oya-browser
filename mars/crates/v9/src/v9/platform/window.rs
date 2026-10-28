@@ -478,11 +478,32 @@ pub(in crate::v9) fn write_cookie(vm: &mut Vm, field: &str) -> Res<()> {
 /** performance members. */
 pub(in crate::v9) fn performance(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match native_name(&call) {
-        "now" => Ok(JsValue::Number(vm.page.state.clock)),
-        "timeOrigin" => Ok(JsValue::Number(vm.page.state.epoch)),
-        "getEntries" | "getEntriesByType" | "getEntriesByName" => {
-            Ok(JsValue::Object(vm.new_array(Vec::new())?))
+        "now" => Ok(JsValue::Number(super::performance::now(vm))),
+        "timeOrigin" => Ok(JsValue::Number(super::performance::origin(vm))),
+        "getEntries" => super::performance::get_entries(vm, call, None, None),
+        "getEntriesByType" => {
+            super::performance::check_receiver(vm, &call.this)?;
+            if call.args.is_empty() {
+                return Err(vm.type_error("performance.getEntriesByType requires a type"));
+            }
+            let kind = vm.to_text(&call.arg(0))?;
+            super::performance::get_entries(vm, call, Some(&kind), None)
         }
+        "getEntriesByName" => {
+            super::performance::check_receiver(vm, &call.this)?;
+            if call.args.is_empty() {
+                return Err(vm.type_error("performance.getEntriesByName requires a name"));
+            }
+            let name = vm.to_string(&call.arg(0))?;
+            let kind = if call.arg(1) == JsValue::Undefined {
+                None
+            } else {
+                Some(vm.to_text(&call.arg(1))?)
+            };
+            super::performance::get_entries(vm, call, kind.as_deref(), Some(name))
+        }
+        "clearMarks" => super::performance::clear(vm, call, "mark"),
+        "clearMeasures" => super::performance::clear(vm, call, "measure"),
         "timing" => {
             let id = vm.new_object()?;
             let start = vm.page.state.epoch;
@@ -533,10 +554,10 @@ pub(in crate::v9) fn window_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match name {
         "btoa" => {
             let text = vm.to_string(&call.arg(0))?;
-            if text.as_units().iter().any(|unit| *unit > 0xff) {
+            if text.code_units().any(|unit| unit > 0xff) {
                 return Err(vm.throw(crate::v9::vm::error::ErrorKind::Error, "InvalidCharacterError: The string to be encoded contains characters outside of the Latin1 range."));
             }
-            let bytes: Vec<u8> = text.as_units().iter().map(|unit| *unit as u8).collect();
+            let bytes: Vec<u8> = text.code_units().map(|unit| unit as u8).collect();
             JsValue::string(&base64_encode(&bytes)).map_err(Into::into)
         }
         "atob" => {

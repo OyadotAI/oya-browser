@@ -114,7 +114,10 @@ impl Vm<'_> {
                 marker.objects.contains(id)
                     && matches!(
                         object.class,
-                        Class::WeakRef(_) | Class::FinalizationRegistry(_)
+                        Class::WeakRef(_)
+                            | Class::FinalizationRegistry(_)
+                            | Class::WeakMap(_)
+                            | Class::WeakSet(_)
                     )
             })
             .map(|(id, _)| *id)

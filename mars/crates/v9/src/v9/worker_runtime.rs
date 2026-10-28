@@ -1,3 +1,4 @@
+mod collection;
 /** Explicitly scoped d8 worker sessions own isolated V9 threads, queues and cancellation capabilities. */
 mod engine;
 mod profiles;
@@ -46,6 +47,9 @@ impl ConformanceWorkerSession {
                 shared_gc: Mutex::new(shared_gc::Registry::default()),
                 available: Condvar::new(),
                 profiles: Mutex::new(Vec::new()),
+                collection: Mutex::new(collection::Collection::default()),
+                collection_wake: Condvar::new(),
+                collection_requested: AtomicBool::new(false),
             }),
         }
     }
@@ -87,6 +91,9 @@ pub struct ConformanceWorkerHost {
     available: Condvar,
     /** Completed inert artifacts survive child shutdown until the owning runner consumes them. */
     profiles: Mutex<Vec<(Option<u64>, String)>>,
+    collection: Mutex<collection::Collection>,
+    collection_wake: Condvar,
+    collection_requested: AtomicBool,
 }
 /** An opaque snapshot identity has authority only in endpoints which were granted its actual Arc. */
 struct SharedGrant {
@@ -294,6 +301,9 @@ impl ConformanceWorkerHost {
             failure: Mutex::new(None),
         });
         environment.conformance_workers = Some(self.clone());
+        if environment.conformance_native_main_source.is_some() {
+            environment.conformance_native_main_source = Some(0);
+        }
         environment.conformance_worker_id = Some(id);
         environment.conformance_worker_cancel = Some(worker.cancel.clone());
         environment.conformance_d8 = true;
@@ -338,10 +348,12 @@ impl ConformanceWorkerHost {
         id: u64,
         requester: Option<u64>,
         deadline: Instant,
-    ) -> EngineResult<Option<WorkerGraph>> {
+        mut safepoint: impl FnMut() -> crate::v9::vm::Res<()>,
+    ) -> crate::v9::vm::Res<Option<WorkerGraph>> {
         let worker = self.worker(id)?;
         let output = worker.output.lock().unwrap();
         loop {
+            safepoint()?;
             match output.try_recv() {
                 Ok(message) => return Ok(Some(message)),
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(None),
@@ -351,7 +363,7 @@ impl ConformanceWorkerHost {
                 return Ok(output.try_recv().ok());
             }
             if self.cancelled(requester) || Instant::now() >= deadline {
-                return Err(crate::v9::platform::timeout());
+                return Err(crate::v9::platform::timeout().into());
             }
             match output.recv_timeout(PARK_INTERVAL) {
                 Ok(message) => return Ok(Some(message)),

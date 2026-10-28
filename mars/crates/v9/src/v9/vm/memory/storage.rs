@@ -155,6 +155,7 @@ pub(super) fn class(vm: &Vm, class: &Class, bank: u32, tracker: &mut Tracker) ->
             BytesRange::exact(size_of::<RegExpData>() + data.flags.capacity())
         }
         Class::ArrayBuffer(bytes) => vector::<u8>(bytes.0.capacity()),
+        Class::SparseWasmBuffer(bytes) => BytesRange::exact(bytes.resident()),
         Class::SharedArrayBuffer(bytes) => {
             tracker.allocation(
                 bank,

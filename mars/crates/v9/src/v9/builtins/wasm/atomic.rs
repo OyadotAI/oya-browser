@@ -9,7 +9,9 @@ fn shape(op: u32) -> Result<(usize, Type), Error> {
         return Ok((if op == 2 { 8 } else { 4 }, Type::I32));
     }
     if !(0x10..=0x4e).contains(&op) {
-        return Err(Error::invalid("invalid atomic opcode"));
+        return Err(Error::invalid(&format!(
+            "invalid atomic opcode: 0xfe{op:x}"
+        )));
     }
     let lane = (op - 0x10) % 7;
     Ok((
@@ -23,25 +25,44 @@ fn shape(op: u32) -> Result<(usize, Type), Error> {
 }
 /** Atomic memargs require exact natural alignment; fence has one reserved zero byte. */
 pub(super) fn decode(r: &mut binary::Reader, m: &Module) -> Result<Instruction, Error> {
-    let op = r.u32()?;
+    let op = r.prefixed_opcode()?;
+    if matches!(op, 4..=7 | 0x5c..=0x71) && !r.shared_enabled {
+        return Err(Error::invalid("shared atomic instructions require --wasm-shared"));
+    }
+    #[cfg(not(feature = "conformance"))]
+    if matches!(op, 5..=7) { return Err(Error::unsupported("WebAssembly shared wait queues")); }
     if (0x5c..=0x71).contains(&op) {
         return gc::atomic::decode(r, op);
     }
+    if op == 5 {
+        let index = r.u32()?;
+        let slot = r.u32()?;
+        let field = gc_types::fields(m, index)?.get(slot as usize).ok_or_else(|| Error::invalid("unknown Wasm struct field"))?;
+        if !m.definitions.get(index as usize).is_some_and(|d| d.shared) || field.ty != Type::I32 || field.packed.is_some() {
+            return Err(Error::invalid("struct.wait requires a shared i32 field"));
+        }
+        return Ok(Instruction::Atomic(op, index, u64::from(slot)));
+    }
     if op == 3 {
-        if r.byte()? > 1 {
+        let ordering = r.byte()?;
+        if ordering == 1 && !r.acquire_release_enabled {
+            return Err(Error::invalid("atomic fence ordering requires --wasm-acquire-release"));
+        }
+        if ordering > 1 {
             return Err(Error::invalid("invalid atomic fence immediate"));
         }
         return Ok(Instruction::Atomic(op, 0, 0));
     }
-    if op == 4 {
+    if matches!(op, 4 | 6 | 7) {
         return Ok(Instruction::Atomic(op, 0, 0));
     }
     let (width, _) = shape(op)?;
     let (align, index, offset) = r.ordered_memarg(m, Some(op >= 0x1e))?;
     if align != width.trailing_zeros() {
-        return Err(Error::invalid(
-            "atomic alignment must equal natural alignment",
-        ));
+        return Err(Error::invalid(&format!(
+            "invalid alignment for atomic operation; expected alignment is {}, actual alignment is {align}",
+            width.trailing_zeros()
+        )));
     }
     Ok(Instruction::Atomic(op, index, offset))
 }
@@ -50,6 +71,9 @@ pub(super) fn signature(m: &Module, op: u32, index: u32) -> Result<(Vec<Type>, V
     if matches!(op, 3 | 4) {
         return Ok((vec![], vec![]));
     }
+    if op == 5 { return Ok((vec![Type::Ref(i64::from(index), true), Type::Shared(-36, true), Type::I32, Type::I64], vec![Type::I32])); }
+    if op == 7 { return Ok((vec![], vec![Type::Shared(-36, false)])); }
+    if op == 6 { return Ok((vec![Type::Shared(-36, true), Type::I32], vec![Type::I32])); }
     if validate::memory_count(m) == 0 {
         return Err(Error::invalid("atomic instruction requires a memory"));
     }
@@ -93,6 +117,38 @@ pub(super) fn run(
     }
     if op == 4 {
         std::thread::yield_now();
+        return Ok(());
+    }
+    #[cfg(feature = "conformance")]
+    if op == 5 {
+        let timeout = numeric::i64_value(&numeric::pop(stack)?)?;
+        let expected = numeric::i32_value(&numeric::pop(stack)?)?;
+        let queue = numeric::pop(stack)?;
+        let object = numeric::pop(stack)?;
+        if object == JsValue::Null || queue == JsValue::Null { return Err(trap(vm, "dereferencing a null pointer")); }
+        let object = gc::shared::handle(vm, &object).ok_or_else(|| vm.type_error("invalid shared struct"))?;
+        let queue = gc::shared::handle(vm, &queue).ok_or_else(|| vm.type_error("invalid Wasm wait queue"))?;
+        if queue.metadata()?.0.as_ref() != gc::shared::WAIT_QUEUE_META { return Err(vm.type_error("invalid Wasm wait queue")); }
+        let duration = (timeout >= 0).then(|| std::time::Duration::from_nanos(timeout as u64));
+        let mut failure = None;
+        let result = queue.wait_field(&object, offset as usize, expected, duration, || match vm.wait_safepoint() { Ok(cancelled) => cancelled, Err(error) => { failure = Some(error); true } });
+        if let Some(error) = failure { return Err(error); }
+        let code = match result {
+            Ok(None) => 1,
+            Ok(Some(true)) => 0,
+            Ok(Some(false)) => 2,
+            Err(_) => return Err(vm.type_error("Wasm wait queue failed")),
+        };
+        stack.push(JsValue::Number(code as f64));
+        return Ok(());
+    }
+    if op == 7 { stack.push(gc::shared::new_wait_queue(vm)?); return Ok(()); }
+    #[cfg(feature = "conformance")]
+    if op == 6 {
+        let count = numeric::i32_value(&numeric::pop(stack)?)? as u32;
+        let queue = numeric::pop(stack)?;
+        let notified = gc::shared::notify_queue(vm, &queue, count)?;
+        stack.push(JsValue::Number(notified as f64));
         return Ok(());
     }
     let (width, ty) = shape(op).map_err(|e| compile_failure(vm, e))?;

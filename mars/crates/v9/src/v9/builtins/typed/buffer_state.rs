@@ -119,6 +119,13 @@ pub(in crate::v9) fn detach(vm: &mut Vm, id: ObjectId) {
         bytes.0.clear();
         vm.heap.adjust(0, -(units as isize));
     }
+    if let Some(Class::SparseWasmBuffer(bytes)) =
+        vm.heap.get_mut(id).map(|object| &mut object.class)
+    {
+        let units = bytes.resident().div_ceil(2);
+        bytes.clear();
+        vm.heap.adjust(0, -(units as isize));
+    }
     vm.heap.put(
         id,
         detached_key(),
@@ -144,7 +151,12 @@ pub(in crate::v9) fn valid(vm: &Vm, id: ObjectId) -> bool {
     let Some(object) = vm.heap.get(id) else {
         return false;
     };
-    let length = buffer_bytes(vm, id).map_or(0, Vec::len);
+    if matches!(object.class, Class::SparseWasmBuffer(_))
+        && object.props.get(&maximum_key()).is_some()
+    {
+        return false;
+    }
+    let length = storage_len(vm, id).unwrap_or(0);
     let maximum = object.props.get(&maximum_key()).is_none_or(|prop| matches!(prop.slot, crate::v9::vm::heap::Slot::Data(JsValue::Number(value)) if value.is_finite() && value >= length as f64 && value <= MAXIMUM_LENGTH && value.fract() == 0.0));
     let protection = object.props.get(&protected_key()).is_none_or(|prop| {
         matches!(
@@ -196,7 +208,13 @@ pub(in crate::v9) fn valid_view(vm: &Vm, id: ObjectId) -> bool {
     else {
         return false;
     };
-    if end > BUFFER_BYTES {
+    if end > BUFFER_BYTES
+        && !matches!(
+            vm.heap.get(view.buffer).map(|o| &o.class),
+            Some(Class::SparseWasmBuffer(_))
+        )
+        && !matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SharedArrayBuffer(bytes)) if bytes.is_sparse())
+    {
         return false;
     }
     if matches!(

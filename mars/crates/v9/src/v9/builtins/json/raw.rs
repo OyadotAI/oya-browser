@@ -15,13 +15,18 @@ pub(super) fn install(builder: &mut Builder, json: ObjectId) {
 
 /** Validation accepts exactly one JSON primitive and preserves its original spelling. */
 fn validate(vm: &mut Vm, source: &JsString) -> Res<()> {
-    let whitespace = |unit: &u16| matches!(unit, 0x20 | 0x09 | 0x0a | 0x0d);
-    if source.as_units().first().is_none_or(whitespace)
-        || source.as_units().last().is_some_and(whitespace)
+    let whitespace = |unit: u16| matches!(unit, 0x20 | 0x09 | 0x0a | 0x0d);
+    if source.unit_at(0).is_none_or(whitespace)
+        || source
+            .unit_at(source.len().saturating_sub(1))
+            .is_some_and(whitespace)
     {
         return Err(vm.syntax_error("Invalid raw JSON text"));
     }
-    if matches!(json_parse_units(vm, source.as_units())?, JsValue::Object(_)) {
+    if matches!(
+        read_json(vm, Input::from_string(source), false)?.0,
+        JsValue::Object(_)
+    ) {
         return Err(vm.syntax_error("Raw JSON must contain a primitive value"));
     }
     Ok(())

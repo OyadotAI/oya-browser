@@ -24,6 +24,10 @@ icu_properties = { version = "=2.3.0", default-features = false, features = ["co
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
 
+[dev-dependencies]
+# The test host opens fixture paths relative to an owned directory descriptor.
+libc = "=0.2.191"
+
 [features]
 # Upstream test hosts only: supplies inert fixture sources without filesystem authority.
 # The browser service never enables the d8 compatibility host.

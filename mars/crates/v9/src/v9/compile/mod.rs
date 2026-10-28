@@ -95,6 +95,9 @@ pub(in crate::v9) enum Op {
     /** callee this args... -> result: `eval(...)`, a direct eval when the callee is the
     intrinsic eval, run in the caller's scopes that the string operand describes. */
     DirectEval(u16, u32),
+    /** A checked native intrinsic from the explicitly enabled upstream fixture grammar. */
+    #[cfg(feature = "conformance")]
+    NativeIntrinsic(u8),
     /** Look a name up in the eval-var object in env slot (hops, slot): pushes the value and
     true when it holds the name, else false. */
     GetExt(u32, Slot, Slot),
@@ -205,6 +208,12 @@ pub(in crate::v9) enum Op {
     SuperCall(u16),
     /** array -> this */
     SuperCallSpread,
+    /** Lexical constructor and new.target followed by arguments; binding happens after construction. */
+    LexicalSuperCall(u16),
+    /** Lexical constructor and new.target followed by the spread arguments array. */
+    LexicalSuperCallSpread,
+    /** Bind a captured derived receiver once and then initialize its instance elements. */
+    BindLexicalSuper(Slot, Slot),
     Return,
     /** value this -> return from a derived constructor */
     ReturnDerived,
@@ -502,6 +511,12 @@ pub(in crate::v9) struct Registry {
 /** The content key of a classic script, wherever it sits on a page. */
 pub(in crate::v9) fn source_key(source: &str) -> cache::Key {
     cache::text_key(cache::Grammar::Script, source)
+}
+
+/** Native-fixture grammar has its own cache namespace, even for identical source bytes. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn native_fixture_key(source: &str) -> cache::Key {
+    cache::text_key(cache::Grammar::NativeFixture, source)
 }
 
 impl Registry {

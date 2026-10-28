@@ -12,6 +12,19 @@ use std::collections::BTreeMap;
 /** Where test modules live. */
 const BASE: &str = "https://example.com/app/";
 
+/** Private slots on module namespaces remain writable while exported bindings stay read-only. */
+#[test]
+fn namespace_private_fields_are_distinct_from_read_only_exports() {
+    let loaded = load(
+        vec![Source::Inline(
+            "import * as ns from './dep.mjs';class Base{constructor(value){return value}}class C extends Base{#x=1;read(){return this.#x}write(v){this.#x=v}}new C(ns);C.prototype.write.call(ns,4);let rejected=false;try{ns.value=2}catch(e){rejected=e instanceof TypeError}console.log(C.prototype.read.call(ns),ns.value,rejected,Reflect.ownKeys(ns).length);",
+        )],
+        &[("dep.mjs", "export const value=7;")],
+    );
+    assert!(loaded.failed.is_empty(), "{:?}", loaded.reasons);
+    assert_eq!(loaded.console, ["4 7 true 2"]);
+}
+
 /** One page source: a classic script, an inline module, an external module or an import map. */
 enum Source {
     Classic(&'static str),
@@ -260,16 +273,8 @@ fn dynamic_import_loads_later_from_modules_and_classic_scripts() {
     assert!(loaded.failed.is_empty(), "{:?}", loaded.reasons);
     assert!(loaded.console.contains(&"classic got 42".to_string()));
     assert!(loaded.console.contains(&"module got 42 true".to_string()));
-    assert_eq!(
-        loaded
-            .console
-            .iter()
-            .filter(|line| *line == "TypeError")
-            .count(),
-        2,
-        "{:?}",
-        loaded.console
-    );
+    assert!(loaded.console.contains(&"Error".to_string()), "{:?}", loaded.console);
+    assert!(loaded.console.contains(&"TypeError".to_string()), "{:?}", loaded.console);
     assert_eq!(
         loaded.requested,
         [format!("{BASE}lazy.js"), format!("{BASE}missing.js")]

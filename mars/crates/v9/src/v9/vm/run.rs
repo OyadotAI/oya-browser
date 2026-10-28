@@ -108,6 +108,10 @@ impl Vm<'_> {
                 return Err(Thrown::Fatal(error));
             }
         };
+        #[cfg(feature = "conformance")]
+        if self.page.throw_location.is_none() {
+            builtins::debug_event(self, builtins::DebugEvent::Exception);
+        }
         self.note_throw_location();
         loop {
             let Some(frame) = self.frames.last_mut() else {
@@ -197,6 +201,10 @@ impl Vm<'_> {
                 #[cfg(feature = "conformance")]
                 crate::v9::builtins::profile_tick(self)?;
                 self.collect_if_needed()?;
+                #[cfg(feature = "conformance")]
+                if let Some(host) = self.page.environment.conformance_workers.clone() {
+                    host.collection_safepoint(self.page.environment.conformance_worker_id, self)?;
+                }
             }
             self.collect_if_due()?;
             let frame = self.frames.last_mut().expect("running frame");
@@ -222,6 +230,9 @@ impl Vm<'_> {
     }
     /** Push onto the operand stack. */
     pub(in crate::v9) fn push(&mut self, value: JsValue) {
+        if let JsValue::String(text) = &value {
+            self.track_string(text);
+        }
         self.frame().stack.push(value);
     }
     /** Pop the operand stack. */
@@ -244,6 +255,18 @@ impl Vm<'_> {
     }
     /** A string constant of the running code. */
     fn constant(&mut self, index: u32) -> JsString {
+        #[cfg(feature = "conformance")]
+        {
+            let (site, source) = {
+                let code = &self.frame().code;
+                (code.site, code.strings.get(index as usize).cloned())
+            };
+            let Some(source) = source else {
+                return JsString::empty();
+            };
+            self.isolate_code_constant(site, index, &source)
+        }
+        #[cfg(not(feature = "conformance"))]
         self.frame()
             .code
             .strings
@@ -304,7 +327,18 @@ impl Vm<'_> {
             Op::True => self.push(JsValue::Boolean(true)),
             Op::False => self.push(JsValue::Boolean(false)),
             Op::Hole => self.push(JsValue::Hole),
-            Op::Number(value) => self.push(JsValue::Number(value)),
+            Op::Number(value) => {
+                #[cfg(feature = "conformance")]
+                if self.page.environment.conformance_native_main_source.is_some() && value.is_finite() && value.fract() == 0.0 && value >= -(1_i64 << 30) as f64 && value < (1_i64 << 30) as f64 && !(value == 0.0 && value.is_sign_negative()) {
+                    self.push(JsValue::Smi(value));
+                } else if self.page.environment.conformance_native_main_source.is_some() {
+                    let (site, source) = { let code = &self.frame().code; (code.site, code.source.as_ref().map(|(source, _)| source.clone())) };
+                    let literal = match source { Some(source) => self.number_literal(site, &source, value)?, None => JsValue::Number(value) };
+                    self.push(literal);
+                } else { self.push(JsValue::Number(value)); }
+                #[cfg(not(feature = "conformance"))]
+                self.push(JsValue::Number(value));
+            },
             Op::BigInt(index) => {
                 let text = self.constant(index).lossy();
                 self.charge(crate::v9::value::BigInteger::parse_work(&text))?;
@@ -321,6 +355,14 @@ impl Vm<'_> {
             }
             Op::String(index) => {
                 let value = self.constant(index);
+                #[cfg(feature = "conformance")]
+                let value = if self.page.environment.conformance_shared_string_table {
+                    self.share_string(&value)?
+                } else {
+                    value
+                };
+                #[cfg(feature = "conformance")]
+                value.mark_old();
                 self.push(JsValue::String(value));
             }
             Op::Pop => {
@@ -494,6 +536,455 @@ impl Vm<'_> {
                 self.check_global_function(&name, eval)?;
             }
             Op::DirectEval(count, context) => return self.direct_eval(count, context),
+            #[cfg(feature = "conformance")]
+            Op::NativeIntrinsic(intrinsic) => match intrinsic {
+                0 => {
+                    let value = self.pop();
+                    let message = self.to_text(&value)?;
+                    return Err(EngineError::new(
+                        "conformance_abort_js",
+                        &message,
+                        "The upstream test invoked %AbortJS.",
+                    )
+                    .into());
+                }
+                1 => {
+                    self.drain_jobs()?;
+                    self.push(JsValue::Undefined);
+                }
+                2 | 12 => {
+                    let detach_key = if intrinsic == 12 {
+                        self.pop()
+                    } else {
+                        JsValue::Undefined
+                    };
+                    let value = self.pop();
+                    let Some(id) = value.object() else {
+                        return Err(self.type_error("ArrayBuffer expected"));
+                    };
+                    if !matches!(
+                        self.heap.get(id).map(|object| &object.class),
+                        Some(Class::ArrayBuffer(_))
+                    ) || !builtins::buffer_detachable(self, id)
+                        || detach_key != JsValue::Undefined
+                    {
+                        return Err(self.type_error("ArrayBuffer cannot be detached"));
+                    }
+                    builtins::detach_buffer(self, id);
+                    self.push(JsValue::Undefined);
+                }
+                3 => self.push(JsValue::Boolean(cfg!(target_pointer_width = "64"))),
+                4 => {
+                    let value = self.pop();
+                    let length = self
+                        .to_integer(&value)?
+                        .clamp(0.0, crate::constants::VM_MAX_SAFE_LENGTH);
+                    self.push(JsValue::Number(length));
+                }
+                5 => {
+                    let value = self.pop();
+                    let count = builtins::synchronization_waiter_count(self, &value)?;
+                    self.push(count);
+                }
+                14 | 15 => {
+                    let index = self.peek(0);
+                    let value = self.peek(1);
+                    let count =
+                        builtins::atomics_waiter_count(self, &value, &index, intrinsic == 15)?;
+                    self.drop_n(2);
+                    self.push(count);
+                }
+                16 => {
+                    let allowed = self.pop().truthy();
+                    self.page.state.atomics_wait_disallowed = !allowed;
+                    self.push(JsValue::Undefined);
+                }
+                17 => self.push(JsValue::Boolean(!self.page.state.atomics_wait_disallowed)),
+                18 => {
+                    let value = self.pop();
+                    self.push(JsValue::Boolean(
+                        matches!(value, JsValue::String(value) if value.is_shared()),
+                    ));
+                }
+                19 => {
+                    let right = self.pop();
+                    let left = self.pop();
+                    let same = match (&left, &right) {
+                        (JsValue::Object(a), JsValue::Object(b)) => a == b,
+                        (JsValue::String(a), JsValue::String(b)) => a.same_backing(b),
+                        (JsValue::SharedNumber(a), JsValue::SharedNumber(b)) | (JsValue::LocalNumber(a), JsValue::LocalNumber(b)) => a.root == b.root,
+                        (JsValue::LocalNumber(_) | JsValue::SharedNumber(_), JsValue::Number(number)) | (JsValue::Number(number), JsValue::LocalNumber(_) | JsValue::SharedNumber(_))
+                            if number.is_finite() && number.fract() == 0.0 && *number >= -(1_i64 << 30) as f64 && *number < (1_i64 << 30) as f64 && !(*number == 0.0 && number.is_sign_negative()) => return Err(self.unsupported_error("V8 heap identity for unboxed primitives")),
+                        (JsValue::LocalNumber(_) | JsValue::SharedNumber(_), JsValue::Smi(_)) | (JsValue::Smi(_), JsValue::LocalNumber(_) | JsValue::SharedNumber(_)) => return Err(self.unsupported_error("V8 heap identity for small integers")),
+                        (JsValue::LocalNumber(_), _) | (_, JsValue::LocalNumber(_)) | (JsValue::SharedNumber(_), JsValue::Number(_)) | (JsValue::Number(_), JsValue::SharedNumber(_)) => false,
+                        (
+                            JsValue::SharedNumber(_),
+                            JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
+                        )
+                        | (
+                            JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
+                            JsValue::SharedNumber(_),
+                        ) => false,
+                        (JsValue::Number(n), JsValue::Undefined | JsValue::Null | JsValue::Boolean(_) | JsValue::String(_) | JsValue::Object(_) | JsValue::Symbol(_))
+                        | (JsValue::Undefined | JsValue::Null | JsValue::Boolean(_) | JsValue::String(_) | JsValue::Object(_) | JsValue::Symbol(_), JsValue::Number(n))
+                            if !n.is_finite() || n.fract() != 0.0 || *n < -(1_i64 << 30) as f64 || *n >= (1_i64 << 30) as f64 || (*n == 0.0 && n.is_sign_negative()) => false,
+                        (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b,
+                        (
+                            JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
+                            JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
+                        ) => false,
+                        _ => {
+                            return Err(
+                                self.unsupported_error("V8 heap identity for unboxed primitives")
+                            );
+                        }
+                    };
+                    self.push(JsValue::Boolean(same));
+                }
+                20 => {
+                    builtins::collect_shared(self)?;
+                    self.push(JsValue::Undefined);
+                }
+                21 => {
+                    let value = self.pop();
+                    let initializer = value
+                        .object()
+                        .and_then(|id| self.heap.get(id))
+                        .and_then(|object| object.function())
+                        .and_then(|function| function.fields);
+                    self.push(initializer.map_or(JsValue::Undefined, JsValue::Object));
+                }
+                22 => {
+                    let value = self.peek(0);
+                    let result = builtins::wasm_force_detach(self, &value)?;
+                    self.pop();
+                    self.push(result);
+                }
+                23 => {
+                    let instance = self.peek(0);
+                    let exception = self.peek(1);
+                    let result = builtins::wasm_exception_tag_id(self, &exception, &instance)?;
+                    self.drop_n(2);
+                    self.push(result);
+                }
+                24 => {
+                    let exception = self.peek(0);
+                    let result = builtins::wasm_exception_values(self, &exception)?;
+                    self.pop();
+                    self.push(result);
+                }
+                25 => return Err(builtins::forced_stack_overflow(self)),
+                26 => self.push(JsValue::Number(crate::constants::JS_STRING_UNITS as f64)),
+                31 => {
+                    let right = self.pop();
+                    let left = self.pop();
+                    let result = match (&left, &right) {
+                        (JsValue::String(left), JsValue::String(right)) => {
+                            left.construct_cons(right)?.map(JsValue::String)
+                        }
+                        _ => None,
+                    };
+                    if result.is_none() && !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error("ConstructConsString precondition"));
+                    }
+                    self.push(result.unwrap_or(JsValue::Undefined));
+                }
+                32 => {
+                    const MAX_SMI: f64 = ((1u32 << 30) - 1) as f64;
+                    let start = self.pop();
+                    let text = self.pop();
+                    let result = match (&text, &start) {
+                        (JsValue::String(text), JsValue::Number(start) | JsValue::Smi(start))
+                            if *start >= 0.0
+                                && !start.is_sign_negative()
+                                && *start <= MAX_SMI
+                                && start.fract() == 0.0 =>
+                        {
+                            text.construct_slice(*start as usize)?.map(JsValue::String)
+                        }
+                        _ => None,
+                    };
+                    if result.is_none() && !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error("ConstructSlicedString precondition"));
+                    }
+                    self.push(result.unwrap_or(JsValue::Undefined));
+                }
+                33 | 34 => {
+                    self.pop();
+                    self.pop();
+                    if !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error(
+                            "string construction intrinsic with nonstandard arity",
+                        ));
+                    }
+                    self.push(JsValue::Undefined);
+                }
+                35 => {
+                    let value = self.pop();
+                    let JsValue::String(text) = value else {
+                        return Err(self.unsupported_error("FlattenString requires a string"));
+                    };
+                    self.push(JsValue::String(text.flatten_for_intrinsic()?));
+                }
+                38 => {
+                    let value = self.pop();
+                    let JsValue::String(source) = value else {
+                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructInternalizedString requires a string")) };
+                    };
+                    let result = self.internalize_string(&source)?;
+                    self.push(JsValue::String(result));
+                }
+                39 => {
+                    let value = self.pop();
+                    let JsValue::String(source) = value else {
+                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructThinString requires a string")) };
+                    };
+                    let existing = source.thin_target().is_some() || source.is_actual_cons();
+                    let thin = if existing {
+                        Some(source)
+                    } else {
+                        JsString::empty().construct_cons(&source)?
+                    };
+                    let Some(thin) = thin else {
+                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructThinString precondition")) };
+                    };
+                    if !existing { thin.mark_old(); }
+                    if thin.thin_target().is_none() { self.internalize_string(&thin)?; }
+                    self.push(JsValue::String(thin));
+                }
+                40 | 41 => {
+                    self.pop();
+                    if !self.page.environment.conformance_fuzzing { return Err(self.unsupported_error("string construction intrinsic arity")); }
+                    self.push(JsValue::Undefined);
+                }
+                42 => {
+                    let id = self.alloc(super::heap::Object::new(super::data::Class::Number(0.0), None))?;
+                    self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: 0.0, root: id })));
+                }
+                46 => self.push(JsValue::Smi(f64::from(crate::v9::value::SMI_MAX))),
+                47 => {
+                    let maximum = builtins::array_buffer_max_allocation();
+                    self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
+                }
+                44 => {
+                    let input = self.peek(0);
+                    let primitive = self.to_primitive(&input, super::convert::Hint::Number)?;
+                    let result = match primitive {
+                        value @ (JsValue::LocalNumber(_) | JsValue::SharedNumber(_)) => value,
+                        JsValue::Number(_) => return Err(self.unsupported_error("HeapNumber identity for untracked number")),
+                        value => {
+                            let number = self.to_number(&value)?;
+                            let id = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
+                            JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root: id }))
+                        }
+                    };
+                    self.pop();
+                    self.push(result);
+                }
+                45 => {
+                    self.pop();
+                    if !self.page.environment.conformance_fuzzing { return Err(self.unsupported_error("AllocateHeapNumberWithValue arity")); }
+                    self.push(JsValue::Undefined);
+                }
+                43 => {
+                    let value = self.pop();
+                    if matches!(value, JsValue::Number(number) if number.is_finite() && number.fract() == 0.0 && number >= -(1_i64 << 30) as f64 && number < (1_i64 << 30) as f64 && !(number == 0.0 && number.is_sign_negative())) {
+                        return Err(self.unsupported_error("Smi identity for untracked number"));
+                    }
+                    self.push(JsValue::Boolean(matches!(value, JsValue::Smi(_))));
+                }
+                37 => {
+                    let value = self.pop();
+                    let JsValue::String(source) = value else { return Err(self.unsupported_error("InternalizeString requires a string")); };
+                    let result = self.internalize_string(&source)?;
+                    self.push(JsValue::String(result));
+                }
+                36 => {
+                    let value = self.pop();
+                    let young = match &value {
+                        JsValue::String(text) => !text.is_old(),
+                        JsValue::Undefined | JsValue::Null | JsValue::Boolean(_) => false,
+                        JsValue::Number(number)
+                            if number.is_finite()
+                                && number.fract() == 0.0
+                                && *number >= -(1_i64 << 30) as f64
+                                && *number < (1_i64 << 30) as f64
+                                && !(*number == 0.0 && number.is_sign_negative()) =>
+                        {
+                            false
+                        }
+                        JsValue::Smi(_) | JsValue::SharedNumber(_) => false,
+                        JsValue::LocalNumber(value) => self.heap.get(value.root).is_some_and(|object| object.age < super::gc::PROMOTION_AGE),
+                        JsValue::Object(id) if builtins::is_shared_object(self, *id) => false,
+                        JsValue::Object(id)
+                            if *id < super::heap::INTRINSIC_BASE
+                                && !builtins::is_shared_object(self, *id) =>
+                        {
+                            match self.heap.get(*id) {
+                                Some(object)
+                                    if !matches!(
+                                        object.class,
+                                        Class::Host(_)
+                                            | Class::WasmShared(_)
+                                            | Class::SharedContainerRoot(_)
+                                    ) =>
+                                {
+                                    object.age < super::gc::PROMOTION_AGE
+                                }
+                                _ => {
+                                    return Err(self.unsupported_error(
+                                        "InYoungGeneration requires tracked ordinary storage",
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(self.unsupported_error(
+                                "InYoungGeneration requires tracked ordinary storage",
+                            ));
+                        }
+                    };
+                    self.push(JsValue::Boolean(young));
+                }
+                27 | 29 | 30 => {
+                    let env = &self.page.environment;
+                    if !(env.conformance_shared_heap
+                        || env.conformance_shared_strings
+                        || env.conformance_shared_string_table
+                        || env.conformance_harmony_struct)
+                        || !(env.conformance_shared_strings
+                            || env.conformance_shared_string_table
+                            || env.conformance_harmony_struct)
+                    {
+                        return Err(self.unsupported_error(
+                            "ShareObject requires the shared heap and shared strings",
+                        ));
+                    }
+                    if intrinsic != 27 && !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error("ShareObject with nonstandard arity"));
+                    }
+                    let value = self.pop();
+                    let value = match value {
+                        JsValue::Number(number)
+                            if number.is_finite()
+                                && number.fract() == 0.0
+                                && number >= -(1_i64 << 30) as f64
+                                && number < (1_i64 << 30) as f64
+                                && !(number == 0.0 && number.is_sign_negative()) =>
+                        {
+                            JsValue::Number(number)
+                        }
+                        JsValue::Number(number) => builtins::new_shared_number(self, number)?,
+                        JsValue::LocalNumber(value) => builtins::new_shared_number(self, value.value)?,
+                        JsValue::String(value) => {
+                            JsValue::String(self.share_string(&value)?)
+                        }
+                        JsValue::Smi(_)
+                        | JsValue::SharedNumber(_)
+                        | JsValue::Boolean(_)
+                        | JsValue::Null
+                        | JsValue::Undefined => value,
+                        JsValue::Object(id) if builtins::is_shared_object(self, id) => {
+                            let mark = self.pins.len();
+                            self.pin(JsValue::Object(id));
+                            let result = builtins::materialize_shared_object(self, id);
+                            self.pins.truncate(mark);
+                            result?;
+                            JsValue::Object(id)
+                        }
+                        JsValue::Object(id)
+                            if builtins::conformance_local_mutex(self, &JsValue::Object(id))
+                                || builtins::conformance_local_condition(
+                                    self,
+                                    &JsValue::Object(id),
+                                ) =>
+                        {
+                            JsValue::Object(id)
+                        }
+                        _ if self.page.environment.conformance_fuzzing => JsValue::Undefined,
+                        _ => return Err(self.type_error("Value cannot be shared")),
+                    };
+                    self.push(value);
+                }
+                28 => {
+                    let value = self.pop();
+                    let mark = self.pins.len();
+                    self.pin(value.clone());
+                    let result = if let Some(id) = value
+                        .object()
+                        .filter(|id| builtins::is_shared_object(self, *id))
+                    {
+                        builtins::materialize_shared_object(self, id)
+                    } else {
+                        Ok(())
+                    };
+                    self.pins.truncate(mark);
+                    result?;
+                    let shared = matches!(&value, JsValue::SharedNumber(_))
+                        || matches!(&value, JsValue::String(s) if s.is_shared())
+                        || value.object().is_some_and(|id| matches!(self.heap.get(id).map(|object| &object.class), Some(Class::WasmShared(_))))
+                        || value
+                            .object()
+                            .is_some_and(|id| builtins::is_shared_object(self, id))
+                        || builtins::conformance_local_mutex(self, &value)
+                        || builtins::conformance_local_condition(self, &value);
+                    self.push(JsValue::Boolean(shared));
+                }
+                6 => {
+                    let value = self.pop();
+                    self.push(JsValue::Boolean(value.object().is_some()));
+                }
+                7 => {
+                    let value = self.pop();
+                    let is_array = value.object().is_some_and(|id| {
+                        matches!(
+                            self.heap.get(id).map(|object| &object.class),
+                            Some(Class::Array(_))
+                        ) || id == crate::v9::vm::realm::realm_for(id).ids.array_prototype
+                    });
+                    self.push(JsValue::Boolean(is_array));
+                }
+                8 => {
+                    let value = self.pop();
+                    self.push(JsValue::Boolean(value.truthy()));
+                }
+                9 => {
+                    let value = self.pop();
+                    self.push(JsValue::string(self.type_of(&value))?);
+                }
+                10 => {
+                    let value = self.pop();
+                    let result = match self.to_key(&value)? {
+                        Key::Str(value) => JsValue::String(value),
+                        Key::Sym(id) => JsValue::Symbol(id),
+                        Key::Private(_) => {
+                            return Err(EngineError::invalid("Invalid V9 property key.").into());
+                        }
+                    };
+                    self.push(result);
+                }
+                11 => {
+                    let done = self.pop().truthy();
+                    let value = self.pop();
+                    let result = self.new_object()?;
+                    self.put(result, "value", value)?;
+                    self.put(result, "done", JsValue::Boolean(done))?;
+                    self.push(JsValue::Object(result));
+                }
+                13 => {
+                    let value = self.pop();
+                    let size = value
+                        .object()
+                        .and_then(|id| self.heap.get(id))
+                        .and_then(|object| match &object.class {
+                            Class::WeakMap(table) | Class::WeakSet(table) => Some(table.live),
+                            _ => None,
+                        })
+                        .ok_or_else(|| self.type_error("Expected a weak collection"))?;
+                    self.push(JsValue::Number(size as f64));
+                }
+                _ => return Err(self.unsupported_error("unknown V8 native intrinsic")),
+            },
             Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,
             Op::SetExt(name, hops, slot) => self.set_ext(name, hops, slot)?,
             Op::DeclareExt(name, hops, slot) => self.declare_ext(name, hops, slot)?,
@@ -838,8 +1329,11 @@ impl Vm<'_> {
                 let home = self.peek(0);
                 let key = self.peek(1);
                 let this = self.peek(2);
+                let home = home.object().ok_or_else(|| EngineError::invalid("Invalid V9 super reference home object."))?;
+                let base = builtins::object_get_prototype(self, home)?
+                    .ok_or_else(|| self.type_error("Cannot read properties of null"))?;
                 let key = self.to_key(&key)?;
-                let value = self.super_get(&this, &home, &key)?;
+                let value = self.get_from(base, &key, &this)?;
                 self.drop_n(3);
                 self.push(value);
             }
@@ -934,6 +1428,40 @@ impl Vm<'_> {
                 self.pop();
                 self.push(this);
             }
+            Op::LexicalSuperCall(count) => {
+                let stack = &self.frame().stack;
+                let start = stack.len().saturating_sub(count as usize + 2);
+                let callee = stack[start].clone();
+                let target = stack[start + 1].clone();
+                let args = stack[start + 2..].to_vec();
+                let this = self.construct_lexical_super(callee, target, args)?;
+                self.drop_n(count as usize + 2);
+                self.push(this);
+            }
+            Op::LexicalSuperCallSpread => {
+                let array = self.peek(0);
+                let args = self.array_values(&array)?;
+                let target = self.peek(1);
+                let callee = self.peek(2);
+                let this = self.construct_lexical_super(callee, target, args)?;
+                self.drop_n(3);
+                self.push(this);
+            }
+            Op::BindLexicalSuper(hops, slot) => {
+                let callee = self.pop();
+                let this = self.peek(0);
+                let env = self.env_at(hops)?;
+                if self.env_slot(env, slot)? != JsValue::Hole {
+                    return Err(self.reference_error("Super constructor may only be called once"));
+                }
+                self.heap.set_slot(env, slot as usize, this.clone());
+                if let Some(frame) = self.frames.iter_mut().rev().find(|frame| {
+                    frame.env == Some(env) && frame.construct && frame.code.flags.derived
+                }) {
+                    frame.this = this.clone();
+                }
+                self.run_fields(&callee, &this)?;
+            }
             Op::Return => {
                 let value = self.pop();
                 return self.do_return(value);
@@ -964,6 +1492,8 @@ impl Vm<'_> {
                 let right = self.peek(0);
                 let left = self.peek(1);
                 let value = self.add(&left, &right)?;
+                #[cfg(feature = "conformance")]
+                let value = tagged_smi_result(&left, &right, value);
                 self.drop_n(2);
                 self.push(value);
             }
@@ -989,7 +1519,11 @@ impl Vm<'_> {
                     _ => js_power(a, b),
                 };
                 self.drop_n(2);
-                self.push(JsValue::Number(value));
+                #[cfg(feature = "conformance")]
+                let value = if matches!(op, Op::Sub | Op::Mul | Op::Div | Op::Mod) { tagged_smi_result(&left, &right, JsValue::Number(value)) } else { JsValue::Number(value) };
+                #[cfg(not(feature = "conformance"))]
+                let value = JsValue::Number(value);
+                self.push(value);
             }
             Op::Shl | Op::Shr | Op::UShr | Op::BitAnd | Op::BitOr | Op::BitXor => {
                 let right = self.peek(0);
@@ -1015,7 +1549,11 @@ impl Vm<'_> {
                     _ => f64::from(to_int32(a) ^ to_int32(b)),
                 };
                 self.drop_n(2);
-                self.push(JsValue::Number(value));
+                #[cfg(feature = "conformance")]
+                let value = tagged_smi_result(&left, &right, JsValue::Number(value));
+                #[cfg(not(feature = "conformance"))]
+                let value = JsValue::Number(value);
+                self.push(value);
             }
             Op::Eq | Op::Ne => {
                 let right = self.peek(0);
@@ -1055,7 +1593,7 @@ impl Vm<'_> {
                 self.push(JsValue::Boolean(!value.truthy()));
             }
             Op::Neg | Op::BitNot | Op::Inc | Op::Dec | Op::ToNumeric
-                if !matches!(self.peek(0), JsValue::Number(_)) =>
+                if self.peek(0).number_value().is_none() =>
             {
                 let value = self.peek(0);
                 let numeric = self.to_numeric(&value)?;
@@ -1078,11 +1616,15 @@ impl Vm<'_> {
                 let value = self.peek(0);
                 let number = self.to_number(&value)?;
                 self.pop();
-                self.push(JsValue::Number(-number));
+                #[cfg(feature = "conformance")]
+                let result = tagged_smi_result(&value, &value, JsValue::Number(-number));
+                #[cfg(not(feature = "conformance"))]
+                let result = JsValue::Number(-number);
+                self.push(result);
             }
             Op::ToNumber | Op::ToNumeric => {
                 let value = self.peek(0);
-                if !matches!(value, JsValue::Number(_)) {
+                if value.number_value().is_none() {
                     let number = self.to_number(&value)?;
                     self.pop();
                     self.push(JsValue::Number(number));
@@ -1092,7 +1634,11 @@ impl Vm<'_> {
                 let value = self.peek(0);
                 let number = self.to_number(&value)?;
                 self.pop();
-                self.push(JsValue::Number(f64::from(!to_int32(number))));
+                #[cfg(feature = "conformance")]
+                let result = tagged_smi_result(&value, &value, JsValue::Number(f64::from(!to_int32(number))));
+                #[cfg(not(feature = "conformance"))]
+                let result = JsValue::Number(f64::from(!to_int32(number)));
+                self.push(result);
             }
             Op::Typeof => {
                 let value = self.pop();
@@ -1103,11 +1649,12 @@ impl Vm<'_> {
                 let value = self.peek(0);
                 let number = self.to_number(&value)?;
                 self.pop();
-                self.push(JsValue::Number(if op == Op::Inc {
-                    number + 1.0
-                } else {
-                    number - 1.0
-                }));
+                let result = if op == Op::Inc { number + 1.0 } else { number - 1.0 };
+                #[cfg(feature = "conformance")]
+                let result = tagged_smi_result(&value, &value, JsValue::Number(result));
+                #[cfg(not(feature = "conformance"))]
+                let result = JsValue::Number(result);
+                self.push(result);
             }
             Op::ToStr => {
                 let value = self.peek(0);
@@ -1470,11 +2017,10 @@ impl Vm<'_> {
             self.heap.adjust(0, units as isize);
             return Ok(());
         }
-        let text = name.lossy();
         let key = Key::Str(name.clone());
         let strict = self.reference_strict();
-        if strict && !self.has_property(self.global_object(), &key)? {
-            return Err(self.reference_error(&format!("{text} is not defined")));
+        if strict {
+            return self.set_global_context(key, value);
         }
         self.set(&JsValue::Object(self.global_object()), key, value, strict)
     }
@@ -1640,6 +2186,14 @@ impl Vm<'_> {
     fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
         if let JsValue::Object(id) = base {
             self.guard_realm_global(*id)?;
+            #[cfg(feature = "conformance")]
+            if crate::v9::builtins::is_shared_object(self, *id) {
+                let key = self.constant_key(site);
+                if key.hidden() {
+                    self.private_brand(base, &key, false)?;
+                }
+                return self.get(base, &key);
+            }
         }
         if let Some(value) = self.load_hit(site, base) {
             return Ok(value);
@@ -1715,9 +2269,14 @@ impl Vm<'_> {
         value: &JsValue,
         key: Option<&Key>,
     ) -> bool {
+        self.heap.track_value(value);
         let JsValue::Object(id) = base else {
             return false;
         };
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::is_shared_object(self, *id) {
+            return false;
+        }
         let Some(frame) = self.frames.last() else {
             return false;
         };
@@ -1756,6 +2315,10 @@ impl Vm<'_> {
         let (JsValue::Object(id), JsValue::Number(index)) = (object, key) else {
             return None;
         };
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::shared_container_active(self, *id) {
+            return None;
+        }
         if index.fract() != 0.0 || *index < 0.0 {
             return None;
         }
@@ -1806,6 +2369,24 @@ impl Vm<'_> {
     }
     /** The elements of an array (holes as undefined), for spread calls. */
     pub fn array_values(&mut self, array: &JsValue) -> Res<Vec<JsValue>> {
+        #[cfg(feature = "conformance")]
+        if let Some(id) = array
+            .object()
+            .filter(|id| crate::v9::builtins::shared_container_active(self, *id))
+        {
+            let length = match self.heap.get(id).map(|object| &object.class) {
+                Some(Class::Array(values)) => values.len(),
+                _ => 0,
+            };
+            if length > self.limits.array_length {
+                return Err(
+                    EngineError::limit("V9 call arguments", self.limits.array_length).into(),
+                );
+            }
+            return (0..length)
+                .map(|index| self.get(array, &Key::from(index.to_string().as_str())))
+                .collect();
+        }
         match array
             .object()
             .and_then(|id| self.heap.get(id))
@@ -1880,7 +2461,8 @@ impl Vm<'_> {
             2 => "set ",
             _ => "",
         };
-        let name = crate::v9::value::JsString::from_utf8(prefix)?.concat(&name)?;
+        let prefix = crate::v9::value::JsString::from_utf8(prefix)?;
+        let name = self.concat_strings(&prefix, &name)?;
         self.set_name_snapshot(
             *function_id,
             super::data::FunctionName::flat(JsValue::String(name)),
@@ -2033,6 +2615,20 @@ impl Vm<'_> {
         self.frames[index].this = this.clone();
         Ok(this)
     }
+    /** A lexical arrow retains its constructor and new.target even when the constructor has returned. */
+    fn construct_lexical_super(
+        &mut self,
+        callee: JsValue,
+        target: JsValue,
+        args: Vec<JsValue>,
+    ) -> Res<JsValue> {
+        let parent = callee.object().and_then(|id| self.proto_of(id));
+        let Some(parent) = parent.filter(|parent| self.is_constructor(&JsValue::Object(*parent)))
+        else {
+            return Err(self.type_error("Super constructor is not a constructor"));
+        };
+        self.construct(JsValue::Object(parent), args, Some(target))
+    }
     /** Build a class constructor and prototype from the stack. */
     fn class_op(&mut self, site: u32, has_super: bool) -> Res<()> {
         let fields = self.pop();
@@ -2179,13 +2775,12 @@ const SHORT_NAME: usize = 64;
 so a global read or write allocates nothing; any other name takes the lossy conversion the
 global map's keys were made with. */
 fn with_text<R>(name: &JsString, body: impl FnOnce(&str) -> R) -> R {
-    let units = name.as_units();
     let mut bytes = [0u8; SHORT_NAME];
-    if units.len() <= SHORT_NAME && units.iter().all(|unit| *unit < 0x80) {
-        for (byte, unit) in bytes.iter_mut().zip(units) {
-            *byte = *unit as u8;
+    if name.len() <= SHORT_NAME && name.code_units().all(|unit| unit < 0x80) {
+        for (byte, unit) in bytes.iter_mut().zip(name.code_units()) {
+            *byte = unit as u8;
         }
-        if let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+        if let Ok(text) = std::str::from_utf8(&bytes[..name.len()]) {
             return body(text);
         }
     }
@@ -2206,4 +2801,16 @@ fn cacheable(class: &Class) -> bool {
             | Class::View(_)
             | Class::MappedArguments(_)
     )
+}
+
+/** Integer fast paths preserve actual tagged-small-integer provenance. */
+#[cfg(feature = "conformance")]
+fn tagged_smi_result(left: &JsValue, right: &JsValue, value: JsValue) -> JsValue {
+    if matches!((left, right), (JsValue::Smi(_), JsValue::Smi(_))) {
+        if let JsValue::Number(number) = value {
+            if number.is_finite() && number.fract() == 0.0 && number >= -(1_i64 << 30) as f64 && number < (1_i64 << 30) as f64 && !(number == 0.0 && number.is_sign_negative()) { return JsValue::Smi(number); }
+            return JsValue::Number(number);
+        }
+    }
+    value
 }

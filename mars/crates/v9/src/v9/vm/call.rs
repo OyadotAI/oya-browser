@@ -556,7 +556,11 @@ impl Vm<'_> {
             JsValue::Undefined | JsValue::Hole => "undefined".into(),
             JsValue::Null => "null".into(),
             JsValue::String(_) => "a string".into(),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) => "a number".into(),
             JsValue::Number(_) => "a number".into(),
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => "a number".into(),
             JsValue::Boolean(_) => "a boolean".into(),
             JsValue::Symbol(_) => "a symbol".into(),
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => "a bigint".into(),

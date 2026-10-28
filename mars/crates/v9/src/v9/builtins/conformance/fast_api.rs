@@ -197,7 +197,7 @@ fn attribute_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Attribute writes require primitive Numbers in int32 range and truncate only after successful validation. */
 fn attribute_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let state = state::enter(vm, &call.this)?;
-    let JsValue::Number(value) = call.arg(0) else {
+    let Some(value) = call.arg(0).number_value() else {
         return Err(error(vm, "The attribute requires a number as a new value"));
     };
     if !numbers::in_range(value, true, 32) {

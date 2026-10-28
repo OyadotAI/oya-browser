@@ -3,6 +3,10 @@ use super::*;
 use types::{External, Import, Signature};
 const OPTIONS: &str = "wasm.compile.options";
 const STRINGS: &str = "wasm.compile.strings";
+/** Peak resident units for simultaneous lossy UTF-8 and packed array output. */
+const UTF8_ARRAY_OUTPUT_UNITS: usize = 10;
+/** Upper bound for a temporary lossy UTF-8 allocation per input unit. */
+const UTF8_OUTPUT_UNITS: usize = 3;
 
 /** Read options after copying bytes; inherited and proxy array entries retain observable access order. */
 pub(super) fn options(vm: &mut Vm, value: &JsValue) -> Res<(Vec<JsValue>, Option<JsValue>)> {
@@ -18,7 +22,7 @@ pub(super) fn options(vm: &mut Vm, value: &JsValue) -> Res<(Vec<JsValue>, Option
             let name = key(&index.to_string());
             if vm.has_property(array, &name)? {
                 let item = vm.get(&builtins, &name)?;
-                if matches!(&item, JsValue::String(s) if matches!(s.lossy().as_str(), "js-string"|"text-decoder"|"text-encoder"|"js-prototypes"))
+                if matches!(&item, JsValue::String(s) if s.lossy() == "js-string" || (s.lossy() == "js-prototypes" && js_interop_enabled(vm)) || (matches!(s.lossy().as_str(), "text-decoder"|"text-encoder") && utf8_enabled(vm)))
                 {
                     selected.push(item)
                 }
@@ -34,6 +38,19 @@ pub(super) fn options(vm: &mut Vm, value: &JsValue) -> Res<(Vec<JsValue>, Option
         None
     };
     Ok((selected, strings))
+}
+/** Outside the d8 host, preserve the existing enabled product capability. */
+fn utf8_enabled(vm: &Vm) -> bool {
+    #[cfg(feature = "conformance")]
+    {
+        return !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_imported_strings_utf8;
+    }
+    #[cfg(not(feature = "conformance"))]
+    {
+        let _ = vm;
+        true
+    }
 }
 /** Store only inert selected strings so restored modules never rerun author getters. */
 pub(super) fn store(
@@ -84,7 +101,7 @@ fn type_matches(m: &Module, ty: Type, pattern: u8) -> bool {
         b'r'=>ty.reference()==Some((-17,true)),
         b'e'=>ty.reference()==Some((-17,false)),
         b'b'|b'h'|b'B'=>match ty.reference() {
-            Some((index,nullable)) if index>=0 && nullable==(pattern!=b'B')=>m.definitions.get(index as usize).is_some_and(|d| d.final_type && d.parent.is_none() && matches!(&d.kind,gc_types::Kind::Array(f) if f.mutable && f.ty==Type::I32 && f.packed==Some(if pattern==b'h'{16}else{8}))),
+            Some((index,nullable)) if index>=0 && nullable==(pattern!=b'B')=>m.definitions.get(index as usize).is_some_and(|d| d.final_type && d.parent.is_none() && d.group_len == 1 && matches!(&d.kind,gc_types::Kind::Array(f) if f.mutable && f.ty==Type::I32 && f.packed==Some(if pattern==b'h'{16}else{8}))),
             _=>false,
         },
         _=>false,
@@ -92,13 +109,13 @@ fn type_matches(m: &Module, ty: Type, pattern: u8) -> bool {
 }
 /** Validate recognized signatures at compilation, before looking at the instantiation imports object. */
 pub(super) fn validate(vm: &mut Vm, module: ObjectId, m: &Module) -> Res<()> {
-    for import in &m.imports {
-        if matches!(get(vm,module,STRINGS),Some(JsValue::String(s)) if s.as_units().iter().copied().eq(import.module.encode_utf16()))
+    for (index, import) in m.imports.iter().enumerate() {
+        if matches!(get(vm,module,STRINGS),Some(JsValue::String(s)) if s.code_units().eq(import.module.encode_utf16()))
             && !matches!(import.kind,External::Global(ty,false) if ty.reference().is_some_and(|(h,_)|h==-17))
         {
             return Err(compile_failure(
                 vm,
-                Error::invalid("string constant import must be an immutable externref global"),
+                Error::invalid(&format!("String constant import #{index} {:?} must be an immutable global subtyping externref", import.name)).at(import.offset),
             ));
         }
         let Some(collection) = import.module.strip_prefix("wasm:") else {
@@ -143,7 +160,7 @@ pub(super) fn resolve(
     m: &Module,
     import: &Import,
 ) -> Res<Option<JsValue>> {
-    if matches!(get(vm,module,STRINGS),Some(JsValue::String(s)) if s.as_units().iter().copied().eq(import.module.encode_utf16()))
+    if matches!(get(vm,module,STRINGS),Some(JsValue::String(s)) if s.code_units().eq(import.module.encode_utf16()))
     {
         return Ok(Some(JsValue::string(&import.name)?));
     }
@@ -256,15 +273,13 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "length" => Ok(JsValue::Number(left.len() as f64)),
         "charCodeAt" | "codePointAt" => {
             let offset = index(&call, 1)?;
-            let Some(first) = left.as_units().get(offset).copied() else {
+            let Some(first) = left.unit_at(offset) else {
                 return Err(trap(vm, "string offset out of bounds"));
             };
             let point = if operation == "codePointAt" && (0xd800..=0xdbff).contains(&first) {
-                match left.as_units().get(offset + 1) {
-                    Some(second) if (0xdc00..=0xdfff).contains(second) => {
-                        0x10000
-                            + ((u32::from(first) - 0xd800) << 10)
-                            + (u32::from(*second) - 0xdc00)
+                match left.unit_at(offset + 1) {
+                    Some(second) if (0xdc00..=0xdfff).contains(&second) => {
+                        0x10000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
                     }
                     _ => u32::from(first),
                 }
@@ -275,28 +290,28 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "concat" => {
             let right = string_arg(vm, &call, 1)?;
-            let mut units = left.as_units().to_vec();
-            units.extend(right.as_units());
-            Ok(JsValue::String(JsString::from_units(units)?))
+            Ok(JsValue::String(vm.concat_strings(&left, &right)?))
         }
         "substring" => {
             let start = index(&call, 1)?.min(left.len());
             let end = index(&call, 2)?.min(left.len());
-            Ok(JsValue::String(JsString::from_units(
-                left.as_units()[start..end.max(start)].to_vec(),
-            )?))
+            Ok(JsValue::String(strings::normalized_substring(vm, &left, start, end.max(start))?))
         }
         "compare" => {
             let right = string_arg(vm, &call, 1)?;
             Ok(JsValue::Number(
-                match left.as_units().cmp(right.as_units()) {
+                match left.code_units().cmp(right.code_units()) {
                     std::cmp::Ordering::Less => -1.0,
                     std::cmp::Ordering::Equal => 0.0,
                     std::cmp::Ordering::Greater => 1.0,
                 },
             ))
         }
-        "measureStringAsUTF8" => Ok(JsValue::Number(left.lossy().len() as f64)),
+        "measureStringAsUTF8" => Ok(JsValue::Number(
+            std::char::decode_utf16(left.code_units())
+                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
+                .sum::<usize>() as f64,
+        )),
         "encodeStringToUTF8Array" => {
             let slots = vm.slots(call.callee);
             let module = slots
@@ -307,17 +322,24 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 Some(JsValue::Number(n)) if *n >= 0.0 && n.fract() == 0.0 => *n as u32,
                 _ => return Err(vm.type_error("invalid Wasm encoder array type")),
             };
-            gc::byte_array(vm, module, index, left.lossy().as_bytes())
+            vm.with_string_output(&left, left.len().saturating_mul(UTF8_OUTPUT_UNITS), |vm| {
+                gc::byte_array(vm, module, index, left.lossy().as_bytes())
+            })
         }
         "intoCharCodeArray" => {
-            gc::write_string_array(vm, &call.arg(1), index(&call, 2)?, left.as_units(), 16)?;
+            let units = vm.materialize_string(&left)?;
+            gc::write_string_array(vm, &call.arg(1), index(&call, 2)?, units, 16)?;
             Ok(JsValue::Number(left.len() as f64))
         }
-        "encodeStringIntoUTF8Array" => {
-            let bytes = left.lossy().bytes().map(u16::from).collect::<Vec<_>>();
-            gc::write_string_array(vm, &call.arg(1), index(&call, 2)?, &bytes, 8)?;
-            Ok(JsValue::Number(bytes.len() as f64))
-        }
+        "encodeStringIntoUTF8Array" => vm.with_string_output(
+            &left,
+            left.len().saturating_mul(UTF8_ARRAY_OUTPUT_UNITS),
+            |vm| {
+                let bytes = left.lossy().bytes().map(u16::from).collect::<Vec<_>>();
+                gc::write_string_array(vm, &call.arg(1), index(&call, 2)?, &bytes, 8)?;
+                Ok(JsValue::Number(bytes.len() as f64))
+            },
+        ),
         _ => Err(vm.unsupported_error("WebAssembly string builtin")),
     }
 }
@@ -341,7 +363,7 @@ pub(super) fn snapshot(vm: &Vm, module: ObjectId) -> (Vec<String>, Option<Vec<u1
         })
         .unwrap_or_default();
     let namespace = match get(vm, module, STRINGS) {
-        Some(JsValue::String(s)) => Some(s.as_units().to_vec()),
+        Some(JsValue::String(s)) => Some(s.code_units().collect()),
         _ => None,
     };
     (builtins, namespace)
@@ -349,7 +371,7 @@ pub(super) fn snapshot(vm: &Vm, module: ObjectId) -> (Vec<String>, Option<Vec<u1
 
 /** Compile-time imports are omitted from public import introspection because linking supplies them. */
 pub(super) fn selected(vm: &Vm, module: ObjectId, import: &Import) -> bool {
-    if matches!(get(vm,module,STRINGS),Some(JsValue::String(s))if s.as_units().iter().copied().eq(import.module.encode_utf16()))
+    if matches!(get(vm,module,STRINGS),Some(JsValue::String(s))if s.code_units().eq(import.module.encode_utf16()))
     {
         return true;
     }

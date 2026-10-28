@@ -1026,6 +1026,12 @@ fn singletons(b: &mut Builder) {
     crate::v9::builtins::mark_host_api(&mut b.natives[first_console_native..]);
     b.global("console", console);
     let performance = b.object(Some(b.ids.event_target_prototype));
+    b.put(
+        performance,
+        Key::private(super::performance::BRAND),
+        Static::Value(JsValue::Boolean(true)),
+        HIDDEN_ATTRS,
+    );
     #[cfg(feature = "conformance")]
     b.method(
         performance,
@@ -1036,22 +1042,24 @@ fn singletons(b: &mut Builder) {
     methods(
         b,
         performance,
-        &["now", "getEntries", "getEntriesByType", "getEntriesByName"],
+        &[
+            "now",
+            "getEntries",
+            "getEntriesByType",
+            "getEntriesByName",
+            "clearMarks",
+            "clearMeasures",
+        ],
         window::performance,
     );
     methods(
         b,
         performance,
-        &[
-            "mark",
-            "measure",
-            "clearMarks",
-            "clearMeasures",
-            "clearResourceTimings",
-            "setResourceTimingBufferSize",
-        ],
+        &["clearResourceTimings", "setResourceTimingBufferSize"],
         noop_method,
     );
+    b.method(performance, "mark", 1, super::performance::mark);
+    b.method(performance, "measure", 1, super::performance::measure);
     getters(
         b,
         performance,

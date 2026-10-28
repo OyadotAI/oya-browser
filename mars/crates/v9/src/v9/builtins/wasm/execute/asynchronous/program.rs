@@ -1,7 +1,7 @@
 /** Structured Wasm control becomes immutable owned steps; source paths retain validation and trap coordinates. */
 use super::*;
 /** A source path selects the original nested instruction, with body/else selectors on its ancestors. */
-pub(super) type Path = Vec<(usize, u8)>;
+pub(super) type Path = Vec<(usize, usize)>;
 #[derive(Clone)]
 pub(super) enum Code {
     Plain(Instruction),
@@ -23,6 +23,9 @@ pub(super) struct Scope {
     pub body: usize,
     pub otherwise: usize,
     pub end: usize,
+    pub handlers: Vec<types::Catch>,
+    pub legacy: Vec<(Option<u32>, usize)>,
+    pub delegate: Option<u32>,
 }
 pub(super) struct Program {
     pub ops: Vec<Op>,
@@ -44,7 +47,7 @@ impl Program {
         program.sequence(code, &[], &[]);
         Ok(program)
     }
-    fn sequence(&mut self, code: &[Instruction], scopes: &[usize], path: &[(usize, u8)]) {
+    fn sequence(&mut self, code: &[Instruction], scopes: &[usize], path: &[(usize, usize)]) {
         for (index, instruction) in code.iter().enumerate() {
             let mut inner = instruction;
             let mut position = 0;
@@ -54,11 +57,45 @@ impl Program {
             }
             let mut source = path.to_vec();
             source.push((index, 2));
-            if let Instruction::Block(kind, signature, body, otherwise) = inner {
+            if let Instruction::Try(signature, body, handlers) = inner {
+                self.legacy_try(signature, body, handlers, scopes, &source, position);
+                continue;
+            }
+            let scoped = match inner {
+                Instruction::Block(kind, signature, body, otherwise) => Some((
+                    *kind,
+                    signature,
+                    body.as_slice(),
+                    otherwise.as_slice(),
+                    Vec::new(),
+                    None,
+                )),
+                Instruction::TryTable(signature, handlers, body) => Some((
+                    2,
+                    signature,
+                    body.as_slice(),
+                    &[][..],
+                    handlers.clone(),
+                    None,
+                )),
+                Instruction::Delegate(signature, body, depth) => Some((
+                    7,
+                    signature,
+                    body.as_slice(),
+                    &[][..],
+                    Vec::new(),
+                    Some(*depth),
+                )),
+                _ => None,
+            };
+            if let Some((kind, signature, body, otherwise, handlers, delegate)) = scoped {
                 let scope = self.scopes.len();
                 self.scopes.push(Scope {
-                    kind: *kind,
+                    kind,
                     signature: signature.clone(),
+                    handlers,
+                    legacy: Vec::new(),
+                    delegate,
                     body: 0,
                     otherwise: 0,
                     end: 0,
@@ -74,7 +111,7 @@ impl Program {
                 nested.push(scope);
                 source.last_mut().unwrap().1 = 0;
                 self.sequence(body, &nested, &source);
-                if *kind == 4 {
+                if kind == 4 {
                     self.ops.push(Op {
                         code: Code::Else(scope),
                         scopes: nested.clone(),
@@ -102,6 +139,64 @@ impl Program {
             }
         }
     }
+    /** Flatten legacy try bodies and handlers into the same resumable control graph. */
+    fn legacy_try(
+        &mut self,
+        signature: &Signature,
+        body: &[Instruction],
+        handlers: &[(Option<u32>, Vec<Instruction>)],
+        scopes: &[usize],
+        path: &Path,
+        position: usize,
+    ) {
+        let id = self.scopes.len();
+        self.scopes.push(Scope {
+            kind: 6,
+            signature: signature.clone(),
+            body: 0,
+            otherwise: 0,
+            end: 0,
+            handlers: Vec::new(),
+            legacy: Vec::new(),
+            delegate: None,
+        });
+        self.ops.push(Op {
+            code: Code::Enter(id),
+            scopes: scopes.to_vec(),
+            path: path.clone(),
+            position,
+        });
+        self.scopes[id].body = self.ops.len();
+        let mut nested = scopes.to_vec();
+        nested.push(id);
+        let mut source = path.clone();
+        source.last_mut().unwrap().1 = 0;
+        self.sequence(body, &nested, &source);
+        self.ops.push(Op {
+            code: Code::Else(id),
+            scopes: nested.clone(),
+            path: source.clone(),
+            position,
+        });
+        for (number, (tag, code)) in handlers.iter().enumerate() {
+            self.scopes[id].legacy.push((*tag, self.ops.len()));
+            source.last_mut().unwrap().1 = number + 1;
+            self.sequence(code, &nested, &source);
+            self.ops.push(Op {
+                code: Code::Else(id),
+                scopes: nested.clone(),
+                path: source.clone(),
+                position,
+            });
+        }
+        self.scopes[id].end = self.ops.len();
+        self.ops.push(Op {
+            code: Code::End(id),
+            scopes: nested,
+            path: source,
+            position,
+        });
+    }
     /** The following step determines exactly which control scopes remain active at a suspension point. */
     pub fn active(&self, pc: usize) -> Option<&[usize]> {
         if pc == self.ops.len() {
@@ -120,7 +215,7 @@ fn footprint(code: &[Instruction], depth: usize) -> usize {
             inner = next;
         }
         let base = 2 * std::mem::size_of::<Op>()
-            + 4.max((depth + 1) * 2) * std::mem::size_of::<(usize, u8)>()
+            + 4.max((depth + 1) * 2) * std::mem::size_of::<(usize, usize)>()
             + depth * std::mem::size_of::<usize>();
         let extra = if let Instruction::Block(kind, sig, body, otherwise) = inner {
             2 * std::mem::size_of::<Scope>()
@@ -128,6 +223,24 @@ fn footprint(code: &[Instruction], depth: usize) -> usize {
                 + base * if *kind == 4 { 2 } else { 1 }
                 + footprint(body, depth + 1)
                 + footprint(otherwise, depth + 1)
+        } else if let Instruction::Try(sig, body, handlers) = inner {
+            2 * std::mem::size_of::<Scope>()
+                + (sig.params.len() + sig.results.len()) * std::mem::size_of::<Type>()
+                + handlers.len() * (std::mem::size_of::<(Option<u32>, usize)>() + base)
+                + footprint(body, depth + 1)
+                + handlers
+                    .iter()
+                    .map(|(_, code)| footprint(code, depth + 1))
+                    .sum::<usize>()
+        } else if let Instruction::Delegate(sig, body, _) = inner {
+            2 * std::mem::size_of::<Scope>()
+                + (sig.params.len() + sig.results.len()) * std::mem::size_of::<Type>()
+                + footprint(body, depth + 1)
+        } else if let Instruction::TryTable(sig, handlers, body) = inner {
+            2 * std::mem::size_of::<Scope>()
+                + (sig.params.len() + sig.results.len()) * std::mem::size_of::<Type>()
+                + handlers.len() * std::mem::size_of::<types::Catch>()
+                + footprint(body, depth + 1)
         } else {
             delegated_bytes(instruction)
         };

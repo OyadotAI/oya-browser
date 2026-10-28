@@ -58,7 +58,7 @@ struct Activation<'a> {
     module: &'a Module,
     locals: Vec<JsValue>,
     stack: Vec<JsValue>,
-    labels: Vec<usize>,
+    labels: Vec<Vec<Type>>,
     caught: Vec<(usize, JsValue)>,
     returns: usize,
     roots: super::roots::Roots,
@@ -132,7 +132,7 @@ fn activation(
             .params
             .iter()
             .chain(&signature.results)
-            .any(|t| !t.js_compatible())
+            .any(|t| !gc_types::js_compatible(module, *t))
         {
             return Err(vm.type_error(
                 "type incompatibility when transforming from/to JS: unsupported value type",
@@ -152,9 +152,7 @@ fn activation(
             vec![value]
         };
         if values.len() != signature.results.len() {
-            return Err(
-                vm.type_error("WebAssembly imported function returned the wrong number of values")
-            );
+            return Err(vm.type_error("multi-return length mismatch"));
         }
         return signature
             .results
@@ -179,7 +177,7 @@ fn activation(
         module,
         locals,
         stack: Vec::new(),
-        labels: vec![signature.results.len()],
+        labels: vec![signature.results.clone()],
         caught: vec![],
         returns: signature.results.len(),
         roots: super::roots::Roots::default(),
@@ -195,6 +193,187 @@ fn activation(
 }
 
 impl Activation<'_> {
+    /** Resume uses explicit frames so a handled effect can retain the real execution state. */
+    fn resume_effect(
+        &mut self,
+        vm: &mut Vm,
+        index: u32,
+        handlers: &[types::EffectHandler],
+        throw_tag: Option<Option<u32>>,
+    ) -> Res<Flow> {
+        let value = numeric::pop(&mut self.stack)?;
+        if value == JsValue::Null {
+            return Err(trap(vm, "null continuation reference"));
+        }
+        let object = value
+            .object()
+            .ok_or_else(|| vm.type_error("invalid continuation"))?;
+        if get(vm, object, "wasm.cont.consumed") == Some(JsValue::Boolean(true)) {
+            return Err(trap(vm, "resuming an invalid continuation"));
+        }
+        let function = get(vm, object, "wasm.cont.function")
+            .ok_or_else(|| trap(vm, "invalid continuation"))?;
+        let saved = get(vm, object, "wasm.cont.saved");
+        let target = match self.module.definitions[index as usize].kind {
+            gc_types::Kind::Continuation(target) => target,
+            _ => unreachable!(),
+        };
+        let (args, injection) = match throw_tag {
+            Some(Some(tag)) => {
+                let count = exceptions::exception_signature(self.module, tag)
+                    .map_err(|e| compile_failure(vm, e))?
+                    .params
+                    .len();
+                let args = self.take(count)?;
+                let tag = instance::item(vm, self.instance, exceptions::TAGS, tag)?;
+                (Vec::new(), Some(exceptions::throw(vm, tag, args)?))
+            }
+            Some(None) => {
+                let value = numeric::pop(&mut self.stack)?;
+                if value == JsValue::Null {
+                    return Err(trap(vm, "rethrowing null value"));
+                }
+                (Vec::new(), Some(exceptions::dereference(vm, &value)?))
+            }
+            None => {
+                let mut args = Self::bound_arguments(vm, object);
+                args.extend(self.take(self.module.types[target as usize].params.len())?);
+                (args, None)
+            }
+        };
+        set(vm, object, "wasm.cont.consumed", JsValue::Boolean(true));
+        let switch_tags = handlers
+            .iter()
+            .filter(|h| h.switch)
+            .map(|h| {
+                instance::item(vm, self.instance, exceptions::TAGS, h.tag).and_then(|v| {
+                    v.object()
+                        .ok_or_else(|| vm.type_error("invalid switch tag"))
+                })
+            })
+            .collect::<Res<Vec<_>>>()?;
+        match vm.deeper(|vm| {
+            asynchronous::run_effect(vm, &function, saved, args, &switch_tags, injection)
+        })? {
+            asynchronous::EffectResult::Done(values) => {
+                self.stack.extend(values);
+                Ok(Flow::Next)
+            }
+            asynchronous::EffectResult::Suspended(tag, mut values, saved) => {
+                let handler = handlers
+                    .iter()
+                    .find(|h| {
+                        !h.switch
+                            && instance::item(vm, self.instance, exceptions::TAGS, h.tag)
+                                .ok()
+                                .and_then(|v| v.object())
+                                == Some(tag)
+                    })
+                    .ok_or_else(|| trap(vm, "WasmFX: unhandled suspend"))?;
+                let ty = self
+                    .labels
+                    .iter()
+                    .rev()
+                    .nth(handler.depth as usize)
+                    .and_then(|label| label.last())
+                    .and_then(|ty| ty.reference())
+                    .map(|(heap, _)| heap as u32)
+                    .ok_or_else(|| vm.type_error("invalid effect handler type"))?;
+                let module = get(vm, self.instance, INSTANCE)
+                    .ok_or_else(|| vm.type_error("invalid continuation module"))?;
+                let next = vm.new_object()?;
+                set(vm, next, "wasm.cont.function", function);
+                set(vm, next, "wasm.cont.saved", JsValue::Object(saved));
+                set(vm, next, "wasm.gc.module", module);
+                set(vm, next, "wasm.gc.type", JsValue::Number(ty as f64));
+                values.push(JsValue::Object(next));
+                Ok(Flow::Branch(handler.depth, values))
+            }
+        }
+    }
+    /** Bound arguments are stored in a traced array, including values retained across snapshots. */
+    fn bound_arguments(vm: &Vm, object: ObjectId) -> Vec<JsValue> {
+        get(vm, object, "wasm.cont.bound")
+            .and_then(|v| v.object())
+            .and_then(|id| vm.heap.get(id))
+            .and_then(|o| match &o.class {
+                Class::Array(values) => Some(values.iter().cloned().collect()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+    /** Binding consumes the old continuation and creates a new one with the fixed argument prefix. */
+    fn bind_continuation(&mut self, vm: &mut Vm, source: u32, target: u32) -> Res<()> {
+        let value = numeric::pop(&mut self.stack)?;
+        if value == JsValue::Null {
+            return Err(trap(vm, "null continuation reference"));
+        }
+        let old = value
+            .object()
+            .ok_or_else(|| vm.type_error("invalid continuation"))?;
+        if get(vm, old, "wasm.cont.consumed") == Some(JsValue::Boolean(true)) {
+            return Err(trap(vm, "resuming an invalid continuation"));
+        }
+        let function =
+            get(vm, old, "wasm.cont.function").ok_or_else(|| trap(vm, "invalid continuation"))?;
+        let saved = get(vm, old, "wasm.cont.saved");
+        let module = get(vm, self.instance, INSTANCE)
+            .ok_or_else(|| trap(vm, "invalid continuation module"))?;
+        let get_sig = |index: u32| match self.module.definitions[index as usize].kind {
+            gc_types::Kind::Continuation(i) => &self.module.types[i as usize],
+            _ => unreachable!(),
+        };
+        let count = get_sig(source).params.len() - get_sig(target).params.len();
+        let mut bound = Self::bound_arguments(vm, old);
+        bound.extend(self.take(count)?);
+        set(vm, old, "wasm.cont.consumed", JsValue::Boolean(true));
+        let array = vm.new_array(bound)?;
+        let next = vm.new_object()?;
+        set(vm, next, "wasm.cont.function", function);
+        set(vm, next, "wasm.cont.bound", JsValue::Object(array));
+        if let Some(saved) = saved {
+            set(vm, next, "wasm.cont.saved", saved);
+        }
+        set(vm, next, "wasm.gc.module", module);
+        set(vm, next, "wasm.gc.type", JsValue::Number(target as f64));
+        self.stack.push(JsValue::Object(next));
+        Ok(())
+    }
+    /** A continuation retains its function and becomes unusable before its first resume. */
+    fn continuation(&mut self, vm: &mut Vm, op: u8, index: u32) -> Res<()> {
+        let value = numeric::pop(&mut self.stack)?;
+        if value == JsValue::Null {
+            return Err(trap(vm, "null continuation reference"));
+        }
+        if op == 0xe0 {
+            let module = get(vm, self.instance, INSTANCE)
+                .ok_or_else(|| vm.type_error("invalid continuation module"))?;
+            let object = vm.new_object()?;
+            set(vm, object, "wasm.cont.function", value);
+            set(vm, object, "wasm.gc.module", module);
+            set(vm, object, "wasm.gc.type", JsValue::Number(index as f64));
+            self.stack.push(JsValue::Object(object));
+        } else {
+            let object = value
+                .object()
+                .ok_or_else(|| vm.type_error("invalid continuation"))?;
+            if get(vm, object, "wasm.cont.consumed") == Some(JsValue::Boolean(true)) {
+                return Err(trap(vm, "resuming an invalid continuation"));
+            }
+            let function = get(vm, object, "wasm.cont.function")
+                .ok_or_else(|| trap(vm, "invalid continuation"))?;
+            set(vm, object, "wasm.cont.consumed", JsValue::Boolean(true));
+            let target = match self.module.definitions[index as usize].kind {
+                gc_types::Kind::Continuation(target) => target,
+                _ => unreachable!(),
+            };
+            let mut args = Self::bound_arguments(vm, object);
+            args.extend(self.take(self.module.types[target as usize].params.len())?);
+            self.stack
+                .extend(instance::call_typed(vm, &function, args)?);
+        }
+        Ok(())
+    }
     /** Pop a vector in source order, checking the stack even after module validation. */
     fn take(&mut self, count: usize) -> Res<Vec<JsValue>> {
         if count > self.stack.len() {
@@ -204,12 +383,13 @@ impl Activation<'_> {
     }
     /** Branch arity belongs to its destination label, including loop parameter labels. */
     fn branch(&mut self, depth: u32) -> Res<Flow> {
-        let count = *self
+        let count = self
             .labels
             .iter()
             .rev()
             .nth(depth as usize)
-            .ok_or_else(|| crate::protocol::EngineError::invalid("Invalid WebAssembly label."))?;
+            .ok_or_else(|| crate::protocol::EngineError::invalid("Invalid WebAssembly label."))?
+            .len();
         Ok(Flow::Branch(depth, self.take(count)?))
     }
     /** Values under a block's parameters remain untouched across all its control paths. */
@@ -235,9 +415,9 @@ impl Activation<'_> {
             })?;
         let code = if condition { body } else { otherwise };
         self.labels.push(if op == 3 {
-            signature.params.len()
+            signature.params.clone()
         } else {
-            signature.results.len()
+            signature.results.clone()
         });
         loop {
             if op == 3 {
@@ -376,10 +556,10 @@ impl Activation<'_> {
                 Instruction::TailRef(ty) => {
                     let function = numeric::pop(&mut self.stack)?;
                     if function == JsValue::Null {
-                        return Err(trap(vm, "null function"));
+                        return Err(trap(vm, "dereferencing a null pointer"));
                     }
                     if !instance::function_matches(vm, self.module, *ty, &function)? {
-                        return Err(trap(vm, "indirect call signature mismatch"));
+                        return Err(trap(vm, "function signature mismatch"));
                     }
                     let args = self.take(self.module.types[*ty as usize].params.len())?;
                     Flow::TailReference(function, args)
@@ -387,10 +567,10 @@ impl Activation<'_> {
                 Instruction::CallRef(ty) => {
                     let function = numeric::pop(&mut self.stack)?;
                     if function == JsValue::Null {
-                        return Err(trap(vm, "null function"));
+                        return Err(trap(vm, "dereferencing a null pointer"));
                     }
                     if !instance::function_matches(vm, self.module, *ty, &function)? {
-                        return Err(trap(vm, "indirect call signature mismatch"));
+                        return Err(trap(vm, "function signature mismatch"));
                     }
                     let args = self.take(self.module.types[*ty as usize].params.len())?;
                     self.stack
@@ -464,7 +644,7 @@ impl Activation<'_> {
                 Instruction::ThrowRef => {
                     let value = numeric::pop(&mut self.stack)?;
                     if value == JsValue::Null {
-                        return Err(trap(vm, "null exception reference"));
+                        return Err(trap(vm, "rethrowing null value"));
                     }
                     return Err(Thrown::Value(exceptions::dereference(vm, &value)?));
                 }
@@ -570,6 +750,31 @@ impl Activation<'_> {
                 Instruction::Block(op, signature, body, otherwise) => {
                     self.block(vm, *op, signature, body, otherwise)?
                 }
+                Instruction::Continuation(op, index) => {
+                    self.continuation(vm, *op, *index)?;
+                    Flow::Next
+                }
+                Instruction::ContinuationBind(source, target) => {
+                    self.bind_continuation(vm, *source, *target)?;
+                    Flow::Next
+                }
+                Instruction::Resume(index, handlers) => {
+                    self.resume_effect(vm, *index, handlers, None)?
+                }
+                Instruction::ResumeThrow(index, tag, handlers) => {
+                    self.resume_effect(vm, *index, handlers, Some(*tag))?
+                }
+                Instruction::Suspend(_) => return Err(trap(vm, "WasmFX: unhandled suspend")),
+                Instruction::Switch(_, _) => {
+                    let target = numeric::pop(&mut self.stack)?;
+                    let object = target
+                        .object()
+                        .ok_or_else(|| trap(vm, "null continuation reference"))?;
+                    if get(vm, object, "wasm.cont.consumed") == Some(JsValue::Boolean(true)) {
+                        return Err(trap(vm, "resuming an invalid continuation"));
+                    }
+                    return Err(trap(vm, "WasmFX: unhandled suspend"));
+                }
                 Instruction::Memory(op, _, index, offset) => {
                     self.memory(vm, *op, *index, *offset)?;
                     Flow::Next
@@ -581,16 +786,16 @@ impl Activation<'_> {
                 Instruction::Table(op, index) => {
                     let table = instance::item(vm, self.instance, TABLES, *index)?;
                     if *op == 0x25 {
-                        let at = numeric::i32_value(&numeric::pop(&mut self.stack)?)? as u32;
+                        let at = table::operand_index(vm, &table, &numeric::pop(&mut self.stack)?)?;
                         self.stack.push(
                             table::read(vm, &table, at)
-                                .map_err(|_| trap(vm, "table access out of bounds"))?,
+                                .map_err(|_| trap(vm, "table index is out of bounds"))?,
                         )
                     } else {
                         let value = numeric::pop(&mut self.stack)?;
-                        let at = numeric::i32_value(&numeric::pop(&mut self.stack)?)? as u32;
+                        let at = table::operand_index(vm, &table, &numeric::pop(&mut self.stack)?)?;
                         table::write(vm, &table, at, &value)
-                            .map_err(|_| trap(vm, "table access out of bounds"))?
+                            .map_err(|_| trap(vm, "table index is out of bounds"))?
                     }
                     Flow::Next
                 }
@@ -693,15 +898,15 @@ impl Activation<'_> {
     }
     /** Indirect calls require a non-null Wasm function with exactly the expected signature. */
     fn indirect_target(&mut self, vm: &mut Vm, ty: u32, index: u32) -> Res<JsValue> {
-        let at = numeric::i32_value(&numeric::pop(&mut self.stack)?)? as u32;
         let table = instance::item(vm, self.instance, TABLES, index)?;
+        let at = table::operand_index(vm, &table, &numeric::pop(&mut self.stack)?)?;
         let function =
             table::read(vm, &table, at).map_err(|_| trap(vm, "table index is out of bounds"))?;
         if function == JsValue::Null {
             return Err(trap(vm, "null function"));
         }
         if !instance::function_matches(vm, self.module, ty, &function)? {
-            return Err(trap(vm, "indirect call signature mismatch"));
+            return Err(trap(vm, "function signature mismatch"));
         }
         Ok(function)
     }

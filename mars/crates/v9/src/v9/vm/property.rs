@@ -200,6 +200,14 @@ impl Vm<'_> {
     /** An own property, if present. */
     pub fn own(&mut self, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
         self.guard_realm_global(id)?;
+        #[cfg(feature = "conformance")]
+        if let Some(value) = crate::v9::builtins::read_shared_container(self, id, key)? {
+            let attrs = WRITABLE | ENUMERABLE;
+            return Ok(Some(Prop {
+                slot: Slot::Data(value),
+                attrs,
+            }));
+        }
         let Some(object) = self.heap.get(id) else {
             return Ok(self.intrinsic_own(id, key));
         };
@@ -221,11 +229,19 @@ impl Vm<'_> {
                 if let Some(index) = key.index() {
                     // An element with its own attributes or an accessor lives in the property
                     // list (V8's dictionary elements), its dense slot a hole.
-                    return Ok(elements
+                    let property = elements
                         .get(index as usize)
                         .filter(|value| **value != JsValue::Hole)
                         .map(|value| Prop::data(value.clone()))
-                        .or_else(|| object.props.get(key).cloned()));
+                        .or_else(|| object.props.get(key).cloned());
+                    #[cfg(feature = "conformance")]
+                    if crate::v9::builtins::is_shared_object(self, id) {
+                        return Ok(property.map(|mut property| {
+                            property.attrs = WRITABLE | ENUMERABLE;
+                            property
+                        }));
+                    }
+                    return Ok(property);
                 }
                 if key_is(key, "length") {
                     let fixed = object.props.get(&fixed_length_mark()).is_some();
@@ -237,9 +253,9 @@ impl Vm<'_> {
             }
             Class::String(text) => {
                 if let Some(index) = key.index() {
-                    if let Some(unit) = text.as_units().get(index as usize) {
+                    if let Some(unit) = text.unit_at(index as usize) {
                         return Ok(Some(Prop {
-                            slot: Slot::Data(JsValue::String(JsString::from_slice(&[*unit])?)),
+                            slot: Slot::Data(JsValue::String(JsString::from_slice(&[unit])?)),
                             attrs: ENUMERABLE,
                         }));
                     }
@@ -361,7 +377,11 @@ impl Vm<'_> {
                     return Ok(None);
                 };
                 if key_is(key, "name") {
-                    return Ok(Some(readonly(JsValue::String(code.name.clone()))));
+                    #[cfg(feature = "conformance")]
+                    let name = self.isolate_code_constant(site, u32::MAX, &code.name);
+                    #[cfg(not(feature = "conformance"))]
+                    let name = code.name.clone();
+                    return Ok(Some(readonly(JsValue::String(name))));
                 }
                 if key_is(key, "length") {
                     return Ok(Some(readonly(JsValue::Number(f64::from(code.length)))));
@@ -439,15 +459,19 @@ impl Vm<'_> {
             JsValue::Object(id) => *id,
             JsValue::String(text) => {
                 if let Some(index) = key.index() {
-                    if let Some(unit) = text.as_units().get(index as usize) {
-                        return Ok(JsValue::String(JsString::from_slice(&[*unit])?));
+                    if let Some(unit) = text.unit_at(index as usize) {
+                        return Ok(JsValue::String(JsString::from_slice(&[unit])?));
                     }
                 } else if key_is(key, "length") {
                     return Ok(JsValue::Number(text.len() as f64));
                 }
                 realm().ids.string_prototype
             }
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) => realm().ids.number_prototype,
             JsValue::Number(_) => realm().ids.number_prototype,
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => realm().ids.number_prototype,
             JsValue::Boolean(_) => realm().ids.boolean_prototype,
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => realm().ids.bigint_prototype,
@@ -541,7 +565,11 @@ impl Vm<'_> {
                 }
                 realm().ids.string_prototype
             }
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) => realm().ids.number_prototype,
             JsValue::Number(_) => realm().ids.number_prototype,
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => realm().ids.number_prototype,
             JsValue::Boolean(_) => realm().ids.boolean_prototype,
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => realm().ids.bigint_prototype,
@@ -563,11 +591,35 @@ impl Vm<'_> {
         value: JsValue,
         receiver: &JsValue,
     ) -> Res<bool> {
+        self.set_from_context(start, key, value, receiver, false)
+    }
+    /** Contextual global writes use the same traversal without running a separate proxy trap. */
+    pub(super) fn set_global_context(&mut self, key: Key, value: JsValue) -> Res<()> {
+        let start = self.global_object();
+        let receiver = JsValue::Object(start);
+        if !self.set_from_context(start, key.clone(), value, &receiver, true)? {
+            return Err(self.type_error(&format!(
+                "Cannot assign to read only property '{}' of object",
+                key_text(&key)
+            )));
+        }
+        Ok(())
+    }
+    /** Traverse once so contextual assignment observes setters and proxies in native order. */
+    fn set_from_context(
+        &mut self,
+        start: ObjectId,
+        key: Key,
+        value: JsValue,
+        receiver: &JsValue,
+        contextual: bool,
+    ) -> Res<bool> {
         self.guard_realm_global(start)?;
         if *receiver == JsValue::Object(start) && self.fast_write(start, &key, &value) {
             return Ok(true);
         }
         let mut id = start;
+        let mut writable = false;
         for _ in 0..CHAIN_STEPS {
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_set(id, &proxy, key, value, receiver);
@@ -588,13 +640,33 @@ impl Vm<'_> {
                     }
                     Slot::Accessor(_, None) => return Ok(false),
                     Slot::Data(_) if prop.attrs & WRITABLE == 0 => return Ok(false),
-                    Slot::Data(_) => break,
+                    Slot::Data(_) => {
+                        let window = realm().ids.window_prototype;
+                        let intrinsic = id == window
+                            && self.proto_of(start) == Some(window)
+                            && realm()
+                                .object(window)
+                                .is_some_and(|o| o.get(&key).is_some());
+                        if contextual && id != start && !intrinsic {
+                            return Err(
+                                self.reference_error(&format!("{} is not defined", key_text(&key)))
+                            );
+                        }
+                        writable = true;
+                        break;
+                    }
                 }
             }
             match self.proto_of(id) {
                 Some(proto) => id = proto,
+                None if contextual => {
+                    return Err(self.reference_error(&format!("{} is not defined", key_text(&key))));
+                }
                 None => break,
             }
+        }
+        if contextual && !writable {
+            return Err(EngineError::limit("V9 prototype chain", CHAIN_STEPS).into());
         }
         let JsValue::Object(target) = receiver else {
             return Ok(false);
@@ -616,6 +688,10 @@ impl Vm<'_> {
     list, as V8's fast-properties load does; anything exotic, an accessor, or a function's
     virtual names says Slow and takes the full path, so behaviour is unchanged. */
     fn fast_own(&self, id: ObjectId, key: &Key) -> Fast {
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::shared_container_active(self, id) {
+            return Fast::Slow;
+        }
         let Some(object) = self.heap.get(id) else {
             return Fast::Slow;
         };
@@ -635,6 +711,11 @@ impl Vm<'_> {
     /** Overwrite an own writable data property of an ordinary object in place, the common
     `o.x = v` on an existing field. False leaves every other case to the full [[Set]]. */
     fn fast_write(&mut self, id: ObjectId, key: &Key, value: &JsValue) -> bool {
+        self.heap.track_value(value);
+        #[cfg(feature = "conformance")]
+        if crate::v9::builtins::is_shared_object(self, id) {
+            return false;
+        }
         let Some(object) = self.heap.get_mut(id) else {
             return false;
         };
@@ -657,6 +738,35 @@ impl Vm<'_> {
     }
     /** Create or update an own data property as assignment does. */
     pub fn write_own(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
+        #[cfg(feature = "conformance")]
+        if let Some(result) = crate::v9::builtins::check_shared_store(self, id, &key, &value)? { return Ok(result); }
+        #[cfg(feature = "conformance")]
+        let value = if crate::v9::builtins::is_shared_object(self, id) {
+            let number = match &value {
+                JsValue::LocalNumber(number) => Some(number.value),
+                JsValue::Number(number) if !number.is_finite() || number.fract() != 0.0 || *number < -(1_i64 << 30) as f64 || *number >= (1_i64 << 30) as f64 || (*number == 0.0 && number.is_sign_negative()) => Some(*number),
+                _ => None,
+            };
+            if let Some(number) = number {
+                let mark = self.pins.len();
+                self.pin(JsValue::Object(id));
+                let result = crate::v9::builtins::new_shared_number(self, number);
+                self.pins.truncate(mark);
+                result?
+            } else { value }
+        } else { value };
+        #[cfg(feature = "conformance")]
+        if matches!(value, JsValue::SharedNumber(_)) {
+            let mark = self.pins.len();
+            self.pin(value.clone());
+            let result = self.write_own_value(id, key, value);
+            self.pins.truncate(mark);
+            return result;
+        }
+        self.write_own_value(id, key, value)
+    }
+    /** Perform a pinned ordinary property write after shared-value publication. */
+    fn write_own_value(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
         if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             let desc = match self.own(id, &key)? {
                 Some(prop)
@@ -712,7 +822,13 @@ impl Vm<'_> {
     /** Arrays and host objects handle some keys themselves; None means ordinary handling. */
     fn exotic_write(&mut self, id: ObjectId, key: &Key, value: &JsValue) -> Res<Option<bool>> {
         #[cfg(feature = "conformance")]
-        crate::v9::builtins::check_shared_store(self, id, key, value)?;
+        if let Some(result) = crate::v9::builtins::check_shared_store(self, id, key, value)? {
+            return Ok(Some(result));
+        }
+        #[cfg(feature = "conformance")]
+        if let Some(result) = crate::v9::builtins::write_shared_container(self, id, key, value)? {
+            return Ok(Some(result));
+        }
         let limit = self.limits.array_length;
         let Some(object) = self.heap.get(id) else {
             return Ok(None);
@@ -767,7 +883,7 @@ impl Vm<'_> {
             }
             Class::Host(_) => super::super::platform::host_write(self, id, key, value),
             // A namespace's exports are read-only to their importers.
-            Class::Namespace(_) => Ok(Some(false)),
+            Class::Namespace(_) if !key.hidden() => Ok(Some(false)),
             // Integer-indexed: in-range writes store into the buffer, others are dropped.
             Class::View(_) if crate::v9::builtins::typed_index(self, id, key).is_some() => {
                 crate::v9::builtins::typed_set_integer(self, id, key, value).map(Some)
@@ -777,6 +893,7 @@ impl Vm<'_> {
     }
     /** Store one resident array element without allocating gaps, keeping exact live counts. */
     pub fn array_store(&mut self, id: ObjectId, index: usize, value: JsValue) {
+        self.heap.track_value(&value);
         let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
         else {
             return;
@@ -866,7 +983,11 @@ impl Vm<'_> {
             return Ok(done);
         }
         #[cfg(feature = "conformance")]
-        crate::v9::builtins::check_shared_define(self, id, &key, desc.value.as_ref())?;
+        crate::v9::builtins::check_shared_define(self, id, &key, &desc)?;
+        #[cfg(feature = "conformance")]
+        if let Some(result) = crate::v9::builtins::define_shared_container(self, id, &key, &desc)? {
+            return Ok(result);
+        }
         self.materialize(id)?;
         if let Some(done) = self.define_name_snapshot(id, &key, &desc)? {
             return Ok(done);
@@ -1275,7 +1396,7 @@ pub(super) fn fixed_length_mark() -> Key {
 fn deleted_mark(key: &Key) -> Key {
     let mut units: Vec<u16> = "deleted:".encode_utf16().collect();
     if let Key::Str(text) = key {
-        units.extend_from_slice(text.as_units());
+        units.extend(text.code_units());
     }
     Key::Private(JsString::from_slice(&units).expect("short key"))
 }

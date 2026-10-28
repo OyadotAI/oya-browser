@@ -8,7 +8,7 @@
  */
 use super::break_cursor;
 use super::segmentation::split;
-use super::{LOCALE, locale, supported_locales};
+use super::{locale, supported_locales};
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{BreakIteratorData, Class, HostData};
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object};
@@ -78,7 +78,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .into_iter()
         .next()
         .filter(|tag| !tag.is_empty())
-        .unwrap_or_else(|| LOCALE.into());
+        .unwrap_or_else(|| vm.page.environment.locale.clone());
     let kind = option_type(vm, &call.arg(1))?;
     let prototype = vm.get(&JsValue::Object(call.callee), &Key::from("prototype"))?;
     let proto = match prototype {

@@ -12,6 +12,7 @@ fn run(source: &str) -> Vec<String> {
     let host = common::host();
     let environment = PageEnvironment {
         conformance_d8: true,
+        conformance_expose_externalize_string: true,
         conformance_workers: Some(session.host()),
         ..common::environment()
     };

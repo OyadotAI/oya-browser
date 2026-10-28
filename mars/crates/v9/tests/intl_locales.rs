@@ -3,6 +3,86 @@ currency and percent patterns, compact names, range collapsing and plural rules 
 mod common;
 use common::eval;
 
+/** Omitted Intl locales use the page's host locale across formatter families. */
+#[test]
+fn omitted_locales_follow_the_host_environment() {
+    let mut environment = common::environment();
+    environment.locale = "pt-BR".into();
+    let source = "console.log([Intl.Collator().resolvedOptions().locale,Intl.DateTimeFormat().resolvedOptions().locale,Intl.NumberFormat().resolvedOptions().locale,new Intl.DisplayNames(undefined,{type:'language'}).resolvedOptions().locale].join(','))";
+    let output = common::load_with(source, &environment);
+    assert!(output.failed.is_empty(), "{:?}", common::failure(&output));
+    assert_eq!(common::console(&output), ["pt-BR,pt-BR,pt-BR,pt-BR"]);
+}
+
+/** Arabic numbering retains typed directional marks and the same text across both APIs. */
+#[test]
+fn arabic_numbering_formats_parts_and_resolves_options() {
+    let source = "const f = new Intl.NumberFormat('ar-IQ', {style:'percent', minimumFractionDigits:2});
+        const p = f.formatToParts(-135.32);
+        const out = [p.map(x => x.type + ':' + x.value).join('|'), p.map(x => x.value).join('') === f.format(-135.32), f.resolvedOptions().numberingSystem].join(';');";
+    assert_eq!(
+        eval(source, "out"),
+        "literal:؜|minusSign:-|integer:١٣|group:٬|integer:٥٣٢|decimal:٫|fraction:٠٠|percentSign:٪|literal:؜;true;arab"
+    );
+}
+
+/** Explicit numbering wins over the Unicode extension and other locales retain their default. */
+#[test]
+fn numbering_system_selection_obeys_options_and_extensions() {
+    let source = "const a = new Intl.NumberFormat('en-US-u-nu-arab');
+        const b = new Intl.NumberFormat('en-US-u-nu-arab', {numberingSystem:'latn'});
+        const c = new Intl.NumberFormat('ar-MA');
+        const out = [a.format(12.5), a.resolvedOptions().numberingSystem,
+            b.format(12.5), b.resolvedOptions().numberingSystem, c.resolvedOptions().numberingSystem].join('|');";
+    assert_eq!(eval(source, "out"), "١٢٫٥|arab|12.5|latn|latn");
+}
+
+/** Negative zero, explicit Latin digits, and unsupported options follow the chosen system. */
+#[test]
+fn arabic_numbering_preserves_signs_and_ignores_unsupported_options() {
+    let source = "const a = new Intl.NumberFormat('ar-IQ');
+        const b = new Intl.NumberFormat('ar-IQ', {numberingSystem:'latn'});
+        const c = new Intl.NumberFormat('en-US-u-nu-arab', {numberingSystem:'blah'});
+        const out = [a.format(-0), a.format(1234.5), b.format(-1234.5),
+            c.resolvedOptions().locale, c.resolvedOptions().numberingSystem].join('|');";
+    assert_eq!(
+        eval(source, "out"),
+        "؜-٠|١٬٢٣٤٫٥|‎-1,234.5|en-US-u-nu-arab|arab"
+    );
+}
+
+/** Arabic numbering selects matching patterns across locales and survives locale round trips. */
+#[test]
+fn arabic_numbering_uses_its_own_patterns_and_canonical_locale() {
+    let source = "const a = new Intl.NumberFormat('en-US-u-nu-arab-x-foo');
+        const loc = a.resolvedOptions().locale;
+        const p = new Intl.NumberFormat('de-DE-u-nu-arab', {style:'percent'});
+        const c = new Intl.NumberFormat('en-US-u-nu-arab', {style:'currency', currency:'USD'});
+        const s = new Intl.NumberFormat('en-US-u-nu-arab', {notation:'scientific'});
+        const out = [loc, new Intl.NumberFormat(loc).format(1234), p.format(-1234.5), c.format(-1234.5), s.format(-1234.5)].join('|');";
+    assert_eq!(
+        eval(source, "out"),
+        "en-US-u-nu-arab|١٬٢٣٤|؜-١٢٣٬٤٥٠٪؜|؜-١٬٢٣٤٫٥٠ $|؜-١٫٢٣٥اس٣"
+    );
+}
+
+/** Arabic accounting and negative scientific exponents use directional sign marks. */
+#[test]
+fn arabic_numbering_formats_accounting_and_negative_exponents() {
+    let source = "const c = new Intl.NumberFormat('en-US-u-nu-arab', {style:'currency', currency:'USD', currencySign:'accounting'});
+        const s = new Intl.NumberFormat('en-US-u-nu-arab', {notation:'scientific'});
+        const out = [c.format(-0.0012), s.format(-0.0012)].join('|');";
+    assert_eq!(eval(source, "out"), "؜-٠٫٠٠ $|؜-١٫٢اس؜-٣");
+}
+
+/** Private-use tags cannot alter the resolved locale's default numbering system. */
+#[test]
+fn arabic_default_ignores_private_use_extensions() {
+    let source = "const f = new Intl.NumberFormat('ar-IQ-x-foo');
+        const out = [f.resolvedOptions().locale, f.resolvedOptions().numberingSystem, f.format(-1234.5)].join('|');";
+    assert_eq!(eval(source, "out"), "ar-IQ|arab|؜-١٬٢٣٤٫٥");
+}
+
 /** Each locale formats with its own decimal and group separators and grouping sizes. */
 #[test]
 fn separators_and_grouping_follow_the_locale() {

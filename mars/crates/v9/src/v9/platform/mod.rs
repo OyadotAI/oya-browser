@@ -15,7 +15,6 @@ mod console;
 pub mod devtools;
 mod dom;
 mod dom_parser;
-mod xml_serializer;
 mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
@@ -28,14 +27,17 @@ mod install;
 mod interfaces;
 mod keyboard;
 mod xml_frames;
+mod xml_serializer;
 pub(in crate::v9) use keyboard::press_key;
 mod attr;
 mod attr_dom;
+mod listener_store;
 mod namespaces;
 mod net;
 mod nodes;
 pub(in crate::v9) mod observable;
 mod offsets;
+mod performance;
 mod pseudo_attributes;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) mod random;
@@ -43,7 +45,6 @@ mod range;
 mod range_contents;
 mod range_index;
 mod range_live;
-mod listener_store;
 pub(in crate::v9) mod scripts;
 mod scrolling;
 mod selector;
@@ -214,6 +215,8 @@ pub enum DomLevel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageEnvironment {
+    /// Host locale used when an Intl constructor receives no explicit locale.
+    pub locale: String,
     /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
     pub regexp_buffer_boundaries: bool,
     /// The document URL; `location` reports it.
@@ -319,10 +322,88 @@ pub struct PageEnvironment {
     /// The engine cannot read files; d8.file only sees exactly this host-owned registry.
     #[cfg(feature = "conformance")]
     pub conformance_sources: BTreeMap<String, String>,
+    /** Allow the explicitly supplied async helper to use the implemented shell intrinsics. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_native_async_helper: bool,
+    /** Only this host-selected classic script receives the approved native intrinsic grammar. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_native_main_source: Option<usize>,
+    /// Permit the exact bundled Wasm exception helper to parse native introspection syntax.
+    #[cfg(feature = "conformance")]
+    pub conformance_native_wasm_exceptions_helper: bool,
+    /// Enable experimental Wasm stringref types only when the shell flag requests them.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_stringref: bool,
+    /// Enable custom descriptors in shell tests only when the actual proposal flag is present.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_custom_descriptors: bool,
+    /// Enable non-sequentially-consistent Wasm atomic encodings in shell tests.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_acquire_release: bool,
+    /** Enable the optional UTF-8 Wasm compile-time imports in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_imported_strings_utf8: bool,
+    /** Enable binary16 Wasm instructions in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_fp16: bool,
+    /** Enable custom descriptor JavaScript interop in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_js_interop: bool,
+    /** Enable 128-bit wide arithmetic instructions in the conformance shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_wide_arithmetic: bool,
+    /** Permit mixed legacy and modern Wasm exception instructions in test shells. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_allow_mixed_eh: bool,
+    /** Enable experimental Wasm stack-switching binary forms in the shell. */
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_wasmfx: bool,
+    /// Enable the experimental shared-everything Wasm feature in the shell.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_shared: bool,
+    /// Shell test metadata can select whether its Wasm streaming callback is installed.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_test_streaming: Option<bool>,
+    /// Explicit shell-test work budget; production requests retain their ordinary operation limit.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_operation_limit: Option<usize>,
+    /// Share interned literal backing only when the d8 shared string table flag is enabled.
+    #[cfg(feature = "conformance")]
+    pub conformance_shared_string_table: bool,
+    /// Opt into the shell's shared heap used by shared values and workers.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_shared_heap: bool,
+    /// Permit explicit string sharing without requiring every literal to be interned.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_shared_strings: bool,
+    /// Install the external-string extension only when the d8 host requests its flag.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_expose_externalize_string: bool,
     /// Exact fixture bytes are inert host input; binary reads do not grant engine filesystem access.
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_files: BTreeMap<String, Vec<u8>>,
+    /// Host-verified file and directory existence; absent keys grant no filesystem access.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_exists: BTreeMap<String, bool>,
     /// Run with an ordinary d8 shell global instead of browser Window accessors.
     /// This opt-in host choice keeps browser pages unchanged in conformance builds.
     #[cfg(feature = "conformance")]
@@ -388,6 +469,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_wasm_max_table_entries: Option<usize>,
+    /// Cap logical Wasm memory pages for a conformance shell session.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_wasm_max_memory_pages: Option<usize>,
     /// Native worker authority is scoped by the embedding test and is never serialized into page facts.
     #[cfg(feature = "conformance")]
     #[serde(skip)]
@@ -434,6 +519,7 @@ impl Default for PageEnvironment {
     /** A blank desktop page. */
     fn default() -> Self {
         Self {
+            locale: "en-US".into(),
             regexp_buffer_boundaries: false,
             url: "about:blank".into(),
             referrer: String::new(),
@@ -476,7 +562,47 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_sources: BTreeMap::new(),
             #[cfg(feature = "conformance")]
+            conformance_native_async_helper: false,
+            #[cfg(feature = "conformance")]
+            conformance_native_main_source: None,
+            #[cfg(feature = "conformance")]
+            conformance_native_wasm_exceptions_helper: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_stringref: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_custom_descriptors: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_acquire_release: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_imported_strings_utf8: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_fp16: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_js_interop: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_wide_arithmetic: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_allow_mixed_eh: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_wasmfx: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_shared: false,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_test_streaming: None,
+            #[cfg(feature = "conformance")]
+            conformance_operation_limit: None,
+            #[cfg(feature = "conformance")]
+            conformance_shared_string_table: false,
+            #[cfg(feature = "conformance")]
+            conformance_shared_heap: false,
+            #[cfg(feature = "conformance")]
+            conformance_shared_strings: false,
+            #[cfg(feature = "conformance")]
+            conformance_expose_externalize_string: false,
+            #[cfg(feature = "conformance")]
             conformance_files: BTreeMap::new(),
+            #[cfg(feature = "conformance")]
+            conformance_exists: BTreeMap::new(),
             #[cfg(feature = "conformance")]
             conformance_d8: false,
             #[cfg(feature = "conformance")]
@@ -513,6 +639,8 @@ impl Default for PageEnvironment {
             conformance_wasm_max_module_bytes: None,
             #[cfg(feature = "conformance")]
             conformance_wasm_max_table_entries: None,
+            #[cfg(feature = "conformance")]
+            conformance_wasm_max_memory_pages: None,
             #[cfg(feature = "conformance")]
             conformance_workers: None,
             #[cfg(feature = "conformance")]
@@ -828,10 +956,41 @@ const fn default_cpu_profile_interval() -> u64 {
     1_000
 }
 
+/** Heap-number constants belong to one compiled code site and source. */
+#[cfg(feature = "conformance")]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::v9) struct NumberConstantPool {
+    pub source: [u8; 32],
+    pub values: BTreeMap<u64, JsValue>,
+}
+
 /** Page state that survives between requests, inside VmState. */
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** Per-isolate code constant cells preserve literal identity without sharing mutable metadata between isolates. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub code_constants: BTreeMap<u64, crate::v9::value::JsString>,
+    /** Actual old heap-number constants, deduplicated within one compiled source site. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub number_constants: BTreeMap<u32, NumberConstantPool>,
+    /** Weak intern entries are temporarily carried between VM lifetimes, then restored as weak handles. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interned_strings: Vec<crate::v9::value::JsString>,
+
+    /** Installed shell debug delegate and bounded event counters for this isolate. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "crate::v9::builtins::DebugState::is_empty")]
+    pub debug_delegate: crate::v9::builtins::DebugState,
+
+    /** A d8 test can forbid blocking waits for this agent across state transport. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub atomics_wait_disallowed: bool,
     /** The isolate's real unnamed session and callback survive requests without native thread handles. */
     #[cfg(feature = "conformance")]
     #[serde(
@@ -1111,6 +1270,8 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        #[cfg(feature = "conformance")]
+        out.extend(self.state.number_constants.values().flat_map(|pool| pool.values.values().cloned()));
         #[cfg(feature = "conformance")]
         if let Some(listener) = self.state.cpu_profile.listener {
             out.push(JsValue::Object(listener));

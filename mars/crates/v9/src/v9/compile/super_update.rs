@@ -18,7 +18,6 @@ impl Compiler {
         self.load_home()?;
         self.emit(Op::CaptureSuperBase);
         self.emit(Op::Swap);
-        self.emit(Op::ToPropertyKey);
         self.emit(Op::ReadSuperReference);
         self.emit(Op::ToNumeric);
         if let Some(old) = old {
@@ -36,7 +35,7 @@ impl Compiler {
     }
 
     /** Named and computed references converge before the base is captured, without observing a private super name. */
-    fn super_update_key(&mut self, prop: &MemberProp, pos: Pos) -> EngineResult<()> {
+    pub(super) fn super_update_key(&mut self, prop: &MemberProp, pos: Pos) -> EngineResult<()> {
         match prop {
             MemberProp::Computed(key) => self.expr(key),
             MemberProp::Name(name) => {

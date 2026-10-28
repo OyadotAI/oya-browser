@@ -1034,7 +1034,9 @@ fn response_type(vm: &Vm, this: &JsValue, data: &ResponseData) -> String {
         .object()
         .and_then(|id| headers::get_private(vm, id, "responseType"))
     {
-        return String::from_utf16_lossy(kind.as_units());
+        return char::decode_utf16(kind.code_units())
+            .map(|point| point.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
     }
     let page = parse_url(&vm.page.state.href).map(|url| url.origin());
     let own = parse_url(&data.url).map(|url| url.origin());

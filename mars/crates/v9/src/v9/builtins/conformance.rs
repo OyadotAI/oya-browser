@@ -6,8 +6,12 @@ use crate::v9::vm::data::PromiseState;
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Vm};
 mod async_hooks;
+mod arena_transport;
+mod condition;
 mod cputrace;
 mod d8_constants;
+mod debugger;
+pub(in crate::v9) use debugger::{Event as DebugEvent, State as DebugState, record as debug_event};
 mod extras;
 mod fast_api;
 mod files;
@@ -18,12 +22,21 @@ mod source_positions;
 mod statistics;
 mod test_dom;
 pub(in crate::v9) use inspector::pause_point;
-pub(in crate::v9) use shared::{check_define, check_store};
+pub(in crate::v9) use shared::{check_define, check_store, is_shared_object};
+pub(in crate::v9) use arena_transport::{
+    active as shared_container_active, activate as activate_shared_container, atomic as atomic_shared_container, define as define_shared_container, existing_js_arena,
+    initialize as initialize_shared_containers, read as read_shared_container, write as write_shared_container,
+};
+pub(in crate::v9) use arena_transport::collect_shared;
+pub(in crate::v9) use arena_transport::{new_shared_number, materialize_shared_object, resolve_shared_js_reference, validate_shared_js_record};
 mod trigger_failure;
 pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
 mod microtasks;
+mod mutex;
 pub(in crate::v9) use microtasks::enqueue as enqueue_shell_microtask;
+pub(in crate::v9) use microtasks::relevant_realm as shell_callback_realm;
+pub(in crate::v9) use reporting::exception as report_shell_exception;
 mod output;
 mod profiling;
 pub(in crate::v9) use profiling::{
@@ -36,6 +49,7 @@ pub(in crate::v9) use reporting::terminal as report_terminal_exception;
 mod serializer;
 mod shadow;
 mod strings;
+pub(in crate::v9) use strings::install_lexicals as install_external_string_lexicals;
 mod workers;
 pub(in crate::v9) use async_hooks::{
     async_hook_after, async_hook_before, async_hook_init, async_hook_resolve, async_hook_resource,
@@ -61,7 +75,19 @@ pub(in crate::v9) fn expose_conformance_globals(
     trigger_failure::expose(vm, global, bank);
     inspector::expose(vm, global, bank);
     shared::expose(vm, global, bank);
+    mutex::expose(vm, global, bank);
+    condition::expose(vm, global, bank);
+    strings::expose(vm, global, bank);
     expose_iterator_options(vm, bank);
+    expose_wasm_streaming(vm, bank);
+}
+
+/** D8 omits streaming entry points until an embedder installs its callback. */
+fn expose_wasm_streaming(vm: &mut Vm, bank: u32) {
+    if !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_test_streaming != Some(false) { return; }
+    let namespace = crate::v9::vm::realm::banks::bank(bank).shell_globals.iter().find_map(|(name, value)| (*name == "WebAssembly").then(|| value.object()).flatten()).expect("WebAssembly intrinsic");
+    vm.materialize(namespace).expect("WebAssembly namespace materialization");
+    for name in ["compileStreaming", "instantiateStreaming"] { vm.heap.remove(namespace, &crate::v9::vm::heap::Key::from(name)); }
 }
 
 /** Native embedder receiver state is not ordinary structured data and cannot acquire a fake clone brand. */
@@ -73,6 +99,8 @@ pub(in crate::v9) fn conformance_host_object(vm: &Vm, value: &JsValue) -> bool {
             [
                 "fast-api-brand",
                 "conformance-worker-id",
+                mutex::MUTEX_BRAND,
+                condition::CONDITION_BRAND,
                 test_dom::BRAND_KEY,
             ]
             .iter()
@@ -83,6 +111,32 @@ pub(in crate::v9) fn conformance_host_object(vm: &Vm, value: &JsValue) -> bool {
                     .is_some()
             })
         })
+}
+
+/** Local mutexes cannot silently cross agents before a shared-lock broker exists. */
+pub(in crate::v9) fn conformance_local_mutex(vm: &Vm, value: &JsValue) -> bool {
+    value.object().is_some_and(|id| mutex::is_mutex(vm, id))
+}
+/** Local condition variables cannot cross agents until their backing is shared. */
+pub(in crate::v9) fn conformance_local_condition(vm: &Vm, value: &JsValue) -> bool {
+    value
+        .object()
+        .is_some_and(|id| condition::is_condition(vm, id))
+}
+
+/** Native syntax reads the real synchronization queue, never inferred or fabricated counts. */
+pub(in crate::v9) fn synchronization_waiter_count(vm: &mut Vm, value: &JsValue) -> Res<JsValue> {
+    let store = if let Some(id) = value.object().filter(|id| mutex::is_mutex(vm, *id)) {
+        mutex::storage(vm, id)?
+    } else if value
+        .object()
+        .is_some_and(|id| condition::is_condition(vm, id))
+    {
+        condition::storage(vm, value)?
+    } else {
+        return Err(vm.type_error("Expected Atomics.Mutex or Atomics.Condition"));
+    };
+    Ok(JsValue::Number(store.waiter_count() as f64))
 }
 
 /** The host task performs collection before resolving its returned promise. */
@@ -117,8 +171,11 @@ pub(super) fn install(builder: &mut Builder) {
     files::install(builder);
     inspector::install(builder);
     shared::install(builder);
+    mutex::install(builder);
+    condition::install(builder);
     let d8 = builder.object(Some(builder.ids.object_prototype));
     serializer::install(builder, d8);
+    debugger::install(builder, d8);
     let test = fast_api::install(builder, d8);
     source_positions::install(builder, test);
     test_dom::install(builder, d8);
@@ -133,6 +190,7 @@ pub(super) fn install(builder: &mut Builder) {
     let file = builder.object(Some(builder.ids.object_prototype));
     builder.method(file, "execute", 1, execute);
     builder.method(file, "read", 1, read);
+    builder.method(file, "exists", 1, files::exists);
     builder.alias(d8, "file", file);
     super::wasm::install_conformance(builder, d8);
     builder.global("d8", d8);

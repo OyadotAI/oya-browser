@@ -183,6 +183,7 @@ impl Ids {
             regexp_iterator_prototype: shift(self.regexp_iterator_prototype, amount),
             iterator_prototype: shift(self.iterator_prototype, amount),
             window_prototype: shift(self.window_prototype, amount),
+            shell_global_prototype: shift(self.shell_global_prototype, amount),
             array_values: shift(self.array_values, amount),
             throw_type_error: shift(self.throw_type_error, amount),
             event_target_prototype: shift(self.event_target_prototype, amount),

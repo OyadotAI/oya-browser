@@ -225,6 +225,8 @@ pub(in crate::v9) fn set_original(vm: &mut crate::v9::vm::Vm, event: ObjectId, n
 /** The node an event was dispatched at. */
 pub(in crate::v9) fn original_target(vm: &crate::v9::vm::Vm, event: ObjectId) -> Option<usize> {
     match get_slot(vm, &JsValue::Object(event), "origin") {
+        #[cfg(feature = "conformance")]
+        JsValue::Smi(node) => Some(node as usize),
         JsValue::Number(node) => Some(node as usize),
         _ => None,
     }

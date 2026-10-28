@@ -134,7 +134,9 @@ const URI_RESERVED: &str = ";/?:@&=+$,#";
 /** Percent-encode UTF-8 except unreserved characters. */
 fn encode(vm: &mut Vm, call: Call, safe: &str) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
-    let decoded = match String::from_utf16(text.as_units()) {
+    let decoded: Result<String, _> =
+        char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index))).collect();
+    let decoded = match decoded {
         Ok(decoded) => decoded,
         Err(_) => return Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
     };
@@ -154,7 +156,11 @@ fn encode(vm: &mut Vm, call: Call, safe: &str) -> Res<JsValue> {
 
 /** Percent-decode UTF-8, keeping escapes of `reserved` characters. */
 fn decode(vm: &mut Vm, call: Call, reserved: &str) -> Res<JsValue> {
-    let text = arg_string(vm, &call, 0)?.lossy();
+    let source = arg_string(vm, &call, 0)?;
+    let text: String =
+        char::decode_utf16((0..source.len()).filter_map(|index| source.unit_at(index)))
+            .map(|point| point.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -186,11 +192,11 @@ fn decode(vm: &mut Vm, call: Call, reserved: &str) -> Res<JsValue> {
 fn escape(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
     let mut out = String::new();
-    for unit in text.as_units() {
-        let c = char::from_u32(u32::from(*unit)).unwrap_or('\u{fffd}');
+    for unit in (0..text.len()).filter_map(|index| text.unit_at(index)) {
+        let c = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
         if c.is_ascii_alphanumeric() || "@*_+-./".contains(c) {
             out.push(c);
-        } else if *unit < 0x100 {
+        } else if unit < 0x100 {
             out.push_str(&format!("%{unit:02X}"));
         } else {
             out.push_str(&format!("%u{unit:04X}"));
@@ -202,16 +208,17 @@ fn escape(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** unescape (legacy). */
 fn unescape(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = arg_string(vm, &call, 0)?;
-    let units = text.as_units();
-    let mut out = Vec::with_capacity(units.len());
+    let mut out = Vec::with_capacity(text.len());
     let mut index = 0;
-    while index < units.len() {
-        if units[index] == u16::from(b'%') {
+    while index < text.len() {
+        if text.unit_at(index) == Some(u16::from(b'%')) {
             let read = |start: usize, count: usize| -> Option<u16> {
-                let slice = units.get(start..start + count)?;
-                u16::from_str_radix(&String::from_utf16(slice).ok()?, 16).ok()
+                let units: Vec<_> = (start..start + count)
+                    .map(|index| text.unit_at(index))
+                    .collect::<Option<_>>()?;
+                u16::from_str_radix(&String::from_utf16(&units).ok()?, 16).ok()
             };
-            if units.get(index + 1) == Some(&u16::from(b'u'))
+            if text.unit_at(index + 1) == Some(u16::from(b'u'))
                 && let Some(value) = read(index + 2, 4)
             {
                 out.push(value);
@@ -224,7 +231,7 @@ fn unescape(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 continue;
             }
         }
-        out.push(units[index]);
+        out.push(text.unit_at(index).expect("valid string index"));
         index += 1;
     }
     Ok(JsValue::String(JsString::from_units(out)?))

@@ -1,12 +1,33 @@
 /** String: the constructor, statics and prototype methods over UTF-16 code units. */
 use super::*;
-use crate::constants::JS_STRING_UNITS;
+use crate::constants::{
+    JS_STRING_UNITS, UTF16_HIGH_SURROGATE_END, UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END,
+    UTF16_LOW_SURROGATE_START,
+};
 use crate::protocol::EngineError;
 use crate::v9::vm::data::{Class, IterState};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::{NativeFn, realm, symbol};
 
 mod normalization;
+
+/** Pinned d8 cannot represent more UTF-16 units than this, independent of V9's tighter quota. */
+#[cfg(feature = "conformance")]
+const D8_MAX_STRING_UNITS: usize = if cfg!(target_pointer_width = "32") {
+    (1 << 28) - 16
+} else {
+    (1 << 29) - 24
+};
+
+/** An inherently impossible d8 result throws before any allocation; smaller quota failures stay fatal. */
+fn impossible_shell_string(vm: &mut Vm, length: usize) -> Res<()> {
+    #[cfg(feature = "conformance")]
+    if vm.page.environment.conformance_d8 && length > D8_MAX_STRING_UNITS {
+        return Err(vm.range_error("Invalid string length"));
+    }
+    let _ = (vm, length);
+    Ok(())
+}
 
 /** String and String.prototype. */
 pub(super) fn install(b: &mut Builder) {
@@ -178,15 +199,32 @@ fn raw(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let strings = call.arg(0);
     let raw = vm.get(&strings, &key("raw"))?;
     let length = vm.length_of(&raw)?;
-    let mut out = Vec::new();
+    let mut out = JsString::empty();
+    let mut overflow = None;
     for index in 0..length {
         let chunk = vm.get(&raw, &key(&index.to_string()))?;
-        out.extend_from_slice(vm.to_string(&chunk)?.as_units());
+        let piece = vm.to_string(&chunk)?;
+        raw_append(vm, &mut out, &mut overflow, piece);
         if index + 1 < length && index + 1 < call.args.len() {
-            out.extend_from_slice(vm.to_string(&call.args[index + 1])?.as_units());
+            let piece = vm.to_string(&call.args[index + 1])?;
+            raw_append(vm, &mut out, &mut overflow, piece);
         }
     }
-    units(out)
+    if let Some(error) = overflow {
+        return Err(error);
+    }
+    Ok(JsValue::String(out))
+}
+
+/** Preserve later getter and coercion errors after a raw result exceeds its storage limit. */
+fn raw_append(vm: &mut Vm, out: &mut JsString, overflow: &mut Option<crate::v9::vm::Thrown>, piece: JsString) {
+    if overflow.is_some() {
+        return;
+    }
+    match vm.concat_strings(out, &piece) {
+        Ok(value) => *out = value,
+        Err(error) => *overflow = Some(error),
+    }
 }
 
 /** String.prototype.at. */
@@ -201,7 +239,9 @@ fn at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::Undefined);
     }
-    units(vec![text.as_units()[index as usize]])
+    units(vec![
+        text.unit_at(index as usize).expect("checked string index"),
+    ])
 }
 
 /** String.prototype.charAt. */
@@ -211,7 +251,9 @@ fn char_at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::String(JsString::empty()));
     }
-    units(vec![text.as_units()[index as usize]])
+    units(vec![
+        text.unit_at(index as usize).expect("checked string index"),
+    ])
 }
 
 /** String.prototype.charCodeAt. */
@@ -221,7 +263,9 @@ fn char_code_at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::Number(f64::NAN));
     }
-    Ok(JsValue::Number(f64::from(text.as_units()[index as usize])))
+    Ok(JsValue::Number(f64::from(
+        text.unit_at(index as usize).expect("checked string index"),
+    )))
 }
 
 /** String.prototype.codePointAt. */
@@ -231,11 +275,13 @@ fn code_point_at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::Undefined);
     }
-    let point = text.code_points_from(index as usize);
-    let value = match point {
-        [high, low] => 0x10000 + ((u32::from(*high) - 0xd800) << 10) + (u32::from(*low) - 0xdc00),
-        [unit] => u32::from(*unit),
-        _ => 0,
+    let high = text.unit_at(index as usize).expect("checked string index");
+    let low = text.unit_at(index as usize + 1);
+    let value = match low {
+        Some(low) if (0xd800..=0xdbff).contains(&high) && (0xdc00..=0xdfff).contains(&low) => {
+            0x10000 + ((u32::from(high) - 0xd800) << 10) + (u32::from(low) - 0xdc00)
+        }
+        _ => u32::from(high),
     };
     Ok(JsValue::Number(f64::from(value)))
 }
@@ -245,7 +291,7 @@ fn concat(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut text = this_string(vm, &call)?;
     for value in call.args {
         let part = vm.to_string(value)?;
-        text = text.concat(&part)?;
+        text = vm.concat_strings(&text, &part)?;
     }
     Ok(JsValue::String(text))
 }
@@ -281,8 +327,36 @@ fn ends_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize
     };
-    let units = &text.as_units()[..end];
-    Ok(JsValue::Boolean(units.ends_with(needle.as_units())))
+    if needle.len() > end {
+        return Ok(JsValue::Boolean(false));
+    }
+    Ok(JsValue::Boolean(text_matches_at(
+        &text,
+        &needle,
+        end - needle.len(),
+    )))
+}
+
+/** Compare UTF-16 units without flattening either potentially compact string. */
+fn text_matches_at(text: &JsString, needle: &JsString, start: usize) -> bool {
+    if needle.len() > text.len().saturating_sub(start) {
+        return false;
+    }
+    if let (Some(haystack), Some(pattern)) = (text.flat_units(), needle.flat_units()) {
+        return haystack[start..start + pattern.len()] == *pattern;
+    }
+    (0..needle.len()).all(|offset| text.unit_at(start + offset) == needle.unit_at(offset))
+}
+
+/** Search a compact string without allocating a flattened copy. */
+fn find_string(text: &JsString, needle: &JsString, from: usize) -> Option<usize> {
+    if let (Some(haystack), Some(pattern)) = (text.flat_units(), needle.flat_units()) {
+        return find(haystack, pattern, from);
+    }
+    if needle.len() > text.len() {
+        return None;
+    }
+    (from..=text.len() - needle.len()).find(|start| text_matches_at(text, needle, *start))
 }
 
 /** String.prototype.includes. */
@@ -291,7 +365,7 @@ fn includes(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let needle = not_regexp(vm, &call.arg(0), "includes")?;
     let from = vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize;
     Ok(JsValue::Boolean(
-        find(text.as_units(), needle.as_units(), from).is_some(),
+        find_string(&text, &needle, from).is_some(),
     ))
 }
 
@@ -301,7 +375,7 @@ fn index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let needle = arg_string(vm, &call, 0)?;
     let from = vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize;
     Ok(JsValue::Number(
-        find(text.as_units(), needle.as_units(), from).map_or(-1.0, |i| i as f64),
+        find_string(&text, &needle, from).map_or(-1.0, |i| i as f64),
     ))
 }
 
@@ -315,14 +389,12 @@ fn last_index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         position.max(0.0).min(text.len() as f64) as usize
     };
-    let units = text.as_units();
-    let needle = needle.as_units();
-    if needle.len() > units.len() {
+    if needle.len() > text.len() {
         return Ok(JsValue::Number(-1.0));
     }
-    let start = from.min(units.len() - needle.len());
+    let start = from.min(text.len() - needle.len());
     for index in (0..=start).rev() {
-        if units[index..index + needle.len()] == *needle {
+        if text_matches_at(&text, &needle, index) {
             return Ok(JsValue::Number(index as f64));
         }
     }
@@ -333,11 +405,19 @@ fn last_index_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn locale_compare(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let other = arg_string(vm, &call, 0)?;
-    Ok(JsValue::Number(match text.lossy().cmp(&other.lossy()) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    }))
+    Ok(JsValue::Number(
+        match lossy_points(&text).cmp(lossy_points(&other)) {
+            std::cmp::Ordering::Less => -1.0,
+            std::cmp::Ordering::Equal => 0.0,
+            std::cmp::Ordering::Greater => 1.0,
+        },
+    ))
+}
+
+/** Preserve lossy scalar ordering without creating contiguous UTF-16 or UTF-8 copies. */
+fn lossy_points(text: &JsString) -> impl Iterator<Item = char> + '_ {
+    char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index)))
+        .map(|point| point.unwrap_or(char::REPLACEMENT_CHARACTER))
 }
 
 /** Delegate to a pattern's symbol method, else build a RegExp from it. */
@@ -376,7 +456,12 @@ fn require_global_pattern(vm: &mut Vm, call: &Call, method: &str) -> Res<()> {
         return Ok(());
     }
     let flags = vm.get(&pattern, &key("flags"))?;
-    if flags.nullish() || !vm.to_string(&flags)?.as_units().contains(&u16::from(b'g')) {
+    if flags.nullish()
+        || !vm
+            .to_string(&flags)?
+            .code_units()
+            .any(|unit| unit == u16::from(b'g'))
+    {
         return Err(vm.type_error(&format!("{method} requires a global RegExp")));
     }
     Ok(())
@@ -412,25 +497,20 @@ fn pad(vm: &mut Vm, call: &Call, start: bool) -> Res<JsValue> {
     if filler.is_empty() {
         return Ok(JsValue::String(text));
     }
+    impossible_shell_string(vm, target)?;
     if target > JS_STRING_UNITS {
         return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
     }
-    let fill: Vec<u16> = filler
-        .as_units()
-        .iter()
-        .copied()
-        .cycle()
-        .take(target - text.len())
-        .collect();
-    let mut out = Vec::with_capacity(target);
-    if start {
-        out.extend_from_slice(&fill);
-        out.extend_from_slice(text.as_units());
+    let fill_length = target - text.len();
+    let repeated = vm.repeat_string(&filler, fill_length / filler.len())?;
+    let tail = vm.copy_string_range(&filler, 0, fill_length % filler.len())?;
+    let fill = vm.concat_strings(&repeated, &tail)?;
+    let result = if start {
+        vm.concat_strings(&fill, &text)?
     } else {
-        out.extend_from_slice(text.as_units());
-        out.extend_from_slice(&fill);
-    }
-    units(out)
+        vm.concat_strings(&text, &fill)?
+    };
+    Ok(JsValue::String(result))
 }
 
 /** String.prototype.padEnd. */
@@ -450,10 +530,11 @@ fn repeat(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.range_error(&format!("Invalid count value: {count}")));
     }
     let total = text.len().saturating_mul(count as usize);
+    impossible_shell_string(vm, total)?;
     if total > JS_STRING_UNITS {
         return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
     }
-    units(text.as_units().repeat(count as usize))
+    Ok(JsValue::String(vm.repeat_string(&text, count as usize)?))
 }
 
 /** replace and replaceAll with a string pattern. */
@@ -467,23 +548,25 @@ fn replace_string(vm: &mut Vm, call: &Call, all: bool) -> Res<JsValue> {
     } else {
         vm.to_string(&replacement)?
     };
-    let source = text.as_units();
     let mut positions = Vec::new();
     let mut from = 0;
-    while let Some(found) = find(source, needle.as_units(), from) {
+    while let Some(found) = find_string(&text, &needle, from) {
         positions.push(found);
         if !all {
             break;
         }
         from = found + needle.len().max(1);
-        if from > source.len() {
+        if from > text.len() {
             break;
         }
+    }
+    if positions.is_empty() {
+        return Ok(JsValue::String(text));
     }
     let mut out = Vec::new();
     let mut next = 0;
     for position in positions {
-        out.extend_from_slice(&source[next..position]);
+        out.extend((next..position).filter_map(|index| text.unit_at(index)));
         let replaced = if functional {
             let value = vm.call(
                 replacement.clone(),
@@ -494,7 +577,10 @@ fn replace_string(vm: &mut Vm, call: &Call, all: bool) -> Res<JsValue> {
                     JsValue::String(text.clone()),
                 ],
             )?;
-            vm.to_string(&value)?.as_units().to_vec()
+            let value = vm.to_string(&value)?;
+            (0..value.len())
+                .filter_map(|index| value.unit_at(index))
+                .collect()
         } else {
             super::regexp::expand(
                 vm,
@@ -514,7 +600,7 @@ fn replace_string(vm: &mut Vm, call: &Call, all: bool) -> Res<JsValue> {
             );
         }
     }
-    out.extend_from_slice(&source[next..]);
+    out.extend((next..text.len()).filter_map(|index| text.unit_at(index)));
     units(out)
 }
 
@@ -540,7 +626,7 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let start = vm.relative_index(&call.arg(0), text.len(), 0)?;
     let end = vm.relative_index(&call.arg(1), text.len(), text.len())?;
-    units(text.as_units()[start..end.max(start)].to_vec())
+    Ok(JsValue::String(text.slice_range(start, end.max(start))?))
 }
 
 /** String.prototype.split. */
@@ -563,25 +649,22 @@ fn split(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.array_append(&JsValue::Object(result), JsValue::String(text))?;
         return Ok(JsValue::Object(result));
     }
-    let source = text.as_units();
     let mut parts = Vec::new();
     if separator.is_empty() {
-        for unit in source.iter().take(limit) {
-            parts.push(JsValue::String(JsString::from_slice(&[*unit])?));
+        for index in 0..text.len().min(limit) {
+            parts.push(JsValue::String(text.slice_range(index, index + 1)?));
         }
     } else {
         let mut start = 0;
-        while let Some(found) = find(source, separator.as_units(), start) {
-            parts.push(JsValue::String(JsString::from_slice(
-                &source[start..found],
-            )?));
+        while let Some(found) = find_string(&text, &separator, start) {
+            parts.push(JsValue::String(text.slice_range(start, found)?));
             start = found + separator.len();
             if parts.len() >= limit {
                 break;
             }
         }
         if parts.len() < limit {
-            parts.push(JsValue::String(JsString::from_slice(&source[start..])?));
+            parts.push(JsValue::String(text.slice_range(start, text.len())?));
         }
     }
     for part in parts {
@@ -595,9 +678,7 @@ fn starts_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let needle = not_regexp(vm, &call.arg(0), "startsWith")?;
     let start = vm.to_integer(&call.arg(1))?.clamp(0.0, text.len() as f64) as usize;
-    Ok(JsValue::Boolean(
-        text.as_units()[start..].starts_with(needle.as_units()),
-    ))
+    Ok(JsValue::Boolean(text_matches_at(&text, &needle, start)))
 }
 
 /** String.prototype.substring. */
@@ -611,7 +692,7 @@ fn substring(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.to_integer(&call.arg(1))?.clamp(0.0, length) as usize
     };
     let (low, high) = (start.min(end), start.max(end));
-    units(text.as_units()[low..high].to_vec())
+    Ok(JsValue::String(text.slice_range(low, high)?))
 }
 
 /** String.prototype.substr. */
@@ -623,7 +704,7 @@ fn substr(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         (vm.to_integer(&call.arg(1))?.max(0.0) as usize).min(text.len() - start)
     };
-    units(text.as_units()[start..start + count].to_vec())
+    Ok(JsValue::String(text.slice_range(start, start + count)?))
 }
 
 /** Case mapping over code points; unpaired surrogates stay. Locale variants also validate their locales argument. */
@@ -633,12 +714,22 @@ fn map_case(vm: &mut Vm, call: &Call, upper: bool, locale: bool) -> Res<JsValue>
         // ECMA-402 requires the locales list to canonicalize (and throw on bad tags) even though casing is not localized.
         crate::v9::builtins::intl::canonical_list(vm, &call.arg(0))?;
     }
-    if text.as_units().iter().all(|unit| *unit < 0x80) {
-        let out: Vec<u16> = text
-            .as_units()
-            .iter()
+    if text.len() > JS_STRING_UNITS {
+        return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
+    }
+    let flat = text.flat_units();
+    let code_units = || {
+        (0..text.len()).map(|index| {
+            flat.map_or_else(
+                || text.unit_at(index).expect("valid string index"),
+                |units| units[index],
+            )
+        })
+    };
+    if code_units().all(|unit| unit < 0x80) {
+        let out: Vec<u16> = code_units()
             .map(|unit| {
-                let byte = *unit as u8;
+                let byte = unit as u8;
                 u16::from(if upper {
                     byte.to_ascii_uppercase()
                 } else {
@@ -649,20 +740,72 @@ fn map_case(vm: &mut Vm, call: &Call, upper: bool, locale: bool) -> Res<JsValue>
         return units(out);
     }
     let mut out = Vec::with_capacity(text.len());
-    for point in char::decode_utf16(text.as_units().iter().copied()) {
+    let mut offset = 0;
+    let mut preceded_by_cased = false;
+    while let Some(point) = case_point(&text, &mut offset) {
         match point {
             Ok(c) => {
-                let mapped: String = if upper {
-                    c.to_uppercase().collect()
+                if !upper && c == 'Σ' && preceded_by_cased && !following_cased(&text, offset) {
+                    out.push('ς' as u16);
                 } else {
-                    c.to_lowercase().collect()
-                };
-                out.extend(mapped.encode_utf16());
+                    let mapped: String = if upper {
+                        c.to_uppercase().collect()
+                    } else {
+                        c.to_lowercase().collect()
+                    };
+                    out.extend(mapped.encode_utf16());
+                }
+                if !case_ignorable(c) {
+                    preceded_by_cased = cased(c);
+                }
             }
-            Err(error) => out.push(error.unpaired_surrogate()),
+            Err(unit) => {
+                out.push(unit);
+                preceded_by_cased = false;
+            }
         }
     }
     units(out)
+}
+
+/** Decode one UTF-16 code point while retaining lone surrogates. */
+fn case_point(text: &JsString, offset: &mut usize) -> Option<Result<char, u16>> {
+    let first = text.unit_at(*offset)?;
+    *offset += 1;
+    if (UTF16_HIGH_SURROGATE_START..=UTF16_HIGH_SURROGATE_END).contains(&first) {
+        if let Some(second) = text
+            .unit_at(*offset)
+            .filter(|unit| (UTF16_LOW_SURROGATE_START..=UTF16_LOW_SURROGATE_END).contains(unit))
+        {
+            *offset += 1;
+            let scalar = 0x10000 + ((u32::from(first) - 0xd800) << 10) + u32::from(second) - 0xdc00;
+            return Some(Ok(char::from_u32(scalar).expect("valid surrogate pair")));
+        }
+    }
+    Some(char::from_u32(u32::from(first)).ok_or(first))
+}
+
+/** Final sigma looks through case-ignorable code points for the next cased character. */
+fn following_cased(text: &JsString, mut offset: usize) -> bool {
+    while let Some(point) = case_point(text, &mut offset) {
+        match point {
+            Ok(character) if case_ignorable(character) => continue,
+            Ok(character) => return cased(character),
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/** Unicode's derived Cased property drives contextual lowercase mappings. */
+fn cased(character: char) -> bool {
+    icu_properties::CodePointSetData::new::<icu_properties::props::Cased>().contains(character)
+}
+
+/** Unicode's Case_Ignorable property does not break final-sigma context. */
+fn case_ignorable(character: char) -> bool {
+    icu_properties::CodePointSetData::new::<icu_properties::props::CaseIgnorable>()
+        .contains(character)
 }
 
 /** String.prototype.toLowerCase. */
@@ -701,20 +844,22 @@ pub(in crate::v9) fn is_space(unit: u16) -> bool {
 /** Trim either or both ends. */
 fn trim_with(vm: &mut Vm, call: &Call, start: bool, end: bool) -> Res<JsValue> {
     let text = this_string(vm, call)?;
-    let source = text.as_units();
     let mut low = 0;
-    let mut high = source.len();
+    let mut high = text.len();
     if start {
-        while low < high && is_space(source[low]) {
+        while low < high && text.unit_at(low).is_some_and(is_space) {
             low += 1;
         }
     }
     if end {
-        while high > low && is_space(source[high - 1]) {
+        while high > low && text.unit_at(high - 1).is_some_and(is_space) {
             high -= 1;
         }
     }
-    units(source[low..high].to_vec())
+    if low == 0 && high == text.len() {
+        return Ok(JsValue::String(text));
+    }
+    Ok(JsValue::String(text.slice_range(low, high)?))
 }
 
 /** String.prototype.trim. */
@@ -733,19 +878,32 @@ fn trim_end(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** String.prototype.isWellFormed. */
 fn is_well_formed(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
-    Ok(JsValue::Boolean(
-        String::from_utf16(text.as_units()).is_ok(),
-    ))
+    Ok(JsValue::Boolean(well_formed(&text)))
+}
+
+/** Check surrogate pairing directly across rope node boundaries. */
+fn well_formed(text: &JsString) -> bool {
+    char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index)))
+        .all(|unit| unit.is_ok())
 }
 
 /** String.prototype.toWellFormed. */
 fn to_well_formed(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
-    units(
-        String::from_utf16_lossy(text.as_units())
-            .encode_utf16()
-            .collect(),
-    )
+    if well_formed(&text) {
+        return Ok(JsValue::String(text));
+    }
+    if text.len() > JS_STRING_UNITS {
+        return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS).into());
+    }
+    let mut out = Vec::with_capacity(text.len());
+    for point in char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index))) {
+        push_point(
+            &mut out,
+            point.unwrap_or(char::REPLACEMENT_CHARACTER) as u32,
+        );
+    }
+    units(out)
 }
 
 /** CreateHTML (spec B.2.2.2.1), behind the legacy String.prototype HTML methods: the string
@@ -757,7 +915,7 @@ fn create_html(vm: &mut Vm, call: &Call, tag: &str, attribute: Option<&str>) -> 
     if let Some(attribute) = attribute {
         let value = arg_string(vm, call, 0)?;
         out.extend(format!(" {attribute}=\"").encode_utf16());
-        for &unit in value.as_units() {
+        for unit in (0..value.len()).filter_map(|index| value.unit_at(index)) {
             if unit == u16::from(b'"') {
                 out.extend("&quot;".encode_utf16());
             } else {
@@ -767,7 +925,7 @@ fn create_html(vm: &mut Vm, call: &Call, tag: &str, attribute: Option<&str>) -> 
         out.push(u16::from(b'"'));
     }
     out.push(u16::from(b'>'));
-    out.extend_from_slice(text.as_units());
+    out.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
     out.extend(format!("</{tag}>").encode_utf16());
     Ok(JsValue::String(JsString::from_slice(&out)?))
 }

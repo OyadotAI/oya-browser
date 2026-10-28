@@ -20,7 +20,7 @@ fn number_argument(vm: &mut Vm, value: JsValue, index: usize, signed: bool) -> R
     let ordinal = if index == 0 { "first" } else { "second" };
     let capital = if index == 0 { "First" } else { "Second" };
     let kind = if signed { "int64_t" } else { "uint64_t" };
-    let JsValue::Number(value) = value else {
+    let Some(value) = value.number_value() else {
         return Err(error(
             vm,
             &format!("Did not get a number as {ordinal} parameter."),
@@ -99,7 +99,7 @@ fn integer(value: f64, signed: bool, bits: u32) -> u64 {
 /** The slow enforce-range callback defaults nonnumeric slots to zero without coercing them. */
 fn enforce(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
-    let real = if let JsValue::Number(value) = call.arg(0) {
+    let real = if let Some(value) = call.arg(0).number_value() {
         value
     } else {
         0.0
@@ -107,7 +107,7 @@ fn enforce(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
     if !in_range(real, signed, bits) {
         return Err(error(vm, "Argument out of range."));
     }
-    let checked = if let JsValue::Number(value) = call.arg(1) {
+    let checked = if let Some(value) = call.arg(1).number_value() {
         if in_range(value, signed, bits) {
             integer(value, signed, bits)
         } else {
@@ -121,12 +121,12 @@ fn enforce(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
 /** Slow clamp callback uses primary safe-integer saturation and its real primitive-Boolean in-range switch. */
 fn clamp(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
-    let real = if let JsValue::Number(value) = call.arg(1) {
+    let real = if let Some(value) = call.arg(1).number_value() {
         value
     } else {
         0.0
     };
-    let checked = if let JsValue::Number(value) = call.arg(2) {
+    let checked = if let Some(value) = call.arg(2).number_value() {
         value
     } else {
         f64::MAX

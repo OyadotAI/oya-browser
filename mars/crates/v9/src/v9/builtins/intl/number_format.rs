@@ -130,8 +130,6 @@ const ZERO_DIGIT_CURRENCIES: [&str; 17] = [
 ];
 /** Currencies with three minor digits (CLDR). */
 const THREE_DIGIT_CURRENCIES: [&str; 7] = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
-/** The resolved locale when none is requested. */
-const DEFAULT_LOCALE: &str = "en-US";
 
 /** Install `Intl.NumberFormat` and `Intl.PluralRules` on `intl`. */
 pub(super) fn install(b: &mut Builder, intl: u32) {
@@ -439,7 +437,7 @@ fn currency_digits(code: &str) -> f64 {
 }
 
 /** The locale and the numbering system option, read first by both constructors. */
-fn locale_and_matcher(vm: &mut Vm, call: &Call) -> Res<(String, JsValue)> {
+fn locale_and_matcher(vm: &mut Vm, call: &Call) -> Res<(String, JsValue, Option<String>)> {
     let list = canonical_list(vm, &call.arg(0))?;
     let options = coerce_options(vm, call.arg(1))?;
     choice(
@@ -450,11 +448,20 @@ fn locale_and_matcher(vm: &mut Vm, call: &Call) -> Res<(String, JsValue)> {
         "best fit",
     )?;
     let locale = if list.is_empty() {
-        DEFAULT_LOCALE.into()
+        vm.page.environment.locale.clone()
     } else {
-        resolve_locale(&list)
+        resolve_locale(&list, &vm.page.environment.locale)
     };
-    Ok((locale, options))
+    let numbering = list
+        .first()
+        .and_then(|s| super::tag::parse(s))
+        .and_then(|t| {
+            t.keywords
+                .into_iter()
+                .find(|(k, _)| k == "nu")
+                .map(|(_, v)| v)
+        });
+    Ok((locale, options, numbering))
 }
 
 /** A numbering system type: 3-8 alphanumerics, dash separated. */
@@ -466,13 +473,37 @@ fn well_formed_type(text: &str) -> bool {
 
 /** `new Intl.NumberFormat(locales, options)`, also callable as a function. */
 fn construct_number(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (locale, options) = locale_and_matcher(vm, &call)?;
-    if let Some(system) = get_string(vm, &options, "numberingSystem", &[])?
+    let (mut locale, options, extension) = locale_and_matcher(vm, &call)?;
+    let requested = get_string(vm, &options, "numberingSystem", &[])?;
+    if let Some(system) = &requested
         && !well_formed_type(&system)
     {
         return Err(vm.range_error(&format!("Invalid numberingSystem : {system}")));
     }
     let mut kept = BTreeMap::new();
+    if let Some(mut tag) = super::tag::parse(&locale) {
+        tag.private = None;
+        tag.others.clear();
+        tag.transform = None;
+        locale = super::tag::to_text(&tag);
+    }
+    let default = if locale == "ar-IQ" { "arab" } else { "latn" };
+    let selected = requested
+        .as_deref()
+        .filter(|s| ["arab", "latn"].contains(s))
+        .or(extension
+            .as_deref()
+            .filter(|s| ["arab", "latn"].contains(s)))
+        .unwrap_or(default);
+    if extension.as_deref() == Some(selected)
+        && requested
+            .as_deref()
+            .filter(|s| ["arab", "latn"].contains(s))
+            .is_none_or(|r| r == selected)
+    {
+        locale.push_str(&format!("-u-nu-{selected}"));
+    }
+    kept.insert("@numbering".into(), selected.into());
     unit_options(vm, &options, &mut kept)?;
     let style = kept["style"].clone();
     let notation = choice(
@@ -869,8 +900,10 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
     let sign = sign_for(options, value, zero, negative);
     let style = opt(options, "style");
     let sym = symbols(options);
+    let arab = opt(options, "@numbering") == "arab";
     let accounting = style == "currency"
         && opt(options, "currencySign") == "accounting"
+        && !arab
         && sign == Some('-')
         && sym.accounting_parens;
     let mut out = Parts::new();
@@ -895,14 +928,26 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
                     out.push(("currency", name.into()));
                 }
                 display => {
-                    let local = locale_data::currency_symbol(opt(options, "@locale"), code);
+                    let local =
+                        if arab && opt(options, "@locale").starts_with("ar-IQ") && code == "USD" {
+                            Some("US$")
+                        } else {
+                            locale_data::currency_symbol(opt(options, "@locale"), code)
+                        };
                     let symbol = match (display, row) {
                         ("code", _) => None,
                         ("narrowSymbol", Some(r)) => Some(r.2),
                         _ => local.or(row.map(|r| r.1)),
                     };
                     let symbol = symbol.unwrap_or(code);
-                    if !sym.currency_first {
+                    if arab {
+                        if opt(options, "@locale").starts_with("ar-") {
+                            out.push(("literal", "\u{200f}".into()));
+                        }
+                        out.extend(number);
+                        out.push(("literal", "\u{a0}".into()));
+                        out.push(("currency", symbol.into()));
+                    } else if !sym.currency_first {
                         out.extend(number);
                         out.push(("literal", sym.currency_gap.into()));
                         out.push(("currency", symbol.into()));
@@ -921,7 +966,7 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
         }
         "percent" => {
             out.extend(number);
-            if !sym.percent_gap.is_empty() {
+            if !arab && !sym.percent_gap.is_empty() {
                 out.push(("literal", sym.percent_gap.into()));
             }
             out.push(("percentSign", "%".into()));
@@ -955,7 +1000,47 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
     if accounting {
         out.push(("literal", ")".into()));
     }
+    localize_parts(options, &mut out);
     out
+}
+
+/** Localize digit parts after numeric grouping and plural calculations are complete. */
+fn localize_parts(options: &BTreeMap<String, String>, parts: &mut Parts) {
+    let arab = opt(options, "@numbering") == "arab";
+    let arabic_locale =
+        opt(options, "@locale") == "ar" || opt(options, "@locale").starts_with("ar-");
+    if !arab && !arabic_locale {
+        return;
+    }
+    let mut localized = Parts::new();
+    for (kind, value) in parts.drain(..) {
+        if kind == "minusSign" || kind == "plusSign" || (arab && kind == "exponentMinusSign") {
+            localized.push(("literal", if arab { "\u{061c}" } else { "\u{200e}" }.into()));
+        }
+        if !arab && kind == "percentSign" {
+            localized.push(("literal", "\u{200e}".into()));
+        }
+        let value = match (arab, kind) {
+            (true, "integer" | "fraction" | "exponentInteger") => value
+                .chars()
+                .map(|c| {
+                    c.to_digit(10)
+                        .and_then(|n| char::from_u32(0x660 + n))
+                        .unwrap_or(c)
+                })
+                .collect(),
+            (true, "group") => "٬".into(),
+            (true, "decimal") => "٫".into(),
+            (true, "percentSign") => "٪".into(),
+            (true, "exponentSeparator") => if arabic_locale { "أس" } else { "اس" }.into(),
+            _ => value,
+        };
+        localized.push((kind, value));
+        if kind == "percentSign" {
+            localized.push(("literal", if arab { "\u{061c}" } else { "\u{200e}" }.into()));
+        }
+    }
+    *parts = localized;
 }
 
 /** Parts as `[{type, value}]`, with a `source` when given. */
@@ -1147,7 +1232,16 @@ fn resolved_options(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let data = unwrap(vm, &call.this, "NumberFormat")?;
     let id = vm.new_object()?;
     vm.put(id, "locale", JsValue::string(&data.locale)?)?;
-    vm.put(id, "numberingSystem", JsValue::string("latn")?)?;
+    let numbering = opt(&data.options, "@numbering");
+    vm.put(
+        id,
+        "numberingSystem",
+        JsValue::string(if numbering.is_empty() {
+            "latn"
+        } else {
+            numbering
+        })?,
+    )?;
     for name in [
         "style",
         "currency",
@@ -1179,7 +1273,7 @@ fn construct_plural(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.new_target.is_none() {
         return Err(vm.type_error("Constructor Intl.PluralRules requires 'new'"));
     }
-    let (locale, options) = locale_and_matcher(vm, &call)?;
+    let (locale, options, _) = locale_and_matcher(vm, &call)?;
     let mut kept = BTreeMap::new();
     let kind = choice(vm, &options, "type", &["cardinal", "ordinal"], "cardinal")?;
     kept.insert("type".into(), kind);

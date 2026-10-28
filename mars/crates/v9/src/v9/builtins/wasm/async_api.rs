@@ -58,7 +58,8 @@ fn received(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .first()
         .cloned()
         .ok_or_else(|| vm.type_error("invalid async WebAssembly imports capture"))?;
-    let instance = instance::create(vm, &module, &imports, None)?;
+    let instance = instance::create(vm, &module, &imports, None)
+        .map_err(|error| api_prefix(vm, error, "WebAssembly.instantiate()"))?;
     let result = vm.new_object()?;
     vm.define(result, key("module"), Descriptor::data(module))?;
     vm.define(

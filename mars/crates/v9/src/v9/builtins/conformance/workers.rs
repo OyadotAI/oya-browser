@@ -221,7 +221,12 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let deadline = vm
         .deadline
         .unwrap_or_else(|| Instant::now() + RECEIVE_TIMEOUT);
-    match host.receive(id, vm.page.environment.conformance_worker_id, deadline)? {
+    let requester = vm.page.environment.conformance_worker_id;
+    let mark = vm.pins.len();
+    vm.pin(call.this.clone());
+    let result = host.receive(id, requester, deadline, || host.collection_safepoint(requester, vm));
+    vm.pins.truncate(mark);
+    match result? {
         Some(graph) => clone::decode(vm, graph),
         None => Ok(JsValue::Undefined),
     }
@@ -298,7 +303,7 @@ fn transfers(vm: &mut Vm, list: &JsValue) -> Res<Vec<ObjectId>> {
             .ok_or_else(|| vm.dom_exception("DataCloneError", "Invalid transferable"))?;
         if !matches!(
             vm.heap.get(id).map(|object| &object.class),
-            Some(Class::ArrayBuffer(_))
+            Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))
         ) || !crate::v9::builtins::buffer_detachable(vm, id)
             || buffers.contains(&id)
         {

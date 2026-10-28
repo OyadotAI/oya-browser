@@ -27,13 +27,23 @@ pub(super) fn item(vm: &mut Vm, id: ObjectId, name: &str, index: u32) -> Res<JsV
     value.ok_or_else(|| vm.type_error("invalid WebAssembly instance index"))
 }
 /** Imported getters execute once in declaration order; their own thrown values pass through. */
-fn import(vm: &mut Vm, imports: &JsValue, declaration: &types::Import) -> Res<JsValue> {
+fn import(
+    vm: &mut Vm,
+    imports: &JsValue,
+    declaration: &types::Import,
+    index: usize,
+) -> Res<JsValue> {
     if !matches!(imports, JsValue::Object(_)) {
-        return Err(vm.type_error("WebAssembly imports must be an object"));
+        let error = vm.type_error("Argument 1 must be an object");
+        return Err(native_import_error(vm, error));
     }
     let namespace = vm.get(imports, &key(&declaration.module))?;
     if !matches!(namespace, JsValue::Object(_)) {
-        return Err(link(vm, "WebAssembly import module must be an object"));
+        let error = vm.type_error(&format!(
+            "Import #{index} {:?}: module is not an object or function",
+            declaration.module
+        ));
+        return Err(native_import_error(vm, error));
     }
     vm.get(&namespace, &key(&declaration.name))
 }
@@ -45,40 +55,105 @@ fn resolve_imports(
     imports: &JsValue,
 ) -> Res<[Vec<JsValue>; 5]> {
     let mut spaces: [Vec<JsValue>; 5] = std::array::from_fn(|_| Vec::new());
-    for declaration in &m.imports {
+    for (index, declaration) in m.imports.iter().enumerate() {
         let value = match imports::resolve(vm, module_id, m, declaration)? {
             Some(value) => value,
-            None => import(vm, imports, declaration)?,
+            None => import(vm, imports, declaration, index)?,
         };
         match declaration.kind {
             External::Function(ty) => {
                 if !vm.is_callable(&value) && !jspi::is_suspending(vm, &value) {
-                    return Err(link(vm, "WebAssembly function import is not callable"));
+                    let error = link(
+                        vm,
+                        &format!(
+                            "Import #{index} {:?} {:?}: function import requires a callable",
+                            declaration.module, declaration.name
+                        ),
+                    );
+                    return Err(native_import_error(vm, error));
                 }
                 if is_function(vm, &value) {
-                    if !function_matches(vm, m, ty, &value)? {
-                        return Err(link(vm, "WebAssembly imported function type mismatch"));
+                    let compatible = if declaration.exact_function { function_exact(vm, m, ty, &value)? } else { function_matches(vm, m, ty, &value)? };
+                    if !compatible {
+                        let error = link(
+                            vm,
+                            &format!(
+                                "Import #{index} {:?} {:?}: imported function does not match the expected type",
+                                declaration.module, declaration.name
+                            ),
+                        );
+                        return Err(native_import_error(vm, error));
                     }
                 }
                 spaces[0].push(value)
             }
             External::Tag(ty) => {
-                if !exceptions::compatible(vm, m, ty, &value)? {
+                let compatible = match exceptions::compatible(vm, m, ty, &value) {
+                    Ok(value) => value,
+                    Err(Thrown::Value(_)) => {
+                        return Err(link(vm, "tag import requires a WebAssembly.Tag"));
+                    }
+                    Err(fatal) => return Err(fatal),
+                };
+                if !compatible {
                     return Err(link(vm, "imported tag does not match the expected type"));
                 }
                 spaces[4].push(value)
             }
             External::Table(ty, limits) => {
-                if !table::compatible(vm, &value, ty, limits, m)? {
+                let object = brand(vm, &value, TABLE)?;
+                if table::is64(vm, object) != limits.address64 {
+                    let (actual, expected) = if limits.address64 {
+                        ("i32", "i64")
+                    } else {
+                        ("i64", "i32")
+                    };
                     return Err(link(
                         vm,
-                        "WebAssembly imported table type or limits mismatch",
+                        &format!(
+                            "WebAssembly.Instance(): cannot import {actual} table as {expected}"
+                        ),
                     ));
+                }
+                if !table::compatible(vm, &value, ty, limits, m)? {
+                    let error = link(
+                        vm,
+                        &format!(
+                            "Import #{index} {:?} {:?}: imported table does not match the expected type",
+                            declaration.module, declaration.name
+                        ),
+                    );
+                    return Err(native_import_error(vm, error));
                 }
                 spaces[1].push(value)
             }
             External::Memory(limits) => {
-                if !memory::compatible(vm, &value, limits)? {
+                let compatible = match memory::compatible(vm, &value, limits) {
+                    Ok(value) => value,
+                    Err(Thrown::Value(_)) => {
+                        return Err(link(
+                            vm,
+                            "memory import must be a WebAssembly.Memory object",
+                        ));
+                    }
+                    Err(fatal) => return Err(fatal),
+                };
+                if !compatible {
+                    if let Some(object) = value.object() {
+                        if address::is64(vm, object) != limits.address64 {
+                            let (actual, expected) = if limits.address64 {
+                                ("i32", "i64")
+                            } else {
+                                ("i64", "i32")
+                            };
+                            return Err(link(
+                                vm,
+                                &format!(
+                                    "WebAssembly.Instance(): cannot import {actual} memory as {expected}"
+                                ),
+                            ));
+                        }
+                    }
                     return Err(link(vm, "WebAssembly imported memory limits mismatch"));
                 }
                 spaces[2].push(value)
@@ -89,10 +164,25 @@ fn resolve_imports(
                     .is_some_and(|id| get(vm, id, GLOBAL).is_some())
                 {
                     let (_, actual, changeable) = global::ty(vm, &value)?;
-                    if changeable != mutable
-                        || !type_context::equivalent(vm, value.object().unwrap(), actual, m, ty)?
+                    let mut compatible =
+                        type_context::equivalent(vm, value.object().unwrap(), actual, m, ty)?;
+                    if !mutable {
+                        compatible |= type_context::subtype(vm, value.object().unwrap(), actual, m, ty)?;
+                    }
+                    if !mutable
+                        && actual.reference().is_some_and(|(_, nullable)| !nullable)
+                        && ty.reference().is_some_and(|(_, nullable)| nullable)
                     {
-                        return Err(link(vm, "WebAssembly imported global type mismatch"));
+                        compatible |= type_context::equivalent(
+                            vm,
+                            value.object().unwrap(),
+                            actual.with_nullability(true),
+                            m,
+                            ty,
+                        )?;
+                    }
+                    if changeable != mutable || !compatible {
+                        return Err(link(vm, "imported global does not match the expected type"));
                     }
                     value
                 } else {
@@ -102,9 +192,42 @@ fn resolve_imports(
                             "mutable global import must be a WebAssembly.Global",
                         ));
                     }
-                    let global = global::create(vm, ty, false, value, ids(vm).global)?;
+                    if !global_import_value_valid(m, ty, &value) {
+                        return Err(link(
+                            vm,
+                            "global import must be a number, valid Wasm reference, or WebAssembly.Global object",
+                        ));
+                    }
+                    let is_wasm_function = is_function(vm, &value);
+                    let global = match global::create(vm, ty, false, value, ids(vm).global) {
+                        Ok(global) => global,
+                        Err(Thrown::Value(_)) => {
+                            return Err(link(
+                                vm,
+                                if is_wasm_function {
+                                    "assigned exported function has to be a subtype of the expected type"
+                                } else {
+                                    "JS object does not match expected wasm type"
+                                },
+                            ));
+                        }
+                        Err(fatal) => return Err(fatal),
+                    };
                     type_context::bind(vm, global, module_id);
-                    let _ = global::read(vm, &JsValue::Object(global))?;
+                    match global::read(vm, &JsValue::Object(global)) {
+                        Ok(_) => (),
+                        Err(Thrown::Value(_)) => {
+                            return Err(link(
+                                vm,
+                                if is_wasm_function {
+                                    "assigned exported function has to be a subtype of the expected type"
+                                } else {
+                                    "JS object does not match expected wasm type"
+                                },
+                            ));
+                        }
+                        Err(fatal) => return Err(fatal),
+                    }
                     JsValue::Object(global)
                 };
                 spaces[3].push(value)
@@ -112,6 +235,26 @@ fn resolve_imports(
         }
     }
     Ok(spaces)
+}
+
+/** Only native import failures receive API prefixes; authored getter exceptions stay untouched. */
+fn native_import_error(vm: &mut Vm, error: Thrown) -> Thrown {
+    if let Thrown::Value(JsValue::Object(id)) = &error {
+        set(vm, *id, "wasm.compile.native", JsValue::Boolean(true));
+    }
+    error
+}
+
+/** Primitive numeric imports are type checked without invoking user-authored conversion hooks. */
+fn global_import_value_valid(m: &Module, ty: Type, value: &JsValue) -> bool {
+    if !gc_types::js_compatible(m, ty) {
+        return false;
+    }
+    match ty {
+        Type::I32 | Type::F32 | Type::F64 => value.number_value().is_some(),
+        Type::I64 => matches!(value, JsValue::BigInt(_) | JsValue::BigIntWide(_)),
+        _ => true,
+    }
 }
 
 /** Instantiate the validated module, allocate index spaces, initialize segments, then start. */
@@ -122,6 +265,10 @@ pub(super) fn create(
     target: Option<&JsValue>,
 ) -> Res<ObjectId> {
     let (module_id, m) = module(vm, value)?;
+    if *imports != JsValue::Undefined && imports.object().is_none() {
+        let error = vm.type_error("Argument 1 must be an object");
+        return Err(native_import_error(vm, error));
+    }
     let [
         mut functions,
         mut tables,
@@ -241,7 +388,18 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.new_target.is_none() {
         return Err(vm.type_error("WebAssembly.Instance must be invoked with 'new'"));
     }
-    create(vm, &call.arg(0), &call.arg(1), call.new_target.as_ref()).map(JsValue::Object)
+    if !call
+        .arg(0)
+        .object()
+        .is_some_and(|id| get(vm, id, MODULE).is_some())
+    {
+        return Err(
+            vm.type_error("WebAssembly.Instance(): Argument 0 must be a WebAssembly.Module")
+        );
+    }
+    create(vm, &call.arg(0), &call.arg(1), call.new_target.as_ref())
+        .map(JsValue::Object)
+        .map_err(|error| api_prefix(vm, error, "WebAssembly.Instance()"))
 }
 /** Exports have a stable identity and are not reached through author property getters. */
 pub(super) fn exports(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -281,6 +439,33 @@ pub(super) fn function_matches(
     let actual_type = actual
         .function_type(index)
         .map_err(|e| compile_failure(vm, e))?;
+    let mut current = Some(actual_type);
+    for _ in 0..=actual.definitions.len() {
+        let Some(index) = current else {
+            return Ok(false);
+        };
+        if gc_types::equivalent(&actual, index, expected, ty) {
+            return Ok(true);
+        }
+        current = actual
+            .definitions
+            .get(index as usize)
+            .and_then(|d| d.parent);
+    }
+    Ok(false)
+}
+
+/** Exact function-reference casts do not accept a proper subtype. */
+pub(super) fn function_exact(
+    vm: &mut Vm,
+    expected: &Module,
+    ty: u32,
+    value: &JsValue,
+) -> Res<bool> {
+    let (_, actual, index) = target(vm, value)?;
+    let actual_type = actual
+        .function_type(index)
+        .map_err(|e| compile_failure(vm, e))?;
     Ok(gc_types::equivalent(&actual, actual_type, expected, ty))
 }
 
@@ -297,21 +482,23 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .params
         .iter()
         .chain(&sig.results)
-        .any(|t| !t.js_compatible())
+        .any(|t| !gc_types::js_compatible(&m, *t))
     {
-        return Err(vm.type_error(
-            "type incompatibility when transforming from/to JS: unsupported value type",
-        ));
+        let view = sig.params.iter().chain(&sig.results).any(|ty| matches!(ty, Type::Ref(-26 | -32 | -31, _)));
+        return Err(vm.type_error(if view { "type incompatibility when transforming from/to JS" } else { "type incompatibility when transforming from/to JS: unsupported value type" }));
     }
     let mut args = Vec::new();
     for (i, ty) in sig.params.iter().enumerate() {
         let value = global::convert(vm, *ty, &call.arg(i))?;
         if ty.reference().is_some() && !gc::matches(vm, &m, *ty, &value)? {
-            return Err(vm.type_error("WebAssembly parameter reference type mismatch"));
+            return Err(vm.type_error("type incompatibility when transforming from/to JS"));
         }
         args.push(value)
     }
-    let result = execute::call(vm, instance, &m, index, args)?;
+    let result: Vec<_> = execute::call(vm, instance, &m, index, args)?
+        .into_iter()
+        .map(|value| gc::expose(vm, value))
+        .collect();
     match result.as_slice() {
         [] => Ok(JsValue::Undefined),
         [one] => Ok(one.clone()),
@@ -331,6 +518,7 @@ pub(super) fn constant_value(vm: &mut Vm, instance: ObjectId, value: &Constant) 
                 match instruction {
                     types::Instruction::Constant(c) => stack.push(constant_value(vm, instance, c)?),
                     types::Instruction::Simple(op) => numeric::run(vm, *op, &mut stack)?,
+                    types::Instruction::Atomic(7, _, _) => stack.push(gc::shared::new_wait_queue(vm)?),
                     types::Instruction::Gc(op, args) => {
                         gc::run(vm, instance, &m, *op, args, &mut stack)?
                     }
@@ -358,16 +546,17 @@ pub(super) fn constant_value(vm: &mut Vm, instance: ObjectId, value: &Constant) 
 /** Active segments are range-checked in full before any bytes or table slots are changed. */
 fn initialize(vm: &mut Vm, instance: ObjectId, m: &Module) -> Res<()> {
     let mut data = Vec::new();
-    for segment in &m.data {
+    for (index, segment) in m.data.iter().enumerate() {
         if let (Some(memory), Some(offset)) = (segment.memory, &segment.offset) {
             let memory = item(vm, instance, MEMORIES, memory)?;
             let offset = constant_value(vm, instance, offset)?;
             let at = address::effective(vm, &memory, &offset, 0)?;
+            let size = memory::length(vm, &memory)?;
             if at
                 .checked_add(segment.bytes.len())
-                .is_none_or(|end| end > memory::length(vm, &memory).unwrap_or(0))
+                .is_none_or(|end| end > size)
             {
-                return Err(trap(vm, "data segment out of bounds"));
+                return Err(trap(vm, &format!("WebAssembly.Instance(): data segment {index} is out of bounds (offset {at}, length {}, memory size {size})", segment.bytes.len())));
             }
             data.push((memory, at, &segment.bytes));
         }
@@ -377,7 +566,7 @@ fn initialize(vm: &mut Vm, instance: ObjectId, m: &Module) -> Res<()> {
         if let (Some(table), Some(offset)) = (segment.table, &segment.offset) {
             let table = item(vm, instance, TABLES, table)?;
             let offset = constant_value(vm, instance, offset)?;
-            let at = numeric::i32_value(&offset)? as u32 as usize;
+            let at = table::operand_index(vm, &table, &offset)? as usize;
             if at
                 .checked_add(segment.values.len())
                 .is_none_or(|end| end > table::length(vm, &table).unwrap_or(0))

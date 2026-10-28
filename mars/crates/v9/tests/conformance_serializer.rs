@@ -33,6 +33,25 @@ fn primitive_roundtrips_preserve_exact_language_values() {
         ["true"]
     );
 }
+
+#[test]
+/** Encoding compact input preserves its backing and emits the actual content. */
+fn serialization_does_not_flatten_compact_input() {
+    let source = "const s='ab'.repeat(100000);if(d8.serializer.deserialize(d8.serializer.serialize(s))!==s)throw Error('roundtrip');";
+    let execution = common::load_with(
+        source,
+        &PageEnvironment {
+            conformance_d8: true,
+            ..common::environment()
+        },
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert!(serde_json::to_string(&execution.state).unwrap().len() < 100_000);
+}
 #[test]
 /** Known native version-15 records decode through tags and ZigZag rather than a private wrapper format. */
 fn native_wire_records_are_accepted() {

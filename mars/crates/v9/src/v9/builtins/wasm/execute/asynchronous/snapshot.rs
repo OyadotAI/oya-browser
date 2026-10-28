@@ -5,7 +5,7 @@ pub(super) fn save(vm: &mut Vm, frames: &[Frame]) -> Res<ObjectId> {
     let total = frames
         .iter()
         .try_fold(0usize, |total, frame| {
-            total.checked_add(frame.locals.len() + frame.stack.len() + frame.controls.len() + 6)
+            total.checked_add(frame.locals.len() + frame.stack.len() + frame.controls.len() * 4 + 6)
         })
         .ok_or_else(|| vm.type_error("oversized Wasm continuation"))?;
     if total > vm.limits.properties {
@@ -19,13 +19,16 @@ pub(super) fn save(vm: &mut Vm, frames: &[Frame]) -> Res<ObjectId> {
     for frame in frames {
         let locals = vm.new_array(frame.locals.clone())?;
         let stack = vm.new_array(frame.stack.clone())?;
-        let controls = vm.new_array(
-            frame
-                .controls
-                .iter()
-                .map(|control| JsValue::Number(control.height as f64))
-                .collect(),
-        )?;
+        let mut encoded_controls = Vec::new();
+        for control in &frame.controls {
+            let record = vm.new_array(vec![
+                JsValue::Number(control.height as f64),
+                JsValue::Boolean(control.caught.is_some()),
+                control.caught.clone().unwrap_or(JsValue::Undefined),
+            ])?;
+            encoded_controls.push(JsValue::Object(record));
+        }
+        let controls = vm.new_array(encoded_controls)?;
         let record = vm.new_array(vec![
             JsValue::Object(frame.instance),
             JsValue::Number(frame.index as f64),
@@ -84,6 +87,13 @@ fn typed(vm: &mut Vm, m: &Module, ty: Type, value: &JsValue) -> Res<bool> {
 }
 /** Local initialization and the parent's suspended operand stack are recomputed from validated original code. */
 pub(super) fn restore(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
+    restore_inner(vm, value, false)
+}
+/** Effect suspensions end at a real suspend instruction instead of an imported Promise. */
+pub(super) fn restore_effect(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
+    restore_inner(vm, value, true)
+}
+fn restore_inner(vm: &mut Vm, value: &JsValue, effect: bool) -> Res<Vec<Frame>> {
     let records = list(vm, value, vm.limits.frames)?;
     if records.is_empty() {
         return Err(vm.type_error("empty Wasm continuation"));
@@ -122,10 +132,26 @@ pub(super) fn restore(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
                 &module.bodies[index as usize - module.imported_functions()].code,
             )?
         });
-        let heights = list(vm, &fields[5], super::super::super::constants::MAX_DEPTH)?
-            .iter()
-            .map(|value| self::index(vm, value))
-            .collect::<Res<Vec<_>>>()?;
+        let entries = list(vm, &fields[5], super::super::super::constants::MAX_DEPTH)?;
+        let mut heights = Vec::new();
+        let mut caught = Vec::new();
+        for value in entries {
+            if matches!(value, JsValue::Number(_)) {
+                heights.push(self::index(vm, &value)?);
+                caught.push(None);
+            } else {
+                let record = list(vm, &value, 3)?;
+                if record.len() != 3 {
+                    return Err(vm.type_error("invalid Wasm continuation control record"));
+                }
+                heights.push(self::index(vm, &record[0])?);
+                caught.push(match record[1] {
+                    JsValue::Boolean(false) if record[2] == JsValue::Undefined => None,
+                    JsValue::Boolean(true) => Some(record[2].clone()),
+                    _ => return Err(vm.type_error("invalid Wasm continuation catch state")),
+                });
+            }
+        }
         let (stack_types, initialized, expected_heights) = if imported {
             if position + 1 != records.len() || pc != 1 || !stack.is_empty() {
                 return Err(vm.type_error("invalid suspended Wasm import"));
@@ -136,13 +162,25 @@ pub(super) fn restore(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
             }
             (vec![], vec![true; locals.len()], vec![])
         } else {
-            if position + 1 == records.len() {
+            if position + 1 == records.len() && !effect {
                 return Err(vm.type_error("Wasm continuation must await an imported Promise"));
             }
             let op = pc
                 .checked_sub(1)
                 .and_then(|pc| program.ops.get(pc))
                 .ok_or_else(|| vm.type_error("invalid Wasm continuation position"))?;
+            if position + 1 == records.len() && effect {
+                let super::program::Code::Plain(instruction) = &op.code else {
+                    return Err(vm.type_error("invalid suspended effect"));
+                };
+                let mut inner = instruction;
+                while let Instruction::Located(_, next) = inner {
+                    inner = next;
+                }
+                if !matches!(inner, Instruction::Suspend(_) | Instruction::Switch(_, _)) {
+                    return Err(vm.type_error("invalid suspended effect"));
+                }
+            }
             super::super::super::validate::suspended_stack_path(&module, index, &op.path)
                 .map_err(|e| compile_failure(vm, e))?
         };
@@ -159,14 +197,21 @@ pub(super) fn restore(vm: &mut Vm, value: &JsValue) -> Res<Vec<Frame>> {
         if scopes.len() != heights.len() {
             return Err(vm.type_error("invalid Wasm continuation control stack"));
         }
-        let controls = scopes
-            .iter()
-            .zip(heights)
-            .map(|(scope, height)| super::frame::Control {
+        let mut controls = Vec::new();
+        for ((scope, height), caught) in scopes.iter().zip(heights).zip(caught) {
+            let active_catch = program.scopes[*scope]
+                .legacy
+                .iter()
+                .any(|(_, start)| *start <= pc && pc <= program.scopes[*scope].end);
+            if caught.is_some() != active_catch {
+                return Err(vm.type_error("invalid Wasm continuation catch scope"));
+            }
+            controls.push(super::frame::Control {
                 scope: *scope,
                 height,
-            })
-            .collect();
+                caught,
+            });
+        }
         if stack_types.len() != stack.len() {
             return Err(vm.type_error("invalid Wasm continuation operand stack"));
         }

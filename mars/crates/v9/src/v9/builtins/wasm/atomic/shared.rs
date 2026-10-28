@@ -11,6 +11,10 @@ fn wait(
     expected: JsValue,
     timeout: JsValue,
 ) -> Res<JsValue> {
+    #[cfg(feature = "conformance")]
+    if vm.page.state.atomics_wait_disallowed {
+        return Err(trap(vm, "Atomics wait is not allowed"));
+    }
     let expected = if op == 1 {
         numeric::i32_value(&expected)?.to_le_bytes().to_vec()
     } else {
@@ -82,7 +86,17 @@ pub(super) fn run(
             }
             old
         })
-        .ok_or_else(|| trap(vm, "memory access out of bounds"))?;
+        .ok_or_else(|| {
+            if bytes.is_sparse() {
+                crate::protocol::EngineError::limit(
+                    "V9 buffer resident bytes",
+                    super::super::BUFFER_BYTES,
+                )
+                .into()
+            } else {
+                trap(vm, "memory access out of bounds")
+            }
+        })?;
     push_result(op, ty, old, stack);
     Ok(())
 }

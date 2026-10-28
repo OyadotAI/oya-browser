@@ -15,13 +15,17 @@ impl Vm<'_> {
     }
 
     /** Only inert primitive data and native brands are inspected; user getters and toString are never run. */
-    fn iterator_value_description(&self, value: &JsValue) -> String {
+    pub(in crate::v9) fn iterator_value_description(&self, value: &JsValue) -> String {
         match value {
             JsValue::Undefined | JsValue::Hole => "undefined".into(),
             JsValue::Null => "null".into(),
             JsValue::String(value) => value.lossy(),
             JsValue::Boolean(value) => value.to_string(),
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(value) => crate::v9::value::number_to_string(*value),
             JsValue::Number(value) => crate::v9::value::number_to_string(*value),
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => crate::v9::value::number_to_string(value.value),
             JsValue::BigInt(value) => value.to_string(),
             JsValue::BigIntWide(value) => value.diagnostic(),
             JsValue::Symbol(id) => {

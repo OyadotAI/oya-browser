@@ -2,6 +2,8 @@
 use super::*;
 use crate::v9::vm::data::SharedBytes;
 mod atomics;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use atomics::waiter_count;
 pub(in crate::v9) use atomics::{is_poll, notify_shared};
 mod snapshots;
 pub(in crate::v9) use crate::v9::vm::data::SharedBytes as SharedBuffer;
@@ -19,7 +21,17 @@ pub(in crate::v9) fn import_shared_buffer(vm: &mut Vm, buffer: SharedBuffer) -> 
     let buffer = buffer.for_agent(agent(vm));
     #[cfg(feature = "conformance")]
     let buffer = match vm.page.environment.conformance_workers.clone() {
-        Some(host) => host.shared(vm.page.environment.conformance_worker_id, buffer)?,
+        Some(host) => {
+            let endpoint = vm.page.environment.conformance_worker_id;
+            match host.shared(endpoint, buffer.clone()) {
+                Ok(value) => value,
+                Err(error) if error.code == "limit_exceeded" => {
+                    vm.collect_now()?;
+                    host.shared(endpoint, buffer)?
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         None => buffer,
     };
     vm.alloc(Object::new(

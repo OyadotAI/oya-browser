@@ -25,6 +25,14 @@ pub(in crate::v9) fn parse(tokens: Vec<Token>) -> EngineResult<Program> {
     Parser::new(tokens, false).program()
 }
 
+/** The explicitly enabled fixture grammar recognizes only implemented shell intrinsics. */
+#[cfg(feature = "conformance")]
+pub(in crate::v9) fn parse_native_fixture(tokens: Vec<Token>) -> EngineResult<Program> {
+    let mut parser = Parser::new(tokens, false);
+    parser.native_fixture = true;
+    parser.program()
+}
+
 /** Direct eval inherits its caller's strict grammar, including nested function bodies. */
 pub(in crate::v9) fn parse_strict(tokens: Vec<Token>) -> EngineResult<Program> {
     Parser::new(tokens, true).program()
@@ -95,6 +103,8 @@ struct Context {
 
 /** A recursive-descent parser over the scanner's tokens. */
 pub(in crate::v9) struct Parser {
+    #[cfg(feature = "conformance")]
+    native_fixture: bool,
     tokens: Vec<Token>,
     position: usize,
     /// Index of the matching `)` for each `(`, so arrow heads are found without backtracking.
@@ -180,6 +190,8 @@ impl Parser {
             }
         }
         Self {
+            #[cfg(feature = "conformance")]
+            native_fixture: false,
             tokens,
             position: 0,
             closers,

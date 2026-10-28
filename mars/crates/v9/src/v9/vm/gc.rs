@@ -35,6 +35,11 @@ impl Collection {
 #[derive(Default)]
 pub(super) struct Marker {
     pub objects: FastSet<ObjectId>,
+    #[cfg(feature = "conformance")]
+    pub shared_numbers: Vec<(ObjectId, u64)>,
+    #[cfg(feature = "conformance")]
+    pub local_numbers: Vec<(ObjectId, u64)>,
+    strings: Vec<crate::v9::value::JsString>,
     pub envs: FastSet<EnvId>,
     /** Symbols participate in weak liveness even though their identity ledger is not recycled. */
     pub symbols: FastSet<u32>,
@@ -49,10 +54,34 @@ pub(super) struct Marker {
 }
 
 impl Marker {
+    /** Count marked string backing once, including strings held only by active frames or pins. */
+    fn resident_string_units(&self) -> usize {
+        let mut seen = FastSet::default();
+        let mut bytes = 0usize;
+        for string in &self.strings {
+            string.resident_allocations(|node, identity, _, upper| {
+                if seen.insert((node, identity)) {
+                    bytes = bytes.saturating_add(upper);
+                }
+            });
+        }
+        bytes.div_ceil(2)
+    }
     /** Queue a value. */
     pub(super) fn value(&mut self, value: &JsValue) {
         match value {
             JsValue::Object(id) => self.object(*id),
+            JsValue::String(value) => self.strings.push(value.clone()),
+            #[cfg(feature = "conformance")]
+            JsValue::LocalNumber(value) => {
+                self.local_numbers.push((value.root, value.to_bits()));
+                self.object(value.root);
+            }
+            #[cfg(feature = "conformance")]
+            JsValue::SharedNumber(value) => {
+                self.shared_numbers.push((value.root, value.to_bits()));
+                self.object(value.root);
+            }
             JsValue::Symbol(id) if self.symbols.insert(*id) => {
                 self.weak_live.push(TableKey::Symbol(*id))
             }
@@ -230,6 +259,8 @@ impl Vm<'_> {
         for value in &roots {
             marker.value(value);
         }
+        #[cfg(feature = "conformance")]
+        for text in self.page.state.code_constants.values() { marker.value(&JsValue::String(text.clone())); }
         self.trace(&mut marker);
         let cleanup = if kind == Collection::Snapshot {
             self.trace_snapshot_weak(&mut marker);
@@ -238,6 +269,13 @@ impl Vm<'_> {
             self.trace_ephemerons(&mut marker);
             self.clear_dead_weak(&marker)
         };
+        #[cfg(feature = "conformance")]
+        if kind != Collection::Snapshot {
+            let mut seen = std::collections::BTreeSet::new();
+            for string in &marker.strings {
+                string.age_reachable(kind == Collection::Major, &mut seen);
+            }
+        }
         self.heap
             .objects
             .retain(|id, _| marker.objects.contains(id));
@@ -245,14 +283,21 @@ impl Vm<'_> {
         self.heap.envs.retain(|id, _| marker.envs.contains(id));
         self.templates.retain_objects(&marker.objects);
         #[cfg(feature = "conformance")]
-        if kind == Collection::Minor {
+        if kind != Collection::Snapshot {
             for object in self.heap.objects.values_mut() {
-                object.age = object.age.saturating_add(1).min(PROMOTION_AGE);
+                object.age = if kind == Collection::Major {
+                    PROMOTION_AGE
+                } else {
+                    object.age.saturating_add(1).min(PROMOTION_AGE)
+                };
             }
         }
         self.sweep_realms(&marker.objects);
         self.page.sweep(&marker.objects);
         self.heap.recount();
+        self.heap.last_marked_string_units = marker.resident_string_units();
+        for string in &marker.strings { self.heap.string_budget.register(string); }
+        self.heap.last_registered_string_units = self.heap.string_budget.resident_units();
         self.heap.collected = self.heap.objects.len() + self.heap.envs.len();
         #[cfg(feature = "conformance")]
         crate::v9::builtins::record_collection(self, kind.label(), self.heap.objects.len())?;
@@ -297,6 +342,10 @@ impl Vm<'_> {
                         marker.object(proto);
                     }
                     for (key, prop) in object.props.iter() {
+                        if let super::heap::Key::Str(value) | super::heap::Key::Private(value) = key
+                        {
+                            marker.strings.push(value.clone());
+                        }
                         if let super::heap::Key::Sym(id) = key {
                             marker.value(&JsValue::Symbol(*id));
                         }
@@ -334,6 +383,8 @@ impl Vm<'_> {
 /** Edges held inside an object's internal data. */
 fn trace_class(class: &Class, marker: &mut Marker) {
     match class {
+        Class::String(value) => marker.strings.push(value.clone()),
+        Class::RegExp(value) => marker.strings.push(value.source.clone()),
         Class::SharedArrayBuffer(buffer) => {
             for callback in buffer.async_callbacks() {
                 marker.object(callback);
@@ -346,6 +397,9 @@ fn trace_class(class: &Class, marker: &mut Marker) {
             }
         }
         Class::Function(function) => {
+            if let Some(name) = &function.name {
+                marker.value(&name.tail);
+            }
             if let Some(home) = function.home {
                 marker.object(home);
             }
@@ -425,7 +479,9 @@ fn trace_class(class: &Class, marker: &mut Marker) {
                 marker.value(next);
             }
             IterState::Matches { regexp, .. } => marker.object(*regexp),
-            IterState::String { .. } => {}
+            IterState::String { text, .. } => {
+                marker.strings.push(text.clone());
+            }
         },
         Class::View(view) => marker.object(view.buffer),
         Class::Proxy(proxy) => {
@@ -457,13 +513,45 @@ fn trace_class(class: &Class, marker: &mut Marker) {
 
 #[cfg(test)]
 mod tests {
+    use super::Marker;
     use crate::document::ScriptDocument;
+    use crate::v9::value::{JsString, JsValue};
     use crate::{DocumentHost, PageEnvironment, PageInput, SimpleFragmentParser, StorageState};
 
     /** Arrays of this many empty objects each; the outer array stays under VM_ARRAY_LENGTH. */
     const BATCH: usize = 32;
     /** Live objects the test keeps: a React app's hydrated fiber tree and caches are this big. */
     const KEPT: usize = 500_000;
+
+    /** Active-root accounting deduplicates aliases and notices later flat materialization. */
+    #[test]
+    fn marked_string_roots_charge_aliases_and_new_flat_buffers() {
+        let text: JsString = serde_json::from_str("{\"r\":[\"ab\",100000]}").unwrap();
+        let mut roots = Marker::default();
+        roots.value(&JsValue::String(text.clone()));
+        let before = roots.resident_string_units();
+        roots.value(&JsValue::String(text.clone()));
+        assert_eq!(roots.resident_string_units(), before);
+        text.try_as_units().unwrap();
+        assert!(roots.resident_string_units() >= 200000);
+    }
+
+    /** A nested script callback can reclaim dead strings without losing its pinned native inputs. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn string_reservation_retry_keeps_nested_callback_roots() {
+        let source = "const keep={value:7};const result=[keep].map(x=>{for(let i=0;i<12000;i++){try{throw new Error('message'+i)}catch(e){}}return x})[0];const ok=result===keep&&result.value===7;".to_string();
+        let host = DocumentHost { languages: &[], fragments: &SimpleFragmentParser };
+        let environment = PageEnvironment { url: "https://example.com/".into(), ..PageEnvironment::default() };
+        let mut limits = super::super::Limits::default();
+        limits.units = 100_000;
+        let result = crate::v9::on_v9_stack(|| crate::v9::load_isolated(PageInput {
+            sources: &[source], source_keys: &[], document: ScriptDocument { identity: "page-1".into(), charset: "UTF-8".into(), nodes: Vec::new() },
+            storage: StorageState::default(), host: &host, environment: &environment, modules: crate::ModuleInput::NONE,
+        }, None, limits, false)).unwrap();
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+        assert_eq!(result.state.globals().get("ok").and_then(|binding| binding.value.as_ref()), Some(&JsValue::Boolean(true)));
+    }
 
     /** A large app keeps half a million objects alive at once: the live-object bound allows it,
     and the committed state still fits VM_STATE_BYTES, which is what bounds the memory. */

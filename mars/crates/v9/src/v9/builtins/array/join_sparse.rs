@@ -29,7 +29,7 @@ pub(super) fn empty(vm: &mut Vm, object: &JsValue, length: usize) -> Res<Option<
             )
             .into());
         }
-        units.extend_from_slice(text.as_units());
+        units.extend((0..text.len()).filter_map(|index| text.unit_at(index)));
     }
     Ok(Some(JsString::from_units(units)?))
 }

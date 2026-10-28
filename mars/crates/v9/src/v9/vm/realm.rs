@@ -141,6 +141,9 @@ pub(in crate::v9) struct Ids {
     pub regexp_iterator_prototype: ObjectId,
     pub iterator_prototype: ObjectId,
     pub window_prototype: ObjectId,
+    /** Shell globals have a distinct prototype rather than sharing Object.prototype. */
+    #[cfg(feature = "conformance")]
+    pub shell_global_prototype: ObjectId,
     pub array_values: ObjectId,
     /** %ThrowTypeError%: the frozen thrower behind restricted `caller`, `arguments` and `callee`. */
     pub throw_type_error: ObjectId,
@@ -346,6 +349,15 @@ impl Builder {
     }
     /** Add or replace a static property. */
     pub fn put(&mut self, target: ObjectId, key: Key, value: Static, attrs: u8) {
+        #[cfg(feature = "conformance")]
+        {
+            if let Key::Str(text) = &key {
+                text.mark_old();
+            }
+            if let Static::Value(JsValue::String(text)) = &value {
+                text.mark_old();
+            }
+        }
         let def = self.def(target);
         if let Some(index) = def.index.get(&key) {
             def.props[*index] = (key, value, attrs);
@@ -428,14 +440,20 @@ impl Builder {
         getter: Option<NativeFn>,
         setter: Option<NativeFn>,
     ) {
+        self.builtin_accessor_with_attrs(target, name, getter, setter, super::heap::CONFIGURABLE);
+    }
+    /** Some legacy APIs expose enumerable accessors while retaining native getter identity. */
+    pub fn builtin_accessor_with_attrs(
+        &mut self,
+        target: ObjectId,
+        name: &'static str,
+        getter: Option<NativeFn>,
+        setter: Option<NativeFn>,
+        attrs: u8,
+    ) {
         let get = getter.map(|function| self.accessor_function(name, 0, "get", function));
         let set = setter.map(|function| self.accessor_function(name, 1, "set", function));
-        self.put(
-            target,
-            Key::from(name),
-            Static::Accessor(get, set),
-            super::heap::CONFIGURABLE,
-        );
+        self.put(target, Key::from(name), Static::Accessor(get, set), attrs);
     }
     /** Display labels retain the accessor prefix without changing existing dispatch names or leaking static strings. */
     fn accessor_function(
@@ -454,11 +472,6 @@ impl Builder {
     pub fn global(&mut self, name: &'static str, value: ObjectId) {
         self.globals.push((name, JsValue::Object(value)));
     }
-    /** Expose a primitive constant, such as a host-declared length, as a global binding. */
-    #[cfg(feature = "conformance")]
-    pub fn global_value(&mut self, name: &'static str, value: JsValue) {
-        self.globals.push((name, value));
-    }
     /** Alias an existing value under another name. */
     pub fn alias(&mut self, target: ObjectId, name: &str, value: ObjectId) {
         self.value(target, name, JsValue::Object(value), HIDDEN_ATTRS);
@@ -467,7 +480,10 @@ impl Builder {
 
 /** A string value from builder text. */
 pub(in crate::v9) fn string(text: &str) -> JsValue {
-    JsValue::String(JsString::from_utf8(text).expect("builtin text fits"))
+    let value = JsString::from_utf8(text).expect("builtin text fits");
+    #[cfg(feature = "conformance")]
+    value.mark_old();
+    JsValue::String(value)
 }
 
 /** Gathers every global the builder exposed onto one object, the prototype of frame windows. It runs
@@ -495,6 +511,10 @@ fn build() -> Realm {
     super::super::platform::install(&mut builder);
     super::super::modules::install(&mut builder);
     install_window_interfaces(&mut builder);
+    #[cfg(feature = "conformance")]
+    {
+        builder.ids.shell_global_prototype = builder.object(Some(builder.ids.object_prototype));
+    }
     Realm {
         objects: builder.objects,
         natives: builder.natives,
