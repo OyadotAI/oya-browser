@@ -1274,9 +1274,14 @@ mod tests {
         let checkout = Checkout::new();
         std::fs::write(checkout.0.join("checkout/present"), "export const value=42;").unwrap();
         let scripts = checkout.scripts("import('/present');import(/missing/);", "");
-        let modules = scripts.modules();
-        assert!(modules.sources.iter().any(|module| module.url == "file:///present" && module.source.as_deref() == Some("export const value=42;")));
-        assert!(modules.sources.iter().any(|module| module.url == "file:///missing/" && module.source.is_none()));
+        for (url, expected) in [
+            ("file:///present", Some("export const value=42;")),
+            ("file:///missing/", None),
+        ] {
+            let request = mars_v9::ModuleRequest { url: url.into(), integrity: None };
+            let module = scripts.module_source(&request, true).expect("confined snapshot");
+            assert_eq!(module.source.as_deref(), expected);
+        }
     }
 
     #[test]
