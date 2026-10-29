@@ -115,3 +115,36 @@ fn a_transferred_port_carries_messages_both_ways() {
     let text = texts(&loaded);
     assert!(text.contains("pong ping"), "{text}");
 }
+
+/** A document that refuses to be framed (X-Frame-Options, frame-ancestors) runs no scripts as
+another origin's frame. */
+#[test]
+fn a_document_that_refuses_framing_runs_no_scripts() {
+    for header in [
+        "X-Frame-Options: DENY\r\n",
+        "Content-Security-Policy: frame-ancestors 'none'\r\n",
+    ] {
+        let body = "<script>parent.postMessage('ran','*')</script>";
+        let frame = Fixture::routes(vec![("/", html(header, body))]);
+        let page = serve(format!(
+            "<p id=out>log</p><iframe src='{}/'></iframe><script>addEventListener('message',e=>{{document.getElementById('out').textContent+=' '+e.data}})</script>",
+            frame.url
+        ));
+        let mut runtime = two_origins(&page.url, &frame.url);
+        let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":page.url})).unwrap();
+        assert!(!texts(&loaded).contains("ran"), "{header}");
+    }
+}
+
+/** A sandboxed frame without allow-scripts runs no scripts. */
+#[test]
+fn a_sandboxed_frame_runs_no_scripts() {
+    let frame = serve("<script>parent.postMessage('ran','*')</script>".into());
+    let page = serve(format!(
+        "<p id=out>log</p><iframe sandbox='allow-same-origin' src='{}/'></iframe><script>addEventListener('message',e=>{{document.getElementById('out').textContent+=' '+e.data}})</script>",
+        frame.url
+    ));
+    let mut runtime = two_origins(&page.url, &frame.url);
+    let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":page.url})).unwrap();
+    assert!(!texts(&loaded).contains("ran"));
+}

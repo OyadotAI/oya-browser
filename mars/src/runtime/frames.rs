@@ -218,8 +218,9 @@ impl Runtime {
                 && document.nodes[index].tag == "iframe"
             {
                 let owner = document.nodes[index].local_id;
-                let name = document.nodes[index].attributes.get("name").cloned();
-                let opened = self.frame_page(owner, address, name, base, id_base, deadline, images)?;
+                let attributes = document.nodes[index].attributes.clone();
+                let opened =
+                    self.frame_page(owner, address, &attributes, base, id_base, deadline, images)?;
                 if let Some(frame) = opened {
                     document.nodes[index].embedded = true;
                     frames.push(frame);

@@ -37,16 +37,18 @@ const FIRST_FRAME_BASE: usize = 1 << 32;
 impl Runtime {
     /**
      * The frame of iframe `owner` showing `address` as a page of its own, or None when the
-     * address is same-origin (its document is the embedder's to reach), not http(s), or does not
-     * load as an HTML document in time. Only authority and engine-service failures stop the
-     * embedder.
+     * address is same-origin (its document is the embedder's to reach), not http(s), sandboxed
+     * without both `allow-scripts` and `allow-same-origin` (Mars gives no frame an opaque
+     * origin, so such a frame runs no scripts), refuses to be framed by this embedder
+     * (`frame-ancestors`, `X-Frame-Options`), or does not load as an HTML document in time.
+     * Only authority and engine-service failures stop the embedder.
      */
     #[allow(clippy::too_many_arguments)]
     pub(super) fn frame_page(
         &mut self,
         owner: usize,
         address: &str,
-        name: Option<String>,
+        attributes: &BTreeMap<String, String>,
         base: &url::Url,
         id_base: usize,
         deadline: Instant,
@@ -56,7 +58,8 @@ impl Runtime {
             return Ok(None);
         };
         let web = matches!(url.scheme(), "http" | "https");
-        if !web || same_origin(base, &url) || self.web_origins.is_none() {
+        if !web || same_origin(base, &url) || self.web_origins.is_none() || sandboxed(attributes)
+        {
             return Ok(None);
         }
         let deadline = deadline.min(Instant::now() + FRAME_PAGE_WALL);
@@ -69,13 +72,16 @@ impl Runtime {
             Err(error) if stops_loading(&error) => return Err(error),
             Err(_) => return Ok(None),
         };
-        if acquired.response.status != HTTP_OK || acquired.response.mime != "text/html" {
+        if acquired.response.status != HTTP_OK
+            || acquired.response.mime != "text/html"
+            || !super::framing::may_frame(&acquired.response.headers, base)
+        {
             return Ok(None);
         }
         self.frame_pages += 1;
         let embedding = Embedding {
             origin: base.origin().ascii_serialization(),
-            name: name.unwrap_or_default(),
+            name: attributes.get("name").cloned().unwrap_or_default(),
             identity: format!("{}:frame-{}", self.active_tab_id, self.frame_pages),
         };
         match self.build_page(acquired, deadline, false, Some(&embedding)) {
@@ -110,7 +116,7 @@ impl Runtime {
             return Ok(false);
         };
         let mut added = false;
-        for (index, owner, address, name) in unattached(page, &base, urls) {
+        for (index, owner, address) in unattached(page, &base, urls) {
             if page.frames.len() >= FRAME_COUNT {
                 break;
             }
@@ -120,8 +126,16 @@ impl Runtime {
                 .map(Frame::id_end)
                 .max()
                 .unwrap_or(FIRST_FRAME_BASE);
-            let opened =
-                self.frame_page(owner, &address, name, &base, id_base, deadline, &mut page.images)?;
+            let attributes = page.document.nodes[index].attributes.clone();
+            let opened = self.frame_page(
+                owner,
+                &address,
+                &attributes,
+                &base,
+                id_base,
+                deadline,
+                &mut page.images,
+            )?;
             if let Some(frame) = opened {
                 page.document.nodes[index].embedded = true;
                 Arc::make_mut(&mut page.frames).push(frame);
@@ -339,13 +353,17 @@ fn stop_frame_scripts(page: &mut Page, error: &EngineError) {
     super::scripting::record_console(&mut page.scripting, vec![entry], 0);
 }
 
+/** Whether the iframe's `sandbox` keeps its scripts from running as Mars runs them. */
+fn sandboxed(attributes: &BTreeMap<String, String>) -> bool {
+    attributes.get("sandbox").is_some_and(|tokens| {
+        let allows = |flag: &str| tokens.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case(flag));
+        !allows("allow-scripts") || !allows("allow-same-origin")
+    })
+}
+
 /** The iframes of `page` whose `src` resolves to one of `urls` and that show no frame yet: their
-node index, identity, address and name. */
-fn unattached(
-    page: &Page,
-    base: &url::Url,
-    urls: &[String],
-) -> Vec<(usize, usize, String, Option<String>)> {
+node index, identity and address. */
+fn unattached(page: &Page, base: &url::Url, urls: &[String]) -> Vec<(usize, usize, String)> {
     let shown: std::collections::BTreeSet<usize> =
         page.frames.iter().map(Frame::owner).collect();
     page.document
@@ -357,10 +375,8 @@ fn unattached(
         .filter_map(|(index, node)| {
             let src = node.attributes.get("src")?.trim();
             let resolved = base.join(src).ok()?;
-            urls.iter().any(|url| url == resolved.as_str()).then(|| {
-                let name = node.attributes.get("name").cloned();
-                (index, node.local_id, src.to_string(), name)
-            })
+            (urls.iter().any(|url| url == resolved.as_str()))
+                .then(|| (index, node.local_id, src.to_string()))
         })
         .collect()
 }
