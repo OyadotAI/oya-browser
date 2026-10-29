@@ -184,9 +184,10 @@ impl Canvas {
     fn node_at(&self, point: NSPoint) -> Option<usize> {
         let snapshot = self.ivars().snapshot.borrow();
         let snapshot = snapshot.as_ref()?;
-        hit::node_at_scrolled(
+        hit::node_at_frames(
             snapshot.display.as_ref()?,
             snapshot.document.as_ref()?,
+            &snapshot.frame_documents,
             point,
             self.visibleRect().origin.y,
         )

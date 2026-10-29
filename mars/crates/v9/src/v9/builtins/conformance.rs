@@ -5,8 +5,8 @@ use crate::v9::value::JsValue;
 use crate::v9::vm::data::PromiseState;
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Vm};
-mod async_hooks;
 mod arena_transport;
+mod async_hooks;
 mod condition;
 mod cputrace;
 mod d8_constants;
@@ -21,14 +21,19 @@ mod shared;
 mod source_positions;
 mod statistics;
 mod test_dom;
+pub(in crate::v9) use arena_transport::collect_shared;
+pub(in crate::v9) use arena_transport::{
+    activate as activate_shared_container, active as shared_container_active,
+    atomic as atomic_shared_container, define as define_shared_container, existing_js_arena,
+    initialize as initialize_shared_containers, read as read_shared_container,
+    write as write_shared_container,
+};
+pub(in crate::v9) use arena_transport::{
+    materialize_shared_object, new_shared_number, resolve_shared_js_reference,
+    validate_shared_js_record,
+};
 pub(in crate::v9) use inspector::pause_point;
 pub(in crate::v9) use shared::{check_define, check_store, is_shared_object};
-pub(in crate::v9) use arena_transport::{
-    active as shared_container_active, activate as activate_shared_container, atomic as atomic_shared_container, define as define_shared_container, existing_js_arena,
-    initialize as initialize_shared_containers, read as read_shared_container, write as write_shared_container,
-};
-pub(in crate::v9) use arena_transport::collect_shared;
-pub(in crate::v9) use arena_transport::{new_shared_number, materialize_shared_object, resolve_shared_js_reference, validate_shared_js_record};
 mod trigger_failure;
 pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
@@ -86,10 +91,22 @@ pub(in crate::v9) fn expose_conformance_globals(
 
 /** D8 omits streaming entry points until an embedder installs its callback. */
 fn expose_wasm_streaming(vm: &mut Vm, bank: u32) {
-    if !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_test_streaming != Some(false) { return; }
-    let namespace = crate::v9::vm::realm::banks::bank(bank).shell_globals.iter().find_map(|(name, value)| (*name == "WebAssembly").then(|| value.object()).flatten()).expect("WebAssembly intrinsic");
-    vm.materialize(namespace).expect("WebAssembly namespace materialization");
-    for name in ["compileStreaming", "instantiateStreaming"] { vm.heap.remove(namespace, &crate::v9::vm::heap::Key::from(name)); }
+    if !vm.page.environment.conformance_d8
+        || vm.page.environment.conformance_wasm_test_streaming != Some(false)
+    {
+        return;
+    }
+    let namespace = crate::v9::vm::realm::banks::bank(bank)
+        .shell_globals
+        .iter()
+        .find_map(|(name, value)| (*name == "WebAssembly").then(|| value.object()).flatten())
+        .expect("WebAssembly intrinsic");
+    vm.materialize(namespace)
+        .expect("WebAssembly namespace materialization");
+    for name in ["compileStreaming", "instantiateStreaming"] {
+        vm.heap
+            .remove(namespace, &crate::v9::vm::heap::Key::from(name));
+    }
 }
 
 /** Native embedder receiver state is not ordinary structured data and cannot acquire a fake clone brand. */

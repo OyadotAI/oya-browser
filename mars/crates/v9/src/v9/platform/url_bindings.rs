@@ -25,7 +25,7 @@ static ITERATOR_PROTO: OnceLock<u32> = OnceLock::new();
 /** Install the URLSearchParams Iterator prototype, under %IteratorPrototype%. */
 pub(super) fn install_iterator(b: &mut Builder) {
     let proto = b.object(Some(b.ids.iterator_prototype));
-    b.method(proto, "next", 0, params_next);
+    b.host_method(proto, "next", 0, params_next);
     let _ = ITERATOR_PROTO.set(proto);
 }
 

@@ -107,10 +107,7 @@ fn poll(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Positive bounded task spacing prevents a pending infinite wait from monopolizing one microtask drain. */
 fn schedule(vm: &mut Vm, callback: ObjectId, deadline: f64) -> Res<()> {
     crate::v9::platform::schedule_task(vm, JsValue::Object(callback), Vec::new())?;
-    let due = vm.page.state.clock
-        + (deadline - vm.page.state.clock)
-            .max(0.0)
-            .min(POLL_INTERVAL_MS);
+    let due = vm.page.state.clock + (deadline - vm.page.state.clock).clamp(0.0, POLL_INTERVAL_MS);
     if let Some(timer) = vm.page.state.timers.last_mut() {
         timer.due = due;
     }

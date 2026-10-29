@@ -179,7 +179,13 @@ fn timer_exception_uses_callback_realm_and_preserves_original_value() {
     let host = common::host();
     let environment = environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 10).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        10,
+    )
+    .unwrap();
     assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
     assert_eq!(common::global(&resumed, "r"), "1:foreign");
 }

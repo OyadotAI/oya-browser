@@ -37,7 +37,8 @@ fn an_unprevented_submit_goes_ahead() {
 /** preventDefault keeps the native submission from happening. */
 #[test]
 fn a_prevented_submit_does_not_submit() {
-    let after = submit("document.getElementById('main').addEventListener('submit',e=>e.preventDefault());");
+    let after =
+        submit("document.getElementById('main').addEventListener('submit',e=>e.preventDefault());");
     assert_eq!(after.effects.submit, None);
 }
 

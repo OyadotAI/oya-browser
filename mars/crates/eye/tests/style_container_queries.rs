@@ -22,9 +22,15 @@ const THEME: &str = "@container style(--theme-variant:light){p{order:1}}\
 
 #[test]
 fn an_unnamed_style_query_reads_the_parents_custom_property() {
-    let light = styled("<div style='--theme-variant: light'><p id=p>x</p></div>", THEME);
+    let light = styled(
+        "<div style='--theme-variant: light'><p id=p>x</p></div>",
+        THEME,
+    );
     assert_eq!(style(&light, "p").order, 1);
-    let dark = styled("<div style='--theme-variant:dark'><p id=p>x</p></div>", THEME);
+    let dark = styled(
+        "<div style='--theme-variant:dark'><p id=p>x</p></div>",
+        THEME,
+    );
     assert_eq!(style(&dark, "p").order, 2);
 }
 
@@ -82,9 +88,8 @@ const HERO: &str = "#hero{container-type:inline-size;--hero-layout-row:1}\
 
 #[test]
 fn a_mixed_query_reads_style_and_size_from_the_same_size_container() {
-    let markup = |width: u32| {
-        format!("<div id=hero style='width:{width}px'><div><p id=p>x</p></div></div>")
-    };
+    let markup =
+        |width: u32| format!("<div id=hero style='width:{width}px'><div><p id=p>x</p></div></div>");
     assert_eq!(style(&styled(&markup(1000), HERO), "p").order, 6);
     assert_eq!(style(&styled(&markup(500), HERO), "p").order, 0);
 }
@@ -142,7 +147,11 @@ fn container_height_units_need_a_size_container() {
         "<div id=c><div id=i><p id=p>x</p><p id=q>y</p></div></div>",
         sheet,
     );
-    assert_eq!(style(&document, "p").width, Some(30.0), "the inline-size box is skipped");
+    assert_eq!(
+        style(&document, "p").width,
+        Some(30.0),
+        "the inline-size box is skipped"
+    );
     assert_eq!(style(&document, "q").width, Some(30.0));
 }
 

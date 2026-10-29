@@ -153,12 +153,14 @@ impl Vm<'_> {
             return Ok(program.clone());
         }
         let program = regexp::compile(
-            self.materialize_string(&source)?,
+            self.materialize_string(source)?,
             flags,
             self.page.environment.regexp_buffer_boundaries,
         )
         .map_err(|error| {
-            let message = if error.is_engine_gap() {
+            let message = if error.is_flag_error() {
+                error.0
+            } else if error.is_engine_gap() {
                 format!(
                     "Invalid regular expression: {}: /{}/{flags}",
                     error.0,
@@ -360,17 +362,24 @@ impl Vm<'_> {
 /** Equal capture spans share immutable string storage across the result array. */
 fn capture_values(text: &JsString, captures: &Captures) -> EngineResult<Vec<JsValue>> {
     let mut cache: BTreeMap<(usize, usize), JsString> = BTreeMap::new();
-    captures.iter().map(|capture| match capture {
-        None => Ok(JsValue::Undefined),
-        Some((start, end)) => {
-            let span = (*start, *end);
-            let value = match cache.get(&span) {
-                Some(value) => value.clone(),
-                None => { let value = text.slice_range(*start, *end)?; cache.insert(span, value.clone()); value }
-            };
-            Ok(JsValue::String(value))
-        }
-    }).collect()
+    captures
+        .iter()
+        .map(|capture| match capture {
+            None => Ok(JsValue::Undefined),
+            Some((start, end)) => {
+                let span = (*start, *end);
+                let value = match cache.get(&span) {
+                    Some(value) => value.clone(),
+                    None => {
+                        let value = text.slice_range(*start, *end)?;
+                        cache.insert(span, value.clone());
+                        value
+                    }
+                };
+                Ok(JsValue::String(value))
+            }
+        })
+        .collect()
 }
 
 /** The index after `index`, stepping over a surrogate pair in unicode mode. */

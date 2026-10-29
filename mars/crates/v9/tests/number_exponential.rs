@@ -6,13 +6,17 @@ mod common;
 fn exponential_ties_round_away_from_zero() {
     let source = "const r=[(1.25).toExponential(1),(-1.25).toExponential(1),(9.5).toExponential(0),\
         (0.5).toExponential(0),(123.456).toExponential(3)].join();";
-    assert_eq!(common::eval(source, "r"), "1.3e+0,-1.3e+0,1e+1,5e-1,1.235e+2");
+    assert_eq!(
+        common::eval(source, "r"),
+        "1.3e+0,-1.3e+0,1e+1,5e-1,1.235e+2"
+    );
 }
 
 /** Negative zero prints as zero with or without a fraction digit count. */
 #[test]
 fn negative_zero_prints_unsigned() {
-    let source = "const r=[(-0).toExponential(),(-0).toExponential(2),(0).toExponential(1)].join();";
+    let source =
+        "const r=[(-0).toExponential(),(-0).toExponential(2),(0).toExponential(1)].join();";
     assert_eq!(common::eval(source, "r"), "0e+0,0.00e+0,0.0e+0");
 }
 

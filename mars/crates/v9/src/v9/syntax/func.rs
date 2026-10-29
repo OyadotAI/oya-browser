@@ -1,4 +1,5 @@
 /** Function, arrow, method and class grammar, plus binding patterns. */
+use super::expr::{Cover, INVALID_TARGET};
 use super::stmt::infer_name;
 use super::*;
 use std::cell::RefCell;
@@ -16,7 +17,7 @@ impl Parser {
         let source_available = self.pos().offset.saturating_sub(pos.offset) <= u32::from(u16::MAX);
         let name = if self.at("(") {
             if declaration {
-                return Err(self.unexpected());
+                return Err(self.error_at(pos, "Function statements require a function name"));
             }
             None
         } else {
@@ -75,18 +76,22 @@ impl Parser {
             flags,
         )?;
         // A getter takes no parameters; a setter exactly one, which is not a rest parameter.
-        let arity = match accessor {
-            Some(true) => func.params.is_empty() && func.rest.is_none(),
-            Some(false) => func.params.len() == 1 && func.rest.is_none(),
-            None => true,
+        let fault = match accessor {
+            Some(true) if !func.params.is_empty() || func.rest.is_some() => {
+                Some("Getter must not have any formal parameters.")
+            }
+            Some(false) if func.rest.is_some() && func.params.is_empty() => {
+                Some("Setter function argument must not be a rest parameter")
+            }
+            Some(false) if func.params.len() != 1 || func.rest.is_some() => {
+                Some("Setter must have exactly one formal parameter.")
+            }
+            _ => None,
         };
-        if !arity {
-            return Err(self.error_at(
-                pos,
-                "Getter must not have parameters; setter must have exactly one",
-            ));
+        match fault {
+            Some(reason) => Err(self.error_at(pos, reason)),
+            None => Ok(func),
         }
-        Ok(func)
     }
     /** Parameters and a block body under a fresh function context. */
     fn function_tail(
@@ -118,12 +123,10 @@ impl Parser {
         self.labels = saved.2;
         self.unnest();
         let (params, rest, body) = result?;
-        if strict
-            && name
-                .as_ref()
-                .is_some_and(|name| matches!(&**name, "eval" | "arguments") || reserved(name, true))
+        if let (true, Some(name)) = (strict, &name)
+            && let Some(reason) = strict_name_error(name)
         {
-            return Err(self.error_at(pos, "Unexpected function name in strict mode"));
+            return Err(self.error_at(pos, reason));
         }
         Ok(Rc::new(Func {
             source_span: RefCell::new(Some((pos.offset, self.consumed_end()))),
@@ -187,11 +190,9 @@ impl Parser {
             bound_names(param, &mut names);
         }
         if self.strict
-            && names
-                .iter()
-                .any(|name| matches!(&**name, "eval" | "arguments") || reserved(name, true))
+            && let Some(reason) = names.iter().find_map(|name| strict_name_error(name))
         {
-            return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
+            return Err(self.error_at(pos, reason));
         }
         let simple = rest.is_none() && params.iter().all(|p| matches!(p, Pattern::Ident(..)));
         let strict_names = self.strict || unique || !simple;
@@ -217,6 +218,17 @@ impl Parser {
             if self.eat("...") {
                 rest = Some(self.binding_target()?);
                 self.check_parameter_count(params.len() + 1)?;
+                if self.at("=") {
+                    return Err(self.error_at(
+                        self.pos(),
+                        "Rest parameter may not have a default initializer",
+                    ));
+                }
+                if self.at(",") {
+                    return Err(
+                        self.error_at(self.pos(), "Rest parameter must be last formal parameter")
+                    );
+                }
                 self.expect(")")?;
                 break;
             }
@@ -262,6 +274,7 @@ impl Parser {
             no_arguments: outer.no_arguments,
             static_block: outer.static_block,
             parameters: false,
+            sloppy_async_head: is_async && !outer.asynchronous,
         };
         let result = self.arrow_parts(simple, is_async, no_in);
         let strict = self.strict;
@@ -302,12 +315,13 @@ impl Parser {
             let name = self.identifier()?;
             (vec![Pattern::Ident(name, pos)], None)
         } else {
-            self.parameters()?
+            self.arrow_parameters()?
         };
         // The body is the arrow's own: never a generator, async only for an async arrow.
         self.context.generator = false;
         self.context.asynchronous = is_async;
         self.context.static_block = false;
+        self.context.sloppy_async_head = false;
         self.expect("=>")?;
         let body = if self.at("{") {
             self.next();
@@ -322,6 +336,49 @@ impl Parser {
             Body::Expr(Box::new(self.assignment(no_in)?))
         };
         Ok((params, rest, body))
+    }
+    /** A parenthesized arrow head. It is read as bindings; when that stops at a token, the head
+    is reread as the parenthesized expression V8 reads first, so the error is V8's: the
+    expression's own parse error, or the pattern the expression could not become. */
+    fn arrow_parameters(&mut self) -> EngineResult<(Vec<Pattern>, Option<Pattern>)> {
+        let start = self.position;
+        match self.parameters() {
+            Err(error) if is_token_error(&error) => {
+                self.position = start;
+                self.reread_arrow_head()?;
+                Err(error)
+            }
+            result => result,
+        }
+    }
+    /** Parse the head as `( expression, ... )` and convert each element as a binding, so the
+    first fault V8 would have found is the one reported. Succeeding means the head was fine as
+    an expression, and the caller keeps the binding error it had. */
+    fn reread_arrow_head(&mut self) -> EngineResult<()> {
+        // As an expression the head admits `yield` and `await` operators; V8 refuses those as
+        // parameters only after the pattern itself passed.
+        let outer = std::mem::replace(&mut self.context.parameters, false);
+        let result = self.reread_arrow_elements();
+        self.context.parameters = outer;
+        result
+    }
+    /** The elements of a reread head, each converted as a binding. */
+    fn reread_arrow_elements(&mut self) -> EngineResult<()> {
+        self.expect("(")?;
+        while !self.at(")") {
+            let spread = self.eat("...");
+            let value = self.assignment(false)?;
+            let cover = if spread && matches!(value.kind, ExprKind::Assign(..)) {
+                Cover::Element
+            } else {
+                Cover::Binding
+            };
+            self.pattern_as(value, cover)?;
+            if !self.at(")") {
+                self.expect(",")?;
+            }
+        }
+        self.expect(")")
     }
     /** A binding name or a destructuring binding pattern. */
     pub(super) fn binding_target(&mut self) -> EngineResult<Pattern> {
@@ -340,7 +397,7 @@ impl Parser {
                 }
                 if self.eat("...") {
                     rest = Some(Box::new(self.binding_target()?));
-                    self.expect("]")?;
+                    self.rest_end("]")?;
                     break;
                 }
                 items.push(Some(self.binding_element()?));
@@ -355,8 +412,14 @@ impl Parser {
             let mut rest = None;
             while !self.eat("}") {
                 if self.eat("...") {
+                    if !self.at_identifier() {
+                        return Err(self.error_at(
+                            self.pos(),
+                            "`...` must be followed by an identifier in declaration contexts",
+                        ));
+                    }
                     rest = Some(Box::new(self.binding_target()?));
-                    self.expect("}")?;
+                    self.rest_end("}")?;
                     break;
                 }
                 let key_pos = self.pos();
@@ -367,8 +430,10 @@ impl Parser {
                     (PropKey::Name(name.clone()), Pattern::Ident(name, key_pos))
                 } else {
                     let key = self.property_key()?;
-                    if matches!(key, PropKey::Private(_)) {
-                        return Err(self.error_at(key_pos, "unexpected private name"));
+                    if let PropKey::Private(name) = &key {
+                        return Err(
+                            self.error_at(key_pos, &format!("Unexpected identifier '#{name}'"))
+                        );
                     }
                     self.expect(":")?;
                     (key, self.binding_target()?)
@@ -386,6 +451,22 @@ impl Parser {
             return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
         }
         Ok(Pattern::Ident(name, pos))
+    }
+    /** After a binding pattern's rest element only the closing bracket may follow: a default
+    makes it no target, and a comma puts something after it. */
+    fn rest_end(&mut self, closing: &str) -> EngineResult<()> {
+        if self.at("=") {
+            let reason = if closing == "}" {
+                "`...` must be followed by an identifier in declaration contexts"
+            } else {
+                INVALID_TARGET
+            };
+            return Err(self.error_at(self.pos(), reason));
+        }
+        if self.at(",") {
+            return Err(self.error_at(self.pos(), "Rest element must be last element"));
+        }
+        self.expect(closing)
     }
     /** A binding target with an optional `= default`. */
     fn binding_element(&mut self) -> EngineResult<Pattern> {
@@ -416,7 +497,11 @@ impl Parser {
     /** Name, heritage and body. */
     fn class_rest(&mut self, pos: Pos, declaration: bool) -> EngineResult<Rc<Class>> {
         let name = if self.at_identifier() && !self.at_name("extends") {
-            Some(self.identifier()?)
+            let name = self.identifier()?;
+            if matches!(&*name, "eval" | "arguments") {
+                return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
+            }
+            Some(name)
         } else if declaration {
             return Err(self.unexpected());
         } else {
@@ -576,8 +661,17 @@ impl Parser {
                 && accessor.is_none()
                 && matches!(&key, PropKey::Name(name) if &**name == "constructor");
             if is_constructor {
-                if is_async || generator || constructor.is_some() {
-                    return Err(self.error_at(pos, "A class may only have one constructor"));
+                let fault = if is_async {
+                    Some("Class constructor may not be an async method")
+                } else if generator {
+                    Some("Class constructor may not be a generator")
+                } else if constructor.is_some() {
+                    Some("A class may only have one constructor")
+                } else {
+                    None
+                };
+                if let Some(reason) = fault {
+                    return Err(self.error_at(pos, reason));
                 }
                 let flags = FuncFlags {
                     constructor: true,
@@ -745,8 +839,11 @@ fn class_key_error(
 ) -> Option<&'static str> {
     let name = match key {
         PropKey::Name(name) => &**name,
+        PropKey::Private(name) if &**name == "constructor" && method => {
+            return Some("Class constructor may not be a private method");
+        }
         PropKey::Private(name) if &**name == "constructor" => {
-            return Some("Classes may not have a private field named '#constructor'");
+            return Some("Classes may not have a field named 'constructor'");
         }
         _ => return None,
     };
@@ -757,6 +854,18 @@ fn class_key_error(
         "constructor" if !method => Some("Classes may not have a field named 'constructor'"),
         "constructor" if accessor && !is_static => Some("Class constructor may not be an accessor"),
         _ => None,
+    }
+}
+
+/** What strict code calls a function or parameter name it forbids: `eval` and `arguments`
+by name, the strict reserved words by class. */
+fn strict_name_error(name: &str) -> Option<&'static str> {
+    if matches!(name, "eval" | "arguments") {
+        Some("Unexpected eval or arguments in strict mode")
+    } else if reserved(name, true) {
+        Some("Unexpected strict mode reserved word")
+    } else {
+        None
     }
 }
 

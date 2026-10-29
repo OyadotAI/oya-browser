@@ -59,7 +59,11 @@ impl Vm<'_> {
     }
     /** Describe values without invoking authored getters or conversion methods. */
     fn proxy_invariant_value(&self, value: &JsValue) -> String {
-        if matches!(value, JsValue::Object(_)) { "#<Object>".into() } else { self.iterator_value_description(value) }
+        if matches!(value, JsValue::Object(_)) {
+            "#<Object>".into()
+        } else {
+            self.iterator_value_description(value)
+        }
     }
     /** A truthy set trap still cannot claim a forbidden write to a fixed target property. */
     pub(super) fn check_set(&mut self, target: ObjectId, key: &Key, value: &JsValue) -> Res<()> {
@@ -104,12 +108,10 @@ impl Vm<'_> {
         }
         let current = self.target_own(target, key)?;
         if *result == JsValue::Undefined {
-            if let Some(prop) = current {
-                if prop.attrs & CONFIGURABLE == 0 || !self.target_extensible(target)? {
-                    return Err(
-                        self.type_error("Proxy descriptor trap cannot hide a target property")
-                    );
-                }
+            if let Some(prop) = current
+                && (prop.attrs & CONFIGURABLE == 0 || !self.target_extensible(target)?)
+            {
+                return Err(self.type_error("Proxy descriptor trap cannot hide a target property"));
             }
             return Ok(None);
         }
@@ -160,6 +162,8 @@ impl Vm<'_> {
             return Err(self.range_error("Proxy ownKeys result is too large"));
         }
         let mut keys = Vec::with_capacity(length);
+        // Keys compare by value and nothing writes them while the set lives.
+        #[allow(clippy::mutable_key_type)]
         let mut seen = HashSet::new();
         for index in 0..length {
             let value = self.get(result, &Key::from(&index.to_string()))?;
@@ -176,6 +180,7 @@ impl Vm<'_> {
         Ok(keys)
     }
     /** A non-extensible target has an exact key set; every target retains its fixed keys. */
+    #[allow(clippy::mutable_key_type)]
     fn check_key_set(&mut self, target: ObjectId, result: &HashSet<Key>) -> Res<()> {
         let extensible = self.target_extensible(target)?;
         let target_keys = self.deeper(|vm| vm.own_keys(target))?;

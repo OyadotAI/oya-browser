@@ -53,7 +53,7 @@ impl SharedBytes {
         if !sparse.valid()
             || maximum < length
             || maximum as u64 > super::super::sparse_buffer::MAX_LOGICAL
-            || maximum % WASM_PAGE_BYTES != 0
+            || !maximum.is_multiple_of(WASM_PAGE_BYTES)
         {
             return Err(EngineError::invalid(
                 "Invalid sparse shared WebAssembly memory.",

@@ -185,7 +185,11 @@ fn toggle_attribute_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let mut pairs = pairs_of(vm, node);
     let present = pairs.iter().any(|(key, _)| *key == name);
     let forced = !matches!(call.arg(1), JsValue::Undefined);
-    let wanted = if forced { call.arg(1).truthy() } else { !present };
+    let wanted = if forced {
+        call.arg(1).truthy()
+    } else {
+        !present
+    };
     if wanted != present {
         if wanted {
             pairs.push((name, String::new()));

@@ -54,7 +54,9 @@ pub(in crate::v9) fn inspect(vm: &mut Vm, value: &JsValue, depth: usize) -> Stri
         JsValue::Smi(number) => number_to_string(*number),
         JsValue::Number(number) => number_to_string(*number),
         #[cfg(feature = "conformance")]
-        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => number_to_string(number.value),
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => {
+            number_to_string(number.value)
+        }
         JsValue::BigInt(value) => format!("{value}n"),
         JsValue::BigIntWide(value) => format!("{}n", value.diagnostic()),
         JsValue::Boolean(flag) => flag.to_string(),

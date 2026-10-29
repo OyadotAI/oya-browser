@@ -169,7 +169,10 @@ fn add_listener(
         return Ok(());
     }
     let listeners = &vm.page.state.listeners;
-    if listeners.find(target, &kind, options.capture, callback).is_some() {
+    if listeners
+        .find(target, &kind, options.capture, callback)
+        .is_some()
+    {
         return Ok(());
     }
     if listeners.len() >= LISTENERS {

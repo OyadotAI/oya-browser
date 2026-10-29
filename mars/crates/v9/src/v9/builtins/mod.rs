@@ -11,15 +11,16 @@ mod collections;
 mod conformance;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
-    ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state,
-    DebugEvent, DebugState, debug_event, install_external_string_lexicals,
+    DebugEvent, DebugState, ProfileClock, ProfileState, debug_event,
+    install_external_string_lexicals, profile_tick, validate_profile, validate_profile_state,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{
-    activate_shared_container, atomic_shared_container, check_define as check_shared_define, existing_js_arena,
-    check_store as check_shared_store, collect_shared, define_shared_container,
-    initialize_shared_containers, is_shared_object, pause_point as loop_stack_check,
-    read_shared_container, shared_container_active, write_shared_container, new_shared_number, materialize_shared_object, resolve_shared_js_reference, validate_shared_js_record,
+    activate_shared_container, atomic_shared_container, check_define as check_shared_define,
+    check_store as check_shared_store, collect_shared, define_shared_container, existing_js_arena,
+    initialize_shared_containers, is_shared_object, materialize_shared_object, new_shared_number,
+    pause_point as loop_stack_check, read_shared_container, resolve_shared_js_reference,
+    shared_container_active, validate_shared_js_record, write_shared_container,
 };
 /** The wasm loop stack check. Only the conformance host has a debugger to pause here; other builds run straight through. */
 #[cfg(not(feature = "conformance"))]
@@ -61,6 +62,7 @@ mod string;
 mod symbol;
 mod temporal;
 pub(in crate::v9) mod typed;
+mod v8_order;
 mod wasm;
 mod weak;
 #[cfg(feature = "conformance")]
@@ -75,7 +77,8 @@ pub(in crate::v9) use wasm::wasm_worker_restore_shared_gc;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::{
     WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_memory_buffer,
-    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore, wasm_worker_restore_memory,
+    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore,
+    wasm_worker_restore_memory,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::{
@@ -95,9 +98,9 @@ pub(in crate::v9) use integrity::{
 };
 pub(in crate::v9) use json::{is_raw_json, json_parse_text};
 pub(in crate::v9) use object::{from_descriptor, to_descriptor};
-pub(in crate::v9) use typed::iterator_length as typed_iterator_length;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use typed::array_buffer_max_allocation;
+pub(in crate::v9) use typed::iterator_length as typed_iterator_length;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use typed::waiter_count as atomics_waiter_count;
 #[cfg(feature = "conformance")]
@@ -127,14 +130,12 @@ pub(in crate::v9) fn symbol_description(vm: &Vm, id: u32) -> Option<String> {
 }
 
 use super::value::{JsString, JsValue, ObjectId};
-use super::vm::heap::Key;
+use super::vm::heap::{INTRINSIC_BASE, Key};
 use super::vm::realm::Builder;
 use super::vm::{Call, Res, Vm};
 
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::enqueue_shell_microtask;
-#[cfg(feature = "conformance")]
-pub(in crate::v9) use conformance::{report_shell_exception, shell_callback_realm};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]
@@ -159,6 +160,7 @@ pub(in crate::v9) use conformance::{
     validate_environment as validate_conformance_environment, validate_native_test_object,
 };
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{report_shell_exception, shell_callback_realm};
 pub(in crate::v9) use function::to_string as function_to_string;
 /** JSON.stringify for engine callers: conformance workers, and history entries saving their state. */
 pub(in crate::v9) use json::stringify as json_stringify;
@@ -193,6 +195,7 @@ pub(in crate::v9) fn install(builder: &mut Builder) {
     wasm::install(builder);
     proxy::install(builder);
     temporal::install(builder);
+    v8_order::install(builder);
     #[cfg(feature = "conformance")]
     {
         let first = builder.natives.len();
@@ -233,6 +236,38 @@ pub(in crate::v9) fn text(vm: &mut Vm, text: &str) -> Res<JsValue> {
 /** A key from Rust text. */
 pub(in crate::v9) fn key(name: &str) -> Key {
     Key::from(name)
+}
+
+/** Put an intrinsic's own keys in the order V8's bootstrapper installs them, which pages observe
+through `Object.getOwnPropertyNames` and `getOwnPropertySymbols` and use to fingerprint the
+engine. Named keys come first in the given order, strings before symbols; keys left unnamed keep
+their install order after them, so a conformance-only extra never disturbs the public list. */
+pub(super) fn order(b: &mut Builder, target: ObjectId, names: &[&str], symbols: &[u32]) {
+    let def = &mut b.objects[(target - INTRINSIC_BASE) as usize];
+    let rank = |key: &Key| match key {
+        Key::Str(_) => (
+            0,
+            names
+                .iter()
+                .position(|name| *key == Key::from(name))
+                .unwrap_or(names.len()),
+        ),
+        Key::Sym(id) => (
+            1,
+            symbols
+                .iter()
+                .position(|symbol| symbol == id)
+                .unwrap_or(symbols.len()),
+        ),
+        Key::Private(_) => (2, 0),
+    };
+    def.props.sort_by_cached_key(|(key, ..)| rank(key));
+    def.index = def
+        .props
+        .iter()
+        .enumerate()
+        .map(|(index, (key, ..))| (key.clone(), index))
+        .collect();
 }
 
 #[cfg(feature = "conformance")]

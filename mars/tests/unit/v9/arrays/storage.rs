@@ -22,9 +22,7 @@ fn repeated_references_to_one_string_share_its_units() {
     let copies = 2 * JS_ENVIRONMENT_UNITS / unit;
     assert_eq!(
         result(
-            &format!(
-                "const s='x'.repeat({unit});const r=Array.from({{length:{copies}}},()=>s);"
-            ),
+            &format!("const s='x'.repeat({unit});const r=Array.from({{length:{copies}}},()=>s);"),
             "r.length"
         ),
         copies.to_string()

@@ -57,9 +57,10 @@ pub(in crate::v9) fn validate_sources(
 }
 
 impl Vm<'_> {
-    /** A real major collection precedes source-pressure reclamation, preserving every surviving weak or strong code root. */
-    /** Dynamic code inherits the shell intrinsic grammar when the page admitted it, as V8 lets
-        `--allow-natives-syntax` apply to eval and `new Function` sources too. */
+    /// A real major collection precedes source-pressure reclamation, preserving every surviving
+    /// weak or strong code root. Dynamic code inherits the shell intrinsic grammar when the page
+    /// admitted it, as V8 lets `--allow-natives-syntax` apply to eval and `new Function` sources
+    /// too.
     pub(in crate::v9) fn native_dynamic(&self) -> bool {
         #[cfg(feature = "conformance")]
         {

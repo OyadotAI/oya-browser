@@ -35,9 +35,9 @@ fn ids() -> &'static Ids {
 /** Install MessageChannel and MessagePort. */
 pub(in crate::v9) fn install(b: &mut Builder) {
     let port = b.object(Some(b.ids.event_target_prototype));
-    b.method(port, "postMessage", 1, post_message);
+    b.host_method(port, "postMessage", 1, post_message);
     for name in ["start", "close"] {
-        b.method(port, name, 0, port_control);
+        b.host_method(port, name, 0, port_control);
     }
     let ctor = b.constructor(
         "MessagePort",
@@ -121,7 +121,10 @@ fn post_message(vm: &mut Vm, call: Call) -> Res<JsValue> {
             )
             .into());
         }
-        vm.page.effects.port_messages.push(PortMessage { link, data });
+        vm.page
+            .effects
+            .port_messages
+            .push(PortMessage { link, data });
     }
     Ok(JsValue::Undefined)
 }
@@ -181,9 +184,13 @@ make never collide. */
 fn new_link() -> Res<u64> {
     use ring::rand::SecureRandom;
     let mut bytes = [0_u8; 8];
-    ring::rand::SystemRandom::new().fill(&mut bytes).map_err(|_| {
-        crate::protocol::EngineError::unsupported("The operating system random source is unavailable to V9.")
-    })?;
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| {
+            crate::protocol::EngineError::unsupported(
+                "The operating system random source is unavailable to V9.",
+            )
+        })?;
     Ok(u64::from_le_bytes(bytes) & LINK_MASK)
 }
 

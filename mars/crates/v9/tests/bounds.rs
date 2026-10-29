@@ -65,7 +65,10 @@ fn string_length_is_bounded() {
         JS_STRING_UNITS - 1
     ));
     assert!(execution.failed.is_empty(), "{:?}", failure(&execution));
-    assert_eq!(common::global(&execution, "caught"), "RangeError:Invalid string length");
+    assert_eq!(
+        common::global(&execution, "caught"),
+        "RangeError:Invalid string length"
+    );
 }
 
 /** An infinite loop stops at the operation budget or the deadline. */

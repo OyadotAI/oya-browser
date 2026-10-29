@@ -386,6 +386,9 @@ impl Runtime {
         let mut phase = Instant::now();
         let parse = json!({"source":acquired.response.source,"charset":acquired.response.charset,"xml":xml});
         let mut document: Document = self.call_typed("document", "document.parse", &parse, None)?;
+        if embedding.is_some() {
+            crate::document::normalize_document_text(&mut document)?;
+        }
         perf::record("page.parse", phase, || document.nodes.len().to_string());
         phase = Instant::now();
         document.diagnostics.extend(acquired.diagnostics);

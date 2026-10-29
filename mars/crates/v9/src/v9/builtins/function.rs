@@ -317,7 +317,8 @@ fn bound_metadata(vm: &mut Vm, id: ObjectId, target: ObjectId, count: usize) -> 
     let length = bound_length(vm, target, count)?;
     let name = vm.bind_name_snapshot(target)?;
     vm.set_name_snapshot(id, name)?;
-    for (name, value) in [("length", JsValue::Number(length))] {
+    {
+        let (name, value) = ("length", JsValue::Number(length));
         vm.heap.put(
             id,
             key(name),
@@ -376,13 +377,11 @@ pub(in crate::v9) fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .and_then(|id| vm.heap.get(id))
             .and_then(|object| object.props.get(&Key::private("dynamic-function-source")))
             .is_some_and(|prop| matches!(prop.slot, Slot::Data(JsValue::Boolean(true))));
-        if dynamic {
-            if let Some(index) = source.find('(') {
-                return text(
-                    vm,
-                    &format!("{} anonymous{}", &source[..index], &source[index..]),
-                );
-            }
+        if dynamic && let Some(index) = source.find('(') {
+            return text(
+                vm,
+                &format!("{} anonymous{}", &source[..index], &source[index..]),
+            );
         }
         return text(vm, &source);
     }

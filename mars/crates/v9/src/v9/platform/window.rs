@@ -236,9 +236,9 @@ pub(in crate::v9) fn navigator_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "hardwareConcurrency" => JsValue::Number(NAVIGATOR_CORES),
         "deviceMemory" => JsValue::Number(NAVIGATOR_MEMORY),
         "maxTouchPoints" => JsValue::Number(0.0),
-        "webdriver" | "pdfViewerEnabled" => JsValue::Boolean(false),
+        "webdriver" => JsValue::Boolean(false),
+        "pdfViewerEnabled" => JsValue::Boolean(true),
         "doNotTrack" => JsValue::Null,
-        "plugins" | "mimeTypes" => JsValue::Object(vm.new_array(Vec::new())?),
         _ => JsValue::Undefined,
     })
 }
@@ -292,7 +292,11 @@ fn low_entropy(vm: &mut Vm) -> Res<Vec<(String, JsValue)>> {
 /** One high-entropy hint's value, or None for a name Chrome does not answer. */
 fn high_entropy(vm: &mut Vm, hint: &str) -> Res<Option<JsValue>> {
     use crate::constants::{CHROME_FULL_VERSION, MACOS_PLATFORM_VERSION};
-    let arch = if cfg!(target_arch = "aarch64") { "arm" } else { "x86" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm"
+    } else {
+        "x86"
+    };
     Ok(Some(match hint {
         "architecture" => JsValue::string(arch)?,
         "bitness" => JsValue::string("64")?,
@@ -320,10 +324,18 @@ fn brands(vm: &mut Vm, full: bool) -> Res<JsValue> {
         .and_then(|rest| rest.split('.').next())
         .unwrap_or_default()
         .to_owned();
-    let chrome = if full { crate::constants::CHROME_FULL_VERSION.to_owned() } else { major };
+    let chrome = if full {
+        crate::constants::CHROME_FULL_VERSION.to_owned()
+    } else {
+        major
+    };
     let grease = if full { UA_GREASE_FULL } else { UA_GREASE };
     let mut list = Vec::new();
-    for (brand, version) in [("Chromium", chrome.as_str()), ("Not?A_Brand", grease), ("Google Chrome", chrome.as_str())] {
+    for (brand, version) in [
+        ("Not?A_Brand", grease),
+        ("Chromium", chrome.as_str()),
+        ("Mars", chrome.as_str()),
+    ] {
         let fields = [
             ("brand".to_owned(), JsValue::string(brand)?),
             ("version".to_owned(), JsValue::string(version)?),
@@ -337,7 +349,12 @@ fn brands(vm: &mut Vm, full: bool) -> Res<JsValue> {
 fn record(vm: &mut Vm, fields: &[(String, JsValue)]) -> Res<JsValue> {
     let object = JsValue::Object(vm.new_object()?);
     for (name, value) in fields {
-        vm.set(&object, crate::v9::vm::heap::Key::from(name), value.clone(), true)?;
+        vm.set(
+            &object,
+            crate::v9::vm::heap::Key::from(name),
+            value.clone(),
+            true,
+        )?;
     }
     Ok(object)
 }

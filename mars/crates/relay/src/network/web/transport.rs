@@ -370,17 +370,21 @@ pub(super) fn retry_with_rsa(error: &std::io::Error) -> bool {
 
 /**
  * The server answered the hello with handshake_failure (or a version or security refusal):
- * no suite or version in common, Chromium's ERR_SSL_VERSION_OR_CIPHER_MISMATCH.
+ * no suite or version in common, Chromium's ERR_SSL_VERSION_OR_CIPHER_MISMATCH. A server that
+ * picked one of the suites hello.rs advertises for Chrome's shape but Rustls cannot run lands
+ * here too, so legacy.rs gets its turn at the kRSA ones.
  */
 fn refused_suites(error: &std::io::Error) -> bool {
     use rustls::AlertDescription::{HandshakeFailure, InsufficientSecurity, ProtocolVersion};
+    use rustls::PeerMisbehaved::SelectedUnofferedCipherSuite;
     matches!(
         error
             .get_ref()
             .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
-        Some(rustls::Error::AlertReceived(
-            HandshakeFailure | InsufficientSecurity | ProtocolVersion
-        ))
+        Some(
+            rustls::Error::AlertReceived(HandshakeFailure | InsufficientSecurity | ProtocolVersion)
+                | rustls::Error::PeerMisbehaved(SelectedUnofferedCipherSuite)
+        )
     )
 }
 

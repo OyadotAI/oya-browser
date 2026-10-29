@@ -80,7 +80,8 @@ impl Shape {
     }
 }
 
-/** A key-to-slot hash index. */
+/** A key-to-slot hash index. Keys compare by value and never change once indexed. */
+#[allow(clippy::mutable_key_type)]
 fn index_of(keys: &[Key]) -> FastMap<Key, usize> {
     keys.iter()
         .enumerate()

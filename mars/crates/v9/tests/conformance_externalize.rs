@@ -643,9 +643,17 @@ fn noncanonical_shared_external_resource_survives_snapshot() {
 #[test]
 fn native_thin_and_internalized_strings_keep_distinct_backings() {
     let source = "let source=['real thin',' payload'].join('');let thin=%ConstructThinString(source);let target=%ConstructInternalizedString(source);let again=%ConstructThinString(thin);let r=[thin===target,!%IsSameHeapObject(thin,target),%IsSameHeapObject(thin,again),%IsSameHeapObject(target,%InternalizeString(thin))].join();";
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        ..common::environment()
+    };
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,true");
 }
 
@@ -653,8 +661,17 @@ fn native_thin_and_internalized_strings_keep_distinct_backings() {
 #[test]
 fn native_thin_construction_fuzzing_preserves_argument_effects() {
     let source = "let n=0;let a=%ConstructThinString();let b=%ConstructThinString('too short');let c=%ConstructThinString(1);let d=%ConstructThinString('long enough payload',++n);let e=%ConstructInternalizedString(1);let f=%ConstructInternalizedString('valid',++n);let r=[a,b,c,d,e,f,n].join();";
-    let environment = PageEnvironment { conformance_d8: true, conformance_fuzzing: true, conformance_native_main_source: Some(0), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_fuzzing: true,
+        conformance_native_main_source: Some(0),
+        ..common::environment()
+    };
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), ",,,,,,2");
 }

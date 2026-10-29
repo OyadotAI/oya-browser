@@ -71,9 +71,9 @@ fn ids() -> &'static Ids {
 /** Install the window proxy prototype and the delivery task. */
 pub(in crate::v9) fn install(b: &mut Builder) {
     let proxy = b.object(Some(b.ids.object_prototype));
-    b.method(proxy, "postMessage", 1, proxy_post);
+    b.host_method(proxy, "postMessage", 1, proxy_post);
     for name in ["focus", "blur", "close"] {
-        b.method(proxy, name, 0, proxy_nothing);
+        b.host_method(proxy, name, 0, proxy_nothing);
     }
     for name in ["closed", "window", "self", "frames", "length"] {
         b.getter(proxy, name, proxy_get);

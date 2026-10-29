@@ -80,7 +80,10 @@ impl Vm<'_> {
     pub fn enqueue(&mut self, job: Job) -> Res<()> {
         #[cfg(feature = "conformance")]
         let job = match job {
-            Job::Callback(callback) => Job::CallbackWithData { callback, continuation_data: self.page.state.continuation_data.clone() },
+            Job::Callback(callback) => Job::CallbackWithData {
+                callback,
+                continuation_data: self.page.state.continuation_data.clone(),
+            },
             job => job,
         };
         #[cfg(feature = "conformance")]
@@ -93,7 +96,9 @@ impl Vm<'_> {
         #[cfg(feature = "conformance")]
         if let Some(bank) = self.custom_job_realm(&job) {
             let context = &mut self.realms.contexts[bank as usize];
-            if !context.microtask_queue_closed { context.custom_jobs.push(job); }
+            if !context.microtask_queue_closed {
+                context.custom_jobs.push(job);
+            }
             return Ok(());
         }
         self.jobs.push_back(job);
@@ -111,8 +116,14 @@ impl Vm<'_> {
                 ReactionHandler::Resume(holder) => Some(*holder),
             },
         };
-        let bank = callback.and_then(|id| self.job_callback_realm(id)).unwrap_or(self.active_realm);
-        self.realms.contexts.get(bank as usize).filter(|context| context.own_microtask_queue && context.global.is_some()).map(|_| bank)
+        let bank = callback
+            .and_then(|id| self.job_callback_realm(id))
+            .unwrap_or(self.active_realm);
+        self.realms
+            .contexts
+            .get(bank as usize)
+            .filter(|context| context.own_microtask_queue && context.global.is_some())
+            .map(|_| bank)
     }
     /** Bound functions and live proxies inherit the target's realm; revoked proxies use the current context. */
     #[cfg(feature = "conformance")]
@@ -375,9 +386,14 @@ impl Vm<'_> {
         match &job {
             Job::Callback(function) => self.pins.push(function.clone()),
             #[cfg(feature = "conformance")]
-            Job::CallbackWithData { callback, continuation_data } => {
+            Job::CallbackWithData {
+                callback,
+                continuation_data,
+            } => {
                 self.pins.push(callback.clone());
-                if let Some(value) = continuation_data { self.pins.push(value.clone()); }
+                if let Some(value) = continuation_data {
+                    self.pins.push(value.clone());
+                }
             }
             Job::Thenable {
                 promise,
@@ -403,19 +419,26 @@ impl Vm<'_> {
         #[cfg(feature = "conformance")]
         let previous_data = match &job {
             Job::Reaction { reaction, .. } => Some(reaction.continuation_data.clone()),
-            Job::Thenable { continuation_data, .. } => Some(continuation_data.clone()),
+            Job::Thenable {
+                continuation_data, ..
+            } => Some(continuation_data.clone()),
             Job::Callback(_) => Some(None),
-            Job::CallbackWithData { continuation_data, .. } => Some(continuation_data.clone()),
-        }.map(|data| std::mem::replace(&mut self.page.state.continuation_data, data));
+            Job::CallbackWithData {
+                continuation_data, ..
+            } => Some(continuation_data.clone()),
+        }
+        .map(|data| std::mem::replace(&mut self.page.state.continuation_data, data));
         #[cfg(feature = "conformance")]
-        if let Some(Some(value)) = &previous_data { self.pins.push(value.clone()); }
+        if let Some(Some(value)) = &previous_data {
+            self.pins.push(value.clone());
+        }
         let result = (|| -> Res<()> {
             #[cfg(feature = "conformance")]
-            if let Some(resource) = resource {
-                if let Err(error) = super::async_hook_before(self, resource) {
-                    super::async_hook_unwind(self)?;
-                    return Err(error);
-                }
+            if let Some(resource) = resource
+                && let Err(error) = super::async_hook_before(self, resource)
+            {
+                super::async_hook_unwind(self)?;
+                return Err(error);
             }
             let result = self.run_job(job);
             #[cfg(feature = "conformance")]
@@ -429,7 +452,9 @@ impl Vm<'_> {
             result
         })();
         #[cfg(feature = "conformance")]
-        if let Some(previous) = previous_data { self.page.state.continuation_data = previous; }
+        if let Some(previous) = previous_data {
+            self.page.state.continuation_data = previous;
+        }
         self.pins.truncate(mark);
         result
     }
@@ -503,7 +528,11 @@ impl Vm<'_> {
     /** A resolve/reject pair sharing one already-resolved flag. */
     pub fn resolving_functions(&mut self, promise: ObjectId) -> Res<(ObjectId, ObjectId)> {
         let flag = self.new_object()?;
-        self.heap.put(flag, Key::private(RESOLVER_TARGET), crate::v9::vm::heap::Prop::data(JsValue::Object(promise)));
+        self.heap.put(
+            flag,
+            Key::private(RESOLVER_TARGET),
+            crate::v9::vm::heap::Prop::data(JsValue::Object(promise)),
+        );
         let slots = vec![JsValue::Object(flag)];
         let resolve = self.native_closure(natives().resolve, slots.clone())?;
         let reject = self.native_closure(natives().reject, slots)?;
@@ -516,8 +545,17 @@ fn claim(vm: &mut Vm, call: &Call) -> Res<Option<ObjectId>> {
     let slots = vm.slots(call.callee);
     let (promise, flag, shared) = match slots.as_slice() {
         [JsValue::Object(flag)] => {
-            let target = vm.heap.get(*flag).and_then(|object| object.props.get(&Key::private(RESOLVER_TARGET))).and_then(|prop| match &prop.slot { crate::v9::vm::heap::Slot::Data(JsValue::Object(target)) => Some(*target), _ => None });
-            let Some(target) = target else { return Ok(None); };
+            let target = vm
+                .heap
+                .get(*flag)
+                .and_then(|object| object.props.get(&Key::private(RESOLVER_TARGET)))
+                .and_then(|prop| match &prop.slot {
+                    crate::v9::vm::heap::Slot::Data(JsValue::Object(target)) => Some(*target),
+                    _ => None,
+                });
+            let Some(target) = target else {
+                return Ok(None);
+            };
             (target, JsValue::Object(*flag), true)
         }
         [JsValue::Object(promise), flag] => (*promise, flag.clone(), false),
@@ -528,7 +566,13 @@ fn claim(vm: &mut Vm, call: &Call) -> Res<Option<ObjectId>> {
     }
     if let JsValue::Object(flag) = flag {
         vm.put(flag, "done", JsValue::Boolean(true))?;
-        if shared { vm.heap.put(flag, Key::private(RESOLVER_TARGET), crate::v9::vm::heap::Prop::data(JsValue::Undefined)); }
+        if shared {
+            vm.heap.put(
+                flag,
+                Key::private(RESOLVER_TARGET),
+                crate::v9::vm::heap::Prop::data(JsValue::Undefined),
+            );
+        }
     }
     Ok(Some(promise))
 }

@@ -19,10 +19,10 @@ pub(super) fn write(test: &str, profiles: Vec<(Option<u64>, String)>) -> Result<
         let isolate = endpoint.map_or_else(|| "root".into(), |id| format!("worker-{id}"));
         let directory = confined(&root, &root.join("cpu-profiles").join(&name).join(isolate))?;
         let file = directory.join("v8.prof");
-        if let Ok(metadata) = std::fs::symlink_metadata(&file) {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err("CPU profile artifact must be a regular owned file".into());
-            }
+        if let Ok(metadata) = std::fs::symlink_metadata(&file)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err("CPU profile artifact must be a regular owned file".into());
         }
         std::fs::write(file, json).map_err(|error| error.to_string())?;
     }

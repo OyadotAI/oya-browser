@@ -87,7 +87,10 @@ fn encode(state: &State) -> Vec<u8> {
                 SharedGcValue::Null => bytes.push(1),
                 SharedGcValue::Boolean(v) => bytes.push(if *v { 3 } else { 2 }),
                 #[cfg(feature = "conformance")]
-                SharedGcValue::Smi(v) => { bytes.push(12); bytes.extend(v.to_le_bytes()); }
+                SharedGcValue::Smi(v) => {
+                    bytes.push(12);
+                    bytes.extend(v.to_le_bytes());
+                }
                 SharedGcValue::Number(v) => {
                     bytes.push(4);
                     put(&mut bytes, *v);
@@ -114,7 +117,9 @@ fn encode(state: &State) -> Vec<u8> {
                     bytes.push(u8::from(value.is_external()));
                     bytes.push(u8::from(value.is_latin1()));
                     count(&mut bytes, value.len());
-                    for unit in value.code_units() { bytes.extend(unit.to_le_bytes()); }
+                    for unit in value.code_units() {
+                        bytes.extend(unit.to_le_bytes());
+                    }
                 }
                 SharedGcValue::BigIntWide(value) => {
                     bytes.push(9);
@@ -174,7 +179,13 @@ impl<'a> Reader<'a> {
             3 => SharedGcValue::Boolean(true),
             4 => SharedGcValue::Number(self.u64()?),
             #[cfg(feature = "conformance")]
-            12 => { let value = i32::from_le_bytes(self.take(4)?.try_into().unwrap()); if !(-(1_i32 << 30)..(1_i32 << 30)).contains(&value) { return Err(invalid()); } SharedGcValue::Smi(value) },
+            12 => {
+                let value = i32::from_le_bytes(self.take(4)?.try_into().unwrap());
+                if !(-(1_i32 << 30)..(1_i32 << 30)).contains(&value) {
+                    return Err(invalid());
+                }
+                SharedGcValue::Smi(value)
+            }
             5 => SharedGcValue::BigInt(i128::from_le_bytes(self.take(16)?.try_into().unwrap())),
             6 => SharedGcValue::Vector(self.take(16)?.try_into().unwrap()),
             7 => {
@@ -195,21 +206,40 @@ impl<'a> Reader<'a> {
                 let interned = if tag == 11 { self.byte()? } else { 0 };
                 let external = self.byte()?;
                 let one_byte = self.byte()?;
-                if interned > 1 || external > 1 || one_byte > 1 { return Err(invalid()); }
+                if interned > 1 || external > 1 || one_byte > 1 {
+                    return Err(invalid());
+                }
                 let n = self.count()?;
-                if n > crate::constants::JS_STRING_UNITS || n > remaining / 2 { return Err(invalid()); }
-                let units = self.take(n.checked_mul(2).ok_or_else(invalid)?)?.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect::<Vec<_>>();
-                let value = if one_byte != 0 { crate::v9::value::JsString::from_units(units)? } else { crate::v9::value::JsString::from_units_two_byte(units)? };
-                if (one_byte != 0) != value.is_latin1() { return Err(invalid()); }
+                if n > crate::constants::JS_STRING_UNITS || n > remaining / 2 {
+                    return Err(invalid());
+                }
+                let units = self
+                    .take(n.checked_mul(2).ok_or_else(invalid)?)?
+                    .chunks_exact(2)
+                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .collect::<Vec<_>>();
+                let value = if one_byte != 0 {
+                    crate::v9::value::JsString::from_units(units)?
+                } else {
+                    crate::v9::value::JsString::from_units_two_byte(units)?
+                };
+                if (one_byte != 0) != value.is_latin1() {
+                    return Err(invalid());
+                }
                 let value = if interned != 0 {
                     crate::v9::value::intern_shared_internalized(&value)?
-                } else if one_byte == 0 && value.code_units().all(|unit| unit <= u16::from(u8::MAX)) {
+                } else if one_byte == 0 && value.code_units().all(|unit| unit <= u16::from(u8::MAX))
+                {
                     crate::v9::value::intern_shared_two_byte_noncanonical(&value)?
                 } else {
                     crate::v9::value::intern_shared_string(&value)?
                 };
-                if (one_byte != 0) != value.is_latin1() { return Err(invalid()); }
-                if external != 0 { value.externalize()?; }
+                if (one_byte != 0) != value.is_latin1() {
+                    return Err(invalid());
+                }
+                if external != 0 {
+                    value.externalize()?;
+                }
                 SharedGcValue::SharedString(value)
             }
             9 => {

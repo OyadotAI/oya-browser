@@ -28,6 +28,22 @@ pub(super) fn install(builder: &mut Builder) {
     builder.method(object, "notify", 3, notify);
     builder.method(object, "isLockFree", 1, is_lock_free);
     asynchronous::install(builder, object);
+    builder.method(object, "pause", 0, pause);
+}
+
+/** Atomics.pause: a spin-wait hint with nothing to wait on here, so it only validates the
+iteration count the way V8 does, since pages feature-test it and read its error text. */
+fn pause(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let integral = match call.arg(0) {
+        JsValue::Undefined => true,
+        other => other
+            .number_value()
+            .is_some_and(|count| count.fract() == 0.0 && count.is_finite()),
+    };
+    if !integral {
+        return Err(vm.type_error("Atomics.pause argument must be undefined or an integer"));
+    }
+    Ok(JsValue::Undefined)
 }
 
 /** The receiver must be an attached, in-bounds integer typed array; waitable kinds are narrower. */
@@ -256,13 +272,13 @@ fn wait(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let result = buffer.wait(offset, &expected, timeout, || {
         #[cfg(feature = "conformance")]
         {
-            return match vm.wait_safepoint() {
+            match vm.wait_safepoint() {
                 Ok(expired) => expired,
                 Err(error) => {
                     poll_error = Some(error);
                     true
                 }
-            };
+            }
         }
         #[cfg(not(feature = "conformance"))]
         {

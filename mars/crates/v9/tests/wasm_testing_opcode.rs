@@ -9,7 +9,11 @@ fn wasm_testing_nop_requires_explicit_flag() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     let disabled = common::load_with(source, &environment);
-    assert!(disabled.failed.is_empty(), "{:?}", common::failure(&disabled));
+    assert!(
+        disabled.failed.is_empty(),
+        "{:?}",
+        common::failure(&disabled)
+    );
     assert_eq!(common::global(&disabled, "r"), "false");
     environment.conformance_wasm_testing_opcode = true;
     let enabled = common::load_with(source, &environment);

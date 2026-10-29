@@ -9,6 +9,9 @@ use crate::scopes::Scopes;
 use crate::{Attribute, Error, Event, MAX_DEPTH, Name, XML_NAMESPACE, XMLNS_NAMESPACE};
 use std::collections::HashSet;
 
+/** A start tag's attributes as written: the name as sliced from the input, the value decoded. */
+type Attributes<'a> = Vec<(&'a str, String)>;
+
 /** Parse a whole document into its events, or the first well-formedness error. A byte order
 mark is skipped, and line endings are normalized before anything is read. */
 pub fn parse(source: &str) -> Result<Vec<Event>, Error> {
@@ -211,7 +214,8 @@ impl<'a> Parser<'a> {
     fn processing_instruction(&mut self) -> Result<(), Error> {
         self.reader.eat("<?");
         self.reader.name()?;
-        self.reader.until("?>", "unterminated processing instruction")?;
+        self.reader
+            .until("?>", "unterminated processing instruction")?;
         Ok(())
     }
     /** The document type declaration, read past and dropped, including an internal subset. */
@@ -219,13 +223,13 @@ impl<'a> Parser<'a> {
         self.reader.eat("<!DOCTYPE");
         let rest = self.reader.rest();
         let mut from = 0;
-        if let Some(open) = rest.find('[') {
-            if rest.find('>').is_none_or(|gt| open < gt) {
-                let close = rest[open..]
-                    .find(']')
-                    .ok_or_else(|| self.reader.fail("unterminated DOCTYPE"))?;
-                from = open + close + 1;
-            }
+        if let Some(open) = rest.find('[')
+            && rest.find('>').is_none_or(|gt| open < gt)
+        {
+            let close = rest[open..]
+                .find(']')
+                .ok_or_else(|| self.reader.fail("unterminated DOCTYPE"))?;
+            from = open + close + 1;
         }
         let gt = rest[from..]
             .find('>')
@@ -254,7 +258,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     /** The attributes of a start tag as written, and whether the tag closes itself. */
-    fn attributes(&mut self) -> Result<(Vec<(&'a str, String)>, bool), Error> {
+    fn attributes(&mut self) -> Result<(Attributes<'a>, bool), Error> {
         let mut raw = Vec::new();
         loop {
             let spaced = self.reader.skip_space();
@@ -289,7 +293,7 @@ impl<'a> Parser<'a> {
     fn declare(&mut self, attributes: &[(&'a str, String)]) -> Result<Vec<&'a str>, Error> {
         let mut bound = Vec::new();
         for (name, value) in attributes {
-            let name: &'a str = *name;
+            let name: &'a str = name;
             let Some(prefix) = declared_prefix(name) else {
                 continue;
             };
@@ -381,7 +385,10 @@ impl<'a> Parser<'a> {
         if !self.reader.eat(">") {
             return Err(self.reader.fail("expected '>' to end an end tag"));
         }
-        let open = self.open.pop().ok_or_else(|| self.reader.fail("an end tag has no start"))?;
+        let open = self
+            .open
+            .pop()
+            .ok_or_else(|| self.reader.fail("an end tag has no start"))?;
         if open.qualified != name {
             return Err(self.reader.fail("an end tag does not match its start tag"));
         }
@@ -405,7 +412,9 @@ colon is not a qualified name. */
 fn split_qualified(name: &str) -> Result<(Option<&str>, &str), &'static str> {
     match name.split_once(':') {
         None => Ok((None, name)),
-        Some((prefix, local)) if !prefix.is_empty() && !local.is_empty() && !local.contains(':') => {
+        Some((prefix, local))
+            if !prefix.is_empty() && !local.is_empty() && !local.contains(':') =>
+        {
             Ok((Some(prefix), local))
         }
         Some(_) => Err("a qualified name is malformed"),

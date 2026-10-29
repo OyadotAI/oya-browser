@@ -65,10 +65,10 @@ pub(super) fn next(vm: &mut Vm, id: ObjectId, cursor: &mut usize) -> Res<Option<
 pub(super) fn insert(vm: &mut Vm, id: ObjectId, value: JsValue) -> Res<()> {
     vm.heap.track_value(&value);
     let units = value.string_units() as isize;
-    if let Some(Class::Set(table)) = vm.heap.get_mut(id).map(|object| &mut object.class) {
-        if table.set(value, JsValue::Undefined) {
-            vm.heap.adjust(1, units);
-        }
+    if let Some(Class::Set(table)) = vm.heap.get_mut(id).map(|object| &mut object.class)
+        && table.set(value, JsValue::Undefined)
+    {
+        vm.heap.adjust(1, units);
     }
     vm.check_heap_bounds()
 }

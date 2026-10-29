@@ -22,7 +22,7 @@ pub(super) fn create(vm: &mut Vm) -> Res<ObjectId> {
 
 /** Internal operations accept only directly branded objects, excluding proxies and inherited brands. */
 pub(super) fn identity(vm: &Vm, value: &JsValue) -> Res<ObjectId> {
-    let id = value.object().ok_or_else(|| invalid())?;
+    let id = value.object().ok_or_else(invalid)?;
     if get(vm, id, "disposal-state")? != JsValue::Object(id) {
         return Err(invalid().into());
     }
@@ -60,7 +60,7 @@ pub(super) fn boolean(vm: &Vm, id: ObjectId, name: &str) -> Res<bool> {
 }
 /** Native storage arrays remain subject to ordinary heap accounting and admission limits. */
 fn records(vm: &Vm, id: ObjectId) -> Res<ObjectId> {
-    let record = get(vm, id, "records")?.object().ok_or_else(|| invalid())?;
+    let record = get(vm, id, "records")?.object().ok_or_else(invalid)?;
     if !matches!(
         vm.heap.get(record).map(|object| &object.class),
         Some(Class::Array(_))

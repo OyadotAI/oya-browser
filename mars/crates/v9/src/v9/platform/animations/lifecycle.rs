@@ -71,10 +71,7 @@ fn next_sample(vm: &mut Vm, id: ObjectId, state: &mut State, effect: &Effect) ->
     let now = vm.page.state.clock;
     let boundary = if state.rate > 0.0 { effect.end() } else { 0.0 };
     let current = state.current(now).unwrap_or(0.0);
-    let due = now
-        + ((boundary - current) / state.rate)
-            .max(0.0)
-            .min(ANIMATION_FRAME_MS);
+    let due = now + ((boundary - current) / state.rate).clamp(0.0, ANIMATION_FRAME_MS);
     schedule(vm, id, state, due)
 }
 /** End state follows time and direction, not a timer count or an arbitrary successful Promise. */

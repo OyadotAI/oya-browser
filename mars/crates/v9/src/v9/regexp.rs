@@ -89,16 +89,76 @@ pub(super) const STRING_PROPERTIES: [&str; 7] = [
 
 /** The message for a pattern over a size or nesting bound V9 enforces; ECMAScript has no such early error, so a literal carrying one still parses. */
 pub(super) const ENGINE_LIMIT: &str = "Regular expression too large for engine limit";
+/** V8's reason for a quantifier with no atom before it. */
+const NOTHING_TO_REPEAT: &str = "Nothing to repeat";
+/** V8's reason for a `\p{...}` naming no property. */
+const INVALID_PROPERTY: &str = "Invalid property name";
+/** V8's reason for a `[` that never closes. */
+pub(super) const UNTERMINATED_CLASS: &str = "Unterminated character class";
+/** V8's reason for a class range whose end is below its start. */
+pub(super) const RANGE_OUT_OF_ORDER: &str = "Range out of order in character class";
+
+/** A property error inside a class carries V8's class-specific wording. */
+pub(super) fn in_class(error: PatternError) -> PatternError {
+    if error.0 == INVALID_PROPERTY {
+        PatternError(format!("{INVALID_PROPERTY} in character class"))
+    } else {
+        error
+    }
+}
 
 /** A pattern or flag error, reported to scripts as a SyntaxError. */
 #[derive(Debug)]
 pub(super) struct PatternError(pub String);
+
+/** The start of V8's message for bad RegExp flags, which names no pattern. */
+const INVALID_FLAGS: &str = "Invalid flags supplied to RegExp constructor '";
 
 impl PatternError {
     /** True when the error is V9's own gap (an unsupported construct or a size bound), not an ECMAScript early error; parse-time checks defer these to the runtime. */
     pub(super) fn is_engine_gap(&self) -> bool {
         self.0.starts_with(ENGINE_LIMIT)
     }
+    /** V8's error for flags the constructor refuses; it is already complete, so a caller must
+    not wrap it with the pattern as it wraps pattern errors. */
+    pub(super) fn flags(flags: &str) -> Self {
+        PatternError(format!("{INVALID_FLAGS}{flags}'"))
+    }
+    /** True when the error is about the flags rather than the pattern. */
+    pub(super) fn is_flag_error(&self) -> bool {
+        self.0.starts_with(INVALID_FLAGS)
+    }
+}
+
+/** True when some `\k<name>` in the pattern names none of the compiled groups. The parser has
+already refused `\k` inside a class and every malformed reference, so each one left is an atom.
+ponytail: a name spelled with escapes is left to the parser, which decodes them; only plain names are checked. */
+fn has_dangling_group_reference(pattern: &str, names: &[(String, Vec<usize>)]) -> bool {
+    let mut rest = pattern;
+    while let Some(index) = rest.find('\\') {
+        let after = &rest[index + 1..];
+        let Some(reference) = after.strip_prefix("k<") else {
+            rest = after_escape(after);
+            continue;
+        };
+        let Some(end) = reference.find('>') else {
+            return false;
+        };
+        let name = &reference[..end];
+        if !name.contains('\\') && !names.iter().any(|(declared, _)| declared == name) {
+            return true;
+        }
+        rest = &reference[end + 1..];
+    }
+    false
+}
+
+/** The text after one escaped character, stepping over the whole character. */
+fn after_escape(after: &str) -> &str {
+    after
+        .chars()
+        .next()
+        .map_or("", |escaped| &after[escaped.len_utf8()..])
 }
 
 /** Why a match stopped without a result. */
@@ -142,25 +202,17 @@ pub(super) fn compile(
             'v' => &mut unicode_sets,
             'y' => &mut program.sticky,
             'd' => &mut program.indices,
-            _ => {
-                return Err(PatternError(format!(
-                    "Invalid regular expression flags '{flags}'"
-                )));
-            }
+            _ => return Err(PatternError::flags(flags)),
         };
         if *slot {
-            return Err(PatternError(format!(
-                "Invalid regular expression flags '{flags}'"
-            )));
+            return Err(PatternError::flags(flags));
         }
         *slot = true;
     }
     if unicode_sets {
         // The v flag implies unicode matching, and it cannot be combined with u.
         if program.unicode {
-            return Err(PatternError(format!(
-                "Invalid regular expression flags '{flags}'"
-            )));
+            return Err(PatternError::flags(flags));
         }
         program.unicode = true;
     }
@@ -182,19 +234,25 @@ pub(super) fn compile(
     parser.group_names.open_frame();
     let root = parser.disjunction()?;
     if parser.position < pattern.len() {
-        return Err(PatternError(
-            "Invalid regular expression: unmatched ')'".into(),
-        ));
+        return Err(PatternError("Unmatched ')'".into()));
     }
     if parser.emoji_expansion_limit {
         return Err(PatternError(format!("{ENGINE_LIMIT}: too large")));
     }
     let mut root = root;
     settle_classes(&mut root);
-    program.latin1_possible = latin1_possible(&root, Modes::from_program(&program), program.unicode);
+    program.latin1_possible =
+        latin1_possible(&root, Modes::from_program(&program), program.unicode);
     program.root = root;
     program.groups = parser.groups;
     program.names = parser.group_names.entries;
+    // A `\k<name>` naming no group is an error once the pattern has named groups or the u/v
+    // flag; without either, Annex B reads `\k` as a literal k.
+    if (!program.names.is_empty() || program.unicode)
+        && has_dangling_group_reference(&String::from_utf16_lossy(pattern), &program.names)
+    {
+        return Err(PatternError("Invalid named capture referenced".into()));
+    }
     program.name_slots = parser.group_names.slots;
     Ok(program)
 }
@@ -361,10 +419,15 @@ impl PatternParser<'_> {
         match (terms.last_mut(), atom) {
             (Some(Node::Literal(points)), Node::Char(point)) => points.push(point),
             (Some(last @ Node::Char(_)), Node::Char(point)) => {
-                let Node::Char(first) = *last else { unreachable!() };
+                let Node::Char(first) = *last else {
+                    unreachable!()
+                };
                 *last = Node::Literal(vec![first, point]);
             }
-            (_, atom) => { self.count()?; terms.push(atom); }
+            (_, atom) => {
+                self.count()?;
+                terms.push(atom);
+            }
         }
         Ok(())
     }
@@ -404,20 +467,12 @@ impl PatternParser<'_> {
             }
             Some('[') => self.class()?,
             Some('\\') => self.escape()?,
-            Some('*' | '+' | '?') => {
-                return Err(PatternError(
-                    "Invalid regular expression: nothing to repeat".into(),
-                ));
+            Some('*' | '+' | '?') => return Err(PatternError(NOTHING_TO_REPEAT.into())),
+            Some('{') if self.leading_quantifier() => {
+                return Err(PatternError(NOTHING_TO_REPEAT.into()));
             }
-            Some('{') if self.unicode || self.leading_quantifier() => {
-                return Err(PatternError(
-                    "Invalid regular expression: nothing to repeat".into(),
-                ));
-            }
-            Some(']' | '}') if self.unicode => {
-                return Err(PatternError(
-                    "Invalid regular expression: lone quantifier brackets".into(),
-                ));
+            Some('{' | ']' | '}') if self.unicode => {
+                return Err(PatternError("Lone quantifier brackets".into()));
             }
             _ => Node::Char(self.next_point().unwrap_or(0)),
         };
@@ -440,26 +495,25 @@ impl PatternParser<'_> {
             }
             Some('{') => match self.braces() {
                 Some(bounds) => bounds,
+                None if self.unicode => return Err(PatternError("Incomplete quantifier".into())),
                 None => return Ok(atom),
             },
             _ => return Ok(atom),
         };
         // Lookbehinds never take a quantifier; lookaheads do only under Annex B (no u flag).
         let unquantifiable = match atom {
-            Node::Start | Node::End | Node::Boundary(_) => self.unicode,
-            Node::Look(_, ahead, _) => self.unicode || !ahead,
-            _ => false,
+            Node::Start | Node::End | Node::Boundary(_) => {
+                self.unicode.then_some(NOTHING_TO_REPEAT)
+            }
+            Node::Look(_, ahead, _) if self.unicode || !ahead => Some("Invalid quantifier"),
+            _ => None,
         };
-        if unquantifiable {
-            return Err(PatternError(
-                "Invalid regular expression: nothing to repeat".into(),
-            ));
+        if let Some(reason) = unquantifiable {
+            return Err(PatternError(reason.into()));
         }
         let greedy = !self.eat('?');
         if max.is_some_and(|max| max < min) {
-            return Err(PatternError(
-                "Invalid regular expression: numbers out of order in {} quantifier".into(),
-            ));
+            return Err(PatternError("numbers out of order in {} quantifier".into()));
         }
         Ok(Node::Repeat(Box::new(atom), min, max, greedy, captures))
     }
@@ -540,9 +594,7 @@ impl PatternParser<'_> {
                 self.close()?;
                 return Ok(Node::Group(Box::new(inner), Some(index)));
             }
-            return Err(PatternError(
-                "Invalid regular expression: invalid group".into(),
-            ));
+            return Err(PatternError("Invalid group".into()));
         }
         self.groups += 1;
         if self.groups > REGEXP_GROUPS {
@@ -560,7 +612,7 @@ impl PatternParser<'_> {
         if self.eat(')') {
             Ok(())
         } else {
-            Err(PatternError("Invalid regular expression: missing )".into()))
+            Err(PatternError("Unterminated group".into()))
         }
     }
     /** A group name up to `>`: surrogate pairs and `\u` escapes decode to one code point, and
@@ -740,7 +792,7 @@ impl PatternParser<'_> {
                     self.position += 1;
                     letter as u32 % 32
                 }
-                _ if self.unicode => return Err(PatternError("Invalid unicode escape".into())),
+                _ if self.unicode => return Err(PatternError("Invalid Unicode escape".into())),
                 _ => {
                     self.position -= 1;
                     u32::from(b'\\')
@@ -823,7 +875,7 @@ impl PatternParser<'_> {
     /** Read a property name before its enclosing set decides how to combine it. */
     fn read_property(&mut self, negated: bool) -> Result<Property, PatternError> {
         if !self.eat('{') {
-            return Err(PatternError("Invalid property name".into()));
+            return Err(PatternError(INVALID_PROPERTY.into()));
         }
         let mut name = String::new();
         let mut closed = false;
@@ -836,17 +888,17 @@ impl PatternParser<'_> {
             name.push(c);
         }
         if !closed {
-            return Err(PatternError("Invalid property name".into()));
+            return Err(PatternError(INVALID_PROPERTY.into()));
         }
         let ranges = match property_ranges(&name) {
             Some(ranges) => ranges,
             None if STRING_PROPERTIES.contains(&name.as_str()) => {
                 if !self.unicode_sets || negated {
-                    return Err(PatternError(format!("Invalid property name {name}")));
+                    return Err(PatternError(INVALID_PROPERTY.into()));
                 }
                 return Ok(Property::Strings(name));
             }
-            None => return Err(PatternError(format!("Invalid property name {name}"))),
+            None => return Err(PatternError(INVALID_PROPERTY.into())),
         };
         Ok(Property::CodePoints(ranges))
     }
@@ -870,7 +922,7 @@ impl PatternParser<'_> {
         let mut ranges = Vec::new();
         loop {
             let Some(c) = self.peek_char() else {
-                return Err(PatternError("Invalid regular expression: missing ]".into()));
+                return Err(PatternError(UNTERMINATED_CLASS.into()));
             };
             if c == ']' {
                 self.position += 1;
@@ -894,10 +946,7 @@ impl PatternParser<'_> {
                 match self.class_atom()? {
                     ClassAtom::Char(high) => {
                         if high < low {
-                            return Err(PatternError(
-                                "Invalid regular expression: range out of order in character class"
-                                    .into(),
-                            ));
+                            return Err(PatternError(RANGE_OUT_OF_ORDER.into()));
                         }
                         ranges.push((low, high));
                     }
@@ -950,12 +999,18 @@ impl PatternParser<'_> {
         }
         if (c == 'p' || c == 'P') && self.unicode {
             self.position += 1;
-            if let Node::Class(set, negated) = self.property(c == 'P')? {
+            if let Node::Class(set, negated) = self.property(c == 'P').map_err(in_class)? {
                 return Ok(ClassAtom::Set(if negated { invert(&set) } else { set }));
             }
         }
         if c.is_ascii_digit() && !self.unicode {
             return Ok(ClassAtom::Char(self.legacy_octal()));
+        }
+        if matches!(c, '1'..='7') {
+            return Err(PatternError("Invalid decimal escape".into()));
+        }
+        if matches!(c, '8' | '9') {
+            return Err(PatternError("Invalid escape".into()));
         }
         // With named groups present, `\k` is a reference slot and cannot be an identity escape.
         if c == 'k' && self.named_groups {
@@ -1307,10 +1362,21 @@ impl<'a> Matcher<'a> {
         let mut cursor = position;
         for offset in 0..points.len() {
             self.steps += 1;
-            if self.steps > self.budget || self.expired() { self.exceeded = true; return false; }
-            let index = if self.backward { points.len() - offset - 1 } else { offset };
-            let Some((point, end)) = self.atom(cursor) else { return false; };
-            if !self.same(point, points[index]) { return false; }
+            if self.steps > self.budget || self.expired() {
+                self.exceeded = true;
+                return false;
+            }
+            let index = if self.backward {
+                points.len() - offset - 1
+            } else {
+                offset
+            };
+            let Some((point, end)) = self.atom(cursor) else {
+                return false;
+            };
+            if !self.same(point, points[index]) {
+                return false;
+            }
             cursor = end;
         }
         next(self, cursor)
@@ -1368,7 +1434,13 @@ impl<'a> Matcher<'a> {
     offer the continuation from each end, longest first when greedy and shortest first when lazy.
     The general path recurses once per iteration and stops at REGEXP_DEPTH, so `/^[a-z]+$/` on
     25k characters failed as a limit; a page's whole-document matches are far longer than that. */
-    fn repeat_flat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+    fn repeat_flat(
+        &mut self,
+        r: &Repeat<'_>,
+        position: usize,
+        count: u32,
+        next: Next<'_, 'a>,
+    ) -> bool {
         let mut ends = vec![position];
         let mut taken = count;
         while r.max.is_none_or(|max| taken < max) {
@@ -1377,7 +1449,9 @@ impl<'a> Matcher<'a> {
                 self.exceeded = true;
                 return false;
             }
-            let Some((point, end)) = self.atom(ends[ends.len() - 1]) else { break };
+            let Some((point, end)) = self.atom(ends[ends.len() - 1]) else {
+                break;
+            };
             if !self.atom_matches(r.inner, point) {
                 break;
             }
@@ -1516,9 +1590,13 @@ fn latin1_char(point: u32, modes: Modes, unicode: bool) -> bool {
 /** A class is feasible when at least one Latin-1 point survives its case fold and negation. */
 fn latin1_class(ranges: &[(u32, u32)], negated: bool, modes: Modes, unicode: bool) -> bool {
     (0..=u32::from(u8::MAX)).any(|point| {
-        let contains = |candidate| ranges.iter().any(|(low, high)| (*low..=*high).contains(&candidate));
-        let matched = contains(point)
-            || modes.ignore_case && case::equivalents(point, unicode).any(contains);
+        let contains = |candidate| {
+            ranges
+                .iter()
+                .any(|(low, high)| (*low..=*high).contains(&candidate))
+        };
+        let matched =
+            contains(point) || modes.ignore_case && case::equivalents(point, unicode).any(contains);
         matched != negated
     })
 }
@@ -1527,13 +1605,19 @@ fn latin1_class(ranges: &[(u32, u32)], negated: bool, modes: Modes, unicode: boo
 fn latin1_possible(node: &Node, modes: Modes, unicode: bool) -> bool {
     match node {
         Node::Char(point) => latin1_char(*point, modes, unicode),
-        Node::Literal(points) => points.iter().all(|point| latin1_char(*point, modes, unicode)),
+        Node::Literal(points) => points
+            .iter()
+            .all(|point| latin1_char(*point, modes, unicode)),
         Node::Class(ranges, negated) => latin1_class(ranges, *negated, modes, unicode),
         Node::Group(inner, _) => latin1_possible(inner, modes, unicode),
         Node::Scoped(inner, effective) => latin1_possible(inner, *effective, unicode),
         Node::Look(inner, _, false) => latin1_possible(inner, modes, unicode),
-        Node::Concat(parts) => parts.iter().all(|part| latin1_possible(part, modes, unicode)),
-        Node::Alt(parts) => parts.iter().any(|part| latin1_possible(part, modes, unicode)),
+        Node::Concat(parts) => parts
+            .iter()
+            .all(|part| latin1_possible(part, modes, unicode)),
+        Node::Alt(parts) => parts
+            .iter()
+            .any(|part| latin1_possible(part, modes, unicode)),
         Node::Repeat(inner, min, _, _, _) => *min == 0 || latin1_possible(inner, modes, unicode),
         _ => true,
     }

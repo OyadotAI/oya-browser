@@ -118,7 +118,9 @@ fn atom(
             };
             return Ok(Atom::Primitive(JsValue::String(copy)));
         }
-        JsValue::LocalNumber(value) if graph.worker => return Ok(Atom::Primitive(JsValue::Number(value.value))),
+        JsValue::LocalNumber(value) if graph.worker => {
+            return Ok(Atom::Primitive(JsValue::Number(value.value)));
+        }
         JsValue::SharedNumber(value) if graph.worker => {
             let Some(Class::SharedContainerRoot(root)) =
                 vm.heap.get(value.root).map(|object| &object.class)

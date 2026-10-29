@@ -399,7 +399,12 @@ impl Parser {
             self.position += 1;
         }
         text.split(',')
-            .map(|range| range.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+            .map(|range| {
+                range
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'')
+                    .to_string()
+            })
             .filter(|range| !range.is_empty())
             .collect()
     }
@@ -649,7 +654,9 @@ fn pseudo_matches(
         Pseudo::Root => node == super::HTML || is_document_element(page, node),
         Pseudo::Lang(ranges) => {
             let language = nearest_language(page, node);
-            ranges.iter().any(|range| language_matches(&language, range))
+            ranges
+                .iter()
+                .any(|range| language_matches(&language, range))
         }
         Pseudo::Scope => scope.map_or(node == super::HTML, |scope| scope == node),
         Pseudo::PopoverOpen => super::interfaces::popover::matches_open(page, heap, node),
@@ -671,7 +678,10 @@ fn pseudo_matches(
 fn nearest_language(page: &mut super::Page, node: usize) -> String {
     let mut current = Some(node);
     while let Some(id) = current {
-        if let Some(lang) = page.view(id).and_then(|view| view.attributes.get("lang").cloned()) {
+        if let Some(lang) = page
+            .view(id)
+            .and_then(|view| view.attributes.get("lang").cloned())
+        {
             return lang;
         }
         current = page.parent(id);

@@ -140,7 +140,9 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let address64 = address::descriptor(vm, &descriptor)?;
     let limits = descriptor_limits(vm, &descriptor, address64)?;
     if ty == Type::Ref(-25, true) && call.args.len() < 2 {
-        return Err(vm.type_error("WebAssembly.Table(): Missing initial value when creating stringref table"));
+        return Err(vm.type_error(
+            "WebAssembly.Table(): Missing initial value when creating stringref table",
+        ));
     }
     let value = if call.args.len() > 1 {
         call.arg(1)

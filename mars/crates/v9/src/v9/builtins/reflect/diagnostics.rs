@@ -51,15 +51,15 @@ fn object(vm: &mut Vm, id: ObjectId) -> Res<String> {
         return error(vm, id);
     }
     let object_method = intrinsic(vm, intrinsics.ids.object_prototype, &key("toString"));
-    if to_string == object_method && to_string != JsValue::Undefined {
-        if let Some(ctor) = data(vm, id, &key("constructor"))?.object()
-            && vm.proxy_of(ctor).is_none()
-            && vm.is_callable(&JsValue::Object(ctor))
-            && let JsValue::String(name) = data(vm, ctor, &key("name"))?
-            && !name.is_empty()
-        {
-            return Ok(format!("#<{}>", name.lossy()));
-        }
+    if to_string == object_method
+        && to_string != JsValue::Undefined
+        && let Some(ctor) = data(vm, id, &key("constructor"))?.object()
+        && vm.proxy_of(ctor).is_none()
+        && vm.is_callable(&JsValue::Object(ctor))
+        && let JsValue::String(name) = data(vm, ctor, &key("name"))?
+        && !name.is_empty()
+    {
+        return Ok(format!("#<{}>", name.lossy()));
     }
     let tag = match data(vm, id, &Key::Sym(symbol::TO_STRING_TAG))? {
         JsValue::String(tag) => {

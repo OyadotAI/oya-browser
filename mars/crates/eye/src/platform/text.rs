@@ -119,10 +119,15 @@ fn styled_family(name: &str, face: Face) -> Option<Retained<NSFont>> {
     if traits.is_empty() {
         return Some(regular);
     }
-    let descriptor = regular
-        .fontDescriptor()
-        .fontDescriptorWithSymbolicTraits(traits);
-    NSFont::fontWithDescriptor_size(&descriptor, face.size).or(Some(regular))
+    // SAFETY: the selector is NSFontDescriptor's own; AppKit answers nil when the family has
+    // no face with the traits (browserleaks.com's fonts do), which the generated binding
+    // declares impossible and turns into a panic that took the whole document service down.
+    let descriptor: Option<Retained<NSFontDescriptor>> = unsafe {
+        objc2::msg_send![&*regular.fontDescriptor(), fontDescriptorWithSymbolicTraits: traits]
+    };
+    descriptor
+        .and_then(|descriptor| NSFont::fontWithDescriptor_size(&descriptor, face.size))
+        .or(Some(regular))
 }
 /** The descriptor with `wght` set, so one variable file serves every weight the page uses. */
 fn varied(descriptor: &NSFontDescriptor, weight: f64) -> Retained<NSFontDescriptor> {

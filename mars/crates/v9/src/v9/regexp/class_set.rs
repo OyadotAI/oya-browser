@@ -224,7 +224,7 @@ fn set_node(set: ClassSet) -> Node {
 
 /** The error for a class that never reaches its closing bracket. */
 fn missing_bracket() -> PatternError {
-    PatternError("Invalid regular expression: missing ]".into())
+    PatternError(super::UNTERMINATED_CLASS.into())
 }
 
 /** The error for a character that the v-mode grammar does not allow unescaped. */
@@ -369,9 +369,7 @@ impl PatternParser<'_> {
     fn range_end(&mut self, low: u32) -> Result<u32, PatternError> {
         match self.class_item()? {
             Item::Char(high) if high >= low => Ok(high),
-            Item::Char(_) => Err(PatternError(
-                "Invalid regular expression: range out of order in character class".into(),
-            )),
+            Item::Char(_) => Err(PatternError(super::RANGE_OUT_OF_ORDER.into())),
             Item::Set(_) => Err(PatternError("Invalid character class".into())),
         }
     }
@@ -386,7 +384,7 @@ impl PatternParser<'_> {
         while self.at_operator(operator) {
             self.position += 2;
             if self.unit_char(0) == Some(operator.symbol()) {
-                return Err(bad_operation());
+                return Err(bad_character());
             }
             let rhs = self.class_item()?;
             acc = apply(operator, acc, self.operand(rhs));
@@ -453,7 +451,7 @@ impl PatternParser<'_> {
 
     /** `\p{...}` or `\P{...}`. A property of strings cannot be negated, so `\P` of one is an early error. */
     fn property_set(&mut self, negated: bool) -> Result<ClassSet, PatternError> {
-        match self.read_property(negated)? {
+        match self.read_property(negated).map_err(super::in_class)? {
             Property::Strings(name) => self.emoji_class(&name),
             Property::CodePoints(set) => Ok(self.escape_class(set, negated)),
         }
@@ -472,7 +470,7 @@ impl PatternParser<'_> {
     /** The body of `\q{a|bc|}` after `\q`. */
     fn string_alternatives(&mut self) -> Result<ClassSet, PatternError> {
         if !self.eat(OPEN_BRACE) {
-            return Err(bad_character());
+            return Err(PatternError("Invalid escape".into()));
         }
         let mut set = ClassSet::default();
         loop {
@@ -517,8 +515,11 @@ impl PatternParser<'_> {
         if c == '\\' {
             return self.class_set_escape();
         }
-        if SYNTAX.contains(c) || (DOUBLED.contains(c) && self.doubled_at(c)) {
+        if SYNTAX.contains(c) {
             return Err(bad_character());
+        }
+        if DOUBLED.contains(c) && self.doubled_at(c) {
+            return Err(bad_operation());
         }
         self.next_point().ok_or_else(missing_bracket)
     }

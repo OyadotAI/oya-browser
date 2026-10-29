@@ -1,3 +1,5 @@
+use super::Page;
+use super::components::FRAGMENT;
 /**
  * XMLSerializer: `serializeToString` writes a node as XML, as the DOM Parsing standard describes.
  * Elements carry their namespace: a namespace that differs from the one the enclosing element set
@@ -9,9 +11,7 @@ use super::dom;
 use super::frames::{DOCTYPE, DOCUMENT_NODE};
 use super::implementation::PROCESSING_INSTRUCTION;
 use super::namespaces::implied_namespace;
-use super::Page;
 use super::nodes::NodeView;
-use super::components::FRAGMENT;
 use crate::v9::value::{JsString, JsValue};
 use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
@@ -22,7 +22,7 @@ type Namespace = Option<String>;
 /** Install the XMLSerializer constructor and its prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
-    b.method(proto, "serializeToString", 1, serialize_to_string);
+    b.host_method(proto, "serializeToString", 1, serialize_to_string);
     let ctor = b.constructor("XMLSerializer", 0, construct, proto, None);
     b.global("XMLSerializer", ctor);
 }
@@ -114,7 +114,10 @@ fn write_element(
     out.push('<');
     out.push_str(&name);
     write_namespace_declaration(&namespace, inherited, out);
-    for (attribute, value) in attributes.iter().filter(|(name, _)| name.as_str() != "xmlns") {
+    for (attribute, value) in attributes
+        .iter()
+        .filter(|(name, _)| name.as_str() != "xmlns")
+    {
         out.push(' ');
         out.push_str(attribute);
         out.push_str("=\"");
@@ -157,7 +160,13 @@ fn write_namespace_declaration(namespace: &Namespace, inherited: &Namespace, out
 }
 
 /** Write every child of a node in order, each in the namespace its parent element set. */
-fn write_children(page: &mut Page, id: usize, namespace: &Namespace, depth: usize, out: &mut String) {
+fn write_children(
+    page: &mut Page,
+    id: usize,
+    namespace: &Namespace,
+    depth: usize,
+    out: &mut String,
+) {
     for child in page.children(id) {
         write_node(page, child, namespace, depth + 1, out);
     }

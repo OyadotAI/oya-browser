@@ -141,7 +141,9 @@ pub(super) fn signature(m: &Module, index: u32) -> Result<&types::Signature, Err
 /** Exception handlers cannot use effect tags with result values. */
 pub(super) fn exception_signature(m: &Module, index: u32) -> Result<&types::Signature, Error> {
     let signature = signature(m, index)?;
-    if !signature.results.is_empty() { return Err(Error::invalid("exception tag must have no results")); }
+    if !signature.results.is_empty() {
+        return Err(Error::invalid("exception tag must have no results"));
+    }
     Ok(signature)
 }
 /** Internal native tags retain source bytes and an exact type index for canonical linking. */
@@ -326,7 +328,7 @@ pub(super) fn payload(vm: &mut Vm, value: &JsValue, tag: &JsValue) -> Res<Option
     }
     let owner = value.object().and_then(|id| get(vm, id, OWNER));
     if owner.as_ref() != Some(tag) {
-        return if owner.is_none() && is_js_tag(vm, &tag) {
+        return if owner.is_none() && is_js_tag(vm, tag) {
             Ok(Some(vec![value.clone()]))
         } else {
             Ok(None)
@@ -342,9 +344,9 @@ pub(super) fn payload(vm: &mut Vm, value: &JsValue, tag: &JsValue) -> Res<Option
 }
 /** Catch-all handlers catch JS and tagged exceptions while preserving native trap propagation. */
 pub(super) fn catchable(vm: &Vm, value: &JsValue) -> bool {
-    !value
+    value
         .object()
-        .is_some_and(|id| get(vm, id, "wasm.trap").is_some())
+        .is_none_or(|id| get(vm, id, "wasm.trap").is_none())
 }
 /** Receiver branding happens before comparing the supplied tag. */
 fn is(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -378,13 +380,16 @@ fn get_arg(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let index = memory::index(vm, &call.arg(1))? as usize;
     if let Some(ty) = parameters(vm, &tag)?.get(index).copied() {
         let mut compatible = ty.js_compatible();
-        if compatible && ty.reference().is_some_and(|(heap, _)| heap >= 0) {
-            if let Some(source) = tag.object().and_then(|id| get(vm, id, "wasm.tag.module")) {
-                let (_, m) = super::module(vm, &source)?;
-                compatible = gc_types::js_compatible(&m, ty);
-            }
+        if compatible
+            && ty.reference().is_some_and(|(heap, _)| heap >= 0)
+            && let Some(source) = tag.object().and_then(|id| get(vm, id, "wasm.tag.module"))
+        {
+            let (_, m) = super::module(vm, &source)?;
+            compatible = gc_types::js_compatible(&m, ty);
         }
-        if !compatible { return Err(vm.type_error("invalid type for WebAssembly exception argument")); }
+        if !compatible {
+            return Err(vm.type_error("invalid type for WebAssembly exception argument"));
+        }
     }
     let values = payload(vm, &call.this, &tag)?.unwrap();
     values
@@ -454,9 +459,8 @@ pub(super) fn is_js_tag(vm: &Vm, value: &JsValue) -> bool {
     };
     #[cfg(feature = "conformance")]
     {
-        return id
-            == IDS.get().unwrap().js_tag
-                + vm.object_intrinsics(id).bank * crate::v9::vm::realm::banks::BANK_STRIDE;
+        id == IDS.get().unwrap().js_tag
+            + vm.object_intrinsics(id).bank * crate::v9::vm::realm::banks::BANK_STRIDE
     }
     #[cfg(not(feature = "conformance"))]
     {

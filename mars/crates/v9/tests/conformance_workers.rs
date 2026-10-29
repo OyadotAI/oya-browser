@@ -51,10 +51,20 @@ fn shared_gc_collects_idle_workers_and_resumes_them() {
 #[test]
 fn shared_gc_collects_a_blocked_mutex_waiter() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('onmessage=({data:m})=>{postMessage(\"ready\");Atomics.Mutex.lock(m,()=>postMessage(\"acquired\"))}',{type:'string'});const m=new Atomics.Mutex();let r='';Atomics.Mutex.lock(m,()=>{w.postMessage(m);r=w.getMessage();%SharedGC()});r+=','+w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "ready,acquired");
     session.finish().expect("worker terminates");
 }
@@ -63,10 +73,19 @@ fn shared_gc_collects_a_blocked_mutex_waiter() {
 #[test]
 fn shared_gc_tracks_worker_lifecycle_across_generations() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const make=()=>new Worker('onmessage=()=>postMessage(42)',{type:'string'});const a=make();a.postMessage(0);let r=''+a.getMessage();for(let i=0;i<4;i++)%SharedGC();a.terminateAndWait();const b=make();b.postMessage(0);r+=','+b.getMessage();%SharedGC();b.postMessage(0);r+=','+b.getMessage();b.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "42,42,42");
     session.finish().expect("workers terminate");
 }
@@ -75,10 +94,19 @@ fn shared_gc_tracks_worker_lifecycle_across_generations() {
 #[test]
 fn worker_initiated_shared_gc_collects_parent_waiting_for_message() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('onmessage=()=>{%SharedGC();postMessage(42)}',{type:'string'});w.postMessage(0);let r=w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "42");
     session.finish().expect("worker terminates");
 }
@@ -87,10 +115,19 @@ fn worker_initiated_shared_gc_collects_parent_waiting_for_message() {
 #[test]
 fn shared_gc_collects_a_typed_array_waiter() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const a=new Int32Array(new SharedArrayBuffer(4));const w=new Worker('onmessage=({data:a})=>postMessage(Atomics.wait(a,0,0))',{type:'string'});w.postMessage(a);while(%AtomicsNumWaitersForTesting(a,0)!==1){}%SharedGC();let r=''+Atomics.notify(a,0,1);r+=','+w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "1,ok");
     session.finish().expect("worker terminates");
 }
@@ -99,10 +136,20 @@ fn shared_gc_collects_a_typed_array_waiter() {
 #[test]
 fn shared_gc_collects_a_condition_waiter() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const m=new Atomics.Mutex(),c=new Atomics.Condition();const w=new Worker('onmessage=({data:x})=>Atomics.Mutex.lock(x.m,()=>{postMessage(\"ready\");postMessage(Atomics.Condition.wait(x.c,x.m))})',{type:'string'});w.postMessage({m,c});let r=w.getMessage();while(%AtomicsSynchronizationPrimitiveNumWaitersForTesting(c)!==1){}%SharedGC();r+=','+Atomics.Condition.notify(c,1)+','+w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "ready,1,true");
     session.finish().expect("worker terminates");
 }
@@ -111,10 +158,20 @@ fn shared_gc_collects_a_condition_waiter() {
 #[test]
 fn shared_gc_collects_an_executing_worker() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const a=new SharedArray(1);a[0]=0;const w=new Worker('onmessage=({data:a})=>{postMessage(\"running\");while(a[0]===0){}postMessage(a[0])}',{type:'string'});w.postMessage(a);let r=w.getMessage();%SharedGC();a[0]=7;r+=','+w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "running,7");
     session.finish().expect("worker terminates");
 }
@@ -123,10 +180,19 @@ fn shared_gc_collects_an_executing_worker() {
 #[test]
 fn shared_gc_does_not_strand_a_cancelled_waiter() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const a=new Int32Array(new SharedArrayBuffer(4));const w=new Worker('onmessage=({data:a})=>Atomics.wait(a,0,0)',{type:'string'});w.postMessage(a);while(%AtomicsNumWaitersForTesting(a,0)!==1){}%SharedGC();w.terminateAndWait();let r=%AtomicsNumWaitersForTesting(a,0);";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "0");
     session.finish().expect("cancelled worker terminates");
 }
@@ -135,10 +201,19 @@ fn shared_gc_does_not_strand_a_cancelled_waiter() {
 #[test]
 fn worker_shared_gc_collects_parent_in_atomics_wait() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const a=new Int32Array(new SharedArrayBuffer(4));const w=new Worker('onmessage=({data:a})=>{postMessage(\"ready\");while(%AtomicsNumWaitersForTesting(a,0)!==1){}%SharedGC();Atomics.notify(a,0,1)}',{type:'string'});w.postMessage(a);let r=w.getMessage();r+=','+Atomics.wait(a,0,0);w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "ready,ok");
     session.finish().expect("worker terminates");
 }
@@ -171,9 +246,21 @@ fn mutex_worker_transfer_shares_the_real_lock() {
 #[test]
 fn synchronization_worker_round_trip_preserves_identity() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_workers: Some(session.host()), ..common::environment() };
-    let execution = common::load_with("const w=new Worker('onmessage=({data})=>postMessage(data)',{type:'string'}),m=new Atomics.Mutex(),c=new Atomics.Condition();w.postMessage({m,c});const result=w.getMessage();let r=[result.m===m,result.c===c].join();w.terminateAndWait();", &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
+    let execution = common::load_with(
+        "const w=new Worker('onmessage=({data})=>postMessage(data)',{type:'string'}),m=new Atomics.Mutex(),c=new Atomics.Condition();w.postMessage({m,c});const result=w.getMessage();let r=[result.m===m,result.c===c].join();w.terminateAndWait();",
+        &environment,
+    );
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true");
     session.finish().expect("worker terminates");
 }
@@ -182,10 +269,19 @@ fn synchronization_worker_round_trip_preserves_identity() {
 #[test]
 fn nested_synchronizers_remain_shared_across_workers() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('onmessage=({data:s})=>{Atomics.Mutex.lock(s.m,()=>{postMessage(\"waiting\");postMessage(Atomics.Condition.wait(s.c,s.m,1000))})}',{type:'string'});const T=SharedStructType(['m','c']),s=T(),m=Atomics.Mutex(),c=Atomics.Condition();s.m=m;s.c=c;w.postMessage(s);let r=w.getMessage();r+=','+Atomics.Mutex.lock(m,()=>Atomics.Condition.notify(c));r+=','+w.getMessage()+','+(s.m===m)+','+(s.c===c);w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "waiting,1,true,true,true");
     assert!(execution.effects.unsupported.is_empty());
     session.finish().expect("worker terminates");
@@ -195,10 +291,19 @@ fn nested_synchronizers_remain_shared_across_workers() {
 #[test]
 fn nested_mutex_survives_creator_worker_exit() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('onmessage=({data:s})=>{s.m=Atomics.Mutex();postMessage(\"done\")}',{type:'string'});const T=SharedStructType(['m']),s=T();w.postMessage(s);w.getMessage();w.terminateAndWait();gc();let r=Atomics.Mutex.lock(s.m,()=>42);";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "42");
     assert!(execution.effects.unsupported.is_empty());
     session.finish().expect("worker terminates");
@@ -346,10 +451,19 @@ fn new_shared_reference_after_transfer_reaches_existing_worker() {
 #[test]
 fn shared_child_survives_writer_worker_exit() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('onmessage=({data:a})=>{const child=SharedArray(1);child[0]=42;a[0]=child;postMessage(\"done\")} ',{type:'string'});const a=SharedArray(1);w.postMessage(a);w.getMessage();w.terminateAndWait();gc();let r=a[0][0];";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "42");
     assert!(execution.effects.unsupported.is_empty());
     session.finish().expect("worker terminates");
@@ -457,10 +571,19 @@ fn nested_shared_containers_preserve_identity_and_live_values() {
 #[test]
 fn nested_shared_graph_survives_worker_state_restoration() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const w=new Worker('let a;onmessage=({data})=>{if(data===\"read\")postMessage([a[0][0],a[1]===a].join());else{a=data;postMessage(\"stored\")}}',{type:'string'});const a=SharedArray(2),inner=SharedArray(1);inner[0]='old';a[0]=inner;a[1]=a;w.postMessage(a);let r=w.getMessage();inner[0]='new';w.postMessage('read');r+=','+w.getMessage();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "stored,new,true");
     session.finish().expect("worker terminates");
 }
@@ -853,7 +976,9 @@ fn shared_grants_release_collected_backing_reservations() {
 #[test]
 fn shared_grant_pressure_collects_unreachable_buffers() {
     assert_eq!(
-        run("const keep=new SharedArrayBuffer(1048576);const view=new Uint8Array(keep);view[0]=42;for(let i=0;i<48;i++){let temporary=new SharedArrayBuffer(1048576)}console.log(view[0]);"),
+        run(
+            "const keep=new SharedArrayBuffer(1048576);const view=new Uint8Array(keep);view[0]=42;for(let i=0;i<48;i++){let temporary=new SharedArrayBuffer(1048576)}console.log(view[0]);"
+        ),
         ["42"]
     );
 }
@@ -970,14 +1095,23 @@ fn native_instruction_loops_cancel_before_exhausting_the_operation_budget() {
     );
 }
 
-
 #[test]
 fn shared_number_retains_backing_identity_across_worker_round_trip() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_shared_strings: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_shared_strings: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const x=%ShareObject(1.5);const w=new Worker('onmessage=({data:x})=>postMessage(x)',{type:'string'});w.postMessage(x);const y=w.getMessage();let r=[x===y,%IsSameHeapObject(x,y),%IsInWritableSharedSpace(y)].join();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true");
     session.finish().expect("worker terminates");
 }
@@ -988,12 +1122,31 @@ fn shared_number_snapshot_does_not_grant_another_session() {
     let sources = vec![source.to_string()];
     let host = common::host();
     let first = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_shared_strings: true, conformance_native_main_source: Some(0), conformance_workers: Some(first.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_shared_strings: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(first.host()),
+        ..common::environment()
+    };
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     let second = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_native_main_source: Some(0), conformance_workers: Some(second.host()), ..common::environment() };
-    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).is_err());
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(second.host()),
+        ..common::environment()
+    };
+    assert!(
+        mars_v9::run_timers(
+            common::input(&sources, &host, &environment),
+            common::round_trip(loaded.state),
+            1.0,
+            10
+        )
+        .is_err()
+    );
     first.finish().unwrap();
     second.finish().unwrap();
 }
@@ -1001,11 +1154,24 @@ fn shared_number_snapshot_does_not_grant_another_session() {
 #[test]
 fn worker_shared_number_publication_preserves_identity_and_tagged_values() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_harmony_struct: true, conformance_native_main_source: Some(0), conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_harmony_struct: true,
+        conformance_native_main_source: Some(0),
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const a=SharedArray(2);a[0]=1.5;a[1]=0;const x=a[0];const w=new Worker('onmessage=({data:a})=>{postMessage(a);a[0]=3.5;a[1]=7;postMessage(a)}',{type:'string'});w.postMessage(a);w.getMessage();const seen=w.getMessage();gc();let r=[x===1.5,a[0]===3.5,%IsSmi(a[1]),a[1]===7,seen===a,%IsSameHeapObject(a[0],a[0])].join();w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,true,true,true,true"
+    );
     session.finish().expect("worker terminates");
 }
 
@@ -1013,10 +1179,21 @@ fn worker_shared_number_publication_preserves_identity_and_tagged_values() {
 #[test]
 fn worker_refuses_nonshared_wasm_gc_with_inert_diagnostic() {
     let session = ConformanceWorkerSession::new();
-    let environment = PageEnvironment { conformance_d8: true, conformance_workers: Some(session.host()), ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        conformance_workers: Some(session.host()),
+        ..common::environment()
+    };
     let source = "const bytes=new Uint8Array([0,97,115,109,1,0,0,0,1,10,2,95,1,127,1,96,0,1,99,0,3,2,1,1,7,5,1,1,102,0,0,10,9,1,7,0,65,42,251,0,0,11]);const value=new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.f();let calls=0;value.toString=()=>{calls++;throw Error('must not run')};const w=new Worker('onmessage=()=>{}',{type:'string'});let message='';try{w.postMessage({value})}catch(e){message=e.message}let r=[message,calls].join('|');w.terminateAndWait();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "[object Object] could not be cloned.|0");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "[object Object] could not be cloned.|0"
+    );
     session.finish().expect("worker terminates");
 }

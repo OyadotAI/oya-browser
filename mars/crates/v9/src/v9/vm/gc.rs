@@ -121,7 +121,9 @@ impl Marker {
         match job {
             Job::Reaction { reaction, argument } => {
                 #[cfg(feature = "conformance")]
-                if let Some(value) = &reaction.continuation_data { self.value(value); }
+                if let Some(value) = &reaction.continuation_data {
+                    self.value(value);
+                }
                 self.reaction_handler(&reaction.handler);
                 if let Some(target) = reaction.target {
                     self.object(target);
@@ -135,16 +137,27 @@ impl Marker {
                 ..
             } => {
                 #[cfg(feature = "conformance")]
-                if let Job::Thenable { continuation_data: Some(value), .. } = job { self.value(value); }
+                if let Job::Thenable {
+                    continuation_data: Some(value),
+                    ..
+                } = job
+                {
+                    self.value(value);
+                }
                 self.object(*promise);
                 self.value(thenable);
                 self.value(then);
             }
             Job::Callback(function) => self.value(function),
             #[cfg(feature = "conformance")]
-            Job::CallbackWithData { callback, continuation_data } => {
+            Job::CallbackWithData {
+                callback,
+                continuation_data,
+            } => {
                 self.value(callback);
-                if let Some(value) = continuation_data { self.value(value); }
+                if let Some(value) = continuation_data {
+                    self.value(value);
+                }
             }
         }
     }
@@ -270,7 +283,9 @@ impl Vm<'_> {
             marker.value(value);
         }
         #[cfg(feature = "conformance")]
-        for text in self.page.state.code_constants.values() { marker.value(&JsValue::String(text.clone())); }
+        for text in self.page.state.code_constants.values() {
+            marker.value(&JsValue::String(text.clone()));
+        }
         self.trace(&mut marker);
         let cleanup = if kind == Collection::Snapshot {
             self.trace_snapshot_weak(&mut marker);
@@ -306,7 +321,9 @@ impl Vm<'_> {
         self.page.sweep(&marker.objects);
         self.heap.recount();
         self.heap.last_marked_string_units = marker.resident_string_units();
-        for string in &marker.strings { self.heap.string_budget.register(string); }
+        for string in &marker.strings {
+            self.heap.string_budget.register(string);
+        }
         self.heap.last_registered_string_units = self.heap.string_budget.resident_units();
         self.heap.collected = self.heap.objects.len() + self.heap.envs.len();
         #[cfg(feature = "conformance")]
@@ -454,7 +471,9 @@ fn trace_class(class: &Class, marker: &mut Marker) {
             }
             for reaction in &data.reactions {
                 #[cfg(feature = "conformance")]
-                if let Some(value) = &reaction.continuation_data { marker.value(value); }
+                if let Some(value) = &reaction.continuation_data {
+                    marker.value(value);
+                }
                 marker.reaction_handler(&reaction.handler);
                 if let Some(target) = reaction.target {
                     marker.object(target);
@@ -553,16 +572,48 @@ mod tests {
     #[test]
     fn string_reservation_retry_keeps_nested_callback_roots() {
         let source = "const keep={value:7};const result=[keep].map(x=>{for(let i=0;i<12000;i++){try{throw new Error('message'+i)}catch(e){}}return x})[0];const ok=result===keep&&result.value===7;".to_string();
-        let host = DocumentHost { languages: &[], fragments: &SimpleFragmentParser };
-        let environment = PageEnvironment { url: "https://example.com/".into(), ..PageEnvironment::default() };
-        let mut limits = super::super::Limits::default();
-        limits.units = 100_000;
-        let result = crate::v9::on_v9_stack(|| crate::v9::load_isolated(PageInput {
-            sources: &[source], source_keys: &[], document: ScriptDocument { identity: "page-1".into(), charset: "UTF-8".into(), nodes: Vec::new() },
-            storage: StorageState::default(), host: &host, environment: &environment, modules: crate::ModuleInput::NONE,
-        }, None, limits, false)).unwrap();
+        let host = DocumentHost {
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment {
+            url: "https://example.com/".into(),
+            ..PageEnvironment::default()
+        };
+        let limits = super::super::Limits {
+            units: 100_000,
+            ..Default::default()
+        };
+        let result = crate::v9::on_v9_stack(|| {
+            crate::v9::load_isolated(
+                PageInput {
+                    sources: &[source],
+                    source_keys: &[],
+                    document: ScriptDocument {
+                        identity: "page-1".into(),
+                        charset: "UTF-8".into(),
+                        nodes: Vec::new(),
+                    },
+                    storage: StorageState::default(),
+                    host: &host,
+                    environment: &environment,
+                    modules: crate::ModuleInput::NONE,
+                },
+                None,
+                limits,
+                false,
+            )
+        })
+        .unwrap();
         assert!(result.failed.is_empty(), "{:?}", result.failed);
-        assert_eq!(result.state.globals().get("ok").and_then(|binding| binding.value.as_ref()), Some(&JsValue::Boolean(true)));
+        assert_eq!(
+            result
+                .state
+                .globals()
+                .get("ok")
+                .and_then(|binding| binding.value.as_ref()),
+            Some(&JsValue::Boolean(true))
+        );
     }
 
     /** A large app keeps half a million objects alive at once: the live-object bound allows it,

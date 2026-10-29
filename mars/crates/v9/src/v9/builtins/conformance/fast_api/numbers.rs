@@ -11,7 +11,7 @@ pub(super) fn in_range(value: f64, signed: bool, bits: u32) -> bool {
         (true, 32) => (i32::MIN as f64..=i32::MAX as f64).contains(&value),
         (false, 32) => (0.0..=u32::MAX as f64).contains(&value),
         (true, 64) => value >= i64::MIN as f64 && value < -(i64::MIN as f64),
-        (false, 64) => value >= 0.0 && value < 18_446_744_073_709_551_616.0,
+        (false, 64) => (0.0..18_446_744_073_709_551_616.0).contains(&value),
         _ => false,
     }
 }
@@ -53,8 +53,8 @@ fn sum(vm: &mut Vm, call: Call, signed: bool, bigint: bool) -> Res<JsValue> {
         return Err(error(vm, "Invalid number of arguments, expected two."));
     }
     let mut values = [0; 2];
-    for index in 0..2 {
-        values[index] = if bigint {
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = if bigint {
             bigint_argument(vm, call.arg(index), index)?
         } else {
             number_argument(vm, call.arg(index), index, signed)?
@@ -99,11 +99,7 @@ fn integer(value: f64, signed: bool, bits: u32) -> u64 {
 /** The slow enforce-range callback defaults nonnumeric slots to zero without coercing them. */
 fn enforce(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
-    let real = if let Some(value) = call.arg(0).number_value() {
-        value
-    } else {
-        0.0
-    };
+    let real = call.arg(0).number_value().unwrap_or(0.0);
     if !in_range(real, signed, bits) {
         return Err(error(vm, "Argument out of range."));
     }
@@ -121,16 +117,8 @@ fn enforce(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
 /** Slow clamp callback uses primary safe-integer saturation and its real primitive-Boolean in-range switch. */
 fn clamp(vm: &mut Vm, call: Call, signed: bool, bits: u32) -> Res<JsValue> {
     state::enter(vm, &call.this)?;
-    let real = if let Some(value) = call.arg(1).number_value() {
-        value
-    } else {
-        0.0
-    };
-    let checked = if let Some(value) = call.arg(2).number_value() {
-        value
-    } else {
-        f64::MAX
-    };
+    let real = call.arg(1).number_value().unwrap_or(0.0);
+    let checked = call.arg(2).number_value().unwrap_or(f64::MAX);
     let range = call.arg(0) == JsValue::Boolean(true)
         && in_range(real, signed, bits)
         && in_range(checked, signed, bits);

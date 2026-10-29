@@ -103,7 +103,11 @@ pub(super) fn create(vm: &mut Vm, limits: types::Limits, proto: ObjectId) -> Res
     let memory = vm.alloc(Object::new(Class::Plain, Some(proto)))?;
     let storage = if limits.shared {
         shared_memory::create(vm, limits)?
-    } else if length > BUFFER_BYTES || (length > 0 && vm.heap.counts.units.saturating_add(length.div_ceil(2)) > vm.limits.units / SPARSE_MEMORY_PRESSURE_DIVISOR) {
+    } else if length > BUFFER_BYTES
+        || (length > 0
+            && vm.heap.counts.units.saturating_add(length.div_ceil(2))
+                > vm.limits.units / SPARSE_MEMORY_PRESSURE_DIVISOR)
+    {
         let sparse = crate::v9::vm::data::SparseBuffer::new(length);
         let storage = vm.alloc(Object::new(
             Class::SparseWasmBuffer(sparse),
@@ -130,11 +134,23 @@ pub(super) fn create(vm: &mut Vm, limits: types::Limits, proto: ObjectId) -> Res
 }
 /** Host page flags can only lower the engine's existing logical-memory limit. */
 pub(super) fn page_limit(vm: &Vm, address64: bool) -> usize {
-    let limit = if address64 { address::MAX_MEMORY64_PAGES } else { MAX_WASM_PAGES } as usize;
+    let limit = if address64 {
+        address::MAX_MEMORY64_PAGES
+    } else {
+        MAX_WASM_PAGES
+    } as usize;
     #[cfg(feature = "conformance")]
-    { return vm.page.environment.conformance_wasm_max_memory_pages.map_or(limit, |n| limit.min(n)); }
+    {
+        vm.page
+            .environment
+            .conformance_wasm_max_memory_pages
+            .map_or(limit, |n| limit.min(n))
+    }
     #[cfg(not(feature = "conformance"))]
-    { let _ = vm; limit }
+    {
+        let _ = vm;
+        limit
+    }
 }
 /** Shared memories are explicitly unsupported rather than behaving like unshared buffers. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -187,10 +203,10 @@ pub(super) fn storage(vm: &mut Vm, memory: &JsValue) -> Res<ObjectId> {
 }
 /** The current memory buffer is a real ArrayBuffer shared with typed views and Wasm loads. */
 fn buffer_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !call
+    if call
         .this
         .object()
-        .is_some_and(|id| get(vm, id, MEMORY).is_some())
+        .is_none_or(|id| get(vm, id, MEMORY).is_none())
     {
         return Err(vm.type_error("Receiver is not a WebAssembly.Memory"));
     }
@@ -238,12 +254,18 @@ pub(super) fn resize(vm: &mut Vm, memory: &JsValue, delta: u32) -> Res<u32> {
             }
         }
         _ => return Err(vm.type_error("invalid WebAssembly memory maximum")),
-    }.min(page_limit(vm, address::is64(vm, object)));
+    }
+    .min(page_limit(vm, address::is64(vm, object)));
     if shared_memory::backing(vm, old).is_some() {
         return shared_memory::grow(vm, object, old, delta, maximum);
     }
     if next > maximum {
-        let message = if address::is64(vm, object) && get(vm, object, MAXIMUM) == Some(JsValue::Undefined) { "WebAssembly.Memory.grow(): Unable to grow instance memory" } else { "WebAssembly.Memory.grow(): Maximum memory size exceeded" };
+        let message =
+            if address::is64(vm, object) && get(vm, object, MAXIMUM) == Some(JsValue::Undefined) {
+                "WebAssembly.Memory.grow(): Unable to grow instance memory"
+            } else {
+                "WebAssembly.Memory.grow(): Maximum memory size exceeded"
+            };
         return Err(vm.range_error(message));
     }
     if next > MAX_PAGES
@@ -311,10 +333,10 @@ fn grow_sparse(
 }
 /** JavaScript growth failures throw; Wasm memory.grow translates only allocation failures to -1. */
 fn grow(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !call
+    if call
         .this
         .object()
-        .is_some_and(|id| get(vm, id, MEMORY).is_some())
+        .is_none_or(|id| get(vm, id, MEMORY).is_none())
     {
         return Err(vm.type_error("Receiver is not a WebAssembly.Memory"));
     }

@@ -42,19 +42,36 @@ pub(super) fn same_hierarchy(m: &Module, a: Type, b: Type) -> Result<bool, Error
 pub(super) fn decode(r: &mut binary::Reader) -> Result<Instruction, Error> {
     let op = r.prefixed_opcode()?;
     if (32..=38).contains(&op) && !r.custom_descriptors_enabled {
-        return Err(Error::invalid("custom descriptor instruction requires --wasm-custom-descriptors"));
+        return Err(Error::invalid(
+            "custom descriptor instruction requires --wasm-custom-descriptors",
+        ));
     }
     if op == 31 && !r.shared_enabled {
-        return Err(Error::invalid("shared i31 instruction requires --wasm-shared"));
+        return Err(Error::invalid(
+            "shared i31 instruction requires --wasm-shared",
+        ));
     }
     if op == 0x4c {
-        if !r.ref_cast_nop_enabled { return Err(Error::invalid("Invalid opcode 0xfb4c (enable with --wasm-ref-cast-nop)")); }
+        if !r.ref_cast_nop_enabled {
+            return Err(Error::invalid(
+                "Invalid opcode 0xfb4c (enable with --wasm-ref-cast-nop)",
+            ));
+        }
         let ty = gc_types::heap(r, false)?;
         let (heap, _) = ty.reference().unwrap();
-        return Ok(Instruction::Gc(op, vec![heap, i64::from(matches!(ty, Type::Exact(..))), i64::from(matches!(ty, Type::Shared(..)))]));
+        return Ok(Instruction::Gc(
+            op,
+            vec![
+                heap,
+                i64::from(matches!(ty, Type::Exact(..))),
+                i64::from(matches!(ty, Type::Shared(..))),
+            ],
+        ));
     }
     if op > u8::MAX as u32 {
-        return Err(Error::invalid(&format!("invalid stringref opcode: fb{op:x}")));
+        return Err(Error::invalid(&format!(
+            "invalid stringref opcode: fb{op:x}"
+        )));
     }
     if op >= 0x80 {
         if !r.stringref_enabled {
@@ -77,7 +94,11 @@ pub(super) fn decode(r: &mut binary::Reader) -> Result<Instruction, Error> {
             let (heap, _) = ty.reference().unwrap();
             return Ok(Instruction::Gc(
                 op,
-                vec![heap, i64::from(matches!(ty, Type::Exact(..))), i64::from(matches!(ty, Type::Shared(..)))],
+                vec![
+                    heap,
+                    i64::from(matches!(ty, Type::Exact(..))),
+                    i64::from(matches!(ty, Type::Shared(..))),
+                ],
             ));
         }
         24 | 25 | 37 | 38 => {
@@ -127,8 +148,7 @@ pub(super) fn coerce(vm: &mut Vm, ty: Type, value: &JsValue) -> Res<JsValue> {
                 matches!(heap, -18 | -19) || heap == -21 && !array || heap == -22 && array
             }
         } else {
-            (heap == -18 && shared_extern(vm, value))
-                || matches!(heap, -18 | -19 | -20) && i31(value)
+            (heap == -18 && shared_extern(vm, value)) || matches!(heap, -20..=-18) && i31(value)
         }
     } else {
         reference_allowed(vm, heap, value)
@@ -140,10 +160,10 @@ pub(super) fn coerce(vm: &mut Vm, ty: Type, value: &JsValue) -> Res<JsValue> {
                 return Ok(JsValue::String(vm.share_string(text)?));
             }
             #[cfg(feature = "conformance")]
-            if !i31(value) {
-                if let Some(number) = value.number_value() {
-                    return crate::v9::builtins::new_shared_number(vm, number);
-                }
+            if !i31(value)
+                && let Some(number) = value.number_value()
+            {
+                return crate::v9::builtins::new_shared_number(vm, number);
             }
         }
         Ok(value.clone())
@@ -160,7 +180,9 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
                 .object()
                 .is_some_and(|id| get(vm, id, "wasm.gc.module").is_some());
     }
-    if matches!(heap, -19 | -21 | -22) && shared::handle(vm, value).is_some() { return false; }
+    if matches!(heap, -19 | -21 | -22) && shared::handle(vm, value).is_some() {
+        return false;
+    }
     match heap {
         -17 | -18 => true,
         -19 => i31(value) || kind(vm, value).is_some(),
@@ -168,7 +190,9 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
         -21 => kind(vm, value) == Some(false),
         -22 => kind(vm, value) == Some(true),
         -23 => exceptions::is_reference(vm, value),
-        -24 => value.object().is_some_and(|id| get(vm, id, "wasm.cont.function").is_some()),
+        -24 => value
+            .object()
+            .is_some_and(|id| get(vm, id, "wasm.cont.function").is_some()),
         -26 | -32 | -25 => matches!(value, JsValue::String(_)),
         -31 => value
             .object()
@@ -179,18 +203,31 @@ fn reference_allowed(vm: &Vm, heap: i64, value: &JsValue) -> bool {
 }
 /** Shared extern references must contain values that can cross an agent boundary. */
 fn shared_extern(vm: &Vm, value: &JsValue) -> bool {
-    if value.number_value().is_some() || matches!(value, JsValue::Undefined | JsValue::Boolean(_) | JsValue::String(_)) || shared::handle(vm, value).is_some() {
+    if value.number_value().is_some()
+        || matches!(
+            value,
+            JsValue::Undefined | JsValue::Boolean(_) | JsValue::String(_)
+        )
+        || shared::handle(vm, value).is_some()
+    {
         return true;
     }
     #[cfg(feature = "conformance")]
-    if value.object().is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id)) {
+    if value
+        .object()
+        .is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id))
+    {
         return true;
     }
     false
 }
 /** The immediate i31 representation preserves value identity and cannot allocate a foreign object. */
 fn i31(value: &JsValue) -> bool {
-    value.number_value().is_some_and(|n| n.fract()==0.0&&(n!=0.0||!n.is_sign_negative())&&n>=-1_073_741_824.0&&n<1_073_741_824.0)
+    value.number_value().is_some_and(|n| {
+        n.fract() == 0.0
+            && (n != 0.0 || !n.is_sign_negative())
+            && (-1_073_741_824.0..1_073_741_824.0).contains(&n)
+    })
 }
 /** Crossing back into JavaScript exposes the original externref inside any.convert_extern. */
 pub(super) fn expose(vm: &Vm, value: JsValue) -> JsValue {
@@ -228,8 +265,7 @@ pub(super) fn matches(vm: &mut Vm, m: &Module, ty: Type, value: &JsValue) -> Res
         return Ok(if heap == -17 {
             shared_extern(vm, value)
         } else {
-            (heap == -18 && shared_extern(vm, value))
-                || matches!(heap, -18 | -19 | -20) && i31(value)
+            (heap == -18 && shared_extern(vm, value)) || matches!(heap, -20..=-18) && i31(value)
         });
     }
     if heap < 0 {
@@ -530,7 +566,18 @@ pub(super) fn run(
             let shared_number = matches!(value, JsValue::SharedNumber(_));
             #[cfg(not(feature = "conformance"))]
             let shared_number = false;
-            if matches!(value, JsValue::Null | JsValue::Undefined | JsValue::Boolean(_) | JsValue::BigInt(_) | JsValue::BigIntWide(_)) || i31(&value) || shared_number || matches!(value, JsValue::String(_)) || kind(vm, &value).is_some() {
+            if matches!(
+                value,
+                JsValue::Null
+                    | JsValue::Undefined
+                    | JsValue::Boolean(_)
+                    | JsValue::BigInt(_)
+                    | JsValue::BigIntWide(_)
+            ) || i31(&value)
+                || shared_number
+                || matches!(value, JsValue::String(_))
+                || kind(vm, &value).is_some()
+            {
                 stack.push(value)
             } else {
                 let object = vm.new_object()?;
@@ -638,7 +685,9 @@ pub(super) fn string_storage(vm: &mut Vm, value: &JsValue, bits: u8, mutable: bo
     if let Some(root) = shared::handle(vm, value) {
         let (bytes, index, array, length) = root.metadata()?;
         let module = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
-        if !array || !matches!(module.definitions.get(index as usize).map(|d| &d.kind), Some(Kind::Array(f)) if f.packed == Some(bits) && (!mutable || f.mutable)) {
+        if !array
+            || !matches!(module.definitions.get(index as usize).map(|d| &d.kind), Some(Kind::Array(f)) if f.packed == Some(bits) && (!mutable || f.mutable))
+        {
             return Err(vm.type_error("expected a packed Wasm array"));
         }
         return Ok(length);

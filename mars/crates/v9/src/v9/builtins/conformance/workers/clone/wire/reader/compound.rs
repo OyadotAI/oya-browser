@@ -58,6 +58,8 @@ impl Reader<'_> {
     /** Property lists terminate with their exact native count; duplicate keys cannot create hidden live values. */
     fn fields(&mut self, end: u8, depth: usize) -> Result<Vec<(Key, Atom)>> {
         let mut fields = Vec::new();
+        // Keys compare by value and nothing writes them while the set lives.
+        #[allow(clippy::mutable_key_type)]
         let mut keys = std::collections::BTreeSet::new();
         while self.peek() != Some(end) {
             if fields.len() >= MESSAGE_UNITS {

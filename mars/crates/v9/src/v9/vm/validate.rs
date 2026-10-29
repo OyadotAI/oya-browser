@@ -59,21 +59,25 @@ impl Vm<'_> {
                 }
             }
         }
-        let valid = globals
-            .iter()
-            .all(|(name, binding)| {
-                if declared.get(name) == Some(&binding.kind) {
-                    return true;
-                }
-                #[cfg(feature = "conformance")]
-                if self.page.environment.conformance_expose_externalize_string
-                    && binding.kind == BindingKind::Let
-                    && matches!(name.as_str(), "kExternalStringMinOneByteLength" | "kExternalStringMinTwoByteLength" | "kExternalStringMinOneByteCachedLength" | "kExternalStringMinTwoByteCachedLength")
-                {
-                    return true;
-                }
-                false
-            });
+        let valid = globals.iter().all(|(name, binding)| {
+            if declared.get(name) == Some(&binding.kind) {
+                return true;
+            }
+            #[cfg(feature = "conformance")]
+            if self.page.environment.conformance_expose_externalize_string
+                && binding.kind == BindingKind::Let
+                && matches!(
+                    name.as_str(),
+                    "kExternalStringMinOneByteLength"
+                        | "kExternalStringMinTwoByteLength"
+                        | "kExternalStringMinOneByteCachedLength"
+                        | "kExternalStringMinTwoByteCachedLength"
+                )
+            {
+                return true;
+            }
+            false
+        });
         if valid {
             Ok(())
         } else {
@@ -90,17 +94,33 @@ impl Vm<'_> {
         let marker = self.mark_everything();
         #[cfg(feature = "conformance")]
         {
-            if !self.page.environment.conformance_d8 && !self.page.state.character_roots.is_empty() {
+            if !self.page.environment.conformance_d8 && !self.page.state.character_roots.is_empty()
+            {
                 return Err(forged("character roots outside d8"));
             }
             for (unit, value) in &self.page.state.character_roots {
-                if !value.is_read_only_root() || value.unit_at(0) != Some(u16::from(*unit)) || value.len() != 1 {
+                if !value.is_read_only_root()
+                    || value.unit_at(0) != Some(u16::from(*unit))
+                    || value.len() != 1
+                {
                     return Err(forged("invalid character root"));
                 }
             }
-            for value in marker.strings.iter().filter(|value| value.is_read_only_root()) {
-                let Some(unit) = value.unit_at(0).and_then(|unit| u8::try_from(unit).ok()) else { return Err(forged("invalid read-only character")); };
-                if !self.page.state.character_roots.get(&unit).is_some_and(|root| root.same_backing(value)) {
+            for value in marker
+                .strings
+                .iter()
+                .filter(|value| value.is_read_only_root())
+            {
+                let Some(unit) = value.unit_at(0).and_then(|unit| u8::try_from(unit).ok()) else {
+                    return Err(forged("invalid read-only character"));
+                };
+                if !self
+                    .page
+                    .state
+                    .character_roots
+                    .get(&unit)
+                    .is_some_and(|root| root.same_backing(value))
+                {
                     return Err(forged("unregistered read-only character"));
                 }
             }
@@ -112,40 +132,97 @@ impl Vm<'_> {
         }
         #[cfg(feature = "conformance")]
         for (id, bits) in &marker.local_numbers {
-            let Some(object) = self.heap.get(*id) else { return Err(forged("invalid local number root")); };
-            if !matches!(object.class, super::data::Class::Number(number) if number.to_bits() == *bits) || object.proto.is_some() || !object.props.is_empty() { return Err(forged("invalid local number value")); }
+            let Some(object) = self.heap.get(*id) else {
+                return Err(forged("invalid local number root"));
+            };
+            if !matches!(object.class, super::data::Class::Number(number) if number.to_bits() == *bits)
+                || object.proto.is_some()
+                || !object.props.is_empty()
+            {
+                return Err(forged("invalid local number value"));
+            }
         }
         #[cfg(feature = "conformance")]
         for (id, bits) in &marker.shared_numbers {
-            let Some(super::data::Class::SharedContainerRoot(root)) = self.heap.get(*id).map(|object| &object.class) else { return Err(forged("invalid shared number root")); };
-            if root.metadata()?.0.as_ref() != b"d8-shared-number-v1" || !matches!(root.read(0)?.0, super::data::SharedGcValue::Number(value) if value == *bits) { return Err(forged("invalid shared number value")); }
+            let Some(super::data::Class::SharedContainerRoot(root)) =
+                self.heap.get(*id).map(|object| &object.class)
+            else {
+                return Err(forged("invalid shared number root"));
+            };
+            if root.metadata()?.0.as_ref() != b"d8-shared-number-v1"
+                || !matches!(root.read(0)?.0, super::data::SharedGcValue::Number(value) if value == *bits)
+            {
+                return Err(forged("invalid shared number value"));
+            }
         }
         #[cfg(feature = "conformance")]
         {
-          let mut canonical_constants = std::collections::BTreeMap::new();
-          for (key, value) in &self.page.state.code_constants {
-            if let Some(previous) = canonical_constants.insert(value.clone(), value.clone()) {
-                if !previous.same_backing(value) { return Err(forged("code constant identity")); }
+            // Keys compare by value and nothing writes them while the map lives.
+            #[allow(clippy::mutable_key_type)]
+            let mut canonical_constants = std::collections::BTreeMap::new();
+            for (key, value) in &self.page.state.code_constants {
+                if let Some(previous) = canonical_constants.insert(value.clone(), value.clone())
+                    && !previous.same_backing(value)
+                {
+                    return Err(forged("code constant identity"));
+                }
+                let site = (key >> 32) as u32;
+                let index = *key as u32 as usize;
+                if !self
+                    .registry
+                    .codes
+                    .get(&site)
+                    .and_then(|code| {
+                        if index == u32::MAX as usize {
+                            Some(&code.name)
+                        } else {
+                            code.strings.get(index)
+                        }
+                    })
+                    .is_some_and(|expected| {
+                        expected == value && expected.is_latin1() == value.is_latin1()
+                    })
+                    || value.is_shared()
+                {
+                    return Err(forged("code constant"));
+                }
             }
-            let site = (key >> 32) as u32;
-            let index = *key as u32 as usize;
-            if !self.registry.codes.get(&site).and_then(|code| if index == u32::MAX as usize { Some(&code.name) } else { code.strings.get(index) }).is_some_and(|expected| expected == value && expected.is_latin1() == value.is_latin1()) || value.is_shared() {
-                return Err(forged("code constant"));
-            }
-          }
         }
         #[cfg(feature = "conformance")]
         let mut number_source_hashes = super::heap::FastMap::default();
         #[cfg(feature = "conformance")]
         for (site, pool) in &self.page.state.number_constants {
-            if pool.values.is_empty() { return Err(forged("empty numeric constant pool")); }
-            let Some(code) = self.registry.codes.get(site) else { return Err(forged("numeric constant site")); };
-            let Some((source, _)) = &code.source else { return Err(forged("numeric constant source")); };
-            if *number_source_hashes.entry(source.as_ptr() as usize).or_insert_with(|| crate::v9::compile::source_key(source)) != pool.source { return Err(forged("numeric constant source")); }
-            let literals: super::heap::FastSet<u64> = code.ops.iter().filter_map(|op| if let crate::v9::compile::Op::Number(number) = op { Some(number.to_bits()) } else { None }).collect();
+            if pool.values.is_empty() {
+                return Err(forged("empty numeric constant pool"));
+            }
+            let Some(code) = self.registry.codes.get(site) else {
+                return Err(forged("numeric constant site"));
+            };
+            let Some((source, _)) = &code.source else {
+                return Err(forged("numeric constant source"));
+            };
+            if *number_source_hashes
+                .entry(source.as_ptr() as usize)
+                .or_insert_with(|| crate::v9::compile::source_key(source))
+                != pool.source
+            {
+                return Err(forged("numeric constant source"));
+            }
+            let literals: super::heap::FastSet<u64> = code
+                .ops
+                .iter()
+                .filter_map(|op| {
+                    if let crate::v9::compile::Op::Number(number) = op {
+                        Some(number.to_bits())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
             for (bits, value) in &pool.values {
                 if !matches!(value, JsValue::LocalNumber(value) if value.to_bits() == *bits)
-                    || !literals.contains(bits) {
+                    || !literals.contains(bits)
+                {
                     return Err(forged("numeric constant value"));
                 }
             }
@@ -176,7 +253,11 @@ impl Vm<'_> {
             marker.job(job);
         }
         #[cfg(feature = "conformance")]
-        for context in &self.realms.contexts { for job in &context.custom_jobs { marker.job(job); } }
+        for context in &self.realms.contexts {
+            for job in &context.custom_jobs {
+                marker.job(job);
+            }
+        }
         self.module_roots(&mut marker);
         let mut roots = Vec::new();
         self.page.roots(&mut roots);
@@ -316,7 +397,9 @@ impl Vm<'_> {
                 Class::ArrayBuffer(_) if !crate::v9::builtins::valid_buffer(self, *id) => {
                     return Err(forged("buffer internal slots"));
                 }
-                Class::SparseWasmBuffer(bytes) if !bytes.valid() || !crate::v9::builtins::valid_buffer(self, *id) => {
+                Class::SparseWasmBuffer(bytes)
+                    if !bytes.valid() || !crate::v9::builtins::valid_buffer(self, *id) =>
+                {
                     return Err(forged("sparse Wasm buffer"));
                 }
                 Class::View(_) if !crate::v9::builtins::valid_typed_view(self, *id) => {

@@ -372,5 +372,9 @@ fn custom_and_default_microtasks_share_one_job_limit() {
     environment.conformance_d8 = true;
     let result = mars_v9::load_page(common::input(&sources, &host, &environment));
     let execution = result.unwrap();
-    assert!(common::failure(&execution).is_some_and(|message| message.contains("V9 pending jobs")), "unexpected failure: {:?}", common::failure(&execution));
+    assert!(
+        common::failure(&execution).is_some_and(|message| message.contains("V9 pending jobs")),
+        "unexpected failure: {:?}",
+        common::failure(&execution)
+    );
 }

@@ -66,8 +66,9 @@ pub(super) enum Kind {
         cooked: Option<JsString>,
         /** The chunk's source text, for String.raw and tag functions. */
         raw: JsString,
-        /** Invalid escapes are early errors only when no tag receives this chunk. */
-        invalid: bool,
+        /** The V8 reason for the chunk's first invalid escape: an early error only when no tag
+        receives the chunk. */
+        invalid: Option<&'static str>,
         head: bool,
         tail: bool,
     },
@@ -76,6 +77,10 @@ pub(super) enum Kind {
         pattern: String,
         flags: String,
     },
+    /** Text the scanner could not read, carrying its reason. V8 scans one token ahead of the
+    parser, so a parse error earlier in the source beats a scan error later in it; V9 scans the
+    whole script first, so the scan error waits here until the parser reaches it. */
+    Illegal(String),
     End,
 }
 /** Scanning consumes the complete bounded script before any evaluation can begin. */
@@ -129,10 +134,18 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
             || source.rest().starts_with("'use strict'");
         let regex = regex_allowed(tokens.last().map(|token| &token.kind));
         let text = source.rest();
-        let kind = next_kind(&mut source, &mut braces, regex).map_err(|mut error| {
-            error.phase = Some("scan".into());
-            errors::located(error, location, "scan")
-        })?;
+        let template_close = source.peek() == Some('}') && braces.last() == Some(&true);
+        let kind = match next_kind(&mut source, &mut braces, regex) {
+            Ok(kind) => kind,
+            Err(error) if error.code == "script_syntax_error" => {
+                defer(&mut tokens, &error, location, template_close);
+                break;
+            }
+            Err(mut error) => {
+                error.phase = Some("scan".into());
+                return Err(errors::located(error, location, "scan"));
+            }
+        };
         let consumed = text.len() - source.rest().len();
         let escaped = matches!(kind, Kind::Name(_)) && text[..consumed].contains('\\');
         let legacy = legacy::literal(&text[..consumed], &kind);
@@ -147,6 +160,29 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         });
     }
     Ok(tokens)
+}
+/** Park a scan error as an Illegal token for the parser to report when it gets there, followed
+by End. A `}` that should have resumed a template stays a `}` first: V8 scans it as a brace and
+only rescans the continuation once the substitution's expression has parsed, so an empty
+substitution is "Unexpected token '}'" before the unterminated template is anything. */
+fn defer(tokens: &mut Vec<Token>, error: &EngineError, location: SourceLocation, brace: bool) {
+    let blank = |kind, location: SourceLocation| Token {
+        kind,
+        location,
+        end: location.byte_offset,
+        exact_strict: false,
+        line_terminator_before: false,
+        escaped: false,
+        legacy: None,
+    };
+    if brace {
+        tokens.push(blank(Kind::Symbol('}'), location));
+    }
+    tokens.push(blank(
+        Kind::Illegal(errors::reason(error).to_string()),
+        location,
+    ));
+    tokens.push(blank(Kind::End, location));
 }
 /** Braces decide whether `}` closes a block or resumes the template it interrupted. */
 fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> EngineResult<Kind> {
@@ -380,17 +416,18 @@ fn identifier(source: &mut Source<'_>, start: SourceLocation) -> EngineResult<St
             Some('\\') => {
                 source.next();
                 if source.next() != Some('u') {
-                    return Err(errors::syntax(start, "invalid identifier escape"));
+                    return Err(errors::syntax(start, "unexpected character"));
                 }
-                let value = literals::unicode(source, start)?;
+                let value =
+                    literals::unicode(source).map_err(|reason| errors::syntax(start, reason))?;
                 let character = char::from_u32(value)
-                    .ok_or_else(|| errors::syntax(start, "invalid identifier escape"))?;
+                    .ok_or_else(|| errors::syntax(start, "unexpected character"))?;
                 if !(if name.is_empty() {
                     identifier_start(character)
                 } else {
                     identifier_continue(character)
                 }) {
-                    return Err(errors::syntax(start, "invalid identifier escape"));
+                    return Err(errors::syntax(start, "unexpected character"));
                 }
                 name.push(character);
             }

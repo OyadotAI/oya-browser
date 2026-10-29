@@ -103,7 +103,7 @@ impl Parser {
         if usable {
             Ok(name.clone())
         } else {
-            Err(self.error_at(pos, "unexpected reserved word"))
+            Err(self.error_at(pos, "Unexpected reserved word"))
         }
     }
     /** Everything after `export`. */
@@ -146,7 +146,7 @@ impl Parser {
             }
             StmtKind::Function(func) => names.extend(func.name.clone()),
             StmtKind::Class(class) => names.extend(class.name.clone()),
-            _ => return Err(self.error_at(pos, "unexpected token")),
+            _ => return Err(self.error_at(pos, "Unexpected token 'export'")),
         }
         for name in names {
             self.export(ExportEntry::Local {
@@ -172,7 +172,7 @@ impl Parser {
             if func.name.is_none() {
                 *func.display.borrow_mut() = Name::from("default");
                 Rc::get_mut(&mut func)
-                    .ok_or_else(|| self.error_at(at, "unexpected token"))?
+                    .ok_or_else(|| self.error_at(at, "Unexpected token 'export'"))?
                     .name = Some(Name::from(DEFAULT_BINDING));
             }
             let local = func.name.clone().expect("named above");

@@ -223,7 +223,10 @@ mod tests {
     #[test]
     fn utf8_bom_overrides_the_declared_charset() {
         let body = b"\xEF\xBB\xBFok";
-        assert_eq!(super::html_charset("text/html", Some("windows-1252".into()), body).as_deref(), Some("UTF-8"));
+        assert_eq!(
+            super::html_charset("text/html", Some("windows-1252".into()), body).as_deref(),
+            Some("UTF-8")
+        );
         assert_eq!(decode(body.to_vec(), Some("UTF-8")).unwrap(), "ok");
     }
 
@@ -241,7 +244,10 @@ mod tests {
     #[test]
     fn declared_or_non_html_bodies_keep_their_charset() {
         let body = b"<meta charset=big5>";
-        assert_eq!(super::html_charset("text/html", Some("UTF-8".into()), body).as_deref(), Some("UTF-8"));
+        assert_eq!(
+            super::html_charset("text/html", Some("UTF-8".into()), body).as_deref(),
+            Some("UTF-8")
+        );
         assert_eq!(super::html_charset("text/css", None, body), None);
     }
 

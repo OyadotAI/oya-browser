@@ -136,7 +136,11 @@ fn content_type_verdicts_match_on_every_fetch_path() {
             b"\x80\x93\xE9".as_slice(),
             Ok("\u{20AC}\u{201C}\u{e9}"),
         ),
-        ("text/html; charset=shift_jis", b"\x82\xA0".as_slice(), Ok("\u{3042}")),
+        (
+            "text/html; charset=shift_jis",
+            b"\x82\xA0".as_slice(),
+            Ok("\u{3042}"),
+        ),
         (
             "text/html; charset=nope",
             accepted,

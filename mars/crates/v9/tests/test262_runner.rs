@@ -409,7 +409,9 @@ fn cases_mjsunit(
             skip_case(skips, exclusions, &rel, format!("no-optimizer:dir:{top}"));
             continue;
         }
-        if status_fails.iter().any(|pattern| status_matches(pattern, &rel))
+        if status_fails
+            .iter()
+            .any(|pattern| status_matches(pattern, &rel))
             || MJSUNIT_UPSTREAM_FAIL.contains(&rel.trim_end_matches(".js"))
         {
             skip_case(skips, exclusions, &rel, "upstream:fail".into());
@@ -490,20 +492,35 @@ fn cases_mjsunit(
 
 /** Respect V8's platform-specific exclusions only on non-Linux hosts. */
 fn non_linux_status_skips(root: &Path) -> Vec<String> {
-    let Ok(text) = read_confined(root, Path::new("mjsunit.status")) else { return Vec::new(); };
+    let Ok(text) = read_confined(root, Path::new("mjsunit.status")) else {
+        return Vec::new();
+    };
     non_linux_status_entries(&text, cfg!(target_os = "linux"))
 }
 
 /** Read the exact upstream non-Linux block rather than interpreting unrelated conditions. */
 fn non_linux_status_entries(text: &str, linux: bool) -> Vec<String> {
-    if linux { return Vec::new(); }
-    let Some((_, tail)) = text.split_once("['system != linux', {") else { return Vec::new(); };
-    let Some((block, _)) = tail.split_once("}],") else { return Vec::new(); };
-    block.lines().filter_map(|line| {
-        let line = line.trim();
-        if !line.contains("[SKIP]") { return None; }
-        line.strip_prefix('\'')?.split_once('\'').map(|(name, _)| name.to_string())
-    }).collect()
+    if linux {
+        return Vec::new();
+    }
+    let Some((_, tail)) = text.split_once("['system != linux', {") else {
+        return Vec::new();
+    };
+    let Some((block, _)) = tail.split_once("}],") else {
+        return Vec::new();
+    };
+    block
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if !line.contains("[SKIP]") {
+                return None;
+            }
+            line.strip_prefix('\'')?
+                .split_once('\'')
+                .map(|(name, _)| name.to_string())
+        })
+        .collect()
 }
 
 /** V9 implements SIMD in software, so upstream's no_simd_hardware condition is false. */
@@ -548,8 +565,13 @@ fn inert_native_syntax_flag(source: &str) -> bool {
 
 /** Only tests whose every percent token names an implemented intrinsic are considered for opt-in execution. */
 fn supported_native_intrinsics(source: &str) -> bool {
-    if source.lines().filter_map(|line| line.strip_prefix("// Flags:")).flat_map(str::split_whitespace).any(|flag| flag == "--fuzzing")
-        && (source.contains("%WasmStruct") || source.contains("%WasmArray")) {
+    if source
+        .lines()
+        .filter_map(|line| line.strip_prefix("// Flags:"))
+        .flat_map(str::split_whitespace)
+        .any(|flag| flag == "--fuzzing")
+        && (source.contains("%WasmStruct") || source.contains("%WasmArray"))
+    {
         return false;
     }
     if !source
@@ -675,12 +697,24 @@ fn supported_native_intrinsics(source: &str) -> bool {
 #[test]
 /** Mixed or unknown private intrinsics stay excluded rather than faking unsupported state. */
 fn native_admission_requires_only_implemented_intrinsics() {
-    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();"));
-    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%MaxSmi();%ArrayBufferMaxByteLength();"));
-    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%WasmStruct();%WasmArray();"));
-    assert!(supported_native_intrinsics("// Flags: --allow-natives-syntax\n%IsWasmTrapHandlerEnabled();"));
-    assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax --fuzzing\n%WasmStruct();"));
-    assert!(!supported_native_intrinsics("// Flags: --allow-natives-syntax\n%AllocateHeapNumber();%IsSmi(0);"));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%AllocateHeapNumber();"
+    ));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%MaxSmi();%ArrayBufferMaxByteLength();"
+    ));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%WasmStruct();%WasmArray();"
+    ));
+    assert!(supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%IsWasmTrapHandlerEnabled();"
+    ));
+    assert!(!supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax --fuzzing\n%WasmStruct();"
+    ));
+    assert!(!supported_native_intrinsics(
+        "// Flags: --allow-natives-syntax\n%AllocateHeapNumber();%IsSmi(0);"
+    ));
     assert!(supported_native_intrinsics(
         "// Flags: --allow-natives-syntax\n%InternalizeString('value');"
     ));
@@ -792,14 +826,20 @@ fn supported_mjsunit_flags(source: &str) -> bool {
                 continue;
             }
             if flag == "--wasm-num-compilation-tasks" {
-                if flags.next() != Some("0") { return false; }
+                if flags.next() != Some("0") {
+                    return false;
+                }
                 continue;
             }
-            let numeric = ["--wasm-max-module-size", "--wasm-max-mem-pages", "--wasm-max-table-size"];
+            let numeric = [
+                "--wasm-max-module-size",
+                "--wasm-max-mem-pages",
+                "--wasm-max-table-size",
+            ];
             if numeric.contains(&flag) {
-                if !flags
+                if flags
                     .next()
-                    .is_some_and(|value| value.parse::<usize>().is_ok())
+                    .is_none_or(|value| value.parse::<usize>().is_err())
                 {
                     return false;
                 }
@@ -825,63 +865,185 @@ V8, so refusing it hid language coverage for nothing. Flags that change what a p
 (staging features, ICU switches, the inspector, code caching, strictness) are not here. */
 const INERT_D8_FLAGS: &[&str] = &[
     // JIT tiers, budgets and feedback.
-    "--no-lazy-feedback-allocation", "--lazy-feedback-allocation", "--invocation-count-for-turbofan",
-    "--invocation-count-for-maglev", "--invocation-count-for-maglev-osr", "--interrupt-budget",
-    "--interrupt-budget-for-feedback-allocation", "--jit-fuzzing", "--no-jit-fuzzing", "--maglev",
-    "--no-maglev", "--turbofan", "--no-turbofan", "--noturbofan", "--always-turbofan", "--turbolev",
-    "--turbolev-future", "--turboshaft", "--no-turbo", "--turbo-filter", "--always-osr", "--use-osr",
-    "--ignition-osr", "--osr-to-tierup", "--no-use-ic", "--nouse-ic", "--deopt-every-n-times",
-    "--no-concurrent-recompilation", "--no-concurrent-osr", "--no-concurrent-sparkplug",
-    "--stress-concurrent-inlining", "--assert-types", "--turbo-loop-variable", "--turbo-loop-rotation",
-    "--turbo-stats-nvp", "--noturbo-inlining", "--no-turbo-escape", "--no-turbo-allocation-folding",
-    "--turboshaft-assert-types", "--turboshaft-typed-optimizations", "--maglev-non-eager-inlining",
-    "--max-maglev-inlined-bytecode-size-small", "--maglev-untagged-phis", "--no-maglev-untagged-phis",
-    "--maglev-extend-properties-backing-store", "--minimum-invocations-after-ic-update",
-    "--minimum-invocations-before-optimization", "--function-context-specialization",
-    "--noanalyze-environment-liveness", "--no-analyze-environment-liveness", "--jitless",
-    "--efficiency-mode", "--for-of-optimization", "--force-slow-path", "--no-force-slow-path",
-    "--no-fast-math", "--no-inline-new", "--noinline-new", "--omit-default-ctors",
-    "--proto-assign-seq-opt", "--superspreading", "--cache-property-key-string-adds",
-    "--typed-array-length-loading", "--use-std-math-pow", "--test-small-max-function-context-stub-size",
-    "--stress-lazy-compilation", "--nocompilation-cache", "--random-seed", "--flag-processing-mode",
-    "--predictable", "--single-threaded", "--stress-runs", "--stress-delay-tasks",
-    "--no-wait-for-background-tasks", "--future",
+    "--no-lazy-feedback-allocation",
+    "--lazy-feedback-allocation",
+    "--invocation-count-for-turbofan",
+    "--invocation-count-for-maglev",
+    "--invocation-count-for-maglev-osr",
+    "--interrupt-budget",
+    "--interrupt-budget-for-feedback-allocation",
+    "--jit-fuzzing",
+    "--no-jit-fuzzing",
+    "--maglev",
+    "--no-maglev",
+    "--turbofan",
+    "--no-turbofan",
+    "--noturbofan",
+    "--always-turbofan",
+    "--turbolev",
+    "--turbolev-future",
+    "--turboshaft",
+    "--no-turbo",
+    "--turbo-filter",
+    "--always-osr",
+    "--use-osr",
+    "--ignition-osr",
+    "--osr-to-tierup",
+    "--no-use-ic",
+    "--nouse-ic",
+    "--deopt-every-n-times",
+    "--no-concurrent-recompilation",
+    "--no-concurrent-osr",
+    "--no-concurrent-sparkplug",
+    "--stress-concurrent-inlining",
+    "--assert-types",
+    "--turbo-loop-variable",
+    "--turbo-loop-rotation",
+    "--turbo-stats-nvp",
+    "--noturbo-inlining",
+    "--no-turbo-escape",
+    "--no-turbo-allocation-folding",
+    "--turboshaft-assert-types",
+    "--turboshaft-typed-optimizations",
+    "--maglev-non-eager-inlining",
+    "--max-maglev-inlined-bytecode-size-small",
+    "--maglev-untagged-phis",
+    "--no-maglev-untagged-phis",
+    "--maglev-extend-properties-backing-store",
+    "--minimum-invocations-after-ic-update",
+    "--minimum-invocations-before-optimization",
+    "--function-context-specialization",
+    "--noanalyze-environment-liveness",
+    "--no-analyze-environment-liveness",
+    "--jitless",
+    "--efficiency-mode",
+    "--for-of-optimization",
+    "--force-slow-path",
+    "--no-force-slow-path",
+    "--no-fast-math",
+    "--no-inline-new",
+    "--noinline-new",
+    "--omit-default-ctors",
+    "--proto-assign-seq-opt",
+    "--superspreading",
+    "--cache-property-key-string-adds",
+    "--typed-array-length-loading",
+    "--use-std-math-pow",
+    "--test-small-max-function-context-stub-size",
+    "--stress-lazy-compilation",
+    "--nocompilation-cache",
+    "--random-seed",
+    "--flag-processing-mode",
+    "--predictable",
+    "--single-threaded",
+    "--stress-runs",
+    "--stress-delay-tasks",
+    "--no-wait-for-background-tasks",
+    "--future",
     // The regexp tiers and the experimental backtracking engine.
-    "--no-regexp-tier-up", "--regexp-tier-up", "--noregexp-optimization",
-    "--enable-experimental-regexp-engine", "--no-enable-experimental-regexp-engine",
-    "--enable-experimental-regexp-engine-on-excessive-backtracks", "--regexp-backtracks-before-fallback",
+    "--no-regexp-tier-up",
+    "--regexp-tier-up",
+    "--noregexp-optimization",
+    "--enable-experimental-regexp-engine",
+    "--no-enable-experimental-regexp-engine",
+    "--enable-experimental-regexp-engine-on-excessive-backtracks",
+    "--regexp-backtracks-before-fallback",
     "--experimental-regexp-engine-capture-group-opt",
     "--experimental-regexp-engine-capture-group-opt-max-memory-usage",
-    "--no-default-to-experimental-regexp-engine", "--no-regexp-interpret-all",
+    "--no-default-to-experimental-regexp-engine",
+    "--no-regexp-interpret-all",
     // The generational collector and its stress modes.
-    "--gc-global", "--no-gc-global", "--gc-interval", "--max-semi-space-size", "--min-semi-space-size",
-    "--max-old-space-size", "--stress-compaction", "--no-stress-compaction", "--verify-heap",
-    "--noverify-heap", "--invoke-weak-callbacks", "--minor-ms", "--no-minor-ms", "--stress-scavenge",
-    "--no-single-generation", "--handle-weak-ref-weakly-in-minor-gc", "--no-scavenger-chaos-mode",
-    "--stress-marking", "--trace-gc-object-stats", "--trace-evacuation", "--stress-flush-code",
-    "--no-stress-flush-code", "--flush-bytecode", "--stress-flush-bytecode", "--multi-mapped-mock-allocator",
-    "--check-handle-count", "--stress-per-context-marking-worklist",
-    "--stress-scavenger-conservative-object-pinning-random", "--track-array-buffer-views", "--code-stats",
-    "--empty-shared-heap", "--nostress-incremental-marking", "--no-stress-incremental-marking",
-    "--no-stress-concurrent-allocation", "--track-field-types", "--typed-array-max-size-in-heap",
-    "--max-lazy", "--stress-wasm-code-gc", "--stress-snapshot",
+    "--gc-global",
+    "--no-gc-global",
+    "--gc-interval",
+    "--max-semi-space-size",
+    "--min-semi-space-size",
+    "--max-old-space-size",
+    "--stress-compaction",
+    "--no-stress-compaction",
+    "--verify-heap",
+    "--noverify-heap",
+    "--invoke-weak-callbacks",
+    "--minor-ms",
+    "--no-minor-ms",
+    "--stress-scavenge",
+    "--no-single-generation",
+    "--handle-weak-ref-weakly-in-minor-gc",
+    "--no-scavenger-chaos-mode",
+    "--stress-marking",
+    "--trace-gc-object-stats",
+    "--trace-evacuation",
+    "--stress-flush-code",
+    "--no-stress-flush-code",
+    "--flush-bytecode",
+    "--stress-flush-bytecode",
+    "--multi-mapped-mock-allocator",
+    "--check-handle-count",
+    "--stress-per-context-marking-worklist",
+    "--stress-scavenger-conservative-object-pinning-random",
+    "--track-array-buffer-views",
+    "--code-stats",
+    "--empty-shared-heap",
+    "--nostress-incremental-marking",
+    "--no-stress-incremental-marking",
+    "--no-stress-concurrent-allocation",
+    "--track-field-types",
+    "--typed-array-max-size-in-heap",
+    "--max-lazy",
+    "--stress-wasm-code-gc",
+    "--stress-snapshot",
     // Printing, tracing and logging that only produce output.
-    "--print-code", "--print-ast", "--print-wasm-code", "--code-comments", "--trace-ignition",
-    "--trace-turbo-graph", "--trace-turbo-reduction", "--trace-wasm", "--trace-wasm-decoder",
-    "--trace-wasm-memory", "--trace-regexp-bytecodes", "--trace-generalization", "--trace-migration",
-    "--trace-normalization", "--log-code", "--log", "--logfile", "--enable-tracing", "--dump-counters",
-    "--perf-prof", "--perf-prof-delete-file", "--perf-prof-unwinding-info", "--print-opt-code-filter",
-    "--print-builtin-code-filter", "--debug-code", "--enable-slow-asserts",
-    "--interpreted-frames-native-stack", "--cpu-profiler-sampling-interval",
+    "--print-code",
+    "--print-ast",
+    "--print-wasm-code",
+    "--code-comments",
+    "--trace-ignition",
+    "--trace-turbo-graph",
+    "--trace-turbo-reduction",
+    "--trace-wasm",
+    "--trace-wasm-decoder",
+    "--trace-wasm-memory",
+    "--trace-regexp-bytecodes",
+    "--trace-generalization",
+    "--trace-migration",
+    "--trace-normalization",
+    "--log-code",
+    "--log",
+    "--logfile",
+    "--enable-tracing",
+    "--dump-counters",
+    "--perf-prof",
+    "--perf-prof-delete-file",
+    "--perf-prof-unwinding-info",
+    "--print-opt-code-filter",
+    "--print-builtin-code-filter",
+    "--debug-code",
+    "--enable-slow-asserts",
+    "--interpreted-frames-native-stack",
+    "--cpu-profiler-sampling-interval",
     // Lazy parsing and background compilation.
-    "--lazy", "--no-lazy", "--nolazy", "--lazy-inner-functions", "--enable-lazy-source-positions",
-    "--stress-lazy-source-positions", "--stress-lazy", "--preparser-scope-analysis",
-    "--parallel-compile-tasks-for-lazy", "--parallel-compile-tasks-for-eager-toplevel",
-    "--compiler-dispatcher", "--stress-background-compile", "--no-stress-background-compile",
-    "--streaming-compile", "--no-script-streaming", "--compile-hints-magic", "--array-destructure-bytecode",
-    "--use-external-strings", "--string-slices",
+    "--lazy",
+    "--no-lazy",
+    "--nolazy",
+    "--lazy-inner-functions",
+    "--enable-lazy-source-positions",
+    "--stress-lazy-source-positions",
+    "--stress-lazy",
+    "--preparser-scope-analysis",
+    "--parallel-compile-tasks-for-lazy",
+    "--parallel-compile-tasks-for-eager-toplevel",
+    "--compiler-dispatcher",
+    "--stress-background-compile",
+    "--no-stress-background-compile",
+    "--streaming-compile",
+    "--no-script-streaming",
+    "--compile-hints-magic",
+    "--array-destructure-bytecode",
+    "--use-external-strings",
+    "--string-slices",
     // Native stack sizing; V9 bounds frames by count, not bytes.
-    "--stack-size", "--sim-stack-size",
+    "--stack-size",
+    "--sim-stack-size",
 ];
 
 /** A flag is inert when its name, before any `=value`, tunes machinery V9 does not have. */
@@ -893,30 +1055,57 @@ fn inert_d8_flag(flag: &str) -> bool {
 #[test]
 /** Unconditional FAIL rows are read like SKIP rows, and mixed rows stay out of both. */
 fn status_fail_rows_are_parsed_separately_from_skips() {
-    let text = "[ALWAYS, {\n 'bugs/*': [FAIL],\n 'flaky': [PASS, FAIL],\n 'gone': [SKIP],\n}],  # ALWAYS";
-    assert_eq!(always_status_entries(text, "[FAIL]"), vec!["bugs/*".to_string()]);
-    assert_eq!(always_status_entries(text, "[SKIP]"), vec!["gone".to_string()]);
+    let text =
+        "[ALWAYS, {\n 'bugs/*': [FAIL],\n 'flaky': [PASS, FAIL],\n 'gone': [SKIP],\n}],  # ALWAYS";
+    assert_eq!(
+        always_status_entries(text, "[FAIL]"),
+        vec!["bugs/*".to_string()]
+    );
+    assert_eq!(
+        always_status_entries(text, "[SKIP]"),
+        vec!["gone".to_string()]
+    );
 }
 
 #[test]
 /** Unsupported flags in any line or combination cannot be admitted as no-ops. */
 fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     // V9 has neither optimizer, so asking for one changes nothing about its execution state.
-    assert!(supported_mjsunit_flags("// Flags: --no-maglev --no-turbofan\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-maglev --turbofan\n"));
-    assert!(supported_mjsunit_flags("// Flags: --stack-size=100 --interrupt-budget=1024\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-maglev --no-turbofan\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-maglev --turbofan\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --stack-size=100 --interrupt-budget=1024\n"
+    ));
     // --no-fail tells d8 to ignore failures, which is not a tuning flag.
     assert!(!supported_mjsunit_flags("// Flags: --no-fail\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --stack-size=100 --js-staging\n"));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --stack-size=100 --js-staging\n"
+    ));
     assert!(!supported_mjsunit_flags("// Flags: --enable-inspector\n"));
-    assert!(supported_mjsunit_flags("// Flags: --js-iterator-includes --js-iterator-join\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --js-iterator-includes --unknown\n"));
-    assert!(supported_mjsunit_flags("// Flags: --async-stack-traces --no-async-stack-traces\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --async-stack-traces --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --js-iterator-includes --js-iterator-join\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --js-iterator-includes --unknown\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --async-stack-traces --no-async-stack-traces\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --async-stack-traces --unknown\n"
+    ));
     assert!(supported_mjsunit_flags("// Flags: -- 1 --literal\n"));
     assert!(!supported_mjsunit_flags("// Flags: --unknown -- 1\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --wasm-enforce-bounds-checks\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-trap-handler --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-wasm-trap-handler --wasm-enforce-bounds-checks\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --no-wasm-trap-handler --unknown\n"
+    ));
     assert!(supported_mjsunit_flags(
         "// Flags: --expose-gc --harmony-struct\n// Flags: --wasm-max-module-size=128\n"
     ));
@@ -931,48 +1120,116 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     ));
     assert!(supported_mjsunit_flags("// Flags: --shared-string-table\n"));
     assert!(supported_mjsunit_flags("// Flags: --js-sum-precise\n"));
-    assert!(supported_mjsunit_flags("// Flags: --expose-externalize-string\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --expose-externalize-string --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --expose-externalize-string\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --expose-externalize-string --unknown\n"
+    ));
     assert!(supported_mjsunit_flags("// Flags: --wasm-test-streaming\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-stringref\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-custom-descriptors\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-acquire-release\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-imported-strings-utf8\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-custom-descriptors\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-acquire-release\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-imported-strings-utf8\n"
+    ));
     assert!(supported_mjsunit_flags("// Flags: --wasm-fp16\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-js-interop\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-wide-arithmetic\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-wide-arithmetic\n"
+    ));
     assert!(supported_mjsunit_flags("// Flags: --wasm-wasmfx\n"));
     assert!(supported_mjsunit_flags("// Flags: --wasm-shared\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-compact-imports\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-compact-imports\n"
+    ));
     assert!(supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-math-intrinsics --no-wasm-math-intrinsics\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-math-intrinsics --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-ref-cast-nop --unknown\n"));
-    assert!(supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --enable-testing-opcode-in-wasm --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-compact-imports --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-shared --unknown\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-wasm-inlining --no-wasm-loop-unrolling --no-wasm-loop-peeling --no-wasm-opt --no-wasm-dynamic-tiering --no-wasm-native-module-cache\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --no-wasm-inlining --unknown\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-enable-avx --no-enable-sse4-1 --no-enable-sse4-2 --no-enable-ssse3\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --no-enable-avx --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-math-intrinsics --no-wasm-math-intrinsics\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-math-intrinsics --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-ref-cast-nop --unknown\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --enable-testing-opcode-in-wasm\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --enable-testing-opcode-in-wasm --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-compact-imports --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-shared --unknown\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-wasm-lazy-compilation --nowasm-lazy-compilation\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-wasm-inlining --no-wasm-loop-unrolling --no-wasm-loop-peeling --no-wasm-opt --no-wasm-dynamic-tiering --no-wasm-native-module-cache\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --no-wasm-inlining --unknown\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-enable-avx --no-enable-sse4-1 --no-enable-sse4-2 --no-enable-ssse3\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --no-enable-avx --unknown\n"
+    ));
     assert!(!supported_mjsunit_flags("// Flags: --enable-avx\n"));
-    assert!(supported_mjsunit_flags("// Flags: --no-wasm-tier-up --wasm-num-compilation-tasks=0\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks 0\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-num-compilation-tasks=1\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-lazy-compilation\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-wasmfx --unknown\n"));
-    assert!(supported_mjsunit_flags("// Flags: --wasm-allow-mixed-eh-for-testing\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-allow-mixed-eh-for-testing --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-wide-arithmetic --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-js-interop --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-fp16 --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-imported-strings-utf8 --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-acquire-release --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-custom-descriptors --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-stringref --unknown\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-test-streaming --unknown\n"));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --no-wasm-tier-up --wasm-num-compilation-tasks=0\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-num-compilation-tasks 0\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-num-compilation-tasks=1\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-lazy-compilation\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-wasmfx --unknown\n"
+    ));
+    assert!(supported_mjsunit_flags(
+        "// Flags: --wasm-allow-mixed-eh-for-testing\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-allow-mixed-eh-for-testing --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-wide-arithmetic --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-js-interop --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-fp16 --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-imported-strings-utf8 --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-acquire-release --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-custom-descriptors --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-stringref --unknown\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-test-streaming --unknown\n"
+    ));
     assert!(!supported_mjsunit_flags(
         "// Flags: --shared-string-table --unknown\n"
     ));
@@ -991,18 +1248,19 @@ fn mjsunit_admission_requires_all_flags_to_be_implemented() {
     assert!(supported_mjsunit_flags(
         "// Flags: --wasm-max-table-size=10\n"
     ));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=bad\n"));
-    assert!(!supported_mjsunit_flags("// Flags: --wasm-max-table-size=10 --unknown\n"));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-max-table-size=bad\n"
+    ));
+    assert!(!supported_mjsunit_flags(
+        "// Flags: --wasm-max-table-size=10 --unknown\n"
+    ));
 }
 
 /** Explicit admission does not change the default discovery profile. */
 fn include_mjsunit_dirs() -> Vec<String> {
     let requested = prefixes("MJSUNIT_INCLUDE_DIRS");
-    if !requested.is_empty() {
-        assert!(
-            cfg!(feature = "conformance"),
-            "MJSUNIT_INCLUDE_DIRS requires --features conformance"
-        );
+    if !requested.is_empty() && !cfg!(feature = "conformance") {
+        panic!("MJSUNIT_INCLUDE_DIRS requires --features conformance");
     }
     for name in &requested {
         assert!(
@@ -1394,7 +1652,13 @@ fn retire(worker: &mut Option<Worker>) {
 }
 
 /** Send case `i` to the worker (spawning one if needed) and read its verdict. */
-fn ask(child: &mut Option<Worker>, suite: &str, binary: &Path, i: usize, case: &Case) -> Result<(), String> {
+fn ask(
+    child: &mut Option<Worker>,
+    suite: &str,
+    binary: &Path,
+    i: usize,
+    case: &Case,
+) -> Result<(), String> {
     let worker = child.get_or_insert_with(|| spawn_worker(suite, binary));
     let request = json!({"index":i,"path":case.rel,"identity":case_identity(case)});
     let reply = writeln!(worker.child.stdin.as_mut().unwrap(), "{request}")
@@ -1514,9 +1778,19 @@ struct WorkerBinary(PathBuf);
 impl WorkerBinary {
     /** Cargo may replace its test binary during a long run, so workers execute this stable copy. */
     fn snapshot(suite: &str) -> Self {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("mars-v9-worker-{suite}-{}-{nonce}", std::process::id()));
-        std::fs::OpenOptions::new().write(true).create_new(true).open(&path).expect("reserve worker binary");
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mars-v9-worker-{suite}-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("reserve worker binary");
         std::fs::copy(std::env::current_exe().unwrap(), &path).expect("snapshot worker binary");
         Self(path)
     }
@@ -1524,7 +1798,9 @@ impl WorkerBinary {
 
 impl Drop for WorkerBinary {
     /** The snapshot is removed only after all worker processes have exited. */
-    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /** Run every case in parallel worker processes, print and write the scoreboard. */
@@ -1562,7 +1838,12 @@ fn score(
     let outcomes: Outcomes = Arc::new(Mutex::new((0..cases.len()).map(|_| None).collect()));
     let workers: Vec<_> = (0..jobs)
         .map(|_| {
-            let (cases, next, outcomes, binary) = (cases.clone(), next.clone(), outcomes.clone(), binary.clone());
+            let (cases, next, outcomes, binary) = (
+                cases.clone(),
+                next.clone(),
+                outcomes.clone(),
+                binary.clone(),
+            );
             thread::spawn(move || {
                 let mut child: Option<Worker> = None;
                 loop {
@@ -1592,7 +1873,12 @@ fn score(
         match outcome.as_ref().unwrap() {
             Ok(()) => entry.0 += 1,
             Err(e) if e.contains(NO_OPTIMIZER_EXIT) => {
-                skip_case(&mut skips, &mut exclusions, &case.rel, NO_OPTIMIZER_SKIP.into());
+                skip_case(
+                    &mut skips,
+                    &mut exclusions,
+                    &case.rel,
+                    NO_OPTIMIZER_SKIP.into(),
+                );
             }
             Err(e) => {
                 entry.1 += 1;
@@ -1718,7 +2004,6 @@ fn status_skip_patterns_match_only_their_paths() {
     );
 }
 
-
 /** The SIMD condition is read from its exact status block, without admitting other conditions. */
 #[test]
 fn simd_status_skips_only_matching_block() {
@@ -1748,10 +2033,26 @@ fn non_linux_status_skips_only_matching_platform_and_block() {
     let status = "['system == linux', {\n 'wasm/linux-only': [SKIP],\n}],\n['system != linux', {\n 'wasm/memory-control': [SKIP],\n 'regress/wasm/regress-493307331': [SKIP],\n 'wasm/keep': [PASS],\n}],\n";
     assert!(non_linux_status_entries(status, true).is_empty());
     let skips = non_linux_status_entries(status, false);
-    assert!(skips.iter().any(|name| status_matches(name, "wasm/memory-control.js")));
-    assert!(skips.iter().any(|name| status_matches(name, "regress/wasm/regress-493307331.js")));
-    assert!(!skips.iter().any(|name| status_matches(name, "wasm/linux-only.js")));
-    assert!(!skips.iter().any(|name| status_matches(name, "wasm/keep.js")));
+    assert!(
+        skips
+            .iter()
+            .any(|name| status_matches(name, "wasm/memory-control.js"))
+    );
+    assert!(
+        skips
+            .iter()
+            .any(|name| status_matches(name, "regress/wasm/regress-493307331.js"))
+    );
+    assert!(
+        !skips
+            .iter()
+            .any(|name| status_matches(name, "wasm/linux-only.js"))
+    );
+    assert!(
+        !skips
+            .iter()
+            .any(|name| status_matches(name, "wasm/keep.js"))
+    );
 }
 
 /** tc39 test262 against V9. */

@@ -21,16 +21,16 @@ static PROTO: OnceLock<u32> = OnceLock::new();
 /** Install FormData. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
-    b.method(proto, "append", 2, append);
-    b.method(proto, "set", 2, set);
-    b.method(proto, "delete", 1, delete);
-    b.method(proto, "get", 1, get);
-    b.method(proto, "getAll", 1, get_all);
-    b.method(proto, "has", 1, has);
-    b.method(proto, "forEach", 1, for_each);
-    b.method(proto, "keys", 0, keys);
-    b.method(proto, "values", 0, values);
-    let entries = b.method(proto, "entries", 0, entries);
+    b.host_method(proto, "append", 2, append);
+    b.host_method(proto, "set", 2, set);
+    b.host_method(proto, "delete", 1, delete);
+    b.host_method(proto, "get", 1, get);
+    b.host_method(proto, "getAll", 1, get_all);
+    b.host_method(proto, "has", 1, has);
+    b.host_method(proto, "forEach", 1, for_each);
+    b.host_method(proto, "keys", 0, keys);
+    b.host_method(proto, "values", 0, values);
+    let entries = b.host_method(proto, "entries", 0, entries);
     b.put(
         proto,
         Key::Sym(symbol::ITERATOR),

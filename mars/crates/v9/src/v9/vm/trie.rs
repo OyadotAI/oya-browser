@@ -19,10 +19,13 @@ const LEVELS: u32 = 6;
 /** The shift of the root level. */
 const ROOT_SHIFT: u32 = BITS * (LEVELS - 1);
 
+/** A leaf's slots: the key's low bits select one, which holds the full key and its value. */
+type LeafSlots<V> = Box<[Option<(u32, Arc<V>)>; WIDTH]>;
+
 /** One level: branches above, leaves holding keys and shared values at the bottom. */
 enum Node<V> {
     Branch(Box<[Option<Arc<Node<V>>>; WIDTH]>),
-    Leaf(Box<[Option<(u32, Arc<V>)>; WIDTH]>),
+    Leaf(LeafSlots<V>),
 }
 
 impl<V> Clone for Node<V> {

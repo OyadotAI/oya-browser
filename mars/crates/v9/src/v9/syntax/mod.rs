@@ -100,6 +100,9 @@ struct Context {
     static_block: bool,
     /// Inside a parameter list, where `yield` and `await` expressions are early errors.
     parameters: bool,
+    /// Inside the parameters of an async arrow whose enclosing code is not async, which V8
+    /// first reads as a call `async(...)` where `await` is a plain name.
+    sloppy_async_head: bool,
 }
 
 /** A recursive-descent parser over the scanner's tokens. */
@@ -168,6 +171,46 @@ struct Levels {
 
 /** No parenthesis closes here. */
 const NO_CLOSER: u32 = u32::MAX;
+
+/** V8's reason for an `await` operand outside async code, where `await` is only a name. */
+pub(super) const AWAIT_OUTSIDE_ASYNC: &str =
+    "await is only valid in async functions and the top level bodies of modules";
+
+/** V8's reason for `await` used as a name in an async arrow's parameters. */
+pub(super) const AWAIT_BINDING: &str =
+    "'await' is not a valid identifier name in an async function";
+
+/** V8's reason for a name bound twice in one scope. */
+pub(super) fn redeclared(name: &str) -> String {
+    format!("Identifier '{name}' has already been declared")
+}
+
+/** The reasons `unexpected` produces, by prefix: an error with one of these is the token's own
+and not a rule of the grammar, so a head reread as an expression may replace it. */
+const TOKEN_REASONS: [&str; 10] = [
+    "Unexpected token '",
+    "Unexpected identifier '",
+    "Unexpected number",
+    "Unexpected string",
+    "Unexpected end of input",
+    "Unexpected template string",
+    "Unexpected regular expression",
+    "Unexpected reserved word",
+    "Unexpected strict mode reserved word",
+    "Keyword must not contain escaped characters",
+];
+
+/** True when the error is one `unexpected` produced for a token. */
+pub(super) fn is_token_error(error: &EngineError) -> bool {
+    let reason = errors::reason(error);
+    TOKEN_REASONS
+        .iter()
+        .any(|prefix| reason.starts_with(prefix))
+}
+
+/** Contextual keywords V8 scans as their own tokens, so an unexpected one is named as a token
+rather than as an identifier. */
+const CONTEXTUAL_TOKENS: [&str; 6] = ["get", "set", "of", "async", "using", "accessor"];
 
 impl Parser {
     /** Decoded token values cannot erase Annex B's strict-mode lexical early errors. */
@@ -341,7 +384,9 @@ impl Parser {
             Err(self.unexpected())
         }
     }
-    /** A semicolon, or a place automatic semicolon insertion allows one. */
+    /** A semicolon, or a place automatic semicolon insertion allows one. An `await` that was
+    read as a plain name outside async code and is now followed by an operand gets V8's hint
+    about where `await` works instead of the token's own error. */
     fn semicolon(&mut self) -> EngineResult<()> {
         if self.eat(";") {
             return Ok(());
@@ -352,17 +397,67 @@ impl Parser {
         {
             return Ok(());
         }
+        if self.consumed_await() {
+            let at = self.tokens[self.position - 1].location;
+            return Err(errors::syntax(at, AWAIT_OUTSIDE_ASYNC));
+        }
         Err(self.unexpected())
     }
-    /** The syntax error for the current token. */
+    /** True when the last consumed token was the name `await` where it is not an operator. */
+    fn consumed_await(&self) -> bool {
+        let Some(previous) = self
+            .position
+            .checked_sub(1)
+            .map(|index| &self.tokens[index])
+        else {
+            return false;
+        };
+        !previous.escaped
+            && matches!(&previous.kind, Kind::Name(name) if name == "await")
+            && !self.context.asynchronous
+    }
+    /** The syntax error for the current token, worded by V8's token classes. */
     fn unexpected(&self) -> EngineError {
         let token = self.peek();
-        let what = match &token.kind {
-            Kind::End => "unexpected end of input",
-            Kind::Opaque(_) => "unexpected literal",
-            _ => "unexpected token",
-        };
-        errors::syntax(token.location, what)
+        errors::syntax(token.location, &self.unexpected_reason(token))
+    }
+    /** V8 names punctuators and keywords, names identifiers (and `#names`), and describes
+    literals, templates and the end of input; a scan error reports its own reason. */
+    fn unexpected_reason(&self, token: &Token) -> String {
+        match &token.kind {
+            Kind::End => "Unexpected end of input".to_string(),
+            Kind::Illegal(reason) => reason.clone(),
+            Kind::Number(_) | Kind::BigInt(_) | Kind::BigIntWide(_) => {
+                "Unexpected number".to_string()
+            }
+            Kind::String(_) | Kind::Opaque(_) => "Unexpected string".to_string(),
+            Kind::Template { .. } => "Unexpected template string".to_string(),
+            Kind::Regex { .. } => "Unexpected regular expression".to_string(),
+            Kind::Private(name) => format!("Unexpected identifier '#{name}'"),
+            Kind::Name(name) => self.unexpected_name(name, token.escaped),
+            kind => format!("Unexpected token '{}'", spelling(kind).unwrap_or("")),
+        }
+    }
+    /** A name by V8's token classes: keywords and the contextual keywords V8 tokenizes are
+    tokens, `await` and `enum` are reserved words, the strict-only words are reserved words in
+    strict code and identifiers in sloppy code (where V8 prints the future reserved words as
+    'undefined', having no spelling for that token class), and the rest are identifiers. */
+    fn unexpected_name(&self, name: &str, escaped: bool) -> String {
+        if escaped && reserved(name, self.strict) {
+            return "Keyword must not contain escaped characters".to_string();
+        }
+        match name {
+            "await" | "enum" => "Unexpected reserved word".to_string(),
+            _ if reserved(name, false) || CONTEXTUAL_TOKENS.contains(&name) => {
+                format!("Unexpected token '{name}'")
+            }
+            _ if self.strict && reserved(name, true) => {
+                "Unexpected strict mode reserved word".to_string()
+            }
+            "let" | "static" | "yield" => format!("Unexpected identifier '{name}'"),
+            _ if reserved(name, true) => "Unexpected identifier 'undefined'".to_string(),
+            _ => format!("Unexpected identifier '{name}'"),
+        }
     }
     /** A syntax error at a position. */
     fn error_at(&self, pos: Pos, reason: &str) -> EngineError {
@@ -464,11 +559,14 @@ impl Parser {
         let Kind::Name(name) = &token.kind else {
             return Err(self.unexpected());
         };
+        if name == "await" && self.context.sloppy_async_head {
+            return Err(errors::syntax(token.location, AWAIT_BINDING));
+        }
         if reserved(name, self.strict)
             || name == "yield" && (self.context.generator || self.strict)
             || name == "await" && (self.context.asynchronous || self.context.static_block)
         {
-            return Err(errors::syntax(token.location, "unexpected reserved word"));
+            return Err(self.unexpected());
         }
         self.next();
         Ok(Name::from(name.as_str()))
@@ -496,7 +594,7 @@ impl Parser {
     /** Declare a `#name` in the innermost class body; only a getter and setter pair may share one. */
     fn declare_private(&mut self, name: &Name, kind: PrivateKind, pos: Pos) -> EngineResult<()> {
         let Some(scope) = self.privates.last_mut() else {
-            return Err(self.error_at(pos, "unexpected private name"));
+            return Err(self.error_at(pos, &format!("Unexpected identifier '#{name}'")));
         };
         let mut earlier = scope.declared.iter().filter(|(seen, _)| seen == name);
         let clash = match (earlier.next(), earlier.next()) {
@@ -509,7 +607,7 @@ impl Parser {
             _ => true,
         };
         if clash {
-            return Err(self.error_at(pos, "Identifier has already been declared"));
+            return Err(self.error_at(pos, &redeclared(&format!("#{name}"))));
         }
         scope.declared.push((name.clone(), kind));
         Ok(())
@@ -527,12 +625,13 @@ impl Parser {
     }
     /** Any identifier name, including keywords, as after a dot. */
     fn property_name(&mut self) -> EngineResult<Name> {
-        match self.next().kind {
-            Kind::Name(name) => Ok(Name::from(name.as_str())),
-            _ => {
-                self.position -= 1;
-                Err(self.unexpected())
+        match &self.peek().kind {
+            Kind::Name(name) => {
+                let name = Name::from(name.as_str());
+                self.next();
+                Ok(name)
             }
+            _ => Err(self.unexpected()),
         }
     }
     /** True if the token is an identifier that can start an expression or binding. */

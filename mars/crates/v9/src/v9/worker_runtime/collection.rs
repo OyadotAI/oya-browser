@@ -148,16 +148,27 @@ mod tests {
         let (input, _receiver) = mpsc::sync_channel(1);
         let (outgoing, output) = mpsc::sync_channel(1);
         let worker = Arc::new(Worker {
-            input, outgoing, output: Mutex::new(output),
-            cancel: Arc::new(AtomicBool::new(false)), done: Arc::new(AtomicBool::new(false)),
-            thread: Mutex::new(None), error: Mutex::new(None), failure: Mutex::new(None),
+            input,
+            outgoing,
+            output: Mutex::new(output),
+            cancel: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(AtomicBool::new(false)),
+            thread: Mutex::new(None),
+            error: Mutex::new(None),
+            failure: Mutex::new(None),
         });
         host.workers.lock().unwrap().insert(1, worker.clone());
         let start = Instant::now();
-        assert!(host.coordinate_collection(None, || Ok(()), || Ok(())).is_err());
+        assert!(
+            host.coordinate_collection(None, || Ok(()), || Ok(()))
+                .is_err()
+        );
         assert!(start.elapsed() < COLLECTION_TIMEOUT + Duration::from_secs(1));
         assert!(!host.collection_requested.load(Ordering::Acquire));
         worker.done.store(true, Ordering::Release);
-        assert!(host.coordinate_collection(None, || Ok(()), || Ok(())).is_ok());
+        assert!(
+            host.coordinate_collection(None, || Ok(()), || Ok(()))
+                .is_ok()
+        );
     }
 }

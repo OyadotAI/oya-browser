@@ -14,8 +14,15 @@ pub(super) fn limits(m: &Module, index: u32) -> Result<types::Limits, Error> {
         .chain(m.memories.iter().copied())
         .nth(index as usize)
         .ok_or_else(|| {
-            let count = m.imports.iter().filter(|import| matches!(import.kind, types::External::Memory(_))).count() + m.memories.len();
-            Error::invalid(&format!("memory index {index} exceeds number of declared memories ({count})"))
+            let count = m
+                .imports
+                .iter()
+                .filter(|import| matches!(import.kind, types::External::Memory(_)))
+                .count()
+                + m.memories.len();
+            Error::invalid(&format!(
+                "memory index {index} exceeds number of declared memories ({count})"
+            ))
         })
 }
 /** Memory operands have the same width as their selected memory's declared index space. */

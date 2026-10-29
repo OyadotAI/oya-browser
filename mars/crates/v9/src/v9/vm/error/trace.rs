@@ -46,9 +46,13 @@ impl Captured {
             receiver: frame.this.clone(),
             name: {
                 #[cfg(feature = "conformance")]
-                { frame.code.name.isolate_code_constant() }
+                {
+                    frame.code.name.isolate_code_constant()
+                }
                 #[cfg(not(feature = "conformance"))]
-                { frame.code.name.clone() }
+                {
+                    frame.code.name.clone()
+                }
             },
             file: vm.modules.source_name(pos.offset as usize),
             line: pos.line,
@@ -289,7 +293,7 @@ impl Vm<'_> {
         {
             let current = &self.realms.contexts[self.active_realm as usize];
             let other = &self.realms.contexts[bank as usize];
-            return current.shadow || other.shadow || current.token == other.token;
+            current.shadow || other.shadow || current.token == other.token
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -315,7 +319,11 @@ impl Vm<'_> {
         }
     }
     /** Frame data is inaccessible to JavaScript except through the checked CallSite API. */
-    fn make_callsite(&mut self, mut frame: Captured, filenames: &mut std::collections::BTreeMap<String, JsValue>) -> Result<ObjectId, EngineError> {
+    fn make_callsite(
+        &mut self,
+        mut frame: Captured,
+        filenames: &mut std::collections::BTreeMap<String, JsValue>,
+    ) -> Result<ObjectId, EngineError> {
         let mut wasm_function = JsValue::Null;
         let mut wasm_module = JsValue::Null;
         if frame.wasm {
@@ -339,7 +347,11 @@ impl Vm<'_> {
         let eval_origin = origin.map_or(Ok(JsValue::Undefined), |origin| {
             JsValue::string(origin.display())
         })?;
-        let file = if frame.builtin { JsValue::Undefined } else if let Some(value) = filenames.get(&frame.file) { value.clone() } else {
+        let file = if frame.builtin {
+            JsValue::Undefined
+        } else if let Some(value) = filenames.get(&frame.file) {
+            value.clone()
+        } else {
             let value = JsValue::string(&frame.file)?;
             filenames.insert(frame.file.clone(), value.clone());
             value

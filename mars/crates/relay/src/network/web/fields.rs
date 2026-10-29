@@ -25,13 +25,11 @@ pub(super) const USER_AGENT: &str = concat!(
     ".0.0.0 Safari/537.36"
 );
 
-/// Chrome 152's low-entropy brand list. Chromium seeds the GREASE brand and the order with the
-/// major version: 152 % 11 and 153 % 11 pick `?` and `_`, 152 % 3 picks "24", and 152 % 6
-/// picks the order grease, Chromium, Google Chrome placed at slots 1, 0, 2.
+/// Mars's browser brand, alongside the compatibility engine and GREASE brand.
 pub(super) const SEC_CH_UA: &str = concat!(
-    r#""Chromium";v=""#,
+    r#""Not?A_Brand";v="24", "Chromium";v=""#,
     chrome_major!(),
-    r#"", "Not?A_Brand";v="24", "Google Chrome";v=""#,
+    r#"", "Mars";v=""#,
     chrome_major!(),
     r#"""#
 );
@@ -290,14 +288,13 @@ pub(super) fn http1_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    /** The GREASE brand depends on the major version, so a version move must fail here until
-    the brand list is recomputed for it. */
+    /** Mars and its compatibility engine report the same major version. */
     #[test]
     fn the_brand_list_belongs_to_the_presented_major() {
         assert_eq!(CHROME_ENGINE, "Chrome/152.0.0.0");
         assert_eq!(
             SEC_CH_UA,
-            r#""Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152""#
+            r#""Not?A_Brand";v="24", "Chromium";v="152", "Mars";v="152""#
         );
         assert!(USER_AGENT.contains(CHROME_ENGINE));
     }

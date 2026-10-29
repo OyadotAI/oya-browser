@@ -50,7 +50,8 @@ pub(super) fn remember(url: &Url, accept_ch: &str) {
 
 /** Whether a comma-separated `Accept-CH` list names `hint`, ignoring case and spaces. */
 fn named(list: &str, hint: &str) -> bool {
-    list.split(',').any(|token| token.trim().eq_ignore_ascii_case(hint))
+    list.split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case(hint))
 }
 
 /** The hint fields this request's origin asked for, in Chrome's order, with Chrome's values. */
@@ -72,13 +73,17 @@ pub(super) fn high_entropy(url: &Url) -> Vec<(&'static str, String)> {
 fn value(hint: &str) -> String {
     let full = CHROME_FULL_VERSION;
     match hint {
-        "sec-ch-ua-arch" => quoted(if cfg!(target_arch = "aarch64") { "arm" } else { "x86" }),
+        "sec-ch-ua-arch" => quoted(if cfg!(target_arch = "aarch64") {
+            "arm"
+        } else {
+            "x86"
+        }),
         "sec-ch-ua-bitness" => quoted("64"),
         "sec-ch-ua-form-factors" => quoted("Desktop"),
         "sec-ch-ua-full-version" => quoted(full),
-        "sec-ch-ua-full-version-list" => format!(
-            r#""Chromium";v="{full}", "Not?A_Brand";v="24.0.0.0", "Google Chrome";v="{full}""#
-        ),
+        "sec-ch-ua-full-version-list" => {
+            format!(r#""Not?A_Brand";v="24.0.0.0", "Chromium";v="{full}", "Mars";v="{full}""#)
+        }
         "sec-ch-ua-model" => quoted(""),
         "sec-ch-ua-platform-version" => quoted(MACOS_PLATFORM_VERSION),
         _ => "?0".into(),
@@ -99,8 +104,14 @@ mod tests {
     fn an_origin_gets_the_hints_it_asked_for() {
         let asked = Url::parse("https://hints-a.test/search").unwrap();
         let other = Url::parse("https://hints-b.test/").unwrap();
-        remember(&asked, "Sec-CH-UA-Platform-Version, sec-ch-ua-arch,sec-ch-ua-unknown");
-        let names: Vec<_> = high_entropy(&asked).into_iter().map(|(name, _)| name).collect();
+        remember(
+            &asked,
+            "Sec-CH-UA-Platform-Version, sec-ch-ua-arch,sec-ch-ua-unknown",
+        );
+        let names: Vec<_> = high_entropy(&asked)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         assert_eq!(names, ["sec-ch-ua-arch", "sec-ch-ua-platform-version"]);
         assert!(high_entropy(&other).is_empty());
         remember(&asked, "");
@@ -111,9 +122,9 @@ mod tests {
     #[test]
     fn the_full_version_list_matches_the_brands() {
         let list = value("sec-ch-ua-full-version-list");
-        assert!(list.starts_with(r#""Chromium";v="152."#));
+        assert!(list.starts_with(r#""Not?A_Brand";v="24.0.0.0""#));
         assert!(list.contains(r#""Not?A_Brand";v="24.0.0.0""#));
-        assert!(list.ends_with(&format!(r#""Google Chrome";v="{CHROME_FULL_VERSION}""#)));
+        assert!(list.ends_with(&format!(r#""Mars";v="{CHROME_FULL_VERSION}""#)));
     }
 
     /** The full version's major is the major the User-Agent and Sec-CH-UA present. */

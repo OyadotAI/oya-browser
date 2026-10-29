@@ -14,8 +14,8 @@ mod devtools;
 pub mod downloads;
 mod exif;
 mod frame_pages;
-mod framing;
 mod frames;
+mod framing;
 /** Committed pages the person visited and address-field completion. */
 pub mod history;
 mod horizontal;

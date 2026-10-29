@@ -12,7 +12,9 @@ pub(super) const MUTEX_BRAND: &str = "conformance-local-mutex";
 const MUTEX_STORE: &str = "conformance-mutex-store";
 static CONSTRUCTOR: OnceLock<ObjectId> = OnceLock::new();
 /** Resolve a constructor identity in the requesting intrinsic bank. */
-pub(super) fn constructor_id(bank: u32) -> ObjectId { *CONSTRUCTOR.get().expect("mutex installed") + bank * banks::BANK_STRIDE }
+pub(super) fn constructor_id(bank: u32) -> ObjectId {
+    *CONSTRUCTOR.get().expect("mutex installed") + bank * banks::BANK_STRIDE
+}
 
 /** Register functions independently of flag-gated realm exposure. */
 pub(super) fn install(builder: &mut Builder) {
@@ -100,16 +102,28 @@ pub(super) fn storage(vm: &mut Vm, object: ObjectId) -> Res<SharedGc> {
             _ => None,
         });
     match backing.and_then(|id| vm.heap.get(id)).map(|o| &o.class) {
-        Some(Class::SharedContainerRoot(store)) if store.metadata()?.0.as_ref() == super::arena_transport::MUTEX_META => Ok(store.clone()),
+        Some(Class::SharedContainerRoot(store))
+            if store.metadata()?.0.as_ref() == super::arena_transport::MUTEX_META =>
+        {
+            Ok(store.clone())
+        }
         _ => Err(vm.type_error("Invalid Atomics.Mutex storage")),
     }
 }
 /** Restore a receiver-local wrapper around the same broker-granted backing. */
 pub(super) fn restore(vm: &mut Vm, store: SharedGc) -> Res<ObjectId> {
-    let ids: Vec<_> = vm.heap.objects.keys().copied().filter(|id| is_mutex(vm, *id)).collect();
+    let ids: Vec<_> = vm
+        .heap
+        .objects
+        .keys()
+        .copied()
+        .filter(|id| is_mutex(vm, *id))
+        .collect();
     for id in ids {
         let other = storage(vm, id)?;
-        if other.node() == store.node() && other.arena().same_store(&store.arena()) { return Ok(id); }
+        if other.node() == store.node() && other.arena().same_store(&store.arena()) {
+            return Ok(id);
+        }
     }
     let constructor =
         *CONSTRUCTOR.get().expect("mutex installed") + vm.active_realm * banks::BANK_STRIDE;
@@ -156,11 +170,21 @@ pub(super) fn owner(vm: &Vm) -> u64 {
         .saturating_add(1)
 }
 /** Native queue exhaustion and cancellation remain distinct engine failures. */
-pub(super) fn wait_failure(vm: &mut Vm, failure: crate::v9::vm::data::SharedWaitFailure) -> crate::v9::vm::Thrown {
+pub(super) fn wait_failure(
+    vm: &mut Vm,
+    failure: crate::v9::vm::data::SharedWaitFailure,
+) -> crate::v9::vm::Thrown {
     match failure {
         crate::v9::vm::data::SharedWaitFailure::Cancelled => crate::v9::platform::timeout().into(),
-        crate::v9::vm::data::SharedWaitFailure::Limit => crate::protocol::EngineError::new("limit_exceeded", "Shared synchronization waiter limit exceeded.", "Reduce concurrent waiters.").into(),
-        crate::v9::vm::data::SharedWaitFailure::Invalid => vm.type_error("Invalid synchronization state"),
+        crate::v9::vm::data::SharedWaitFailure::Limit => crate::protocol::EngineError::new(
+            "limit_exceeded",
+            "Shared synchronization waiter limit exceeded.",
+            "Reduce concurrent waiters.",
+        )
+        .into(),
+        crate::v9::vm::data::SharedWaitFailure::Invalid => {
+            vm.type_error("Invalid synchronization state")
+        }
     }
 }
 pub(super) fn locked(vm: &mut Vm, object: ObjectId) -> Res<bool> {
@@ -171,7 +195,13 @@ pub(super) fn locked(vm: &mut Vm, object: ObjectId) -> Res<bool> {
 pub(super) fn release(vm: &mut Vm, object: ObjectId) -> Res<()> {
     let store = storage(vm, object)?;
     let me = SharedGcValue::BigInt(owner(vm) as i128);
-    let (previous, _) = store.update(0, |value| if *value == me { SharedGcValue::BigInt(0) } else { value.clone() })?;
+    let (previous, _) = store.update(0, |value| {
+        if *value == me {
+            SharedGcValue::BigInt(0)
+        } else {
+            value.clone()
+        }
+    })?;
     if previous != me {
         return Err(vm.type_error("Mutex is not locked by this agent"));
     }
@@ -189,8 +219,16 @@ pub(super) fn acquire(
     let me = owner(vm) as i128;
     let started = Instant::now();
     loop {
-        let (previous, _) = store.update(0, |value| if *value == SharedGcValue::BigInt(0) { SharedGcValue::BigInt(me) } else { value.clone() })?;
-        let SharedGcValue::BigInt(previous) = previous else { return Err(vm.type_error("Invalid Atomics.Mutex storage")); };
+        let (previous, _) = store.update(0, |value| {
+            if *value == SharedGcValue::BigInt(0) {
+                SharedGcValue::BigInt(me)
+            } else {
+                value.clone()
+            }
+        })?;
+        let SharedGcValue::BigInt(previous) = previous else {
+            return Err(vm.type_error("Invalid Atomics.Mutex storage"));
+        };
         if previous == 0 {
             return Ok(true);
         }
@@ -205,13 +243,20 @@ pub(super) fn acquire(
         if remaining == Some(Duration::ZERO) {
             return Ok(false);
         }
-        if vm.page.state.atomics_wait_disallowed { return Err(vm.type_error("Atomics wait is not allowed")); }
+        if vm.page.state.atomics_wait_disallowed {
+            return Err(vm.type_error("Atomics wait is not allowed"));
+        }
         let mut poll_error = None;
         let wait = store.wait_owner(previous, remaining, || match vm.wait_safepoint() {
             Ok(expired) => expired,
-            Err(error) => { poll_error = Some(error); true }
+            Err(error) => {
+                poll_error = Some(error);
+                true
+            }
         });
-        if let Some(error) = poll_error { return Err(error); }
+        if let Some(error) = poll_error {
+            return Err(error);
+        }
         let wait = wait.map_err(|failure| wait_failure(vm, failure))?;
         if wait == Some(false) {
             return Ok(false);

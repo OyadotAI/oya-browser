@@ -18,6 +18,44 @@ pub(super) type ServerStream = StreamOwned<ServerConnection, TcpStream>;
 /// The client side of a test connection, as `transport::Connection::Tls` holds it.
 pub(super) type ClientStream = StreamOwned<ClientConnection, TcpStream>;
 
+/// The test CA as a root store, for a client built the way production builds it.
+pub(super) fn test_roots() -> Arc<RootCertStore> {
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(CA.to_vec())).expect("root");
+    Arc::new(roots)
+}
+
+/// A one-connection server of the given protocol versions and key-exchange groups, closing
+/// right after its handshake, for proving the shaped hello still negotiates.
+pub(super) fn handshake_server(
+    versions: &'static [&'static rustls::SupportedProtocolVersion],
+    groups: Vec<&'static dyn rustls::crypto::SupportedKxGroup>,
+) -> (std::net::SocketAddr, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept");
+        let mut provider = rustls::crypto::ring::default_provider();
+        provider.kx_groups = groups;
+        let config = ServerConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(versions)
+            .expect("versions")
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(LEAF.to_vec())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY.to_vec())),
+            )
+            .expect("server config");
+        let mut connection = ServerConnection::new(Arc::new(config)).expect("server");
+        while connection.is_handshaking() {
+            connection
+                .complete_io(&mut socket)
+                .expect("server handshake");
+        }
+    });
+    (address, server)
+}
+
 /// Starts a one-connection TLS server offering `alpn` that runs `script`, and returns a client
 /// that trusts the test CA and has completed its handshake with it.
 pub(super) fn tls(

@@ -1793,7 +1793,10 @@ fn gc_atomic_storage_contracts_are_checked_at_compile_time() {
         ),
         "-1"
     );
-    let packed = gc_function(&[0x5f, 1, 0x78, 1], &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0]);
+    let packed = gc_function(
+        &[0x5f, 1, 0x78, 1],
+        &[0xd0, 0, 0x41, 1, 0xfe, 0x60, 0, 0, 0],
+    );
     assert_eq!(eval(&packed, "let r=WebAssembly.validate(bytes);"), "true");
     for storage in [[0x7f, 0], [0x7d, 1]] {
         let bytes = gc_function(

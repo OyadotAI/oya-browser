@@ -93,11 +93,17 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = JsValue::String(vm.to_string(&value)?);
     let ty = match value_type(vm, &value) {
         Ok(ty) => ty,
-        Err(Thrown::Value(_)) => return Err(vm.type_error("WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type")),
+        Err(Thrown::Value(_)) => {
+            return Err(vm.type_error(
+                "WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type",
+            ));
+        }
         Err(error) => return Err(error),
     };
     if ty == Type::Ref(-25, true) && !super::stringref_enabled(vm) {
-        return Err(vm.type_error("WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type"));
+        return Err(vm.type_error(
+            "WebAssembly.Global(): Descriptor property 'value' must be a WebAssembly type",
+        ));
     }
     if !ty.js_compatible() {
         return Err(vm.type_error("WebAssembly.Global value type is not a JavaScript value type"));

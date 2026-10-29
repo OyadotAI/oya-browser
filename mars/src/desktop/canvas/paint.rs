@@ -406,12 +406,12 @@ impl Painter {
         );
         CGContext::eo_clip(self.cg());
     }
-    /** A zero-offset blur in the shadow's color; the cast shape itself carries the offset.
-                             * CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur radius,
-                             * so the CSS value passes through unchanged. */
-    /** A shadow offset that moves what is drawn SHADOW_REACH user units to the left back into
-                            place. CoreGraphics applies shadow offsets in device space whatever the transform, so the
-                            user-space shift is mapped through the current transform first. */
+    /// A zero-offset blur in the shadow's color; the cast shape itself carries the offset.
+    /// CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur
+    /// radius, so the CSS value passes through unchanged. A shadow offset that moves what is drawn
+    /// SHADOW_REACH user units to the left back into place: CoreGraphics applies shadow offsets in
+    /// device space whatever the transform, so the user-space shift is mapped through the current
+    /// transform first.
     fn cast_from_afar(&self, blur: f64, color: &NSColor) {
         let [r, g, b, a] = components(color);
         let cg_color = objc2_core_graphics::CGColor::new_srgb(r, g, b, a);

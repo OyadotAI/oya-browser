@@ -43,8 +43,8 @@ pub(super) fn options(vm: &mut Vm, value: &JsValue) -> Res<(Vec<JsValue>, Option
 fn utf8_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_imported_strings_utf8;
+        !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_imported_strings_utf8
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -295,7 +295,12 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "substring" => {
             let start = index(&call, 1)?.min(left.len());
             let end = index(&call, 2)?.min(left.len());
-            Ok(JsValue::String(strings::normalized_substring(vm, &left, start, end.max(start))?))
+            Ok(JsValue::String(strings::normalized_substring(
+                vm,
+                &left,
+                start,
+                end.max(start),
+            )?))
         }
         "compare" => {
             let right = string_arg(vm, &call, 1)?;

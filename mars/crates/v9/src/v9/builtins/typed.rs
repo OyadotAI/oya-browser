@@ -49,7 +49,9 @@ const BUFFER_BYTES: usize = 2 * crate::constants::JS_STRING_UNITS;
 
 /** The actual maximum allocation for author-created ArrayBuffer backings. */
 #[cfg(feature = "conformance")]
-pub(in crate::v9) fn array_buffer_max_allocation() -> usize { BUFFER_BYTES }
+pub(in crate::v9) fn array_buffer_max_allocation() -> usize {
+    BUFFER_BYTES
+}
 
 /** Typed array kinds, constructor names and element sizes, in `ElementKind` order. */
 const KINDS: [(ElementKind, &str, usize); 12] = [
@@ -300,11 +302,12 @@ fn is_view(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The receiver's buffer, or a TypeError. */
 fn this_buffer(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
-    match call
-        .this
-        .object()
-        .filter(|id| matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))))
-    {
+    match call.this.object().filter(|id| {
+        matches!(
+            vm.heap.get(*id).map(|o| &o.class),
+            Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))
+        )
+    }) {
         Some(id) => Ok(id),
         None => Err(vm.type_error("Receiver is not an ArrayBuffer")),
     }
@@ -313,9 +316,7 @@ fn this_buffer(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
 /** ArrayBuffer.prototype.byteLength. */
 fn buffer_length(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_buffer(vm, &call)?;
-    Ok(JsValue::Number(
-        storage_len(vm, id).unwrap_or(0) as f64
-    ))
+    Ok(JsValue::Number(storage_len(vm, id).unwrap_or(0) as f64))
 }
 
 /** ArrayBuffer.prototype.slice(begin, end). */
@@ -665,9 +666,16 @@ fn write_bytes(vm: &mut Vm, view: &ViewData, at: usize, bytes: &[u8]) -> Res<()>
     }
     let start = view.offset + at;
     if !write_range(vm, view.buffer, start, bytes)
-        && (matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SparseWasmBuffer(_)))
-            || matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SharedArrayBuffer(buffer)) if buffer.is_sparse())) {
-        return Err(crate::protocol::EngineError::limit("V9 buffer resident bytes", 2 * crate::constants::JS_STRING_UNITS).into());
+        && (matches!(
+            vm.heap.get(view.buffer).map(|o| &o.class),
+            Some(Class::SparseWasmBuffer(_))
+        ) || matches!(vm.heap.get(view.buffer).map(|o| &o.class), Some(Class::SharedArrayBuffer(buffer)) if buffer.is_sparse()))
+    {
+        return Err(crate::protocol::EngineError::limit(
+            "V9 buffer resident bytes",
+            2 * crate::constants::JS_STRING_UNITS,
+        )
+        .into());
     }
     Ok(())
 }

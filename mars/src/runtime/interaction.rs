@@ -136,6 +136,14 @@ impl Runtime {
     pub(super) fn click(&mut self, params: Value) -> EngineResult<Value> {
         let input: Click = parameters(params)?;
         let page = self.current()?.clone();
+        if let Some(href) = frame_link(
+            &page,
+            &input.page_id,
+            &input.node_id,
+            input.expected_revision,
+        )? {
+            return self.follow(&href);
+        }
         let node = target(
             &page,
             &input.page_id,
@@ -452,6 +460,51 @@ impl Runtime {
         }
         published
     }
+}
+
+/** A painted frame link follows through normal policy. A wrong page or revision is left to the
+ordinary target check, so a stale revision still reports a revision conflict. */
+fn frame_link(
+    page: &Page,
+    page_id: &str,
+    node_id: &str,
+    revision: u64,
+) -> EngineResult<Option<String>> {
+    if page.id() != page_id || page.revision != revision {
+        return Ok(None);
+    }
+    let Some(local) = node_id
+        .strip_prefix(&format!("{}:node-", page.id()))
+        .and_then(|id| id.parse::<usize>().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(frame) = page.frames.iter().find(|frame| frame.node(local).is_some()) else {
+        return Ok(None);
+    };
+    let painted = page.display.as_ref().is_some_and(|display| {
+        display
+            .items
+            .iter()
+            .any(|item| item.local_id == local && crate::document::agent_visible(item))
+    });
+    if !painted {
+        return Err(invalid_target());
+    }
+    let mut node = frame.node(local);
+    while let Some(current) = node {
+        if current.tag == "a"
+            && !current.hidden()
+            && !current.disabled
+            && !crate::document::agent_hidden(frame.document(), current)
+        {
+            return Ok(current.href.as_deref().and_then(|href| frame.resolve(href)));
+        }
+        node = current
+            .parent
+            .and_then(|parent| frame.node(frame.id_base() + parent));
+    }
+    Ok(None)
 }
 
 /** Authority, ownership and engine-service failures stop an action; V9 refusals do not. */

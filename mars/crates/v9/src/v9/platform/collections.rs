@@ -1,3 +1,4 @@
+use super::Page;
 /**
  * Live HTMLCollection lists: getElementsByTagName, getElementsByTagNameNS and getElementsByClassName.
  * A list keeps its last answer together with the tree generation it was read at. A read runs the
@@ -5,7 +6,6 @@
  * is O(1) (or O(log n) for the index) and one burst of mutations costs one O(n) rescan of the subtree.
  */
 use super::dom::search;
-use super::Page;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
@@ -25,7 +25,10 @@ pub(in crate::v9) enum Filter {
     /** Elements with this tag name, lowercased by the caller; `*` matches every element. */
     Tag(String),
     /** Elements whose local name matches, when `namespace_matches`: the namespace was `*` or HTML. */
-    TagNs { namespace_matches: bool, local: String },
+    TagNs {
+        namespace_matches: bool,
+        local: String,
+    },
     /** Elements carrying every one of these classes; an empty set matches nothing. */
     Class(Vec<String>),
 }

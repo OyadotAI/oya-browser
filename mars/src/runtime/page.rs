@@ -143,7 +143,18 @@ impl Page {
             .filter(|(node, _)| !crate::document::agent_hidden(&self.document, node))
             .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds, &derived))
             .collect::<Vec<_>>();
-        json!({"page_id":self.id(),"revision":self.revision,"url":safe_url(&self.url,self.sensitive),"title":self.document.title,"status":self.status,"diagnostics":self.document.diagnostics,"degraded":self.degraded,"layout_generation":self.layout_generation,"nodes":nodes})
+        let frame_nodes = self.frames.iter().flat_map(|frame| {
+            let labels = super::names::names(frame.document());
+            frame.document().nodes.iter().zip(labels).filter_map(|(node, name)| {
+                let id = frame.id_base() + node.local_id;
+                let item = bounds.get(&id).filter(|item| crate::document::agent_visible(item))?;
+                if crate::document::agent_hidden(frame.document(), node) { return None; }
+                Some(json!({"node_id":self.node_id(id),"tag":node.tag,"role":crate::document::role(node),
+                    "name":name,"text":node.text,"href":node.href,"enabled":!node.disabled && !node.hidden(),
+                    "bounds":{"x":item.x,"y":item.y,"width":item.width,"height":item.height,"unit":"logical_points"}}))
+            }).collect::<Vec<_>>()
+        }).collect::<Vec<_>>();
+        json!({"page_id":self.id(),"revision":self.revision,"url":safe_url(&self.url,self.sensitive),"title":self.document.title,"status":self.status,"diagnostics":self.document.diagnostics,"degraded":self.degraded,"layout_generation":self.layout_generation,"nodes":nodes,"frame_nodes":frame_nodes})
     }
     /** Agent geometry and semantic controls refer to the exact painted display item. */
     fn inspect_node(
@@ -272,6 +283,8 @@ pub struct BrowserSnapshot {
     pub inspection: Value,
     /// Native controls read literal values from this same document.
     pub document: Option<Document>,
+    /// Frame documents retain their painted identity range for native hit testing.
+    pub frame_documents: Vec<(usize, usize, Document)>,
     /// Encoded images are decoded by AppKit from bounded, validated static resources.
     pub images: BTreeMap<usize, super::images::ImageAsset>,
     /// All painting, placement and hit testing use this display list.
@@ -385,6 +398,14 @@ impl Runtime {
         BrowserSnapshot {
             inspection,
             document: page.map(|page| page.document.clone()),
+            frame_documents: page
+                .map(|page| {
+                    page.frames
+                        .iter()
+                        .map(|frame| (frame.id_base(), frame.id_end(), frame.document().clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
             images: page.map(|page| page.images.clone()).unwrap_or_default(),
             display: page.and_then(|page| page.display.clone()),
             failed: self.failed,

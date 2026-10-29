@@ -45,9 +45,14 @@ impl Vm<'_> {
         if !self.set_from(start, key.clone(), value.clone(), &receiver)? && self.reference_strict()
         {
             if self.inert_super_receiver_redefinition(start, &key, &receiver) {
-                return Err(self.type_error(&format!("Cannot redefine property: {}", crate::v9::vm::property::key_text(&key))));
+                return Err(self.type_error(&format!(
+                    "Cannot redefine property: {}",
+                    crate::v9::vm::property::key_text(&key)
+                )));
             }
-            let object = receiver.object().and_then(|id| self.inert_constructor_name(id))
+            let object = receiver
+                .object()
+                .and_then(|id| self.inert_constructor_name(id))
                 .map_or_else(String::new, |name| format!(" '#<{name}>'"));
             return Err(self.type_error(&format!(
                 "Cannot assign to read only property '{}' of object{object}",
@@ -60,18 +65,41 @@ impl Vm<'_> {
     }
 
     /** Recognize receiver descriptor conflicts only when the base chain is inert and inspectable. */
-    fn inert_super_receiver_redefinition(&self, start: ObjectId, key: &Key, receiver: &JsValue) -> bool {
+    fn inert_super_receiver_redefinition(
+        &self,
+        start: ObjectId,
+        key: &Key,
+        receiver: &JsValue,
+    ) -> bool {
         use crate::v9::vm::heap::{Slot, WRITABLE};
-        let Some(object) = receiver.object().and_then(|id| self.heap.get(id)) else { return false; };
+        let Some(object) = receiver.object().and_then(|id| self.heap.get(id)) else {
+            return false;
+        };
         if !matches!(object.class, Class::Plain)
-            || !object.props.get(key).is_some_and(|prop| matches!(prop.slot, Slot::Accessor(..))) { return false; }
+            || !object
+                .props
+                .get(key)
+                .is_some_and(|prop| matches!(prop.slot, Slot::Accessor(..)))
+        {
+            return false;
+        }
         let mut current = Some(start);
         for _ in 0..crate::v9::vm::property::CHAIN_STEPS {
-            let Some(id) = current else { return true; };
+            let Some(id) = current else {
+                return true;
+            };
             if let Some(object) = self.heap.get(id) {
-                if !matches!(object.class, Class::Plain) { return false; }
-                if let Some(prop) = object.props.get(key) { return matches!(prop.slot, Slot::Data(_)) && prop.attrs & WRITABLE != 0; }
-            } else if super::super::realm::realm().object(id).and_then(|object| object.get(key)).is_some() {
+                if !matches!(object.class, Class::Plain) {
+                    return false;
+                }
+                if let Some(prop) = object.props.get(key) {
+                    return matches!(prop.slot, Slot::Data(_)) && prop.attrs & WRITABLE != 0;
+                }
+            } else if super::super::realm::realm()
+                .object(id)
+                .and_then(|object| object.get(key))
+                .is_some()
+            {
                 return false;
             }
             current = self.proto_of(id);

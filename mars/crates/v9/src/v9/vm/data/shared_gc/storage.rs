@@ -4,21 +4,41 @@ impl State {
     /** Intern equal shared string contents while retaining only weak table references. */
     fn intern(&mut self, value: SharedGcValue) -> EngineResult<SharedGcValue> {
         use std::hash::{Hash, Hasher};
-        let SharedGcValue::String(text) = value else { return Ok(value) };
+        let SharedGcValue::String(text) = value else {
+            return Ok(value);
+        };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
         let hash = hasher.finish();
-        if let Some(existing) = self.interned.get(&hash).and_then(|entries| entries.iter().filter_map(Weak::upgrade).find(|existing| **existing == *text)) {
+        if let Some(existing) = self.interned.get(&hash).and_then(|entries| {
+            entries
+                .iter()
+                .filter_map(Weak::upgrade)
+                .find(|existing| **existing == *text)
+        }) {
             return Ok(SharedGcValue::String(existing));
         }
         self.intern_operations += 1;
-        if self.intern_operations >= INTERN_PURGE_INTERVAL || self.interned.len() >= MAX_INTERN_ENTRIES {
-            self.interned.retain(|_, entries| { entries.retain(|entry| entry.strong_count() != 0); !entries.is_empty() });
+        if self.intern_operations >= INTERN_PURGE_INTERVAL
+            || self.interned.len() >= MAX_INTERN_ENTRIES
+        {
+            self.interned.retain(|_, entries| {
+                entries.retain(|entry| entry.strong_count() != 0);
+                !entries.is_empty()
+            });
             self.intern_operations = 0;
             self.intern_entries = self.interned.values().map(Vec::len).sum();
         }
-        if self.intern_entries >= MAX_INTERN_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_INTERN_ENTRIES)); }
-        self.interned.entry(hash).or_default().push(Arc::downgrade(&text));
+        if self.intern_entries >= MAX_INTERN_ENTRIES {
+            return Err(EngineError::limit(
+                "shared interned strings",
+                MAX_INTERN_ENTRIES,
+            ));
+        }
+        self.interned
+            .entry(hash)
+            .or_default()
+            .push(Arc::downgrade(&text));
         self.intern_entries += 1;
         Ok(SharedGcValue::String(text))
     }
@@ -43,12 +63,12 @@ impl State {
         let mut pending: Vec<_> = self.roots.keys().copied().collect();
         let mut marked = BTreeSet::new();
         while let Some(id) = pending.pop() {
-            if marked.insert(id) {
-                if let Some(record) = self.records.get(&id) {
-                    for value in &record.values {
-                        if let SharedGcValue::Reference(id) = value {
-                            pending.push(*id);
-                        }
+            if marked.insert(id)
+                && let Some(record) = self.records.get(&id)
+            {
+                for value in &record.values {
+                    if let SharedGcValue::Reference(id) = value {
+                        pending.push(*id);
                     }
                 }
             }
@@ -104,7 +124,9 @@ impl SharedGcArena {
         if state.dirty {
             state.sweep();
         }
-        for value in &mut values { *value = state.intern(value.clone())?; }
+        for value in &mut values {
+            *value = state.intern(value.clone())?;
+        }
         if module.len() > MAX_BYTES
             || values.len() > crate::constants::VM_ARRAY_LENGTH
             || state.records.len() >= crate::constants::VM_OBJECTS
@@ -184,9 +206,25 @@ impl SharedGc {
                 .and_then(|r| r.values.get(index))
                 .cloned()
                 .ok_or_else(invalid)?;
-            let number = if !marker.is_empty() && let SharedGcValue::Reference(node) = old {
-                state.records.get(&node).filter(|record| state.modules.get(record.module as usize).is_some_and(|module| module.as_ref() == marker)).and_then(|record| match record.values.first() { Some(SharedGcValue::Number(bits)) => Some(*bits), _ => None })
-            } else { None };
+            let number = if !marker.is_empty()
+                && let SharedGcValue::Reference(node) = old
+            {
+                state
+                    .records
+                    .get(&node)
+                    .filter(|record| {
+                        state
+                            .modules
+                            .get(record.module as usize)
+                            .is_some_and(|module| module.as_ref() == marker)
+                    })
+                    .and_then(|record| match record.values.first() {
+                        Some(SharedGcValue::Number(bits)) => Some(*bits),
+                        _ => None,
+                    })
+            } else {
+                None
+            };
             let next = state.intern(step(&old, number))?;
             if !state.valid_value(&next) {
                 return Err(invalid());
@@ -246,9 +284,20 @@ mod tests {
     #[test]
     fn explicit_collection_traces_live_roots_and_reclaims_cycles() {
         let arena = SharedGcArena::new().unwrap();
-        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Null]).unwrap();
-        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Reference(first.node())]).unwrap();
-        first.update(0, |_| SharedGcValue::Reference(second.node())).unwrap();
+        let first = arena
+            .allocate(b"shared", 0, false, vec![SharedGcValue::Null])
+            .unwrap();
+        let second = arena
+            .allocate(
+                b"shared",
+                0,
+                false,
+                vec![SharedGcValue::Reference(first.node())],
+            )
+            .unwrap();
+        first
+            .update(0, |_| SharedGcValue::Reference(second.node()))
+            .unwrap();
         let first_id = first.node();
         let second_id = second.node();
         drop(second);
@@ -265,10 +314,18 @@ mod tests {
         let arena = SharedGcArena::new().unwrap();
         let left: Arc<[u16]> = Arc::from([65, 66]);
         let right: Arc<[u16]> = Arc::from([65, 66]);
-        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(left)]).unwrap();
-        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(right)]).unwrap();
-        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else { panic!("string") };
-        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else { panic!("string") };
+        let first = arena
+            .allocate(b"shared", 0, false, vec![SharedGcValue::String(left)])
+            .unwrap();
+        let second = arena
+            .allocate(b"shared", 0, false, vec![SharedGcValue::String(right)])
+            .unwrap();
+        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else {
+            panic!("string")
+        };
+        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else {
+            panic!("string")
+        };
         assert!(Arc::ptr_eq(&a, &b));
         let weak = Arc::downgrade(&a);
         drop((a, b, first, second));
@@ -280,15 +337,47 @@ mod tests {
     #[test]
     fn snapshot_restore_reinterns_shared_string_values() {
         let arena = SharedGcArena::new().unwrap();
-        let first = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(Arc::from([65, 66]))]).unwrap();
-        let second = arena.allocate(b"shared", 0, false, vec![SharedGcValue::String(Arc::from([65, 66]))]).unwrap();
-        let parent = arena.allocate(b"shared", 0, false, vec![SharedGcValue::Reference(first.node()), SharedGcValue::Reference(second.node())]).unwrap();
+        let first = arena
+            .allocate(
+                b"shared",
+                0,
+                false,
+                vec![SharedGcValue::String(Arc::from([65, 66]))],
+            )
+            .unwrap();
+        let second = arena
+            .allocate(
+                b"shared",
+                0,
+                false,
+                vec![SharedGcValue::String(Arc::from([65, 66]))],
+            )
+            .unwrap();
+        let parent = arena
+            .allocate(
+                b"shared",
+                0,
+                false,
+                vec![
+                    SharedGcValue::Reference(first.node()),
+                    SharedGcValue::Reference(second.node()),
+                ],
+            )
+            .unwrap();
         let bytes = serde_json::to_vec(&parent).unwrap();
         let restored: SharedGc = serde_json::from_slice(&bytes).unwrap();
-        let (_, Some(first)) = restored.read(0).unwrap() else { panic!("first child") };
-        let (_, Some(second)) = restored.read(1).unwrap() else { panic!("second child") };
-        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else { panic!("first string") };
-        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else { panic!("second string") };
+        let (_, Some(first)) = restored.read(0).unwrap() else {
+            panic!("first child")
+        };
+        let (_, Some(second)) = restored.read(1).unwrap() else {
+            panic!("second child")
+        };
+        let (SharedGcValue::String(a), _) = first.read(0).unwrap() else {
+            panic!("first string")
+        };
+        let (SharedGcValue::String(b), _) = second.read(0).unwrap() else {
+            panic!("second string")
+        };
         assert!(Arc::ptr_eq(&a, &b));
     }
 }

@@ -147,6 +147,7 @@ impl Vm<'_> {
         }
     }
     /** Primitive integers retain their exact storage form. */
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_numeric(&mut self, value: &JsValue) -> Res<JsValue> {
         let primitive = self.to_primitive(value, Hint::Number)?;
         if primitive.is_bigint() {

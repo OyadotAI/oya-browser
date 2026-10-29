@@ -100,10 +100,10 @@ impl Vm<'_> {
                 {
                     return Some(id);
                 }
-            } else if let Some(def) = realm_for(id).object(id) {
-                if def.get(&tag).is_some() || def.get(&primitive).is_some() {
-                    return Some(id);
-                }
+            } else if let Some(def) = realm_for(id).object(id)
+                && (def.get(&tag).is_some() || def.get(&primitive).is_some())
+            {
+                return Some(id);
             }
             current = self.proto_of(id);
         }
@@ -257,7 +257,9 @@ impl Vm<'_> {
                         #[cfg(feature = "conformance")]
                         let value = if self.page.environment.conformance_d8 && unit <= 255 {
                             self.character_root(unit as u8)?
-                        } else { JsString::from_slice(&[unit])? };
+                        } else {
+                            JsString::from_slice(&[unit])?
+                        };
                         #[cfg(not(feature = "conformance"))]
                         let value = JsString::from_slice(&[unit])?;
                         return Ok(Some(Prop {
@@ -486,15 +488,7 @@ impl Vm<'_> {
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
             JsValue::BigInt(_) | JsValue::BigIntWide(_) => realm().ids.bigint_prototype,
             JsValue::Undefined | JsValue::Null | JsValue::Hole => {
-                let what = if matches!(base, JsValue::Null) {
-                    "null"
-                } else {
-                    "undefined"
-                };
-                return Err(self.type_error(&format!(
-                    "Cannot read properties of {what} (reading '{}')",
-                    key_text(key)
-                )));
+                return Err(self.nullish_read_error(base, key));
             }
         };
         self.get_from(start, key, base)
@@ -508,19 +502,37 @@ impl Vm<'_> {
             return;
         }
         let global = self.global_object();
-        let named = |name: &str| match self.heap.get(global).and_then(|o| o.props.get(&Key::from(name))) {
+        let named = |name: &str| match self
+            .heap
+            .get(global)
+            .and_then(|o| o.props.get(&Key::from(name)))
+        {
             Some(prop) => matches!(&prop.slot, Slot::Data(JsValue::Object(id)) if *id == start),
             None => false,
         };
         let owner = if start == global {
             Some("window")
         } else {
-            ["navigator", "document", "screen", "performance", "location", "history"]
-                .into_iter()
-                .find(|name| named(name))
+            [
+                "navigator",
+                "document",
+                "screen",
+                "performance",
+                "location",
+                "history",
+            ]
+            .into_iter()
+            .find(|name| named(name))
         };
         if let Some(owner) = owner {
             eprintln!("MISSING {owner}.{}", key_text(key));
+        } else if std::env::var_os("V9_TRACE_MISSING").is_some_and(|value| value == "all") {
+            let class = self
+                .heap
+                .get(start)
+                .map(|object| crate::v9::vm::data::class_label(&object.class))
+                .unwrap_or("?");
+            eprintln!("MISSING [{class}#{start}].{}", key_text(key));
         }
     }
     /** [[Get]] starting at an object with an explicit receiver for getters. */
@@ -576,14 +588,10 @@ impl Vm<'_> {
         let start = match base {
             JsValue::Object(id) => *id,
             JsValue::Undefined | JsValue::Null | JsValue::Hole => {
-                let what = if matches!(base, JsValue::Null) {
-                    "null"
-                } else {
-                    "undefined"
-                };
+                let name = self.key_display(&key);
+                let what = self.v8_value_text(base);
                 return Err(self.type_error(&format!(
-                    "Cannot set properties of {what} (setting '{}')",
-                    key_text(&key)
+                    "Cannot set properties of {what} (setting '{name}')"
                 )));
             }
             JsValue::String(text) => {
@@ -594,10 +602,7 @@ impl Vm<'_> {
                         .is_some_and(|index| (index as usize) < text.len())
                 {
                     if strict {
-                        return Err(self.type_error(&format!(
-                            "Cannot assign to read only property '{}' of object",
-                            key_text(&key)
-                        )));
+                        return Err(self.read_only_error(base, &key));
                     }
                     return Ok(());
                 }
@@ -614,12 +619,113 @@ impl Vm<'_> {
         };
         let done = self.set_from(start, key.clone(), value, base)?;
         if !done && strict {
-            return Err(self.type_error(&format!(
-                "Cannot assign to read only property '{}' of object",
-                key_text(&key)
-            )));
+            return Err(self.set_failure(base, &key));
         }
         Ok(())
+    }
+    /** `Cannot read properties of null (reading 'x')`; a read of Symbol.iterator is V8's
+    iteration message instead, since that is what the read was for. */
+    pub(super) fn nullish_read_error(&mut self, base: &JsValue, key: &Key) -> Thrown {
+        if *key == Key::Sym(super::realm::symbol::ITERATOR) {
+            let what = self.v8_callsite_text(base);
+            return self.type_error(&format!(
+                "{what} is not iterable (cannot read property Symbol(Symbol.iterator))"
+            ));
+        }
+        let name = self.key_display(key);
+        let what = self.v8_value_text(base);
+        self.type_error(&format!(
+            "Cannot read properties of {what} (reading '{name}')"
+        ))
+    }
+    /** A key as V8 prints it in a message: a user symbol with its description. */
+    pub(in crate::v9) fn key_display(&self, key: &Key) -> String {
+        match key {
+            Key::Sym(id) => format!("Symbol({})", crate::v9::builtins::symbol_text(self, *id)),
+            other => key_text(other),
+        }
+    }
+    /** The TypeError for a strict [[Set]] that did nothing, told apart the way V8 tells it: a
+    read-only property, a getter without a setter, a primitive receiver, or a closed receiver.
+    The obstacle is found again inertly, so no getter or trap runs twice. */
+    pub(super) fn set_failure(&mut self, receiver: &JsValue, key: &Key) -> Thrown {
+        let name = self.key_display(key);
+        match self.set_obstacle(receiver, key) {
+            Some(Obstacle::ReadOnly) => self.read_only_error(receiver, key),
+            Some(Obstacle::GetterOnly(holder)) => {
+                let holder = self.v8_value_text(&JsValue::Object(holder));
+                self.type_error(&format!(
+                    "Cannot set property {name} of {holder} which has only a getter"
+                ))
+            }
+            // A proxy without a set trap defines on its closed target, which V8 reports as a
+            // definition.
+            None if receiver
+                .object()
+                .is_some_and(|id| self.proxy_of(id).is_some()) =>
+            {
+                self.type_error(&format!(
+                    "Cannot define property {name}, object is not extensible"
+                ))
+            }
+            None if matches!(receiver, JsValue::Object(_)) => self.type_error(&format!(
+                "Cannot add property {name}, object is not extensible"
+            )),
+            None => {
+                let kind = self.type_of(receiver);
+                let text = self.v8_value_text(receiver);
+                self.type_error(&format!(
+                    "Cannot create property '{name}' on {kind} '{text}'"
+                ))
+            }
+        }
+    }
+    /** `Cannot assign to read only property 'k' of object '#<Object>'`, the receiver by type. */
+    fn read_only_error(&mut self, receiver: &JsValue, key: &Key) -> Thrown {
+        let name = self.key_display(key);
+        let kind = self.type_of(receiver);
+        let text = self.v8_value_text(receiver);
+        self.type_error(&format!(
+            "Cannot assign to read only property '{name}' of {kind} '{text}'"
+        ))
+    }
+    /** The property along the chain that stopped a [[Set]], read without traps or getters: a
+    proxy is looked through to its target, as V8's message is about the target. */
+    fn set_obstacle(&mut self, receiver: &JsValue, key: &Key) -> Option<Obstacle> {
+        let mut id = match receiver {
+            JsValue::Object(id) => *id,
+            other => self.primitive_prototype(other)?,
+        };
+        for _ in 0..CHAIN_STEPS {
+            while let Some(proxy) = self.proxy_of(id) {
+                id = proxy.target?;
+            }
+            if let Ok(Some(prop)) = self.own(id, key) {
+                return match prop.slot {
+                    Slot::Accessor(_, None) => Some(Obstacle::GetterOnly(id)),
+                    Slot::Data(_) if prop.attrs & WRITABLE == 0 => Some(Obstacle::ReadOnly),
+                    _ => None,
+                };
+            }
+            id = self.proto_of(id)?;
+        }
+        None
+    }
+    /** The prototype a primitive's property lookups start from. */
+    fn primitive_prototype(&self, value: &JsValue) -> Option<ObjectId> {
+        let ids = &realm().ids;
+        Some(match value {
+            JsValue::String(_) => ids.string_prototype,
+            JsValue::Number(_) => ids.number_prototype,
+            #[cfg(feature = "conformance")]
+            JsValue::Smi(_) | JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => {
+                ids.number_prototype
+            }
+            JsValue::Boolean(_) => ids.boolean_prototype,
+            JsValue::Symbol(_) => ids.symbol_prototype,
+            JsValue::BigInt(_) | JsValue::BigIntWide(_) => ids.bigint_prototype,
+            _ => return None,
+        })
     }
     /** The ordinary [[Set]] walk: setters and read-only data stop it; otherwise write on the receiver. */
     pub fn set_from(
@@ -636,10 +742,7 @@ impl Vm<'_> {
         let start = self.global_object();
         let receiver = JsValue::Object(start);
         if !self.set_from_context(start, key.clone(), value, &receiver, true)? {
-            return Err(self.type_error(&format!(
-                "Cannot assign to read only property '{}' of object",
-                key_text(&key)
-            )));
+            return Err(self.set_failure(&receiver, &key));
         }
         Ok(())
     }
@@ -1023,7 +1126,13 @@ impl Vm<'_> {
         let Some(dense) = elements.dense_slice() else {
             return false;
         };
-        let (count, units) = (values.len() as isize, values.iter().map(|value| value.string_units() as isize).sum());
+        let (count, units) = (
+            values.len() as isize,
+            values
+                .iter()
+                .map(|value| value.string_units() as isize)
+                .sum(),
+        );
         let mut all = values;
         all.extend_from_slice(dense);
         *elements = super::array_elements::ArrayElements::from(all);
@@ -1391,7 +1500,7 @@ impl Vm<'_> {
         let leading = keys.iter().take_while(|key| key.index().is_some()).count();
         keys[..leading].sort_by_key(|key| key.index());
         for name in &virtual_names {
-            let key = Key::from(*name);
+            let key = Key::from(name);
             // Replacing an existing virtual property keeps its original insertion position.
             keys.push(key);
         }
@@ -1465,6 +1574,14 @@ impl Vm<'_> {
         }
         Ok(())
     }
+}
+
+/** What stopped a [[Set]], for its message. */
+enum Obstacle {
+    /** A data property that is not writable, on the receiver or inherited. */
+    ReadOnly,
+    /** An accessor without a setter, held by this object. */
+    GetterOnly(ObjectId),
 }
 
 /** Merge a partial descriptor over an existing property. */

@@ -156,7 +156,8 @@ fn capture_metadata(vm: &mut Vm, wrapper: ObjectId, target: ObjectId) -> Res<()>
     };
     let name = vm.capture_name_snapshot(target, true)?;
     vm.set_name_snapshot(wrapper, name)?;
-    for (key, value) in [("length", JsValue::Number(length))] {
+    {
+        let (key, value) = ("length", JsValue::Number(length));
         vm.heap.put(
             wrapper,
             Key::from(key),

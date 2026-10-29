@@ -87,7 +87,10 @@ fn z_angle<'a>(parts: &[&'a str]) -> EngineResult<&'a str> {
 then scale, then the list. ponytail: a percentage `translate` adds to the list's own percentage
 offset, exact when no rotate or scale sits between them (the common centering case). */
 pub(super) fn compose(style: &mut ComputedStyle, parts: &[(Option<[f64; 6]>, [f64; 2])]) {
-    if parts.iter().all(|(matrix, percent)| matrix.is_none() && *percent == [0.0; 2]) {
+    if parts
+        .iter()
+        .all(|(matrix, percent)| matrix.is_none() && *percent == [0.0; 2])
+    {
         return;
     }
     let mut composed = super::paint::IDENTITY;

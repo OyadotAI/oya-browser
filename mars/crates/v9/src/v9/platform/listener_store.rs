@@ -128,7 +128,12 @@ impl ListenerStore {
      * The registrations a dispatch fires at one target, type and phase, in registration order. The
      * scan visits only that bucket, so a dispatch costs the listeners it fires plus O(log n).
      */
-    pub fn firing(&self, target: Target, kind: &str, capture: bool) -> Vec<(ListenerKey, Listener)> {
+    pub fn firing(
+        &self,
+        target: Target,
+        kind: &str,
+        capture: bool,
+    ) -> Vec<(ListenerKey, Listener)> {
         let first = key(target, kind, capture, FIRST_CALLBACK, FIRST_ID);
         let mut firing: Vec<(ListenerKey, Listener)> = self
             .entries
@@ -165,7 +170,13 @@ mod tests {
     use crate::v9::value::JsValue;
 
     /** A registration on a target with the given callback object and id. */
-    fn listener(target: Target, kind: &str, capture: bool, callback: ObjectId, id: u32) -> Listener {
+    fn listener(
+        target: Target,
+        kind: &str,
+        capture: bool,
+        callback: ObjectId,
+        id: u32,
+    ) -> Listener {
         Listener {
             id,
             target,

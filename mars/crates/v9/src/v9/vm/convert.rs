@@ -82,7 +82,9 @@ impl Vm<'_> {
             JsValue::Smi(value) => JsString::from_utf8(&number_to_string(*value))?,
             JsValue::Number(value) => JsString::from_utf8(&number_to_string(*value))?,
             #[cfg(feature = "conformance")]
-            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => JsString::from_utf8(&number_to_string(value.value))?,
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => {
+                JsString::from_utf8(&number_to_string(value.value))?
+            }
             JsValue::Boolean(true) => JsString::from_utf8("true")?,
             JsValue::Boolean(false) => JsString::from_utf8("false")?,
             JsValue::Null => JsString::from_utf8("null")?,
@@ -138,7 +140,9 @@ impl Vm<'_> {
             JsValue::Smi(value) => (Class::Number(*value), ids.number_prototype),
             JsValue::Number(value) => (Class::Number(*value), ids.number_prototype),
             #[cfg(feature = "conformance")]
-            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => (Class::Number(value.value), ids.number_prototype),
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => {
+                (Class::Number(value.value), ids.number_prototype)
+            }
             JsValue::String(text) => (Class::String(text.clone()), ids.string_prototype),
             JsValue::Symbol(id) => (Class::Symbol(*id), ids.symbol_prototype),
             JsValue::BigInt(value) => (Class::BigInt(*value), ids.bigint_prototype),
@@ -147,12 +151,13 @@ impl Vm<'_> {
         #[cfg(feature = "conformance")]
         let mark = self.pins.len();
         #[cfg(feature = "conformance")]
-        let pinned_shared = if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = value {
-            self.pin(JsValue::Object(value.root));
-            true
-        } else {
-            false
-        };
+        let pinned_shared =
+            if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = value {
+                self.pin(JsValue::Object(value.root));
+                true
+            } else {
+                false
+            };
         let allocated = self.alloc(Object::new(class, Some(proto)));
         #[cfg(feature = "conformance")]
         if pinned_shared {
@@ -215,8 +220,12 @@ impl Vm<'_> {
     pub fn loose_equal(&mut self, left: &JsValue, right: &JsValue) -> Res<bool> {
         #[cfg(feature = "conformance")]
         {
-            if let JsValue::Smi(value) = left { return self.loose_equal(&JsValue::Number(*value), right); }
-            if let JsValue::Smi(value) = right { return self.loose_equal(left, &JsValue::Number(*value)); }
+            if let JsValue::Smi(value) = left {
+                return self.loose_equal(&JsValue::Number(*value), right);
+            }
+            if let JsValue::Smi(value) = right {
+                return self.loose_equal(left, &JsValue::Number(*value));
+            }
             if let JsValue::SharedNumber(value) | JsValue::LocalNumber(value) = left {
                 return self.loose_equal(&JsValue::Number(value.value), right);
             }

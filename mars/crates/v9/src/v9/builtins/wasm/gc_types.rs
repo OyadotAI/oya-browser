@@ -36,7 +36,9 @@ pub(super) struct Definition {
 /** Heap type encodings are signed 33-bit indices or one of the specified abstract heap types. */
 pub(super) fn heap(r: &mut Reader, nullable: bool) -> Result<Type, Error> {
     if r.bytes.get(r.at) == Some(&0x65) {
-        if !r.shared_enabled { return Err(Error::invalid("shared references require --wasm-shared")); }
+        if !r.shared_enabled {
+            return Err(Error::invalid("shared references require --wasm-shared"));
+        }
         r.byte()?;
         let heap = r.signed(33)?;
         if heap == -25 {
@@ -147,7 +149,9 @@ fn read_definition(m: &mut Module, r: &mut Reader, first: u8) -> Result<(), Erro
     }
     let shared = opcode == 0x65;
     if shared {
-        if !r.shared_enabled { return Err(Error::invalid("shared types require --wasm-shared")); }
+        if !r.shared_enabled {
+            return Err(Error::invalid("shared types require --wasm-shared"));
+        }
         opcode = r.byte()?;
     }
     let mut descriptor = None;
@@ -171,7 +175,11 @@ fn read_definition(m: &mut Module, r: &mut Reader, first: u8) -> Result<(), Erro
         opcode = r.byte()?;
     }
     if (descriptor.is_some() || describes.is_some()) && opcode != 0x5f {
-        return Err(Error::invalid(if descriptor.is_some() { "'descriptor' may only be used with structs" } else { "'describes' may only be used with structs" }));
+        return Err(Error::invalid(if descriptor.is_some() {
+            "'descriptor' may only be used with structs"
+        } else {
+            "'describes' may only be used with structs"
+        }));
     }
     let kind = match opcode {
         0x60 => {
@@ -214,7 +222,9 @@ fn read_definition(m: &mut Module, r: &mut Reader, first: u8) -> Result<(), Erro
         _ => return Err(Error::invalid("unknown WebAssembly composite type")),
     };
     if shared && !matches!(kind, Kind::Struct(_) | Kind::Array(_)) {
-        return Err(Error::invalid("shared functions/continuations are not supported yet"));
+        return Err(Error::invalid(
+            "shared functions/continuations are not supported yet",
+        ));
     }
     m.types.push(match &kind {
         Kind::Function(sig) => sig.clone(),
@@ -260,7 +270,7 @@ pub(super) fn check_type(m: &Module, ty: Type) -> Result<(), Error> {
             return Err(Error::invalid("unknown referenced heap type"));
         }
         if heap < 0
-            && !(matches!(heap, -32 | -31 | -26) && !ty.reference().unwrap().1)
+            && (!matches!(heap, -32 | -31 | -26) || ty.reference().unwrap().1)
             && !matches!(heap, -37 | -36 | -25..=-11)
         {
             return Err(Error::invalid("unknown abstract heap type"));
@@ -282,15 +292,15 @@ pub(super) fn js_compatible(m: &Module, ty: Type) -> bool {
 /** All declared inheritance is acyclic, non-final and structurally valid before code is checked. */
 pub(super) fn validate(m: &Module) -> Result<(), Error> {
     for (i, definition) in m.definitions.iter().enumerate() {
-        if let Kind::Continuation(target) = definition.kind {
-            if !matches!(
+        if let Kind::Continuation(target) = definition.kind
+            && !matches!(
                 m.definitions.get(target as usize).map(|d| &d.kind),
                 Some(Kind::Function(_))
-            ) {
-                return Err(Error::invalid(
-                    "continuation type requires a function signature",
-                ));
-            }
+            )
+        {
+            return Err(Error::invalid(
+                "continuation type requires a function signature",
+            ));
         }
         if let Some(parent) = definition.parent
             && parent as usize >= i
@@ -307,10 +317,17 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
                 Kind::Array(field) => std::slice::from_ref(field),
                 _ => &[],
             };
-            if let Some((field_index, field)) = fields.iter().enumerate().find(|(_, f)| f.ty.reference().is_some() && !is_shared(m, f.ty)) {
+            if let Some((field_index, field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, f)| f.ty.reference().is_some() && !is_shared(m, f.ty))
+            {
                 let message = match &definition.kind {
                     Kind::Array(_) => "shared array must have shared element type".to_string(),
-                    _ => format!("Type {i}: shared struct must have shared field types, actual type for field {field_index} is {}", field.ty.display()),
+                    _ => format!(
+                        "Type {i}: shared struct must have shared field types, actual type for field {field_index} is {}",
+                        field.ty.display()
+                    ),
                 };
                 return Err(Error::invalid(&message));
             }
@@ -318,11 +335,18 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
                 .parent
                 .is_some_and(|p| !m.definitions[p as usize].shared)
             {
-                return Err(Error::invalid("invalid explicit supertype: shared subtype requires a shared supertype"));
+                return Err(Error::invalid(
+                    "invalid explicit supertype: shared subtype requires a shared supertype",
+                ));
             }
         }
-        if definition.parent.is_some_and(|p| m.definitions[p as usize].shared != definition.shared) {
-            return Err(Error::invalid("invalid explicit supertype: sharedness differs"));
+        if definition
+            .parent
+            .is_some_and(|p| m.definitions[p as usize].shared != definition.shared)
+        {
+            return Err(Error::invalid(
+                "invalid explicit supertype: sharedness differs",
+            ));
         }
         if let Some(desc) = definition.descriptor {
             if desc >= definition.group_start + definition.group_len {
@@ -330,18 +354,27 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
                     "descriptor type index {desc} is out of bounds"
                 )));
             }
-            if m.definitions.get(desc as usize).is_some_and(|other| other.shared != definition.shared) {
-                return Err(Error::invalid(&format!("Type {i} and its descriptor {desc} must have same sharedness")));
+            if m.definitions
+                .get(desc as usize)
+                .is_some_and(|other| other.shared != definition.shared)
+            {
+                return Err(Error::invalid(&format!(
+                    "Type {i} and its descriptor {desc} must have same sharedness"
+                )));
             }
             if !matches!(m.definitions.get(desc as usize),Some(other)if matches!(other.kind,Kind::Struct(_))&&other.describes==Some(i as u32))
             {
-                return Err(Error::invalid(
-                    &format!("Type {i} has descriptor {desc} but {desc} doesn't describe {i}"),
-                ));
+                return Err(Error::invalid(&format!(
+                    "Type {i} has descriptor {desc} but {desc} doesn't describe {i}"
+                )));
             }
         }
         if let Some(described) = definition.describes {
-            if described >= i as u32 { return Err(Error::invalid("types can only describe previously-declared types")); }
+            if described >= i as u32 {
+                return Err(Error::invalid(
+                    "types can only describe previously-declared types",
+                ));
+            }
             if described >= definition.group_start + definition.group_len {
                 return Err(Error::invalid(&format!(
                     "described type index {described} is out of bounds"
@@ -349,9 +382,9 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
             }
             if !matches!(m.definitions.get(described as usize),Some(other)if matches!(other.kind,Kind::Struct(_))&&other.descriptor==Some(i as u32))
             {
-                return Err(Error::invalid(
-                    &format!("Type {i} describes {described} but {described} isn't a descriptor for {i}"),
-                ));
+                return Err(Error::invalid(&format!(
+                    "Type {i} describes {described} but {described} isn't a descriptor for {i}"
+                )));
             }
         }
         let mut current = Some(i as u32);
@@ -373,16 +406,20 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
         }
         for ty in field_types(definition) {
             check_type(m, ty)?;
-            if let Some((heap, _)) = ty.reference() {
-                if heap >= i64::from(definition.group_start + definition.group_len) {
-                    return Err(Error::invalid(&format!("Type index {heap} is out of bounds")));
-                }
+            if let Some((heap, _)) = ty.reference()
+                && heap >= i64::from(definition.group_start + definition.group_len)
+            {
+                return Err(Error::invalid(&format!(
+                    "Type index {heap} is out of bounds"
+                )));
             }
         }
         if let Some(parent) = definition.parent {
             let base = &m.definitions[parent as usize];
             if base.final_type {
-                return Err(Error::invalid(&format!("type {i} extends final type {parent}")));
+                return Err(Error::invalid(&format!(
+                    "type {i} extends final type {parent}"
+                )));
             }
             let descriptor_subtype = match (definition.descriptor, base.descriptor) {
                 (_, None) => true,
@@ -394,7 +431,10 @@ pub(super) fn validate(m: &Module) -> Result<(), Error> {
                 (Some(child), Some(parent)) => heap_subtype(m, i64::from(child), i64::from(parent)),
                 _ => false,
             };
-            if !descriptor_subtype || !described_subtype || !valid_subtype(m, &definition.kind, &base.kind) {
+            if !descriptor_subtype
+                || !described_subtype
+                || !valid_subtype(m, &definition.kind, &base.kind)
+            {
                 return Err(Error::invalid(&format!(
                     "type {i} has invalid explicit supertype {parent}"
                 )));
@@ -463,12 +503,12 @@ pub(super) fn subtype(m: &Module, actual: Type, expected: Type) -> bool {
             return false;
         }
         if heap < 0 {
-            return match (heap, m.definitions.get(expected as usize).map(|d| &d.kind)) {
-                (-15, Some(Kind::Struct(_) | Kind::Array(_))) => true,
-                (-13, Some(Kind::Function(_))) => true,
-                (-11, Some(Kind::Continuation(_))) => true,
-                _ => false,
-            };
+            return matches!(
+                (heap, m.definitions.get(expected as usize).map(|d| &d.kind)),
+                (-15, Some(Kind::Struct(_) | Kind::Array(_)))
+                    | (-13, Some(Kind::Function(_)))
+                    | (-11, Some(Kind::Continuation(_)))
+            );
         }
         return heap >= 0
             && (matches!(actual, Type::Exact(..))

@@ -10,8 +10,12 @@ use super::namespaces::{INVALID_CHARACTER_ERROR, NameError};
 pub(in crate::v9) const SYNTAX_ERROR: &str = "SyntaxError";
 /** The attribute whose token list `relList` reads and writes. */
 const REL_ATTRIBUTE: &str = "rel";
+/** The attribute whose token list `sandbox` validates iframe restrictions against. */
+const SANDBOX_ATTRIBUTE: &str = "sandbox";
 /** The tag of a link element, whose `rel` has its own supported tokens. */
 const LINK_TAG: &str = "link";
+/** The tag whose `sandbox` attribute has a defined supported-token vocabulary. */
+const IFRAME_TAG: &str = "iframe";
 /** The tags whose `rel` supports the noopener and noreferrer keywords. */
 const ANCHOR_TAGS: [&str; 2] = ["a", "area"];
 /** The tokens a link element's `rel` supports, as the HTML standard lists them. */
@@ -28,6 +32,23 @@ const LINK_REL_TOKENS: &[&str] = &[
 ];
 /** The tokens an anchor's or area's `rel` supports. */
 const ANCHOR_REL_TOKENS: &[&str] = &["noopener", "noreferrer"];
+/** The keywords accepted by an iframe's sandbox DOMTokenList. */
+const IFRAME_SANDBOX_TOKENS: &[&str] = &[
+    "allow-downloads",
+    "allow-forms",
+    "allow-modals",
+    "allow-orientation-lock",
+    "allow-pointer-lock",
+    "allow-popups",
+    "allow-popups-to-escape-sandbox",
+    "allow-presentation",
+    "allow-same-origin",
+    "allow-scripts",
+    "allow-storage-access-by-user-activation",
+    "allow-top-navigation",
+    "allow-top-navigation-by-user-activation",
+    "allow-top-navigation-to-custom-protocols",
+];
 /** Methods that change the token set, and so run the update steps and check their tokens. */
 pub(in crate::v9) const MUTATING_METHODS: [&str; 4] = ["add", "remove", "toggle", "replace"];
 /** The arguments `replace` needs: the token and its replacement. */
@@ -73,6 +94,9 @@ pub(in crate::v9) fn supported_tokens(
     tag: &str,
     attribute: &str,
 ) -> Option<&'static [&'static str]> {
+    if attribute == SANDBOX_ATTRIBUTE && tag == IFRAME_TAG {
+        return Some(IFRAME_SANDBOX_TOKENS);
+    }
     if attribute != REL_ATTRIBUTE {
         return None;
     }
@@ -108,7 +132,7 @@ mod tests {
         assert!(check_token("plain-token").is_ok());
     }
 
-    /** classList has no supported tokens; relList on a link or an anchor has a fixed list. */
+    /** classList has no supported tokens; relList and iframe sandbox have fixed lists. */
     #[test]
     fn supported_lists_follow_the_attribute_and_tag() {
         assert!(supported_tokens("div", "class").is_none());
@@ -118,5 +142,8 @@ mod tests {
         assert!(!is_supported(link, "noopener"));
         let anchor = supported_tokens("a", "rel").expect("anchor has a list");
         assert!(is_supported(anchor, "noopener"));
+        let sandbox = supported_tokens("iframe", "sandbox").expect("iframe has a sandbox list");
+        assert!(is_supported(sandbox, "allow-same-origin"));
+        assert!(!is_supported(sandbox, "allow-unknown"));
     }
 }

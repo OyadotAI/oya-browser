@@ -86,12 +86,24 @@ fn converted_external_values_keep_identity_through_anyref_tables() {
         bytes.extend(data);
     }
     let mut bytes = b"\0asm\x01\0\0\0".to_vec();
-    section(&mut bytes, 1, &[2,0x60,2,0x7f,0x6f,0,0x60,1,0x7f,1,0x6e]);
-    section(&mut bytes, 2, &[1,1,b'm',1,b't',1,0x6e,0,1]);
-    section(&mut bytes, 3, &[2,0,1]);
-    section(&mut bytes, 7, &[2,1,b's',0,0,1,b'g',0,1]);
-    section(&mut bytes, 10, &[2,10,0,0x20,0,0x20,1,0xfb,26,0x26,0,0x0b,6,0,0x20,0,0x25,0,0x0b]);
-    let source = format!("const t=new WebAssembly.Table({{element:'anyref',initial:1}}),b=new Uint8Array({bytes:?}),e=new WebAssembly.Instance(new WebAssembly.Module(b),{{m:{{t}}}}).exports;const o={{}},s='hello world';e.s(0,o);let r=[t.get(0)===o,e.g(0)===o];e.s(0,s);r.push(t.get(0)===s,e.g(0)===s);r=r.join()");
+    section(
+        &mut bytes,
+        1,
+        &[2, 0x60, 2, 0x7f, 0x6f, 0, 0x60, 1, 0x7f, 1, 0x6e],
+    );
+    section(&mut bytes, 2, &[1, 1, b'm', 1, b't', 1, 0x6e, 0, 1]);
+    section(&mut bytes, 3, &[2, 0, 1]);
+    section(&mut bytes, 7, &[2, 1, b's', 0, 0, 1, b'g', 0, 1]);
+    section(
+        &mut bytes,
+        10,
+        &[
+            2, 10, 0, 0x20, 0, 0x20, 1, 0xfb, 26, 0x26, 0, 0x0b, 6, 0, 0x20, 0, 0x25, 0, 0x0b,
+        ],
+    );
+    let source = format!(
+        "const t=new WebAssembly.Table({{element:'anyref',initial:1}}),b=new Uint8Array({bytes:?}),e=new WebAssembly.Instance(new WebAssembly.Module(b),{{m:{{t}}}}).exports;const o={{}},s='hello world';e.s(0,o);let r=[t.get(0)===o,e.g(0)===o];e.s(0,s);r.push(t.get(0)===s,e.g(0)===s);r=r.join()"
+    );
     assert_eq!(common::eval(&source, "r"), "true,true,true,true");
 }
 

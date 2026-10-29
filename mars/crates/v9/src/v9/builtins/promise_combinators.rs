@@ -59,6 +59,7 @@ pub(super) fn install(b: &mut Builder, ctor: ObjectId, proto: ObjectId) {
         combinator(vm, call, Combinator::Race)
     });
     b.method(ctor, "withResolvers", 0, with_resolvers);
+    b.method(ctor, "try", 1, try_static);
     b.method(proto, "then", 2, then);
     b.method(proto, "finally", 1, finally);
     let _ = NATIVES.set(Natives {
@@ -197,6 +198,22 @@ fn with_resolvers(vm: &mut Vm, call: Call) -> Res<JsValue> {
     vm.put(result, "resolve", cap.resolve)?;
     vm.put(result, "reject", cap.reject)?;
     Ok(JsValue::Object(result))
+}
+
+/** Promise.try: call the function now with the remaining arguments and settle a new promise
+with what it returns or throws, so a synchronous throw never escapes the caller. */
+fn try_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let c = this_constructor(vm, &call)?;
+    let cap = new_capability(vm, &c)?;
+    let args = call.args.iter().skip(1).cloned().collect();
+    match vm.call(call.arg(0), JsValue::Undefined, args) {
+        Ok(value) => vm.call(cap.resolve, JsValue::Undefined, vec![value])?,
+        Err(crate::v9::vm::Thrown::Value(error)) => {
+            vm.call(cap.reject, JsValue::Undefined, vec![error])?
+        }
+        Err(other) => return Err(other),
+    };
+    Ok(cap.promise)
 }
 
 /** Invoke(value, "then", args). */

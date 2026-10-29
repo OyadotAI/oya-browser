@@ -73,9 +73,9 @@ fn custom(body: &str, probe: &Probe<'_>) -> Truth {
     let actual = (probe.custom)(name);
     Truth::of(match wanted {
         None => actual.is_some(),
-        Some(wanted) => actual.is_some_and(|actual| {
-            actual.split_whitespace().eq(wanted.split_whitespace())
-        }),
+        Some(wanted) => {
+            actual.is_some_and(|actual| actual.split_whitespace().eq(wanted.split_whitespace()))
+        }
     })
 }
 

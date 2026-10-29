@@ -11,7 +11,9 @@ pub(super) const CONDITION_BRAND: &str = "conformance-local-condition";
 const CONDITION_STORE: &str = "conformance-condition-store";
 static CONSTRUCTOR: OnceLock<ObjectId> = OnceLock::new();
 /** Resolve a constructor identity in the requesting intrinsic bank. */
-pub(super) fn constructor_id(bank: u32) -> ObjectId { *CONSTRUCTOR.get().expect("condition installed") + bank * banks::BANK_STRIDE }
+pub(super) fn constructor_id(bank: u32) -> ObjectId {
+    *CONSTRUCTOR.get().expect("condition installed") + bank * banks::BANK_STRIDE
+}
 
 /** Install the native constructor and operations without exposing the feature globally. */
 pub(super) fn install(builder: &mut Builder) {
@@ -85,10 +87,18 @@ fn create(vm: &mut Vm, store: SharedGc, prototype: ObjectId) -> Res<ObjectId> {
 }
 /** Worker decoding restores a local wrapper around the original condition queue. */
 pub(super) fn restore(vm: &mut Vm, store: SharedGc) -> Res<ObjectId> {
-    let ids: Vec<_> = vm.heap.objects.keys().copied().filter(|id| is_condition(vm, *id)).collect();
+    let ids: Vec<_> = vm
+        .heap
+        .objects
+        .keys()
+        .copied()
+        .filter(|id| is_condition(vm, *id))
+        .collect();
     for id in ids {
         let other = storage(vm, &JsValue::Object(id))?;
-        if other.node() == store.node() && other.arena().same_store(&store.arena()) { return Ok(id); }
+        if other.node() == store.node() && other.arena().same_store(&store.arena()) {
+            return Ok(id);
+        }
     }
     let constructor =
         *CONSTRUCTOR.get().expect("condition installed") + vm.active_realm * banks::BANK_STRIDE;
@@ -128,13 +138,19 @@ pub(super) fn storage(vm: &mut Vm, value: &JsValue) -> Res<SharedGc> {
         .and_then(|id| vm.heap.get(id))
         .map(|object| &object.class)
     {
-        Some(Class::SharedContainerRoot(store)) if store.metadata()?.0.as_ref() == super::arena_transport::CONDITION_META => Ok(store.clone()),
+        Some(Class::SharedContainerRoot(store))
+            if store.metadata()?.0.as_ref() == super::arena_transport::CONDITION_META =>
+        {
+            Ok(store.clone())
+        }
         _ => Err(vm.type_error("Invalid Atomics.Condition storage")),
     }
 }
 /** Wait temporarily releases the held local mutex, reacquiring even after cancellation. */
 fn wait(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if vm.page.state.atomics_wait_disallowed { return Err(vm.type_error("Atomics wait is not allowed")); }
+    if vm.page.state.atomics_wait_disallowed {
+        return Err(vm.type_error("Atomics wait is not allowed"));
+    }
     let store = storage(vm, &call.arg(0))?;
     let Some(mutex) = call
         .arg(1)
@@ -149,22 +165,39 @@ fn wait(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let duration = match call.arg(2) {
         JsValue::Undefined => None,
         value => {
-            let Some(value) = value.number_value() else { return Err(vm.type_error("Timeout must be a number")); };
-            if value.is_infinite() && value.is_sign_positive() { None } else { Some(Duration::from_millis(value.max(0.0) as u64)) }
-        },
+            let Some(value) = value.number_value() else {
+                return Err(vm.type_error("Timeout must be a number"));
+            };
+            if value.is_infinite() && value.is_sign_positive() {
+                None
+            } else {
+                Some(Duration::from_millis(value.max(0.0) as u64))
+            }
+        }
     };
     let mutex_store = super::mutex::storage(vm, mutex)?;
     let owner = super::mutex::owner(vm);
     let mut poll_error = None;
-    let result = store.condition_wait(&mutex_store, owner as i128, duration, || match vm.wait_safepoint() {
-        Ok(expired) => expired,
-        Err(error) => { poll_error = Some(error); true }
+    let result = store.condition_wait(&mutex_store, owner as i128, duration, || {
+        match vm.wait_safepoint() {
+            Ok(expired) => expired,
+            Err(error) => {
+                poll_error = Some(error);
+                true
+            }
+        }
     });
-    if let Err(failure @ (crate::v9::vm::data::SharedWaitFailure::Limit | crate::v9::vm::data::SharedWaitFailure::Invalid)) = result {
+    if let Err(
+        failure @ (crate::v9::vm::data::SharedWaitFailure::Limit
+        | crate::v9::vm::data::SharedWaitFailure::Invalid),
+    ) = result
+    {
         return Err(super::mutex::wait_failure(vm, failure));
     }
     super::mutex::acquire(vm, mutex, None, true)?;
-    if let Some(error) = poll_error { return Err(error); }
+    if let Some(error) = poll_error {
+        return Err(error);
+    }
     let result = result.map_err(|failure| super::mutex::wait_failure(vm, failure))?;
     Ok(JsValue::Boolean(result))
 }

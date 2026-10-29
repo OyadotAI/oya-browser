@@ -1,4 +1,4 @@
-/** Exact binary summation accumulates finite IEEE-754 inputs as integers before one rounding. */
+/*! Exact binary summation accumulates finite IEEE-754 inputs as integers before one rounding. */
 
 /** IEEE-754 double precision's fraction width. */
 const FRACTION: usize = 52;

@@ -94,7 +94,7 @@ impl Vm<'_> {
             (proxy, target, Some(trap)) => {
                 let args = vec![JsValue::Object(target), key.value(), receiver.clone()];
                 let result = self.call_trap(&proxy, trap, args)?;
-                self.proxy_check(target, &[result.clone()], |vm| {
+                self.proxy_check(target, std::slice::from_ref(&result), |vm| {
                     vm.check_get(target, key, &result)
                 })?;
                 Ok(result)
@@ -121,7 +121,7 @@ impl Vm<'_> {
                 ];
                 let success = self.call_trap(&proxy, trap, args)?.truthy();
                 if success {
-                    self.proxy_check(target, &[value.clone()], |vm| {
+                    self.proxy_check(target, std::slice::from_ref(&value), |vm| {
                         vm.check_set(target, &key, &value)
                     })?;
                 }
@@ -166,7 +166,7 @@ impl Vm<'_> {
             (proxy, target, Some(trap)) => {
                 let result =
                     self.call_trap(&proxy, trap, vec![JsValue::Object(target), key.value()])?;
-                self.proxy_check(target, &[result.clone()], |vm| {
+                self.proxy_check(target, std::slice::from_ref(&result), |vm| {
                     vm.checked_own(target, key, &result)
                 })
             }
@@ -205,7 +205,9 @@ impl Vm<'_> {
         match self.proxy_trap(proxy, "ownKeys")? {
             (proxy, target, Some(trap)) => {
                 let list = self.call_trap(&proxy, trap, vec![JsValue::Object(target)])?;
-                self.proxy_check(target, &[list.clone()], |vm| vm.checked_keys(target, &list))
+                self.proxy_check(target, std::slice::from_ref(&list), |vm| {
+                    vm.checked_keys(target, &list)
+                })
             }
             (_, target, None) => self.deeper(|vm| vm.own_keys(target)),
         }

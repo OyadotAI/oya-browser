@@ -59,10 +59,11 @@ fn collect(vm: &mut Vm, scope: Option<usize>, element: Option<(usize, bool)>) ->
         {
             continue;
         }
-        if let Some((ancestor, subtree)) = element {
-            if node != ancestor && (!subtree || !descendant(vm, node, ancestor)?) {
-                continue;
-            }
+        if let Some((ancestor, subtree)) = element
+            && node != ancestor
+            && (!subtree || !descendant(vm, node, ancestor)?)
+        {
+            continue;
         }
         values.push(JsValue::Object(id));
     }

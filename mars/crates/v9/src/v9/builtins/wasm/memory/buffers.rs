@@ -54,7 +54,10 @@ fn convert(vm: &mut Vm, value: &JsValue, resizable: bool) -> Res<JsValue> {
     if super::super::super::buffer_maximum(vm, old).is_some() == resizable {
         return Ok(JsValue::Object(old));
     }
-    if matches!(vm.heap.get(old).map(|o| &o.class), Some(Class::SparseWasmBuffer(_))) {
+    if matches!(
+        vm.heap.get(old).map(|o| &o.class),
+        Some(Class::SparseWasmBuffer(_))
+    ) {
         return Err(vm.unsupported_error("sparse resizable WebAssembly memory"));
     }
     let Some(Class::ArrayBuffer(bytes)) = vm.heap.get(old).map(|o| &o.class) else {
@@ -82,7 +85,7 @@ pub(in crate::v9::builtins::wasm) fn resize_buffer(
     };
     let current = storage(vm, &JsValue::Object(memory))?;
     let old = super::length(vm, &JsValue::Object(memory))?;
-    if current != buffer || length < old || length % PAGE_BYTES != 0 {
+    if current != buffer || length < old || !length.is_multiple_of(PAGE_BYTES) {
         return Err(vm.range_error("WebAssembly buffer resize requires nonshrinking whole pages"));
     }
     super::resize(

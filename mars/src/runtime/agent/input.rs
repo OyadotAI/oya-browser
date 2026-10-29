@@ -92,10 +92,10 @@ impl Runtime {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?;
-        let (hit, target) = page.hit(x, y).ok_or_else(nothing_here)?;
-        let hit = page.point_node(hit);
+        let (base, hit, target) = page.hit(x, y).ok_or_else(nothing_here)?;
+        let hit = page.point_node(base, hit);
         let target = target.ok_or_else(nothing_here)?;
-        let node_id = page.node_id(target.local_id);
+        let node_id = page.node_id(base + target.local_id);
         if editable(target) {
             return Ok(
                 json!({"page_id":page.id(),"revision":page.revision,"focused":node_id,"hit":hit}),
@@ -120,10 +120,10 @@ impl Runtime {
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?;
         let mut result = json!({"page_id":page.id(),"revision":page.revision,"events":"none"});
-        if let Some((hit, target)) = page.hit(x, y) {
-            result["hit"] = page.point_node(hit);
+        if let Some((base, hit, target)) = page.hit(x, y) {
+            result["hit"] = page.point_node(base, hit);
             if let Some(target) = target {
-                result["clickable"] = json!(page.node_id(target.local_id));
+                result["clickable"] = json!(page.node_id(base + target.local_id));
             }
         }
         Ok(result)

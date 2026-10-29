@@ -13,7 +13,12 @@ const VIEW_OUTPUT_UNITS: usize = 5;
 const ARRAY_OUTPUT_UNITS: usize = 7;
 
 /** Wasm substring construction normalizes encoding to the actual copied code units. */
-pub(super) fn normalized_substring(vm: &mut Vm, value: &JsString, start: usize, end: usize) -> Res<JsString> {
+pub(super) fn normalized_substring(
+    vm: &mut Vm,
+    value: &JsString,
+    start: usize,
+    end: usize,
+) -> Res<JsString> {
     vm.copy_string_range(value, start, end)
 }
 
@@ -59,28 +64,6 @@ pub(super) fn decode_wtf8(bytes: &[u8]) -> Result<Vec<u16>, Error> {
         at += width;
     }
     Ok(units)
-}
-
-#[cfg(test)]
-mod literal_tests {
-    use super::*;
-
-    /** WTF-8 accepts lone surrogate code units but rejects malformed and overlong sequences. */
-    #[test]
-    fn literal_wtf8_preserves_surrogates_and_checks_encoding() {
-        assert_eq!(
-            decode_wtf8(&[0x41, 0xed, 0xa0, 0x80, 0xf0, 0x9f, 0x98, 0x80]).unwrap(),
-            [0x41, 0xd800, 0xd83d, 0xde00]
-        );
-        for invalid in [
-            &[0xc0, 0x80][..],
-            &[0xe2, 0x82][..],
-            &[0xf4, 0x90, 0x80, 0x80][..],
-        ] {
-            assert!(decode_wtf8(invalid).is_err());
-        }
-        assert!(decode_wtf8(&[0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]).is_err());
-    }
 }
 
 /** Each implemented string instruction has its real immediate grammar; other proposals remain explicit. */
@@ -713,4 +696,26 @@ pub(super) fn run(
     };
     stack.push(value);
     Ok(())
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use super::*;
+
+    /** WTF-8 accepts lone surrogate code units but rejects malformed and overlong sequences. */
+    #[test]
+    fn literal_wtf8_preserves_surrogates_and_checks_encoding() {
+        assert_eq!(
+            decode_wtf8(&[0x41, 0xed, 0xa0, 0x80, 0xf0, 0x9f, 0x98, 0x80]).unwrap(),
+            [0x41, 0xd800, 0xd83d, 0xde00]
+        );
+        for invalid in [
+            &[0xc0, 0x80][..],
+            &[0xe2, 0x82][..],
+            &[0xf4, 0x90, 0x80, 0x80][..],
+        ] {
+            assert!(decode_wtf8(invalid).is_err());
+        }
+        assert!(decode_wtf8(&[0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]).is_err());
+    }
 }

@@ -80,7 +80,7 @@ fn install_methods(builder: &mut Builder, prototype: ObjectId) {
         let function = builder.function(name, 1, *function);
         builder.put(
             prototype,
-            Key::from(*name),
+            Key::from(name),
             Static::Value(JsValue::Object(function)),
             DEFAULT_ATTRS,
         );

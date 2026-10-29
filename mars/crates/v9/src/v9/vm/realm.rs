@@ -231,7 +231,7 @@ impl Realm {
 pub(in crate::v9) fn realm() -> &'static Realm {
     #[cfg(feature = "conformance")]
     {
-        return banks::bank(banks::current());
+        banks::bank(banks::current())
     }
     #[cfg(not(feature = "conformance"))]
     root_realm()
@@ -246,7 +246,7 @@ fn root_realm() -> &'static Realm {
 fn bank_stride() -> u32 {
     #[cfg(feature = "conformance")]
     {
-        return banks::BANK_STRIDE;
+        banks::BANK_STRIDE
     }
     #[cfg(not(feature = "conformance"))]
     0
@@ -255,7 +255,7 @@ fn bank_stride() -> u32 {
 pub(in crate::v9) fn realm_for(id: ObjectId) -> &'static Realm {
     #[cfg(feature = "conformance")]
     {
-        return banks::bank(banks::owner(id));
+        banks::bank(banks::owner(id))
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -267,7 +267,7 @@ pub(in crate::v9) fn realm_for(id: ObjectId) -> &'static Realm {
 pub(in crate::v9) fn native_index(id: ObjectId) -> u32 {
     #[cfg(feature = "conformance")]
     {
-        return banks::native_index(id);
+        banks::native_index(id)
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -332,14 +332,15 @@ impl Builder {
         });
         let native = self.natives.len() as u32 - 1;
         self.def(id).call = Some(native);
-        self.value(id, "prototype", JsValue::Object(prototype), 0);
-        self.value(id, "name", string(name), super::heap::CONFIGURABLE);
+        // V8 installs length, name, prototype in this order; pages list it.
         self.value(
             id,
             "length",
             JsValue::Number(f64::from(length)),
             super::heap::CONFIGURABLE,
         );
+        self.value(id, "name", string(name), super::heap::CONFIGURABLE);
+        self.value(id, "prototype", JsValue::Object(prototype), 0);
         self.value(prototype, "constructor", JsValue::Object(id), HIDDEN_ATTRS);
         id
     }
@@ -393,6 +394,34 @@ impl Builder {
         self.value(target, name, JsValue::Object(id), HIDDEN_ATTRS);
         id
     }
+    /** A host (WebIDL) operation: enumerable, as Chrome lists DOM methods, unlike ECMAScript
+    builtins. Pages hash `Object.keys(Node.prototype)` as a fingerprint. */
+    pub fn host_method(
+        &mut self,
+        target: ObjectId,
+        name: &'static str,
+        length: u32,
+        function: NativeFn,
+    ) -> ObjectId {
+        let id = self.function(name, length, function);
+        self.value(
+            target,
+            name,
+            JsValue::Object(id),
+            super::heap::DEFAULT_ATTRS,
+        );
+        id
+    }
+    /** A WebIDL constant: enumerable, never writable or configurable, on the interface object
+    and its prototype alike. */
+    pub fn host_constant(&mut self, target: ObjectId, name: &str, value: f64) {
+        self.value(
+            target,
+            name,
+            JsValue::Number(value),
+            super::heap::ENUMERABLE,
+        );
+    }
     /** A symbol-keyed method. */
     pub fn symbol_method(
         &mut self,
@@ -411,7 +440,8 @@ impl Builder {
         );
         id
     }
-    /** An accessor property; enumerable accessors model host attributes. */
+    /** An accessor property; enumerable accessors model host attributes. The functions are
+    named `get x` and `set x`, as Chrome names every attribute getter and setter. */
     pub fn accessor(
         &mut self,
         target: ObjectId,
@@ -419,8 +449,8 @@ impl Builder {
         getter: Option<NativeFn>,
         setter: Option<NativeFn>,
     ) {
-        let get = getter.map(|function| self.function(name, 0, function));
-        let set = setter.map(|function| self.function(name, 1, function));
+        let get = getter.map(|function| self.accessor_function(name, 0, "get", function));
+        let set = setter.map(|function| self.accessor_function(name, 1, "set", function));
         self.put(
             target,
             Key::from(name),

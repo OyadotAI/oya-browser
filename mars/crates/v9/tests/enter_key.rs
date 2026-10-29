@@ -38,6 +38,7 @@ fn enter_fires_keydown_keypress_keyup_with_key_code_13() {
 /** preventDefault on keydown cancels the native action, as Google's handler does. */
 #[test]
 fn a_cancelled_keydown_stops_the_native_action() {
-    let after = enter("document.addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault()});");
+    let after =
+        enter("document.addEventListener('keydown',e=>{if(e.key==='Enter')e.preventDefault()});");
     assert!(!after.effects.key_default);
 }

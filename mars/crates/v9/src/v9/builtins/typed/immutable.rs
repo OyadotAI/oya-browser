@@ -39,7 +39,9 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let start = vm.relative_index(&call.arg(0), length, 0)?;
     let end = vm.relative_index(&call.arg(1), length, length)?;
     let count = end.saturating_sub(start);
-    if count > BUFFER_BYTES { return Err(vm.range_error("ArrayBuffer slice exceeds resident byte limit")); }
+    if count > BUFFER_BYTES {
+        return Err(vm.range_error("ArrayBuffer slice exceeds resident byte limit"));
+    }
     let output = new_buffer(vm, vec![0; count])?;
     if buffer_state::detached(vm, id) {
         return Err(vm.type_error("Cannot slice a detached ArrayBuffer"));
@@ -50,7 +52,8 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let bytes = if count == 0 {
         Vec::new()
     } else {
-        read_range(vm, id, start, count).ok_or_else(|| vm.range_error("ArrayBuffer slice exceeds resident byte limit"))?
+        read_range(vm, id, start, count)
+            .ok_or_else(|| vm.range_error("ArrayBuffer slice exceeds resident byte limit"))?
     };
     if !write_range(vm, output, 0, &bytes) {
         return Err(vm.type_error("Cannot initialize immutable ArrayBuffer"));

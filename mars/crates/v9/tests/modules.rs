@@ -273,8 +273,16 @@ fn dynamic_import_loads_later_from_modules_and_classic_scripts() {
     assert!(loaded.failed.is_empty(), "{:?}", loaded.reasons);
     assert!(loaded.console.contains(&"classic got 42".to_string()));
     assert!(loaded.console.contains(&"module got 42 true".to_string()));
-    assert!(loaded.console.contains(&"Error".to_string()), "{:?}", loaded.console);
-    assert!(loaded.console.contains(&"TypeError".to_string()), "{:?}", loaded.console);
+    assert!(
+        loaded.console.contains(&"Error".to_string()),
+        "{:?}",
+        loaded.console
+    );
+    assert!(
+        loaded.console.contains(&"TypeError".to_string()),
+        "{:?}",
+        loaded.console
+    );
     assert_eq!(
         loaded.requested,
         [format!("{BASE}lazy.js"), format!("{BASE}missing.js")]

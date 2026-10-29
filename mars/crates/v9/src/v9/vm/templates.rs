@@ -26,7 +26,15 @@ impl Vm<'_> {
             .get(index as usize)
             .ok_or_else(|| EngineError::invalid("V9 template slot is missing."))?;
         #[cfg(feature = "conformance")]
-        let isolated: Vec<_> = chunks.iter().map(|(cooked, raw)| (cooked.as_ref().map(JsString::isolate_code_constant), raw.isolate_code_constant())).collect();
+        let isolated: Vec<_> = chunks
+            .iter()
+            .map(|(cooked, raw)| {
+                (
+                    cooked.as_ref().map(JsString::isolate_code_constant),
+                    raw.isolate_code_constant(),
+                )
+            })
+            .collect();
         #[cfg(feature = "conformance")]
         let chunks = isolated.as_slice();
         let roots = self.pins.len();

@@ -11,13 +11,22 @@ fn generated_source_appends_remain_correct() {
 /** Large generated functions compile and run both directly and through eval. */
 #[test]
 fn generated_function_many_parameters_executes_in_eval() {
-    let params = (0..32000).map(|i| format!("arg{i}")).collect::<Vec<_>>().join(",");
-    let args = (0..32000).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    let params = (0..32000)
+        .map(|i| format!("arg{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let args = (0..32000)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     let source = format!("(function f({params}){{return arg16000;}})({args})");
     mars_v9::check(&source).unwrap();
     assert_eq!(common::eval(&format!("const r={source};"), "r"), "16000");
     let literal = serde_json::to_string(&source).unwrap();
-    assert_eq!(common::eval(&format!("const r=eval({literal});"), "r"), "16000");
+    assert_eq!(
+        common::eval(&format!("const r=eval({literal});"), "r"),
+        "16000"
+    );
 }
 
 /** Concatenation retains lone surrogates and pairs adjacent halves without rewriting either input. */
@@ -115,6 +124,8 @@ fn deferred_concatenations_have_content_hash_equality_and_order() {
     let later = flat
         .concat(&mars_v9::JsString::from_utf8("a").unwrap())
         .unwrap();
+    // Keys compare by value and nothing writes them while the set lives.
+    #[allow(clippy::mutable_key_type)]
     let values = BTreeSet::from([later.clone(), deferred.clone(), flat.clone()]);
     assert_eq!(values.into_iter().collect::<Vec<_>>(), [flat, later]);
 }

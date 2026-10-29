@@ -106,7 +106,7 @@ impl Reader<'_> {
                 self.raw(length)?.iter().map(|byte| *byte as u16).collect()
             }
             b'c' => {
-                if length % 2 != 0 || self.position % 2 != 0 {
+                if length % 2 != 0 || !self.position.is_multiple_of(2) {
                     return Err(Failure::Invalid);
                 }
                 self.charge(length / 2)?;
@@ -170,13 +170,12 @@ impl Reader<'_> {
             return self.atom(depth + 1);
         }
         let atom = self.value(tag, depth + 1)?;
-        if let Atom::Reference(id) = atom {
-            if matches!(self.graph.nodes[id].kind, Kind::Buffer(_, _, _))
-                && self.peek() == Some(b'V')
-            {
-                self.tag()?;
-                return self.view(id);
-            }
+        if let Atom::Reference(id) = atom
+            && matches!(self.graph.nodes[id].kind, Kind::Buffer(_, _, _))
+            && self.peek() == Some(b'V')
+        {
+            self.tag()?;
+            return self.view(id);
         }
         Ok(atom)
     }

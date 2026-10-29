@@ -1,8 +1,8 @@
 /** String: the constructor, statics and prototype methods over UTF-16 code units. */
 use super::*;
 use crate::constants::{
-    JS_STRING_UNITS, STRING_SEARCH_FLAT_UNITS, UTF16_HIGH_SURROGATE_END, UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END,
-    UTF16_LOW_SURROGATE_START,
+    JS_STRING_UNITS, STRING_SEARCH_FLAT_UNITS, UTF16_HIGH_SURROGATE_END,
+    UTF16_HIGH_SURROGATE_START, UTF16_LOW_SURROGATE_END, UTF16_LOW_SURROGATE_START,
 };
 use crate::protocol::EngineError;
 use crate::v9::vm::data::{Class, IterState};
@@ -174,7 +174,8 @@ fn string_units(vm: &mut Vm, value: Vec<u16>) -> Res<JsValue> {
 /** One-byte substring results use the same read-only root as character iteration. */
 fn string_slice(vm: &mut Vm, text: &JsString, start: usize, end: usize) -> Res<JsString> {
     #[cfg(feature = "conformance")]
-    if vm.page.environment.conformance_d8 && end == start.saturating_add(1)
+    if vm.page.environment.conformance_d8
+        && end == start.saturating_add(1)
         && let Some(unit) = text.unit_at(start).filter(|unit| *unit <= 255)
     {
         return vm.character_root(unit as u8);
@@ -239,7 +240,12 @@ fn raw(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Preserve later getter and coercion errors after a raw result exceeds its storage limit. */
-fn raw_append(vm: &mut Vm, out: &mut JsString, overflow: &mut Option<crate::v9::vm::Thrown>, piece: JsString) {
+fn raw_append(
+    vm: &mut Vm,
+    out: &mut JsString,
+    overflow: &mut Option<crate::v9::vm::Thrown>,
+    piece: JsString,
+) {
     if overflow.is_some() {
         return;
     }
@@ -261,9 +267,10 @@ fn at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::Undefined);
     }
-    string_units(vm, vec![
-        text.unit_at(index as usize).expect("checked string index"),
-    ])
+    string_units(
+        vm,
+        vec![text.unit_at(index as usize).expect("checked string index")],
+    )
 }
 
 /** String.prototype.charAt. */
@@ -273,9 +280,10 @@ fn char_at(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if index < 0.0 || index >= text.len() as f64 {
         return Ok(JsValue::String(JsString::empty()));
     }
-    string_units(vm, vec![
-        text.unit_at(index as usize).expect("checked string index"),
-    ])
+    string_units(
+        vm,
+        vec![text.unit_at(index as usize).expect("checked string index")],
+    )
 }
 
 /** String.prototype.charCodeAt. */
@@ -435,21 +443,25 @@ fn locale_compare(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let other = arg_string(vm, &call, 0)?;
     let options = super::intl::read_options(vm, &call.arg(2), "Collator")?;
-    Ok(JsValue::Number(super::intl::collate(&text.lossy(), &other.lossy(), &options)))
+    Ok(JsValue::Number(super::intl::collate(
+        &text.lossy(),
+        &other.lossy(),
+        &options,
+    )))
 }
 
 /** Delegate to a pattern's symbol method, else build a RegExp from it. */
 fn delegate(vm: &mut Vm, call: &Call, symbol: u32, flags: &str) -> Res<Option<JsValue>> {
     require_receiver(vm, call)?;
     let pattern = call.arg(0);
-    if matches!(pattern, JsValue::Object(_)) {
-        if let Some(method) = vm.get_method(&pattern, &Key::Sym(symbol))? {
-            let mut args = vec![call.this.clone()];
-            if symbol == symbol::REPLACE || symbol == symbol::SPLIT {
-                args.push(call.arg(1));
-            }
-            return vm.call(method, pattern, args).map(Some);
+    if matches!(pattern, JsValue::Object(_))
+        && let Some(method) = vm.get_method(&pattern, &Key::Sym(symbol))?
+    {
+        let mut args = vec![call.this.clone()];
+        if symbol == symbol::REPLACE || symbol == symbol::SPLIT {
+            args.push(call.arg(1));
         }
+        return vm.call(method, pattern, args).map(Some);
     }
     if flags.is_empty() {
         return Ok(None);
@@ -644,7 +656,12 @@ fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let text = this_string(vm, &call)?;
     let start = vm.relative_index(&call.arg(0), text.len(), 0)?;
     let end = vm.relative_index(&call.arg(1), text.len(), text.len())?;
-    Ok(JsValue::String(string_slice(vm, &text, start, end.max(start))?))
+    Ok(JsValue::String(string_slice(
+        vm,
+        &text,
+        start,
+        end.max(start),
+    )?))
 }
 
 /** String.prototype.split. */
@@ -722,7 +739,12 @@ fn substr(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         (vm.to_integer(&call.arg(1))?.max(0.0) as usize).min(text.len() - start)
     };
-    Ok(JsValue::String(string_slice(vm, &text, start, start + count)?))
+    Ok(JsValue::String(string_slice(
+        vm,
+        &text,
+        start,
+        start + count,
+    )?))
 }
 
 /** Case mapping over code points; unpaired surrogates stay. Locale variants also validate their locales argument. */
@@ -790,15 +812,14 @@ fn map_case(vm: &mut Vm, call: &Call, upper: bool, locale: bool) -> Res<JsValue>
 fn case_point(text: &JsString, offset: &mut usize) -> Option<Result<char, u16>> {
     let first = text.unit_at(*offset)?;
     *offset += 1;
-    if (UTF16_HIGH_SURROGATE_START..=UTF16_HIGH_SURROGATE_END).contains(&first) {
-        if let Some(second) = text
+    if (UTF16_HIGH_SURROGATE_START..=UTF16_HIGH_SURROGATE_END).contains(&first)
+        && let Some(second) = text
             .unit_at(*offset)
             .filter(|unit| (UTF16_LOW_SURROGATE_START..=UTF16_LOW_SURROGATE_END).contains(unit))
-        {
-            *offset += 1;
-            let scalar = 0x10000 + ((u32::from(first) - 0xd800) << 10) + u32::from(second) - 0xdc00;
-            return Some(Ok(char::from_u32(scalar).expect("valid surrogate pair")));
-        }
+    {
+        *offset += 1;
+        let scalar = 0x10000 + ((u32::from(first) - 0xd800) << 10) + u32::from(second) - 0xdc00;
+        return Some(Ok(char::from_u32(scalar).expect("valid surrogate pair")));
     }
     Some(char::from_u32(u32::from(first)).ok_or(first))
 }

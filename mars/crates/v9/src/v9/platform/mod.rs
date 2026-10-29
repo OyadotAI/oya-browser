@@ -7,9 +7,9 @@
 pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
-mod chrome_env;
-pub(in crate::v9) mod messaging;
 pub(in crate::v9) mod channel;
+mod chrome_env;
+mod chrome_shapes;
 pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;
 mod console;
@@ -28,6 +28,7 @@ mod implementation;
 mod install;
 mod interfaces;
 mod keyboard;
+pub(in crate::v9) mod messaging;
 mod xml_frames;
 mod xml_serializer;
 pub(in crate::v9) use keyboard::press_key;
@@ -40,6 +41,7 @@ mod nodes;
 pub(in crate::v9) mod observable;
 mod offsets;
 mod performance;
+mod plugins;
 mod pseudo_attributes;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) mod random;
@@ -48,6 +50,8 @@ mod range_contents;
 mod range_index;
 mod range_live;
 pub(in crate::v9) mod scripts;
+mod trusted_types;
+pub(in crate::v9) use trusted_types::trusted_script_text;
 mod scrolling;
 mod selector;
 mod sheets;
@@ -1067,7 +1071,10 @@ pub(in crate::v9) struct PageState {
 
     /** Installed shell debug delegate and bounded event counters for this isolate. */
     #[cfg(feature = "conformance")]
-    #[serde(default, skip_serializing_if = "crate::v9::builtins::DebugState::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::v9::builtins::DebugState::is_empty"
+    )]
     pub debug_delegate: crate::v9::builtins::DebugState,
 
     /** A d8 test can forbid blocking waits for this agent across state transport. */
@@ -1361,7 +1368,12 @@ impl<'h> Page<'h> {
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
         #[cfg(feature = "conformance")]
-        out.extend(self.state.number_constants.values().flat_map(|pool| pool.values.values().cloned()));
+        out.extend(
+            self.state
+                .number_constants
+                .values()
+                .flat_map(|pool| pool.values.values().cloned()),
+        );
         #[cfg(feature = "conformance")]
         if let Some(listener) = self.state.cpu_profile.listener {
             out.push(JsValue::Object(listener));
@@ -1402,9 +1414,20 @@ impl<'h> Page<'h> {
             out.push(value.clone());
         }
         #[cfg(feature = "conformance")]
-        out.extend(self.state.character_roots.values().cloned().map(JsValue::String));
+        out.extend(
+            self.state
+                .character_roots
+                .values()
+                .cloned()
+                .map(JsValue::String),
+        );
         out.extend(self.state.selection.map(JsValue::Object));
-        out.extend(self.state.linked_ports.values().map(|id| JsValue::Object(*id)));
+        out.extend(
+            self.state
+                .linked_ports
+                .values()
+                .map(|id| JsValue::Object(*id)),
+        );
         out.extend(self.joining.iter().cloned());
         out.extend(self.unhandled.iter().map(|id| JsValue::Object(*id)));
         self.state.components.roots(out, &self.state.wrappers);
@@ -1596,8 +1619,22 @@ pub(in crate::v9) fn expose_window_globals(vm: &mut Vm) {
             Static::Accessor(..) => None,
         })
         .collect();
+    // ECMAScript's own value properties: NaN, Infinity and undefined are frozen on the global
+    // object, and globalThis is the object itself as a writable, configurable data property.
+    let frozen = ["NaN", "Infinity", "undefined"].map(Key::from);
+    let global_this = Key::from("globalThis");
     for (key, value, attrs) in globals {
-        vm.heap.put(GLOBAL, key, Prop { slot: Slot::Data(value), attrs });
+        let attrs = if frozen.contains(&key) { 0 } else { attrs };
+        let value = if key == global_this {
+            JsValue::Object(GLOBAL)
+        } else {
+            value
+        };
+        let prop = Prop {
+            slot: Slot::Data(value),
+            attrs,
+        };
+        vm.heap.put(GLOBAL, key, prop);
     }
 }
 

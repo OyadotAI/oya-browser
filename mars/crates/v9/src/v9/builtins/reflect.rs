@@ -160,7 +160,12 @@ fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let proto = match call.arg(1) {
         JsValue::Object(proto) => Some(proto),
         JsValue::Null => None,
-        _ => return Err(vm.type_error("Object prototype may only be an Object or null")),
+        other => {
+            let text = vm.v8_value_text(&other);
+            return Err(vm.type_error(&format!(
+                "Object prototype may only be an Object or null: {text}"
+            )));
+        }
     };
     super::integrity::set_prototype_of(vm, id, proto).map(JsValue::Boolean)
 }

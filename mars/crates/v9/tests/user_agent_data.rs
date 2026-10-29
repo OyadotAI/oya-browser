@@ -9,10 +9,16 @@ fn low_entropy_values_match_sec_ch_ua() {
         d.brands.map(b=>b.brand+'/'+b.version).join(' '),d.mobile,d.platform,JSON.stringify(d.toJSON().platform)].join('|');";
     let expected = format!(
         "true|Chromium/{major} Not?A_Brand/24 Google Chrome/{major}|false|macOS|\"macOS\"",
-        major = mars_v9::constants::CHROME_FULL_VERSION.split('.').next().unwrap()
+        major = mars_v9::constants::CHROME_FULL_VERSION
+            .split('.')
+            .next()
+            .unwrap()
     );
     let mut environment = common::environment();
-    environment.user_agent = format!("Mozilla/5.0 Chrome/{} Safari/537.36", mars_v9::constants::CHROME_FULL_VERSION);
+    environment.user_agent = format!(
+        "Mozilla/5.0 Chrome/{} Safari/537.36",
+        mars_v9::constants::CHROME_FULL_VERSION
+    );
     let execution = common::load_with(source, &environment);
     assert_eq!(common::failure(&execution), None);
     assert_eq!(common::global(&execution, "r"), expected);

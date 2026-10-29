@@ -793,7 +793,8 @@ impl<'a> Cascade<'a> {
 impl Cascade<'_> {
     /** Whether every `@container` query around a matched rule holds for the current element. */
     fn container_truth(&self, rule: &Rule) -> Truth {
-        let custom = |scope: usize, name: &str| self.scopes.substitute(scope, &format!("var({name})"));
+        let custom =
+            |scope: usize, name: &str| self.scopes.substitute(scope, &format!("var({name})"));
         rule.containers.iter().fold(Truth::True, |truth, query| {
             let sizes = self.sizes.as_ref();
             truth.and(query.truth(&self.ancestry, self.parent_scope, sizes, &custom))
@@ -811,7 +812,11 @@ fn ancestry(
     while let Some(index) = current {
         let node = &candidate.nodes[index];
         let scope = index + FIRST_NODE;
-        found.extend(super::container::ancestor(node.local_id, scope, &node.style));
+        found.extend(super::container::ancestor(
+            node.local_id,
+            scope,
+            &node.style,
+        ));
         current = node.parent.and_then(|id| positions.get(&id).copied());
     }
     found

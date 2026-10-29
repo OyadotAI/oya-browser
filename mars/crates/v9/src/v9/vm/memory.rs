@@ -106,7 +106,7 @@ impl Tracker {
             self.allocation(
                 bank,
                 Allocation::BigInt(words.as_ptr() as usize),
-                BytesRange::exact(words.len() * size_of::<u32>() + 2 * size_of::<usize>()),
+                BytesRange::exact(std::mem::size_of_val(words) + 2 * size_of::<usize>()),
             );
         }
     }

@@ -59,10 +59,10 @@ fn close(vm: &mut Vm, state: &State) -> Res<()> {
             None => Ok(()),
         };
     }
-    if let Some(inner) = state.inner {
-        if let Err(error) = vm.iter_close(inner) {
-            return Err(close_error(vm, state.record, error));
-        }
+    if let Some(inner) = state.inner
+        && let Err(error) = vm.iter_close(inner)
+    {
+        return Err(close_error(vm, state.record, error));
     }
     vm.iter_close(state.record)
 }

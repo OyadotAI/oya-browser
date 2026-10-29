@@ -80,7 +80,10 @@ impl Vm<'_> {
     non-configurable property the declaration cannot take over): spec steps 9 to 12 throw a
     TypeError, unlike the lexical collisions before them, which are SyntaxErrors. */
     fn undefinable_global(&mut self, name: &JsString) -> Thrown {
-        self.type_error(&format!("Cannot redefine global property '{}'", name.lossy()))
+        self.type_error(&format!(
+            "Cannot redefine global property '{}'",
+            name.lossy()
+        ))
     }
 
     /** Nonconfigurable writable globals retain their attributes; configurable accessors become ordinary data without calls. */

@@ -236,8 +236,7 @@ fn push_bytes(bytes: &[u8], out: &mut String) {
 /** Bytes the WHATWG query percent-encode set escapes: controls, space and the characters `"`, `#`,
 `<` and `>`. Everything else, such as `@`, is written as it is. */
 fn in_query_set(byte: u8) -> bool {
-    byte < QUERY_FIRST_PRINTABLE
-        || byte > QUERY_LAST_PRINTABLE
+    !(QUERY_FIRST_PRINTABLE..=QUERY_LAST_PRINTABLE).contains(&byte)
         || matches!(byte, b'"' | b'#' | b'<' | b'>')
 }
 

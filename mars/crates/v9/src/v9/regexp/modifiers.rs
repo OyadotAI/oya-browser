@@ -49,7 +49,8 @@ impl PatternParser<'_> {
         parsed
     }
 
-    /** Exact ASCII flags cannot repeat on either side of the single dash; both sides cannot be empty. */
+    /** Exact ASCII flags cannot repeat on either side of the single dash; both sides cannot be
+    empty. Each fault has V8's own wording. */
     fn modifier_flags(&mut self) -> Result<Modes, PatternError> {
         let mut effective = self.modes;
         let mut seen = 0;
@@ -60,14 +61,19 @@ impl PatternParser<'_> {
                     self.position += 1;
                     return Ok(effective);
                 }
-                Some('-') if !removing => {
+                Some(':') => return Err(invalid_flag_group()),
+                Some('-') if removing => {
+                    return Err(PatternError("Multiple dashes in flag group".into()));
+                }
+                Some('-') => {
                     removing = true;
                     self.position += 1;
                 }
                 Some(character) => {
-                    let flag = modifier_flag(character)
-                        .filter(|flag| seen & flag == 0)
-                        .ok_or_else(invalid_group)?;
+                    let flag = modifier_flag(character).ok_or_else(invalid_group)?;
+                    if seen & flag != 0 {
+                        return Err(PatternError("Repeated flag in flag group".into()));
+                    }
                     seen |= flag;
                     effective.set(flag, !removing);
                     self.position += 1;
@@ -88,9 +94,14 @@ fn modifier_flag(character: char) -> Option<u8> {
     }
 }
 
-/** Invalid modifier syntax shares the engine's existing group SyntaxError path. */
+/** A character that is no modifier flag makes the whole group V8's invalid group. */
 fn invalid_group() -> PatternError {
-    PatternError("Invalid regular expression: invalid modifier group".into())
+    PatternError("Invalid group".into())
+}
+
+/** A modifier group with no flags on either side of its dash. */
+fn invalid_flag_group() -> PatternError {
+    PatternError("Invalid flag group".into())
 }
 
 impl<'a> Matcher<'a> {

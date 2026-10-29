@@ -15,8 +15,8 @@ use crate::constants::{
     NODES, TEXT_BYTES,
 };
 use crate::protocol::{EngineError, EngineResult};
-use mars_core::dom::MetadataElement;
 use mars_core::charset::meta_name;
+use mars_core::dom::MetadataElement;
 use mars_core::http::{UTF_8, WINDOWS_1252, encoding_for_label};
 
 /** Table structure start tags HTML ignores outside a table. */

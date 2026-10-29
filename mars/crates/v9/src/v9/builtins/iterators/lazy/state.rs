@@ -116,7 +116,7 @@ impl State {
             None if done => id,
             None => return Err(invalid().into()),
         };
-        let mode = Mode::parse(&get(vm, id, "mode")).ok_or_else(|| invalid())?;
+        let mode = Mode::parse(&get(vm, id, "mode")).ok_or_else(invalid)?;
         let callback = get(vm, id, "callback");
         let counter = number(vm, id, "counter")?;
         let remaining = number(vm, id, "remaining")?;

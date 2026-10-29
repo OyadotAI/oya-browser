@@ -114,6 +114,16 @@ impl VarKind {
     pub(in crate::v9) fn resource(self) -> bool {
         matches!(self, Self::Using | Self::AwaitUsing)
     }
+    /** The declaration's keyword as source spells it, for messages that name the kind. */
+    pub(in crate::v9) fn keyword(self) -> &'static str {
+        match self {
+            Self::Var => "var",
+            Self::Let => "let",
+            Self::Const => "const",
+            Self::Using => "using",
+            Self::AwaitUsing => "await using",
+        }
+    }
 }
 
 /** One `name = value` item of a declaration. */

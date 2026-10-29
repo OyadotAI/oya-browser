@@ -12,12 +12,21 @@ static TABLE: OnceLock<Mutex<Table>> = OnceLock::new();
 
 /** Find a live canonical shared allocation without reserving or creating new backing. */
 pub(in crate::v9) fn find(value: &JsString) -> Option<JsString> {
-    if value.is_shared() { return Some(value.clone()); }
+    if value.is_shared() {
+        return Some(value.clone());
+    }
     let units = value.flat_units()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     units.hash(&mut hasher);
-    let table = TABLE.get()?.lock().unwrap_or_else(|error| error.into_inner());
-    let found = table.buckets.get(&hasher.finish())?.iter().filter_map(Weak::upgrade)
+    let table = TABLE
+        .get()?
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let found = table
+        .buckets
+        .get(&hasher.finish())?
+        .iter()
+        .filter_map(Weak::upgrade)
         .filter(|item| item.units.as_ref() == units)
         .max_by_key(|item| item.interned.load(std::sync::atomic::Ordering::Acquire))?;
     let one_byte = found.one_byte;
@@ -31,14 +40,22 @@ pub(in crate::v9) fn find_internalized(value: &JsString) -> Option<JsString> {
     let one_byte = units.iter().all(|unit| *unit <= super::LATIN1_MAX_UNIT);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     units.hash(&mut hasher);
-    let table = TABLE.get()?.lock().unwrap_or_else(|error| error.into_inner());
+    let table = TABLE
+        .get()?
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let bucket = table.buckets.get(&hasher.finish())?;
-    let found = bucket.iter().filter_map(Weak::upgrade)
+    let found = bucket
+        .iter()
+        .filter_map(Weak::upgrade)
         .find(|item| item.units.as_ref() == units && item.interned.load(Ordering::Acquire))
-        .or_else(|| bucket.iter().filter_map(Weak::upgrade).find(|item| {
-            item.units.as_ref() == units && item.one_byte == one_byte
-                && super::Storage::Shared(item.clone()).can_intern_in_place()
-        }))?;
+        .or_else(|| {
+            bucket.iter().filter_map(Weak::upgrade).find(|item| {
+                item.units.as_ref() == units
+                    && item.one_byte == one_byte
+                    && super::Storage::Shared(item.clone()).can_intern_in_place()
+            })
+        })?;
     found.interned.store(true, Ordering::Release);
     let encoding = found.one_byte;
     Some(JsString(super::Storage::Shared(found), encoding))
@@ -50,9 +67,18 @@ pub(in crate::v9) fn find_noncanonical_two_byte(value: &JsString) -> Option<JsSt
     let units = value.flat_units()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     units.hash(&mut hasher);
-    let table = TABLE.get()?.lock().unwrap_or_else(|error| error.into_inner());
-    let found = table.buckets.get(&hasher.finish())?.iter().filter_map(Weak::upgrade)
-        .find(|item| item.units.as_ref() == units && !item.one_byte && !item.interned.load(Ordering::Acquire))?;
+    let table = TABLE
+        .get()?
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let found = table
+        .buckets
+        .get(&hasher.finish())?
+        .iter()
+        .filter_map(Weak::upgrade)
+        .find(|item| {
+            item.units.as_ref() == units && !item.one_byte && !item.interned.load(Ordering::Acquire)
+        })?;
     Some(JsString(super::Storage::Shared(found), false))
 }
 
@@ -77,7 +103,9 @@ pub(in crate::v9) fn collect() {
 
 /** Intern immutable code units and preserve their actual shared allocation and provenance. */
 pub(in crate::v9) fn intern(value: &JsString) -> EngineResult<JsString> {
-    if value.is_shared() { return Ok(value.clone()); }
+    if value.is_shared() {
+        return Ok(value.clone());
+    }
     let units = value.as_units();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     units.hash(&mut hasher);
@@ -87,7 +115,11 @@ pub(in crate::v9) fn intern(value: &JsString) -> EngineResult<JsString> {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     if let Some(found) = table.buckets.get(&hash).and_then(|bucket| {
-        bucket.iter().filter_map(Weak::upgrade).filter(|item| item.units.as_ref() == units).max_by_key(|item| item.interned.load(std::sync::atomic::Ordering::Acquire))
+        bucket
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|item| item.units.as_ref() == units)
+            .max_by_key(|item| item.interned.load(std::sync::atomic::Ordering::Acquire))
     }) {
         let one_byte = found.one_byte;
         return Ok(JsString(super::Storage::Shared(found), one_byte));
@@ -104,7 +136,17 @@ pub(in crate::v9) fn intern(value: &JsString) -> EngineResult<JsString> {
     }
     let shared = match &value.0 {
         super::Storage::Shared(cell) => cell.clone(),
-        _ => Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte: value.is_latin1(), external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), read_only: false, forward: std::sync::OnceLock::new() }),
+        _ => Arc::new(super::storage::FlatData {
+            units: Arc::from(units),
+            one_byte: value.is_latin1(),
+            external: super::storage::ExternalSlot::default(),
+            old: std::sync::atomic::AtomicBool::new(true),
+            survivals: std::sync::atomic::AtomicU8::new(0),
+            id: super::Storage::next_id(),
+            interned: std::sync::atomic::AtomicBool::new(false),
+            read_only: false,
+            forward: std::sync::OnceLock::new(),
+        }),
     };
     table
         .buckets
@@ -119,19 +161,50 @@ pub(in crate::v9) fn intern(value: &JsString) -> EngineResult<JsString> {
 pub(in crate::v9) fn intern_noncanonical_two_byte(value: &JsString) -> EngineResult<JsString> {
     use std::sync::atomic::Ordering;
     let units = value.as_units();
-    if units.iter().any(|unit| *unit > super::LATIN1_MAX_UNIT) { return Err(EngineError::invalid("invalid noncanonical shared string")); }
-    let mut hasher = std::collections::hash_map::DefaultHasher::new(); units.hash(&mut hasher); let hash = hasher.finish();
-    let mut table = TABLE.get_or_init(|| Mutex::new(Table::default())).lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| bucket.iter().filter_map(Weak::upgrade).find(|item| item.units.as_ref() == units && !item.one_byte && !item.interned.load(Ordering::Acquire))) {
+    if units.iter().any(|unit| *unit > super::LATIN1_MAX_UNIT) {
+        return Err(EngineError::invalid("invalid noncanonical shared string"));
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    units.hash(&mut hasher);
+    let hash = hasher.finish();
+    let mut table = TABLE
+        .get_or_init(|| Mutex::new(Table::default()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| {
+        bucket.iter().filter_map(Weak::upgrade).find(|item| {
+            item.units.as_ref() == units && !item.one_byte && !item.interned.load(Ordering::Acquire)
+        })
+    }) {
         return Ok(JsString(super::Storage::Shared(found), false));
     }
     if table.count >= MAX_ENTRIES {
-        table.buckets.retain(|_, bucket| { bucket.retain(|entry| entry.strong_count() != 0); !bucket.is_empty() });
+        table.buckets.retain(|_, bucket| {
+            bucket.retain(|entry| entry.strong_count() != 0);
+            !bucket.is_empty()
+        });
         table.count = table.buckets.values().map(Vec::len).sum();
-        if table.count >= MAX_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_ENTRIES)); }
+        if table.count >= MAX_ENTRIES {
+            return Err(EngineError::limit("shared interned strings", MAX_ENTRIES));
+        }
     }
-    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte:false, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(false), read_only: false, forward: std::sync::OnceLock::new() });
-    table.buckets.entry(hash).or_default().push(Arc::downgrade(&shared)); table.count += 1;
+    let shared = Arc::new(super::storage::FlatData {
+        units: Arc::from(units),
+        one_byte: false,
+        external: super::storage::ExternalSlot::default(),
+        old: std::sync::atomic::AtomicBool::new(true),
+        survivals: std::sync::atomic::AtomicU8::new(0),
+        id: super::Storage::next_id(),
+        interned: std::sync::atomic::AtomicBool::new(false),
+        read_only: false,
+        forward: std::sync::OnceLock::new(),
+    });
+    table
+        .buckets
+        .entry(hash)
+        .or_default()
+        .push(Arc::downgrade(&shared));
+    table.count += 1;
     Ok(JsString(super::Storage::Shared(shared), false))
 }
 
@@ -143,22 +216,55 @@ pub(in crate::v9) fn intern_internalized(value: &JsString) -> EngineResult<JsStr
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     units.hash(&mut hasher);
     let hash = hasher.finish();
-    let mut table = TABLE.get_or_init(|| Mutex::new(Table::default())).lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| bucket.iter().filter_map(Weak::upgrade).find(|item| item.units.as_ref() == units && item.interned.load(Ordering::Acquire))) {
+    let mut table = TABLE
+        .get_or_init(|| Mutex::new(Table::default()))
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| {
+        bucket
+            .iter()
+            .filter_map(Weak::upgrade)
+            .find(|item| item.units.as_ref() == units && item.interned.load(Ordering::Acquire))
+    }) {
         let encoding = found.one_byte;
         return Ok(JsString(super::Storage::Shared(found), encoding));
     }
-    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| bucket.iter().filter_map(Weak::upgrade).find(|item| item.units.as_ref() == units && item.one_byte == one_byte && super::Storage::Shared(item.clone()).can_intern_in_place())) {
+    if let Some(found) = table.buckets.get(&hash).and_then(|bucket| {
+        bucket.iter().filter_map(Weak::upgrade).find(|item| {
+            item.units.as_ref() == units
+                && item.one_byte == one_byte
+                && super::Storage::Shared(item.clone()).can_intern_in_place()
+        })
+    }) {
         found.interned.store(true, Ordering::Release);
         return Ok(JsString(super::Storage::Shared(found), one_byte));
     }
     if table.count >= MAX_ENTRIES {
-        table.buckets.retain(|_, bucket| { bucket.retain(|entry| entry.strong_count() != 0); !bucket.is_empty() });
+        table.buckets.retain(|_, bucket| {
+            bucket.retain(|entry| entry.strong_count() != 0);
+            !bucket.is_empty()
+        });
         table.count = table.buckets.values().map(Vec::len).sum();
-        if table.count >= MAX_ENTRIES { return Err(EngineError::limit("shared interned strings", MAX_ENTRIES)); }
+        if table.count >= MAX_ENTRIES {
+            return Err(EngineError::limit("shared interned strings", MAX_ENTRIES));
+        }
     }
-    let shared = Arc::new(super::storage::FlatData { units: Arc::from(units), one_byte, external: super::storage::ExternalSlot::default(), old: std::sync::atomic::AtomicBool::new(true), survivals: std::sync::atomic::AtomicU8::new(0), id: super::Storage::next_id(), interned: std::sync::atomic::AtomicBool::new(true), read_only: false, forward: std::sync::OnceLock::new() });
-    table.buckets.entry(hash).or_default().push(Arc::downgrade(&shared));
+    let shared = Arc::new(super::storage::FlatData {
+        units: Arc::from(units),
+        one_byte,
+        external: super::storage::ExternalSlot::default(),
+        old: std::sync::atomic::AtomicBool::new(true),
+        survivals: std::sync::atomic::AtomicU8::new(0),
+        id: super::Storage::next_id(),
+        interned: std::sync::atomic::AtomicBool::new(true),
+        read_only: false,
+        forward: std::sync::OnceLock::new(),
+    });
+    table
+        .buckets
+        .entry(hash)
+        .or_default()
+        .push(Arc::downgrade(&shared));
     table.count += 1;
     Ok(JsString(super::Storage::Shared(shared), one_byte))
 }
@@ -187,11 +293,17 @@ mod tests {
             scope.spawn(|| other.externalize().unwrap());
         });
         assert!(shared.is_external() && other.is_external());
-        let super::super::Storage::Shared(cell) = &shared.0 else { panic!("shared") };
+        let super::super::Storage::Shared(cell) = &shared.0 else {
+            panic!("shared")
+        };
         let resource = cell.external.get().unwrap();
-        assert_eq!(resource.one_byte.as_deref(), Some(b"external shared string".as_slice()));
+        assert_eq!(
+            resource.one_byte.as_deref(),
+            Some(b"external shared string".as_slice())
+        );
         assert!(shared.0.same(&other.0));
-        let restored: JsString = serde_json::from_str(&serde_json::to_string(&shared).unwrap()).unwrap();
+        let restored: JsString =
+            serde_json::from_str(&serde_json::to_string(&shared).unwrap()).unwrap();
         assert!(restored.is_shared() && restored.is_external());
         assert!(shared.0.same(&restored.0));
     }
@@ -202,9 +314,12 @@ mod tests {
         let value = JsString::from_units_two_byte(vec![65, 66]).unwrap();
         assert!(!value.is_latin1());
         value.externalize().unwrap();
-        let restored: JsString = serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
+        let restored: JsString =
+            serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
         assert!(!restored.is_latin1() && restored.is_external());
-        let super::super::Storage::Flat(cell) = &restored.0 else { panic!("flat") };
+        let super::super::Storage::Flat(cell) = &restored.0 else {
+            panic!("flat")
+        };
         assert!(cell.external.get().unwrap().one_byte.is_none());
     }
 
@@ -215,12 +330,23 @@ mod tests {
         let source = JsString::from_utf8("arena external lifetime").unwrap();
         let shared = intern(&source).unwrap();
         let arena = SharedGcArena::new().unwrap();
-        let root = arena.allocate(b"test", 0, false, vec![SharedGcValue::SharedString(shared.clone())]).unwrap();
+        let root = arena
+            .allocate(
+                b"test",
+                0,
+                false,
+                vec![SharedGcValue::SharedString(shared.clone())],
+            )
+            .unwrap();
         shared.externalize().unwrap();
-        let super::super::Storage::Shared(cell) = &shared.0 else { panic!("shared") };
+        let super::super::Storage::Shared(cell) = &shared.0 else {
+            panic!("shared")
+        };
         let weak = Arc::downgrade(cell);
         drop(shared);
-        let (SharedGcValue::SharedString(restored), _) = root.read(0).unwrap() else { panic!("field") };
+        let (SharedGcValue::SharedString(restored), _) = root.read(0).unwrap() else {
+            panic!("field")
+        };
         assert!(restored.is_external() && weak.upgrade().is_some());
         drop((restored, root));
         arena.collect();
@@ -235,12 +361,21 @@ mod tests {
         let shared = intern(&source).unwrap();
         shared.externalize().unwrap();
         let arena = SharedGcArena::new().unwrap();
-        let root = arena.allocate(b"test", 0, false, vec![SharedGcValue::SharedString(shared.clone())]).unwrap();
+        let root = arena
+            .allocate(
+                b"test",
+                0,
+                false,
+                vec![SharedGcValue::SharedString(shared.clone())],
+            )
+            .unwrap();
         let wire = serde_json::to_string(&root).unwrap();
         drop((root, shared));
         arena.collect();
         let restored: SharedGc = serde_json::from_str(&wire).unwrap();
-        let (SharedGcValue::SharedString(value), _) = restored.read(0).unwrap() else { panic!("shared field") };
+        let (SharedGcValue::SharedString(value), _) = restored.read(0).unwrap() else {
+            panic!("shared field")
+        };
         assert!(value.is_shared() && value.is_external());
         assert_eq!(value.lossy(), "external snapshot field");
     }
@@ -273,19 +408,35 @@ mod tests {
     #[test]
     fn shared_graph_snapshot_preserves_canonical_encoding_and_identity() {
         use crate::v9::vm::data::{SharedGc, SharedGcArena, SharedGcValue};
-        let source = JsString::from_units_two_byte("shared graph encoding test".encode_utf16().collect()).unwrap();
+        let source =
+            JsString::from_units_two_byte("shared graph encoding test".encode_utf16().collect())
+                .unwrap();
         let noncanonical = intern_noncanonical_two_byte(&source).unwrap();
         let canonical = intern_internalized(&noncanonical).unwrap();
         assert!(!noncanonical.same_backing(&canonical));
         let arena = SharedGcArena::new().unwrap();
-        let root = arena.allocate(b"test", 0, false, vec![SharedGcValue::SharedString(noncanonical.clone()), SharedGcValue::SharedString(canonical.clone())]).unwrap();
+        let root = arena
+            .allocate(
+                b"test",
+                0,
+                false,
+                vec![
+                    SharedGcValue::SharedString(noncanonical.clone()),
+                    SharedGcValue::SharedString(canonical.clone()),
+                ],
+            )
+            .unwrap();
         let wire = serde_json::to_string(&root).unwrap();
-        drop((root, noncanonical, canonical)); arena.collect();
+        drop((root, noncanonical, canonical));
+        arena.collect();
         let restored: SharedGc = serde_json::from_str(&wire).unwrap();
-        let (SharedGcValue::SharedString(first), _) = restored.read(0).unwrap() else { panic!("first string") };
-        let (SharedGcValue::SharedString(second), _) = restored.read(1).unwrap() else { panic!("second string") };
+        let (SharedGcValue::SharedString(first), _) = restored.read(0).unwrap() else {
+            panic!("first string")
+        };
+        let (SharedGcValue::SharedString(second), _) = restored.read(1).unwrap() else {
+            panic!("second string")
+        };
         assert!(!first.is_latin1() && second.is_latin1());
         assert!(!first.same_backing(&second));
     }
-
 }
