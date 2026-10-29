@@ -29,6 +29,8 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 #[cfg(feature = "conformance")]
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
+pub use platform::channel::PortMessage;
+pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::devtools;
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
@@ -843,6 +845,28 @@ pub enum PageEvent {
     Submit {
         /// The form's projected id.
         form: usize,
+    },
+    /// A message another document posted to this window (`postMessage`): `message` fires at
+    /// the window with the data, the sender's origin and its proxy as `source`.
+    Message {
+        /// The data as it crossed.
+        data: platform::messaging::MessageData,
+        /// The sender's serialized origin.
+        origin: String,
+        /// The sender: `PARENT` for the embedding page, or the iframe it runs in.
+        #[serde(default)]
+        source: Option<i64>,
+        /// Links of the MessagePorts sent with it; each arrives as a port in `event.ports`.
+        #[serde(default)]
+        ports: Vec<u64>,
+    },
+    /// A message posted on the far end of a port linked into this document: `message` fires at
+    /// the port bound to `link`.
+    PortMessage {
+        /// The channel link.
+        link: u64,
+        /// The data as it crossed.
+        data: platform::messaging::MessageData,
     },
 }
 
@@ -1726,6 +1750,24 @@ fn page_event_with(
                 hash_changed,
             } => pop_state(&mut vm, state.as_deref(), hash_changed)?,
             PageEvent::Submit { form } => submit_event(&mut vm, form)?,
+            PageEvent::Message {
+                data,
+                origin,
+                source,
+                ports,
+            } => {
+                vm.remaining = vm.limits.operations;
+                let received =
+                    platform::messaging::receive(&mut vm, &data, &origin, source, &ports)
+                        .and_then(|_| vm.drain_jobs());
+                report_thrown(&mut vm, received)?;
+            }
+            PageEvent::PortMessage { link, data } => {
+                vm.remaining = vm.limits.operations;
+                let received = platform::messaging::receive_on_port(&mut vm, link, &data)
+                    .and_then(|_| vm.drain_jobs());
+                report_thrown(&mut vm, received)?;
+            }
         }
         finish(vm)
     }

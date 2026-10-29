@@ -191,7 +191,8 @@ pub struct WebResponse {
     pub disposition: Option<String>,
     /// A script request's response headers (lowercase, repeats joined, at most
     /// SCRIPT_RESPONSE_HEADERS), for the coordinator's CORS check and filtering. Set-Cookie and
-    /// Set-Cookie2 are never among them; other requests carry none.
+    /// Set-Cookie2 are never among them. A document carries only X-Frame-Options and
+    /// Content-Security-Policy, for the framing check; other requests carry none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<(String, String)>,
 }

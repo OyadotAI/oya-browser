@@ -57,9 +57,8 @@ pub(in crate::v9) fn default_view_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
-        "window" | "self" | "globalThis" | "frames" | "top" | "parent" => {
-            JsValue::Object(vm.global_object())
-        }
+        "window" | "self" | "globalThis" | "frames" => JsValue::Object(vm.global_object()),
+        "top" | "parent" => return super::messaging::parent(vm),
         "document" => JsValue::Object(realm().ids.document),
         "location" => JsValue::Object(realm().ids.location),
         "innerWidth" | "outerWidth" => JsValue::Number(environment.viewport_width),
@@ -83,7 +82,7 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .page
             .current_event
             .map_or(JsValue::Undefined, JsValue::Object),
-        "name" => JsValue::string("")?,
+        "name" => JsValue::string(&environment.window_name)?,
         "localStorage" => storage_object(vm, true)?,
         "sessionStorage" => storage_object(vm, false)?,
         _ => JsValue::Undefined,
@@ -765,27 +764,7 @@ pub(in crate::v9) fn window_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Object(id))
         }
         "getSelection" => super::range::selection(vm),
-        "postMessage" => {
-            let data = call.arg(0);
-            let event = super::events::create_event(vm, "message", false, false)?;
-            if let JsValue::Object(id) = event {
-                vm.put(id, "data", data)?;
-                vm.put(
-                    id,
-                    "origin",
-                    JsValue::string(
-                        &super::net::parse_url(&vm.page.state.href)
-                            .map(|u| u.origin().ascii_serialization())
-                            .unwrap_or_default(),
-                    )?,
-                )?;
-                vm.put(id, "source", JsValue::Object(vm.global_object()))?;
-                let dispatcher = JsValue::Object(realm().ids.fields_dummy);
-                let _ = dispatcher;
-                super::events::dispatch(vm, super::Target::Window, id)?;
-            }
-            Ok(JsValue::Undefined)
-        }
+        "postMessage" => super::messaging::post_to_self(vm, &call),
         "randomUUID" => {
             let text = random_uuid().map_err(crate::v9::vm::Thrown::Fatal)?;
             JsValue::string(&text).map_err(Into::into)

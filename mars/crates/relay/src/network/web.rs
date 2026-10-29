@@ -435,13 +435,21 @@ fn finish(
             .get("content-disposition")
             .filter(|_| download)
             .cloned(),
-        headers: if request.destination == Destination::Empty {
-            super::cors::response_headers(&headers)
-        } else {
-            Vec::new()
+        headers: match request.destination {
+            Destination::Empty => super::cors::response_headers(&headers),
+            // A document keeps the headers that say who may frame it, for the coordinator's
+            // check before it embeds the document in another origin's page.
+            Destination::Document => FRAMING_HEADERS
+                .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
+            _ => Vec::new(),
         },
     })
 }
+
+/// Response headers a document carries to the coordinator: who may frame it.
+const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
 
 /**
  * Whether a response is a file to save rather than a page: only a top-level GET, and only when the

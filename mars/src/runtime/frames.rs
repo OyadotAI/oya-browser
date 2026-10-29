@@ -7,8 +7,10 @@
  * content box, the frame's viewport for `vw`, `vh` and media queries, and Eye splices the result
  * into the page's display under the frame's clip, layer and identity range.
  *
- * Embedded documents run no script and take no input: Mars has no nested browsing contexts, so
- * a page's scripts never reach a frame's document. FRAME_COUNT frames per page, FRAME_DEPTH
+ * An iframe whose `src` is another origin's document is that document's own page
+ * (`frame_pages`): its scripts run in their own realm and talk to the embedder by postMessage.
+ * Other embedded documents run no script, and a same-origin one is reachable from the page's
+ * scripts as its contentDocument. None takes input yet. FRAME_COUNT frames per page, FRAME_DEPTH
  * levels of nesting and FRAME_BYTES_TOTAL source bytes bound the work; a frame past them, or
  * one that fails to load, stays an empty box (an object or embed shows its fallback).
  */
@@ -38,7 +40,7 @@ const FRAME_ID_SHIFT: u32 = 32;
 /// the frame's real content box: HTML's default 300 by 150 frame.
 const DEFAULT_VIEWPORT: (f64, f64) = (300.0, 150.0);
 /// The only HTTP status whose body is the embedded document.
-const HTTP_OK: u16 = 200;
+pub(super) const HTTP_OK: u16 = 200;
 /// Frame answers a page keeps in its environment, one per distinct URL its scripts asked for.
 const SCRIPT_FRAME_ANSWERS: usize = 256;
 
@@ -57,7 +59,65 @@ pub(super) struct Frame {
     id_base: usize,
     /// Frames inside it.
     frames: Vec<Frame>,
+    /// The frame's own page when its document runs scripts (`frame_pages`); `document` and
+    /// `sheets` then follow that page's after every step.
+    pub(super) page: Option<Box<Page>>,
 }
+
+/** What a frame's own page takes from its embedder: the embedder's origin (its `parent`), the
+frame's `name` (its `window.name`) and a script identity of its own, so V9 keeps its state apart
+from the embedder's. */
+pub(super) struct Embedding {
+    pub origin: String,
+    pub name: String,
+    pub identity: String,
+}
+impl Frame {
+    /** The frame of iframe `owner` showing its own `page`, the page's images added to `images`
+    under the frame's identity range. */
+    pub(super) fn of_page(
+        owner: usize,
+        page: Page,
+        id_base: usize,
+        images: &mut BTreeMap<usize, ImageAsset>,
+    ) -> Self {
+        images.extend(page.images.iter().map(|(id, asset)| (id + id_base, asset.clone())));
+        Self {
+            owner,
+            document: page.document.clone(),
+            url: url::Url::parse(&page.url).ok().unwrap_or_else(blank),
+            sheets: page.resolved_stylesheets.clone(),
+            id_base,
+            frames: Vec::new(),
+            page: Some(Box::new(page)),
+        }
+    }
+    /** Takes the document, sheets and images its page has now, replacing the frame's images. */
+    pub(super) fn follow_page(&mut self, images: &mut BTreeMap<usize, ImageAsset>) {
+        let Some(page) = &self.page else {
+            return;
+        };
+        self.document.clone_from(&page.document);
+        self.sheets.clone_from(&page.resolved_stylesheets);
+        let range = self.id_base..self.id_base + (1 << FRAME_ID_SHIFT);
+        images.retain(|id, _| !range.contains(id));
+        images.extend(page.images.iter().map(|(id, asset)| (id + self.id_base, asset.clone())));
+    }
+    /** The iframe element this frame shows in. */
+    pub(super) fn owner(&self) -> usize {
+        self.owner
+    }
+    /** The first identity past this frame's range, where a frame added later may start. */
+    pub(super) fn id_end(&self) -> usize {
+        self.id_base + (1 << FRAME_ID_SHIFT)
+    }
+}
+
+/** about:blank, for a frame page whose address no longer parses. */
+fn blank() -> url::Url {
+    url::Url::parse("about:blank").expect("about:blank parses")
+}
+
 /** A page's frames, shared by every copy of the page. */
 pub(super) type Frames = Arc<Vec<Frame>>;
 
@@ -153,6 +213,20 @@ impl Runtime {
             }
             allowance.count += 1;
             let id_base = allowance.count << FRAME_ID_SHIFT;
+            if depth == 0
+                && let Source::Address(address, None) = &source
+                && document.nodes[index].tag == "iframe"
+            {
+                let owner = document.nodes[index].local_id;
+                let attributes = document.nodes[index].attributes.clone();
+                let opened =
+                    self.frame_page(owner, address, &attributes, base, id_base, deadline, images)?;
+                if let Some(frame) = opened {
+                    document.nodes[index].embedded = true;
+                    frames.push(frame);
+                    continue;
+                }
+            }
             let node = &mut document.nodes[index];
             let Some((content, script)) = self.frame_content(source, base, deadline, allowance)?
             else {
@@ -234,6 +308,7 @@ impl Runtime {
             sheets,
             id_base,
             frames: Vec::new(),
+            page: None,
         })
     }
     /** What one frame source shows, with the document scripts may reach when the frame is
@@ -443,23 +518,28 @@ impl Runtime {
     /**
      * Answers the frame documents a V9 step asked for, recording each answer in the page's
      * environment so the next step's `load` event can fire. `give_up` (the module rounds ran out)
-     * or the deadline refuses everything that is still pending.
+     * or the deadline refuses everything that is still pending. A refused frame of another
+     * origin then loads as a page of its own (`attach_frame_pages`); returns whether one did.
      */
     pub(super) fn fetch_frames(
         &mut self,
         page: &mut Page,
         deadline: Instant,
         give_up: bool,
-    ) -> EngineResult<()> {
+    ) -> EngineResult<bool> {
         let requests = std::mem::take(&mut page.scripting.modules.frame_requests);
+        let mut others = Vec::new();
         for request in requests {
             let answer = self.answer_frame(page, &request.url, deadline, give_up)?;
+            if answer.source.is_none() && !give_up {
+                others.push(request.url.clone());
+            }
             page.scripting
                 .environment
                 .frame_documents
                 .insert(request.url, answer);
         }
-        Ok(())
+        self.attach_frame_pages(page, &others, deadline)
     }
     /** The answer to one frame request: a same-origin document of a type Mars parses, within the
     page's frame bytes, or a refusal. The frame is never fetched cross-origin. */

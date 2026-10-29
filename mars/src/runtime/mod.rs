@@ -13,6 +13,8 @@ mod devtools;
 /** Saving files fetched through the governed network path. */
 pub mod downloads;
 mod exif;
+mod frame_pages;
+mod framing;
 mod frames;
 /** Committed pages the person visited and address-field completion. */
 pub mod history;

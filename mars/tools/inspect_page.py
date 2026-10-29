@@ -9,7 +9,7 @@ import json, subprocess, sys, time, threading
 url, wait = sys.argv[1], float(sys.argv[2])
 out_png = sys.argv[3] if len(sys.argv) > 3 else __file__.rsplit('/', 1)[0] + '/shot.png'
 import pathlib
-M = str(pathlib.Path(__file__).resolve().parents[1] / 'mars/dist/Mars.app/Contents/MacOS/mars')
+M = str(pathlib.Path(__file__).resolve().parents[1] / 'dist/Mars.app/Contents/MacOS/mars')
 p = subprocess.Popen([M, 'desktop', '--agent', '--agent-control', '--ephemeral', '--url', url], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 replies = {}
 def reader():
