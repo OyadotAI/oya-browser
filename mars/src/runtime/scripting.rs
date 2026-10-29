@@ -118,6 +118,12 @@ pub(super) struct Scripting {
     pub scroll_y: Option<f64>,
     /// The horizontal document scroll offset the page's scripts asked for, not yet adopted.
     pub scroll_x: Option<f64>,
+    /// Messages the page's scripts posted to its parent or its frames, not yet delivered.
+    pub outbox: Vec<crate::v9::FrameMessage>,
+    /// Messages its scripts posted on ports linked to other documents, not yet delivered.
+    pub port_outbox: Vec<crate::v9::PortMessage>,
+    /// Which frame (by iframe identity) each port link of this page leads to.
+    pub port_links: std::collections::BTreeMap<u64, usize>,
 }
 
 /// What a step changed that may need images: the first node identity its insertions took, and
@@ -204,6 +210,9 @@ impl Default for Scripting {
             key_default: false,
             scroll_y: None,
             scroll_x: None,
+            outbox: Vec::new(),
+            port_outbox: Vec::new(),
+            port_links: Default::default(),
         }
     }
 }
@@ -216,7 +225,7 @@ impl Scripting {
         self.last_tick = now;
     }
     /** Whether the page has script work waiting. */
-    fn pending(&self) -> bool {
+    pub(super) fn pending(&self) -> bool {
         self.loaded
             && (self.scroll_pending
                 || self.next_timer_ms.is_some()
@@ -360,7 +369,7 @@ impl Runtime {
             state_token,
             storage,
             failed,
-            effects,
+            mut effects,
             module_requests,
             script_requests,
             frame_requests,
@@ -403,6 +412,8 @@ impl Runtime {
             scripting.navigation = effects.navigation;
         }
         record_console(scripting, effects.console, effects.console_dropped);
+        scripting.outbox.append(&mut effects.messages);
+        scripting.port_outbox.append(&mut effects.port_messages);
         // A scrolled container repaints like a changed document, as Blink scrolls on assignment.
         changed |= !effects.element_scroll.is_empty();
         page.element_scroll.extend(effects.element_scroll);
@@ -743,6 +754,7 @@ impl Runtime {
         yield_now: &mut dyn FnMut() -> bool,
     ) -> EngineResult<bool> {
         let mut changed = false;
+        let advance_ms = (virtual_end - page.scripting.clock_ms).max(0.0);
         for step in 0..SETTLE_STEPS {
             if Instant::now() >= until || !page.scripting.loaded || (step > 0 && yield_now()) {
                 break;
@@ -792,6 +804,7 @@ impl Runtime {
             }
         }
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
+        changed |= self.run_frame_pages(page, until, advance_ms)?;
         Ok(changed)
     }
 
@@ -894,7 +907,7 @@ impl Runtime {
     pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
         let now = Instant::now();
         let due = self.page.as_ref().is_some_and(|page| {
-            page.scripting.pending()
+            (page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
                 && now >= page.scripting.last_tick + TICK_INTERVAL.max(page.scripting.tick_cost)
         });

@@ -2840,6 +2840,22 @@ fn argument_nodes(vm: &mut Vm, call: &Call) -> Res<Vec<usize>> {
 ParentNode and ChildNode steps: the nodes are validated first, then moved out of wherever they
 were (as "convert nodes into a node" does with its fragment), then inserted together at a
 point found among the siblings that are not being moved. */
+/** replaceChildren on an element whose parsed text sits on the element itself (no text node
+child) clears that text first, as `textContent = ''` does; otherwise the old label stays and the
+new one is painted after it (Google's app launcher showed "MapsMaps"). A node being moved in
+from inside the element keeps it from clearing, since clearing would detach it. */
+fn clear_own_text(vm: &mut Vm, node: usize, moved: &[usize]) -> Res<()> {
+    let own = vm.page.view(node).and_then(|view| view.text).unwrap_or_default();
+    if own.is_empty() || !vm.page.is_element(node) {
+        return Ok(());
+    }
+    let inside = vm.page.descendants(node);
+    if moved.iter().any(|child| inside.contains(child)) {
+        return Ok(());
+    }
+    vm.page.set_text(node, "").map_err(|error| dom_error(vm, error))
+}
+
 fn mutate(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     let name = native_name(call);
     let nodes = argument_nodes(vm, call)?;
@@ -2894,6 +2910,7 @@ fn mutate(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
         }
         "after" | "replaceWith" => next,
         _ => {
+            clear_own_text(vm, node, &nodes)?;
             for child in traverse_children(vm, node) {
                 if !nodes.contains(&child) {
                     remove_node(vm, child)?;

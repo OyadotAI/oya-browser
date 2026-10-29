@@ -8,7 +8,8 @@ pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 mod chrome_env;
-mod channel;
+pub(in crate::v9) mod messaging;
+pub(in crate::v9) mod channel;
 pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;
 mod console;
@@ -297,6 +298,13 @@ pub struct PageEnvironment {
     /// refusal, so the frame's load event still fires with no document.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub frame_documents: BTreeMap<String, FrameDocument>,
+    /// The origin of the page embedding this document when it runs in a frame: `parent` and
+    /// `top` are then that page's proxy. None for a top-level page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedder_origin: Option<String>,
+    /// `window.name`: a frame's `name` attribute, which frame protocols pass settings in.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub window_name: String,
     /// The `<html>` element's own attributes, which the document engine keeps apart from its
     /// nodes; `document.documentElement` shows them under what scripts set since.
     pub html_attributes: BTreeMap<String, String>,
@@ -585,6 +593,8 @@ impl Default for PageEnvironment {
             script_attributes: Vec::new(),
             metadata: Vec::new(),
             frame_documents: BTreeMap::new(),
+            embedder_origin: None,
+            window_name: String::new(),
             html_attributes: BTreeMap::new(),
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
@@ -893,6 +903,13 @@ pub struct HostEffects {
     /// The horizontal document scroll offset a script scrolled the viewport to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scroll_x: Option<f64>,
+    /// Messages scripts posted to windows in other documents (the embedding page or a frame),
+    /// in order, for the app to deliver.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<messaging::FrameMessage>,
+    /// Messages posted on MessagePorts whose peers live in other documents, in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub port_messages: Vec<channel::PortMessage>,
 }
 
 /** A scheduled callback. */
@@ -1152,6 +1169,13 @@ pub(in crate::v9) struct PageState {
     pub frames: BTreeMap<usize, usize>,
     /** Each iframe's contentWindow object. */
     pub frame_windows: BTreeMap<usize, ObjectId>,
+    /** Proxies for windows in other documents, by target (`messaging::PARENT` or an iframe). */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub remote_windows: BTreeMap<i64, ObjectId>,
+    /** MessagePorts linked to ports in other documents, by link; kept alive while linked, as
+    an entangled port is, so a message across the link still finds its handler. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub linked_ports: BTreeMap<u64, ObjectId>,
     /** The reverse of `frames`: the iframe a frame document belongs to, so defaultView finds
     the frame's window without scanning every frame. */
     pub document_frames: BTreeMap<usize, usize>,
@@ -1380,6 +1404,7 @@ impl<'h> Page<'h> {
         #[cfg(feature = "conformance")]
         out.extend(self.state.character_roots.values().cloned().map(JsValue::String));
         out.extend(self.state.selection.map(JsValue::Object));
+        out.extend(self.state.linked_ports.values().map(|id| JsValue::Object(*id)));
         out.extend(self.joining.iter().cloned());
         out.extend(self.unhandled.iter().map(|id| JsValue::Object(*id)));
         self.state.components.roots(out, &self.state.wrappers);
@@ -1391,6 +1416,7 @@ impl<'h> Page<'h> {
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
         self.state.attr_wrappers.retain(|_, id| live.contains(id));
+        messaging::sweep(&mut self.state.remote_windows, live);
         for by_attribute in self.state.token_lists.values_mut() {
             by_attribute.retain(|_, id| live.contains(id));
         }

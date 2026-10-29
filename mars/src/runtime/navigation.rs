@@ -360,18 +360,20 @@ impl Runtime {
         }
         let post = acquired.method == Method::Post;
         self.prefetched.clear();
-        let built = self.build_page(acquired, deadline, sensitive);
+        let built = self.build_page(acquired, deadline, sensitive, None);
         self.prefetched.clear();
         built
             .map(Some)
             .map_err(|error| if post { uncertain() } else { error })
     }
-    /** Cookie network-state commits precede document parsing, under current authority. */
-    fn build_page(
+    /** Cookie network-state commits precede document parsing, under current authority. A page
+    built for a frame (`embedding`) loads no frames of its own and paints nothing early. */
+    pub(super) fn build_page(
         &mut self,
         acquired: Acquired,
         deadline: Instant,
         sensitive: bool,
+        embedding: Option<&super::frames::Embedding>,
     ) -> EngineResult<Page> {
         // XHTML and SVG documents take Eye's XML parser, as Blink picks XMLDocumentParser.
         let xml = crate::document::xml_mime(&acquired.response.mime);
@@ -416,8 +418,12 @@ impl Runtime {
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
-        let (frames, scripted_frames) =
-            self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?;
+        let (frames, scripted_frames) = match embedding {
+            Some(_) => Default::default(),
+            None => {
+                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
+            }
+        };
         perf::record("page.frames", phase, || frames.len().to_string());
         phase = Instant::now();
         let resolved = self.resolve_scripts(
@@ -437,7 +443,10 @@ impl Runtime {
             .generation
             .checked_add(1)
             .ok_or_else(|| EngineError::limit("page generations", usize::MAX))?;
-        let script_identity = format!("{}:document-{generation}", self.active_tab_id);
+        let script_identity = match embedding {
+            Some(embedding) => embedding.identity.clone(),
+            None => format!("{}:document-{generation}", self.active_tab_id),
+        };
         let mut environment = self.page_environment(
             &acquired.response.url,
             self.referrer(&acquired.response.url),
@@ -455,6 +464,10 @@ impl Runtime {
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
             .collect();
+        if let Some(embedding) = embedding {
+            environment.embedder_origin = Some(embedding.origin.clone());
+            environment.window_name.clone_from(&embedding.name);
+        }
         let mut page = Page {
             generation,
             script_identity,
@@ -500,7 +513,11 @@ impl Runtime {
         // First paint: people see the parsed and styled page while its scripts run, as a
         // browser paints before load. The window is the only observer; agents get the page
         // once it has settled, as before.
-        if !resolved.is_empty() && self.provisional.is_some() && self.web_origins.is_some() {
+        if !resolved.is_empty()
+            && embedding.is_none()
+            && self.provisional.is_some()
+            && self.web_origins.is_some()
+        {
             self.prepare_display(&mut page)?;
             self.first_paint(&page);
             perf::record("page.first_paint", phase, String::new);

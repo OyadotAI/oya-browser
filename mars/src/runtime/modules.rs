@@ -132,7 +132,7 @@ impl Runtime {
             let give_up = round == MODULE_ROUNDS || Instant::now() >= deadline;
             self.fetch_modules(page, deadline, give_up)?;
             self.fetch_script_loads(page, deadline, give_up)?;
-            self.fetch_frames(page, deadline, give_up)?;
+            step.changed |= self.fetch_frames(page, deadline, give_up)?;
             match self.script_step(page, json!({"kind":"modules"})) {
                 Ok(next) => {
                     step.changed |= next.changed;

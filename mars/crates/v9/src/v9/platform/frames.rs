@@ -325,12 +325,27 @@ pub(in crate::v9) fn adopt(page: &mut super::Page, old: usize, new: usize) {
 /** HTMLIFrameElement's contentDocument and contentWindow. */
 pub(super) fn frame_get(vm: &mut Vm, frame: usize, name: &str) -> Res<JsValue> {
     let Some(document) = frame_document(vm, frame)? else {
+        // A frame showing another document's own browsing context answers with its proxy.
+        if name == "contentWindow" && browsing_context(vm, frame) {
+            return super::messaging::proxy(vm, frame as i64);
+        }
         return Ok(JsValue::Null);
     };
     if name == "contentDocument" {
         return wrap_document(vm, document);
     }
     content_window(vm, frame, document)
+}
+
+/** Whether the iframe loads a document of its own from `src`, which the app runs apart. */
+fn browsing_context(vm: &mut Vm, frame: usize) -> bool {
+    vm.page.tag(frame) == "iframe"
+        && vm.page.connected(frame)
+        && vm.page.attribute_value(frame, "srcdoc").is_none()
+        && vm.page.attribute_value(frame, "src").is_some_and(|src| {
+            let src = src.trim();
+            !src.is_empty() && !src.eq_ignore_ascii_case("about:blank")
+        })
 }
 
 /** The frame's window: its document, the frame element, and the page as parent and top. It shares

@@ -111,6 +111,8 @@ pub struct Runtime {
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
+    /** Pages built for frames so far, which numbers each one's script identity. */
+    pub(super) frame_pages: u64,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
@@ -483,6 +485,7 @@ impl Runtime {
             revisions: Default::default(),
             prefetched: Default::default(),
             v9_sources: Default::default(),
+            frame_pages: 0,
             provisional: None,
         };
         for (name, executable) in [

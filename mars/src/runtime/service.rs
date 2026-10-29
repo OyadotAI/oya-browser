@@ -578,7 +578,7 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
 /// Pages whose states this process keeps between steps. Each keeps only its committed state,
 /// the last step's base and that step's result, so a 25 MB heap (YouTube) never crosses the
 /// pipe and memory stays bounded; a page past the limit gets `state_missing` on its next step.
-pub(super) const RESIDENT_PAGES: usize = 4;
+pub(super) const RESIDENT_PAGES: usize = 8;
 /// The error a step gets when its base names a state this process no longer holds (it was
 /// restarted, or dropped the page); the coordinator cannot resend it, so it reloads the page.
 pub(super) const STATE_MISSING: &str = "state_missing";
@@ -689,9 +689,9 @@ fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<
     });
 }
 
-/// Distinct source lists the V9 process keeps: the current page's and one more (a tab switch or
-/// the page just left), so memory stays bounded by twice SCRIPT_TOTAL_BYTES.
-pub(super) const RESIDENT_SOURCES: usize = 2;
+/// Distinct source lists the V9 process keeps: the current page's, its frames' and the page
+/// just left, so memory stays bounded by four times SCRIPT_TOTAL_BYTES.
+pub(super) const RESIDENT_SOURCES: usize = 4;
 /// The error a step gets when its digest names sources this process no longer holds (it was
 /// restarted, or evicted them); the coordinator then sends the sources themselves.
 pub(super) const SOURCES_MISSING: &str = "sources_missing";

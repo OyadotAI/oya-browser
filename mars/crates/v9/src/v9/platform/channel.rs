@@ -1,8 +1,12 @@
 /**
  * MessageChannel: two entangled ports. A message posted on one port is delivered to the other
  * as a `message` event from a zero-delay task, which is how schedulers (React, YouTube's) yield
- * between chunks of work. Data is passed as is; V9 has one realm, so nothing needs cloning
- * across it.
+ * between chunks of work. Data is passed as is within the realm.
+ *
+ * A port posted to a window in another document (`transfer`) leaves this realm: its peer stays
+ * here, linked to the port the other document receives by a channel link both share, and a
+ * message on either end leaves as an effect (`HostEffects::port_messages`) for the app to carry
+ * across, as the frame messages that carry the ports do (see `messaging`).
  */
 use super::{Target, events, timers};
 use crate::v9::value::{JsValue, ObjectId};
@@ -104,17 +108,156 @@ fn peer(vm: &Vm, port: &JsValue) -> Option<JsValue> {
     }
 }
 
-/** `port.postMessage(data)`: deliver to the peer from a task. */
+/** `port.postMessage(data)`: deliver to the peer from a task, or across its link. */
 fn post_message(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if let Some(peer) = peer(vm, &call.this) {
         timers::schedule(vm, JsValue::Object(ids().deliver), vec![peer, call.arg(0)])?;
+    } else if let Some(link) = link(vm, &call.this) {
+        let data = super::messaging::encode(vm, &call)?;
+        if vm.page.effects.port_messages.len() >= PORT_MESSAGES_PER_STEP {
+            return Err(crate::protocol::EngineError::limit(
+                "V9 port messages",
+                PORT_MESSAGES_PER_STEP,
+            )
+            .into());
+        }
+        vm.page.effects.port_messages.push(PortMessage { link, data });
     }
     Ok(JsValue::Undefined)
+}
+
+/// Messages one step may post on ports linked to other documents.
+const PORT_MESSAGES_PER_STEP: usize = 256;
+/// Ports of one page linked to other documents.
+const LINKED_PORTS: usize = 64;
+/// Link identities stay exact in a JavaScript number.
+const LINK_MASK: u64 = (1 << 53) - 1;
+
+/** A message posted on a port whose peer lives in another document. */
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortMessage {
+    /// The channel link both ends share.
+    pub link: u64,
+    /// The data, as window messages carry it.
+    pub data: super::messaging::MessageData,
+}
+
+/** The private key holding a port's link to another document. */
+fn link_key() -> Key {
+    Key::private("messageLink")
+}
+
+/** The link a port has to another document, if any. */
+fn link(vm: &Vm, port: &JsValue) -> Option<u64> {
+    match vm.heap.get(port.object()?)?.props.get(&link_key()) {
+        Some(Prop {
+            slot: Slot::Data(JsValue::Number(link)),
+            ..
+        }) => Some(*link as u64),
+        _ => None,
+    }
+}
+
+/** Gives `port` the link `link` and registers it, so messages across the link reach it. */
+fn bind(vm: &mut Vm, port: ObjectId, link: u64) -> Res<()> {
+    if vm.page.state.linked_ports.len() >= LINKED_PORTS {
+        return Err(crate::protocol::EngineError::limit("V9 linked ports", LINKED_PORTS).into());
+    }
+    vm.heap.put(
+        port,
+        link_key(),
+        Prop {
+            slot: Slot::Data(JsValue::Number(link as f64)),
+            attrs: HIDDEN_ATTRS,
+        },
+    );
+    vm.page.state.linked_ports.insert(link, port);
+    Ok(())
+}
+
+/** A fresh link identity from the operating system's random source, so links two documents
+make never collide. */
+fn new_link() -> Res<u64> {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0_u8; 8];
+    ring::rand::SystemRandom::new().fill(&mut bytes).map_err(|_| {
+        crate::protocol::EngineError::unsupported("The operating system random source is unavailable to V9.")
+    })?;
+    Ok(u64::from_le_bytes(bytes) & LINK_MASK)
+}
+
+/** Whether `value` is a MessagePort. */
+pub(in crate::v9) fn is_port(vm: &Vm, value: &JsValue) -> bool {
+    value
+        .object()
+        .and_then(|id| vm.heap.get(id))
+        .is_some_and(|object| object.proto == Some(ids().port))
+}
+
+/**
+ * Sends `port` to another document: its peer stays here linked to the link this returns, and
+ * `port` itself is detached here, as a transferred port is. A port already linked elsewhere
+ * passes its own link on.
+ */
+pub(in crate::v9) fn transfer(vm: &mut Vm, port: &JsValue) -> Res<u64> {
+    if let Some(link) = link(vm, port) {
+        vm.page.state.linked_ports.remove(&link);
+        return Ok(link);
+    }
+    let link = new_link()?;
+    if let Some(JsValue::Object(peer)) = peer(vm, port) {
+        bind(vm, peer, link)?;
+        disentangle(vm, peer);
+    }
+    if let Some(id) = port.object() {
+        disentangle(vm, id);
+    }
+    Ok(link)
+}
+
+/** A port received from another document over `link`. */
+pub(in crate::v9) fn adopt(vm: &mut Vm, link: u64) -> Res<JsValue> {
+    let port = new_port(vm)?;
+    bind(vm, port, link)?;
+    Ok(JsValue::Object(port))
+}
+
+/** Fires a message that came across `link` at the port bound to it here, if any. */
+pub(in crate::v9) fn receive(vm: &mut Vm, link: u64, data: JsValue) -> Res<()> {
+    let Some(port) = vm.page.state.linked_ports.get(&link).copied() else {
+        return Ok(());
+    };
+    let event = events::create_event(vm, "message", false, false)?;
+    let Some(id) = event.object() else {
+        return Ok(());
+    };
+    vm.put(id, "data", data)?;
+    let ports = vm.new_array(Vec::new())?;
+    vm.put(id, "ports", JsValue::Object(ports))?;
+    vm.put(id, "origin", JsValue::string("")?)?;
+    events::dispatch(vm, Target::Object(port), id)?;
+    Ok(())
+}
+
+/** Clears a port's local peer. */
+fn disentangle(vm: &mut Vm, port: ObjectId) {
+    vm.heap.put(
+        port,
+        peer_key(),
+        Prop {
+            slot: Slot::Data(JsValue::Null),
+            attrs: HIDDEN_ATTRS,
+        },
+    );
 }
 
 /** `start()` does nothing (ports deliver as soon as a handler is set); `close()` disentangles. */
 fn port_control(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if super::dom::native_name(&call) == "close" {
+        if let Some(link) = link(vm, &call.this) {
+            vm.page.state.linked_ports.remove(&link);
+        }
         for port in [Some(call.this.clone()), peer(vm, &call.this)]
             .into_iter()
             .flatten()
