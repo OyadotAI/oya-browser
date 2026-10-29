@@ -42,7 +42,8 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     let (tree_walker, node_iterator) = traversals(b);
     let (mutation_observer, mutation_record) = observers(b);
     // ProcessingInstruction is installed by platform::implementation, which gives it a prototype.
-    for name in ["CDATASection"] {
+    {
+        let name = "CDATASection";
         // Pages patch these interfaces' prototypes; V9 creates no such nodes.
         let proto = b.object(Some(b.ids.text_prototype));
         let ctor = b.constructor(name, 0, dom::illegal_constructor, proto, None);
@@ -63,7 +64,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
 /** Register methods that share one native dispatching on its name. */
 fn methods(b: &mut Builder, target: u32, names: &[&'static str], function: NativeFn) {
     for name in names {
-        b.method(target, name, 0, function);
+        b.host_method(target, name, 0, function);
     }
 }
 
@@ -100,7 +101,7 @@ fn fragments(b: &mut Builder) -> u32 {
         ],
         dom::element_method,
     );
-    b.method(proto, "getElementById", 1, shadow::fragment_method);
+    b.host_method(proto, "getElementById", 1, shadow::fragment_method);
     let ctor = b.constructor("DocumentFragment", 0, construct_fragment, proto, None);
     b.global("DocumentFragment", ctor);
     proto
@@ -188,7 +189,7 @@ fn elements(b: &mut Builder) {
         Some(template::content_set),
     );
     // A drawing context V9 cannot provide is null, as browsers answer for unavailable contexts.
-    b.method(html, "getContext", 1, |_, _| Ok(JsValue::Null));
+    b.host_method(html, "getContext", 1, |_, _| Ok(JsValue::Null));
     let ctor = b.constructor(
         "HTMLElement",
         0,
@@ -288,7 +289,7 @@ fn traversals(b: &mut Builder) -> (u32, u32) {
         &["nextNode", "previousNode"],
         traversal::iterator_method,
     );
-    b.method(iterator, "detach", 0, traversal::detach);
+    b.host_method(iterator, "detach", 0, traversal::detach);
     tag_as(b, iterator, "NodeIterator");
     let ctor = b.constructor("NodeIterator", 0, dom::illegal_constructor, iterator, None);
     b.global("NodeIterator", ctor);

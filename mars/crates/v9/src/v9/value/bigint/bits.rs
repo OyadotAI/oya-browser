@@ -170,9 +170,9 @@ fn negate_words(words: &mut [u32]) {
 }
 /** A partial top word contains only the requested low bits. */
 fn mask_last(words: &mut [u32], bits: usize) {
-    if bits % WORD_BITS != 0 {
-        if let Some(last) = words.last_mut() {
-            *last &= (1u32 << (bits % WORD_BITS)) - 1;
-        }
+    if !bits.is_multiple_of(WORD_BITS)
+        && let Some(last) = words.last_mut()
+    {
+        *last &= (1u32 << (bits % WORD_BITS)) - 1;
     }
 }

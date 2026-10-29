@@ -73,20 +73,20 @@ static PI_PROTOTYPE: OnceLock<u32> = OnceLock::new();
 implementation share this prototype. */
 pub(super) fn install_prototype(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
-    b.method(
+    b.host_method(
         proto,
         "createDocumentType",
         CREATE_DOCUMENT_TYPE_LENGTH,
         create_document_type,
     );
-    b.method(
+    b.host_method(
         proto,
         "createDocument",
         CREATE_DOCUMENT_LENGTH,
         create_document,
     );
-    b.method(proto, "createHTMLDocument", 1, dom::create_html_document);
-    b.method(proto, "hasFeature", 0, super::install::yes);
+    b.host_method(proto, "createHTMLDocument", 1, dom::create_html_document);
+    b.host_method(proto, "hasFeature", 0, super::install::yes);
     b.ids.implementation_prototype = proto;
     let page = b.object(Some(proto));
     b.ids.implementation = page;
@@ -110,7 +110,7 @@ pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.text_prototype));
     b.getter(proto, "target", target_get);
     for (name, length, method) in PI_METHODS {
-        b.method(proto, name, length, method);
+        b.host_method(proto, name, length, method);
     }
     let ctor = b.constructor(
         "ProcessingInstruction",

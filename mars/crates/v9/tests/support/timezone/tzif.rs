@@ -71,8 +71,13 @@ fn size(header: &Header, width: usize) -> usize {
         + header.standard
         + header.utc
 }
+/** The local time types as (offset seconds, is DST), and the one in force before the first transition. */
+type LocalTypes = (Vec<(i32, bool)>, (i32, bool));
+/** Transitions as (instant, offset seconds) with each one's DST flag. */
+type Transitions = (Vec<(f64, i32)>, Vec<bool>);
+
 /** Signed offsets preserve historical LMT seconds; abbreviations must name an actual NUL-terminated string. */
-fn types(bytes: &[u8], header: &Header) -> Result<(Vec<(i32, bool)>, (i32, bool)), String> {
+fn types(bytes: &[u8], header: &Header) -> Result<LocalTypes, String> {
     let start = header.times * 9;
     let names = bytes
         .get(start + header.types * 6..start + header.types * 6 + header.chars)
@@ -106,7 +111,7 @@ fn transitions(
     header: &Header,
     offsets: &[(i32, bool)],
     initial: &mut (i32, bool),
-) -> Result<(Vec<(f64, i32)>, Vec<bool>), String> {
+) -> Result<Transitions, String> {
     let mut result = Vec::with_capacity(header.times);
     let mut daylight = Vec::with_capacity(header.times);
     let mut previous = None;

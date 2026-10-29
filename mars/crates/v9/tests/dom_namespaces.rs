@@ -79,7 +79,7 @@ fn create_element_ns_puts_an_html_name_in_the_html_namespace_upper_cased() {
 fn create_element_ns_refuses_a_name_that_starts_with_a_digit() {
     let source = format!(
         "const r={};",
-        outcome(&format!("document.createElementNS(null,'1foo')"))
+        outcome("document.createElementNS(null,'1foo')")
     );
     assert_eq!(eval(&source, "r"), "InvalidCharacterError");
 }

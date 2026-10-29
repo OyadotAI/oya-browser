@@ -1,4 +1,5 @@
 /** Statement grammar: declarations, control flow, exceptions and labels. */
+use super::expr::{Cover, IMPORT_OUTSIDE_MODULE, INVALID_FOR_TARGET};
 use super::func::bound_names;
 use super::*;
 
@@ -36,11 +37,10 @@ impl Parser {
             return self.module_declaration();
         }
         if let Some(kind) = self.resource_declaration(false) {
+            // V8 reads `using` as a name here, so the binding after it is the unexpected token.
             if !list_item || !self.context.using_allowed {
-                return Err(self.error_at(
-                    self.pos(),
-                    "Resource declaration is not allowed in this context",
-                ));
+                self.next();
+                return Err(self.unexpected());
             }
             self.resource_keyword(kind)?;
             let list = self.declarations(kind, false)?;
@@ -59,10 +59,7 @@ impl Parser {
                 self.semicolon()?;
                 Ok(StmtKind::Var(VarKind::Var, list))
             }
-            "const" | "class" if !list_item => Err(self.error_at(
-                self.pos(),
-                "Lexical declaration cannot appear in a single-statement context",
-            )),
+            "const" | "class" if !list_item => Err(self.unexpected()),
             // A single statement only refuses `let [`; `let` before a new line is a name.
             "let"
                 if !list_item
@@ -145,7 +142,7 @@ impl Parser {
             "throw" => {
                 self.next();
                 if self.peek().line_terminator_before {
-                    return Err(self.unexpected());
+                    return Err(self.error_at(self.pos(), "Illegal newline after throw"));
                 }
                 let value = self.expression(false)?;
                 self.semicolon()?;
@@ -162,15 +159,18 @@ impl Parser {
                 let pos = self.pos();
                 self.next();
                 if self.strict {
-                    return Err(self.error_at(pos, "with is not allowed in strict mode"));
+                    return Err(
+                        self.error_at(pos, "Strict mode code may not include a with statement")
+                    );
                 }
                 let object = self.parenthesized()?;
                 let body = self.sub_statement(false)?;
                 Ok(StmtKind::With(object, Box::new(body)))
             }
-            "import" | "export" if !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '.')) => {
-                Err(self.unexpected())
+            "import" if !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '.')) => {
+                Err(self.error_at(self.pos(), IMPORT_OUTSIDE_MODULE))
             }
+            "export" => Err(self.unexpected()),
             _ if matches!(self.peek_at(1).kind, Kind::Symbol(':')) && self.at_identifier() => {
                 self.labeled(list_item)
             }
@@ -212,10 +212,7 @@ impl Parser {
     fn resource_keyword(&mut self, kind: VarKind) -> EngineResult<()> {
         if kind == VarKind::AwaitUsing {
             if !self.context.asynchronous || self.context.parameters {
-                return Err(self.error_at(
-                    self.pos(),
-                    "await using is only valid in async functions and modules",
-                ));
+                return Err(self.error_at(self.pos(), AWAIT_OUTSIDE_ASYNC));
             }
             self.expect_name("await")?;
         }
@@ -226,9 +223,9 @@ impl Parser {
         match &self.peek_at(1).kind {
             Kind::Symbol('[' | '{') => true,
             Kind::Name(name) => {
-                !["in", "instanceof"].contains(&name.as_str())
-                    && !(self.peek_at(1).line_terminator_before
-                        && ["in", "instanceof", "of"].contains(&name.as_str()))
+                !(["in", "instanceof"].contains(&name.as_str())
+                    || (self.peek_at(1).line_terminator_before
+                        && ["in", "instanceof", "of"].contains(&name.as_str())))
             }
             _ => false,
         }
@@ -254,14 +251,15 @@ impl Parser {
     give `if` a plain function declaration (Annex B.3.3). */
     fn sub_statement(&mut self, if_branch: bool) -> EngineResult<Stmt> {
         let async_function = self.at_async_function();
-        let function = self.at_name("function")
-            && (!if_branch
-                || self.strict
-                || matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply)));
+        let generator = self.at_name("function")
+            && matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply));
+        let function = self.at_name("function") && (!if_branch || self.strict || generator);
         if async_function || function {
+            // V8 names the generator only where Annex B would otherwise admit the function.
+            let annex_b = if_branch && !self.strict;
             return Err(self.error_at(
                 self.pos(),
-                "In strict mode code, functions can only be declared at top level or inside a block.",
+                self.single_statement_function(async_function, generator && annex_b),
             ));
         }
         let declares = if_branch && self.at_name("function");
@@ -275,6 +273,19 @@ impl Parser {
             kind: StmtKind::Block(vec![statement]),
             pos,
         })
+    }
+    /** V8's reason for a function declaration where only a statement may stand. */
+    fn single_statement_function(&self, asynchronous: bool, generator: bool) -> &'static str {
+        if asynchronous {
+            "Async functions can only be declared at the top level or inside a block."
+        } else if self.strict {
+            "In strict mode code, functions can only be declared at top level or inside a block."
+        } else if generator {
+            "Generators can only be declared at the top level or inside a block."
+        } else {
+            "In non-strict mode code, functions can only be declared at top level, inside a \
+block, or as the body of an if statement."
+        }
     }
     /** A block's (or case block's) lexical names must be unique, apart from sloppy plain
     function pairs, and no `var` in the same list may reuse one. */
@@ -306,13 +317,13 @@ impl Parser {
                     .iter()
                     .any(|(seen, merges, _)| *seen == name && !(plain && *merges));
                 if clash {
-                    return Err(self.error_at(stmt.pos, "Identifier has already been declared"));
+                    return Err(self.error_at(stmt.pos, &redeclared(&name)));
                 }
                 lexical.push((name, plain, stmt.pos));
             }
         }
         match lexical.iter().find(|(name, _, _)| vars.contains(name)) {
-            Some((_, _, pos)) => Err(self.error_at(*pos, "Identifier has already been declared")),
+            Some((name, _, pos)) => Err(self.error_at(*pos, &redeclared(name))),
             None => Ok(()),
         }
     }
@@ -340,15 +351,15 @@ impl Parser {
             }
             if kind != VarKind::Var {
                 bound_names(&target, &mut names);
+                if names.iter().any(|n| &**n == "let") {
+                    return Err(self.error_at(pos, "let is disallowed as a lexically bound name"));
+                }
                 let duplicate = names
                     .iter()
                     .enumerate()
-                    .any(|(i, n)| names[..i].contains(n));
-                if duplicate || names.iter().any(|n| &**n == "let") {
-                    return Err(self.error_at(
-                        pos,
-                        "let is disallowed as a lexically bound name, and names may not repeat",
-                    ));
+                    .find(|(i, n)| names[..*i].contains(n));
+                if let Some((_, name)) = duplicate {
+                    return Err(self.error_at(pos, &redeclared(name)));
                 }
             }
             let init = if self.eat("=") {
@@ -359,10 +370,7 @@ impl Parser {
                 Some(value)
             } else {
                 if !for_head && (kind.immutable() || !matches!(target, Pattern::Ident(..))) {
-                    return Err(self.error_at(
-                        self.pos(),
-                        "Missing initializer in destructuring or const declaration",
-                    ));
+                    return Err(self.error_at(self.pos(), &missing_initializer(kind, &target)));
                 }
                 None
             };
@@ -371,6 +379,10 @@ impl Parser {
                 return Ok(list);
             }
         }
+    }
+    /** V8's reason for a `for await` outside async code: `await` is just an unexpected word. */
+    fn for_await_outside_async(&self) -> EngineError {
+        self.unexpected()
     }
     /** `( expression )` */
     fn parenthesized(&mut self) -> EngineResult<Expr> {
@@ -403,13 +415,10 @@ impl Parser {
     /** C-style, for-in, for-of and for-await loops. */
     fn for_statement(&mut self) -> EngineResult<StmtKind> {
         self.next();
-        let is_await = self.eat_name("await");
-        if is_await && !self.context.asynchronous {
-            return Err(self.error_at(
-                self.pos(),
-                "for await is only valid in async functions and modules",
-            ));
+        if self.at_name("await") && !self.context.asynchronous {
+            return Err(self.for_await_outside_async());
         }
+        let is_await = self.eat_name("await");
         self.expect("(")?;
         let init = if self.at(";") {
             None
@@ -430,7 +439,17 @@ impl Parser {
                 }
             };
             let list = self.declarations(kind, true)?;
-            if list.len() == 1 && (self.at_name("in") || self.at_name("of")) {
+            let each = self.at_name("in") || self.at_name("of");
+            if each && list.len() > 1 {
+                return Err(self.error_at(
+                    self.pos(),
+                    &format!(
+                        "Invalid left-hand side in {} loop: Must have a single binding.",
+                        self.loop_kind()
+                    ),
+                ));
+            }
+            if each {
                 let declarator = list.into_iter().next().expect("one declarator");
                 // Only sloppy `for (var x = init in ...)` keeps an initializer (Annex B.3.5).
                 let legacy = self.at_name("in")
@@ -440,7 +459,10 @@ impl Parser {
                 if declarator.init.is_some() && !legacy {
                     return Err(self.error_at(
                         self.pos(),
-                        "for-in/of loop variable declaration may not have an initializer.",
+                        &format!(
+                            "{} loop variable declaration may not have an initializer.",
+                            self.loop_kind()
+                        ),
                     ));
                 }
                 let assign = match (&declarator.target, declarator.init) {
@@ -472,35 +494,28 @@ impl Parser {
             }
             // Only a for-in/of head may omit initializers; a plain for head follows the
             // ordinary declaration rule.
-            if list.iter().any(|declarator| {
+            let missing = list.iter().find(|declarator| {
                 declarator.init.is_none()
                     && (kind.immutable() || !matches!(declarator.target, Pattern::Ident(..)))
-            }) {
-                return Err(self.error_at(
-                    self.pos(),
-                    "Missing initializer in destructuring or const declaration",
-                ));
+            });
+            if let Some(declarator) = missing {
+                return Err(
+                    self.error_at(self.pos(), &missing_initializer(kind, &declarator.target))
+                );
             }
             Some(ForInit::Declare(kind, list))
         } else {
             let start = self.position;
             let value = self.expression(true)?;
-            if self.at_name("of")
-                && !(!is_await
-                    && matches!(&value.kind, ExprKind::Ident(n) if &**n == "async")
-                    && self.position == start + 1)
-                || self.at_name("in")
-            {
-                if matches!(value.kind, ExprKind::Assign(..)) {
-                    return Err(self.error_at(value.pos, "Invalid left-hand side in for-in loop"));
-                }
-                let target = self.legacy_target(value)?;
+            if self.at_name("of") || self.at_name("in") {
+                self.check_for_each_head(&value, start, is_await)?;
+                let target = self.legacy_target_as(value, Cover::ForEach)?;
                 return self.for_each(ForHead::Target(target), is_await);
             }
             Some(ForInit::Expr(value))
         };
         if is_await {
-            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+            return Err(self.unexpected());
         }
         self.expect(";")?;
         let test = if self.at(";") {
@@ -523,17 +538,49 @@ impl Parser {
             body: Box::new(body),
         })
     }
+    /** "for-in" or "for-of", by the keyword at the cursor, for V8's loop-specific wording. */
+    fn loop_kind(&self) -> &'static str {
+        if self.at_name("of") {
+            "for-of"
+        } else {
+            "for-in"
+        }
+    }
+    /** An expression head of a for-in/of loop: an assignment is no target, a for-of head may
+    not start with `let` (that would have been a declaration) nor be the bare name `async`. */
+    fn check_for_each_head(&self, value: &Expr, start: usize, is_await: bool) -> EngineResult<()> {
+        if matches!(value.kind, ExprKind::Assign(..)) {
+            return Err(self.error_at(value.pos, INVALID_FOR_TARGET));
+        }
+        if !self.at_name("of") {
+            return Ok(());
+        }
+        let first = &self.tokens[start];
+        if !first.escaped && matches!(&first.kind, Kind::Name(name) if name == "let") {
+            return Err(self.error_at(
+                value.pos,
+                "The left-hand side of a for-of loop may not start with 'let'.",
+            ));
+        }
+        let bare_async = !is_await
+            && matches!(&value.kind, ExprKind::Ident(n) if &**n == "async")
+            && self.position == start + 1;
+        if bare_async {
+            return Err(self.error_at(
+                value.pos,
+                "The left-hand side of a for-of loop may not be 'async'.",
+            ));
+        }
+        Ok(())
+    }
     /** The rest of a for-in or for-of loop after its head. */
     fn for_each(&mut self, head: ForHead, is_await: bool) -> EngineResult<StmtKind> {
         let of = self.at_name("of");
         if is_await && !of {
-            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+            return Err(self.unexpected());
         }
         if !of && matches!(head, ForHead::Declare(kind, _) if kind.resource()) {
-            return Err(self.error_at(
-                self.pos(),
-                "Resource declarations are not allowed in for-in loops",
-            ));
+            return Err(self.error_at(self.pos(), "Invalid 'using' in for-in loop"));
         }
         self.next();
         let right = if of {
@@ -609,13 +656,12 @@ impl Parser {
         // A labelled function is sloppy Annex B grammar for a plain function only, and only
         // where a declaration may stand: never a generator or an async function.
         let body = if self.at_name("function") || self.at_async_function() {
-            if !list_item
-                || self.strict
-                || self.at_async_function()
-                || matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply))
-            {
+            let asynchronous = self.at_async_function();
+            let generator = matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply));
+            if !list_item || self.strict || asynchronous || generator {
                 self.labels.pop();
-                return Err(self.error_at(self.pos(), "In strict mode code, functions can only be declared at top level or inside a block."));
+                let reason = self.single_statement_function(asynchronous, generator && list_item);
+                return Err(self.error_at(self.pos(), reason));
             }
             self.statement(list_item)
         } else {
@@ -657,7 +703,7 @@ impl Parser {
             None
         };
         if handler.is_none() && finalizer.is_none() {
-            return Err(self.unexpected());
+            return Err(self.error_at(self.pos(), "Missing catch or finally after try"));
         }
         Ok(StmtKind::Try {
             block,
@@ -705,6 +751,16 @@ impl Parser {
         self.check_redeclarations(cases.iter().flat_map(|case| &case.body))?;
         Ok(StmtKind::Switch(discriminant, cases))
     }
+}
+
+/** V8's reason for a declaration that needs an initializer and has none: a pattern first, then
+the declaration kind by name. */
+fn missing_initializer(kind: VarKind, target: &Pattern) -> String {
+    let what = match (kind, target) {
+        (_, Pattern::Ident(..)) => kind.keyword(),
+        _ => "destructuring",
+    };
+    format!("Missing initializer in {what} declaration")
 }
 
 /** Anonymous functions and classes take the name of the binding they initialize. */

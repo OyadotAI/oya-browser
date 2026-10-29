@@ -490,9 +490,21 @@ mod tests {
     #[test]
     fn huffman_encoding_round_trips_and_matches_the_rfc() {
         // RFC 7541 C.4.1: "www.example.com" Huffman-codes to these 12 bytes.
-        assert_eq!(huffman_encode(b"www.example.com"), hex("f1e3 c2e5 f23a 6ba0 ab90 f4ff"));
-        for text in ["", "a", "custom-key", "Mozilla/5.0 (Macintosh)", "\u{0}\u{ff}"] {
-            assert_eq!(huffman_decode(&huffman_encode(text.as_bytes())).unwrap(), text.as_bytes());
+        assert_eq!(
+            huffman_encode(b"www.example.com"),
+            hex("f1e3 c2e5 f23a 6ba0 ab90 f4ff")
+        );
+        for text in [
+            "",
+            "a",
+            "custom-key",
+            "Mozilla/5.0 (Macintosh)",
+            "\u{0}\u{ff}",
+        ] {
+            assert_eq!(
+                huffman_decode(&huffman_encode(text.as_bytes())).unwrap(),
+                text.as_bytes()
+            );
         }
     }
 

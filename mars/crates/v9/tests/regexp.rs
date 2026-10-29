@@ -23,7 +23,9 @@ fn oversized_pattern_reports_its_engine_limit() {
 /** Long plain patterns use bounded literal storage and match forward and through lookbehind. */
 #[test]
 fn long_literal_runs_do_not_consume_structural_regex_nodes() {
-    let result = run("const text='a'.repeat(20000);const direct=new RegExp('^'+text+'$');const behind=/(?<=abc)d/;r=[direct.test(text),direct.test(text+'b'),behind.test('abcd')].join(',');");
+    let result = run(
+        "const text='a'.repeat(20000);const direct=new RegExp('^'+text+'$');const behind=/(?<=abc)d/;r=[direct.test(text),direct.test(text+'b'),behind.test('abcd')].join(',');",
+    );
     assert_eq!(result, "true,false,true");
 }
 
@@ -187,20 +189,26 @@ fn class_k_escape_is_an_error_only_with_named_groups() {
 #[test]
 fn global_replace_overflow_is_a_range_error() {
     let piece = mars_v9::constants::JS_STRING_UNITS / 32 + 1;
-    let result = run(&format!("const piece='b'.repeat({piece});let a,b;try{{'a'.repeat(32).replace(/a/g,piece)}}catch(e){{a=e instanceof RangeError}}try{{'a'.repeat(32).replace(/a/g,()=>piece)}}catch(e){{b=e instanceof RangeError}}r=a+','+b;"));
+    let result = run(&format!(
+        "const piece='b'.repeat({piece});let a,b;try{{'a'.repeat(32).replace(/a/g,piece)}}catch(e){{a=e instanceof RangeError}}try{{'a'.repeat(32).replace(/a/g,()=>piece)}}catch(e){{b=e instanceof RangeError}}r=a+','+b;"
+    ));
     assert_eq!(result, "true,true");
 }
 
 /** A complete interval cannot quantify an absent atom in legacy RegExp mode. */
 #[test]
 fn leading_interval_quantifier_is_invalid() {
-    let result = run("let a,b;try{new RegExp('{4,5}abc')}catch(e){a=e instanceof SyntaxError}try{new RegExp('{abc')}catch(e){b=true}r=a+','+b;");
+    let result = run(
+        "let a,b;try{new RegExp('{4,5}abc')}catch(e){a=e instanceof SyntaxError}try{new RegExp('{abc')}catch(e){b=true}r=a+','+b;",
+    );
     assert_eq!(result, "true,undefined");
 }
 
 /** An impossible non-Latin-1 continuation prunes nested loops without losing optional branches. */
 #[test]
 fn non_latin1_literals_prune_latin1_subjects() {
-    let result = run("const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/(?!(((.*)*)*x)Ā)foo/.test('foo'),/(a|(((.*)*)*x)ă|(((.*)*)*x)Ā)/.test('z'),/K/ui.test('k')].join();");
+    let result = run(
+        "const s='This is ASCII';r=[/(((.*)*)*x)Ā/.test(s),/a*Ā/.test('a'),/Ā?x/.test('x'),/Ā|x/.test('x'),/(?!(((.*)*)*x)Ā)foo/.test('foo'),/(a|(((.*)*)*x)ă|(((.*)*)*x)Ā)/.test('z'),/K/ui.test('k')].join();",
+    );
     assert_eq!(result, "false,false,true,true,true,false,true");
 }

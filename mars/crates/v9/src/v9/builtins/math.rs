@@ -4,6 +4,10 @@ use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{NativeFn, Static, string, symbol};
 
 mod exact_sum;
+mod fdlibm;
+mod glibc_trig;
+mod hyperbolic;
+mod sincostab;
 mod stable;
 mod sum;
 
@@ -87,33 +91,36 @@ macro_rules! unary {
     };
 }
 
+// Each function comes from where V8 takes it: glibc's sin and cos, V8's own fdlibm ports for
+// exp, the logarithms, cbrt, tan, tanh and the hyperbolics, and musl's fdlibm (the libm crate)
+// for the rest, which matched bit for bit on the sweep.
 unary! {
     abs => f64::abs;
-    acos => f64::acos;
-    acosh => f64::acosh;
-    asin => f64::asin;
-    asinh => f64::asinh;
-    atan => f64::atan;
-    atanh => stable::atanh;
-    cbrt => f64::cbrt;
+    acos => libm::acos;
+    acosh => hyperbolic::acosh;
+    asin => libm::asin;
+    asinh => hyperbolic::asinh;
+    atan => libm::atan;
+    atanh => hyperbolic::atanh;
+    cbrt => fdlibm::cbrt;
     ceil => f64::ceil;
-    cos => f64::cos;
-    cosh => f64::cosh;
-    exp => f64::exp;
-    expm1 => f64::exp_m1;
+    cos => glibc_trig::cos;
+    cosh => hyperbolic::cosh;
+    exp => fdlibm::exp;
+    expm1 => libm::expm1;
     floor => f64::floor;
     fround => |x| f64::from(x as f32);
-    log => f64::ln;
-    log1p => f64::ln_1p;
-    log10 => f64::log10;
-    log2 => f64::log2;
+    log => fdlibm::log;
+    log1p => libm::log1p;
+    log10 => fdlibm::log10;
+    log2 => fdlibm::log2;
     round => stable::round;
     sign => |x| if x.is_nan() || x == 0.0 { x } else { x.signum() };
-    sin => f64::sin;
-    sinh => f64::sinh;
+    sin => glibc_trig::sin;
+    sinh => hyperbolic::sinh;
     sqrt => f64::sqrt;
-    tan => f64::tan;
-    tanh => f64::tanh;
+    tan => fdlibm::tan;
+    tanh => fdlibm::tanh;
     trunc => f64::trunc;
     clz32 => |x| f64::from(crate::v9::value::to_uint32(x).leading_zeros());
 }
@@ -122,8 +129,11 @@ unary! {
 fn atan2(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let y = arg_number(vm, &call, 0)?;
     let x = arg_number(vm, &call, 1)?;
-    Ok(JsValue::Number(y.atan2(x)))
+    Ok(JsValue::Number(libm::atan2(y, x)))
 }
+
+/** A Math native paired with the f64 operation it applies to one argument. */
+type Unary = (NativeFn, fn(f64) -> f64);
 
 /** Math.pow. */
 fn pow(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -135,24 +145,47 @@ fn pow(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Recognize only genuine Math builtins and operate directly on already-converted Wasm f64 values. */
-pub(in crate::v9) fn wasm_intrinsic(vm: &Vm, function: &JsValue, args: &[JsValue]) -> Option<JsValue> {
+pub(in crate::v9) fn wasm_intrinsic(
+    vm: &Vm,
+    function: &JsValue,
+    args: &[JsValue],
+) -> Option<JsValue> {
     let id = function.object()?;
     let native = crate::v9::vm::realm::realm_for(id).native(id)?;
     if let Some(object) = vm.heap.get(id) {
         let function = object.function()?;
-        if !matches!(function.kind, crate::v9::vm::data::FunctionKind::Native { id: index, .. } if index == crate::v9::vm::realm::native_index(id)) { return None; }
+        if !matches!(function.kind, crate::v9::vm::data::FunctionKind::Native { id: index, .. } if index == crate::v9::vm::realm::native_index(id))
+        {
+            return None;
+        }
     }
-    let unary: &[(NativeFn, fn(f64) -> f64)] = &[(acos, f64::acos), (asin, f64::asin), (atan, f64::atan), (cos, f64::cos), (sin, f64::sin), (tan, f64::tan), (exp, f64::exp), (log, f64::ln), (sqrt, f64::sqrt)];
+    let unary: &[Unary] = &[
+        (acos, libm::acos),
+        (asin, libm::asin),
+        (atan, libm::atan),
+        (cos, glibc_trig::cos),
+        (sin, glibc_trig::sin),
+        (tan, fdlibm::tan),
+        (exp, fdlibm::exp),
+        (log, fdlibm::log),
+        (sqrt, f64::sqrt),
+    ];
     if let [value] = args {
         let value = value.number_value()?;
         for (builtin, operation) in unary {
-            if std::ptr::fn_addr_eq(native.function, *builtin) { return Some(JsValue::Number(operation(value))); }
+            if std::ptr::fn_addr_eq(native.function, *builtin) {
+                return Some(JsValue::Number(operation(value)));
+            }
         }
     }
     if let [a, b] = args {
         let (a, b) = (a.number_value()?, b.number_value()?);
-        if std::ptr::fn_addr_eq(native.function, atan2 as NativeFn) { return Some(JsValue::Number(a.atan2(b))); }
-        if std::ptr::fn_addr_eq(native.function, pow as NativeFn) { return Some(JsValue::Number(crate::v9::vm::run::js_power(a, b))); }
+        if std::ptr::fn_addr_eq(native.function, atan2 as NativeFn) {
+            return Some(JsValue::Number(libm::atan2(a, b)));
+        }
+        if std::ptr::fn_addr_eq(native.function, pow as NativeFn) {
+            return Some(JsValue::Number(crate::v9::vm::run::js_power(a, b)));
+        }
     }
     None
 }
@@ -191,14 +224,14 @@ fn min(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Number(result))
 }
 
-/** Scaled compensated summation avoids overflow and underflow while preserving conversion order. */
+/** Math.hypot: every argument converts first, in order, then V8's scaled sum runs. */
 fn hypot(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let numbers = call
         .args
         .iter()
         .map(|value| vm.to_number(value))
         .collect::<Res<Vec<_>>>()?;
-    Ok(JsValue::Number(stable::hypot(&numbers)))
+    Ok(JsValue::Number(hyperbolic::hypot(&numbers)))
 }
 
 /** Math.random: xorshift64* over state the page serializes, seeded by the host. */

@@ -58,7 +58,11 @@ impl Runtime {
             return Ok(None);
         };
         let web = matches!(url.scheme(), "http" | "https");
-        if !web || same_origin(base, &url) || self.web_origins.is_none() || sandboxed(attributes)
+        let same_origin_sandbox = same_origin(base, &url) && scriptable_sandbox(attributes);
+        if !web
+            || same_origin(base, &url) && !same_origin_sandbox
+            || self.web_origins.is_none()
+            || sandboxed(attributes)
         {
             return Ok(None);
         }
@@ -70,11 +74,16 @@ impl Runtime {
         let acquired = match self.acquire(request, deadline, Some(base.clone()), false, true) {
             Ok(acquired) => acquired,
             Err(error) if stops_loading(&error) => return Err(error),
-            Err(_) => return Ok(None),
+            Err(error) => {
+                super::supervisor::perf::record("frame.failed", Instant::now(), || {
+                    error.message.clone()
+                });
+                return Ok(None);
+            }
         };
         if acquired.response.status != HTTP_OK
             || acquired.response.mime != "text/html"
-            || !super::framing::may_frame(&acquired.response.headers, base)
+            || !super::framing::may_frame(&acquired.response.headers, base, &url)
         {
             return Ok(None);
         }
@@ -94,7 +103,12 @@ impl Runtime {
                 Ok(Some(Frame::of_page(owner, page, id_base, images)))
             }
             Err(error) if stops_loading(&error) => Err(error),
-            Err(_) => Ok(None),
+            Err(error) => {
+                super::supervisor::perf::record("frame.failed", Instant::now(), || {
+                    error.message.clone()
+                });
+                Ok(None)
+            }
         }
     }
 
@@ -169,7 +183,12 @@ impl Runtime {
             return Ok(false);
         }
         let mut frames = std::mem::take(&mut page.frames);
-        let result = self.exchange(page, Arc::make_mut(&mut frames).as_mut_slice(), until, advance_ms);
+        let result = self.exchange(
+            page,
+            Arc::make_mut(&mut frames).as_mut_slice(),
+            until,
+            advance_ms,
+        );
         page.frames = frames;
         result
     }
@@ -194,7 +213,10 @@ impl Runtime {
                     continue;
                 };
                 let mail = Mail {
-                    messages: outgoing.iter().filter(|m| m.target == owner as i64).collect(),
+                    messages: outgoing
+                        .iter()
+                        .filter(|m| m.target == owner as i64)
+                        .collect(),
                     ports: (port_outgoing.iter())
                         .filter(|m| page.scripting.port_links.get(&m.link) == Some(&owner))
                         .collect(),
@@ -241,7 +263,8 @@ impl Runtime {
     ) -> EngineResult<bool> {
         let mut changed = false;
         for message in mail.messages {
-            changed |= self.deliver(child, message.clone(), Some(embedder), Some(MESSAGE_PARENT))?;
+            changed |=
+                self.deliver(child, message.clone(), Some(embedder), Some(MESSAGE_PARENT))?;
         }
         for message in mail.ports {
             changed |= self.deliver_on_port(child, message.clone())?;
@@ -333,11 +356,15 @@ impl Page {
     pub(super) fn frames_pending(&self) -> bool {
         !self.scripting.outbox.is_empty()
             || !self.scripting.port_outbox.is_empty()
-            || self.frames.iter().filter_map(|f| f.page.as_ref()).any(|child| {
-                child.scripting.pending()
-                    || !child.scripting.outbox.is_empty()
-                    || !child.scripting.port_outbox.is_empty()
-            })
+            || self
+                .frames
+                .iter()
+                .filter_map(|f| f.page.as_ref())
+                .any(|child| {
+                    child.scripting.pending()
+                        || !child.scripting.outbox.is_empty()
+                        || !child.scripting.port_outbox.is_empty()
+                })
     }
 }
 
@@ -355,17 +382,31 @@ fn stop_frame_scripts(page: &mut Page, error: &EngineError) {
 
 /** Whether the iframe's `sandbox` keeps its scripts from running as Mars runs them. */
 fn sandboxed(attributes: &BTreeMap<String, String>) -> bool {
-    attributes.get("sandbox").is_some_and(|tokens| {
-        let allows = |flag: &str| tokens.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case(flag));
-        !allows("allow-scripts") || !allows("allow-same-origin")
+    attributes
+        .get("sandbox")
+        .is_some_and(|tokens| !allows_sandbox(tokens))
+}
+
+/** Whether a sandboxed same-origin iframe may execute its own scripts. */
+fn scriptable_sandbox(attributes: &BTreeMap<String, String>) -> bool {
+    attributes
+        .get("sandbox")
+        .is_some_and(|tokens| allows_sandbox(tokens))
+}
+
+/** Whether sandbox tokens preserve both script execution and the frame's origin. */
+fn allows_sandbox(tokens: &str) -> bool {
+    ["allow-scripts", "allow-same-origin"].iter().all(|flag| {
+        tokens
+            .split_ascii_whitespace()
+            .any(|token| token.eq_ignore_ascii_case(flag))
     })
 }
 
 /** The iframes of `page` whose `src` resolves to one of `urls` and that show no frame yet: their
 node index, identity and address. */
 fn unattached(page: &Page, base: &url::Url, urls: &[String]) -> Vec<(usize, usize, String)> {
-    let shown: std::collections::BTreeSet<usize> =
-        page.frames.iter().map(Frame::owner).collect();
+    let shown: std::collections::BTreeSet<usize> = page.frames.iter().map(Frame::owner).collect();
     page.document
         .nodes
         .iter()

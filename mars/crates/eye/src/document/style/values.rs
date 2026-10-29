@@ -490,7 +490,10 @@ pub(super) fn container_relative(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.match_indices("cq").any(|(at, _)| {
         let numeric = lower[..at].ends_with(|c: char| c.is_ascii_digit() || c == '.');
-        numeric && CONTAINER_UNITS.iter().any(|unit| lower[at..].starts_with(unit))
+        numeric
+            && CONTAINER_UNITS
+                .iter()
+                .any(|unit| lower[at..].starts_with(unit))
     })
 }
 thread_local! {

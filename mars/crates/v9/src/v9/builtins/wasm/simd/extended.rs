@@ -75,7 +75,7 @@ pub(super) fn run(vm: &mut Vm, op: u32, inputs: &[[u8; 16]], out: &mut [u8; 16])
             for i in 0..16 / size {
                 let x = read_float(&a, size, i);
                 let y = read_float(&inputs[1], size, i);
-                write_float(out, size, i, numeric::minimum(x, y, op % 2 == 0))
+                write_float(out, size, i, numeric::minimum(x, y, op.is_multiple_of(2)))
             }
         }
         _ => unreachable!("extended SIMD signature and executor agree"),
@@ -106,7 +106,7 @@ fn write_float(bytes: &mut [u8; 16], size: usize, index: usize, value: f64) {
 /** Saturating narrowing always interprets the wide input as signed before clamping. */
 fn narrow(op: u32, a: &[u8; 16], b: &[u8; 16], out: &mut [u8; 16]) {
     let size = if op < 0x80 { 1 } else { 2 };
-    let unsigned = op % 2 == 0;
+    let unsigned = op.is_multiple_of(2);
     let lower = if unsigned {
         0
     } else {
@@ -164,7 +164,7 @@ fn pairwise(op: u32, a: &[u8; 16], out: &mut [u8; 16]) {
     for i in 0..16 / size {
         let x = lane(a, size / 2, i * 2);
         let y = lane(a, size / 2, i * 2 + 1);
-        let result = if op % 2 == 0 {
+        let result = if op.is_multiple_of(2) {
             signed(x, size / 2) + signed(y, size / 2)
         } else {
             (x + y) as i64

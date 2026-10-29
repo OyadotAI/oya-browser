@@ -9,12 +9,19 @@ fn compact_imports_are_gated_and_expand_in_order() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     let disabled = common::load_with(source, &environment);
-    assert!(disabled.failed.is_empty(), "{:?}", common::failure(&disabled));
+    assert!(
+        disabled.failed.is_empty(),
+        "{:?}",
+        common::failure(&disabled)
+    );
     assert_eq!(common::global(&disabled, "r"), "false,false");
     environment.conformance_wasm_compact_imports = true;
     let enabled = common::load_with(source, &environment);
     assert!(enabled.failed.is_empty(), "{:?}", common::failure(&enabled));
-    assert_eq!(common::global(&enabled, "r"), "true,true,m.a:function,m.b:function,module-a-module-b");
+    assert_eq!(
+        common::global(&enabled, "r"),
+        "true,true,m.a:function,m.b:function,module-a-module-b"
+    );
 }
 
 /** Truncated grouped names are rejected before a partially expanded module escapes. */

@@ -36,7 +36,7 @@ impl Vm<'_> {
             {
                 return Ok(());
             }
-            return self.with_realm(entered, |vm| Err(vm.type_error("no access")));
+            self.with_realm(entered, |vm| Err(vm.type_error("no access")))
         }
         #[cfg(not(feature = "conformance"))]
         let _ = callee;
@@ -120,7 +120,7 @@ impl Vm<'_> {
         for (name, value) in &realm.shell_globals {
             self.heap.put(
                 id,
-                Key::from(*name),
+                Key::from(name),
                 Prop {
                     slot: Slot::Data(value.clone()),
                     attrs: HIDDEN_ATTRS,
@@ -142,7 +142,7 @@ impl Vm<'_> {
                     "queueMicrotask",
                 ]
                 .iter()
-                .any(|name| *key == Key::from(*name))
+                .any(|name| *key == Key::from(name))
                 {
                     continue;
                 }
@@ -180,8 +180,8 @@ impl Vm<'_> {
     pub(super) fn caller_realm_visible(&self, id: ObjectId) -> bool {
         #[cfg(feature = "conformance")]
         {
-            return self.realms.contexts[self.active_realm as usize].token
-                == self.realms.contexts[self.object_realm(id) as usize].token;
+            self.realms.contexts[self.active_realm as usize].token
+                == self.realms.contexts[self.object_realm(id) as usize].token
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -194,7 +194,7 @@ impl Vm<'_> {
         let count = self.globals.len();
         #[cfg(feature = "conformance")]
         {
-            return count + self.realms.bindings();
+            count + self.realms.bindings()
         }
         #[cfg(not(feature = "conformance"))]
         count
@@ -214,7 +214,7 @@ impl Vm<'_> {
         #[cfg(feature = "conformance")]
         {
             let bank = self.object_realm(id);
-            return bank == 0 || self.realms.slots.contains(&Some(bank));
+            bank == 0 || self.realms.slots.contains(&Some(bank))
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -226,12 +226,11 @@ impl Vm<'_> {
     pub(super) fn realm_identity_valid(&self, id: ObjectId) -> bool {
         #[cfg(feature = "conformance")]
         {
-            return self
-                .realms
+            self.realms
                 .contexts
                 .get(self.object_realm(id) as usize)
                 .and_then(|context| context.global)
-                .is_some();
+                .is_some()
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -268,7 +267,7 @@ impl Vm<'_> {
     pub(in crate::v9) fn object_intrinsics(&self, id: ObjectId) -> &'static super::realm::Realm {
         #[cfg(feature = "conformance")]
         {
-            return super::realm::banks::bank(self.object_realm(id));
+            super::realm::banks::bank(self.object_realm(id))
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -301,9 +300,9 @@ impl Vm<'_> {
     pub(in crate::v9) fn global_object(&self) -> ObjectId {
         #[cfg(feature = "conformance")]
         {
-            return self.realms.contexts[self.active_realm as usize]
+            self.realms.contexts[self.active_realm as usize]
                 .global
-                .unwrap_or(GLOBAL);
+                .unwrap_or(GLOBAL)
         }
         #[cfg(not(feature = "conformance"))]
         GLOBAL
@@ -312,11 +311,11 @@ impl Vm<'_> {
     pub(in crate::v9) fn object_realm(&self, id: ObjectId) -> u32 {
         #[cfg(feature = "conformance")]
         {
-            return if id >= INTRINSIC_BASE {
+            if id >= INTRINSIC_BASE {
                 super::realm::banks::owner(id)
             } else {
                 self.heap.get(id).map_or(0, |object| object.realm)
-            };
+            }
         }
         #[cfg(not(feature = "conformance"))]
         {
@@ -360,7 +359,7 @@ impl Vm<'_> {
             );
             self.active_realm = bank;
             super::realm::banks::select(bank);
-            return Ok(());
+            Ok(())
         }
         #[cfg(not(feature = "conformance"))]
         Err(EngineError::invalid("Invalid V9 realm activation.").into())

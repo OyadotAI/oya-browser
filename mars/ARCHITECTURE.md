@@ -265,7 +265,8 @@ profile-clear actions; ordinary and NDJSON windows retain confirmed profile clea
 ## Dependencies and adaptations
 
 Locked serde crates supply serialization; url supplies syntax; Rustls/ring and webpki roots
-supply verified TLS; png and jpeg-decoder validate static image resources; security-framework
+supply verified TLS (Rustls is a vendored copy, `vendor/rustls`, with one addition that shapes the
+ClientHello like Chrome's; see its `MARS.md`); png and jpeg-decoder validate static image resources; security-framework
 binds the macOS Keychain; objc2 supplies AppKit bindings; libc supplies cancellable pipe polling.
 No HTTP client, JS VM, document/render engine or browser framework dependency is used.
 The pinned ryu-js numeric primitive supplies ECMAScript number formatting; it owns no VM state.

@@ -5,6 +5,7 @@ use super::realm::realm;
 use super::{Thrown, Vm};
 use crate::protocol::{EngineError, SourceLocation};
 use crate::v9::value::{JsString, JsValue, ObjectId};
+pub(in crate::v9) mod render;
 mod trace;
 pub(in crate::v9) use trace::{CALLSITE_KEY, FRAMES_KEY, STRUCTURED_KEY};
 
@@ -29,11 +30,15 @@ impl Vm<'_> {
         let constructor = Key::constructor();
         for _ in 0..PEEK_DEPTH {
             let object = self.heap.get(id)?;
-            if !matches!(object.class, Class::Plain) { return None; }
+            if !matches!(object.class, Class::Plain) {
+                return None;
+            }
             let next = object.proto;
             if let Some(prop) = object.props.get(&constructor) {
-                let Slot::Data(JsValue::Object(ctor)) = prop.slot else { return None; };
-                if self.heap.get(ctor).and_then(|object| object.function()).is_none() { return None; }
+                let Slot::Data(JsValue::Object(ctor)) = prop.slot else {
+                    return None;
+                };
+                self.heap.get(ctor).and_then(|object| object.function())?;
                 return match self.own(ctor, &Key::from("name")).ok().flatten()?.slot {
                     Slot::Data(JsValue::String(name)) => Some(name.lossy()),
                     _ => None,
@@ -114,6 +119,10 @@ impl Vm<'_> {
     }
     /** A thrown error of a kind; allocation failures become engine errors. */
     pub fn throw(&mut self, kind: ErrorKind, message: &str) -> Thrown {
+        #[cfg(feature = "measure")]
+        if std::env::var_os("V9_TRACE_MISSING").is_some_and(|value| value == "all") {
+            eprintln!("THROW {kind:?}: {message}");
+        }
         match self.make_error(kind, message) {
             Ok(id) => Thrown::Value(JsValue::Object(id)),
             Err(error) => Thrown::Fatal(error),
@@ -267,30 +276,16 @@ impl Vm<'_> {
         if name != "MjsUnitAssertionError" && self.is_conformance_assertion(value) {
             description.push_str(" (caused by MjsUnitAssertionError)");
         }
-        if name == "MjsUnitAssertionError" {
-            if let Some(stack) = self.peek_data(*id, "stack") {
-                let lines: Vec<_> = stack.lines().rev().take(DIAGNOSTIC_FRAMES).collect();
-                for line in lines.into_iter().rev() {
-                    description.push('\n');
-                    description.push_str(line);
-                }
+        if name == "MjsUnitAssertionError"
+            && let Some(stack) = self.peek_data(*id, "stack")
+        {
+            let lines: Vec<_> = stack.lines().rev().take(DIAGNOSTIC_FRAMES).collect();
+            for line in lines.into_iter().rev() {
+                description.push('\n');
+                description.push_str(line);
             }
         }
         Some(description)
-    }
-    /** What a value is, for a message that names it (`NodeList`, `undefined`, `number`), read
-    without running page code. */
-    pub(in crate::v9) fn kind_name(&mut self, value: &JsValue) -> String {
-        match value {
-            JsValue::Object(id) => self
-                .constructor_name(*id)
-                .unwrap_or_else(|| "object".into()),
-            JsValue::Undefined => "undefined".into(),
-            JsValue::Null => "null".into(),
-            JsValue::String(_) => "string".into(),
-            JsValue::Boolean(_) => "boolean".into(),
-            _ => "value".into(),
-        }
     }
     /** The `name` of the object's `constructor`, read without running getters. */
     fn constructor_name(&mut self, mut id: ObjectId) -> Option<String> {

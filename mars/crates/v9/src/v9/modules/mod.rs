@@ -622,7 +622,7 @@ pub(in crate::v9) fn dynamic_import(
         None => Err("Failed to resolve module specifier: the page has no base URL.".into()),
     };
     let key = match resolved {
-        Ok(url) => String::from(url),
+        Ok(url) => url,
         Err(message) => return link::reject_type_error(vm, promise, &message),
     };
     if vm.module_counts().1 >= MODULES {

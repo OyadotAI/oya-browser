@@ -35,10 +35,10 @@ pub(super) fn install(b: &mut Builder) {
     let blob = b.object(Some(b.ids.object_prototype));
     b.getter(blob, "size", size);
     b.getter(blob, "type", kind);
-    b.method(blob, "slice", 0, slice);
-    b.method(blob, "text", 0, read_text);
-    b.method(blob, "arrayBuffer", 0, read_array_buffer);
-    b.method(blob, "bytes", 0, read_bytes);
+    b.host_method(blob, "slice", 0, slice);
+    b.host_method(blob, "text", 0, read_text);
+    b.host_method(blob, "arrayBuffer", 0, read_array_buffer);
+    b.host_method(blob, "bytes", 0, read_bytes);
     tag(b, blob, "Blob");
     let blob_ctor = b.constructor("Blob", 0, construct_blob, blob, None);
     b.global("Blob", blob_ctor);

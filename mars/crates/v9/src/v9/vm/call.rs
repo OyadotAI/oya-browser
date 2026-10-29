@@ -37,7 +37,10 @@ enum Behavior {
 impl Vm<'_> {
     /** Native re-entry retains a host bridge in addition to its bytecode frame. */
     pub(super) fn stack_capacity_used(&self) -> usize {
-        self.frames.len().saturating_add(self.native_depth.saturating_mul(crate::constants::VM_NATIVE_FRAME_WEIGHT))
+        self.frames.len().saturating_add(
+            self.native_depth
+                .saturating_mul(crate::constants::VM_NATIVE_FRAME_WEIGHT),
+        )
     }
 
     /** What calling this value would do, if it is callable. */
@@ -195,12 +198,14 @@ impl Vm<'_> {
         if self.stack_capacity_used() >= self.limits.frames {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
+        // A call from native code has no source text: V8 names the value by its type for a
+        // call (`number 1 is not a function`) and by its text for a construct.
         let Some(behavior) = self.behavior(&function) else {
-            let text = self.callee_text(&function);
+            let text = self.v8_callsite_text(&function);
             return Err(self.type_error(&format!("{text} is not a function")));
         };
         if construct.is_some() && !self.is_constructor(&function) {
-            let text = self.callee_text(&function);
+            let text = self.v8_value_text(&function);
             return Err(self.type_error(&format!("{text} is not a constructor")));
         }
         match behavior {
@@ -366,10 +371,13 @@ impl Vm<'_> {
             .ok_or_else(|| EngineError::invalid("Invalid V9 function code site."))?;
         let flags = code.flags;
         if flags.constructor && construct.is_none() {
-            return Err(self.type_error(&format!(
-                "Class constructor {} cannot be invoked without 'new'",
-                code.name.lossy()
-            )));
+            let name = code.name.lossy();
+            let message = if name.is_empty() {
+                "Class constructors cannot be invoked without 'new'".to_string()
+            } else {
+                format!("Class constructor {name} cannot be invoked without 'new'")
+            };
+            return Err(self.type_error(&message));
         }
         let this = if construct.is_some() {
             if flags.derived {
@@ -557,22 +565,9 @@ impl Vm<'_> {
         );
         Ok(id)
     }
-    /** A short name for error messages, without running script code. */
+    /** A value named in an error message, as V8 prints it, without running script code. */
     pub fn callee_text(&mut self, value: &JsValue) -> String {
-        match value {
-            JsValue::Undefined | JsValue::Hole => "undefined".into(),
-            JsValue::Null => "null".into(),
-            JsValue::String(_) => "a string".into(),
-            #[cfg(feature = "conformance")]
-            JsValue::Smi(_) => "a number".into(),
-            JsValue::Number(_) => "a number".into(),
-            #[cfg(feature = "conformance")]
-            JsValue::SharedNumber(_) | JsValue::LocalNumber(_) => "a number".into(),
-            JsValue::Boolean(_) => "a boolean".into(),
-            JsValue::Symbol(_) => "a symbol".into(),
-            JsValue::BigInt(_) | JsValue::BigIntWide(_) => "a bigint".into(),
-            JsValue::Object(_) => "an object".into(),
-        }
+        self.v8_value_text(value)
     }
     /** Run a just-pushed async function frame until it first awaits or finishes. */
     fn start_async(&mut self) -> Res<JsValue> {

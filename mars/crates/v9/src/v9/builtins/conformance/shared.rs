@@ -108,19 +108,35 @@ fn is_shared_struct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Shared-array instance checks follow branded prototypes across realms. */
 pub(super) fn shared_has_instance(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let Some(constructor) = call.this.object().filter(|id| vm.is_callable(&JsValue::Object(*id))) else { return Ok(JsValue::Boolean(false)); };
+    let Some(constructor) = call
+        .this
+        .object()
+        .filter(|id| vm.is_callable(&JsValue::Object(*id)))
+    else {
+        return Ok(JsValue::Boolean(false));
+    };
     let bank = vm.object_realm(constructor);
-    let shared_array = constructor == NATIVES.get().expect("shared constructors").array + bank * banks::BANK_STRIDE;
+    let shared_array = constructor
+        == NATIVES.get().expect("shared constructors").array + bank * banks::BANK_STRIDE;
     let mutex = super::mutex::constructor_id(bank) == constructor;
     let condition = super::condition::constructor_id(bank) == constructor;
-    let is_struct = vm.heap.get(constructor).is_some_and(|object| object.props.get(&Key::private(STRUCT_CONSTRUCTOR)).is_some());
+    let is_struct = vm.heap.get(constructor).is_some_and(|object| {
+        object
+            .props
+            .get(&Key::private(STRUCT_CONSTRUCTOR))
+            .is_some()
+    });
     let mut current = call.arg(0).object();
     for _ in 0..crate::v9::vm::property::CHAIN_STEPS {
         let Some(id) = current else {
             return Ok(JsValue::Boolean(false));
         };
         let struct_match = is_struct && vm.heap.get(id).and_then(|object| object.props.get(&Key::private(STRUCT_MARK))).is_some_and(|prop| matches!(&prop.slot, Slot::Data(JsValue::Object(id)) if *id == constructor));
-        if shared_array && kind(vm, id) == Some(Kind::Array) || mutex && super::mutex::is_mutex(vm, id) || condition && super::condition::is_condition(vm, id) || struct_match {
+        if shared_array && kind(vm, id) == Some(Kind::Array)
+            || mutex && super::mutex::is_mutex(vm, id)
+            || condition && super::condition::is_condition(vm, id)
+            || struct_match
+        {
             return Ok(JsValue::Boolean(true));
         }
         current = vm.proto_of(id);
@@ -151,7 +167,14 @@ fn array_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = vm.new_array(vec![JsValue::Undefined; length])?;
     vm.set_proto(id, None)?;
     mark(vm, id, ARRAY_MARK)?;
-    vm.define(id, Key::length(), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?;
+    vm.define(
+        id,
+        Key::length(),
+        crate::v9::vm::property::Descriptor {
+            writable: Some(false),
+            ..Default::default()
+        },
+    )?;
     // Shared arrays never grow: a store past the end is refused like any non-extensible array.
     crate::v9::builtins::integrity::prevent_extensions(vm, id)?;
     Ok(JsValue::Object(id))
@@ -175,7 +198,11 @@ fn struct_type_new(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let slots = vec![JsValue::Object(prototype), JsValue::Object(fields)];
     let natives = NATIVES.get().expect("installed shared intrinsics");
     let ctor = vm.native_closure(natives.instance, slots)?;
-    vm.heap.put(ctor, Key::private(STRUCT_CONSTRUCTOR), Prop::data(JsValue::Boolean(true)));
+    vm.heap.put(
+        ctor,
+        Key::private(STRUCT_CONSTRUCTOR),
+        Prop::data(JsValue::Boolean(true)),
+    );
     vm.heap.put(
         ctor,
         Key::prototype(),
@@ -201,10 +228,18 @@ fn field_names(vm: &mut Vm, value: &JsValue) -> Res<Vec<JsString>> {
     };
     let raw_length = vm.get(value, &Key::length())?;
     let length = vm.to_number(&raw_length)?;
-    let length = if length.is_nan() { 0.0 } else { length.trunc().max(0.0) };
-    if length > MAX_STRUCT_FIELDS as f64 { return Err(vm.range_error("Shared struct field count out of range")); }
+    let length = if length.is_nan() {
+        0.0
+    } else {
+        length.trunc().max(0.0)
+    };
+    if length > MAX_STRUCT_FIELDS as f64 {
+        return Err(vm.range_error("Shared struct field count out of range"));
+    }
     let mut values = Vec::with_capacity(length as usize);
-    for index in 0..length as usize { values.push(vm.get(value, &Key::from(index.to_string().as_str()))?); }
+    for index in 0..length as usize {
+        values.push(vm.get(value, &Key::from(index.to_string().as_str()))?);
+    }
     let mut seen = BTreeSet::new();
     let mut names = Vec::with_capacity(values.len());
     for value in values {
@@ -276,7 +311,16 @@ fn mark(vm: &mut Vm, id: ObjectId, name: &str) -> Res<()> {
 /** A decoded worker wrapper receives the same hidden kind marker as its source. */
 pub(super) fn mark_transport(vm: &mut Vm, id: ObjectId, array: bool) -> Res<()> {
     mark(vm, id, if array { ARRAY_MARK } else { STRUCT_MARK })?;
-    if array { vm.define(id, Key::length(), crate::v9::vm::property::Descriptor { writable: Some(false), ..Default::default() })?; }
+    if array {
+        vm.define(
+            id,
+            Key::length(),
+            crate::v9::vm::property::Descriptor {
+                writable: Some(false),
+                ..Default::default()
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -306,7 +350,10 @@ fn check_shareable(vm: &mut Vm, value: &JsValue) -> Res<()> {
             if kind(vm, *id).is_none()
                 && !super::mutex::is_mutex(vm, *id)
                 && !super::condition::is_condition(vm, *id)
-                && !matches!(vm.heap.get(*id).map(|object| &object.class), Some(Class::WasmShared(_))) =>
+                && !matches!(
+                    vm.heap.get(*id).map(|object| &object.class),
+                    Some(Class::WasmShared(_))
+                ) =>
         {
             Err(vm.type_error(OBJECT_NOT_SHARED))
         }

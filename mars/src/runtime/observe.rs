@@ -219,7 +219,7 @@ impl Page {
      * The topmost painted node under a document point, and the nearest node a click there would
      * activate. Items are in paint order, so the last one containing the point is on top.
      */
-    pub(super) fn hit(&self, x: f64, y: f64) -> Option<(&Node, Option<&Node>)> {
+    pub(super) fn hit(&self, x: f64, y: f64) -> Option<(usize, &Node, Option<&Node>)> {
         let inside = |left: f64, top: f64, width: f64, height: f64| {
             x >= left && x < left + width && y >= top && y < top + height
         };
@@ -230,31 +230,43 @@ impl Page {
                     .clip
                     .is_none_or(|clip| inside(clip.x, clip.y, clip.width, clip.height))
         })?;
-        let position = |id: usize| local_position(&self.document.nodes, id, |node| node.local_id);
-        let node = &self.document.nodes[position(item.local_id)?];
-        if !agent_visible(&self.document, node) {
+        let frame = self
+            .frames
+            .iter()
+            .find(|frame| frame.node(item.local_id).is_some());
+        let (base, document) = frame.map_or((0, &self.document), |frame| {
+            (frame.id_base(), frame.document())
+        });
+        let position = |id: usize| local_position(&document.nodes, id, |node| node.local_id);
+        let node = &document.nodes[position(item.local_id - base)?];
+        if !agent_visible(document, node) {
             return None;
         }
         let mut current = Some(node);
         while let Some(candidate) = current {
             if CLICKABLE.contains(&candidate.tag.as_str()) {
-                return Some((node, Some(candidate)));
+                return Some((base, node, Some(candidate)));
             }
             current = candidate
                 .parent
                 .and_then(position)
-                .map(|index| &self.document.nodes[index]);
+                .map(|index| &document.nodes[index]);
         }
-        Some((node, None))
+        Some((base, node, None))
     }
     /** What a point lookup reports about a node: identity, role and name, never a secret value. */
-    pub(super) fn point_node(&self, node: &Node) -> Value {
-        let labels = super::names::names(&self.document);
-        let name = local_position(&self.document.nodes, node.local_id, |node| node.local_id)
+    pub(super) fn point_node(&self, base: usize, node: &Node) -> Value {
+        let document = self
+            .frames
+            .iter()
+            .find(|frame| frame.id_base() == base)
+            .map_or(&self.document, |frame| frame.document());
+        let labels = super::names::names(document);
+        let name = local_position(&document.nodes, node.local_id, |node| node.local_id)
             .and_then(|index| labels.get(index))
             .map(|name| cap(name.trim()))
             .unwrap_or_default();
-        let mut value = json!({"node_id":self.node_id(node.local_id),"role":role(node)});
+        let mut value = json!({"node_id":self.node_id(base + node.local_id),"role":role(node)});
         if !name.is_empty() {
             value["name"] = json!(name);
         }

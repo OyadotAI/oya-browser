@@ -1,5 +1,5 @@
 use super::attr_dom;
-use super::collections::{self, live_collection, tag_ns_filter, current, Filter, LiveList};
+use super::collections::{self, Filter, LiveList, current, live_collection, tag_ns_filter};
 use super::components;
 /** The DOM scripts see: node wrappers, the document, and Node/Element/HTMLElement members. */
 pub(in crate::v9) use super::html::{parse_detached, serialize};
@@ -296,10 +296,8 @@ fn data_prop(value: JsValue) -> Prop {
     }
 }
 
-/**
- * A static list answers its index and length from the vector it holds. Copying that vector per
- * read made `list[i]` and `list.length` cost O(n) each, so a loop over a list cost O(n^2).
- */
+// A static list answers its index and length from the vector it holds. Copying that vector per
+// read made `list[i]` and `list.length` cost O(n) each, so a loop over a list cost O(n^2).
 
 /** Own virtual properties of host objects. */
 pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
@@ -2845,7 +2843,11 @@ child) clears that text first, as `textContent = ''` does; otherwise the old lab
 new one is painted after it (Google's app launcher showed "MapsMaps"). A node being moved in
 from inside the element keeps it from clearing, since clearing would detach it. */
 fn clear_own_text(vm: &mut Vm, node: usize, moved: &[usize]) -> Res<()> {
-    let own = vm.page.view(node).and_then(|view| view.text).unwrap_or_default();
+    let own = vm
+        .page
+        .view(node)
+        .and_then(|view| view.text)
+        .unwrap_or_default();
     if own.is_empty() || !vm.page.is_element(node) {
         return Ok(());
     }
@@ -2853,7 +2855,9 @@ fn clear_own_text(vm: &mut Vm, node: usize, moved: &[usize]) -> Res<()> {
     if moved.iter().any(|child| inside.contains(child)) {
         return Ok(());
     }
-    vm.page.set_text(node, "").map_err(|error| dom_error(vm, error))
+    vm.page
+        .set_text(node, "")
+        .map_err(|error| dom_error(vm, error))
 }
 
 fn mutate(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {

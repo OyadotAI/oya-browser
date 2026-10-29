@@ -97,10 +97,12 @@ fn copy_buffer(
     start: usize,
     count: usize,
 ) -> Res<()> {
-    let Some(target) = target
-        .object()
-        .filter(|target| matches!(vm.heap.get(*target).map(|o| &o.class), Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))))
-    else {
+    let Some(target) = target.object().filter(|target| {
+        matches!(
+            vm.heap.get(*target).map(|o| &o.class),
+            Some(Class::ArrayBuffer(_) | Class::SparseWasmBuffer(_))
+        )
+    }) else {
         return Err(vm.type_error("ArrayBuffer species returned an incompatible object"));
     };
     if source == target
@@ -113,9 +115,17 @@ fn copy_buffer(
     if buffer_state::detached(vm, source) {
         return Err(vm.type_error("Cannot slice a detached ArrayBuffer"));
     }
-    let available = storage_len(vm, source).unwrap_or(0).saturating_sub(start).min(count);
-    let bytes = read_range(vm, source, start.min(storage_len(vm, source).unwrap_or(0)), available)
-        .ok_or_else(|| vm.range_error("ArrayBuffer slice exceeds resident byte limit"))?;
+    let available = storage_len(vm, source)
+        .unwrap_or(0)
+        .saturating_sub(start)
+        .min(count);
+    let bytes = read_range(
+        vm,
+        source,
+        start.min(storage_len(vm, source).unwrap_or(0)),
+        available,
+    )
+    .ok_or_else(|| vm.range_error("ArrayBuffer slice exceeds resident byte limit"))?;
     if !write_range(vm, target, 0, &bytes) {
         return Err(vm.type_error("ArrayBuffer species returned unwritable backing"));
     }

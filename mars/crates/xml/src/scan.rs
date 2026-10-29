@@ -1,4 +1,4 @@
-/**
+/*!
  * Byte-level helpers for XML: white space, name characters, character and entity references,
  * and the character validity rule. The scanner only moves across ASCII bytes and whole names, so
  * every position it keeps is a character boundary.
@@ -81,8 +81,8 @@ pub fn decode(raw: &str) -> Result<String, String> {
             .find(';')
             .ok_or_else(|| "a reference is missing its ';'".to_string())?;
         let name = &after[..end];
-        let c = reference_char(name)
-            .ok_or_else(|| format!("undefined entity &{};", short(name)))?;
+        let c =
+            reference_char(name).ok_or_else(|| format!("undefined entity &{};", short(name)))?;
         out.push(c);
         rest = &after[end + 1..];
     }

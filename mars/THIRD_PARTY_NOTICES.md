@@ -128,6 +128,12 @@ not a parser, virtual machine or browser engine. Its license files ship with
 the Cargo dependency. This package retains the selected Boost Software License
 at [licenses/ryu-js/LICENSE-BOOST](licenses/ryu-js/LICENSE-BOOST).
 
+## rustls 0.23.45 (vendored)
+
+`vendor/rustls` is the registry crate rustls 0.23.45, Apache-2.0 OR ISC OR MIT (its licence
+files are alongside), with one additive change for Chrome-shaped ClientHellos. `vendor/rustls/MARS.md`
+lists the changed files and how to diff against upstream.
+
 ## Image decoders
 
 `png` 0.17.16 and `jpeg-decoder` 0.3.2 are licensed under MIT OR Apache-2.0.

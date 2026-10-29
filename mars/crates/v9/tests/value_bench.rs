@@ -17,14 +17,20 @@ const ROWS: [(&str, &str, &str); 7] = [
     ("arithmetic", "let a=1,b=2,x=0;", "x=a+b;"),
     ("call", "function g(v){return v}let x=0;", "x=g(i);"),
     ("property read, own", "const o={p:1};let x=0;", "x=o.p;"),
-    ("property read, prototype method", "class C{m(){}}const o=new C();let x;", "x=o.m;"),
+    (
+        "property read, prototype method",
+        "class C{m(){}}const o=new C();let x;",
+        "x=o.m;",
+    ),
     ("new", "class C{}let x;", "x=new C();"),
     ("indexed read", "const a=[1,2,3,4];let x=0;", "x=a[i&3];"),
 ];
 
 /** Wall time of one row's loop, per iteration, in nanoseconds. */
 fn row_ns(setup: &str, body: &str) -> f64 {
-    let source = format!("function run(){{{setup}for(let i=0;i<{ITERATIONS};i++){{{body}}}}}run();const done='y';");
+    let source = format!(
+        "function run(){{{setup}for(let i=0;i<{ITERATIONS};i++){{{body}}}}}run();const done='y';"
+    );
     let started = std::time::Instant::now();
     assert_eq!(common::eval(&source, "done"), "y");
     started.elapsed().as_nanos() as f64 / f64::from(ITERATIONS)

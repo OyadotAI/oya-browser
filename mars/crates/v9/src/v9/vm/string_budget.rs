@@ -51,19 +51,20 @@ impl StringBudget {
         Ok(units)
     }
     /** Include existing in-flight reservations in every resident-limit decision. */
-    fn reserve_against(
-        &mut self,
-        units: usize,
-        limit: usize,
-    ) -> crate::protocol::EngineResult<()> {
+    fn reserve_against(&mut self, units: usize, limit: usize) -> crate::protocol::EngineResult<()> {
         self.refresh_materialization();
-        if self.upper_units
+        if self
+            .upper_units
             .saturating_add(self.reserved_units)
             .saturating_add(units)
             > limit
         {
             let resident = self.resident_units();
-            if resident.saturating_add(self.reserved_units).saturating_add(units) > limit {
+            if resident
+                .saturating_add(self.reserved_units)
+                .saturating_add(units)
+                > limit
+            {
                 return Err(crate::protocol::EngineError::limit(
                     "V9 resident string materialization units",
                     limit,
@@ -87,7 +88,11 @@ impl StringBudget {
     }
     /** Reserve native string construction when no input string object exists yet. */
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn reserve_new(&mut self, units: usize, limit: usize) -> crate::protocol::EngineResult<usize> {
+    pub(in crate::v9) fn reserve_new(
+        &mut self,
+        units: usize,
+        limit: usize,
+    ) -> crate::protocol::EngineResult<usize> {
         let units = units.saturating_add(MATERIALIZATION_OVERHEAD_UNITS);
         self.reserve_against(units, limit)?;
         Ok(units)

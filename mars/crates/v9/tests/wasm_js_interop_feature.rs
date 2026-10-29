@@ -10,7 +10,11 @@ fn prototype_imports_follow_shell_feature_state() {
     environment.conformance_d8 = true;
     environment.conformance_wasm_custom_descriptors = true;
     let disabled = common::load_with(source, &environment);
-    assert!(disabled.failed.is_empty(), "{:?}", common::failure(&disabled));
+    assert!(
+        disabled.failed.is_empty(),
+        "{:?}",
+        common::failure(&disabled)
+    );
     assert_eq!(common::global(&disabled, "r"), "true");
     environment.conformance_wasm_js_interop = true;
     let enabled = common::load_with(source, &environment);

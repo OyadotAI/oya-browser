@@ -1,8 +1,8 @@
 /** Inert signed-limb snapshots reject oversized and noncanonical magnitudes before admitting values. */
 use super::*;
 use serde::{
-    de::{Error, SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error, SeqAccess, Visitor},
 };
 
 impl Serialize for BigInt {

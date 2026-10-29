@@ -21,40 +21,103 @@ impl ConformanceWorkerHost {
     pub(in crate::v9) fn collect_shared_arenas(&self) {
         let registry = self.shared_gc.lock().unwrap();
         let mut arenas: BTreeMap<u64, SharedGcArena> = BTreeMap::new();
-        for arena in registry.arena.iter().chain(registry.container_arena.iter()).cloned()
-            .chain(registry.grants.values().chain(registry.container_grants.values()).filter_map(|grant| grant.arena.upgrade()))
+        for arena in registry
+            .arena
+            .iter()
+            .chain(registry.container_arena.iter())
+            .cloned()
+            .chain(
+                registry
+                    .grants
+                    .values()
+                    .chain(registry.container_grants.values())
+                    .filter_map(|grant| grant.arena.upgrade()),
+            )
         {
             arenas.entry(arena.identity()).or_insert(arena);
         }
         drop(registry);
-        for arena in arenas.into_values() { arena.collect(); }
+        for arena in arenas.into_values() {
+            arena.collect();
+        }
     }
     /** JS containers and Wasm shared records use the session arena, with distinct root grants. */
     pub(in crate::v9) fn shared_container_arena(&self) -> EngineResult<SharedGcArena> {
-        if self.closing.load(Ordering::Acquire) { return Err(cancelled()); }
+        if self.closing.load(Ordering::Acquire) {
+            return Err(cancelled());
+        }
         let mut registry = self.shared_gc.lock().unwrap();
-        if registry.arena.is_none() { registry.arena = Some(SharedGcArena::new()?); }
-        if registry.container_arena.is_none() { registry.container_arena = registry.arena.clone(); }
+        if registry.arena.is_none() {
+            registry.arena = Some(SharedGcArena::new()?);
+        }
+        if registry.container_arena.is_none() {
+            registry.container_arena = registry.arena.clone();
+        }
         Ok(registry.container_arena.as_ref().unwrap().clone())
     }
     /** Grant an actual container root to one live session endpoint; IDs alone never grant authority. */
-    pub(in crate::v9) fn shared_container(&self, endpoint: Option<u64>, value: SharedGc) -> EngineResult<SharedGc> {
-        if self.closing.load(Ordering::Acquire) { return Err(cancelled()); }
-        if endpoint.is_some_and(|id| !self.workers.lock().unwrap().contains_key(&id)) { return Err(EngineError::invalid("Shared container endpoint is outside its worker session.")); }
+    pub(in crate::v9) fn shared_container(
+        &self,
+        endpoint: Option<u64>,
+        value: SharedGc,
+    ) -> EngineResult<SharedGc> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(cancelled());
+        }
+        if endpoint.is_some_and(|id| !self.workers.lock().unwrap().contains_key(&id)) {
+            return Err(EngineError::invalid(
+                "Shared container endpoint is outside its worker session.",
+            ));
+        }
         let mut registry = self.shared_gc.lock().unwrap();
         let arena = value.arena();
-        if !registry.container_arena.as_ref().is_some_and(|owned| owned.same_store(&arena)) { return Err(EngineError::invalid("Shared container arena is outside its worker session.")); }
+        if !registry
+            .container_arena
+            .as_ref()
+            .is_some_and(|owned| owned.same_store(&arena))
+        {
+            return Err(EngineError::invalid(
+                "Shared container arena is outside its worker session.",
+            ));
+        }
         let key = (arena.identity(), value.node());
-        registry.container_grants.retain(|(_, node), grant| grant.arena.upgrade().is_some_and(|arena| arena.contains(*node)));
-        if !registry.container_grants.contains_key(&key) && registry.container_grants.len() >= SHARED_STORE_LIMIT { return Err(EngineError::limit("Shared container root grants", SHARED_STORE_LIMIT)); }
-        registry.container_grants.entry(key).or_insert_with(|| Grant { arena: arena.downgrade(), endpoints: BTreeSet::new() }).endpoints.insert(endpoint);
+        registry.container_grants.retain(|(_, node), grant| {
+            grant
+                .arena
+                .upgrade()
+                .is_some_and(|arena| arena.contains(*node))
+        });
+        if !registry.container_grants.contains_key(&key)
+            && registry.container_grants.len() >= SHARED_STORE_LIMIT
+        {
+            return Err(EngineError::limit(
+                "Shared container root grants",
+                SHARED_STORE_LIMIT,
+            ));
+        }
+        registry
+            .container_grants
+            .entry(key)
+            .or_insert_with(|| Grant {
+                arena: arena.downgrade(),
+                endpoints: BTreeSet::new(),
+            })
+            .endpoints
+            .insert(endpoint);
         Ok(value)
     }
     /** Restore only a live root explicitly granted to this endpoint. */
-    pub(in crate::v9) fn restore_shared_container(&self, endpoint: Option<u64>, arena: u64, node: u64) -> Option<SharedGc> {
+    pub(in crate::v9) fn restore_shared_container(
+        &self,
+        endpoint: Option<u64>,
+        arena: u64,
+        node: u64,
+    ) -> Option<SharedGc> {
         let registry = self.shared_gc.lock().unwrap();
         let grant = registry.container_grants.get(&(arena, node))?;
-        if !grant.endpoints.contains(&endpoint) { return None; }
+        if !grant.endpoints.contains(&endpoint) {
+            return None;
+        }
         grant.arena.upgrade()?.root(node).ok()
     }
     /** All descendant isolates in this host session allocate compatible shared records in one arena. */
@@ -64,7 +127,10 @@ impl ConformanceWorkerHost {
         }
         let mut registry = self.shared_gc.lock().unwrap();
         if registry.arena.is_none() {
-            registry.arena = Some(match &registry.container_arena { Some(arena) => arena.clone(), None => SharedGcArena::new()? });
+            registry.arena = Some(match &registry.container_arena {
+                Some(arena) => arena.clone(),
+                None => SharedGcArena::new()?,
+            });
         }
         Ok(registry.arena.as_ref().unwrap().clone())
     }
@@ -85,14 +151,20 @@ impl ConformanceWorkerHost {
         let arena = value.arena();
         let key = (arena.identity(), value.node());
         let mut registry = self.shared_gc.lock().unwrap();
-        if let Some(previous) = &registry.arena {
-            if previous.identity() == arena.identity() && !previous.same_store(&arena) {
-                if !previous.is_empty() {
-                    return Err(EngineError::invalid("Shared GC arena identity collision."));
-                }
-                let shared_with_containers = registry.container_arena.as_ref().is_some_and(|container| container.same_store(previous));
-                registry.arena = Some(arena.clone());
-                if shared_with_containers { registry.container_arena = Some(arena.clone()); }
+        if let Some(previous) = &registry.arena
+            && previous.identity() == arena.identity()
+            && !previous.same_store(&arena)
+        {
+            if !previous.is_empty() {
+                return Err(EngineError::invalid("Shared GC arena identity collision."));
+            }
+            let shared_with_containers = registry
+                .container_arena
+                .as_ref()
+                .is_some_and(|container| container.same_store(previous));
+            registry.arena = Some(arena.clone());
+            if shared_with_containers {
+                registry.container_arena = Some(arena.clone());
             }
         }
         if registry.grants.get(&key).is_some_and(|grant| {
@@ -103,14 +175,14 @@ impl ConformanceWorkerHost {
         }) {
             registry.grants.remove(&key);
         }
-        if let Some(grant) = registry.grants.get_mut(&key) {
-            if let Some(previous) = grant.arena.upgrade() {
-                if !previous.same_store(&arena) {
-                    return Err(EngineError::invalid("Shared GC arena identity collision."));
-                }
-                grant.endpoints.insert(endpoint);
-                return Ok(value);
+        if let Some(grant) = registry.grants.get_mut(&key)
+            && let Some(previous) = grant.arena.upgrade()
+        {
+            if !previous.same_store(&arena) {
+                return Err(EngineError::invalid("Shared GC arena identity collision."));
             }
+            grant.endpoints.insert(endpoint);
+            return Ok(value);
         }
         if registry.updates >= SHARED_PURGE_INTERVAL || registry.grants.len() >= SHARED_STORE_LIMIT
         {
@@ -240,7 +312,11 @@ mod tests {
         for container_first in [false, true] {
             let session = ConformanceWorkerSession::new();
             let host = session.host();
-            let first = if container_first { host.shared_container_arena().unwrap() } else { host.shared_gc_arena().unwrap() };
+            let first = if container_first {
+                host.shared_container_arena().unwrap()
+            } else {
+                host.shared_gc_arena().unwrap()
+            };
             let wasm = host.shared_gc_arena().unwrap();
             let container = host.shared_container_arena().unwrap();
             assert!(first.same_store(&wasm) && wasm.same_store(&container));
@@ -248,10 +324,22 @@ mod tests {
             let container_root = record(&container);
             host.shared_gc(None, wasm_root.clone()).unwrap();
             host.shared_container(None, container_root.clone()).unwrap();
-            assert!(host.restore_shared_gc(None, wasm.identity(), wasm_root.node()).is_some());
-            assert!(host.restore_shared_container(None, container.identity(), container_root.node()).is_some());
-            assert!(host.restore_shared_container(None, wasm.identity(), wasm_root.node()).is_none());
-            assert!(host.restore_shared_gc(None, container.identity(), container_root.node()).is_none());
+            assert!(
+                host.restore_shared_gc(None, wasm.identity(), wasm_root.node())
+                    .is_some()
+            );
+            assert!(
+                host.restore_shared_container(None, container.identity(), container_root.node())
+                    .is_some()
+            );
+            assert!(
+                host.restore_shared_container(None, wasm.identity(), wasm_root.node())
+                    .is_none()
+            );
+            assert!(
+                host.restore_shared_gc(None, container.identity(), container_root.node())
+                    .is_none()
+            );
             session.finish().unwrap();
         }
     }

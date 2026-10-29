@@ -1,4 +1,4 @@
-/** Exact fixed decimal rounding: Rust supplies all digits, while binary ties round upward. */
+/*! Exact fixed decimal rounding: Rust supplies all digits, while binary ties round upward. */
 
 /** Fraction bits in the binary64 significand, excluding its implicit leading bit. */
 const FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
@@ -106,5 +106,10 @@ fn exponent_form(digits: &[u8], exponent: i32) -> String {
     let point = if rest.is_empty() { "" } else { "." };
     let sign = if exponent < 0 { "-" } else { "+" };
     let text = |part: &[u8]| String::from_utf8(part.to_vec()).expect("ASCII digits");
-    format!("{}{point}{}e{sign}{}", text(first), text(rest), exponent.abs())
+    format!(
+        "{}{point}{}e{sign}{}",
+        text(first),
+        text(rest),
+        exponent.abs()
+    )
 }

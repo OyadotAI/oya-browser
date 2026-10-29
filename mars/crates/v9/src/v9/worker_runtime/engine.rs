@@ -137,8 +137,12 @@ fn execute(
         if endpoint.worker.cancel.load(Ordering::Acquire) {
             return Ok(());
         }
-        if let (Some(host), Some(id)) = (&environment.conformance_workers, environment.conformance_worker_id) {
-            host.collection_safepoint(Some(id), &mut vm).map_err(|error| uncaught(&mut vm, error))?;
+        if let (Some(host), Some(id)) = (
+            &environment.conformance_workers,
+            environment.conformance_worker_id,
+        ) {
+            host.collection_safepoint(Some(id), &mut vm)
+                .map_err(|error| uncaught(&mut vm, error))?;
         }
         let global = JsValue::Object(vm.global_object());
         let handler = vm

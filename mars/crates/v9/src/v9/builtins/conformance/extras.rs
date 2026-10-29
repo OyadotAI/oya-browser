@@ -32,8 +32,16 @@ static SET_CONTINUATION: OnceLock<u32> = OnceLock::new();
 pub(super) fn install(builder: &mut Builder, d8: ObjectId) {
     let _ = TRACE.set(builder.native("trace", 5, trace));
     let _ = CATEGORY.set(builder.native("isTraceCategoryEnabled", 1, is_enabled));
-    let _ = GET_CONTINUATION.set(builder.native("getContinuationPreservedEmbedderData", 0, get_continuation));
-    let _ = SET_CONTINUATION.set(builder.native("setContinuationPreservedEmbedderData", 1, set_continuation));
+    let _ = GET_CONTINUATION.set(builder.native(
+        "getContinuationPreservedEmbedderData",
+        0,
+        get_continuation,
+    ));
+    let _ = SET_CONTINUATION.set(builder.native(
+        "setContinuationPreservedEmbedderData",
+        1,
+        set_continuation,
+    ));
     builder.method(d8, "getExtrasBindingObject", 0, binding);
 }
 
@@ -55,8 +63,14 @@ fn binding(vm: &mut Vm, _call: Call) -> Res<JsValue> {
     for (name, index) in [
         ("trace", *TRACE.get().unwrap()),
         ("isTraceCategoryEnabled", *CATEGORY.get().unwrap()),
-        ("getContinuationPreservedEmbedderData", *GET_CONTINUATION.get().unwrap()),
-        ("setContinuationPreservedEmbedderData", *SET_CONTINUATION.get().unwrap()),
+        (
+            "getContinuationPreservedEmbedderData",
+            *GET_CONTINUATION.get().unwrap(),
+        ),
+        (
+            "setContinuationPreservedEmbedderData",
+            *SET_CONTINUATION.get().unwrap(),
+        ),
     ] {
         let function = vm.native_closure(index, Vec::new())?;
         vm.heap.put(
@@ -76,7 +90,12 @@ fn binding(vm: &mut Vm, _call: Call) -> Res<JsValue> {
 
 /** Read the current isolate data without coercion or cloning its identity. */
 fn get_continuation(vm: &mut Vm, _call: Call) -> Res<JsValue> {
-    Ok(vm.page.state.continuation_data.clone().unwrap_or(JsValue::Undefined))
+    Ok(vm
+        .page
+        .state
+        .continuation_data
+        .clone()
+        .unwrap_or(JsValue::Undefined))
 }
 
 /** Replace the current isolate data; pending continuations retain their captured values. */

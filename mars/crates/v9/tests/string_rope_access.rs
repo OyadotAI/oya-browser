@@ -140,8 +140,12 @@ fn forged_slice_snapshot_cannot_escape_parent() {
 #[cfg(feature = "conformance")]
 #[test]
 fn snapshot_decode_rejects_excessive_buffered_entries() {
-    let count = mars_v9::constants::VM_STATE_BYTES / (2 * std::mem::size_of::<serde_json::Value>()) + 1;
-    let wire = format!("{{\"heap\":[{}null],\"$slice_parents\":[]}}", "null,".repeat(count));
+    let count =
+        mars_v9::constants::VM_STATE_BYTES / (2 * std::mem::size_of::<serde_json::Value>()) + 1;
+    let wire = format!(
+        "{{\"heap\":[{}null],\"$slice_parents\":[]}}",
+        "null,".repeat(count)
+    );
     let error = serde_json::from_str::<mars_v9::VmState>(&wire).unwrap_err();
     assert!(error.to_string().contains("snapshot decoding buffer limit"));
 }
@@ -223,6 +227,8 @@ fn hash_lookup_preserves_compact_backing() {
     let compact: mars_v9::JsString = serde_json::from_str("{\"r\":[\"ab\",10000]}").unwrap();
     let flat = mars_v9::JsString::from_utf8(&"ab".repeat(10000)).unwrap();
     let before = compact.resident_units();
+    // Keys compare by value and nothing writes them while the set lives.
+    #[allow(clippy::mutable_key_type)]
     let mut keys = std::collections::HashSet::new();
     keys.insert(compact.clone());
     assert!(keys.contains(&flat));

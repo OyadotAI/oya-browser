@@ -36,6 +36,7 @@ fn wait(
     }))
 }
 /** No script callback, allocation or VM access occurs while atomic backing bytes are locked. */
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     vm: &mut Vm,
     bytes: SharedBytes,

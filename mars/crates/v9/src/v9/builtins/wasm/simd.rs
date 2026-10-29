@@ -633,7 +633,7 @@ fn integer_op(op: u32, a: &[u8; 16], b: Option<&[u8; 16]>, shift: u32, out: &mut
             23 => x.min(y),
             24 => sx.max(sy) as u64,
             25 => x.max(y),
-            27 => (x + y + 1) / 2,
+            27 => (x + y).div_ceil(2),
             _ => unreachable!("SIMD operation was not admitted by its signature"),
         };
         put(out, size, i, bits)

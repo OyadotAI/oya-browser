@@ -63,29 +63,31 @@ Requests carry Chrome 152 on macOS's headers in Chrome's order (`sec-ch-ua*`,
 `WebRequest::initiator` and `destination` let the caller make Sec-Fetch-Site,
 Origin, Referer, Accept and the priority match what Chrome would send.
 
-Measured on 2026-10-23 through `examples/fetch.rs` against
-`https://tls.peet.ws/api/all`:
+Measured on 2026-10-28 through `examples/fetch.rs` against
+`https://tls.peet.ws/api/all`, with the vendored Rustls (`vendor/rustls`, see its
+`MARS.md`) shaping the hello:
 
 | Signal | Relay (measured) | Chrome (published values, not measured here) |
 |:---|:---|:---|
 | Akamai HTTP/2 | `1:65536;2:0;4:6291456;6:262144\|15663105\|0\|m,a,s,p` (hash `52d84b11737d980aef856699f885ca86`) | identical |
 | HEADERS priority | weight 256, exclusive, depends on 0 | identical |
-| JA4 | `t13d1012h2_61a7ad8aa9b6_fe7e4c5e2d0e` | `t13d1516h2_...` |
-| JA3 | `771,4865-4866-4867-49195-49199-49196-49200-52393-52392-255,11-13-43-27-35-23-51-45-0-16-5-10,29-23-24,0` | GREASE, 15 suites, 16 extensions, randomized order |
+| JA4 | `t13d1516h2_8daaf6152771_d8a2da3f94cd` | identical |
+| JA3 | GREASE, 15 suites, 16 extensions, randomized order, e.g. `771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,43-0-35-10-65281-23-5-16-11-51-45-18-13-27-17613-65037,4588-29-23-24,0` | changes per connection, as here |
 
-The suites Rustls offers are in Chrome's order, followed by the renegotiation
-SCSV; signature schemes, X25519 first and certificate compression (Brotli) match
-Chrome. What Rustls cannot do, so the TLS fingerprint still differs:
+The shaping adds what stock Rustls cannot send: GREASE in suites, groups, key shares, versions
+and two extensions; `renegotiation_info` (65281) in place of the SCSV; an empty
+`signed_certificate_timestamp` (18); ALPS `application_settings` (17613) for h2, with the
+client EncryptedExtensions message a server that accepts it waits for; a GREASE
+`encrypted_client_hello` outer (65037) from random bytes; and Chrome's six legacy suites
+(`c013 c014 009c 009d 002f 0035`) advertised after the nine Rustls runs. A server that picks a
+legacy suite fails the Rustls handshake and legacy.rs retries with the kRSA GCM pair; the CBC
+four have no path yet. Rustls still places the ECH extension just before the last GREASE where
+Chrome shuffles it, and the GREASE ECH payload is a fixed 208 bytes.
 
-- GREASE values in suites, groups, extensions and versions.
-- Chrome's randomized extension order (JA3 changes per connection; JA4 sorts).
-- The CBC and static-RSA suites (`c013 c014 009c 009d 002f 0035`): 9 suites
-  instead of 15.
-- `renegotiation_info` (65281; Rustls sends the SCSV instead),
-  `signed_certificate_timestamp` (18), ALPS `application_settings` (17613) and
-  ECH GREASE `encrypted_client_hello` (65037; Rustls supports it only with an
-  HPKE provider, which ring lacks): 12 extensions instead of 16.
-- `X25519MLKEM768` (4588) as the first group and key share (aws-lc-rs only).
+Google's search interstitial (the "Please click here if you are not redirected" page with
+its botguard script) is served to this hello and to the stock one alike, and to any client
+without a passed challenge; it is Google's JavaScript gate, not a fingerprint verdict. What
+decides results versus `/sorry/` is the token the page script computes, so that is a V9 matter.
 
 Cloudflare still answers `stackoverflow.com/questions` with its challenge (403)
 while header-only checks now pass (reddit.com serves the real page instead of

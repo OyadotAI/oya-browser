@@ -356,7 +356,12 @@ impl<'h> Vm<'h> {
     }
     /** Give cached compiled text one independently mutable cell per isolate and stable code location. */
     #[cfg(feature = "conformance")]
-    pub(super) fn isolate_code_constant(&mut self, site: u32, index: u32, source: &JsString) -> JsString {
+    pub(super) fn isolate_code_constant(
+        &mut self,
+        site: u32,
+        index: u32,
+        source: &JsString,
+    ) -> JsString {
         let key = (u64::from(site) << 32) | u64::from(index);
         if let Some(value) = self.page.state.code_constants.get(&key)
             && value == source
@@ -367,15 +372,28 @@ impl<'h> Vm<'h> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
         let hash = hasher.finish();
-        let value = self.code_constant_index.get(&hash).and_then(|bucket| bucket.iter().filter_map(|(entry, one_byte)| entry.upgrade(*one_byte)).find(|value| value == source));
-        let value = if let Some(value) = value { value } else {
+        let value = self.code_constant_index.get(&hash).and_then(|bucket| {
+            bucket
+                .iter()
+                .filter_map(|(entry, one_byte)| entry.upgrade(*one_byte))
+                .find(|value| value == source)
+        });
+        let value = if let Some(value) = value {
+            value
+        } else {
             let value = source.isolate_code_constant();
             self.track_string(&value);
             let (_, weak) = value.weak_registration();
-            self.code_constant_index.entry(hash).or_default().push((weak, value.is_latin1()));
+            self.code_constant_index
+                .entry(hash)
+                .or_default()
+                .push((weak, value.is_latin1()));
             self.code_constant_index_ops = self.code_constant_index_ops.saturating_add(1);
             if self.code_constant_index_ops >= CODE_CONSTANT_INDEX_SWEEP_INTERVAL {
-                self.code_constant_index.retain(|_, entries| { entries.retain(|(entry, _)| entry.is_alive()); !entries.is_empty() });
+                self.code_constant_index.retain(|_, entries| {
+                    entries.retain(|(entry, _)| entry.is_alive());
+                    !entries.is_empty()
+                });
                 self.code_constant_index_ops = 0;
             }
             value
@@ -386,7 +404,9 @@ impl<'h> Vm<'h> {
     /** Return the isolate's permanent read-only canonical cell for one Latin-1 character. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn character_root(&mut self, unit: u8) -> Res<JsString> {
-        if let Some(value) = self.page.state.character_roots.get(&unit) { return Ok(value.clone()); }
+        if let Some(value) = self.page.state.character_roots.get(&unit) {
+            return Ok(value.clone());
+        }
         let value = JsString::character_root(unit);
         self.track_string(&value);
         self.check_heap_bounds()?;
@@ -394,46 +414,103 @@ impl<'h> Vm<'h> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         value.hash(&mut hasher);
         let (_, weak) = value.weak_registration();
-        self.code_constant_index.entry(hasher.finish()).or_default().push((weak, true));
+        self.code_constant_index
+            .entry(hasher.finish())
+            .or_default()
+            .push((weak, true));
         self.page.state.character_roots.insert(unit, value.clone());
         Ok(value)
     }
     /** Reuse one old heap allocation for each numeric literal in one bytecode constant pool. */
     #[cfg(feature = "conformance")]
-    pub(super) fn number_literal(&mut self, site: u32, source: &std::sync::Arc<str>, number: f64) -> Res<JsValue> {
+    pub(super) fn number_literal(
+        &mut self,
+        site: u32,
+        source: &std::sync::Arc<str>,
+        number: f64,
+    ) -> Res<JsValue> {
         let pointer = source.as_ptr() as usize;
         let hash = if let Some((weak, hash)) = self.number_source_hashes.get(&pointer) {
-            if weak.upgrade().is_some_and(|previous| std::sync::Arc::ptr_eq(&previous, source)) { *hash } else { crate::v9::compile::source_key(source) }
-        } else { crate::v9::compile::source_key(source) };
-        if self.number_source_hashes.len() >= NUMBER_SOURCE_CACHE_CAPACITY && !self.number_source_hashes.contains_key(&pointer) {
-            self.number_source_hashes.retain(|_, (weak, _)| weak.strong_count() != 0);
+            if weak
+                .upgrade()
+                .is_some_and(|previous| std::sync::Arc::ptr_eq(&previous, source))
+            {
+                *hash
+            } else {
+                crate::v9::compile::source_key(source)
+            }
+        } else {
+            crate::v9::compile::source_key(source)
+        };
+        if self.number_source_hashes.len() >= NUMBER_SOURCE_CACHE_CAPACITY
+            && !self.number_source_hashes.contains_key(&pointer)
+        {
+            self.number_source_hashes
+                .retain(|_, (weak, _)| weak.strong_count() != 0);
         }
-        if self.number_source_hashes.len() < NUMBER_SOURCE_CACHE_CAPACITY || self.number_source_hashes.contains_key(&pointer) {
-            self.number_source_hashes.insert(pointer, (std::sync::Arc::downgrade(source), hash));
+        if self.number_source_hashes.len() < NUMBER_SOURCE_CACHE_CAPACITY
+            || self.number_source_hashes.contains_key(&pointer)
+        {
+            self.number_source_hashes
+                .insert(pointer, (std::sync::Arc::downgrade(source), hash));
         }
         let pools = &mut self.page.state.number_constants;
-        if pools.get(&site).is_some_and(|pool| pool.source != hash) { pools.remove(&site); }
-        if let Some(value) = pools.get(&site).and_then(|pool| pool.values.get(&number.to_bits())) { return Ok(value.clone()); }
+        if pools.get(&site).is_some_and(|pool| pool.source != hash) {
+            pools.remove(&site);
+        }
+        if let Some(value) = pools
+            .get(&site)
+            .and_then(|pool| pool.values.get(&number.to_bits()))
+        {
+            return Ok(value.clone());
+        }
         let id = self.alloc(heap::Object::new(data::Class::Number(number), None))?;
-        if let Some(object) = self.heap.get_mut(id) { object.age = gc::PROMOTION_AGE; }
-        let value = JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root: id }));
-        self.page.state.number_constants.entry(site).or_insert_with(|| crate::v9::platform::NumberConstantPool { source: hash, values: BTreeMap::new() }).values.insert(number.to_bits(), value.clone());
+        if let Some(object) = self.heap.get_mut(id) {
+            object.age = gc::PROMOTION_AGE;
+        }
+        let value = JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData {
+            value: number,
+            root: id,
+        }));
+        self.page
+            .state
+            .number_constants
+            .entry(site)
+            .or_insert_with(|| crate::v9::platform::NumberConstantPool {
+                source: hash,
+                values: BTreeMap::new(),
+            })
+            .values
+            .insert(number.to_bits(), value.clone());
         Ok(value)
     }
     /** Drop roots for code replaced by dynamic evaluation before snapshotting the registry. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn prune_number_constants(&mut self) {
         let mut hashes: FastMap<usize, [u8; 32]> = FastMap::default();
-        self.page.state.number_constants.retain(|site, pool| self.registry.codes.get(site).and_then(|code| code.source.as_ref()).is_some_and(|(source, _)| {
-            *hashes.entry(source.as_ptr() as usize).or_insert_with(|| crate::v9::compile::source_key(source)) == pool.source
-        }));
+        self.page.state.number_constants.retain(|site, pool| {
+            self.registry
+                .codes
+                .get(site)
+                .and_then(|code| code.source.as_ref())
+                .is_some_and(|(source, _)| {
+                    *hashes
+                        .entry(source.as_ptr() as usize)
+                        .or_insert_with(|| crate::v9::compile::source_key(source))
+                        == pool.source
+                })
+        });
     }
     /** Intern against live isolate-owned cells, turning noncanonical ordinary strings into thin aliases. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn internalize_string(&mut self, source: &JsString) -> Res<JsString> {
         use std::hash::{Hash, Hasher};
-        if let Some(target) = source.thin_target() { return Ok(target); }
-        if source.is_interned() { return Ok(source.clone()); }
+        if let Some(target) = source.thin_target() {
+            return Ok(target);
+        }
+        if source.is_interned() {
+            return Ok(source.clone());
+        }
         let _ = self.materialize_string(source)?;
         let flat = source.flatten_for_intrinsic()?;
         self.track_string(&flat);
@@ -448,32 +525,53 @@ impl<'h> Vm<'h> {
                     Ok(target)
                 })?
             };
-            if !target.mark_interned() || (!source.is_shared() && !source.forward_to(&target)) { return Err(self.unsupported_error("shared thin string transition")); }
-            if !flat.same_backing(source) && !flat.forward_to(&target) { return Err(self.unsupported_error("shared flat string transition")); }
+            if !target.mark_interned() || (!source.is_shared() && !source.forward_to(&target)) {
+                return Err(self.unsupported_error("shared thin string transition"));
+            }
+            if !flat.same_backing(source) && !flat.forward_to(&target) {
+                return Err(self.unsupported_error("shared flat string transition"));
+            }
             return Ok(target);
         }
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         flat.hash(&mut hasher);
         let hash = hasher.finish();
-        let found = self.code_constant_index.get(&hash).and_then(|entries| entries.iter().filter_map(|(entry, one_byte)| entry.upgrade(*one_byte)).find(|value| value.is_interned() && value == &flat));
+        let found = self.code_constant_index.get(&hash).and_then(|entries| {
+            entries
+                .iter()
+                .filter_map(|(entry, one_byte)| entry.upgrade(*one_byte))
+                .find(|value| value.is_interned() && value == &flat)
+        });
         let target = if let Some(target) = found {
             target
         } else if flat.is_interned() {
             flat.clone()
         } else {
-            let can_reuse = flat.is_old() && flat.can_intern_in_place() && !flat.is_shared() && !self.page.environment.conformance_shared_string_table && (flat.is_latin1() || flat.code_units().any(|unit| unit > 255));
+            let can_reuse = flat.is_old()
+                && flat.can_intern_in_place()
+                && !flat.is_shared()
+                && !self.page.environment.conformance_shared_string_table
+                && (flat.is_latin1() || flat.code_units().any(|unit| unit > 255));
             let candidate = if can_reuse && flat.mark_interned() {
                 flat.clone()
             } else {
                 let candidate = self.copy_string(&flat, false)?;
-                if !candidate.mark_interned() { return Err(self.unsupported_error("internalized string representation")); }
+                if !candidate.mark_interned() {
+                    return Err(self.unsupported_error("internalized string representation"));
+                }
                 candidate
             };
             let (_, weak) = candidate.weak_registration();
-            self.code_constant_index.entry(hash).or_default().push((weak, candidate.is_latin1()));
+            self.code_constant_index
+                .entry(hash)
+                .or_default()
+                .push((weak, candidate.is_latin1()));
             self.code_constant_index_ops = self.code_constant_index_ops.saturating_add(1);
             if self.code_constant_index_ops >= CODE_CONSTANT_INDEX_SWEEP_INTERVAL {
-                self.code_constant_index.retain(|_, entries| { entries.retain(|(entry, _)| entry.is_alive()); !entries.is_empty() });
+                self.code_constant_index.retain(|_, entries| {
+                    entries.retain(|(entry, _)| entry.is_alive());
+                    !entries.is_empty()
+                });
                 self.code_constant_index_ops = 0;
             }
             candidate
@@ -489,9 +587,13 @@ impl<'h> Vm<'h> {
     /** Save only weak intern entries whose backing is still retained by the isolate. */
     #[cfg(feature = "conformance")]
     pub(super) fn save_interned_strings(&mut self) {
+        // Keys compare by value and nothing writes them while the map lives.
+        #[allow(clippy::mutable_key_type)]
         let mut unique = std::collections::BTreeMap::new();
         for (entry, one_byte) in self.code_constant_index.values().flatten() {
-            if let Some(value) = entry.upgrade(*one_byte).filter(JsString::is_interned) { unique.insert(value.clone(), value); }
+            if let Some(value) = entry.upgrade(*one_byte).filter(JsString::is_interned) {
+                unique.insert(value.clone(), value);
+            }
         }
         self.page.state.interned_strings = unique.into_values().collect();
     }
@@ -509,18 +611,33 @@ impl<'h> Vm<'h> {
     }
     /** Reserve both temporary and final buffers before copying a native string. */
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn copy_string(&mut self, source: &JsString, two_byte: bool) -> Res<JsString> {
-        let reserved = self.heap.string_budget.reserve_copy(source, self.limits.units)?;
+    pub(in crate::v9) fn copy_string(
+        &mut self,
+        source: &JsString,
+        two_byte: bool,
+    ) -> Res<JsString> {
+        let reserved = self
+            .heap
+            .string_budget
+            .reserve_copy(source, self.limits.units)?;
         let units = source.code_units().collect();
-        let result = if two_byte { JsString::from_units_two_byte(units) } else { JsString::from_units(units) };
-        if let Ok(value) = &result { self.track_string(value); }
+        let result = if two_byte {
+            JsString::from_units_two_byte(units)
+        } else {
+            JsString::from_units(units)
+        };
+        if let Ok(value) = &result {
+            self.track_string(value);
+        }
         self.heap.string_budget.release(reserved);
         Ok(result?)
     }
     /** Reserve and register a real shared backing before publishing it to another agent. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn share_string(&mut self, source: &JsString) -> Res<JsString> {
-        if source.is_shared() { return Ok(source.clone()); }
+        if source.is_shared() {
+            return Ok(source.clone());
+        }
         let _ = self.materialize_string(source)?;
         if let Some(shared) = crate::v9::value::find_shared_string(source) {
             self.track_string(&shared);
@@ -533,23 +650,39 @@ impl<'h> Vm<'h> {
         })
     }
     /** Charge a native string-derived buffer for the full duration of its use. */
-    pub(in crate::v9) fn with_string_output<T>(&mut self, source: &JsString, units: usize, f: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
-        let reserved = match self.heap.string_budget.reserve_output(source, units, self.limits.units) {
-            Ok(reserved) => reserved,
-            // Nested script callbacks also have native_depth > 0; pinning, not depth, marks
-            // whether execution is currently holding unrooted native temporaries.
-            Err(_) if !self.pinning && !self.frames.is_empty() => {
-                self.collect_now()?;
-                self.heap.string_budget.reserve_output(source, units, self.limits.units)?
-            }
-            Err(error) => return Err(error.into()),
-        };
+    pub(in crate::v9) fn with_string_output<T>(
+        &mut self,
+        source: &JsString,
+        units: usize,
+        f: impl FnOnce(&mut Self) -> Res<T>,
+    ) -> Res<T> {
+        let reserved =
+            match self
+                .heap
+                .string_budget
+                .reserve_output(source, units, self.limits.units)
+            {
+                Ok(reserved) => reserved,
+                // Nested script callbacks also have native_depth > 0; pinning, not depth, marks
+                // whether execution is currently holding unrooted native temporaries.
+                Err(_) if !self.pinning && !self.frames.is_empty() => {
+                    self.collect_now()?;
+                    self.heap
+                        .string_budget
+                        .reserve_output(source, units, self.limits.units)?
+                }
+                Err(error) => return Err(error.into()),
+            };
         let result = f(self);
         self.heap.string_budget.release(reserved);
         result
     }
     /** Reserve a flat concatenation's peak backing before either input can be copied. */
-    pub(in crate::v9) fn concat_strings(&mut self, left: &JsString, right: &JsString) -> Res<JsString> {
+    pub(in crate::v9) fn concat_strings(
+        &mut self,
+        left: &JsString,
+        right: &JsString,
+    ) -> Res<JsString> {
         let length = left.len().saturating_add(right.len());
         if length > crate::constants::JS_STRING_UNITS {
             return Err(self.range_error("Invalid string length"));
@@ -565,7 +698,12 @@ impl<'h> Vm<'h> {
         })
     }
     /** Copy a UTF-16 range with normalized encoding, charging both transient and final backing. */
-    pub(in crate::v9) fn copy_string_range(&mut self, source: &JsString, start: usize, end: usize) -> Res<JsString> {
+    pub(in crate::v9) fn copy_string_range(
+        &mut self,
+        source: &JsString,
+        start: usize,
+        end: usize,
+    ) -> Res<JsString> {
         let count = end - start;
         self.with_string_output(source, count.saturating_mul(2), |vm| {
             let units = source.code_units().skip(start).take(count).collect();
@@ -575,7 +713,11 @@ impl<'h> Vm<'h> {
         })
     }
     /** Reserve any source cache and final output before a repetition falls back to copying. */
-    pub(in crate::v9) fn repeat_string(&mut self, source: &JsString, count: usize) -> Res<JsString> {
+    pub(in crate::v9) fn repeat_string(
+        &mut self,
+        source: &JsString,
+        count: usize,
+    ) -> Res<JsString> {
         let length = source.len().saturating_mul(count);
         if length > crate::constants::JS_STRING_UNITS || !source.repeat_will_flatten(count) {
             return Ok(source.repeat(count)?);
@@ -589,15 +731,30 @@ impl<'h> Vm<'h> {
     }
     /** Restored top-level bindings live outside the heap but still own string allocations. */
     pub(super) fn register_global_strings(&mut self) {
-        let strings: Vec<_> = self.globals.values().filter_map(|binding| match &binding.value {
-            Some(JsValue::String(text)) => Some(text.clone()),
-            _ => None,
-        }).collect();
-        for text in strings { self.track_string(&text); }
+        let strings: Vec<_> = self
+            .globals
+            .values()
+            .filter_map(|binding| match &binding.value {
+                Some(JsValue::String(text)) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        for text in strings {
+            self.track_string(&text);
+        }
         #[cfg(feature = "conformance")]
         {
-            let constants: Vec<_> = self.page.state.code_constants.values().chain(self.page.state.character_roots.values()).cloned().collect();
-            for text in constants { self.track_string(&text); }
+            let constants: Vec<_> = self
+                .page
+                .state
+                .code_constants
+                .values()
+                .chain(self.page.state.character_roots.values())
+                .cloned()
+                .collect();
+            for text in constants {
+                self.track_string(&text);
+            }
         }
     }
     /** A VM over a heap, with the global object created if missing. */
@@ -607,12 +764,22 @@ impl<'h> Vm<'h> {
         #[cfg(feature = "conformance")]
         let code_constant_index = {
             use std::hash::{Hash, Hasher};
-            let mut index: FastMap<u64, Vec<(crate::v9::value::WeakString, bool)>> = FastMap::default();
-            for value in page.state.code_constants.values().chain(page.state.interned_strings.iter()).chain(page.state.character_roots.values()) {
+            let mut index: FastMap<u64, Vec<(crate::v9::value::WeakString, bool)>> =
+                FastMap::default();
+            for value in page
+                .state
+                .code_constants
+                .values()
+                .chain(page.state.interned_strings.iter())
+                .chain(page.state.character_roots.values())
+            {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 value.hash(&mut hasher);
                 let (_, weak) = value.weak_registration();
-                index.entry(hasher.finish()).or_default().push((weak, value.is_latin1()));
+                index
+                    .entry(hasher.finish())
+                    .or_default()
+                    .push((weak, value.is_latin1()));
             }
             index
         };
@@ -877,7 +1044,11 @@ impl<'h> Vm<'h> {
                     "V9 aggregate own properties",
                 ),
                 (units, limits.units, "V9 environment UTF-16 units"),
-                (self.heap.last_registered_string_units, limits.units, "V9 resident string units"),
+                (
+                    self.heap.last_registered_string_units,
+                    limits.units,
+                    "V9 resident string units",
+                ),
                 (counts.environments, limits.environments, "V9 environments"),
                 (bindings, limits.bindings, "V9 bindings"),
             ] {

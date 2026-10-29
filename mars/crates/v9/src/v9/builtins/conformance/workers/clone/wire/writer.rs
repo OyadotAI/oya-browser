@@ -54,7 +54,7 @@ impl Writer<'_> {
         }
         let length = text.len() * 2;
         let varbytes = (usize::BITS - length.max(1).leading_zeros()).div_ceil(7) as usize;
-        if (self.bytes.len() + 1 + varbytes) % 2 != 0 {
+        if !(self.bytes.len() + 1 + varbytes).is_multiple_of(2) {
             self.tag(0)?;
         }
         self.tag(b'c')?;

@@ -6,7 +6,7 @@ pub(super) fn js_compatible(vm: &mut Vm, object: ObjectId, ty: Type) -> Res<bool
     if !ty.js_compatible() {
         return Ok(false);
     }
-    if !ty.reference().is_some_and(|(heap, _)| heap >= 0) {
+    if ty.reference().is_none_or(|(heap, _)| heap < 0) {
         return Ok(true);
     }
     let owner = get(vm, object, OWNER).ok_or_else(|| {
@@ -42,8 +42,8 @@ pub(super) fn equivalent(
     expected: &Module,
     ty: Type,
 ) -> Res<bool> {
-    if !actual.reference().is_some_and(|(heap, _)| heap >= 0)
-        && !ty.reference().is_some_and(|(heap, _)| heap >= 0)
+    if actual.reference().is_none_or(|(heap, _)| heap < 0)
+        && ty.reference().is_none_or(|(heap, _)| heap < 0)
     {
         return Ok(actual == ty);
     }

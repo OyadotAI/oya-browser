@@ -6,7 +6,7 @@ const DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /** Invalid trailing input beyond a full destination is not inspected, but odd length is always rejected. */
 fn decode(vm: &mut Vm, input: &JsString, capacity: usize) -> Res<(Vec<u8>, bool)> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err(vm.syntax_error("Invalid hexadecimal string"));
     }
     let mut output = Vec::with_capacity(capacity.min(input.len() / 2));

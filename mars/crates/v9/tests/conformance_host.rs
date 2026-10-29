@@ -25,10 +25,17 @@ fn d8_date_now_advances_in_a_busy_loop() {
 /** Shell performance and Date share one advancing monotonic origin and mark timeline. */
 #[test]
 fn d8_performance_clock_advances_and_matches_marks() {
-    let environment = PageEnvironment { conformance_d8: true, ..common::environment() };
+    let environment = PageEnvironment {
+        conformance_d8: true,
+        ..common::environment()
+    };
     let source = "const start=performance.now();let current=start;while(current===start)current=performance.now();const mark=performance.mark('a');const end=performance.now();const r=[current>start,mark.startTime>=current,mark.startTime<=end,Math.abs(Date.now()-(performance.timeOrigin+performance.now()))<100].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,true");
 }
 

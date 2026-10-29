@@ -21,7 +21,10 @@ use storage::Storage;
 pub(in crate::v9) use storage::materialization_epoch;
 pub use string::CodePointCursor;
 #[cfg(feature = "conformance")]
-pub(in crate::v9) use wire::{serialize_slice_parents, set_slice_parents, with_slice_parents, with_string_identities, with_string_identity_encoding};
+pub(in crate::v9) use wire::{
+    serialize_slice_parents, set_slice_parents, with_slice_parents, with_string_identities,
+    with_string_identity_encoding,
+};
 
 /** Heap object identities; intrinsic objects live in a reserved high range. */
 pub type ObjectId = u32;
@@ -81,13 +84,13 @@ mod shared;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use shared::collect as collect_shared_strings;
 #[cfg(feature = "conformance")]
-pub(in crate::v9) use shared::intern as intern_shared_string;
-#[cfg(feature = "conformance")]
 pub(in crate::v9) use shared::find as find_shared_string;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use shared::find_internalized as find_shared_internalized;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use shared::find_noncanonical_two_byte as find_shared_two_byte_noncanonical;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use shared::intern as intern_shared_string;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use shared::intern_internalized as intern_shared_internalized;
 #[cfg(feature = "conformance")]
@@ -143,7 +146,9 @@ impl std::hash::Hash for JsString {
                 used = 0;
             }
         }
-        if used != 0 { state.write(&bytes[..used]); }
+        if used != 0 {
+            state.write(&bytes[..used]);
+        }
     }
 }
 
@@ -312,16 +317,26 @@ impl JsString {
         value
     }
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn is_interned(&self) -> bool { self.0.interned() }
+    pub(in crate::v9) fn is_interned(&self) -> bool {
+        self.0.interned()
+    }
     /** Construct one permanent, old, internalized one-byte character cell. */
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn character_root(unit: u8) -> Self { Self(Storage::character_root(unit), true) }
+    pub(in crate::v9) fn character_root(unit: u8) -> Self {
+        Self(Storage::character_root(unit), true)
+    }
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn is_read_only_root(&self) -> bool { self.0.is_read_only_root() }
+    pub(in crate::v9) fn is_read_only_root(&self) -> bool {
+        self.0.is_read_only_root()
+    }
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn can_intern_in_place(&self) -> bool { self.0.can_intern_in_place() }
+    pub(in crate::v9) fn can_intern_in_place(&self) -> bool {
+        self.0.can_intern_in_place()
+    }
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn mark_interned(&self) -> bool { self.0.mark_interned() }
+    pub(in crate::v9) fn mark_interned(&self) -> bool {
+        self.0.mark_interned()
+    }
     /** Thin construction distinguishes actual cons shape from a cell already externalized. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn is_actual_cons(&self) -> bool {
@@ -329,10 +344,15 @@ impl JsString {
     }
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn thin_target(&self) -> Option<Self> {
-        self.0.forwarding_target().map(|target| { let one_byte = target.actual_one_byte(); Self(target, one_byte) })
+        self.0.forwarding_target().map(|target| {
+            let one_byte = target.actual_one_byte();
+            Self(target, one_byte)
+        })
     }
     #[cfg(feature = "conformance")]
-    pub(in crate::v9) fn forward_to(&self, target: &Self) -> bool { self.0.forward_to(&target.0) }
+    pub(in crate::v9) fn forward_to(&self, target: &Self) -> bool {
+        self.0.forward_to(&target.0)
+    }
     /** Record actual survival of this isolate's string through a full collection. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn mark_old(&self) {
@@ -429,9 +449,13 @@ impl JsString {
     /** Preserve effective encoding through operations, including a thin forwarding target. */
     fn effective_encoding(&self) -> bool {
         #[cfg(feature = "conformance")]
-        { self.0.forwarded_one_byte().unwrap_or(self.1) }
+        {
+            self.0.forwarded_one_byte().unwrap_or(self.1)
+        }
         #[cfg(not(feature = "conformance"))]
-        { self.1 }
+        {
+            self.1
+        }
     }
     /// Whether this string uses a one-byte representation, answered without rescanning.
     #[cfg(feature = "conformance")]
@@ -475,7 +499,10 @@ impl JsString {
         if self.is_empty() {
             return Ok(other.clone());
         }
-        Ok(Self(self.0.concat(&other.0), self.effective_encoding() && other.effective_encoding()))
+        Ok(Self(
+            self.0.concat(&other.0),
+            self.effective_encoding() && other.effective_encoding(),
+        ))
     }
     /** Construct the native test-only cons shape while retaining both original children. */
     #[cfg(feature = "conformance")]
@@ -496,7 +523,10 @@ impl JsString {
         if !storage.is_cons() {
             return Err(EngineError::unsupported("string rope depth limit"));
         }
-        Ok(Some(Self(storage, self.effective_encoding() && other.effective_encoding())))
+        Ok(Some(Self(
+            storage,
+            self.effective_encoding() && other.effective_encoding(),
+        )))
     }
     /** Construct an actual suffix view whose backing retains its parent. */
     #[cfg(feature = "conformance")]
@@ -519,21 +549,34 @@ impl JsString {
     #[cfg(feature = "conformance")]
     pub(super) fn from_slice_range(parent: &Self, start: usize, length: usize) -> Option<Self> {
         let end = start.checked_add(length)?;
-        parent.0.sliced_range(start, end).map(|storage| Self(storage, parent.effective_encoding()))
+        parent
+            .0
+            .sliced_range(start, end)
+            .map(|storage| Self(storage, parent.effective_encoding()))
     }
     #[cfg(feature = "conformance")]
     pub(super) fn cons_parts(&self) -> Option<(Self, Self)> {
-        self.0.cons_parts(self.effective_encoding()).map(|(left, right)| {
-            let l = left.actual_one_byte();
-            let r = right.actual_one_byte();
-            (Self(left, l), Self(right, r))
-        })
+        self.0
+            .cons_parts(self.effective_encoding())
+            .map(|(left, right)| {
+                let l = left.actual_one_byte();
+                let r = right.actual_one_byte();
+                (Self(left, l), Self(right, r))
+            })
     }
     /** Materialize the cached real flat child while preserving direct and sliced identities. */
     #[cfg(feature = "conformance")]
     pub(in crate::v9) fn flatten_for_intrinsic(&self) -> EngineResult<Self> {
-        if self.0.needs_intrinsic_flatten() && self.len() > JS_STRING_UNITS { return Err(EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS)); }
-        Ok(Self(self.0.flatten_intrinsic(self.effective_encoding()), self.effective_encoding()))
+        if self.0.needs_intrinsic_flatten() && self.len() > JS_STRING_UNITS {
+            return Err(EngineError::limit(
+                "JavaScript string UTF-16 units",
+                JS_STRING_UNITS,
+            ));
+        }
+        Ok(Self(
+            self.0.flatten_intrinsic(self.effective_encoding()),
+            self.effective_encoding(),
+        ))
     }
     #[cfg(feature = "conformance")]
     pub(super) fn flattened_cons_child(&self) -> Option<Self> {
@@ -558,7 +601,11 @@ impl JsString {
             .flattened_repeat_parts(self.effective_encoding())
             .map(|(parent, count, flat)| {
                 let one_byte = parent.actual_one_byte();
-                (Self(parent, one_byte), count, Self(flat, self.effective_encoding()))
+                (
+                    Self(parent, one_byte),
+                    count,
+                    Self(flat, self.effective_encoding()),
+                )
             })
     }
     #[cfg(feature = "conformance")]
@@ -643,9 +690,12 @@ impl PartialEq for JsValue {
             #[cfg(feature = "conformance")]
             (Smi(a), Smi(b) | Number(b)) | (Number(b), Smi(a)) => a == b,
             #[cfg(feature = "conformance")]
-            (SharedNumber(a) | LocalNumber(a), Number(b) | Smi(b)) | (Number(b) | Smi(b), SharedNumber(a) | LocalNumber(a)) => a.value == *b,
+            (SharedNumber(a) | LocalNumber(a), Number(b) | Smi(b))
+            | (Number(b) | Smi(b), SharedNumber(a) | LocalNumber(a)) => a.value == *b,
             #[cfg(feature = "conformance")]
-            (SharedNumber(a) | LocalNumber(a), SharedNumber(b) | LocalNumber(b)) => a.value == b.value,
+            (SharedNumber(a) | LocalNumber(a), SharedNumber(b) | LocalNumber(b)) => {
+                a.value == b.value
+            }
             (String(a), String(b)) => a == b,
             (Object(a), Object(b)) => a == b,
             (Symbol(a), Symbol(b)) => a == b,
@@ -688,7 +738,9 @@ impl JsValue {
             Self::Smi(value) => *value != 0.0 && !value.is_nan(),
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             #[cfg(feature = "conformance")]
-            Self::SharedNumber(value) | Self::LocalNumber(value) => value.value != 0.0 && !value.is_nan(),
+            Self::SharedNumber(value) | Self::LocalNumber(value) => {
+                value.value != 0.0 && !value.is_nan()
+            }
             Self::String(value) => !value.is_empty(),
             Self::BigInt(value) => *value != 0,
             Self::BigIntWide(value) => !value.is_zero(),
@@ -785,8 +837,12 @@ impl JsValue {
 
         #[cfg(feature = "conformance")]
         {
-            if let Self::Smi(value) = self { return Self::Number(*value).abstract_equal(other); }
-            if let Self::Smi(value) = other { return self.abstract_equal(&Self::Number(*value)); }
+            if let Self::Smi(value) = self {
+                return Self::Number(*value).abstract_equal(other);
+            }
+            if let Self::Smi(value) = other {
+                return self.abstract_equal(&Self::Number(*value));
+            }
         }
         use JsValue::*;
         Ok(match (self, other) {
@@ -816,7 +872,9 @@ impl JsValue {
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
             #[cfg(feature = "conformance")]
-            (Self::Smi(a), Self::Smi(b) | Self::Number(b)) | (Self::Number(b), Self::Smi(a)) => a == b,
+            (Self::Smi(a), Self::Smi(b) | Self::Number(b)) | (Self::Number(b), Self::Smi(a)) => {
+                a == b
+            }
             (Self::Number(a), Self::Number(b)) => a == b,
             (Self::BigInt(a), Self::BigIntWide(b)) | (Self::BigIntWide(b), Self::BigInt(a)) => {
                 b.to_i128() == Some(*a)
@@ -828,7 +886,14 @@ impl JsValue {
     /// SameValueZero, used by includes, Map and Set.
     pub fn same_value_zero(&self, other: &Self) -> bool {
         #[cfg(feature = "conformance")]
-        { if let Self::Smi(value) = self { return Self::Number(*value).same_value_zero(other); } if let Self::Smi(value) = other { return self.same_value_zero(&Self::Number(*value)); } }
+        {
+            if let Self::Smi(value) = self {
+                return Self::Number(*value).same_value_zero(other);
+            }
+            if let Self::Smi(value) = other {
+                return self.same_value_zero(&Self::Number(*value));
+            }
+        }
         #[cfg(feature = "conformance")]
         {
             if let Self::SharedNumber(value) | Self::LocalNumber(value) = self {
@@ -847,7 +912,14 @@ impl JsValue {
     /// SameValue, used by Object.is.
     pub fn same_value(&self, other: &Self) -> bool {
         #[cfg(feature = "conformance")]
-        { if let Self::Smi(value) = self { return Self::Number(*value).same_value(other); } if let Self::Smi(value) = other { return self.same_value(&Self::Number(*value)); } }
+        {
+            if let Self::Smi(value) = self {
+                return Self::Number(*value).same_value(other);
+            }
+            if let Self::Smi(value) = other {
+                return self.same_value(&Self::Number(*value));
+            }
+        }
         #[cfg(feature = "conformance")]
         {
             if let Self::SharedNumber(value) | Self::LocalNumber(value) = self {

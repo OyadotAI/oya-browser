@@ -511,6 +511,6 @@ fn members(b: &mut Builder, proto: u32, interface: &Interface) {
     }
     let method: NativeFn = dom::element_method;
     for name in interface.methods {
-        b.method(proto, name, 0, method);
+        b.host_method(proto, name, 0, method);
     }
 }

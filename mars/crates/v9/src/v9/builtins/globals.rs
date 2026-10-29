@@ -26,6 +26,14 @@ pub(super) fn install(b: &mut Builder) {
             super::number::install_parser(b, name, id);
         }
     }
+    // The global object's value properties. The page's window makes the first three frozen
+    // own properties and replaces the globalThis placeholder with itself when it is created.
+    b.globals.extend([
+        ("NaN", JsValue::Number(f64::NAN)),
+        ("Infinity", JsValue::Number(f64::INFINITY)),
+        ("undefined", JsValue::Undefined),
+        ("globalThis", JsValue::Undefined),
+    ]);
 }
 
 /** parseInt. */
@@ -163,7 +171,9 @@ const HEX_RADIX: u32 = 16;
 surrogate outside any escape passes through as the spec requires instead of becoming U+FFFD. */
 fn decode(vm: &mut Vm, call: Call, reserved: &str) -> Res<JsValue> {
     let source = arg_string(vm, &call, 0)?;
-    let units: Vec<u16> = (0..source.len()).filter_map(|index| source.unit_at(index)).collect();
+    let units: Vec<u16> = (0..source.len())
+        .filter_map(|index| source.unit_at(index))
+        .collect();
     match decode_units(&units, reserved) {
         Some(out) => Ok(JsValue::String(JsString::from_units(out)?)),
         None => Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
@@ -269,8 +279,13 @@ fn unescape(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Indirect eval: compile and run at the top level with V9's parser. */
 fn eval(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let JsValue::String(source) = call.arg(0) else {
-        return Ok(call.arg(0));
+    let argument = call.arg(0);
+    let source = match &argument {
+        JsValue::String(source) => source.clone(),
+        other => match crate::v9::platform::trusted_script_text(vm, other)? {
+            Some(JsValue::String(source)) => source,
+            _ => return Ok(argument),
+        },
     };
     super::function::evaluate(vm, source.lossy())
 }

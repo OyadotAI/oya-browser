@@ -26,7 +26,7 @@ const MISSING_ARGUMENTS: &str =
 /** Install the DOMParser constructor and its prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
-    b.method(proto, "parseFromString", 2, parse_from_string);
+    b.host_method(proto, "parseFromString", 2, parse_from_string);
     let ctor = b.constructor("DOMParser", 0, construct, proto, None);
     b.global("DOMParser", ctor);
 }

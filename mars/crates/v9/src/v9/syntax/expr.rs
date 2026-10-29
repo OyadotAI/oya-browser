@@ -60,14 +60,16 @@ impl Parser {
             return self.yield_expression(no_in);
         }
         let pos = self.pos();
+        let start = self.position;
         let target = self.conditional(no_in)?;
         let operator = match self.punct() {
-            Some("=") => AssignOp::Assign,
-            Some(spelling) => match compound(spelling) {
-                Some(operator) => operator,
-                None => return Ok(target),
-            },
-            None => return Ok(target),
+            Some("=") => Some(AssignOp::Assign),
+            Some(spelling) => compound(spelling),
+            None => None,
+        };
+        let Some(operator) = operator else {
+            self.check_arrow_head(&target, start)?;
+            return Ok(target);
         };
         self.next();
         let pattern = if operator == AssignOp::Assign {
@@ -75,9 +77,9 @@ impl Parser {
         } else {
             if matches!(operator, AssignOp::Logical(_)) && matches!(target.kind, ExprKind::Call(..))
             {
-                return Err(self.error_at(pos, "Invalid left-hand side in assignment"));
+                return Err(self.error_at(pos, INVALID_ASSIGNMENT));
             }
-            self.simple_target(target)?
+            self.simple_target(target, INVALID_ASSIGNMENT)?
         };
         let mut value = self.assignment(no_in)?;
         if let Pattern::Ident(name, _) = &pattern {
@@ -87,6 +89,28 @@ impl Parser {
             ExprKind::Assign(operator, Box::new(pattern), Box::new(value)),
             pos,
         )
+    }
+    /** An `=>` after an expression that `arrow` did not take as a head is V8's malformed
+    parameter list, unless the expression is a name or starts with a parenthesis: those are
+    heads a line break kept from `=>`, and the arrow is then simply the unexpected token. */
+    fn check_arrow_head(&self, target: &Expr, start: usize) -> EngineResult<()> {
+        // `async (...)` on one line is a head too; only a line break kept it from the arrow.
+        let async_head = matches!(target.kind, ExprKind::Call(..))
+            && self.at_index_name(start, "async")
+            && matches!(self.tokens[start + 1].kind, Kind::Symbol('('))
+            && !self.tokens[start + 1].line_terminator_before;
+        let plain = matches!(target.kind, ExprKind::Ident(_))
+            || matches!(self.tokens[start].kind, Kind::Symbol('('))
+            || async_head;
+        if self.at("=>") && !plain {
+            return Err(self.error_at(target.pos, "Malformed arrow function parameter list"));
+        }
+        Ok(())
+    }
+    /** True when the token at `index` is this unescaped name. */
+    fn at_index_name(&self, index: usize, name: &str) -> bool {
+        let token = &self.tokens[index];
+        !token.escaped && matches!(&token.kind, Kind::Name(found) if found == name)
     }
     /** `yield`, `yield value` and `yield* iterable`. */
     fn yield_expression(&mut self, no_in: bool) -> EngineResult<Expr> {
@@ -144,6 +168,9 @@ impl Parser {
             if precedence < minimum {
                 return Ok(left);
             }
+            if let Binary::Logical(operator) = &operator {
+                self.check_logical_mixture(*operator, &left, minimum)?;
+            }
             self.next();
             let right_minimum = if precedence == EXPONENT {
                 precedence
@@ -151,9 +178,6 @@ impl Parser {
                 precedence + 1
             };
             let right = self.binary(right_minimum, no_in)?;
-            if let Binary::Logical(operator) = &operator {
-                self.check_logical_mixture(*operator, &left, &right)?;
-            }
             let kind = match operator {
                 Binary::Plain(op) => ExprKind::Binary(op, Box::new(left), Box::new(right)),
                 Binary::Logical(op) => ExprKind::Logical(op, Box::new(left), Box::new(right)),
@@ -161,23 +185,22 @@ impl Parser {
             left = self.node(kind, pos)?;
         }
     }
-    /** CoalesceExpression and LogicalORExpression are separate grammar branches unless a parenthesis joins them. */
+    /** CoalesceExpression and LogicalORExpression are separate grammar branches unless a
+    parenthesis joins them, so the operator that mixes them is the unexpected token: a `??`
+    after an unparenthesized `||` or `&&` operand, or a `||` or `&&` met while a `??` operand
+    is being read (only that operand is read at NULLISH_OPERAND). */
     fn check_logical_mixture(
         &self,
         operator: LogicalOp,
         left: &Expr,
-        right: &Expr,
+        minimum: u8,
     ) -> EngineResult<()> {
-        for operand in [left, right] {
-            if let ExprKind::Logical(inner, ..) = &operand.kind
-                && (*inner == LogicalOp::Nullish) != (operator == LogicalOp::Nullish)
-                && !self.parenthesized_logical.contains(&operand.pos.offset)
-            {
-                return Err(self.error_at(
-                    operand.pos,
-                    "Unexpected token in nullish coalescing expression",
-                ));
-            }
+        let nullish = operator == LogicalOp::Nullish;
+        let mixed_left = matches!(&left.kind, ExprKind::Logical(inner, ..)
+            if (*inner == LogicalOp::Nullish) != nullish)
+            && !self.parenthesized_logical.contains(&left.pos.offset);
+        if mixed_left || !nullish && minimum == NULLISH_OPERAND {
+            return Err(self.unexpected());
         }
         Ok(())
     }
@@ -188,6 +211,8 @@ impl Parser {
             return Err(self.unexpected());
         };
         if no_in || !self.eat_name("in") {
+            // The name itself is what V8 refuses: a `#name` stands nowhere but before `in`.
+            self.position -= 1;
             return Err(self.unexpected());
         }
         let name = Name::from(name.as_str());
@@ -206,7 +231,7 @@ impl Parser {
             };
         }
         let operator = match self.punct()? {
-            "??" => (1, Binary::Logical(LogicalOp::Nullish)),
+            "??" => (NULLISH, Binary::Logical(LogicalOp::Nullish)),
             "||" => (2, Binary::Logical(LogicalOp::Or)),
             "&&" => (3, Binary::Logical(LogicalOp::And)),
             "|" => (4, Binary::Plain(BitOr)),
@@ -244,11 +269,11 @@ impl Parser {
             let increment = self.at("++");
             self.next();
             let operand = self.unary()?;
-            let target = self.simple_target(operand)?;
+            let target = self.simple_target(operand, INVALID_PREFIX)?;
             let target = match target {
                 Pattern::Ident(name, pos) => self.node(ExprKind::Ident(name), pos)?,
                 Pattern::Expr(expr) => *expr,
-                _ => return Err(self.error_at(pos, "Invalid left-hand side in prefix operation")),
+                _ => return Err(self.error_at(pos, INVALID_PREFIX)),
             };
             return self.node(ExprKind::Update(increment, true, Box::new(target)), pos);
         }
@@ -277,22 +302,43 @@ impl Parser {
                 return Err(self.error_at(pos, "Private fields can not be deleted"));
             }
             if self.at("**") {
-                return Err(self.unexpected());
+                return Err(self.error_at(pos, UNARY_EXPONENT));
             }
             return self.node(ExprKind::Unary(operator, Box::new(operand)), pos);
         }
         if self.at_name("await") && self.context.asynchronous {
             if self.context.parameters {
-                return Err(self.error_at(pos, "Illegal await-expression in formal parameters"));
+                return Err(self.await_in_parameters(pos));
             }
             self.next();
             let operand = self.unary()?;
             if self.at("**") {
-                return Err(self.unexpected());
+                return Err(self.error_at(pos, UNARY_EXPONENT));
             }
             return self.node(ExprKind::Await(Box::new(operand)), pos);
         }
         self.postfix()
+    }
+    /** An `await` expression inside async parameters. V8 reads a sloppy `async (...)` head as a
+    call first, where `await` is a plain name: the name is the error unless an operand follows
+    it, which then leaves the call's argument list unterminated. */
+    fn await_in_parameters(&self, pos: Pos) -> EngineError {
+        if !self.context.sloppy_async_head {
+            return self.error_at(pos, AWAIT_IN_PARAMETERS);
+        }
+        let ends = matches!(self.peek_at(1).kind, Kind::End)
+            || matches!(
+                self.peek_at(1).kind,
+                Kind::Symbol(')' | ',' | '=' | ']' | '}')
+            );
+        if ends {
+            self.error_at(pos, AWAIT_BINDING)
+        } else {
+            self.error_at(
+                Pos::from_location(self.peek_at(1).location),
+                UNTERMINATED_ARGUMENTS,
+            )
+        }
     }
     /** Postfix `++` and `--` with no line break before them. */
     fn postfix(&mut self) -> EngineResult<Expr> {
@@ -301,10 +347,10 @@ impl Parser {
         if (self.at("++") || self.at("--")) && !self.peek().line_terminator_before {
             let increment = self.at("++");
             self.next();
-            let target = match self.simple_target(value)? {
+            let target = match self.simple_target(value, INVALID_POSTFIX)? {
                 Pattern::Ident(name, pos) => self.node(ExprKind::Ident(name), pos)?,
                 Pattern::Expr(expr) => *expr,
-                _ => return Err(self.error_at(pos, "Invalid left-hand side in postfix operation")),
+                _ => return Err(self.error_at(pos, INVALID_POSTFIX)),
             };
             return self.node(ExprKind::Update(increment, false, Box::new(target)), pos);
         }
@@ -331,28 +377,45 @@ impl Parser {
         let pos = self.pos();
         self.next();
         if self.eat(".") {
-            if !self.at_name("meta") || self.module.is_none() {
-                return Err(self.error_at(pos, "import.meta is only valid in a module"));
+            if !self.at_name("meta") {
+                return Err(self.unexpected());
+            }
+            if self.module.is_none() {
+                return Err(self.error_at(pos, "Cannot use 'import.meta' outside a module"));
             }
             self.next();
             return self.node(ExprKind::ImportMeta, pos);
         }
         if !self.at("(") {
+            return Err(self.error_at(pos, IMPORT_OUTSIDE_MODULE));
+        }
+        self.expect("(")?;
+        let specifier = self.import_argument()?;
+        let Some(specifier) = specifier else {
+            return Err(self.error_at(pos, "import() requires a specifier"));
+        };
+        let options = if self.at(")") {
+            None
+        } else {
+            self.import_argument()?
+        };
+        self.expect(")")?;
+        self.node(ExprKind::Import(specifier, options), pos)
+    }
+    /** One `import()` argument with its optional trailing comma: V8 reads at most two, then
+    expects the closing parenthesis, so a third is simply the unexpected token it starts with. */
+    fn import_argument(&mut self) -> EngineResult<Option<Box<Expr>>> {
+        if self.at(")") {
+            return Ok(None);
+        }
+        if self.at("...") {
             return Err(self.unexpected());
         }
-        let mut arguments = self.arguments()?.into_iter();
-        let mut value = || match arguments.next() {
-            Some(Element::Value(value)) => Ok(Some(Box::new(value))),
-            None => Ok(None),
-            Some(_) => Err(self.error_at(pos, "import() requires a specifier")),
-        };
-        let (Some(specifier), options) = (value()?, value()?) else {
-            return Err(self.error_at(pos, "import() requires a specifier"));
-        };
-        if value()?.is_some() {
-            return Err(self.error_at(pos, "import() requires a specifier"));
+        let value = self.assignment(false)?;
+        if !self.at(")") && !self.eat(",") {
+            return Err(self.unexpected());
         }
-        self.node(ExprKind::Import(specifier, options), pos)
+        Ok(Some(Box::new(value)))
     }
     /** `new Callee(args)`, `new Callee`, and `new.target`. The `target` keyword is a terminal
     symbol, so an escaped spelling is not it; and only a function body, a class element or eval
@@ -361,9 +424,14 @@ impl Parser {
         let pos = self.pos();
         self.next();
         if self.eat(".") {
-            let escaped = self.peek().escaped;
-            let name = self.property_name()?;
-            if &*name != "target" || escaped || !self.context.new_target {
+            if !matches!(&self.peek().kind, Kind::Name(name) if name == "target") {
+                return Err(self.unexpected());
+            }
+            if self.peek().escaped {
+                return Err(self.error_at(pos, "'new.target' must not contain escaped characters"));
+            }
+            self.next();
+            if !self.context.new_target {
                 return Err(self.error_at(pos, "new.target expression is not allowed here"));
             }
             return self.node(ExprKind::NewTarget, pos);
@@ -427,6 +495,11 @@ impl Parser {
                     }
                     self.next();
                     optional = true;
+                    if matches!(self.peek().kind, Kind::Template { head: true, .. }) {
+                        return Err(
+                            self.error_at(self.pos(), "Invalid tagged template on optional chain")
+                        );
+                    }
                     base = if self.at("(") {
                         let arguments = self.arguments()?;
                         self.node(ExprKind::Call(Box::new(base), arguments, true), pos)?
@@ -507,31 +580,24 @@ impl Parser {
             if list.len() > crate::constants::FUNCTION_PARAMETERS {
                 return Err(self.error_at(self.pos(), "Too many arguments in function call"));
             }
-            if !self.at(")") {
-                self.expect(",")?;
+            if !self.at(")") && !self.eat(",") {
+                return Err(self.error_at(self.pos(), UNTERMINATED_ARGUMENTS));
             }
         }
         Ok(list)
     }
     /** A literal whose pattern does not compile is an early error even if the literal never runs,
-    as ECMA-262 requires; so is a `\k<name>` that names no group once the pattern has named groups
-    or the `u`/`v` flag (without either, Annex B reads `\k` as a literal `k`). */
+    as ECMA-262 requires (the compiler also refuses a `\k<name>` that names no group). */
     fn regex_literal_check(&self, pos: Pos, pattern: &str, flags: &str) -> EngineResult<()> {
         let units: Vec<u16> = pattern.encode_utf16().collect();
         // Boundary assertions are accepted here; the runtime still refuses them where the environment disables them.
-        let program = match crate::v9::regexp::compile(&units, flags, true) {
+        match crate::v9::regexp::compile(&units, flags, true) {
             // Only ECMAScript early errors throw here; V9's own gaps wait for the runtime, so real pages still parse.
             Err(error) if !error.is_engine_gap() => {
-                return Err(self.regex_error(pos, pattern, flags, &error.0));
+                Err(self.regex_error(pos, pattern, flags, &error.0))
             }
-            Err(_) => return Ok(()),
-            Ok(program) => program,
-        };
-        let named = !program.names.is_empty() || flags.contains(['u', 'v']);
-        if named && has_dangling_group_reference(pattern, &program.names) {
-            return Err(self.regex_error(pos, pattern, flags, "Invalid named capture referenced"));
+            _ => Ok(()),
         }
-        Ok(())
     }
     /** The SyntaxError for a regexp literal, worded as V8 words it. */
     fn regex_error(&self, pos: Pos, pattern: &str, flags: &str, reason: &str) -> EngineError {
@@ -629,7 +695,7 @@ impl Parser {
                     | "CurrentFrameIsTurbofan" => (69, 0),
                     name if OPTIMIZER_HINTS.contains(&name) => (67, 0),
                     _ => {
-                        return Err(crate::protocol::EngineError::unsupported(&format!(
+                        return Err(crate::protocol::EngineError::unsupported(format!(
                             "V8 native intrinsic %{name}"
                         )));
                     }
@@ -700,9 +766,13 @@ impl Parser {
                 self.next();
                 let value = self.expression(false)?;
                 self.expect(")")?;
+                // A parenthesized name is still a reference, but never a binding.
                 if matches!(
                     value.kind,
-                    ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign(..)
+                    ExprKind::Array(_)
+                        | ExprKind::Object(_)
+                        | ExprKind::Assign(..)
+                        | ExprKind::Ident(_)
                 ) {
                     self.parenthesized_patterns.insert(value.pos.offset);
                 }
@@ -781,8 +851,8 @@ impl Parser {
         else {
             return Err(self.unexpected());
         };
-        if invalid && !tagged {
-            return Err(self.error_at(self.pos(), "Invalid escape sequence in template literal"));
+        if let (Some(reason), false) = (invalid, tagged) {
+            return Err(self.error_at(self.pos(), reason));
         }
         quasis.push(cooked);
         raws.push(raw);
@@ -797,9 +867,8 @@ impl Parser {
                     tail: last,
                     invalid,
                 } => {
-                    if invalid && !tagged {
-                        return Err(self
-                            .error_at(self.pos(), "Invalid escape sequence in template literal"));
+                    if let (Some(reason), false) = (invalid, tagged) {
+                        return Err(self.error_at(self.pos(), reason));
                     }
                     quasis.push(cooked);
                     raws.push(raw);
@@ -807,11 +876,22 @@ impl Parser {
                 }
                 _ => {
                     self.position -= 1;
-                    return Err(self.unexpected());
+                    return Err(self.unterminated_substitution());
                 }
             }
         }
         Ok((quasis, raws, expressions))
+    }
+    /** The error where a template substitution's expression ends: a `}` the scanner could not
+    resume the template after reports the scan error (an unterminated template), as V8 does once
+    it rescans; anything else is the missing brace. */
+    fn unterminated_substitution(&mut self) -> EngineError {
+        if self.at("}") && matches!(self.peek_at(1).kind, Kind::Illegal(_)) {
+            self.next();
+        } else if !matches!(self.peek().kind, Kind::Illegal(_)) {
+            return self.error_at(self.pos(), "Missing } in template expression");
+        }
+        self.unexpected()
     }
     /** `[a, , ...b]` */
     fn array_literal(&mut self) -> EngineResult<Expr> {
@@ -899,9 +979,19 @@ impl Parser {
             }
             return Ok(PropDef::Shorthand(name, pos));
         }
+        let key_start = self.position;
         let key = self.property_key()?;
-        if matches!(key, PropKey::Private(_)) {
-            return Err(self.error_at(pos, "unexpected private name"));
+        if let PropKey::Private(name) = &key {
+            return Err(self.error_at(pos, &format!("Unexpected identifier '#{name}'")));
+        }
+        // A key that cannot be shorthand must open a value or a method; V8 refuses the key itself.
+        let bare = !matches!(self.tokens[key_start].kind, Kind::Name(_))
+            && accessor.is_none()
+            && !is_async
+            && !generator;
+        if bare && !self.at(":") && !self.at("(") {
+            self.position = key_start;
+            return Err(self.unexpected());
         }
         if let Some(getter) = accessor {
             let func = self.method(pos, &key, false, false, Some(getter))?;
@@ -936,6 +1026,18 @@ impl Parser {
     }
     /** An identifier, string, number, computed or private property key. */
     pub(super) fn property_key(&mut self) -> EngineResult<PropKey> {
+        if !matches!(
+            self.peek().kind,
+            Kind::Name(_)
+                | Kind::String(_)
+                | Kind::Number(_)
+                | Kind::BigInt(_)
+                | Kind::BigIntWide(_)
+                | Kind::Private(_)
+                | Kind::Symbol('[')
+        ) {
+            return Err(self.unexpected());
+        }
         let token = self.next();
         self.strict_literal(&token)?;
         Ok(match token.kind {
@@ -959,112 +1061,148 @@ impl Parser {
                 self.expect("]")?;
                 PropKey::Computed(Box::new(key))
             }
-            _ => {
-                self.position -= 1;
-                return Err(self.unexpected());
-            }
+            _ => unreachable!("property keys are checked before they are consumed"),
         })
     }
-    /** Turn a parsed expression into an assignment or binding pattern (the cover grammar). */
-    pub(super) fn pattern_of(&mut self, value: Expr) -> EngineResult<Pattern> {
+    /** The cover grammar under one reading. The whole target refuses with the reading's own
+    reason; every element inside it is a destructuring target, and a binding never holds a
+    property reference. */
+    pub(super) fn pattern_as(&mut self, value: Expr, cover: Cover) -> EngineResult<Pattern> {
         let pos = value.pos;
-        self.check_cover(&value)?;
+        self.check_cover(&value, cover)?;
         match value.kind {
             ExprKind::Ident(name) => {
-                self.check_assignable(&name, pos)?;
+                self.check_assignable(&name, pos, cover)?;
                 Ok(Pattern::Ident(name, pos))
             }
-            ExprKind::Member(..) => Ok(Pattern::Expr(Box::new(value))),
-            ExprKind::Array(elements) => {
-                let mut items = Vec::new();
-                let mut rest = None;
-                let count = elements.len();
-                for (index, element) in elements.into_iter().enumerate() {
-                    match element {
-                        Element::Hole => items.push(None),
-                        Element::Value(value) => items.push(Some(self.pattern_of(value)?)),
-                        Element::Spread(value)
-                            if index + 1 == count
-                                && !matches!(value.kind, ExprKind::Assign(..)) =>
-                        {
-                            rest = Some(Box::new(self.pattern_of(value)?));
-                        }
-                        Element::Spread(_) => {
-                            return Err(self.error_at(pos, "Rest element must be last element"));
-                        }
-                    }
-                }
-                Ok(Pattern::Array(items, rest, pos))
+            ExprKind::Member(..) if !cover.binding() => Ok(Pattern::Expr(Box::new(value))),
+            ExprKind::Member(..) if cover == Cover::BindingElement => {
+                Err(self.error_at(pos, ILLEGAL_BINDING_PROPERTY))
             }
-            ExprKind::Object(properties) => {
-                let mut items = Vec::new();
-                let mut rest = None;
-                let count = properties.len();
-                for (index, property) in properties.into_iter().enumerate() {
-                    match property {
-                        PropDef::Value(key, value) => items.push(PatProp {
-                            key,
-                            value: self.pattern_of(value)?,
-                        }),
-                        PropDef::Shorthand(name, pos) => {
-                            self.check_assignable(&name, pos)?;
-                            items.push(PatProp {
-                                key: PropKey::Name(name.clone()),
-                                value: Pattern::Ident(name, pos),
-                            })
-                        }
-                        PropDef::ShorthandDefault(name, pos, value) => {
-                            self.check_assignable(&name, pos)?;
-                            items.push(PatProp {
-                                key: PropKey::Name(name.clone()),
-                                value: Pattern::Default(Box::new(Pattern::Ident(name, pos)), value),
-                            })
-                        }
-                        PropDef::Spread(value) if index + 1 == count => {
-                            rest = Some(Box::new(self.pattern_of(value)?));
-                        }
-                        _ => {
-                            return Err(
-                                self.error_at(pos, "Invalid destructuring assignment target")
-                            );
-                        }
-                    }
-                }
-                Ok(Pattern::Object(items, rest, pos))
+            ExprKind::Array(elements) => self.array_pattern(elements, pos, cover),
+            ExprKind::Object(properties) => self.object_pattern(properties, pos, cover),
+            ExprKind::Assign(AssignOp::Assign, target, _)
+                if cover != Cover::Assignment && legacy_call(&target) =>
+            {
+                Err(self.error_at(pos, INVALID_TARGET))
             }
             ExprKind::Assign(AssignOp::Assign, target, value) => {
                 Ok(Pattern::Default(target, value))
             }
-            _ => Err(self.error_at(pos, "Invalid left-hand side in assignment")),
+            _ => Err(self.error_at(pos, cover.reason())),
         }
+    }
+    /** `[a, , ...rest]` as a pattern: a rest with a default is no target, and nothing follows a rest. */
+    fn array_pattern(
+        &mut self,
+        elements: Vec<Element>,
+        pos: Pos,
+        cover: Cover,
+    ) -> EngineResult<Pattern> {
+        let mut items = Vec::new();
+        let mut rest = None;
+        let count = elements.len();
+        for (index, element) in elements.into_iter().enumerate() {
+            match element {
+                Element::Hole => items.push(None),
+                Element::Value(value) => {
+                    items.push(Some(self.pattern_as(value, cover.element())?));
+                }
+                Element::Spread(value) if matches!(value.kind, ExprKind::Assign(..)) => {
+                    return Err(self.error_at(value.pos, INVALID_TARGET));
+                }
+                Element::Spread(value) if index + 1 == count => {
+                    rest = Some(Box::new(self.pattern_as(value, cover.element())?));
+                }
+                Element::Spread(_) => return Err(self.error_at(pos, REST_NOT_LAST)),
+            }
+        }
+        Ok(Pattern::Array(items, rest, pos))
+    }
+    /** `{a, b: c, ...rest}` as a pattern: methods and accessors are no targets, the rest must
+    be a plain reference (a name, for a binding), and nothing follows it. */
+    fn object_pattern(
+        &mut self,
+        properties: Vec<PropDef>,
+        pos: Pos,
+        cover: Cover,
+    ) -> EngineResult<Pattern> {
+        let mut items = Vec::new();
+        let mut rest = None;
+        let count = properties.len();
+        for (index, property) in properties.into_iter().enumerate() {
+            match property {
+                PropDef::Value(key, value) => items.push(PatProp {
+                    key,
+                    value: self.pattern_as(value, cover.element())?,
+                }),
+                PropDef::Shorthand(name, pos) => {
+                    self.check_assignable(&name, pos, Cover::Assignment)?;
+                    items.push(PatProp {
+                        key: PropKey::Name(name.clone()),
+                        value: Pattern::Ident(name, pos),
+                    })
+                }
+                PropDef::ShorthandDefault(name, pos, value) => {
+                    self.check_assignable(&name, pos, Cover::Assignment)?;
+                    items.push(PatProp {
+                        key: PropKey::Name(name.clone()),
+                        value: Pattern::Default(Box::new(Pattern::Ident(name, pos)), value),
+                    })
+                }
+                PropDef::Spread(value) if index + 1 == count => {
+                    rest = Some(Box::new(self.object_rest(value, cover)?));
+                }
+                PropDef::Spread(_) => return Err(self.error_at(pos, REST_NOT_LAST)),
+                _ => return Err(self.error_at(pos, INVALID_TARGET)),
+            }
+        }
+        Ok(Pattern::Object(items, rest, pos))
+    }
+    /** An object rest target: a reference in assignments, a name in bindings; a nested pattern
+    or default is V8's "must be followed by" error, anything else is no target at all. */
+    fn object_rest(&mut self, value: Expr, cover: Cover) -> EngineResult<Pattern> {
+        let pattern = matches!(
+            value.kind,
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign(..)
+        );
+        let reference = matches!(value.kind, ExprKind::Ident(_) | ExprKind::Member(..));
+        if pattern {
+            return Err(self.error_at(value.pos, cover.rest_reason()));
+        }
+        if !reference {
+            return Err(self.error_at(value.pos, cover.element().reason()));
+        }
+        self.pattern_as(value, cover.element())
     }
     /** What the cover grammar refuses to reread as a pattern: a parenthesized literal or
     assignment (`(x = y) = 1`, `[(x = y)] = []`), and a literal with a comma after its rest. */
-    fn check_cover(&self, value: &Expr) -> EngineResult<()> {
+    fn check_cover(&self, value: &Expr, cover: Cover) -> EngineResult<()> {
         let pos = value.pos;
         let literal = matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_));
         if self.parenthesized_patterns.contains(&pos.offset)
-            && (literal || matches!(value.kind, ExprKind::Assign(..)))
+            && (literal || matches!(value.kind, ExprKind::Assign(..)) || cover.binding())
         {
-            return Err(self.error_at(pos, "Invalid destructuring assignment target"));
+            return Err(self.error_at(pos, cover.reason()));
         }
         if literal && self.rest_commas.contains(&pos.offset) {
-            return Err(self.error_at(pos, "Rest element must be last element"));
+            return Err(self.error_at(pos, REST_NOT_LAST));
         }
         Ok(())
     }
     /** Web-compatible call targets are rewritten to call[throw ReferenceError], as in V8; the
     web-compat allowance is sloppy only, so strict code gets the early error instead. */
     pub(super) fn legacy_target(&mut self, value: Expr) -> EngineResult<Pattern> {
+        self.legacy_target_as(value, Cover::Assignment)
+    }
+    /** `legacy_target` under a reading: the for-in/of head words its refusal differently. */
+    pub(super) fn legacy_target_as(&mut self, value: Expr, cover: Cover) -> EngineResult<Pattern> {
         if matches!(value.kind, ExprKind::Call(_, _, false)) {
             let pos = value.pos;
             if self.strict {
-                return Err(self.error_at(pos, "Invalid left-hand side in assignment"));
+                return Err(self.error_at(pos, cover.reason()));
             }
-            let error = self.node(
-                ExprKind::InvalidReference("Invalid left-hand side in assignment"),
-                pos,
-            )?;
+            let error = self.node(ExprKind::InvalidReference(INVALID_ASSIGNMENT), pos)?;
             let member = self.node(
                 ExprKind::Member(
                     Box::new(value),
@@ -1075,27 +1213,33 @@ impl Parser {
             )?;
             return Ok(Pattern::Expr(Box::new(member)));
         }
-        self.pattern_of(value)
+        self.pattern_as(value, cover)
     }
-    /** Compound assignment and updates need a plain name or member target. */
-    fn simple_target(&mut self, value: Expr) -> EngineResult<Pattern> {
+    /** Compound assignment and updates need a plain name or member target; `reason` is what
+    the operation calls anything else. */
+    fn simple_target(&mut self, value: Expr, reason: &'static str) -> EngineResult<Pattern> {
         if matches!(value.kind, ExprKind::Call(_, _, false)) {
             return self.legacy_target(value);
         }
         let pos = value.pos;
         match value.kind {
             ExprKind::Ident(name) => {
-                self.check_assignable(&name, pos)?;
+                self.check_assignable(&name, pos, Cover::Assignment)?;
                 Ok(Pattern::Ident(name, pos))
             }
             ExprKind::Member(..) => Ok(Pattern::Expr(Box::new(value))),
-            _ => Err(self.error_at(pos, "Invalid left-hand side in assignment")),
+            _ => Err(self.error_at(pos, reason)),
         }
     }
-    /** Strict code cannot assign `eval` or `arguments`. */
-    fn check_assignable(&self, name: &str, pos: Pos) -> EngineResult<()> {
+    /** Strict code cannot assign `eval` or `arguments`; V8 says so for a plain target and
+    calls the name an invalid element inside a pattern. */
+    fn check_assignable(&self, name: &str, pos: Pos, cover: Cover) -> EngineResult<()> {
         if self.strict && (name == "eval" || name == "arguments") {
-            return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
+            let reason = match cover {
+                Cover::Assignment | Cover::ForEach => "Unexpected eval or arguments in strict mode",
+                _ => INVALID_TARGET,
+            };
+            return Err(self.error_at(pos, reason));
         }
         Ok(())
     }
@@ -1109,7 +1253,7 @@ impl Parser {
                 || matches!(self.peek_at(1).kind, Kind::Name(_))
                     && matches!(self.peek_at(2).kind, Kind::Arrow));
         let offset = usize::from(is_async);
-        let simple = matches!(&self.peek_at(offset).kind, Kind::Name(name) if !reserved(name, self.strict) || name == "yield" || name == "await")
+        let simple = matches!(&self.peek_at(offset).kind, Kind::Name(name) if self.arrow_name(name))
             && matches!(self.peek_at(offset + 1).kind, Kind::Arrow)
             && !self.peek_at(offset + 1).line_terminator_before;
         let parenthesized = matches!(self.peek_at(offset).kind, Kind::Symbol('('))
@@ -1121,6 +1265,16 @@ impl Parser {
             self.next();
         }
         self.arrow_function(pos, is_async, simple, no_in).map(Some)
+    }
+    /** True if a name may head a simple arrow: a reserved word is not one, but `yield` and
+    `await` are except where they are operators, so the arrow reports the strict reserved word
+    and the operator reports the `=>`. */
+    fn arrow_name(&self, name: &str) -> bool {
+        match name {
+            "yield" => !self.context.generator,
+            "await" => !self.context.asynchronous,
+            _ => !reserved(name, self.strict),
+        }
     }
     /** True if the parenthesis at `index` closes right before `=>` on the same line. */
     fn arrow_after(&self, index: usize) -> bool {
@@ -1138,37 +1292,6 @@ impl Parser {
     }
 }
 
-/** True when some `\k<name>` in the pattern names none of the compiled groups. The compiler has
-already refused `\k` inside a class and every malformed reference, so each one left is an atom.
-ponytail: a name spelled with escapes is left to the compiler, which decodes them; only plain names are checked. */
-fn has_dangling_group_reference(pattern: &str, names: &[(String, Vec<usize>)]) -> bool {
-    let mut rest = pattern;
-    while let Some(index) = rest.find('\\') {
-        let after = &rest[index + 1..];
-        let Some(reference) = after.strip_prefix("k<") else {
-            rest = after_escape(after);
-            continue;
-        };
-        let Some(end) = reference.find('>') else {
-            return false;
-        };
-        let name = &reference[..end];
-        if !name.contains('\\') && !names.iter().any(|(declared, _)| declared == name) {
-            return true;
-        }
-        rest = &reference[end + 1..];
-    }
-    false
-}
-
-/** The text after one escaped character, stepping over the whole character. */
-fn after_escape(after: &str) -> &str {
-    after
-        .chars()
-        .next()
-        .map_or("", |escaped| &after[escaped.len_utf8()..])
-}
-
 /** `delete x.#y` (also inside an optional chain) is an early error: private names never go away. */
 fn deletes_private(operand: &Expr) -> bool {
     match &operand.kind {
@@ -1180,6 +1303,99 @@ fn deletes_private(operand: &Expr) -> bool {
 
 /** `**` binds tighter than every other binary operator and associates to the right. */
 const EXPONENT: u8 = 12;
+/** The precedence of `??`; its operands are read one level above it. */
+const NULLISH: u8 = 1;
+/** The level a `??` operand is read at: a `||` or `&&` met there mixes with the `??`. */
+const NULLISH_OPERAND: u8 = NULLISH + 1;
+/** V8's reason for an assignment whose target is not a reference or pattern. */
+pub(super) const INVALID_ASSIGNMENT: &str = "Invalid left-hand side in assignment";
+/** V8's reason for a pattern element that cannot be assigned. */
+pub(super) const INVALID_TARGET: &str = "Invalid destructuring assignment target";
+/** V8's reason for a for-in/of head that is not a reference or pattern. */
+pub(super) const INVALID_FOR_TARGET: &str = "Invalid left-hand side in for-loop";
+/** V8's reason for a rest element with anything after it. */
+const REST_NOT_LAST: &str = "Rest element must be last element";
+/** V8's reason for a property reference where a binding pattern wants a name. */
+const ILLEGAL_BINDING_PROPERTY: &str = "Illegal property in declaration context";
+/** V8's reason for an object rest that is a pattern or a default in an assignment. */
+const REST_ASSIGNABLE: &str =
+    "`...` must be followed by an assignable reference in assignment contexts";
+/** V8's reason for an object rest that is a pattern or a default in a binding. */
+const REST_IDENTIFIER: &str = "`...` must be followed by an identifier in declaration contexts";
+
+/** How a cover expression is reread: as the whole target of an assignment or a for-in/of head,
+as an element inside a destructuring target, or as the bindings of an arrow head. Each reading
+words its refusals as V8 does. */
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Cover {
+    /** The target of `=`. */
+    Assignment,
+    /** The head of a for-in/of loop. */
+    ForEach,
+    /** An element of a destructuring assignment. */
+    Element,
+    /** One arrow parameter, reread from a parenthesized expression. */
+    Binding,
+    /** An element inside a reread arrow parameter. */
+    BindingElement,
+}
+
+impl Cover {
+    /** The reading of an element inside this one. */
+    fn element(self) -> Self {
+        match self {
+            Cover::Binding | Cover::BindingElement => Cover::BindingElement,
+            _ => Cover::Element,
+        }
+    }
+    /** True for the readings that bind names rather than assign references. */
+    fn binding(self) -> bool {
+        matches!(self, Cover::Binding | Cover::BindingElement)
+    }
+    /** What this reading calls an expression it cannot take. */
+    fn reason(self) -> &'static str {
+        match self {
+            Cover::Assignment => INVALID_ASSIGNMENT,
+            Cover::ForEach => INVALID_FOR_TARGET,
+            Cover::Element | Cover::Binding | Cover::BindingElement => INVALID_TARGET,
+        }
+    }
+    /** What this reading calls an object rest that is a pattern or a default. */
+    fn rest_reason(self) -> &'static str {
+        if self.binding() {
+            REST_IDENTIFIER
+        } else {
+            REST_ASSIGNABLE
+        }
+    }
+}
+
+/** True for the target `legacy_target` builds for a sloppy call: a reference that throws when
+assigned, which no destructuring element may be. */
+fn legacy_call(target: &Pattern) -> bool {
+    match target {
+        Pattern::Expr(expr) => matches!(
+            &expr.kind,
+            ExprKind::Member(base, MemberProp::Computed(key), _)
+                if matches!(base.kind, ExprKind::Call(..))
+                    && matches!(key.kind, ExprKind::InvalidReference(_))
+        ),
+        _ => false,
+    }
+}
+/** V8's reason for a prefix `++` or `--` on a non-reference. */
+const INVALID_PREFIX: &str = "Invalid left-hand side expression in prefix operation";
+/** V8's reason for a postfix `++` or `--` on a non-reference. */
+const INVALID_POSTFIX: &str = "Invalid left-hand side expression in postfix operation";
+/** V8's reason for a unary operator applied to an exponentiation base. */
+const UNARY_EXPONENT: &str = "Unary operator used immediately before exponentiation expression. \
+Parenthesis must be used to disambiguate operator precedence";
+/** V8's reason for an `import` that is not `import(` or `import.` in a classic script. */
+pub(super) const IMPORT_OUTSIDE_MODULE: &str = "Cannot use import statement outside a module";
+/** V8's reason for a call whose arguments are not followed by `,` or `)`. */
+const UNTERMINATED_ARGUMENTS: &str = "missing ) after argument list";
+/** V8's reason for an `await` expression in async parameters. */
+const AWAIT_IN_PARAMETERS: &str = "Illegal await-expression in formal parameters of async function";
 
 /** Plain and short-circuiting binary operators. */
 enum Binary {

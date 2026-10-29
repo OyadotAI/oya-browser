@@ -45,9 +45,9 @@ pub(super) fn instantiate(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Promise adoption may return an authored different value, so the actual callback rechecks the Module brand. */
 fn received(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let module = call.arg(0);
-    if !module
+    if module
         .object()
-        .is_some_and(|id| get(vm, id, MODULE).is_some())
+        .is_none_or(|id| get(vm, id, MODULE).is_none())
     {
         return Err(vm.type_error(
             "Illegal call to WebAssembly.instantiate callback: Argument is not a WasmModuleObject",

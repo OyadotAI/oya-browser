@@ -63,7 +63,9 @@ impl Vm<'_> {
         }
     }
 
-    /** Reachable weak maps retain values only after their keys are independently reachable. */
+    /** Reachable weak maps retain values only after their keys are independently reachable.
+    Table keys compare by identity and nothing writes them while the marker runs. */
+    #[allow(clippy::mutable_key_type)]
     pub(super) fn trace_ephemerons(&self, marker: &mut Marker) {
         let mut waiting: FastMap<TableKey, Vec<JsValue>> = FastMap::default();
         while let Some(identity) = marker.weak_live.pop() {
@@ -80,6 +82,7 @@ impl Vm<'_> {
     }
 
     /** Register conditional value edges once per live map; later key discoveries wake them. */
+    #[allow(clippy::mutable_key_type)]
     fn mark_weak_map(
         &self,
         id: ObjectId,

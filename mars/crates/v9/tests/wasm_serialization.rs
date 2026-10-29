@@ -182,7 +182,11 @@ fn explicit_table_capacity_limits_module_decoding() {
     environment.conformance_wasm_max_table_entries = Some(3);
     let source = "const h=[0,97,115,109,1,0,0,0,4,4,1,112,0],ok=new Uint8Array([...h,3]),bad=new Uint8Array([...h,4]);let r=[WebAssembly.validate(ok),WebAssembly.validate(bad)];try{new WebAssembly.Module(bad)}catch(e){r.push(e instanceof WebAssembly.CompileError,/implementation limit \\(3 elements\\)/.test(e.message))}r=r.join()";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,false,true,true");
 }
 

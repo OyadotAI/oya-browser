@@ -58,7 +58,9 @@ impl Parsed {
             buckets: Buckets::new(&state.rules),
             pseudo_rules: state.rules.iter().any(|rule| rule.pseudo.is_some()),
             container_rules: state.rules.iter().any(|rule| {
-                let unit = |d: &super::declaration::Declaration| super::values::container_relative(&d.value);
+                let unit = |d: &super::declaration::Declaration| {
+                    super::values::container_relative(&d.value)
+                };
                 !rule.containers.is_empty() || rule.declarations.iter().any(unit)
             }),
             untrusted: state.budget.untrusted,

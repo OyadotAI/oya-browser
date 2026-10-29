@@ -8,7 +8,8 @@ pub(super) fn create(vm: &mut Vm, limits: types::Limits) -> Res<ObjectId> {
         .max
         .ok_or_else(|| vm.type_error("Shared WebAssembly memory requires a maximum"))?;
     let length = limits.min as usize * PAGE_BYTES;
-    let capacity = (maximum as usize).min(super::memory::page_limit(vm, limits.address64))
+    let capacity = (maximum as usize)
+        .min(super::memory::page_limit(vm, limits.address64))
         .checked_mul(PAGE_BYTES)
         .ok_or_else(|| vm.range_error("WebAssembly memory allocation failed"))?;
     let backing = if capacity > BUFFER_BYTES {

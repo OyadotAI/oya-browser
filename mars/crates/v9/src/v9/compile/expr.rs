@@ -132,7 +132,7 @@ impl Compiler {
             ExprKind::New(callee, args) => {
                 self.expr(callee)?;
                 if spreads(args) {
-                    self.spread_array(args)?;
+                    self.spread_array(args, true)?;
                     self.at(expr.pos);
                     self.name_callee(callee);
                     self.emit(Op::NewSpread);
@@ -198,6 +198,12 @@ impl Compiler {
                     self.emit(Op::AsyncYieldStar);
                     self.emit(Op::AsyncYieldStarResult);
                 } else if *delegate {
+                    if value
+                        .as_ref()
+                        .is_some_and(|value| !site_text::is_name_or_literal(value))
+                    {
+                        self.record_site(SiteKind::Printed, YIELD_STAR_VALUE);
+                    }
                     self.emit(Op::GetIterator);
                     self.emit(Op::Undefined);
                     self.emit(Op::YieldStar);
@@ -369,7 +375,7 @@ impl Compiler {
             return self.direct_eval_call(count(args)?);
         }
         if spreads(args) {
-            self.spread_array(args)?;
+            self.spread_array(args, true)?;
             self.at(pos);
             self.name_callee(callee);
             self.emit(Op::CallSpread);
@@ -383,12 +389,36 @@ impl Compiler {
         }
         Ok(())
     }
-    /** Remember the callee's written name for the call instruction emitted next, so a call of a
-     * non-function can name it as V8 does. Callees without a written name keep the generic text. */
+    /** Remember the callee as the source wrote it for the call instruction emitted next, so a
+     * call of a non-function names it as V8 does. */
     fn name_callee(&mut self, callee: &Expr) {
-        if let Some(label) = callee_label(callee) {
-            let pc = self.here() as u32;
-            self.f().callees.push((pc, label.into()));
+        self.record_site(SiteKind::Printed, &site_text::site_text(callee));
+    }
+    /** Record the written form of the operand of the instruction emitted next, for its message. */
+    pub(super) fn record_site(&mut self, kind: SiteKind, text: &str) {
+        let pc = self.here() as u32;
+        self.f().callees.push((pc, kind, text.into()));
+    }
+    /** Record how a value an instruction iterates was written: `for (x of y.z)`, `[...y.z]`.
+     * A call prints as its callee, since V8 blames the call before the iteration. */
+    pub(super) fn record_iterable(&mut self, iterable: &Expr) {
+        match site_text::call_callee(iterable) {
+            Some(callee) => self.record_site(SiteKind::CallResult, &site_text::site_text(callee)),
+            None => self.record_site(SiteKind::Printed, &site_text::site_text(iterable)),
+        }
+    }
+    /** Record an array spread while retaining its distinct nullish error wording. */
+    fn record_array_spread(&mut self, iterable: &Expr) {
+        match site_text::call_callee(iterable) {
+            Some(callee) => self.record_site(SiteKind::CallResult, &site_text::site_text(callee)),
+            None => self.record_site(SiteKind::ArraySpread, &site_text::site_text(iterable)),
+        }
+    }
+    /** Record a value an array pattern iterates. V8 prints it only when its printer reaches it;
+     * anything else is described by its runtime type. */
+    pub(super) fn record_destructured_iterable(&mut self, iterable: &Expr) {
+        if site_text::starts_at_first_token(iterable) {
+            self.record_iterable(iterable);
         }
     }
     /** `super(...)` binds `this`. */
@@ -399,7 +429,7 @@ impl Compiler {
             return self.lexical_super_call(args, pos);
         }
         if spreads(args) {
-            self.spread_array(args)?;
+            self.spread_array(args, true)?;
             self.at(pos);
             self.emit(Op::SuperCallSpread);
         } else {
@@ -420,7 +450,7 @@ impl Compiler {
         self.load_name(&Name::from("%constructor"), pos)?;
         self.load_name(&Name::from("new.target"), pos)?;
         if spreads(args) {
-            self.spread_array(args)?;
+            self.spread_array(args, true)?;
             self.emit(Op::LexicalSuperCallSpread);
         } else {
             for arg in args {
@@ -447,7 +477,7 @@ impl Compiler {
         }
     }
     /** Build an array from elements with spreads. */
-    fn spread_array(&mut self, elements: &[Element]) -> EngineResult<()> {
+    fn spread_array(&mut self, elements: &[Element], arguments: bool) -> EngineResult<()> {
         self.emit(Op::NewArray(0));
         for element in elements {
             match element {
@@ -457,6 +487,11 @@ impl Compiler {
                 }
                 Element::Spread(value) => {
                     self.expr(value)?;
+                    if arguments {
+                        self.record_site(SiteKind::SpreadArgument, &site_text::site_text(value));
+                    } else {
+                        self.record_array_spread(value);
+                    }
                     self.emit(Op::ArraySpread);
                 }
                 Element::Hole => {
@@ -470,7 +505,7 @@ impl Compiler {
     /** Array literals. */
     fn array(&mut self, elements: &[Element]) -> EngineResult<()> {
         if spreads(elements) || elements.len() > ARRAY_LITERAL_BATCH {
-            return self.spread_array(elements);
+            return self.spread_array(elements, false);
         }
         for element in elements {
             self.element_value(element)?;
@@ -620,6 +655,7 @@ impl Compiler {
         }
         let argc = Slot::try_from(values.len() + 1)
             .map_err(|_| EngineError::limit("V9 call arguments", Slot::MAX as usize))?;
+        self.name_callee(tag);
         self.emit(Op::Call(argc));
         Ok(())
     }
@@ -680,9 +716,16 @@ impl Compiler {
                 if matches!(object.kind, ExprKind::Super) {
                     self.load_this()?;
                     match prop {
-                        MemberProp::Computed(key) => { self.expr(key)?; self.emit(Op::Pop); }
+                        MemberProp::Computed(key) => {
+                            self.expr(key)?;
+                            self.emit(Op::Pop);
+                        }
                         MemberProp::Name(_) => {}
-                        MemberProp::Private(_) => return Err(self.error(operand.pos, "Private fields can not be deleted")),
+                        MemberProp::Private(_) => {
+                            return Err(
+                                self.error(operand.pos, "Private fields can not be deleted")
+                            );
+                        }
                     }
                     self.load_home()?;
                     self.emit(Op::CaptureSuperBase);
@@ -825,7 +868,14 @@ impl Compiler {
             }
             (AssignOp::Assign, pattern) => {
                 self.expr(value)?;
-                self.assign_pattern(pattern)
+                // V8's printer reaches the value of an assigned object pattern but not of an
+                // assigned array pattern, whose iteration is positioned at the assignment.
+                let source = if matches!(pattern, Pattern::Array(..)) {
+                    Source::Parameter
+                } else {
+                    Source::Expr(value)
+                };
+                self.assign_pattern(pattern, source)
             }
             (AssignOp::Binary(op), Pattern::Ident(name, pos)) => {
                 let base = self.ref_name(name, *pos)?;
@@ -1092,20 +1142,6 @@ fn logical(operator: LogicalOp) -> Op {
         LogicalOp::And => Op::JumpIfFalseKeep(0),
         LogicalOp::Or => Op::JumpIfTrueKeep(0),
         LogicalOp::Nullish => Op::JumpIfNotNullishKeep(0),
-    }
-}
-/** The callee as V8 prints it in "is not a function": identifiers, `this`, member chains and
- * calls. Computed and private keys have no written name here, so they keep the generic text. */
-fn callee_label(expr: &Expr) -> Option<String> {
-    match &expr.kind {
-        ExprKind::Ident(name) => Some(name.to_string()),
-        ExprKind::This => Some("this".into()),
-        ExprKind::Chain(inner) => callee_label(inner),
-        ExprKind::Member(object, MemberProp::Name(name), _) => {
-            Some(format!("{}.{name}", callee_label(object)?))
-        }
-        ExprKind::Call(callee, _, _) => Some(format!("{}(...)", callee_label(callee)?)),
-        _ => None,
     }
 }
 

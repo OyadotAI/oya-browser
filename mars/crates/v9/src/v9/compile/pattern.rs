@@ -11,6 +11,17 @@ enum Store {
     Assign,
 }
 
+/** How the value a pattern destructures was written, for V8's message when it is nullish or
+not iterable: the expression it came from, V8's name for a hidden binding (`.for`, `.catch`), a
+parameter (described by its runtime type), or a value a nested pattern reads from its parent. */
+#[derive(Clone, Copy)]
+pub(super) enum Source<'a> {
+    Expr(&'a Expr),
+    Text(&'static str),
+    Parameter,
+    Nested,
+}
+
 /** A member assignment target whose base (and computed key) sit in registers. */
 struct Target {
     base: Slot,
@@ -24,25 +35,43 @@ enum TargetKey {
     Computed(Slot),
 }
 
+/** What V8 prints for a defaulted destructuring value: the three parts of the conditional its
+parser made of it. */
+const DEFAULTED: &str = "(intermediate value)(intermediate value)(intermediate value)";
+
 impl Compiler {
+    /** Record how an object pattern's value was written, for the message when it is nullish; a
+     * parameter or nested value is described by its runtime type instead. */
+    fn record_source(&mut self, source: Source) {
+        match source {
+            Source::Expr(value) => {
+                self.record_site(SiteKind::Printed, &super::site_text::site_text(value))
+            }
+            Source::Text(text) => self.record_site(SiteKind::Printed, text),
+            Source::Parameter | Source::Nested => {}
+        }
+    }
     /** Bind the value on the stack (kept) to a declaration pattern. */
-    pub(super) fn bind_pattern(&mut self, pattern: &Pattern, initialize: bool) -> EngineResult<()> {
-        self.pattern(
-            pattern,
-            if initialize {
-                Store::Initialize
-            } else {
-                Store::Assign
-            },
-        )
+    pub(super) fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        initialize: bool,
+        source: Source,
+    ) -> EngineResult<()> {
+        let store = if initialize {
+            Store::Initialize
+        } else {
+            Store::Assign
+        };
+        self.pattern_into(pattern, store, None, source)
     }
     /** Assign the value on the stack (kept) to an assignment pattern. */
-    pub(super) fn assign_pattern(&mut self, pattern: &Pattern) -> EngineResult<()> {
-        self.pattern(pattern, Store::Assign)
+    pub(super) fn assign_pattern(&mut self, pattern: &Pattern, source: Source) -> EngineResult<()> {
+        self.pattern_into(pattern, Store::Assign, None, source)
     }
-    /** One pattern level. */
+    /** One nested pattern level. */
     fn pattern(&mut self, pattern: &Pattern, store: Store) -> EngineResult<()> {
-        self.pattern_into(pattern, store, None)
+        self.pattern_into(pattern, store, None, Source::Nested)
     }
     /** Evaluate a member target's reference into registers before its value is read: spec
     order is lref, then GetV or IteratorStep, then PutValue (13.15.5.5, 13.15.5.6). Super
@@ -108,6 +137,7 @@ impl Compiler {
         pattern: &Pattern,
         store: Store,
         target: Option<Target>,
+        source: Source,
     ) -> EngineResult<()> {
         match pattern {
             Pattern::Expr(_) if target.is_some() => self.store_target(target.expect("target")),
@@ -136,13 +166,18 @@ impl Compiler {
                 self.emit(Op::Pop);
                 self.expr(default)?;
                 self.patch(skip);
-                self.pattern_into(inner, store, target)
+                // A defaulted value is a conditional to V8, which prints each of its three parts.
+                let source = match source {
+                    Source::Nested => Source::Nested,
+                    _ => Source::Text(DEFAULTED),
+                };
+                self.pattern_into(inner, store, target, source)
             }
             Pattern::Object(props, rest, pos) => {
-                self.object_pattern(props, rest.as_deref(), *pos, store)
+                self.object_pattern(props, rest.as_deref(), *pos, store, source)
             }
             Pattern::Array(items, rest, pos) => {
-                self.array_pattern(items, rest.as_deref(), *pos, store)
+                self.array_pattern(items, rest.as_deref(), *pos, store, source)
             }
         }
     }
@@ -153,6 +188,7 @@ impl Compiler {
         rest: Option<&Pattern>,
         pos: Pos,
         store: Store,
+        source: Source,
     ) -> EngineResult<()> {
         self.at(pos);
         let mark = self.f().registers;
@@ -169,12 +205,17 @@ impl Compiler {
             Some(key @ (PropKey::Name(_) | PropKey::Private(_))) => self.key_index(key)?,
             _ => u32::MAX,
         };
-        self.emit(Op::Dup);
-        let ok = self.emit(Op::JumpIfNotNullishKeep(0));
-        self.emit(Op::Dup);
-        self.emit(Op::RequireCoercible(first_key));
-        self.patch(ok);
-        self.emit(Op::Pop);
+        // A nested pattern with a named first key lets that key's read fail, as V8 reports it
+        // ("Cannot read properties of undefined (reading 'b')").
+        if !(matches!(source, Source::Nested) && first_key != u32::MAX) {
+            self.emit(Op::Dup);
+            let ok = self.emit(Op::JumpIfNotNullishKeep(0));
+            self.emit(Op::Dup);
+            self.record_source(source);
+            self.emit(Op::RequireCoercible(first_key));
+            self.patch(ok);
+            self.emit(Op::Pop);
+        }
         for (index, prop) in props.iter().enumerate() {
             self.emit(Op::Dup);
             let target = match &prop.key {
@@ -200,7 +241,7 @@ impl Compiler {
                     target
                 }
             };
-            self.pattern_into(&prop.value, store, target)?;
+            self.pattern_into(&prop.value, store, target, Source::Nested)?;
             self.emit(Op::Pop);
         }
         if let Some(rest) = rest {
@@ -222,11 +263,17 @@ impl Compiler {
         rest: Option<&Pattern>,
         pos: Pos,
         store: Store,
+        source: Source,
     ) -> EngineResult<()> {
         self.at(pos);
         let mark = self.f().registers;
         let iterator = self.temp()?;
         self.emit(Op::Dup);
+        match source {
+            Source::Expr(value) => self.record_destructured_iterable(value),
+            Source::Text(text) => self.record_site(SiteKind::Printed, text),
+            Source::Parameter | Source::Nested => {}
+        }
         self.emit(Op::GetIterator);
         self.emit(Op::SetReg(iterator));
         self.emit(Op::Pop);
@@ -261,7 +308,7 @@ impl Compiler {
             });
             self.pattern_closeable(closeable, true);
             if let Some(item) = item {
-                self.pattern_into(item, store, target)?;
+                self.pattern_into(item, store, target, Source::Nested)?;
             }
             self.emit(Op::Pop);
         }
@@ -270,7 +317,7 @@ impl Compiler {
             self.pattern_closeable(closeable, false);
             self.emit(Op::GetReg(iterator));
             self.emit(Op::IterRest);
-            self.pattern_into(rest, store, target)?;
+            self.pattern_into(rest, store, target, Source::Nested)?;
             self.emit(Op::Pop);
         }
         Ok(())

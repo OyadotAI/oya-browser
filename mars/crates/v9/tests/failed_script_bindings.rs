@@ -44,8 +44,7 @@ fn declarations_missing_from_the_sources_are_refused() {
         round_trip(loaded.state),
         PageEvent::DomContentLoaded,
     )
-    .err()
-    .expect("a binding with no declaration is forged");
+    .expect_err("a binding with no declaration is forged");
     assert!(
         error.message.contains("Invalid V9 state graph"),
         "{}",

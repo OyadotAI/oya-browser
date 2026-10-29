@@ -53,8 +53,14 @@ impl Query {
     pub(super) fn parse(prelude: &str) -> Option<Self> {
         let prelude = prelude.trim();
         let lower = prelude.to_ascii_lowercase();
-        let bare = ["(", "not ", "style("].iter().any(|head| lower.starts_with(head));
-        let end = if bare { 0 } else { lower.find(['(', ' ']).unwrap_or(lower.len()) };
+        let bare = ["(", "not ", "style("]
+            .iter()
+            .any(|head| lower.starts_with(head));
+        let end = if bare {
+            0
+        } else {
+            lower.find(['(', ' ']).unwrap_or(lower.len())
+        };
         let name = (!bare).then(|| lower[..end].to_string());
         if name
             .as_deref()
@@ -63,14 +69,16 @@ impl Query {
             return None;
         }
         let condition = prelude[end..].trim().to_string();
-        let decidable = [0.0, crate::constants::CSS_MAX_SCALAR].iter().all(|extent| {
-            let probe = Probe {
-                width: Some(*extent),
-                height: Some(*extent),
-                custom: &|_| None,
-            };
-            container_query::truth(&condition, &probe) != Truth::Unknown
-        });
+        let decidable = [0.0, crate::constants::CSS_MAX_SCALAR]
+            .iter()
+            .all(|extent| {
+                let probe = Probe {
+                    width: Some(*extent),
+                    height: Some(*extent),
+                    custom: &|_| None,
+                };
+                container_query::truth(&condition, &probe) != Truth::Unknown
+            });
         let size = container_query::reads_size(&condition);
         (!condition.is_empty() && decidable).then_some(Self {
             name,
@@ -106,12 +114,19 @@ impl Query {
     }
     /** The query container, per CSS Conditional 5: named or sized ones from the ancestry, and
      * the parent for an unnamed style-only query. */
-    fn container<'a>(&self, ancestry: &'a [Ancestor], parent: Option<usize>) -> Option<Resolved<'a>> {
+    fn container<'a>(
+        &self,
+        ancestry: &'a [Ancestor],
+        parent: Option<usize>,
+    ) -> Option<Resolved<'a>> {
         if self.name.is_none() && !self.size {
             return parent.map(|scope| (scope, None));
         }
         let found = ancestry.iter().find(|ancestor| {
-            let named = self.name.as_ref().is_none_or(|name| ancestor.names.contains(name));
+            let named = self
+                .name
+                .as_ref()
+                .is_none_or(|name| ancestor.names.contains(name));
             named && (!self.size || ancestor.kind != ContainerType::Normal)
         })?;
         Some((found.scope, Some(found)))
@@ -185,7 +200,9 @@ pub(super) fn sizes(document: &Document, context: RenderContext) -> Option<Sizes
     let display = crate::document::render_with_context(document, context).ok()?;
     let mut first = BTreeMap::new();
     for item in &display.items {
-        first.entry(item.local_id).or_insert([item.width, item.height]);
+        first
+            .entry(item.local_id)
+            .or_insert([item.width, item.height]);
     }
     let mut sizes = Sizes::new();
     for node in &document.nodes {

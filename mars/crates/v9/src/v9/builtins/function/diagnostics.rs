@@ -108,7 +108,9 @@ fn primitive(vm: &Vm, value: &JsValue) -> String {
         JsValue::Smi(value) => crate::v9::value::number_to_string(*value),
         JsValue::Number(value) => crate::v9::value::number_to_string(*value),
         #[cfg(feature = "conformance")]
-        JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => crate::v9::value::number_to_string(value.value),
+        JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => {
+            crate::v9::value::number_to_string(value.value)
+        }
         JsValue::BigInt(value) => value.to_string(),
         JsValue::BigIntWide(value) => value.diagnostic(),
         JsValue::Symbol(id) => format!("Symbol({})", super::super::symbol_text(vm, *id)),

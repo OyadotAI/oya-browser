@@ -21,9 +21,13 @@ impl Captured {
             receiver: frame.this.clone(),
             name: {
                 #[cfg(feature = "conformance")]
-                { code.name.isolate_code_constant() }
+                {
+                    code.name.isolate_code_constant()
+                }
                 #[cfg(not(feature = "conformance"))]
-                { code.name.clone() }
+                {
+                    code.name.clone()
+                }
             },
             file: vm.modules.source_name(pos.offset as usize),
             line: pos.line,

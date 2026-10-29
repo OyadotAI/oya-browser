@@ -406,7 +406,9 @@ fn parse_iso(text: &str) -> Option<(f64, bool)> {
     if !(1.0..=12.0).contains(&month) || !(1.0..=31.0).contains(&day) {
         return None;
     }
-    if index == bytes.len() || (index + 1 == bytes.len() && matches!(bytes.get(index), Some(b'Z' | b'z'))) {
+    if index == bytes.len()
+        || (index + 1 == bytes.len() && matches!(bytes.get(index), Some(b'Z' | b'z')))
+    {
         return Some((make_date(year, month - 1.0, day, 0.0, 0.0, 0.0, 0.0), true));
     }
     if !matches!(bytes.get(index), Some(b'T' | b't' | b' ')) {

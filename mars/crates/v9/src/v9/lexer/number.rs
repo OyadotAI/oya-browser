@@ -55,6 +55,9 @@ pub(super) fn number(source: &mut Source<'_>) -> EngineResult<Kind> {
     }
     let length = source.location().byte_offset - start.byte_offset;
     let value = &rest[..length];
+    if let Some(reason) = separator_error(value.trim_end_matches('n'), prefixed) {
+        return Err(errors::syntax(start, reason));
+    }
     if value.ends_with('n') && (prefixed || !value.contains(['.', 'e', 'E'])) {
         let digits: String = value[..value.len() - 1]
             .chars()
@@ -89,6 +92,40 @@ pub(super) fn number(source: &mut Source<'_>) -> EngineResult<Kind> {
     Ok(Kind::Number(literal(value).map_err(|_| {
         errors::syntax(start, "invalid numeric literal")
     })?))
+}
+/** V8's reason for `1__0`. */
+const CONTINUOUS_SEPARATOR: &str = "Only one underscore is allowed as numeric separator";
+/** V8's reason for `1_` and `1_.5`. */
+const TRAILING_SEPARATOR: &str =
+    "Numeric separators are not allowed at the end of numeric literals";
+/** V8's reason for `0_1`. */
+const LEADING_ZERO_SEPARATOR: &str = "Numeric separator can not be used after leading 0.";
+/** The separator misuse V8 names in a scanned literal, or None when the literal has no
+separator fault V8 names (its other faults fall to the literal checks below). A leading-zero
+legacy literal is left to its own check, as V8 reads it without separators. */
+fn separator_error(digits: &str, prefixed: bool) -> Option<&'static str> {
+    let bytes = digits.as_bytes();
+    let legacy =
+        !prefixed && bytes.first() == Some(&b'0') && bytes.get(1).is_some_and(u8::is_ascii_digit);
+    if legacy || !digits.contains('_') {
+        return None;
+    }
+    if !prefixed && digits.starts_with("0_") {
+        return Some(LEADING_ZERO_SEPARATOR);
+    }
+    if digits.contains("__") {
+        return Some(CONTINUOUS_SEPARATOR);
+    }
+    let radix = if prefixed { 16 } else { 10 };
+    let trailing = digits.char_indices().any(|(index, c)| {
+        c == '_'
+            && digits[..index]
+                .chars()
+                .last()
+                .is_some_and(|before| before.is_digit(radix))
+            && !digits[index + 1..].starts_with(|after: char| after.is_digit(radix))
+    });
+    trailing.then_some(TRAILING_SEPARATOR)
 }
 /** Sloppy-mode `010` is octal; a leading-zero literal with an 8 or 9 is decimal instead. */
 fn legacy(value: &str, start: crate::protocol::SourceLocation) -> EngineResult<f64> {

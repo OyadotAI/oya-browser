@@ -14,8 +14,8 @@ use crate::constants::SCRIPT_CLOCK_STRIDE;
 use crate::protocol::EngineError;
 use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::builtins;
-use crate::v9::compile::Op;
-use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
+use crate::v9::compile::{Op, SiteKind};
+use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
 mod asyncgen;
 mod declarations;
@@ -29,6 +29,8 @@ const NORMAL: f64 = 0.0;
 const THROW: f64 = 1.0;
 const RETURN: f64 = 2.0;
 const JUMP: f64 = 3.0;
+/** V8's ReferenceError for `this` (or a return) in a derived constructor before `super()`. */
+const SUPER_NOT_CALLED: &str = "Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
 /** Packs handler and environment depths into one completion register. */
 const DEPTH_SHIFT: f64 = 65_536.0;
 /** V8's `%GetOptimizationStatus` bits mjsunit reads: kIsFunction (1) and kNeverOptimize (2). V9
@@ -196,6 +198,16 @@ impl Vm<'_> {
             None => error,
         }
     }
+    /** One spread is one instruction however long its source, so its loop checks the clock
+    every SCRIPT_CLOCK_STRIDE elements: otherwise a huge copy overran the script deadline by
+    more than the coordinator's RPC margin and the caller saw "timeout" in place of the
+    script's own time limit. */
+    pub(super) fn spread_tick(&self, count: usize) -> Res<()> {
+        if count.is_multiple_of(SCRIPT_CLOCK_STRIDE) && self.expired() {
+            return Err(Thrown::Fatal(super::super::platform::timeout()));
+        }
+        Ok(())
+    }
     /** Execute instructions until an exit or an exception. */
     fn execute(&mut self) -> Res<Exit> {
         loop {
@@ -360,16 +372,42 @@ impl Vm<'_> {
             Op::Hole => self.push(JsValue::Hole),
             Op::Number(value) => {
                 #[cfg(feature = "conformance")]
-                if self.page.environment.conformance_native_main_source.is_some() && value.is_finite() && value.fract() == 0.0 && value >= -(1_i64 << 30) as f64 && value < (1_i64 << 30) as f64 && !(value == 0.0 && value.is_sign_negative()) {
+                if self
+                    .page
+                    .environment
+                    .conformance_native_main_source
+                    .is_some()
+                    && value.is_finite()
+                    && value.fract() == 0.0
+                    && value >= -(1_i64 << 30) as f64
+                    && value < (1_i64 << 30) as f64
+                    && !(value == 0.0 && value.is_sign_negative())
+                {
                     self.push(JsValue::Smi(value));
-                } else if self.page.environment.conformance_native_main_source.is_some() {
-                    let (site, source) = { let code = &self.frame().code; (code.site, code.source.as_ref().map(|(source, _)| source.clone())) };
-                    let literal = match source { Some(source) => self.number_literal(site, &source, value)?, None => JsValue::Number(value) };
+                } else if self
+                    .page
+                    .environment
+                    .conformance_native_main_source
+                    .is_some()
+                {
+                    let (site, source) = {
+                        let code = &self.frame().code;
+                        (
+                            code.site,
+                            code.source.as_ref().map(|(source, _)| source.clone()),
+                        )
+                    };
+                    let literal = match source {
+                        Some(source) => self.number_literal(site, &source, value)?,
+                        None => JsValue::Number(value),
+                    };
                     self.push(literal);
-                } else { self.push(JsValue::Number(value)); }
+                } else {
+                    self.push(JsValue::Number(value));
+                }
                 #[cfg(not(feature = "conformance"))]
                 self.push(JsValue::Number(value));
-            },
+            }
             Op::BigInt(index) => {
                 let text = self.constant(index).lossy();
                 self.charge(crate::v9::value::BigInteger::parse_work(&text))?;
@@ -387,7 +425,10 @@ impl Vm<'_> {
             Op::String(index) => {
                 let value = self.constant(index);
                 #[cfg(feature = "conformance")]
-                let value = if self.page.environment.conformance_d8 && value.len() == 1 && value.unit_at(0).is_some_and(|unit| unit <= 255) {
+                let value = if self.page.environment.conformance_d8
+                    && value.len() == 1
+                    && value.unit_at(0).is_some_and(|unit| unit <= 255)
+                {
                     self.character_root(value.unit_at(0).expect("one character") as u8)?
                 } else if self.page.environment.conformance_shared_string_table {
                     self.share_string(&value)?
@@ -645,11 +686,35 @@ impl Vm<'_> {
                     let same = match (&left, &right) {
                         (JsValue::Object(a), JsValue::Object(b)) => a == b,
                         (JsValue::String(a), JsValue::String(b)) => a.same_backing(b),
-                        (JsValue::SharedNumber(a), JsValue::SharedNumber(b)) | (JsValue::LocalNumber(a), JsValue::LocalNumber(b)) => a.root == b.root,
-                        (JsValue::LocalNumber(_) | JsValue::SharedNumber(_), JsValue::Number(number)) | (JsValue::Number(number), JsValue::LocalNumber(_) | JsValue::SharedNumber(_))
-                            if number.is_finite() && number.fract() == 0.0 && *number >= -(1_i64 << 30) as f64 && *number < (1_i64 << 30) as f64 && !(*number == 0.0 && number.is_sign_negative()) => return Err(self.unsupported_error("V8 heap identity for unboxed primitives")),
-                        (JsValue::LocalNumber(_) | JsValue::SharedNumber(_), JsValue::Smi(_)) | (JsValue::Smi(_), JsValue::LocalNumber(_) | JsValue::SharedNumber(_)) => return Err(self.unsupported_error("V8 heap identity for small integers")),
-                        (JsValue::LocalNumber(_), _) | (_, JsValue::LocalNumber(_)) | (JsValue::SharedNumber(_), JsValue::Number(_)) | (JsValue::Number(_), JsValue::SharedNumber(_)) => false,
+                        (JsValue::SharedNumber(a), JsValue::SharedNumber(b))
+                        | (JsValue::LocalNumber(a), JsValue::LocalNumber(b)) => a.root == b.root,
+                        (
+                            JsValue::LocalNumber(_) | JsValue::SharedNumber(_),
+                            JsValue::Number(number),
+                        )
+                        | (
+                            JsValue::Number(number),
+                            JsValue::LocalNumber(_) | JsValue::SharedNumber(_),
+                        ) if number.is_finite()
+                            && number.fract() == 0.0
+                            && *number >= -(1_i64 << 30) as f64
+                            && *number < (1_i64 << 30) as f64
+                            && !(*number == 0.0 && number.is_sign_negative()) =>
+                        {
+                            return Err(
+                                self.unsupported_error("V8 heap identity for unboxed primitives")
+                            );
+                        }
+                        (JsValue::LocalNumber(_) | JsValue::SharedNumber(_), JsValue::Smi(_))
+                        | (JsValue::Smi(_), JsValue::LocalNumber(_) | JsValue::SharedNumber(_)) => {
+                            return Err(
+                                self.unsupported_error("V8 heap identity for small integers")
+                            );
+                        }
+                        (JsValue::LocalNumber(_), _)
+                        | (_, JsValue::LocalNumber(_))
+                        | (JsValue::SharedNumber(_), JsValue::Number(_))
+                        | (JsValue::Number(_), JsValue::SharedNumber(_)) => false,
                         (
                             JsValue::SharedNumber(_),
                             JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
@@ -658,9 +723,31 @@ impl Vm<'_> {
                             JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
                             JsValue::SharedNumber(_),
                         ) => false,
-                        (JsValue::Number(n), JsValue::Undefined | JsValue::Null | JsValue::Boolean(_) | JsValue::String(_) | JsValue::Object(_) | JsValue::Symbol(_))
-                        | (JsValue::Undefined | JsValue::Null | JsValue::Boolean(_) | JsValue::String(_) | JsValue::Object(_) | JsValue::Symbol(_), JsValue::Number(n))
-                            if !n.is_finite() || n.fract() != 0.0 || *n < -(1_i64 << 30) as f64 || *n >= (1_i64 << 30) as f64 || (*n == 0.0 && n.is_sign_negative()) => false,
+                        (
+                            JsValue::Number(n),
+                            JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Boolean(_)
+                            | JsValue::String(_)
+                            | JsValue::Object(_)
+                            | JsValue::Symbol(_),
+                        )
+                        | (
+                            JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Boolean(_)
+                            | JsValue::String(_)
+                            | JsValue::Object(_)
+                            | JsValue::Symbol(_),
+                            JsValue::Number(n),
+                        ) if !n.is_finite()
+                            || n.fract() != 0.0
+                            || *n < -(1_i64 << 30) as f64
+                            || *n >= (1_i64 << 30) as f64
+                            || (*n == 0.0 && n.is_sign_negative()) =>
+                        {
+                            false
+                        }
                         (JsValue::Symbol(a), JsValue::Symbol(b)) => a == b,
                         (
                             JsValue::Object(_) | JsValue::String(_) | JsValue::Symbol(_),
@@ -762,7 +849,13 @@ impl Vm<'_> {
                 38 => {
                     let value = self.pop();
                     let JsValue::String(source) = value else {
-                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructInternalizedString requires a string")) };
+                        return if self.page.environment.conformance_fuzzing {
+                            self.push(JsValue::Undefined);
+                            Ok(Flow::Next)
+                        } else {
+                            Err(self
+                                .unsupported_error("ConstructInternalizedString requires a string"))
+                        };
                     };
                     let result = self.internalize_string(&source)?;
                     self.push(JsValue::String(result));
@@ -770,7 +863,12 @@ impl Vm<'_> {
                 39 => {
                     let value = self.pop();
                     let JsValue::String(source) = value else {
-                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructThinString requires a string")) };
+                        return if self.page.environment.conformance_fuzzing {
+                            self.push(JsValue::Undefined);
+                            Ok(Flow::Next)
+                        } else {
+                            Err(self.unsupported_error("ConstructThinString requires a string"))
+                        };
                     };
                     let existing = source.thin_target().is_some() || source.is_actual_cons();
                     let thin = if existing {
@@ -779,20 +877,39 @@ impl Vm<'_> {
                         JsString::empty().construct_cons(&source)?
                     };
                     let Some(thin) = thin else {
-                        return if self.page.environment.conformance_fuzzing { self.push(JsValue::Undefined); Ok(Flow::Next) } else { Err(self.unsupported_error("ConstructThinString precondition")) };
+                        return if self.page.environment.conformance_fuzzing {
+                            self.push(JsValue::Undefined);
+                            Ok(Flow::Next)
+                        } else {
+                            Err(self.unsupported_error("ConstructThinString precondition"))
+                        };
                     };
-                    if !existing { thin.mark_old(); }
-                    if thin.thin_target().is_none() { self.internalize_string(&thin)?; }
+                    if !existing {
+                        thin.mark_old();
+                    }
+                    if thin.thin_target().is_none() {
+                        self.internalize_string(&thin)?;
+                    }
                     self.push(JsValue::String(thin));
                 }
                 40 | 41 => {
                     self.pop();
-                    if !self.page.environment.conformance_fuzzing { return Err(self.unsupported_error("string construction intrinsic arity")); }
+                    if !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error("string construction intrinsic arity"));
+                    }
                     self.push(JsValue::Undefined);
                 }
                 42 => {
-                    let id = self.alloc(super::heap::Object::new(super::data::Class::Number(0.0), None))?;
-                    self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: 0.0, root: id })));
+                    let id = self.alloc(super::heap::Object::new(
+                        super::data::Class::Number(0.0),
+                        None,
+                    ))?;
+                    self.push(JsValue::LocalNumber(std::sync::Arc::new(
+                        crate::v9::value::SharedNumberData {
+                            value: 0.0,
+                            root: id,
+                        },
+                    )));
                 }
                 46 => self.push(JsValue::Smi(f64::from(crate::v9::value::SMI_MAX))),
                 48 | 49 => {
@@ -804,7 +921,9 @@ impl Vm<'_> {
                     let right = self.pop();
                     let left = self.pop();
                     let (JsValue::String(left), JsValue::String(right)) = (left, right) else {
-                        return Err(self.unsupported_error("V8 string comparison intrinsic requires string operands"));
+                        return Err(self.unsupported_error(
+                            "V8 string comparison intrinsic requires string operands",
+                        ));
                     };
                     let ordering = left.cmp(&right);
                     let value = match intrinsic {
@@ -813,14 +932,20 @@ impl Vm<'_> {
                         53 => JsValue::Boolean(ordering.is_gt()),
                         54 => JsValue::Boolean(!ordering.is_lt()),
                         55 => JsValue::Boolean(ordering.is_eq()),
-                        _ => JsValue::Smi(match ordering { std::cmp::Ordering::Less => -1.0, std::cmp::Ordering::Equal => 0.0, std::cmp::Ordering::Greater => 1.0 }),
+                        _ => JsValue::Smi(match ordering {
+                            std::cmp::Ordering::Less => -1.0,
+                            std::cmp::Ordering::Equal => 0.0,
+                            std::cmp::Ordering::Greater => 1.0,
+                        }),
                     };
                     self.push(value);
                 }
                 58 | 60 => {
                     let input = self.peek(0);
                     let primitive = self.to_primitive(&input, super::convert::Hint::Number)?;
-                    let value = if primitive.number_value().is_some() || (intrinsic == 60 && primitive.is_bigint()) {
+                    let value = if primitive.number_value().is_some()
+                        || (intrinsic == 60 && primitive.is_bigint())
+                    {
                         primitive
                     } else {
                         JsValue::Number(self.to_number(&primitive)?)
@@ -838,17 +963,30 @@ impl Vm<'_> {
                     let low = self.pop();
                     let high = self.pop();
                     let (Some(high), Some(low)) = (high.number_value(), low.number_value()) else {
-                        return Err(self.unsupported_error("V8 ConstructDouble requires numeric operands"));
+                        return Err(
+                            self.unsupported_error("V8 ConstructDouble requires numeric operands")
+                        );
                     };
                     let bits = (u64::from(to_uint32(high)) << 32) | u64::from(to_uint32(low));
                     let number = f64::from_bits(bits);
-                    let value = if number.is_finite() && number.fract() == 0.0
-                        && number >= -((1_i64 << 30) as f64) && number <= f64::from(crate::v9::value::SMI_MAX)
-                        && !(number == 0.0 && number.is_sign_negative()) {
+                    let value = if number.is_finite()
+                        && number.fract() == 0.0
+                        && number >= -((1_i64 << 30) as f64)
+                        && number <= f64::from(crate::v9::value::SMI_MAX)
+                        && !(number == 0.0 && number.is_sign_negative())
+                    {
                         JsValue::Smi(number)
                     } else {
-                        let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
-                        JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root }))
+                        let root = self.alloc(super::heap::Object::new(
+                            super::data::Class::Number(number),
+                            None,
+                        ))?;
+                        JsValue::LocalNumber(std::sync::Arc::new(
+                            crate::v9::value::SharedNumberData {
+                                value: number,
+                                root,
+                            },
+                        ))
                     };
                     self.push(value);
                 }
@@ -856,7 +994,11 @@ impl Vm<'_> {
                     let value = self.pop();
                     let result = match value {
                         JsValue::String(text) => text.thin_target().is_none() && text.is_interned(),
-                        JsValue::Smi(_) | JsValue::Number(_) => return Err(self.unsupported_error("V8 IsInternalizedString requires a heap object")),
+                        JsValue::Smi(_) | JsValue::Number(_) => {
+                            return Err(self.unsupported_error(
+                                "V8 IsInternalizedString requires a heap object",
+                            ));
+                        }
                         _ => false,
                     };
                     self.push(JsValue::Boolean(result));
@@ -871,14 +1013,26 @@ impl Vm<'_> {
                     } else {
                         f64::from(HOLE_NAN_WORD)
                     };
-                    let root = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
-                    self.push(JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root })));
+                    let root = self.alloc(super::heap::Object::new(
+                        super::data::Class::Number(number),
+                        None,
+                    ))?;
+                    self.push(JsValue::LocalNumber(std::sync::Arc::new(
+                        crate::v9::value::SharedNumberData {
+                            value: number,
+                            root,
+                        },
+                    )));
                 }
                 68 => {
                     // V9 never optimizes, so it reports V8's own no-turbofan answer: mjsunit's
                     // assertUnoptimized passes and assertOptimized fails with its usual message.
                     let value = self.pop();
-                    let status = if self.is_callable(&value) { OPTIMIZATION_STATUS_FUNCTION } else { OPTIMIZATION_STATUS_NEVER };
+                    let status = if self.is_callable(&value) {
+                        OPTIMIZATION_STATUS_FUNCTION
+                    } else {
+                        OPTIMIZATION_STATUS_NEVER
+                    };
                     self.push(JsValue::Smi(status));
                 }
                 66 => {
@@ -890,18 +1044,34 @@ impl Vm<'_> {
                 }
                 47 => {
                     let maximum = builtins::array_buffer_max_allocation();
-                    self.push(if maximum <= crate::v9::value::SMI_MAX as usize { JsValue::Smi(maximum as f64) } else { JsValue::Number(maximum as f64) });
+                    self.push(if maximum <= crate::v9::value::SMI_MAX as usize {
+                        JsValue::Smi(maximum as f64)
+                    } else {
+                        JsValue::Number(maximum as f64)
+                    });
                 }
                 44 => {
                     let input = self.peek(0);
                     let primitive = self.to_primitive(&input, super::convert::Hint::Number)?;
                     let result = match primitive {
                         value @ (JsValue::LocalNumber(_) | JsValue::SharedNumber(_)) => value,
-                        JsValue::Number(_) => return Err(self.unsupported_error("HeapNumber identity for untracked number")),
+                        JsValue::Number(_) => {
+                            return Err(
+                                self.unsupported_error("HeapNumber identity for untracked number")
+                            );
+                        }
                         value => {
                             let number = self.to_number(&value)?;
-                            let id = self.alloc(super::heap::Object::new(super::data::Class::Number(number), None))?;
-                            JsValue::LocalNumber(std::sync::Arc::new(crate::v9::value::SharedNumberData { value: number, root: id }))
+                            let id = self.alloc(super::heap::Object::new(
+                                super::data::Class::Number(number),
+                                None,
+                            ))?;
+                            JsValue::LocalNumber(std::sync::Arc::new(
+                                crate::v9::value::SharedNumberData {
+                                    value: number,
+                                    root: id,
+                                },
+                            ))
                         }
                     };
                     self.pop();
@@ -909,19 +1079,24 @@ impl Vm<'_> {
                 }
                 45 => {
                     self.pop();
-                    if !self.page.environment.conformance_fuzzing { return Err(self.unsupported_error("AllocateHeapNumberWithValue arity")); }
+                    if !self.page.environment.conformance_fuzzing {
+                        return Err(self.unsupported_error("AllocateHeapNumberWithValue arity"));
+                    }
                     self.push(JsValue::Undefined);
                 }
                 43 => {
                     let value = self.pop();
-                    if matches!(value, JsValue::Number(number) if number.is_finite() && number.fract() == 0.0 && number >= -(1_i64 << 30) as f64 && number < (1_i64 << 30) as f64 && !(number == 0.0 && number.is_sign_negative())) {
+                    if matches!(value, JsValue::Number(number) if number.is_finite() && number.fract() == 0.0 && number >= -(1_i64 << 30) as f64 && number < (1_i64 << 30) as f64 && !(number == 0.0 && number.is_sign_negative()))
+                    {
                         return Err(self.unsupported_error("Smi identity for untracked number"));
                     }
                     self.push(JsValue::Boolean(matches!(value, JsValue::Smi(_))));
                 }
                 37 => {
                     let value = self.pop();
-                    let JsValue::String(source) = value else { return Err(self.unsupported_error("InternalizeString requires a string")); };
+                    let JsValue::String(source) = value else {
+                        return Err(self.unsupported_error("InternalizeString requires a string"));
+                    };
                     let result = self.internalize_string(&source)?;
                     self.push(JsValue::String(result));
                 }
@@ -940,7 +1115,10 @@ impl Vm<'_> {
                             false
                         }
                         JsValue::Smi(_) | JsValue::SharedNumber(_) => false,
-                        JsValue::LocalNumber(value) => self.heap.get(value.root).is_some_and(|object| object.age < super::gc::PROMOTION_AGE),
+                        JsValue::LocalNumber(value) => self
+                            .heap
+                            .get(value.root)
+                            .is_some_and(|object| object.age < super::gc::PROMOTION_AGE),
                         JsValue::Object(id) if builtins::is_shared_object(self, *id) => false,
                         JsValue::Object(id)
                             if *id < super::heap::INTRINSIC_BASE
@@ -1001,10 +1179,10 @@ impl Vm<'_> {
                             JsValue::Number(number)
                         }
                         JsValue::Number(number) => builtins::new_shared_number(self, number)?,
-                        JsValue::LocalNumber(value) => builtins::new_shared_number(self, value.value)?,
-                        JsValue::String(value) => {
-                            JsValue::String(self.share_string(&value)?)
+                        JsValue::LocalNumber(value) => {
+                            builtins::new_shared_number(self, value.value)?
                         }
+                        JsValue::String(value) => JsValue::String(self.share_string(&value)?),
                         JsValue::Smi(_)
                         | JsValue::SharedNumber(_)
                         | JsValue::Boolean(_)
@@ -1048,7 +1226,12 @@ impl Vm<'_> {
                     result?;
                     let shared = matches!(&value, JsValue::SharedNumber(_))
                         || matches!(&value, JsValue::String(s) if s.is_shared())
-                        || value.object().is_some_and(|id| matches!(self.heap.get(id).map(|object| &object.class), Some(Class::WasmShared(_))))
+                        || value.object().is_some_and(|id| {
+                            matches!(
+                                self.heap.get(id).map(|object| &object.class),
+                                Some(Class::WasmShared(_))
+                            )
+                        })
                         || value
                             .object()
                             .is_some_and(|id| builtins::is_shared_object(self, id))
@@ -1211,7 +1394,8 @@ impl Vm<'_> {
                 let iterable = self.peek(0);
                 let array = self.peek(1);
                 let roots = self.pins.len();
-                let iterator = match self.get_iterator(&iterable) {
+                let site = self.site_here();
+                let iterator = match self.get_iterator_at(&iterable, site) {
                     Ok(iterator) => iterator,
                     Err(error) => {
                         if let Thrown::Value(value) = &error {
@@ -1232,8 +1416,11 @@ impl Vm<'_> {
                     self.drop_n(2);
                     return Ok(Flow::Next);
                 }
+                let mut appended = 0usize;
                 while let Some(value) = self.iter_step(iterator)? {
                     self.array_append(&array, value)?;
+                    appended += 1;
+                    self.spread_tick(appended)?;
                 }
                 self.drop_n(2);
             }
@@ -1337,7 +1524,7 @@ impl Vm<'_> {
                 let keys: Vec<JsValue> = stack.drain(start..).collect();
                 let source = self.peek(0);
                 if source.nullish() {
-                    return Err(self.type_error("Cannot destructure 'undefined' or 'null'."));
+                    return Err(self.destructure_error(&source, u32::MAX));
                 }
                 let mut excluded = Vec::new();
                 for key in &keys {
@@ -1425,9 +1612,8 @@ impl Vm<'_> {
                 let object = self.peek(0);
                 let key = self.peek(1);
                 let JsValue::Object(id) = object else {
-                    return Err(self.type_error(
-                        "Cannot use 'in' operator to search for a key in a non-object",
-                    ));
+                    let key = self.v8_value_text(&key);
+                    return Err(self.in_operator_error(&key, &object));
                 };
                 let key = self.to_key(&key)?;
                 let result = self.has_property(id, &key)?;
@@ -1437,9 +1623,9 @@ impl Vm<'_> {
             Op::PrivateIn(key) => {
                 let key = self.constant_key(key);
                 let JsValue::Object(id) = self.peek(0) else {
-                    return Err(self.type_error(
-                        "Cannot use 'in' operator to search for a key in a non-object",
-                    ));
+                    let object = self.peek(0);
+                    let name = format!("#{}", super::private_elements::private_name(&key));
+                    return Err(self.in_operator_error(&name, &object));
                 };
                 self.guard_realm_global(id)?;
                 let result = self
@@ -1468,7 +1654,9 @@ impl Vm<'_> {
                 let home = self.peek(0);
                 let key = self.peek(1);
                 let this = self.peek(2);
-                let home = home.object().ok_or_else(|| EngineError::invalid("Invalid V9 super reference home object."))?;
+                let home = home.object().ok_or_else(|| {
+                    EngineError::invalid("Invalid V9 super reference home object.")
+                })?;
                 let base = builtins::object_get_prototype(self, home)?
                     .ok_or_else(|| self.type_error("Cannot read properties of null"))?;
                 let key = self.to_key(&key)?;
@@ -1660,7 +1848,11 @@ impl Vm<'_> {
                 };
                 self.drop_n(2);
                 #[cfg(feature = "conformance")]
-                let value = if matches!(op, Op::Sub | Op::Mul | Op::Div | Op::Mod) { tagged_smi_result(&left, &right, JsValue::Number(value)) } else { JsValue::Number(value) };
+                let value = if matches!(op, Op::Sub | Op::Mul | Op::Div | Op::Mod) {
+                    tagged_smi_result(&left, &right, JsValue::Number(value))
+                } else {
+                    JsValue::Number(value)
+                };
                 #[cfg(not(feature = "conformance"))]
                 let value = JsValue::Number(value);
                 self.push(value);
@@ -1786,7 +1978,11 @@ impl Vm<'_> {
                 let number = self.to_number(&value)?;
                 self.pop();
                 #[cfg(feature = "conformance")]
-                let result = tagged_smi_result(&value, &value, JsValue::Number(f64::from(!to_int32(number))));
+                let result = tagged_smi_result(
+                    &value,
+                    &value,
+                    JsValue::Number(f64::from(!to_int32(number))),
+                );
                 #[cfg(not(feature = "conformance"))]
                 let result = JsValue::Number(f64::from(!to_int32(number)));
                 self.push(result);
@@ -1800,7 +1996,11 @@ impl Vm<'_> {
                 let value = self.peek(0);
                 let number = self.to_number(&value)?;
                 self.pop();
-                let result = if op == Op::Inc { number + 1.0 } else { number - 1.0 };
+                let result = if op == Op::Inc {
+                    number + 1.0
+                } else {
+                    number - 1.0
+                };
                 #[cfg(feature = "conformance")]
                 let result = tagged_smi_result(&value, &value, JsValue::Number(result));
                 #[cfg(not(feature = "conformance"))]
@@ -1952,7 +2152,8 @@ impl Vm<'_> {
             Op::GetIterator => {
                 let value = self.peek(0);
                 let roots = self.pins.len();
-                let iterator = match self.get_iterator(&value) {
+                let site = self.site_here();
+                let iterator = match self.get_iterator_at(&value, site) {
                     Ok(iterator) => iterator,
                     Err(error) => {
                         if let Thrown::Value(value) = &error {
@@ -2003,8 +2204,11 @@ impl Vm<'_> {
                 };
                 let array = self.new_array(Vec::new())?;
                 self.push(JsValue::Object(array));
+                let mut collected = 0usize;
                 while let Some(value) = self.iter_step(id)? {
                     self.array_append(&JsValue::Object(array), value)?;
+                    collected += 1;
+                    self.spread_tick(collected)?;
                 }
                 self.drop_n(2);
                 self.push(JsValue::Object(array));
@@ -2113,9 +2317,12 @@ impl Vm<'_> {
             .cloned()
             .ok_or_else(|| EngineError::invalid("Invalid V9 environment slot.").into())
     }
-    /** The dead-zone ReferenceError for a name. */
+    /** The dead-zone ReferenceError for a name; `this` before `super()` has V8's own wording. */
     fn dead_zone(&mut self, name: u32) -> Thrown {
         let name = self.constant(name).lossy();
+        if name == "this" {
+            return self.reference_error(SUPER_NOT_CALLED);
+        }
         self.reference_error(&format!("Cannot access '{name}' before initialization"))
     }
     /** Read a global name: lexical bindings first, then the global object. */
@@ -2225,14 +2432,13 @@ impl Vm<'_> {
             self.is_callable(function)
         }
     }
-    /** The TypeError for calling a non-function. The call site's written name is used when the
-     * compiler recorded one (`arr.push`), as V8 prints it; otherwise the value's kind is named. */
-    fn uncallable_error(&mut self, function: &JsValue, constructing: bool) -> Thrown {
-        let pc = self.frame().pc.saturating_sub(1);
-        let named = self.frame().code.callee_at(pc).map(str::to_owned);
-        let text = match named {
-            Some(name) => name,
-            None => self.callee_text(function),
+    /** The TypeError for calling a non-function: the callee as the source wrote it, which the
+     * compiler recorded for every call it compiled; a call it did not record is an intermediate
+     * value to V8 too. */
+    fn uncallable_error(&mut self, _function: &JsValue, constructing: bool) -> Thrown {
+        let text = match self.site_here() {
+            Some((_, text)) => text,
+            None => "(intermediate value)".into(),
         };
         let noun = if constructing {
             "constructor"
@@ -2280,20 +2486,24 @@ impl Vm<'_> {
     environment that owns the `this` slot super() just filled. The frame may be inside a block
     or a nested arrow when super() runs, so its current environment is walked up to `env`. */
     fn derived_frame_over(&self, env: super::heap::EnvId) -> Option<usize> {
-        self.frames.iter().enumerate().rev().find_map(|(index, frame)| {
-            if !frame.construct || !frame.code.flags.derived {
-                return None;
-            }
-            let mut current = frame.env;
-            for _ in 0..super::property::CHAIN_STEPS {
-                let found = current?;
-                if found == env {
-                    return Some(index);
+        self.frames
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, frame)| {
+                if !frame.construct || !frame.code.flags.derived {
+                    return None;
                 }
-                current = self.heap.env(found)?.parent;
-            }
-            None
-        })
+                let mut current = frame.env;
+                for _ in 0..super::property::CHAIN_STEPS {
+                    let found = current?;
+                    if found == env {
+                        return Some(index);
+                    }
+                    current = self.heap.env(found)?.parent;
+                }
+                None
+            })
     }
     /** [[Construct]]'s result once the body has fully completed: an object is the result; a
     derived constructor returning any other non-undefined value is a TypeError; otherwise the
@@ -2306,9 +2516,7 @@ impl Vm<'_> {
             return Err(self.type_error("Derived constructors may only return object or undefined"));
         }
         if frame.this == JsValue::Hole {
-            return Err(self.reference_error(
-                "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-            ));
+            return Err(self.reference_error(SUPER_NOT_CALLED));
         }
         Ok(frame.this.clone())
     }
@@ -2556,31 +2764,74 @@ impl Vm<'_> {
     #[cfg(feature = "conformance")]
     fn compact_character_spread(&mut self, array: &JsValue, iterator: u32) -> Res<bool> {
         use super::data::IterState;
-        if !self.page.environment.conformance_d8 { return Ok(false); }
-        let Some(id) = array.object() else { return Ok(false); };
-        if !matches!(self.heap.get(id).map(|object| &object.class), Some(Class::Array(elements)) if elements.is_empty()) { return Ok(false); }
+        if !self.page.environment.conformance_d8 {
+            return Ok(false);
+        }
+        let Some(id) = array.object() else {
+            return Ok(false);
+        };
+        if !matches!(self.heap.get(id).map(|object| &object.class), Some(Class::Array(elements)) if elements.is_empty())
+        {
+            return Ok(false);
+        }
         let text = match self.heap.get(iterator).map(|object| &object.class) {
             Some(Class::Iter(state)) => match state.as_ref() {
-                IterState::String { text, index: 0, done: false } if text.is_latin1() && text.len() >= MIN_COMPACT_STRING_LENGTH => text.clone(),
+                IterState::String {
+                    text,
+                    index: 0,
+                    done: false,
+                } if text.is_latin1() && text.len() >= MIN_COMPACT_STRING_LENGTH => text.clone(),
                 _ => return Ok(false),
             },
             _ => return Ok(false),
         };
-        if text.len() > u32::MAX as usize || self.heap.counts.properties.saturating_add(258) > self.limits.properties
-            || self.heap.counts.units.saturating_add(text.len()).saturating_add(256) > self.limits.units { return Ok(false); }
+        if text.len() > u32::MAX as usize
+            || self.heap.counts.properties.saturating_add(258) > self.limits.properties
+            || self
+                .heap
+                .counts
+                .units
+                .saturating_add(text.len())
+                .saturating_add(256)
+                > self.limits.units
+        {
+            return Ok(false);
+        }
         self.charge(text.len())?;
         let mut roots = Vec::with_capacity(256);
-        for unit in 0..=u8::MAX { roots.push(JsValue::String(self.character_root(unit)?)); }
-        let Some(elements) = super::array_elements::ArrayElements::character_copy(JsValue::String(text.clone()), roots) else { return Ok(false); };
+        for unit in 0..=u8::MAX {
+            roots.push(JsValue::String(self.character_root(unit)?));
+        }
+        let Some(elements) = super::array_elements::ArrayElements::character_copy(
+            JsValue::String(text.clone()),
+            roots,
+        ) else {
+            return Ok(false);
+        };
         let slots = elements.resident_len();
-        if slots > self.limits.array_length { return Ok(false); }
-        let units = elements.resident_values().map(JsValue::string_units).sum::<usize>();
-        for value in elements.resident_values() { self.heap.track_value(value); }
-        let Some(Class::Array(target)) = self.heap.get_mut(id).map(|object| &mut object.class) else { return Ok(false); };
+        if slots > self.limits.array_length {
+            return Ok(false);
+        }
+        let units = elements
+            .resident_values()
+            .map(JsValue::string_units)
+            .sum::<usize>();
+        for value in elements.resident_values() {
+            self.heap.track_value(value);
+        }
+        let Some(Class::Array(target)) = self.heap.get_mut(id).map(|object| &mut object.class)
+        else {
+            return Ok(false);
+        };
         *target = elements;
         self.heap.adjust(slots as isize, units as isize);
-        if let Some(Class::Iter(state)) = self.heap.get_mut(iterator).map(|object| &mut object.class)
-            && let IterState::String { index, done, .. } = state.as_mut() { *index = text.len() as u32; *done = true; }
+        if let Some(Class::Iter(state)) =
+            self.heap.get_mut(iterator).map(|object| &mut object.class)
+            && let IterState::String { index, done, .. } = state.as_mut()
+        {
+            *index = text.len() as u32;
+            *done = true;
+        }
         Ok(true)
     }
     /** Append to an array literal under construction. */
@@ -2656,12 +2907,17 @@ impl Vm<'_> {
         Ok(())
     }
     /** The TypeError for destructuring a nullish value. The pattern's first key is named when it
-     * has one, as V8 does; the value is written as its own word, since no source text is kept. */
+     * has one, and the value as the source wrote it when the compiler kept that text, otherwise
+     * by its type, as V8 does. */
     fn destructure_error(&mut self, source: &JsValue, name: u32) -> Thrown {
         let word = if matches!(source, JsValue::Null) {
             "null"
         } else {
             "undefined"
+        };
+        let text = match self.site_here() {
+            Some((_, text)) => text,
+            None => self.v8_callsite_text(source),
         };
         let key = self
             .frame()
@@ -2671,11 +2927,26 @@ impl Vm<'_> {
             .map(|key| key.lossy());
         let message = match key {
             Some(key) => {
-                format!("Cannot destructure property '{key}' of '{word}' as it is {word}.")
+                format!("Cannot destructure property '{key}' of '{text}' as it is {word}.")
             }
-            None => format!("Cannot destructure '{word}' as it is {word}."),
+            None => format!("Cannot destructure '{text}' as it is {word}."),
         };
         self.type_error(&message)
+    }
+    /** The written form the compiler recorded for the instruction being executed. */
+    fn site_here(&mut self) -> Option<(SiteKind, String)> {
+        let pc = self.frame().pc.saturating_sub(1);
+        self.frame()
+            .code
+            .callee_at(pc)
+            .map(|(kind, text)| (kind, text.to_owned()))
+    }
+    /** `in` with a non-object on its right names both sides as V8 does. */
+    fn in_operator_error(&mut self, key: &str, object: &JsValue) -> Thrown {
+        let object = self.v8_value_text(object);
+        self.type_error(&format!(
+            "Cannot use 'in' operator to search for '{key}' in {object}"
+        ))
     }
     /** Define a method, getter or setter and give the function its home object. */
     fn define_method(
@@ -2779,10 +3050,9 @@ impl Vm<'_> {
         let id = self.to_object(object)?;
         let deleted = self.delete(id, key)?;
         if !deleted && self.reference_strict() {
-            return Err(self.type_error(&format!(
-                "Cannot delete property '{}'",
-                super::property::key_text(key)
-            )));
+            let holder = self.v8_value_text(&JsValue::Object(id));
+            let name = self.key_display(key);
+            return Err(self.type_error(&format!("Cannot delete property '{name}' of {holder}")));
         }
         Ok(deleted)
     }
@@ -2791,17 +3061,29 @@ impl Vm<'_> {
         if !matches!(base, JsValue::Null | JsValue::Undefined | JsValue::Hole) {
             return Ok(());
         }
+        if !setting && matches!(key, JsValue::Symbol(id) if *id == super::realm::symbol::ITERATOR) {
+            return Err(self.nullish_read_error(base, &Key::Sym(super::realm::symbol::ITERATOR)));
+        }
         let what = if *base == JsValue::Null {
             "null"
         } else {
             "undefined"
         };
         let verb = if setting { "set" } else { "read" };
-        let detail = if let JsValue::String(key) = key {
-            let operation = if setting { "setting" } else { "reading" };
-            format!(" ({operation} '{}')", key.lossy())
-        } else {
-            String::new()
+        // V8 names every key, a symbol as `Symbol(description)`; an object key would need
+        // conversion that can run script, so only primitives are named here.
+        let name = match key {
+            JsValue::String(key) => Some(key.lossy()),
+            JsValue::Symbol(id) => Some(self.key_display(&Key::Sym(*id))),
+            JsValue::Object(_) => None,
+            other => self.to_string(other).ok().map(|text| text.lossy()),
+        };
+        let detail = match name {
+            Some(name) => {
+                let operation = if setting { "setting" } else { "reading" };
+                format!(" ({operation} '{name}')")
+            }
+            None => String::new(),
         };
         Err(self.type_error(&format!("Cannot {verb} properties of {what}{detail}")))
     }
@@ -2818,10 +3100,7 @@ impl Vm<'_> {
             return Err(self.type_error("Cannot set properties of null"));
         };
         if !self.set_from(proto, key.clone(), value, this)? && self.reference_strict() {
-            return Err(self.type_error(&format!(
-                "Cannot assign to read only property '{}' of object",
-                super::property::key_text(&key)
-            )));
+            return Err(self.set_failure(this, &key));
         }
         Ok(())
     }
@@ -2839,7 +3118,7 @@ impl Vm<'_> {
         let parent = callee.object().and_then(|id| self.proto_of(id));
         let Some(parent) = parent.filter(|parent| self.is_constructor(&JsValue::Object(*parent)))
         else {
-            return Err(self.type_error("Super constructor is not a constructor"));
+            return Err(self.super_constructor_error(&callee, parent));
         };
         let this = self.construct(JsValue::Object(parent), args, Some(new_target))?;
         // BindThisValue checks initialization after the parent constructor's observable work.
@@ -2859,9 +3138,51 @@ impl Vm<'_> {
         let parent = callee.object().and_then(|id| self.proto_of(id));
         let Some(parent) = parent.filter(|parent| self.is_constructor(&JsValue::Object(*parent)))
         else {
-            return Err(self.type_error("Super constructor is not a constructor"));
+            return Err(self.super_constructor_error(&callee, parent));
         };
         self.construct(JsValue::Object(parent), args, Some(target))
+    }
+    /** `Super constructor null of A is not a constructor`: the parent as V8 prints it and the
+     * derived class by its name, or `anonymous class` when it has none. */
+    fn super_constructor_error(&mut self, callee: &JsValue, parent: Option<ObjectId>) -> Thrown {
+        let parent = parent.map_or(JsValue::Null, JsValue::Object);
+        // A function parent is named, not printed as source; no name reads as `null`.
+        let parent = match parent {
+            JsValue::Object(id) if self.is_callable(&parent) => {
+                match self
+                    .own(id, &Key::from("name"))
+                    .ok()
+                    .flatten()
+                    .map(|prop| prop.slot)
+                {
+                    Some(Slot::Data(JsValue::String(name))) if !name.is_empty() => name.lossy(),
+                    _ => "null".to_string(),
+                }
+            }
+            other => self.v8_value_text(&other),
+        };
+        let name = self.code_name_of(callee);
+        let class = if name.is_empty() {
+            "anonymous class".to_string()
+        } else {
+            name
+        };
+        self.type_error(&format!(
+            "Super constructor {parent} of {class} is not a constructor"
+        ))
+    }
+    /** The name a closure was compiled with, read without touching its properties. */
+    fn code_name_of(&self, function: &JsValue) -> String {
+        function
+            .object()
+            .and_then(|id| self.heap.get(id))
+            .and_then(|object| object.function())
+            .and_then(|function| match function.kind {
+                FunctionKind::Closure { site, .. } => self.registry.get(site),
+                _ => None,
+            })
+            .map(|code| code.name.lossy())
+            .unwrap_or_default()
     }
     /** Build a class constructor and prototype from the stack. */
     fn class_op(&mut self, site: u32, has_super: bool) -> Res<()> {
@@ -2873,16 +3194,20 @@ impl Vm<'_> {
             Some(JsValue::Null) => (None, ids.function_prototype),
             Some(parent) => {
                 if !self.is_constructor(&parent) {
-                    return Err(self.type_error("Class extends value is not a constructor or null"));
+                    let text = self.v8_value_text(&parent);
+                    return Err(self.type_error(&format!(
+                        "Class extends value {text} is not a constructor or null"
+                    )));
                 }
                 let proto = self.get(&parent, &Key::prototype())?;
                 let proto = match proto {
                     JsValue::Object(id) => Some(id),
                     JsValue::Null => None,
-                    _ => {
-                        return Err(self.type_error(
-                            "Class extends value does not have valid prototype property",
-                        ));
+                    other => {
+                        let text = self.v8_value_text(&other);
+                        return Err(self.type_error(&format!(
+                            "Class extends value does not have valid prototype property {text}"
+                        )));
                     }
                 };
                 (proto, parent.object().expect("constructor object"))
@@ -2989,10 +3314,10 @@ impl Vm<'_> {
         }
         Ok(())
     }
-    /** A var or function declaration of a name an earlier script declared with let, const or
-    class is a SyntaxError, as for two declarations in one script. */
-    /** A top-level lexical name collides with an existing global binding or a non-configurable
-    global property (spec HasLexicalDeclaration and HasRestrictedGlobalProperty): a SyntaxError. */
+    /// A var or function declaration of a name an earlier script declared with let, const or class
+    /// is a SyntaxError, as for two declarations in one script. A top-level lexical name that
+    /// collides with an existing global binding or a non-configurable global property (spec
+    /// HasLexicalDeclaration and HasRestrictedGlobalProperty) is a SyntaxError too.
     fn check_global_lexical(&mut self, name: &crate::v9::value::JsString) -> Res<()> {
         let text = name.lossy();
         let shadowed = self
@@ -3007,7 +3332,9 @@ impl Vm<'_> {
             "undefined" | "NaN" | "Infinity" | "window" | "document" | "location"
         );
         if self.globals.contains_key(&text) || shadowed || restricted {
-            return Err(self.syntax_error(&format!("Identifier '{text}' has already been declared")));
+            return Err(
+                self.syntax_error(&format!("Identifier '{text}' has already been declared"))
+            );
         }
         Ok(())
     }
@@ -3060,11 +3387,18 @@ fn cacheable(class: &Class) -> bool {
 /** Integer fast paths preserve actual tagged-small-integer provenance. */
 #[cfg(feature = "conformance")]
 fn tagged_smi_result(left: &JsValue, right: &JsValue, value: JsValue) -> JsValue {
-    if matches!((left, right), (JsValue::Smi(_), JsValue::Smi(_))) {
-        if let JsValue::Number(number) = value {
-            if number.is_finite() && number.fract() == 0.0 && number >= -(1_i64 << 30) as f64 && number < (1_i64 << 30) as f64 && !(number == 0.0 && number.is_sign_negative()) { return JsValue::Smi(number); }
-            return JsValue::Number(number);
+    if matches!((left, right), (JsValue::Smi(_), JsValue::Smi(_)))
+        && let JsValue::Number(number) = value
+    {
+        if number.is_finite()
+            && number.fract() == 0.0
+            && number >= -(1_i64 << 30) as f64
+            && number < (1_i64 << 30) as f64
+            && !(number == 0.0 && number.is_sign_negative())
+        {
+            return JsValue::Smi(number);
         }
+        return JsValue::Number(number);
     }
     value
 }

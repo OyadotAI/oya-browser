@@ -45,6 +45,11 @@ impl Vm<'_> {
         } else {
             self.peek(count - 1)
         };
+        // A TrustedScript evaluates as its text, as the Trusted Types sink for eval says.
+        let argument = match crate::v9::platform::trusted_script_text(self, &argument)? {
+            Some(text) => text,
+            None => argument,
+        };
         let value = match argument {
             JsValue::String(source) => {
                 let context = self.constant(context).lossy();

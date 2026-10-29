@@ -22,14 +22,19 @@ thread_local! { static ENCODE_IDS: std::cell::RefCell<Option<std::collections::B
 fn encode_id(value: &JsString) -> u64 {
     ENCODE_IDS.with(|state| {
         let mut state = state.borrow_mut();
-        let Some(ids) = state.as_mut() else { return value.snapshot_id() };
+        let Some(ids) = state.as_mut() else {
+            return value.snapshot_id();
+        };
         let next = ids.len() as u64 + 1;
         *ids.entry(value.snapshot_id()).or_insert(next)
     })
 }
 
+/** Per-value metadata a conformance encode records, keyed by object identity. */
 #[cfg(feature = "conformance")]
-thread_local! { static ENCODE_METADATA: std::cell::RefCell<Option<std::collections::BTreeMap<u64, (bool, bool, bool)>>> = const { std::cell::RefCell::new(None) }; }
+type EncodeMetadata = Option<std::collections::BTreeMap<u64, (bool, bool, bool)>>;
+#[cfg(feature = "conformance")]
+thread_local! { static ENCODE_METADATA: std::cell::RefCell<EncodeMetadata> = const { std::cell::RefCell::new(None) }; }
 #[cfg(feature = "conformance")]
 thread_local! { static SLICE_PARENTS: std::cell::RefCell<Option<std::collections::BTreeMap<u64, JsString>>> = const { std::cell::RefCell::new(None) }; }
 #[cfg(feature = "conformance")]
@@ -39,23 +44,32 @@ thread_local! { static DECODE_STRING_BUDGET: std::cell::RefCell<Option<crate::v9
 #[cfg(feature = "conformance")]
 fn track_decoded(value: &JsString) {
     DECODE_STRING_BUDGET.with(|cell| {
-        if let Some(budget) = cell.borrow_mut().as_mut() { budget.register(value); }
+        if let Some(budget) = cell.borrow_mut().as_mut() {
+            budget.register(value);
+        }
     });
 }
 
 /** Reserve output storage before decoding an ordinary string with no existing source cell. */
 #[cfg(feature = "conformance")]
-fn bounded_decoded_new<E: Error>(units: usize, make: impl FnOnce() -> crate::protocol::EngineResult<JsString>) -> Result<JsString, E> {
+fn bounded_decoded_new<E: Error>(
+    units: usize,
+    make: impl FnOnce() -> crate::protocol::EngineResult<JsString>,
+) -> Result<JsString, E> {
     let reserved = DECODE_STRING_BUDGET.with(|cell| -> Result<usize, E> {
         match cell.borrow_mut().as_mut() {
-            Some(budget) => budget.reserve_new(units, crate::constants::JS_ENVIRONMENT_UNITS).map_err(|e| E::custom(e.message)),
+            Some(budget) => budget
+                .reserve_new(units, crate::constants::JS_ENVIRONMENT_UNITS)
+                .map_err(|e| E::custom(e.message)),
             None => Ok(0),
         }
     })?;
     let result = make();
     DECODE_STRING_BUDGET.with(|cell| {
         if let Some(budget) = cell.borrow_mut().as_mut() {
-            if let Ok(value) = &result { budget.register(value); }
+            if let Ok(value) = &result {
+                budget.register(value);
+            }
             budget.release(reserved);
         }
     });
@@ -64,21 +78,42 @@ fn bounded_decoded_new<E: Error>(units: usize, make: impl FnOnce() -> crate::pro
 
 /** Hold output and optional source-cache reservations until construction finishes. */
 #[cfg(feature = "conformance")]
-fn bounded_decoded_string<E: Error>(left: &JsString, right: Option<&JsString>, units: usize, materialize: bool, make: impl FnOnce() -> crate::protocol::EngineResult<JsString>) -> Result<JsString, E> {
+fn bounded_decoded_string<E: Error>(
+    left: &JsString,
+    right: Option<&JsString>,
+    units: usize,
+    materialize: bool,
+    make: impl FnOnce() -> crate::protocol::EngineResult<JsString>,
+) -> Result<JsString, E> {
     let reservations = DECODE_STRING_BUDGET.with(|cell| -> Result<(usize, usize), E> {
         let mut cell = cell.borrow_mut();
-        let Some(budget) = cell.as_mut() else { return Ok((0, 0)); };
-        if let Some(right) = right { budget.register(right); }
-        let source = if materialize { budget.preflight(left, crate::constants::JS_ENVIRONMENT_UNITS).map_err(|e| E::custom(e.message))? } else { 0 };
+        let Some(budget) = cell.as_mut() else {
+            return Ok((0, 0));
+        };
+        if let Some(right) = right {
+            budget.register(right);
+        }
+        let source = if materialize {
+            budget
+                .preflight(left, crate::constants::JS_ENVIRONMENT_UNITS)
+                .map_err(|e| E::custom(e.message))?
+        } else {
+            0
+        };
         match budget.reserve_output(left, units, crate::constants::JS_ENVIRONMENT_UNITS) {
             Ok(output) => Ok((source, output)),
-            Err(error) => { budget.release(source); Err(E::custom(error.message)) }
+            Err(error) => {
+                budget.release(source);
+                Err(E::custom(error.message))
+            }
         }
     })?;
     let result = make();
     DECODE_STRING_BUDGET.with(|cell| {
         if let Some(budget) = cell.borrow_mut().as_mut() {
-            if let Ok(value) = &result { budget.register(value); }
+            if let Ok(value) = &result {
+                budget.register(value);
+            }
             budget.release(reservations.0);
             budget.release(reservations.1);
         }
@@ -111,7 +146,9 @@ pub(in crate::v9) fn with_slice_parents<T>(
 /** Install a validated table inside the current scoped snapshot decode. */
 #[cfg(feature = "conformance")]
 pub(in crate::v9) fn set_slice_parents(parents: std::collections::BTreeMap<u64, JsString>) {
-    SLICE_PARENTS.with(|cell| { cell.replace(Some(parents)); });
+    SLICE_PARENTS.with(|cell| {
+        cell.replace(Some(parents));
+    });
 }
 
 /** Serialize the collected table without producing references within the table itself. */
@@ -181,23 +218,27 @@ pub(in crate::v9) fn with_string_identity_encoding<T>(encode: impl FnOnce() -> T
         let _restore = Restore(state, previous);
         ENCODE_IDS.with(|ids| {
             let previous = ids.replace(Some(std::collections::BTreeMap::new()));
-            struct RestoreIds<'a>(&'a std::cell::RefCell<Option<std::collections::BTreeMap<u64, u64>>>, Option<std::collections::BTreeMap<u64, u64>>);
-            impl Drop for RestoreIds<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
-            let _restore = RestoreIds(ids, previous);
-        ENCODE_METADATA.with(|metadata| {
-            let previous = metadata.replace(Some(std::collections::BTreeMap::new()));
-            struct RestoreMetadata<'a>(
-                &'a std::cell::RefCell<Option<std::collections::BTreeMap<u64, (bool, bool, bool)>>>,
-                Option<std::collections::BTreeMap<u64, (bool, bool, bool)>>,
+            struct RestoreIds<'a>(
+                &'a std::cell::RefCell<Option<std::collections::BTreeMap<u64, u64>>>,
+                Option<std::collections::BTreeMap<u64, u64>>,
             );
-            impl Drop for RestoreMetadata<'_> {
+            impl Drop for RestoreIds<'_> {
                 fn drop(&mut self) {
                     self.0.replace(self.1.take());
                 }
             }
-            let _restore = RestoreMetadata(metadata, previous);
-            encode()
-        })
+            let _restore = RestoreIds(ids, previous);
+            ENCODE_METADATA.with(|metadata| {
+                let previous = metadata.replace(Some(std::collections::BTreeMap::new()));
+                struct RestoreMetadata<'a>(&'a std::cell::RefCell<EncodeMetadata>, EncodeMetadata);
+                impl Drop for RestoreMetadata<'_> {
+                    fn drop(&mut self) {
+                        self.0.replace(self.1.take());
+                    }
+                }
+                let _restore = RestoreMetadata(metadata, previous);
+                encode()
+            })
         })
     })
 }
@@ -219,8 +260,15 @@ pub(in crate::v9) fn with_string_identities<T>(decode: impl FnOnce() -> T) -> T 
         let _restore = Restore(state, previous);
         DECODE_STRING_BUDGET.with(|budget| {
             let previous = budget.replace(Some(Default::default()));
-            struct RestoreBudget<'a>(&'a std::cell::RefCell<Option<crate::v9::vm::string_budget::StringBudget>>, Option<crate::v9::vm::string_budget::StringBudget>);
-            impl Drop for RestoreBudget<'_> { fn drop(&mut self) { self.0.replace(self.1.take()); } }
+            struct RestoreBudget<'a>(
+                &'a std::cell::RefCell<Option<crate::v9::vm::string_budget::StringBudget>>,
+                Option<crate::v9::vm::string_budget::StringBudget>,
+            );
+            impl Drop for RestoreBudget<'_> {
+                fn drop(&mut self) {
+                    self.0.replace(self.1.take());
+                }
+            }
             let _restore = RestoreBudget(budget, previous);
             decode()
         })
@@ -289,11 +337,16 @@ impl Serialize for JsValue {
         match self {
             #[cfg(feature = "conformance")]
             Self::Smi(value) => {
-                if !value.is_finite() || value.fract() != 0.0 || *value < -(1_i64 << 30) as f64 || *value >= (1_i64 << 30) as f64 || (*value == 0.0 && value.is_sign_negative()) {
+                if !value.is_finite()
+                    || value.fract() != 0.0
+                    || *value < -(1_i64 << 30) as f64
+                    || *value >= (1_i64 << 30) as f64
+                    || (*value == 0.0 && value.is_sign_negative())
+                {
                     return Err(serde::ser::Error::custom("invalid Smi"));
                 }
                 single(serializer, "M", &(*value as i32))
-            },
+            }
             #[cfg(feature = "conformance")]
             Self::SharedNumber(value) => single(serializer, "q", &(value.to_bits(), value.root)),
             #[cfg(feature = "conformance")]
@@ -365,7 +418,11 @@ fn encode_string<S: Serializer>(
     let _ = (include_age, include_intern);
     #[cfg(feature = "conformance")]
     if value.is_read_only_root() {
-        return single(serializer, "C", &value.unit_at(0).expect("one-byte character root"));
+        return single(
+            serializer,
+            "C",
+            &value.unit_at(0).expect("one-byte character root"),
+        );
     }
     #[cfg(feature = "conformance")]
     if let Some(target) = value.thin_target() {
@@ -426,22 +483,22 @@ fn encode_string<S: Serializer>(
         return single(serializer, "v", &(SliceParent(&parent), start, length));
     }
     #[cfg(feature = "conformance")]
-    if ENCODE_IDENTITIES.with(|enabled| enabled.get()) {
-        if let Some(parts) = value.flattened_repeat_parts() {
-            return single(serializer, "p", &parts);
-        }
+    if ENCODE_IDENTITIES.with(|enabled| enabled.get())
+        && let Some(parts) = value.flattened_repeat_parts()
+    {
+        return single(serializer, "p", &parts);
     }
     #[cfg(feature = "conformance")]
-    if ENCODE_IDENTITIES.with(|enabled| enabled.get()) {
-        if let Some(child) = value.flattened_cons_child() {
-            return single(serializer, "m", &child);
-        }
+    if ENCODE_IDENTITIES.with(|enabled| enabled.get())
+        && let Some(child) = value.flattened_cons_child()
+    {
+        return single(serializer, "m", &child);
     }
     #[cfg(feature = "conformance")]
-    if ENCODE_IDENTITIES.with(|enabled| enabled.get()) {
-        if let Some(parts) = value.cons_parts() {
-            return single(serializer, "z", &parts);
-        }
+    if ENCODE_IDENTITIES.with(|enabled| enabled.get())
+        && let Some(parts) = value.cons_parts()
+    {
+        return single(serializer, "z", &parts);
     }
     if let Some((child, count)) = value.repeat_parts() {
         return single(serializer, "r", &(child, count));
@@ -535,7 +592,9 @@ impl<'de> Visitor<'de> for ValueVisitor {
         #[cfg(feature = "conformance")]
         let value = if units <= crate::constants::JS_STRING_UNITS {
             bounded_decoded_new::<E>(units.saturating_mul(2), || JsString::from_utf8(value))?
-        } else { JsString::from_utf8(value).map_err(|error| E::custom(error.message))? };
+        } else {
+            JsString::from_utf8(value).map_err(|error| E::custom(error.message))?
+        };
         #[cfg(not(feature = "conformance"))]
         let value = JsString::from_utf8(value).map_err(|error| E::custom(error.message))?;
         #[cfg(feature = "conformance")]
@@ -569,9 +628,13 @@ impl<'de> Visitor<'de> for ValueVisitor {
             "w" => {
                 let units = map.next_value::<Vec<u16>>()?;
                 #[cfg(feature = "conformance")]
-                let value = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units(units))?;
+                let value = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units(units),
+                )?;
                 #[cfg(not(feature = "conformance"))]
-                let value = JsString::from_units(units).map_err(|error| A::Error::custom(error.message))?;
+                let value =
+                    JsString::from_units(units).map_err(|error| A::Error::custom(error.message))?;
                 JsValue::String(value)
             }
             #[cfg(feature = "conformance")]
@@ -629,71 +692,128 @@ impl<'de> Visitor<'de> for ValueVisitor {
             "r" => {
                 let (child, count): (JsString, usize) = map.next_value()?;
                 #[cfg(feature = "conformance")]
-                let result = if child.repeat_will_flatten(count) && child.len().saturating_mul(count) <= crate::constants::JS_STRING_UNITS {
+                let result = if child.repeat_will_flatten(count)
+                    && child.len().saturating_mul(count) <= crate::constants::JS_STRING_UNITS
+                {
                     let units = child.len().saturating_mul(count).saturating_mul(2);
-                    bounded_decoded_string::<A::Error>(&child, None, units, true, || child.repeat(count))?
-                } else { child.repeat(count).map_err(|error| A::Error::custom(error.message))? };
+                    bounded_decoded_string::<A::Error>(&child, None, units, true, || {
+                        child.repeat(count)
+                    })?
+                } else {
+                    child
+                        .repeat(count)
+                        .map_err(|error| A::Error::custom(error.message))?
+                };
                 #[cfg(not(feature = "conformance"))]
-                let result = child.repeat(count).map_err(|error| A::Error::custom(error.message))?;
+                let result = child
+                    .repeat(count)
+                    .map_err(|error| A::Error::custom(error.message))?;
                 JsValue::String(result)
             }
             "c" => {
                 let (left, right): (JsString, JsString) = map.next_value()?;
                 #[cfg(feature = "conformance")]
-                let result = if left.concat_will_flatten(&right) && left.len().saturating_add(right.len()) <= crate::constants::JS_STRING_UNITS {
+                let result = if left.concat_will_flatten(&right)
+                    && left.len().saturating_add(right.len()) <= crate::constants::JS_STRING_UNITS
+                {
                     let units = left.len().saturating_add(right.len()).saturating_mul(2);
-                    bounded_decoded_string::<A::Error>(&left, Some(&right), units, false, || left.concat(&right))?
-                } else { left.concat(&right).map_err(|error| A::Error::custom(error.message))? };
+                    bounded_decoded_string::<A::Error>(&left, Some(&right), units, false, || {
+                        left.concat(&right)
+                    })?
+                } else {
+                    left.concat(&right)
+                        .map_err(|error| A::Error::custom(error.message))?
+                };
                 #[cfg(not(feature = "conformance"))]
-                let result = left.concat(&right).map_err(|error| A::Error::custom(error.message))?;
+                let result = left
+                    .concat(&right)
+                    .map_err(|error| A::Error::custom(error.message))?;
                 JsValue::String(result)
             }
             #[cfg(feature = "conformance")]
             "s" => {
                 let units = map.next_value::<Vec<u16>>()?;
-                let value = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units(units))?;
+                let value = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units(units),
+                )?;
                 let shared = match super::find_shared_string(&value) {
                     Some(shared) => shared,
-                    None => bounded_decoded_string::<A::Error>(&value, None, value.len(), false, || super::intern_shared_string(&value))?,
+                    None => bounded_decoded_string::<A::Error>(
+                        &value,
+                        None,
+                        value.len(),
+                        false,
+                        || super::intern_shared_string(&value),
+                    )?,
                 };
                 JsValue::String(shared)
             }
             #[cfg(feature = "conformance")]
             "x" => {
                 let (units, external): (Vec<u16>, bool) = map.next_value()?;
-                let source = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units(units))?;
+                let source = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units(units),
+                )?;
                 let value = match super::find_shared_internalized(&source) {
                     Some(value) => value,
-                    None => bounded_decoded_string::<A::Error>(&source, None, source.len(), false, || super::intern_shared_internalized(&source))?,
+                    None => bounded_decoded_string::<A::Error>(
+                        &source,
+                        None,
+                        source.len(),
+                        false,
+                        || super::intern_shared_internalized(&source),
+                    )?,
                 };
                 if external && !value.is_external() {
-                    bounded_decoded_string::<A::Error>(&value, None, value.len().saturating_mul(3), false, || {
-                        value.externalize()?;
-                        Ok(value.clone())
-                    })?;
+                    bounded_decoded_string::<A::Error>(
+                        &value,
+                        None,
+                        value.len().saturating_mul(3),
+                        false,
+                        || {
+                            value.externalize()?;
+                            Ok(value.clone())
+                        },
+                    )?;
                 }
                 JsValue::String(value)
             }
             #[cfg(feature = "conformance")]
             "d" => {
                 let units = map.next_value::<Vec<u16>>()?;
-                let value = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units_two_byte(units))?;
+                let value = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units_two_byte(units),
+                )?;
                 let shared = match super::find_shared_two_byte_noncanonical(&value) {
                     Some(shared) => shared,
-                    None => bounded_decoded_string::<A::Error>(&value, None, value.len(), false, || super::intern_shared_two_byte_noncanonical(&value))?,
+                    None => bounded_decoded_string::<A::Error>(
+                        &value,
+                        None,
+                        value.len(),
+                        false,
+                        || super::intern_shared_two_byte_noncanonical(&value),
+                    )?,
                 };
                 JsValue::String(shared)
             }
             #[cfg(feature = "conformance")]
             "M" => {
                 let value: i32 = map.next_value()?;
-                if !(-(1_i32 << 30)..(1_i32 << 30)).contains(&value) { return Err(A::Error::custom("invalid Smi")); }
+                if !(-(1_i32 << 30)..(1_i32 << 30)).contains(&value) {
+                    return Err(A::Error::custom("invalid Smi"));
+                }
                 JsValue::Smi(f64::from(value))
             }
             #[cfg(feature = "conformance")]
             "Q" => {
                 let (bits, root): (u64, super::ObjectId) = map.next_value()?;
-                JsValue::LocalNumber(std::sync::Arc::new(super::SharedNumberData { value: f64::from_bits(bits), root }))
+                JsValue::LocalNumber(std::sync::Arc::new(super::SharedNumberData {
+                    value: f64::from_bits(bits),
+                    root,
+                }))
             }
             #[cfg(feature = "conformance")]
             "q" => {
@@ -706,10 +826,19 @@ impl<'de> Visitor<'de> for ValueVisitor {
             #[cfg(feature = "conformance")]
             "u" => {
                 let units = map.next_value::<Vec<u16>>()?;
-                let value = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units_two_byte(units))?;
+                let value = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units_two_byte(units),
+                )?;
                 let shared = match super::find_shared_string(&value) {
                     Some(shared) => shared,
-                    None => bounded_decoded_string::<A::Error>(&value, None, value.len(), false, || super::intern_shared_string(&value))?,
+                    None => bounded_decoded_string::<A::Error>(
+                        &value,
+                        None,
+                        value.len(),
+                        false,
+                        || super::intern_shared_string(&value),
+                    )?,
                 };
                 JsValue::String(shared)
             }
@@ -738,30 +867,53 @@ impl<'de> Visitor<'de> for ValueVisitor {
                     value
                 } else {
                     let allocation = units.capacity().saturating_add(units.len());
-                    let mut value = bounded_decoded_new::<A::Error>(allocation, || if one_byte {
-                        JsString::from_units(units)
-                    } else {
-                        JsString::from_units_two_byte(units)
+                    let mut value = bounded_decoded_new::<A::Error>(allocation, || {
+                        if one_byte {
+                            JsString::from_units(units)
+                        } else {
+                            JsString::from_units_two_byte(units)
+                        }
                     })?;
                     if shared {
-                        let noncanonical = !one_byte && value.code_units().all(|unit| unit <= super::LATIN1_MAX_UNIT);
-                        let existing = if noncanonical { super::find_shared_two_byte_noncanonical(&value) } else { super::find_shared_string(&value) };
+                        let noncanonical = !one_byte
+                            && value
+                                .code_units()
+                                .all(|unit| unit <= super::LATIN1_MAX_UNIT);
+                        let existing = if noncanonical {
+                            super::find_shared_two_byte_noncanonical(&value)
+                        } else {
+                            super::find_shared_string(&value)
+                        };
                         value = if let Some(existing) = existing {
                             existing
                         } else {
-                            bounded_decoded_string::<A::Error>(&value, None, value.len(), false, || if noncanonical {
-                                super::intern_shared_two_byte_noncanonical(&value)
-                            } else {
-                                super::intern_shared_string(&value)
-                            })?
+                            bounded_decoded_string::<A::Error>(
+                                &value,
+                                None,
+                                value.len(),
+                                false,
+                                || {
+                                    if noncanonical {
+                                        super::intern_shared_two_byte_noncanonical(&value)
+                                    } else {
+                                        super::intern_shared_string(&value)
+                                    }
+                                },
+                            )?
                         };
                     }
                     value.mark_old();
                     if !value.is_external() {
-                        bounded_decoded_string::<A::Error>(&value, None, value.len().saturating_mul(3), false, || {
-                            value.externalize()?;
-                            Ok(value.clone())
-                        })?;
+                        bounded_decoded_string::<A::Error>(
+                            &value,
+                            None,
+                            value.len().saturating_mul(3),
+                            false,
+                            || {
+                                value.externalize()?;
+                                Ok(value.clone())
+                            },
+                        )?;
                     }
                     if let Some(id) = identity {
                         identity_value::<A::Error>(id, value)?
@@ -774,7 +926,10 @@ impl<'de> Visitor<'de> for ValueVisitor {
             #[cfg(feature = "conformance")]
             "t" => {
                 let units = map.next_value::<Vec<u16>>()?;
-                let value = bounded_decoded_new::<A::Error>(units.capacity().saturating_add(units.len()), || JsString::from_units_two_byte(units))?;
+                let value = bounded_decoded_new::<A::Error>(
+                    units.capacity().saturating_add(units.len()),
+                    || JsString::from_units_two_byte(units),
+                )?;
                 JsValue::String(value)
             }
             #[cfg(feature = "conformance")]
@@ -804,8 +959,11 @@ impl<'de> Visitor<'de> for ValueVisitor {
             #[cfg(feature = "conformance")]
             "C" => {
                 let unit: u16 = map.next_value()?;
-                let unit = u8::try_from(unit).map_err(|_| A::Error::custom("invalid character root"))?;
-                JsValue::String(bounded_decoded_new::<A::Error>(1, || Ok(JsString::character_root(unit)))?)
+                let unit =
+                    u8::try_from(unit).map_err(|_| A::Error::custom("invalid character root"))?;
+                JsValue::String(bounded_decoded_new::<A::Error>(1, || {
+                    Ok(JsString::character_root(unit))
+                })?)
             }
             #[cfg(feature = "conformance")]
             "i" => {
@@ -852,7 +1010,9 @@ impl<'de> Visitor<'de> for ValueVisitor {
             return Err(A::Error::custom("extra value field"));
         }
         #[cfg(feature = "conformance")]
-        if let JsValue::String(value) = &value { track_decoded(value); }
+        if let JsValue::String(value) = &value {
+            track_decoded(value);
+        }
         Ok(value)
     }
 }
@@ -887,7 +1047,12 @@ mod decode_budget_tests {
                 match serde_json::from_str::<super::JsString>(&wire) {
                     Ok(value) => values.push(value),
                     Err(error) => {
-                        assert!(error.to_string().contains("resident string materialization units"), "{error}");
+                        assert!(
+                            error
+                                .to_string()
+                                .contains("resident string materialization units"),
+                            "{error}"
+                        );
                         rejected = true;
                         break;
                     }
@@ -899,8 +1064,13 @@ mod decode_budget_tests {
     /** Compact forged trees cannot accumulate unbounded flat fallback buffers during one state. */
     #[test]
     fn nested_flat_fallbacks_respect_live_decoding_budget() {
-        let mut wire = format!("{{\"r\":[\"a\",{}]}}", crate::constants::JS_STRING_UNITS - 80);
-        for _ in 0..45 { wire = format!("{{\"c\":[{wire},\"b\"]}}"); }
+        let mut wire = format!(
+            "{{\"r\":[\"a\",{}]}}",
+            crate::constants::JS_STRING_UNITS - 80
+        );
+        for _ in 0..45 {
+            wire = format!("{{\"c\":[{wire},\"b\"]}}");
+        }
         super::with_string_identities(|| {
             let mut values = Vec::new();
             let mut rejected = false;
@@ -908,7 +1078,12 @@ mod decode_budget_tests {
                 match serde_json::from_str::<super::JsString>(&wire) {
                     Ok(value) => values.push(value),
                     Err(error) => {
-                        assert!(error.to_string().contains("resident string materialization units"), "{error}");
+                        assert!(
+                            error
+                                .to_string()
+                                .contains("resident string materialization units"),
+                            "{error}"
+                        );
                         rejected = true;
                         break;
                     }

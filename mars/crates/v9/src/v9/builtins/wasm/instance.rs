@@ -73,7 +73,11 @@ fn resolve_imports(
                     return Err(native_import_error(vm, error));
                 }
                 if is_function(vm, &value) {
-                    let compatible = if declaration.exact_function { function_exact(vm, m, ty, &value)? } else { function_matches(vm, m, ty, &value)? };
+                    let compatible = if declaration.exact_function {
+                        function_exact(vm, m, ty, &value)?
+                    } else {
+                        function_matches(vm, m, ty, &value)?
+                    };
                     if !compatible {
                         let error = link(
                             vm,
@@ -139,20 +143,20 @@ fn resolve_imports(
                     Err(fatal) => return Err(fatal),
                 };
                 if !compatible {
-                    if let Some(object) = value.object() {
-                        if address::is64(vm, object) != limits.address64 {
-                            let (actual, expected) = if limits.address64 {
-                                ("i32", "i64")
-                            } else {
-                                ("i64", "i32")
-                            };
-                            return Err(link(
-                                vm,
-                                &format!(
-                                    "WebAssembly.Instance(): cannot import {actual} memory as {expected}"
-                                ),
-                            ));
-                        }
+                    if let Some(object) = value.object()
+                        && address::is64(vm, object) != limits.address64
+                    {
+                        let (actual, expected) = if limits.address64 {
+                            ("i32", "i64")
+                        } else {
+                            ("i64", "i32")
+                        };
+                        return Err(link(
+                            vm,
+                            &format!(
+                                "WebAssembly.Instance(): cannot import {actual} memory as {expected}"
+                            ),
+                        ));
                     }
                     return Err(link(vm, "WebAssembly imported memory limits mismatch"));
                 }
@@ -167,7 +171,8 @@ fn resolve_imports(
                     let mut compatible =
                         type_context::equivalent(vm, value.object().unwrap(), actual, m, ty)?;
                     if !mutable {
-                        compatible |= type_context::subtype(vm, value.object().unwrap(), actual, m, ty)?;
+                        compatible |=
+                            type_context::subtype(vm, value.object().unwrap(), actual, m, ty)?;
                     }
                     if !mutable
                         && actual.reference().is_some_and(|(_, nullable)| !nullable)
@@ -388,10 +393,10 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.new_target.is_none() {
         return Err(vm.type_error("WebAssembly.Instance must be invoked with 'new'"));
     }
-    if !call
+    if call
         .arg(0)
         .object()
-        .is_some_and(|id| get(vm, id, MODULE).is_some())
+        .is_none_or(|id| get(vm, id, MODULE).is_none())
     {
         return Err(
             vm.type_error("WebAssembly.Instance(): Argument 0 must be a WebAssembly.Module")
@@ -484,8 +489,16 @@ pub(super) fn invoke(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .chain(&sig.results)
         .any(|t| !gc_types::js_compatible(&m, *t))
     {
-        let view = sig.params.iter().chain(&sig.results).any(|ty| matches!(ty, Type::Ref(-26 | -32 | -31, _)));
-        return Err(vm.type_error(if view { "type incompatibility when transforming from/to JS" } else { "type incompatibility when transforming from/to JS: unsupported value type" }));
+        let view = sig
+            .params
+            .iter()
+            .chain(&sig.results)
+            .any(|ty| matches!(ty, Type::Ref(-26 | -32 | -31, _)));
+        return Err(vm.type_error(if view {
+            "type incompatibility when transforming from/to JS"
+        } else {
+            "type incompatibility when transforming from/to JS: unsupported value type"
+        }));
     }
     let mut args = Vec::new();
     for (i, ty) in sig.params.iter().enumerate() {
@@ -518,7 +531,9 @@ pub(super) fn constant_value(vm: &mut Vm, instance: ObjectId, value: &Constant) 
                 match instruction {
                     types::Instruction::Constant(c) => stack.push(constant_value(vm, instance, c)?),
                     types::Instruction::Simple(op) => numeric::run(vm, *op, &mut stack)?,
-                    types::Instruction::Atomic(7, _, _) => stack.push(gc::shared::new_wait_queue(vm)?),
+                    types::Instruction::Atomic(7, _, _) => {
+                        stack.push(gc::shared::new_wait_queue(vm)?)
+                    }
                     types::Instruction::Gc(op, args) => {
                         gc::run(vm, instance, &m, *op, args, &mut stack)?
                     }
@@ -556,7 +571,13 @@ fn initialize(vm: &mut Vm, instance: ObjectId, m: &Module) -> Res<()> {
                 .checked_add(segment.bytes.len())
                 .is_none_or(|end| end > size)
             {
-                return Err(trap(vm, &format!("WebAssembly.Instance(): data segment {index} is out of bounds (offset {at}, length {}, memory size {size})", segment.bytes.len())));
+                return Err(trap(
+                    vm,
+                    &format!(
+                        "WebAssembly.Instance(): data segment {index} is out of bounds (offset {at}, length {}, memory size {size})",
+                        segment.bytes.len()
+                    ),
+                ));
             }
             data.push((memory, at, &segment.bytes));
         }
@@ -594,8 +615,7 @@ fn initialization_error(vm: &mut Vm, error: Thrown) -> Thrown {
     if let Thrown::Value(JsValue::Object(id)) = &error
         && get(vm, *id, "wasm.trap").is_some()
         && get(vm, *id, "wasm.instance.prefix").is_none()
-    {
-        if let Some(JsValue::String(message)) = vm
+        && let Some(JsValue::String(message)) = vm
             .heap
             .get(*id)
             .and_then(|o| o.props.get(&key("message")))
@@ -603,19 +623,17 @@ fn initialization_error(vm: &mut Vm, error: Thrown) -> Thrown {
                 Slot::Data(v) => Some(v.clone()),
                 _ => None,
             })
-            && let Ok(value) =
-                JsValue::string(&format!("WebAssembly.Instance(): {}", message.lossy()))
-        {
-            vm.heap.put(
-                *id,
-                key("message"),
-                Prop {
-                    slot: Slot::Data(value),
-                    attrs: HIDDEN_ATTRS,
-                },
-            );
-            set(vm, *id, "wasm.instance.prefix", JsValue::Boolean(true));
-        }
+        && let Ok(value) = JsValue::string(&format!("WebAssembly.Instance(): {}", message.lossy()))
+    {
+        vm.heap.put(
+            *id,
+            key("message"),
+            Prop {
+                slot: Slot::Data(value),
+                attrs: HIDDEN_ATTRS,
+            },
+        );
+        set(vm, *id, "wasm.instance.prefix", JsValue::Boolean(true));
     }
     error
 }

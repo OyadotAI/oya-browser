@@ -66,7 +66,6 @@ mod visual_model;
 use crate::constants::DIAGNOSTICS;
 use crate::protocol::EngineError;
 pub use border::BorderStyle;
-pub use individual::default_origin as default_transform_origin;
 pub(crate) use border_image::fetched_border_image;
 pub use border_image::{BorderImage, BorderImageLength, BorderImageRepeat};
 pub use calc_size::{CalcSize, HEIGHT, MIN_HEIGHT, MIN_WIDTH, WIDTH, through as calc_size_through};
@@ -81,6 +80,7 @@ pub(crate) use font_match::select as select_font;
 pub use font_match::{FontRequest, font_requests, install_fonts};
 pub use formatting::{ColorScheme, DocumentFormatting, FormattingElement, LineHeight};
 pub use import::css_imports;
+pub use individual::default_origin as default_transform_origin;
 pub use initial_letter::InitialLetter;
 pub use layer_urls::{background_owner, canvas_key, layer_key};
 pub use model::{

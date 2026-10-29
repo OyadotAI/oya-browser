@@ -41,7 +41,11 @@ impl Stack<'_> {
                 )));
             }
             if matches!(got, Type::Shared(..)) || matches!(ty, Type::Shared(..)) {
-                return Err(Error::invalid(&format!("expected {}, got {}", ty.display(), got.display())));
+                return Err(Error::invalid(&format!(
+                    "expected {}, got {}",
+                    ty.display(),
+                    got.display()
+                )));
             }
             if self.last == "block parameter" {
                 return Err(Error::invalid(&format!(
@@ -1172,7 +1176,8 @@ fn sequence(
                     params[0] = Type::Shared(if *op == 26 { -17 } else { -18 }, true);
                     results[0] = Type::Shared(if *op == 26 { -18 } else { -17 }, true);
                 }
-                if matches!(op, 15 | 29 | 30) && input.is_some_and(|ty| gc_types::is_shared(m, ty)) {
+                if matches!(op, 15 | 29 | 30) && input.is_some_and(|ty| gc_types::is_shared(m, ty))
+                {
                     params[0] = Type::Shared(if *op == 15 { -22 } else { -20 }, true);
                 }
                 let available = s.values.len().min(params.len());
@@ -1550,12 +1555,15 @@ fn constant_expression_type(
     Ok(stack.values[0])
 }
 
+/** A retyped suspended path: the operand types, which are unreachable, and each block's floor. */
+type SuspendedStackPath = (Vec<Type>, Vec<bool>, Vec<usize>);
+
 /** A suspended path is retyped from original structured code, including every active block's lower operands. */
 pub(super) fn suspended_stack_path(
     m: &Module,
     index: u32,
     path: &[(usize, usize)],
-) -> Result<(Vec<Type>, Vec<bool>, Vec<usize>), Error> {
+) -> Result<SuspendedStackPath, Error> {
     let sig = m.signature(index)?;
     let body = m
         .bodies

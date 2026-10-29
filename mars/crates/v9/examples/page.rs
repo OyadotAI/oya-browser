@@ -62,7 +62,10 @@ fn main() {
             println!("[{}] {}", entry.level, entry.text);
         }
         if execution.effects.navigation.is_some() || !execution.effects.cookies.is_empty() {
-            println!("navigation {:?} cookies {:?}", execution.effects.navigation, execution.effects.cookies);
+            println!(
+                "navigation {:?} cookies {:?}",
+                execution.effects.navigation, execution.effects.cookies
+            );
         }
         for failure in &execution.failed {
             println!("FAILED script {}: {}", failure.index, failure.error.message);
@@ -116,7 +119,9 @@ fn main() {
         };
         if step.is_some() || !execution.effects.console.is_empty() || !execution.failed.is_empty() {
             report(
-                &step.clone().map_or_else(|| format!("timers @{now}"), |event| format!("{event:?}")),
+                &step
+                    .clone()
+                    .map_or_else(|| format!("timers @{now}"), |event| format!("{event:?}")),
                 &execution,
             );
         }

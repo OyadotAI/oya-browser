@@ -135,7 +135,9 @@ impl<'a> Reader<'a> {
     /** Prefixed opcodes use the bounded encoded index accepted by the V8 binary decoder. */
     pub(super) fn prefixed_opcode(&mut self) -> Result<u32, Error> {
         let index = self.u32()?;
-        if index > 0xfff { return Err(Error::invalid(&format!("Invalid prefixed opcode {index}"))); }
+        if index > 0xfff {
+            return Err(Error::invalid(&format!("Invalid prefixed opcode {index}")));
+        }
         Ok(index)
     }
     /** One vector count, bounded by both the input and existing VM binding capacity. */
@@ -348,13 +350,13 @@ impl<'a> Reader<'a> {
             let instruction = match op {
                 0x41..=0x44 | 0x23 | 0xd0 | 0xd2 | 0xfd => {
                     let value = self.constant_op(op)?;
-                    if let Constant::Function(index) = value {
-                        if index as usize >= module.function_types().len() {
-                            return Err(Error::invalid(&format!(
-                                "function index #{index} is out of bounds"
-                            ))
-                            .at(position));
-                        }
+                    if let Constant::Function(index) = value
+                        && index as usize >= module.function_types().len()
+                    {
+                        return Err(Error::invalid(&format!(
+                            "function index #{index} is out of bounds"
+                        ))
+                        .at(position));
                     }
                     Instruction::Constant(value)
                 }
@@ -372,16 +374,25 @@ impl<'a> Reader<'a> {
                     instruction
                 }
                 #[cfg(not(feature = "conformance"))]
-                0xfe if self.bytes.get(self.at) == Some(&7) => return Err(Error::unsupported("WebAssembly shared wait queues")),
+                0xfe if self.bytes.get(self.at) == Some(&7) => {
+                    return Err(Error::unsupported("WebAssembly shared wait queues"));
+                }
                 #[cfg(feature = "conformance")]
                 0xfe if self.bytes.get(self.at) == Some(&7) => {
-                    if !self.shared_enabled { return Err(Error::invalid("wait queues require --wasm-shared").at(position)); }
+                    if !self.shared_enabled {
+                        return Err(
+                            Error::invalid("wait queues require --wasm-shared").at(position)
+                        );
+                    }
                     self.byte()?;
                     Instruction::Atomic(7, 0, 0)
                 }
                 0xfe if self.bytes.get(self.at) == Some(&4) => {
                     self.byte()?;
-                    return Err(Error::invalid("opcode pause is not allowed in constant expressions").at(position));
+                    return Err(Error::invalid(
+                        "opcode pause is not allowed in constant expressions",
+                    )
+                    .at(position));
                 }
                 _ => {
                     return Err(Error::invalid(&format!(
@@ -587,7 +598,7 @@ impl<'a> Reader<'a> {
                     let index = self.u32()?;
                     Instruction::Continuation(op, index)
                 }
-                0xe3 | 0xe4 | 0xe5 => {
+                0xe3..=0xe5 => {
                     if !self.wasmfx_enabled {
                         return Err(Error::invalid("resume requires --wasm-wasmfx"));
                     }
@@ -672,7 +683,9 @@ impl<'a> Reader<'a> {
                     }
                 }
                 0x16 => {
-                    if !self.testing_opcode_enabled { return Err(Error::invalid("invalid opcode 0x16")); }
+                    if !self.testing_opcode_enabled {
+                        return Err(Error::invalid("invalid opcode 0x16"));
+                    }
                     Instruction::Simple(1)
                 }
                 0x00 | 0x01 | 0x0f | 0x1a | 0x1b | 0x45..=0xc4 | 0xd1 | 0xd3 | 0xd4 => {
@@ -688,9 +701,24 @@ impl<'a> Reader<'a> {
 
 /** Validate the envelope, decode sections in order, then apply full supported-subset typing. */
 pub(super) fn parse(bytes: &[u8]) -> Result<Module, Error> {
-    parse_with_features(bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, true, true, true)
+    parse_with_features(
+        bytes,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        MAX_DECLARED_TABLE_MINIMUM,
+        true,
+        true,
+        true,
+    )
 }
 /** Compilation applies the optional proposal state selected by the current embedding. */
+#[allow(clippy::too_many_arguments)]
 pub(super) fn parse_with_features(
     bytes: &[u8],
     stringref_enabled: bool,
@@ -731,10 +759,12 @@ pub(super) fn parse_with_features(
     if header[4..] != MAGIC[4..] {
         return Err(Error::invalid("expected version 1").at(4));
     }
-    let mut module = Module::default();
-    module.custom_descriptors_enabled = custom_descriptors_enabled;
-    module.wasmfx_enabled = wasmfx_enabled;
-    module.names = super::diagnostics::function_names(bytes);
+    let mut module = Module {
+        custom_descriptors_enabled,
+        wasmfx_enabled,
+        names: super::diagnostics::function_names(bytes),
+        ..Module::default()
+    };
     let mut seen = std::collections::BTreeSet::new();
     let mut last = 0;
     while reader.at < bytes.len() {
@@ -755,12 +785,10 @@ pub(super) fn parse_with_features(
                     .at(reader.base + reader.at),
             );
         }
-        if section == 14 {
-            if !stringref_enabled {
-                return Err(Error::invalid(
-                    "unexpected section <StringRef> (enable with --wasm-stringref)",
-                ));
-            }
+        if section == 14 && !stringref_enabled {
+            return Err(Error::invalid(
+                "unexpected section <StringRef> (enable with --wasm-stringref)",
+            ));
         }
         let remaining = bytes.len() - reader.at;
         if size > remaining {
@@ -824,14 +852,14 @@ pub(super) fn parse_with_features(
             .at(payload.base + payload.at));
         }
     }
-    if let Some(expected) = module.data_count {
-        if expected as usize != module.data.len() {
-            return Err(Error::invalid(&format!(
-                "data segments count {} mismatch ({expected} expected)",
-                module.data.len()
-            ))
-            .at(bytes.len()));
-        }
+    if let Some(expected) = module.data_count
+        && expected as usize != module.data.len()
+    {
+        return Err(Error::invalid(&format!(
+            "data segments count {} mismatch ({expected} expected)",
+            module.data.len()
+        ))
+        .at(bytes.len()));
     }
     if !module.functions.is_empty() && !seen.contains(&10) {
         return Err(Error::invalid(&format!(
@@ -846,20 +874,48 @@ pub(super) fn parse_with_features(
 
 /** Decode one import type once, including exact-function and descriptor validation. */
 fn import_kind(r: &mut Reader, code: u8) -> Result<External, Error> {
-    if code == 32 && !r.custom_descriptors_enabled { return Err(Error::invalid("exact function imports require --wasm-custom-descriptors")); }
+    if code == 32 && !r.custom_descriptors_enabled {
+        return Err(Error::invalid(
+            "exact function imports require --wasm-custom-descriptors",
+        ));
+    }
     Ok(match code {
         0 | 32 => External::Function(r.u32()?),
-        1 => { let (ty, limits) = r.table_type()?; External::Table(ty, limits) },
+        1 => {
+            let (ty, limits) = r.table_type()?;
+            External::Table(ty, limits)
+        }
         2 => External::Memory(r.limits(true)?),
-        3 => { let (ty, mutable) = r.global_type()?; External::Global(ty, mutable) },
-        4 => { if r.byte()? != 0 { return Err(Error::invalid("invalid tag attribute")); } External::Tag(r.u32()?) },
+        3 => {
+            let (ty, mutable) = r.global_type()?;
+            External::Global(ty, mutable)
+        }
+        4 => {
+            if r.byte()? != 0 {
+                return Err(Error::invalid("invalid tag attribute"));
+            }
+            External::Tag(r.u32()?)
+        }
         _ => return Err(Error::invalid("invalid WebAssembly import kind")),
     })
 }
 /** Append one expanded import while bounding the cumulative grouped count. */
-fn append_import(m: &mut Module, offset: usize, owner: String, name: String, code: u8, kind: External) -> Result<(), Error> {
+fn append_import(
+    m: &mut Module,
+    offset: usize,
+    owner: String,
+    name: String,
+    code: u8,
+    kind: External,
+) -> Result<(), Error> {
     Module::check_count(m.imports.len().saturating_add(1))?;
-    m.imports.push(Import { offset, exact_function: code == 32, module: owner, name, kind });
+    m.imports.push(Import {
+        offset,
+        exact_function: code == 32,
+        module: owner,
+        name,
+        kind,
+    });
     Ok(())
 }
 /** Grouped forms preserve the exact import order and never expose their encoding to linking. */
@@ -872,7 +928,11 @@ fn read_import(m: &mut Module, r: &mut Reader) -> Result<(), Error> {
         let kind = import_kind(r, code)?;
         return append_import(m, offset, owner, name, code, kind);
     }
-    if !r.compact_imports_enabled { return Err(Error::invalid("compact imports require --wasm-compact-imports")); }
+    if !r.compact_imports_enabled {
+        return Err(Error::invalid(
+            "compact imports require --wasm-compact-imports",
+        ));
+    }
     if code == 0x7f {
         let count = r.count()?;
         Module::check_count(m.imports.len().saturating_add(count))?;

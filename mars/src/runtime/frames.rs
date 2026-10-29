@@ -81,7 +81,11 @@ impl Frame {
         id_base: usize,
         images: &mut BTreeMap<usize, ImageAsset>,
     ) -> Self {
-        images.extend(page.images.iter().map(|(id, asset)| (id + id_base, asset.clone())));
+        images.extend(
+            page.images
+                .iter()
+                .map(|(id, asset)| (id + id_base, asset.clone())),
+        );
         Self {
             owner,
             document: page.document.clone(),
@@ -101,7 +105,11 @@ impl Frame {
         self.sheets.clone_from(&page.resolved_stylesheets);
         let range = self.id_base..self.id_base + (1 << FRAME_ID_SHIFT);
         images.retain(|id, _| !range.contains(id));
-        images.extend(page.images.iter().map(|(id, asset)| (id + self.id_base, asset.clone())));
+        images.extend(
+            page.images
+                .iter()
+                .map(|(id, asset)| (id + self.id_base, asset.clone())),
+        );
     }
     /** The iframe element this frame shows in. */
     pub(super) fn owner(&self) -> usize {
@@ -110,6 +118,27 @@ impl Frame {
     /** The first identity past this frame's range, where a frame added later may start. */
     pub(super) fn id_end(&self) -> usize {
         self.id_base + (1 << FRAME_ID_SHIFT)
+    }
+    /** The display identity assigned to this document's local nodes. */
+    pub(super) fn id_base(&self) -> usize {
+        self.id_base
+    }
+    /** Resolve a painted identity only inside this frame's reserved range. */
+    pub(super) fn node(&self, painted: usize) -> Option<&Node> {
+        (self.id_base..self.id_end()).contains(&painted).then(|| {
+            self.document
+                .nodes
+                .iter()
+                .find(|node| node.local_id == painted - self.id_base)
+        })?
+    }
+    /** The styled document the window uses to hit test the frame's painted nodes. */
+    pub(super) fn document(&self) -> &Document {
+        &self.document
+    }
+    /** Resolve a frame link against its own address, never the embedder's. */
+    pub(super) fn resolve(&self, href: &str) -> Option<String> {
+        self.url.join(href).ok().map(|url| url.into())
     }
 }
 

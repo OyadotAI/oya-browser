@@ -30,13 +30,13 @@ fn pending_target(vm: &Vm, promise: ObjectId, flag: ObjectId) -> Option<ObjectId
     if !matches!(flag.class, Class::Plain) {
         return None;
     }
-    if let Some(prop) = flag.props.get(&Key::from("done")) {
-        if !matches!(
+    if let Some(prop) = flag.props.get(&Key::from("done"))
+        && !matches!(
             &prop.slot,
             Slot::Data(JsValue::Boolean(false) | JsValue::Undefined)
-        ) {
-            return None;
-        }
+        )
+    {
+        return None;
     }
     matches!(vm.heap.get(promise).map(|object|&object.class),Some(Class::Promise(data))if matches!(data.state,PromiseState::Pending)).then_some(promise)
 }
@@ -53,7 +53,13 @@ fn resolver(vm: &Vm, function: &JsValue, expected: u32) -> Option<(ObjectId, Obj
         return None;
     }
     match slots.as_slice() {
-        [JsValue::Object(flag)] => match &vm.heap.get(*flag)?.props.get(&Key::private(RESOLVER_TARGET))?.slot {
+        [JsValue::Object(flag)] => match &vm
+            .heap
+            .get(*flag)?
+            .props
+            .get(&Key::private(RESOLVER_TARGET))?
+            .slot
+        {
             Slot::Data(JsValue::Object(promise)) => Some((*promise, *flag)),
             _ => None,
         },

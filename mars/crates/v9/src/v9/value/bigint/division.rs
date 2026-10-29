@@ -25,10 +25,10 @@ impl BigInt {
             let quotient = bits::shift_right_words(&self.words, bit);
             let count = bit.div_ceil(WORD_BITS);
             let mut remainder = self.words[..count.min(self.words.len())].to_vec();
-            if bit % WORD_BITS != 0 {
-                if let Some(last) = remainder.last_mut() {
-                    *last &= (1u32 << (bit % WORD_BITS)) - 1;
-                }
+            if bit % WORD_BITS != 0
+                && let Some(last) = remainder.last_mut()
+            {
+                *last &= (1u32 << (bit % WORD_BITS)) - 1;
             }
             (quotient, remainder)
         } else if other.words.len() == 1 {

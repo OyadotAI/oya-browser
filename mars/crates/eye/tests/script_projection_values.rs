@@ -7,14 +7,21 @@ use mars_eye::{parse, script_document};
 fn projected(markup: &str, id: &str) -> (Option<String>, Option<String>) {
     let document = parse(markup).unwrap();
     let projection = script_document(&document, "page-1").unwrap();
-    let node = projection.nodes.iter().find(|node| node.html_id == id).unwrap();
+    let node = projection
+        .nodes
+        .iter()
+        .find(|node| node.html_id == id)
+        .unwrap();
     (node.value.clone(), node.attributes.get("value").cloned())
 }
 
 /** Hidden inputs keep their value and value attribute. */
 #[test]
 fn hidden_input_values_reach_scripts() {
-    let (value, attribute) = projected("<form><input type=hidden id=h name=ei value=abc></form>", "h");
+    let (value, attribute) = projected(
+        "<form><input type=hidden id=h name=ei value=abc></form>",
+        "h",
+    );
     assert_eq!(value.as_deref(), Some("abc"));
     assert_eq!(attribute.as_deref(), Some("abc"));
 }

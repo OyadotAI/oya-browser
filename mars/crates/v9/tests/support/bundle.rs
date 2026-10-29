@@ -84,8 +84,8 @@ pub(super) fn parse(source: &str, root: &Path) -> Result<Option<Bundle>, String>
             bundle.items.push(Item::Script(body));
         } else if let Some(name) = header.strip_prefix(MODULE) {
             bundle.modules.insert(module_url(root, name)?, body);
-        } else if header.starts_with(ENTRY) {
-            let name = match header[ENTRY.len()..].strip_prefix(':') {
+        } else if let Some(rest) = header.strip_prefix(ENTRY) {
+            let name = match rest.strip_prefix(':') {
                 Some(name) => name.to_string(),
                 None => {
                     let name = format!("entrypoint_{anonymous}.mjs");

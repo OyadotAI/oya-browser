@@ -63,7 +63,7 @@ pub(super) fn install(b: &mut Builder, prototype: u32) {
     for name in ["complete", "naturalWidth", "naturalHeight"] {
         b.getter(prototype, name, get);
     }
-    b.method(prototype, "decode", 0, decode);
+    b.host_method(prototype, "decode", 0, decode);
 }
 
 /** `img.decode()`: a promise that resolves once the image has loaded and rejects with an

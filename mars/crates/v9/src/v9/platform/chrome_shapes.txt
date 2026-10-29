@@ -1,0 +1,937 @@
+# Chrome window interfaces: name|parent|members. Generated from Blink's
+# web_tests/virtual/stable/webexposed/global-interface-listing-expected.txt (plus the
+# platform-specific listing) at Chromium 2c592105bb (2026-09-14), with constant values from the
+# IDL files. Member tokens: m:method g:getter a:accessor s:setter c:CONST=value, M:/G:/A:/S:
+# the static forms, i = @@iterator, y = @@asyncIterator. Interfaces Mars implements are skipped.
+AbortController||m:abort g:signal
+AbortSignal|EventTarget|M:abort M:any M:timeout m:throwIfAborted g:aborted a:onabort g:reason
+AbsoluteOrientationSensor|OrientationSensor|
+AbstractRange||g:collapsed g:endOffset g:startOffset
+Accelerometer|Sensor|g:x g:y g:z
+AnalyserNode|AudioNode|m:getByteFrequencyData m:getByteTimeDomainData m:getFloatFrequencyData m:getFloatTimeDomainData a:fftSize g:frequencyBinCount a:maxDecibels a:minDecibels a:smoothingTimeConstant
+Animation|EventTarget|m:cancel m:commitStyles m:finish m:pause m:persist m:play m:reverse m:updatePlaybackRate a:currentTime a:effect g:finished a:id a:oncancel a:onfinish a:onremove g:overallProgress g:pending g:playState a:playbackRate a:rangeEnd a:rangeStart g:ready g:replaceState a:startTime a:timeline
+AnimationEffect||m:getComputedTiming m:getTiming m:updateTiming
+AnimationEvent|Event|g:animation g:animationName g:elapsedTime g:pseudoElement g:pseudoTarget
+AnimationPlaybackEvent|Event|g:currentTime g:timelineTime
+AnimationTimeline||g:currentTime g:duration
+AnimationTrigger||m:addAnimation m:getAnimations m:removeAnimation
+AsyncDisposableStack||m:Symbol(Symbol.asyncDispose) m:adopt m:defer m:disposeAsync m:move m:use g:disposed
+Attr|Node|g:localName g:name g:namespaceURI g:ownerElement g:prefix g:specified a:value
+Audio||
+AudioBuffer||m:copyFromChannel m:copyToChannel m:getChannelData g:duration g:length g:numberOfChannels g:sampleRate
+AudioBufferSourceNode|AudioScheduledSourceNode|m:start a:buffer g:detune a:loop a:loopEnd a:loopStart g:playbackRate
+AudioContext|BaseAudioContext|m:close m:createMediaElementSource m:createMediaStreamDestination m:createMediaStreamSource m:getOutputTimestamp m:resume m:setSinkId m:suspend g:baseLatency a:onerror a:onsinkchange g:outputLatency g:playbackStats g:sinkId
+AudioData||m:allocationSize m:clone m:close m:copyTo g:duration g:format g:numberOfChannels g:numberOfFrames g:sampleRate g:timestamp
+AudioDecoder|EventTarget|M:isConfigSupported m:close m:configure m:decode m:flush m:reset g:decodeQueueSize a:ondequeue g:state
+AudioDestinationNode|AudioNode|g:maxChannelCount
+AudioEncoder|EventTarget|M:isConfigSupported m:close m:configure m:encode m:flush m:reset g:encodeQueueSize a:ondequeue g:state
+AudioListener||m:setOrientation m:setPosition g:forwardX g:forwardY g:forwardZ g:positionX g:positionY g:positionZ g:upX g:upY g:upZ
+AudioNode|EventTarget|m:connect m:disconnect a:channelCount a:channelCountMode a:channelInterpretation g:context g:numberOfInputs g:numberOfOutputs
+AudioParam||m:cancelAndHoldAtTime m:cancelScheduledValues m:exponentialRampToValueAtTime m:linearRampToValueAtTime m:setTargetAtTime m:setValueAtTime m:setValueCurveAtTime a:automationRate g:defaultValue g:maxValue g:minValue a:value
+AudioParamMap||i m:entries m:forEach m:get m:has m:keys m:values g:size
+AudioPlaybackStats||m:resetLatency m:toJSON g:averageLatency g:maximumLatency g:minimumLatency g:totalDuration g:underrunDuration g:underrunEvents
+AudioProcessingEvent|Event|g:inputBuffer g:outputBuffer g:playbackTime
+AudioScheduledSourceNode|AudioNode|m:start m:stop a:onended
+AudioSinkInfo||g:type
+AudioWorklet|Worklet|
+AudioWorkletNode|AudioNode|a:onprocessorerror g:parameters g:port
+AuthenticatorAssertionResponse|AuthenticatorResponse|g:authenticatorData g:signature g:userHandle
+AuthenticatorAttestationResponse|AuthenticatorResponse|m:getAuthenticatorData m:getPublicKey m:getPublicKeyAlgorithm m:getTransports g:attestationObject
+AuthenticatorResponse||g:clientDataJSON
+BackgroundFetchManager||m:fetch m:get m:getIds
+BackgroundFetchRecord||g:request g:responseReady
+BackgroundFetchRegistration|EventTarget|m:abort m:match m:matchAll g:downloadTotal g:downloaded g:failureReason g:id a:onprogress g:recordsAvailable g:result g:uploadTotal g:uploaded
+BarProp||g:visible
+BarcodeDetector||M:getSupportedFormats m:detect
+BaseAudioContext|EventTarget|m:createAnalyser m:createBiquadFilter m:createBuffer m:createBufferSource m:createChannelMerger m:createChannelSplitter m:createConstantSource m:createConvolver m:createDelay m:createDynamicsCompressor m:createGain m:createIIRFilter m:createOscillator m:createPanner m:createPeriodicWave m:createScriptProcessor m:createStereoPanner m:createWaveShaper m:decodeAudioData g:audioWorklet g:currentTime g:destination g:listener a:onstatechange g:sampleRate g:state
+BatteryManager|EventTarget|g:charging g:chargingTime g:dischargingTime g:level a:onchargingchange a:onchargingtimechange a:ondischargingtimechange a:onlevelchange
+BeforeInstallPromptEvent|Event|m:prompt g:platforms g:userChoice
+BeforeUnloadEvent|Event|a:returnValue
+BiquadFilterNode|AudioNode|m:getFrequencyResponse g:Q g:detune g:frequency g:gain a:type
+Blob||m:arrayBuffer m:bytes m:slice m:stream m:text m:textStream g:size g:type
+BlobEvent|Event|g:data g:timecode
+Bluetooth|EventTarget|m:getAvailability m:getDevices m:requestDevice m:requestLEScan a:onadvertisementreceived
+BluetoothCharacteristicProperties||g:authenticatedSignedWrites g:broadcast g:indicate g:notify g:read g:reliableWrite g:writableAuxiliaries g:write g:writeWithoutResponse
+BluetoothDevice|EventTarget|m:forget m:watchAdvertisements g:gatt g:id g:name a:onadvertisementreceived a:ongattserverdisconnected g:watchingAdvertisements
+BluetoothRemoteGATTCharacteristic|EventTarget|m:getDescriptor m:getDescriptors m:readValue m:startNotifications m:stopNotifications m:writeValue m:writeValueWithResponse m:writeValueWithoutResponse a:oncharacteristicvaluechanged g:properties g:service g:uuid g:value
+BluetoothRemoteGATTDescriptor||m:readValue m:writeValue g:characteristic g:uuid g:value
+BluetoothRemoteGATTServer||m:connect m:disconnect m:getPrimaryService m:getPrimaryServices g:connected g:device
+BluetoothRemoteGATTService||m:getCharacteristic m:getCharacteristics g:device g:isPrimary g:uuid
+BluetoothUUID||M:canonicalUUID M:getCharacteristic M:getDescriptor M:getService
+BroadcastChannel|EventTarget|m:close m:postMessage g:name a:onmessage a:onmessageerror
+BrowserCaptureMediaStreamTrack|MediaStreamTrack|m:cropTo m:restrictTo
+ByteLengthQueuingStrategy||g:highWaterMark g:size
+CDATASection|Text|
+CSPViolationReportBody|ReportBody|m:toJSON g:blockedURL g:columnNumber g:disposition g:documentURL g:effectiveDirective g:lineNumber g:originalPolicy g:referrer g:sample g:sourceFile g:statusCode
+CSSAnimation|Animation|g:animationName
+CSSConditionRule|CSSGroupingRule|g:conditionText
+CSSContainerRule|CSSConditionRule|g:conditions g:containerName g:containerQuery
+CSSCounterStyleRule|CSSRule|a:additiveSymbols a:fallback a:name a:negative a:pad a:prefix a:range a:speakAs a:suffix a:symbols a:system
+CSSFontFaceRule|CSSRule|g:style
+CSSFontFeatureValuesRule|CSSRule|g:annotation g:characterVariant a:fontFamily g:ornaments g:styleset g:stylistic g:swash
+CSSFontPaletteValuesRule|CSSRule|g:basePalette g:fontFamily g:name g:overrideColors
+CSSFunctionDeclarations|CSSRule|a:style
+CSSFunctionDescriptors|CSSStyleDeclaration|a:result
+CSSFunctionRule|CSSGroupingRule|m:getParameters g:name g:returnType
+CSSGroupingRule|CSSRule|m:deleteRule m:insertRule g:cssRules
+CSSImageValue|CSSStyleValue|
+CSSImportRule|CSSRule|g:href g:layerName a:media g:styleSheet g:supportsText
+CSSKeyframeRule|CSSRule|a:keyText a:style
+CSSKeyframesRule|CSSRule|i m:appendRule m:deleteRule m:findRule g:cssRules g:length a:name
+CSSKeywordValue|CSSStyleValue|a:value
+CSSLayerBlockRule|CSSGroupingRule|g:name
+CSSLayerStatementRule|CSSRule|g:nameList
+CSSMarginRule|CSSRule|g:name a:style
+CSSMathClamp|CSSMathValue|g:lower g:upper g:value
+CSSMathInvert|CSSMathValue|g:value
+CSSMathMax|CSSMathValue|g:values
+CSSMathMin|CSSMathValue|g:values
+CSSMathNegate|CSSMathValue|g:value
+CSSMathProduct|CSSMathValue|g:values
+CSSMathSum|CSSMathValue|g:values
+CSSMathValue|CSSNumericValue|g:operator
+CSSMatrixComponent|CSSTransformComponent|a:matrix
+CSSMediaRule|CSSConditionRule|a:media
+CSSNamespaceRule|CSSRule|g:namespaceURI g:prefix
+CSSNestedDeclarations|CSSRule|a:style
+CSSNumericArray||i m:entries m:forEach m:keys m:values g:length
+CSSNumericValue|CSSStyleValue|m:add m:div m:equals m:max m:min m:mul m:sub m:to m:toSum m:type
+CSSPageRule|CSSGroupingRule|a:selectorText a:style
+CSSPerspective|CSSTransformComponent|a:length
+CSSPositionTryDescriptors|CSSStyleDeclaration|a:align-self a:alignSelf a:block-size a:blockSize a:bottom a:height a:inline-size a:inlineSize a:inset a:inset-block a:inset-block-end a:inset-block-start a:inset-inline a:inset-inline-end a:inset-inline-start a:insetBlock a:insetBlockEnd a:insetBlockStart a:insetInline a:insetInlineEnd a:insetInlineStart a:justify-self a:justifySelf a:left a:margin a:margin-block a:margin-block-end a:margin-block-start a:margin-bottom a:margin-inline a:margin-inline-end a:margin-inline-start a:margin-left a:margin-right a:margin-top a:marginBlock a:marginBlockEnd a:marginBlockStart a:marginBottom a:marginInline a:marginInlineEnd a:marginInlineStart a:marginLeft a:marginRight a:marginTop a:max-block-size a:max-height a:max-inline-size a:max-width a:maxBlockSize a:maxHeight a:maxInlineSize a:maxWidth a:min-block-size a:min-height a:min-inline-size a:min-width a:minBlockSize a:minHeight a:minInlineSize a:minWidth a:place-self a:placeSelf a:position-anchor a:position-area a:positionAnchor a:positionArea a:right a:top a:width
+CSSPositionTryRule|CSSRule|g:name a:style
+CSSPositionValue|CSSStyleValue|a:x a:y
+CSSPropertyRule|CSSRule|g:inherits g:initialValue g:name g:syntax
+CSSPseudoElement||m:pseudo g:element g:parent g:type
+CSSRotate|CSSTransformComponent|a:angle a:x a:y a:z
+CSSRule||c:CHARSET_RULE=2 c:COUNTER_STYLE_RULE=11 c:FONT_FACE_RULE=5 c:FONT_FEATURE_VALUES_RULE=14 c:IMPORT_RULE=3 c:KEYFRAMES_RULE=7 c:KEYFRAME_RULE=8 c:MARGIN_RULE=9 c:MEDIA_RULE=4 c:NAMESPACE_RULE=10 c:PAGE_RULE=6 c:STYLE_RULE=1 c:SUPPORTS_RULE=12 a:cssText g:parentRule g:parentStyleSheet g:type
+CSSRuleList||i m:item g:length
+CSSScale|CSSTransformComponent|a:x a:y a:z
+CSSScopeRule|CSSGroupingRule|g:end g:start
+CSSSkew|CSSTransformComponent|a:ax a:ay
+CSSSkewX|CSSTransformComponent|a:ax
+CSSSkewY|CSSTransformComponent|a:ay
+CSSStartingStyleRule|CSSGroupingRule|
+CSSStyleDeclaration||i m:getPropertyPriority m:getPropertyValue m:item m:removeProperty m:setProperty a:cssFloat a:cssText g:length g:parentRule
+CSSStyleRule|CSSRule|m:deleteRule m:insertRule g:cssRules a:selectorText a:style g:styleMap
+CSSStyleSheet|StyleSheet|m:addRule m:deleteRule m:insertRule m:removeRule m:replace m:replaceSync g:cssRules g:ownerRule g:rules
+CSSStyleValue||M:parse M:parseAll m:toString
+CSSSupportsRule|CSSConditionRule|
+CSSTransformComponent||m:toMatrix m:toString a:is2D
+CSSTransformValue|CSSStyleValue|i m:entries m:forEach m:keys m:toMatrix m:values g:is2D g:length
+CSSTransition|Animation|g:transitionProperty
+CSSTranslate|CSSTransformComponent|a:x a:y a:z
+CSSUnitValue|CSSNumericValue|g:unit a:value
+CSSUnparsedValue|CSSStyleValue|i m:entries m:forEach m:keys m:values g:length
+CSSVariableReferenceValue||g:fallback a:variable
+CSSViewTransitionRule|CSSRule|g:navigation g:types
+Cache||m:add m:addAll m:delete m:keys m:match m:matchAll m:put
+CacheStorage||m:delete m:has m:keys m:match m:open
+CanvasCaptureMediaStreamTrack|MediaStreamTrack|m:requestFrame g:canvas
+CanvasGradient||m:addColorStop
+CanvasPattern||m:setTransform
+CanvasRenderingContext2D||m:arc m:arcTo m:beginPath m:bezierCurveTo m:clearRect m:clip m:closePath m:createConicGradient m:createImageData m:createLinearGradient m:createPattern m:createRadialGradient m:drawFocusIfNeeded m:drawImage m:ellipse m:fill m:fillRect m:fillText m:getContextAttributes m:getImageData m:getLineDash m:getTransform m:isContextLost m:isPointInPath m:isPointInStroke m:lineTo m:measureText m:moveTo m:putImageData m:quadraticCurveTo m:rect m:reset m:resetTransform m:restore m:rotate m:roundRect m:save m:scale m:setLineDash m:setTransform m:stroke m:strokeRect m:strokeText m:transform m:translate g:canvas a:direction a:fillStyle a:filter a:font a:fontKerning a:fontStretch a:fontVariantCaps a:globalAlpha a:globalCompositeOperation a:imageSmoothingEnabled a:imageSmoothingQuality a:lang a:letterSpacing a:lineCap a:lineDashOffset a:lineJoin a:lineWidth a:miterLimit a:shadowBlur a:shadowColor a:shadowOffsetX a:shadowOffsetY a:strokeStyle a:textAlign a:textBaseline a:textRendering a:wordSpacing
+CaptureController|EventTarget|m:decreaseZoomLevel m:forwardWheel m:getSupportedZoomLevels m:increaseZoomLevel m:resetZoomLevel m:setFocusBehavior a:onzoomlevelchange g:zoomLevel
+CaretPosition||m:getClientRect g:offset g:offsetNode
+ChannelMergerNode|AudioNode|
+ChannelSplitterNode|AudioNode|
+ChapterInformation||g:artwork g:startTime g:title
+CharacterBoundsUpdateEvent|Event|g:rangeEnd g:rangeStart
+CharacterData|Node|m:after m:appendData m:before m:deleteData m:insertData m:remove m:replaceData m:replaceWith m:substringData a:data g:length g:nextElementSibling g:previousElementSibling
+Clipboard|EventTarget|m:read m:readText m:write m:writeText a:onclipboardchange
+ClipboardChangeEvent|Event|g:changeId g:types
+ClipboardEvent|Event|g:clipboardData
+ClipboardItem||M:supports m:getType g:types
+CloseEvent|Event|g:code g:reason g:wasClean
+CloseWatcher|EventTarget|m:close m:destroy m:requestClose a:oncancel a:onclose
+CommandEvent|Event|g:command g:source
+Comment|CharacterData|
+CompositionEvent|UIEvent|m:initCompositionEvent g:data
+CompressionStream||g:readable g:writable
+ConstantSourceNode|AudioScheduledSourceNode|g:offset
+ContentVisibilityAutoStateChangeEvent|Event|g:skipped
+ConvolverNode|AudioNode|a:buffer a:normalize
+CookieChangeEvent|Event|g:changed g:deleted
+CookieStore|EventTarget|m:delete m:get m:getAll m:set a:onchange
+CookieStoreManager||m:getSubscriptions m:subscribe m:unsubscribe
+CountQueuingStrategy||g:highWaterMark g:size
+CrashReportContext||m:delete m:initialize m:set
+CreateMonitor|EventTarget|a:ondownloadprogress
+Credential||M:isConditionalMediationAvailable g:id g:type
+CredentialsContainer||m:create m:get m:preventSilentAccess m:store
+CropTarget||M:fromElement
+Crypto||m:getRandomValues m:randomUUID g:subtle
+CryptoKey||g:algorithm g:extractable g:type g:usages
+CustomElementRegistry||m:define m:get m:getName m:initialize m:upgrade m:whenDefined
+CustomEvent|Event|m:initCustomEvent g:detail
+CustomStateSet||i m:add m:clear m:delete m:entries m:forEach m:has m:keys m:values g:size
+DOMError||g:message g:name
+DOMException||c:ABORT_ERR=20 c:DATA_CLONE_ERR=25 c:DOMSTRING_SIZE_ERR=2 c:HIERARCHY_REQUEST_ERR=3 c:INDEX_SIZE_ERR=1 c:INUSE_ATTRIBUTE_ERR=10 c:INVALID_ACCESS_ERR=15 c:INVALID_CHARACTER_ERR=5 c:INVALID_MODIFICATION_ERR=13 c:INVALID_NODE_TYPE_ERR=24 c:INVALID_STATE_ERR=11 c:NAMESPACE_ERR=14 c:NETWORK_ERR=19 c:NOT_FOUND_ERR=8 c:NOT_SUPPORTED_ERR=9 c:NO_DATA_ALLOWED_ERR=6 c:NO_MODIFICATION_ALLOWED_ERR=7 c:QUOTA_EXCEEDED_ERR=22 c:SECURITY_ERR=18 c:SYNTAX_ERR=12 c:TIMEOUT_ERR=23 c:TYPE_MISMATCH_ERR=17 c:URL_MISMATCH_ERR=21 c:VALIDATION_ERR=16 c:WRONG_DOCUMENT_ERR=4 g:code g:message g:name
+DOMImplementation||m:createDocument m:createDocumentType m:createHTMLDocument m:hasFeature
+DOMMatrix|DOMMatrixReadOnly|m:invertSelf m:multiplySelf m:preMultiplySelf m:rotateAxisAngleSelf m:rotateFromVectorSelf m:rotateSelf m:scale3dSelf m:scaleSelf m:setMatrixValue m:skewXSelf m:skewYSelf m:translateSelf a:a a:b a:c a:d a:e a:f a:m11 a:m12 a:m13 a:m14 a:m21 a:m22 a:m23 a:m24 a:m31 a:m32 a:m33 a:m34 a:m41 a:m42 a:m43 a:m44
+DOMMatrixReadOnly||M:fromFloat32Array M:fromFloat64Array M:fromMatrix m:flipX m:flipY m:inverse m:multiply m:rotate m:rotateAxisAngle m:rotateFromVector m:scale m:scale3d m:scaleNonUniform m:skewX m:skewY m:toFloat32Array m:toFloat64Array m:toJSON m:toString m:transformPoint m:translate g:a g:b g:c g:d g:e g:f g:is2D g:isIdentity g:m11 g:m12 g:m13 g:m14 g:m21 g:m22 g:m23 g:m24 g:m31 g:m32 g:m33 g:m34 g:m41 g:m42 g:m43 g:m44
+DOMParser||m:parseFromString
+DOMPoint|DOMPointReadOnly|a:w a:x a:y a:z
+DOMPointReadOnly||M:fromPoint m:matrixTransform m:toJSON g:w g:x g:y g:z
+DOMQuad||M:fromQuad M:fromRect m:getBounds m:toJSON g:p1 g:p2 g:p3 g:p4
+DOMRect|DOMRectReadOnly|a:height a:width a:x a:y
+DOMRectList||i m:item g:length
+DOMRectReadOnly||M:fromRect m:toJSON g:bottom g:height g:left g:right g:top g:width g:x g:y
+DOMStringList||i m:contains m:item g:length
+DOMStringMap||
+DOMTokenList||i m:add m:contains m:entries m:forEach m:item m:keys m:remove m:replace m:supports m:toString m:toggle m:values g:length a:value
+DataTransfer||m:clearData m:getData m:setData m:setDragImage a:dropEffect a:effectAllowed g:files g:items g:types
+DataTransferItem||m:getAsFile m:getAsFileSystemHandle m:getAsString m:webkitGetAsEntry g:kind g:type
+DataTransferItemList||i m:add m:clear m:remove g:length
+DecompressionStream||g:readable g:writable
+DelayNode|AudioNode|g:delayTime
+DelegatedInkTrailPresenter||m:updateInkTrailStartPoint g:presentationArea
+DeviceMotionEvent|Event|M:requestPermission g:acceleration g:accelerationIncludingGravity g:interval g:rotationRate
+DeviceMotionEventAcceleration||g:x g:y g:z
+DeviceMotionEventRotationRate||g:alpha g:beta g:gamma
+DeviceOrientationEvent|Event|M:requestPermission g:absolute g:alpha g:beta g:gamma
+DevicePosture|EventTarget|a:onchange g:type
+DigitalCredential|Credential|M:userAgentAllowsProtocol m:toJSON g:data g:protocol
+DisposableStack||m:Symbol(Symbol.dispose) m:adopt m:defer m:dispose m:move m:use g:disposed
+Document|Node|M:parseHTML M:parseHTMLUnsafe m:adoptNode m:append m:ariaNotify m:browsingTopics m:captureEvents m:caretPositionFromPoint m:caretRangeFromPoint m:clear m:close m:createAttribute m:createAttributeNS m:createCDATASection m:createComment m:createDocumentFragment m:createElement m:createElementNS m:createEvent m:createExpression m:createNSResolver m:createNodeIterator m:createProcessingInstruction m:createRange m:createTextNode m:createTreeWalker m:elementFromPoint m:elementsFromPoint m:evaluate m:execCommand m:exitFullscreen m:exitPictureInPicture m:exitPointerLock m:getAnimations m:getElementById m:getElementsByClassName m:getElementsByName m:getElementsByTagName m:getElementsByTagNameNS m:getSelection m:hasFocus m:hasPrivateToken m:hasRedemptionRecord m:hasStorageAccess m:hasUnpartitionedCookieAccess m:importNode m:moveBefore m:open m:prepend m:queryCommandEnabled m:queryCommandIndeterm m:queryCommandState m:queryCommandSupported m:queryCommandValue m:querySelector m:querySelectorAll m:releaseEvents m:replaceChildren m:requestStorageAccess m:requestStorageAccessFor m:startViewTransition m:webkitCancelFullScreen m:webkitExitFullscreen m:write m:writeln g:URL g:activeElement g:activeViewTransition a:adoptedStyleSheets a:alinkColor g:all g:anchors g:applets a:bgColor a:body g:characterSet g:charset g:childElementCount g:children g:compatMode g:contentType a:cookie g:currentScript g:customElementRegistry g:defaultView a:designMode a:dir g:doctype g:documentElement g:documentURI a:domain g:embeds g:featurePolicy a:fgColor g:firstElementChild g:fonts g:forms g:fragmentDirective a:fullscreen a:fullscreenElement a:fullscreenEnabled g:head g:hidden g:images g:implementation g:inputEncoding g:lastElementChild g:lastModified a:linkColor g:links a:onabort a:onanimationcancel a:onanimationend a:onanimationiteration a:onanimationstart a:onauxclick a:onbeforecopy a:onbeforecut a:onbeforeinput a:onbeforematch a:onbeforepaste a:onbeforetoggle a:onbeforexrselect a:onblur a:oncancel a:oncanplay a:oncanplaythrough a:onchange a:onclick a:onclose a:oncommand a:oncontentvisibilityautostatechange a:oncontextlost a:oncontextmenu a:oncontextrestored a:oncopy a:oncuechange a:oncut a:ondblclick a:ondrag a:ondragend a:ondragenter a:ondragleave a:ondragover a:ondragstart a:ondrop a:ondurationchange a:onemptied a:onended a:onerror a:onfocus a:onformdata a:onfreeze a:onfullscreenchange a:onfullscreenerror a:ongotpointercapture a:oninput a:oninvalid a:onkeydown a:onkeypress a:onkeyup a:onload a:onloadeddata a:onloadedmetadata a:onloadstart a:onlostpointercapture a:onmousedown a:onmouseenter a:onmouseleave a:onmousemove a:onmouseout a:onmouseover a:onmouseup a:onmousewheel a:onpaste a:onpause a:onplay a:onplaying a:onpointercancel a:onpointerdown a:onpointerenter a:onpointerleave a:onpointerlockchange a:onpointerlockerror a:onpointermove a:onpointerout a:onpointerover a:onpointerrawupdate a:onpointerup a:onprerenderingchange a:onprogress a:onratechange a:onreadystatechange a:onreset a:onresize a:onresume a:onscroll a:onscrollend a:onscrollsnapchange a:onscrollsnapchanging a:onsearch a:onsecuritypolicyviolation a:onseeked a:onseeking a:onselect a:onselectionchange a:onselectstart a:onslotchange a:onstalled a:onsubmit a:onsuspend a:ontimeupdate a:ontoggle a:ontouchcancel a:ontouchend a:ontouchmove a:ontouchstart a:ontransitioncancel a:ontransitionend a:ontransitionrun a:ontransitionstart a:onvisibilitychange a:onvolumechange a:onwaiting a:onwebkitanimationend a:onwebkitanimationiteration a:onwebkitanimationstart a:onwebkitfullscreenchange a:onwebkitfullscreenerror a:onwebkittransitionend a:onwheel g:pictureInPictureElement g:pictureInPictureEnabled g:plugins g:pointerLockElement g:prerendering g:readyState g:referrer g:rootElement g:scripts g:scrollingElement g:styleSheets g:timeline a:title g:visibilityState a:vlinkColor g:wasDiscarded g:webkitCurrentFullScreenElement g:webkitFullscreenElement g:webkitFullscreenEnabled g:webkitHidden g:webkitIsFullScreen g:webkitVisibilityState g:xmlEncoding a:xmlStandalone a:xmlVersion
+DocumentFragment|Node|m:append m:getElementById m:moveBefore m:prepend m:querySelector m:querySelectorAll m:replaceChildren g:childElementCount g:children g:firstElementChild g:lastElementChild
+DocumentPictureInPicture|EventTarget|m:requestWindow a:onenter g:window
+DocumentPictureInPictureEvent|Event|g:window
+DocumentTimeline|AnimationTimeline|
+DocumentType|Node|m:after m:before m:remove m:replaceWith g:name g:publicId g:systemId
+DragEvent|MouseEvent|g:dataTransfer
+DynamicsCompressorNode|AudioNode|g:attack g:knee g:ratio g:reduction g:release g:threshold
+EditContext|EventTarget|m:attachedElements m:characterBounds m:updateCharacterBounds m:updateControlBounds m:updateSelection m:updateSelectionBounds m:updateText g:characterBoundsRangeStart a:oncharacterboundsupdate a:oncompositionend a:oncompositionstart a:ontextformatupdate a:ontextupdate g:selectionEnd g:selectionStart g:text
+Element|Node|m:after m:animate m:append m:ariaNotify m:attachShadow m:before m:checkVisibility m:closest m:computedStyleMap m:getAnimations m:getAttribute m:getAttributeNS m:getAttributeNames m:getAttributeNode m:getAttributeNodeNS m:getBoundingClientRect m:getClientRects m:getElementsByClassName m:getElementsByTagName m:getElementsByTagNameNS m:getHTML m:hasAttribute m:hasAttributeNS m:hasAttributes m:hasPointerCapture m:insertAdjacentElement m:insertAdjacentHTML m:insertAdjacentText m:matches m:moveBefore m:prepend m:pseudo m:querySelector m:querySelectorAll m:releasePointerCapture m:remove m:removeAttribute m:removeAttributeNS m:removeAttributeNode m:replaceChildren m:replaceWith m:requestFullscreen m:requestPointerLock m:scroll m:scrollBy m:scrollIntoView m:scrollIntoViewIfNeeded m:scrollTo m:setAttribute m:setAttributeNS m:setAttributeNode m:setAttributeNodeNS m:setHTML m:setHTMLUnsafe m:setPointerCapture m:startViewTransition m:toggleAttribute m:webkitMatchesSelector m:webkitRequestFullScreen m:webkitRequestFullscreen g:activeViewTransition a:ariaActionsElements a:ariaActiveDescendantElement a:ariaAtomic a:ariaAutoComplete a:ariaBrailleLabel a:ariaBrailleRoleDescription a:ariaBusy a:ariaChecked a:ariaColCount a:ariaColIndex a:ariaColIndexText a:ariaColSpan a:ariaControlsElements a:ariaCurrent a:ariaDescribedByElements a:ariaDescription a:ariaDetailsElements a:ariaDisabled a:ariaErrorMessageElements a:ariaExpanded a:ariaFlowToElements a:ariaHasPopup a:ariaHidden a:ariaInvalid a:ariaKeyShortcuts a:ariaLabel a:ariaLabelledByElements a:ariaLevel a:ariaLive a:ariaModal a:ariaMultiLine a:ariaMultiSelectable a:ariaOrientation a:ariaPlaceholder a:ariaPosInSet a:ariaPressed a:ariaReadOnly a:ariaRelevant a:ariaRequired a:ariaRoleDescription a:ariaRowCount a:ariaRowIndex a:ariaRowIndexText a:ariaRowSpan a:ariaSelected a:ariaSetSize a:ariaSort a:ariaValueMax a:ariaValueMin a:ariaValueNow a:ariaValueText g:assignedSlot g:attributes g:childElementCount g:children a:classList a:className g:clientHeight g:clientLeft g:clientTop g:clientWidth g:currentCSSZoom g:customElementRegistry a:elementTiming g:firstElementChild a:id a:innerHTML g:lastElementChild g:localName g:namespaceURI g:nextElementSibling a:onbeforecopy a:onbeforecut a:onbeforepaste a:onfullscreenchange a:onfullscreenerror a:onsearch a:onwebkitfullscreenchange a:onwebkitfullscreenerror a:outerHTML a:part g:prefix g:previousElementSibling a:role g:scrollHeight a:scrollLeft a:scrollTop g:scrollWidth g:shadowRoot a:slot g:tagName
+ElementInternals||m:checkValidity m:reportValidity m:setFormValue m:setValidity a:ariaActionsElements a:ariaActiveDescendantElement a:ariaAtomic a:ariaAutoComplete a:ariaBrailleLabel a:ariaBrailleRoleDescription a:ariaBusy a:ariaChecked a:ariaColCount a:ariaColIndex a:ariaColIndexText a:ariaColSpan a:ariaControlsElements a:ariaCurrent a:ariaDescribedByElements a:ariaDescription a:ariaDetailsElements a:ariaDisabled a:ariaErrorMessageElements a:ariaExpanded a:ariaFlowToElements a:ariaHasPopup a:ariaHidden a:ariaInvalid a:ariaKeyShortcuts a:ariaLabel a:ariaLabelledByElements a:ariaLevel a:ariaLive a:ariaModal a:ariaMultiLine a:ariaMultiSelectable a:ariaOrientation a:ariaPlaceholder a:ariaPosInSet a:ariaPressed a:ariaReadOnly a:ariaRelevant a:ariaRequired a:ariaRoleDescription a:ariaRowCount a:ariaRowIndex a:ariaRowIndexText a:ariaRowSpan a:ariaSelected a:ariaSetSize a:ariaSort a:ariaValueMax a:ariaValueMin a:ariaValueNow a:ariaValueText g:form g:labels a:role g:shadowRoot g:states g:validationMessage g:validity g:willValidate
+EncodedAudioChunk||m:copyTo g:byteLength g:duration g:timestamp g:type
+EncodedVideoChunk||m:copyTo g:byteLength g:duration g:timestamp g:type
+ErrorEvent|Event|g:colno g:error g:filename g:lineno g:message
+Event||c:AT_TARGET=2 c:BUBBLING_PHASE=3 c:CAPTURING_PHASE=1 c:NONE=0 m:composedPath m:initEvent m:preventDefault m:stopImmediatePropagation m:stopPropagation g:bubbles a:cancelBubble g:cancelable g:composed g:currentTarget g:defaultPrevented g:eventPhase a:returnValue g:srcElement g:target g:timeStamp g:type
+EventCounts||i m:entries m:forEach m:get m:has m:keys m:values g:size
+EventSource|EventTarget|c:CLOSED=2 c:CONNECTING=0 c:OPEN=1 m:close a:onerror a:onmessage a:onopen g:readyState g:url g:withCredentials
+EventTarget||m:addEventListener m:dispatchEvent m:removeEventListener m:when
+External||m:AddSearchProvider m:IsSearchProviderInstalled
+EyeDropper||m:open
+FeaturePolicy||m:allowedFeatures m:allowsFeature m:features m:getAllowlistForFeature
+FederatedCredential|Credential|g:iconURL g:name g:protocol g:provider
+Fence||m:getNestedConfigs m:reportEvent m:setReportEventDataForAutomaticBeacons
+FencedFrameConfig||m:setSharedStorageContext
+FetchLaterResult||g:activated
+File|Blob|g:lastModified g:lastModifiedDate g:name g:webkitRelativePath
+FileList||i m:item g:length
+FileReader|EventTarget|c:DONE=2 c:EMPTY=0 c:LOADING=1 m:abort m:readAsArrayBuffer m:readAsBinaryString m:readAsDataURL m:readAsText g:error a:onabort a:onerror a:onload a:onloadend a:onloadstart a:onprogress g:readyState g:result
+FileSystemDirectoryHandle|FileSystemHandle|y m:entries m:getDirectoryHandle m:getFileHandle m:keys m:removeEntry m:resolve m:values
+FileSystemFileHandle|FileSystemHandle|m:createWritable m:getFile m:move
+FileSystemHandle||m:isSameEntry m:queryPermission m:remove m:requestPermission g:kind g:name
+FileSystemObserver||m:disconnect m:observe
+FileSystemWritableFileStream|WritableStream|m:seek m:truncate m:write g:mode
+Float16Array|TypedArray|c:BYTES_PER_ELEMENT=2
+FocusEvent|UIEvent|g:relatedTarget
+FontData||m:blob g:family g:fullName g:postscriptName g:style
+FontFace||m:load a:ascentOverride a:descentOverride a:display a:family a:featureSettings a:lineGapOverride g:loaded a:sizeAdjust g:status a:stretch a:style a:unicodeRange a:variant a:variationSettings a:weight
+FontFaceSet|EventTarget|i m:add m:check m:clear m:delete m:entries m:forEach m:has m:keys m:load m:values a:onloading a:onloadingdone a:onloadingerror g:ready g:size g:status
+FontFaceSetLoadEvent|Event|g:fontfaces
+FormData||i m:append m:delete m:entries m:forEach m:get m:getAll m:has m:keys m:set m:values
+FormDataEvent|Event|g:formData
+FragmentDirective||
+GPU||m:getPreferredCanvasFormat m:requestAdapter g:wgslLanguageFeatures
+GPUAdapter||m:requestDevice g:features g:info g:limits
+GPUAdapterInfo||g:architecture g:description g:device g:isFallbackAdapter g:subgroupMaxSize g:subgroupMinSize g:vendor
+GPUBindGroup||a:label
+GPUBindGroupLayout||a:label
+GPUBuffer||m:destroy m:getMappedRange m:mapAsync m:unmap a:label g:mapState g:size g:usage
+GPUCanvasContext||m:configure m:getConfiguration m:getCurrentTexture m:unconfigure g:canvas
+GPUCommandBuffer||a:label
+GPUCommandEncoder||m:beginComputePass m:beginRenderPass m:clearBuffer m:copyBufferToBuffer m:copyBufferToTexture m:copyTextureToBuffer m:copyTextureToTexture m:finish m:insertDebugMarker m:popDebugGroup m:pushDebugGroup m:resolveQuerySet a:label
+GPUCompilationInfo||g:messages
+GPUCompilationMessage||g:length g:lineNum g:linePos g:message g:offset g:type
+GPUComputePassEncoder||m:dispatchWorkgroups m:dispatchWorkgroupsIndirect m:end m:insertDebugMarker m:popDebugGroup m:pushDebugGroup m:setBindGroup m:setImmediates m:setPipeline m:writeTimestamp a:label
+GPUComputePipeline||m:getBindGroupLayout a:label
+GPUDevice|EventTarget|m:createBindGroup m:createBindGroupLayout m:createBuffer m:createCommandEncoder m:createComputePipeline m:createComputePipelineAsync m:createPipelineLayout m:createQuerySet m:createRenderBundleEncoder m:createRenderPipeline m:createRenderPipelineAsync m:createSampler m:createShaderModule m:createTexture m:destroy m:importExternalTexture m:popErrorScope m:pushErrorScope g:adapterInfo g:features a:label g:limits g:lost a:onuncapturederror g:queue
+GPUDeviceLostInfo||g:message g:reason
+GPUError||g:message
+GPUExternalTexture||a:label
+GPUInternalError|GPUError|
+GPUOutOfMemoryError|GPUError|
+GPUPipelineError|DOMException|g:reason
+GPUPipelineLayout||a:label
+GPUQuerySet||m:destroy g:count a:label g:type
+GPUQueue||m:copyExternalImageToTexture m:onSubmittedWorkDone m:submit m:writeBuffer m:writeTexture a:label
+GPURenderBundle||a:label
+GPURenderBundleEncoder||m:draw m:drawIndexed m:drawIndexedIndirect m:drawIndirect m:finish m:insertDebugMarker m:popDebugGroup m:pushDebugGroup m:setBindGroup m:setImmediates m:setIndexBuffer m:setPipeline m:setVertexBuffer a:label
+GPURenderPassEncoder||m:beginOcclusionQuery m:draw m:drawIndexed m:drawIndexedIndirect m:drawIndirect m:end m:endOcclusionQuery m:executeBundles m:insertDebugMarker m:popDebugGroup m:pushDebugGroup m:setBindGroup m:setBlendConstant m:setImmediates m:setIndexBuffer m:setPipeline m:setScissorRect m:setStencilReference m:setVertexBuffer m:setViewport m:writeTimestamp a:label
+GPURenderPipeline||m:getBindGroupLayout a:label
+GPUSampler||a:label
+GPUShaderModule||m:getCompilationInfo a:label
+GPUSupportedFeatures||i m:entries m:forEach m:has m:keys m:values g:size
+GPUSupportedLimits||g:maxBindGroups g:maxBindGroupsPlusVertexBuffers g:maxBindingsPerBindGroup g:maxBufferSize g:maxColorAttachmentBytesPerSample g:maxColorAttachments g:maxComputeInvocationsPerWorkgroup g:maxComputeWorkgroupSizeX g:maxComputeWorkgroupSizeY g:maxComputeWorkgroupSizeZ g:maxComputeWorkgroupStorageSize g:maxComputeWorkgroupsPerDimension g:maxDynamicStorageBuffersPerPipelineLayout g:maxDynamicUniformBuffersPerPipelineLayout g:maxImmediateSize g:maxInterStageShaderVariables g:maxSampledTexturesPerShaderStage g:maxSamplersPerShaderStage g:maxStorageBufferBindingSize g:maxStorageBuffersInFragmentStage g:maxStorageBuffersInVertexStage g:maxStorageBuffersPerShaderStage g:maxStorageTexturesInFragmentStage g:maxStorageTexturesInVertexStage g:maxStorageTexturesPerShaderStage g:maxTextureArrayLayers g:maxTextureDimension1D g:maxTextureDimension2D g:maxTextureDimension3D g:maxUniformBufferBindingSize g:maxUniformBuffersPerShaderStage g:maxVertexAttributes g:maxVertexBufferArrayStride g:maxVertexBuffers g:minStorageBufferOffsetAlignment g:minUniformBufferOffsetAlignment
+GPUTexture||m:createView m:destroy g:depthOrArrayLayers g:dimension g:format g:height a:label g:mipLevelCount g:sampleCount g:textureBindingViewDimension g:usage g:width
+GPUTextureView||a:label
+GPUUncapturedErrorEvent|Event|g:error
+GPUValidationError|GPUError|
+GainNode|AudioNode|g:gain
+Gamepad||g:axes g:buttons g:connected g:id g:index g:mapping g:timestamp g:vibrationActuator
+GamepadButton||g:pressed g:touched g:value
+GamepadEvent|Event|g:gamepad
+GamepadHapticActuator||m:playEffect m:reset g:effects g:type
+Geolocation||m:clearWatch m:getCurrentPosition m:watchPosition
+GeolocationCoordinates||m:toJSON g:accuracy g:altitude g:altitudeAccuracy g:heading g:latitude g:longitude g:speed
+GeolocationPosition||m:toJSON g:coords g:timestamp
+GeolocationPositionError||c:PERMISSION_DENIED=1 c:POSITION_UNAVAILABLE=2 c:TIMEOUT=3 g:code g:message
+GravitySensor|Accelerometer|
+Gyroscope|Sensor|g:x g:y g:z
+HID|EventTarget|m:getDevices m:requestDevice a:onconnect a:ondisconnect
+HIDConnectionEvent|Event|g:device
+HIDDevice|EventTarget|m:close m:forget m:open m:receiveFeatureReport m:sendFeatureReport m:sendReport g:collections a:oninputreport g:opened g:productId g:productName g:vendorId
+HIDInputReportEvent|Event|g:data g:device g:reportId
+HTMLAllCollection||i m:item m:namedItem g:length
+HTMLAnchorElement|HTMLElement|m:toString a:attributionSrc a:charset a:coords a:download a:hash a:host a:hostname a:href a:hrefTranslate a:hreflang a:interestForElement a:name g:origin a:password a:pathname a:ping a:port a:protocol a:referrerPolicy a:rel a:relList a:rev a:search a:shape a:target a:text a:type a:username
+HTMLAreaElement|HTMLElement|m:toString a:alt a:attributionSrc a:coords a:download a:hash a:host a:hostname a:href a:interestForElement a:noHref g:origin a:password a:pathname a:ping a:port a:protocol a:referrerPolicy a:rel a:relList a:search a:shape a:target a:username
+HTMLAudioElement|HTMLMediaElement|
+HTMLBRElement|HTMLElement|a:clear
+HTMLBaseElement|HTMLElement|a:href a:target
+HTMLBodyElement|HTMLElement|a:aLink a:background a:bgColor a:link a:onafterprint a:onbeforeprint a:onbeforeunload a:onblur a:onerror a:onfocus a:ongamepadconnected a:ongamepaddisconnected a:onhashchange a:onlanguagechange a:onload a:onmessage a:onmessageerror a:onoffline a:ononline a:onpagehide a:onpageshow a:onpopstate a:onrejectionhandled a:onresize a:onscroll a:onstorage a:onunhandledrejection a:onunload a:text a:vLink
+HTMLButtonElement|HTMLElement|m:checkValidity m:reportValidity m:setCustomValidity a:command a:commandForElement a:disabled g:form a:formAction a:formEnctype a:formMethod a:formNoValidate a:formTarget a:interestForElement g:labels a:name a:popoverTargetAction a:popoverTargetElement a:type g:validationMessage g:validity a:value g:willValidate
+HTMLCanvasElement|HTMLElement|m:captureStream m:getContext m:toBlob m:toDataURL m:transferControlToOffscreen a:height a:width
+HTMLCollection||i m:item m:namedItem g:length
+HTMLDListElement|HTMLElement|a:compact
+HTMLDataElement|HTMLElement|a:value
+HTMLDataListElement|HTMLElement|g:options
+HTMLDetailsElement|HTMLElement|a:name a:open
+HTMLDialogElement|HTMLElement|m:close m:requestClose m:show m:showModal a:closedBy a:open a:returnValue
+HTMLDirectoryElement|HTMLElement|a:compact
+HTMLDivElement|HTMLElement|a:align
+HTMLDocument|Document|
+HTMLElement|Element|m:attachInternals m:blur m:click m:focus m:hidePopover m:showPopover m:togglePopover a:accessKey g:attributeStyleMap a:autocapitalize a:autofocus a:contentEditable g:dataset a:dir a:draggable a:editContext a:enterKeyHint a:focusGroup a:focusGroupStart a:hidden a:inert a:innerText a:inputMode g:isContentEditable a:lang a:nonce g:offsetHeight g:offsetLeft g:offsetParent g:offsetTop g:offsetWidth a:onabort a:onanimationcancel a:onanimationend a:onanimationiteration a:onanimationstart a:onauxclick a:onbeforeinput a:onbeforematch a:onbeforetoggle a:onbeforexrselect a:onblur a:oncancel a:oncanplay a:oncanplaythrough a:onchange a:onclick a:onclose a:oncommand a:oncontentvisibilityautostatechange a:oncontextlost a:oncontextmenu a:oncontextrestored a:oncopy a:oncuechange a:oncut a:ondblclick a:ondrag a:ondragend a:ondragenter a:ondragleave a:ondragover a:ondragstart a:ondrop a:ondurationchange a:onemptied a:onended a:onerror a:onfocus a:onformdata a:ongotpointercapture a:oninput a:oninvalid a:onkeydown a:onkeypress a:onkeyup a:onload a:onloadeddata a:onloadedmetadata a:onloadstart a:onlostpointercapture a:onmousedown a:onmouseenter a:onmouseleave a:onmousemove a:onmouseout a:onmouseover a:onmouseup a:onmousewheel a:onpaste a:onpause a:onplay a:onplaying a:onpointercancel a:onpointerdown a:onpointerenter a:onpointerleave a:onpointermove a:onpointerout a:onpointerover a:onpointerrawupdate a:onpointerup a:onprogress a:onratechange a:onreset a:onresize a:onscroll a:onscrollend a:onscrollsnapchange a:onscrollsnapchanging a:onsecuritypolicyviolation a:onseeked a:onseeking a:onselect a:onselectionchange a:onselectstart a:onslotchange a:onstalled a:onsubmit a:onsuspend a:ontimeupdate a:ontoggle a:ontouchcancel a:ontouchend a:ontouchmove a:ontouchstart a:ontransitioncancel a:ontransitionend a:ontransitionrun a:ontransitionstart a:onvolumechange a:onwaiting a:onwebkitanimationend a:onwebkitanimationiteration a:onwebkitanimationstart a:onwebkittransitionend a:onwheel a:outerText a:popover a:spellcheck a:style a:tabIndex a:title a:translate a:virtualKeyboardPolicy a:writingSuggestions
+HTMLEmbedElement|HTMLElement|m:getSVGDocument a:align a:height a:name a:src a:type a:width
+HTMLFencedFrameElement|HTMLElement|M:canLoadOpaqueURL a:allow a:config a:height a:sandbox a:width
+HTMLFieldSetElement|HTMLElement|m:checkValidity m:reportValidity m:setCustomValidity a:disabled g:elements g:form a:name g:type g:validationMessage g:validity g:willValidate
+HTMLFontElement|HTMLElement|a:color a:face a:size
+HTMLFormControlsCollection|HTMLCollection|i m:namedItem
+HTMLFormElement|HTMLElement|i m:checkValidity m:reportValidity m:requestSubmit m:reset m:submit a:acceptCharset a:action a:autocomplete g:elements a:encoding a:enctype g:length a:method a:name a:noValidate a:rel a:relList a:target
+HTMLFrameElement|HTMLElement|g:contentDocument g:contentWindow a:frameBorder a:longDesc a:marginHeight a:marginWidth a:name a:noResize a:scrolling a:src
+HTMLFrameSetElement|HTMLElement|a:cols a:onafterprint a:onbeforeprint a:onbeforeunload a:onblur a:onerror a:onfocus a:ongamepadconnected a:ongamepaddisconnected a:onhashchange a:onlanguagechange a:onload a:onmessage a:onmessageerror a:onoffline a:ononline a:onpagehide a:onpageshow a:onpopstate a:onrejectionhandled a:onresize a:onscroll a:onstorage a:onunhandledrejection a:onunload a:rows
+HTMLGeolocationElement|HTMLElement|a:accuracymode a:autolocate g:error g:initialPermissionStatus g:invalidReason g:isValid a:onlocation a:onpromptaction a:onpromptdismiss a:onvalidationstatuschange g:permissionStatus g:position a:watch
+HTMLHRElement|HTMLElement|a:align a:color a:noShade a:size a:width
+HTMLHeadElement|HTMLElement|
+HTMLHeadingElement|HTMLElement|a:align
+HTMLHtmlElement|HTMLElement|a:version
+HTMLIFrameElement|HTMLElement|m:getSVGDocument a:adAuctionHeaders a:align a:allow a:allowFullscreen a:allowPaymentRequest a:browsingTopics g:contentDocument g:contentWindow a:credentialless a:csp g:featurePolicy a:frameBorder a:height a:loading a:longDesc a:marginHeight a:marginWidth a:name a:privateToken a:referrerPolicy a:sandbox a:scrolling a:sharedStorageWritable a:src a:srcdoc a:width
+HTMLImageElement|HTMLElement|m:decode a:align a:alt a:attributionSrc a:border a:browsingTopics g:complete a:crossOrigin g:currentSrc a:decoding a:fetchPriority a:height a:hspace a:isMap a:loading a:longDesc a:lowsrc a:name g:naturalHeight g:naturalWidth a:referrerPolicy a:sharedStorageWritable a:sizes a:src a:srcset a:useMap a:vspace a:width g:x g:y
+HTMLInputElement|HTMLElement|m:checkValidity m:createValueRange m:reportValidity m:select m:setCustomValidity m:setRangeText m:setSelectionRange m:showPicker m:stepDown m:stepUp a:accept a:align a:alt a:autocomplete a:checked a:defaultChecked a:defaultValue a:dirName a:disabled a:files g:form a:formAction a:formEnctype a:formMethod a:formNoValidate a:formTarget a:height a:incremental a:indeterminate g:labels g:list a:max a:maxLength a:min a:minLength a:multiple a:name a:pattern a:placeholder a:popoverTargetAction a:popoverTargetElement a:readOnly a:required a:selectionDirection a:selectionEnd a:selectionStart a:size a:src a:step a:type a:useMap g:validationMessage g:validity a:value a:valueAsDate a:valueAsNumber g:webkitEntries a:webkitdirectory a:width g:willValidate
+HTMLLIElement|HTMLElement|a:type a:value
+HTMLLabelElement|HTMLElement|g:control g:form a:htmlFor
+HTMLLegendElement|HTMLElement|a:align g:form
+HTMLLinkElement|HTMLElement|a:as a:blocking a:charset a:crossOrigin a:disabled a:fetchPriority a:href a:hreflang a:imageSizes a:imageSrcset a:integrity a:media a:referrerPolicy a:rel a:relList a:rev g:sheet a:sizes a:target a:type
+HTMLMapElement|HTMLElement|g:areas a:name
+HTMLMarqueeElement|HTMLElement|m:start m:stop a:behavior a:bgColor a:direction a:height a:hspace a:loop a:scrollAmount a:scrollDelay a:trueSpeed a:vspace a:width
+HTMLMediaElement|HTMLElement|c:HAVE_CURRENT_DATA=2 c:HAVE_ENOUGH_DATA=4 c:HAVE_FUTURE_DATA=3 c:HAVE_METADATA=1 c:HAVE_NOTHING=0 c:NETWORK_EMPTY=0 c:NETWORK_IDLE=1 c:NETWORK_LOADING=2 c:NETWORK_NO_SOURCE=3 m:addTextTrack m:canPlayType m:captureStream m:load m:pause m:play m:setMediaKeys m:setSinkId a:autoplay g:buffered a:controls a:controlsList a:crossOrigin g:currentSrc a:currentTime a:defaultMuted a:defaultPlaybackRate a:disableRemotePlayback g:duration g:ended g:error a:loading a:loop g:mediaKeys a:muted g:networkState a:onencrypted a:onwaitingforkey g:paused a:playbackRate g:played a:preload a:preservesPitch g:readyState g:remote g:seekable g:seeking g:sinkId a:src a:srcObject g:textTracks a:volume g:webkitAudioDecodedByteCount g:webkitVideoDecodedByteCount
+HTMLMenuElement|HTMLElement|a:compact
+HTMLMetaElement|HTMLElement|a:content a:httpEquiv a:media a:name a:scheme
+HTMLMeterElement|HTMLElement|a:high g:labels a:low a:max a:min a:optimum a:value
+HTMLModElement|HTMLElement|a:cite a:dateTime
+HTMLOListElement|HTMLElement|a:compact a:reversed a:start a:type
+HTMLObjectElement|HTMLElement|m:checkValidity m:getSVGDocument m:reportValidity m:setCustomValidity a:align a:archive a:border a:code a:codeBase a:codeType g:contentDocument g:contentWindow a:data a:declare g:form a:height a:hspace a:name a:standby a:type a:useMap g:validationMessage g:validity a:vspace a:width g:willValidate
+HTMLOptGroupElement|HTMLElement|a:disabled a:label
+HTMLOptionElement|HTMLElement|a:defaultSelected a:disabled g:form g:index a:label a:selected a:text a:value
+HTMLOptionsCollection|HTMLCollection|i m:add m:remove a:length a:selectedIndex
+HTMLOutputElement|HTMLElement|m:checkValidity m:reportValidity m:setCustomValidity a:defaultValue g:form a:htmlFor g:labels a:name g:type g:validationMessage g:validity a:value g:willValidate
+HTMLParagraphElement|HTMLElement|a:align
+HTMLParamElement|HTMLElement|a:name a:type a:value a:valueType
+HTMLPictureElement|HTMLElement|
+HTMLPreElement|HTMLElement|a:width
+HTMLProgressElement|HTMLElement|g:labels a:max g:position a:value
+HTMLQuoteElement|HTMLElement|a:cite
+HTMLScriptElement|HTMLElement|M:supports a:async a:attributionSrc a:blocking a:charset a:crossOrigin a:defer a:event a:fetchPriority a:htmlFor a:innerText a:integrity a:noModule a:referrerPolicy a:src a:text a:textContent a:type
+HTMLSelectElement|HTMLElement|i m:add m:checkValidity m:item m:namedItem m:remove m:reportValidity m:setCustomValidity m:showPicker a:autocomplete a:disabled g:form g:labels a:length a:multiple a:name g:options a:required a:selectedIndex g:selectedOptions a:size g:type g:validationMessage g:validity a:value g:willValidate
+HTMLSelectedContentElement|HTMLElement|
+HTMLSlotElement|HTMLElement|m:assign m:assignedElements m:assignedNodes a:name
+HTMLSourceElement|HTMLElement|a:height a:media a:sizes a:src a:srcset a:type a:width
+HTMLSpanElement|HTMLElement|
+HTMLStyleElement|HTMLElement|a:blocking a:disabled a:media g:sheet a:type
+HTMLTableCaptionElement|HTMLElement|a:align
+HTMLTableCellElement|HTMLElement|a:abbr a:align a:axis a:bgColor g:cellIndex a:ch a:chOff a:colSpan a:headers a:height a:noWrap a:rowSpan a:scope a:vAlign a:width
+HTMLTableColElement|HTMLElement|a:align a:ch a:chOff a:span a:vAlign a:width
+HTMLTableElement|HTMLElement|m:createCaption m:createTBody m:createTFoot m:createTHead m:deleteCaption m:deleteRow m:deleteTFoot m:deleteTHead m:insertRow a:align a:bgColor a:border a:caption a:cellPadding a:cellSpacing a:frame g:rows a:rules a:summary g:tBodies a:tFoot a:tHead a:width
+HTMLTableRowElement|HTMLElement|m:deleteCell m:insertCell a:align a:bgColor g:cells a:ch a:chOff g:rowIndex g:sectionRowIndex a:vAlign
+HTMLTableSectionElement|HTMLElement|m:deleteRow m:insertRow a:align a:ch a:chOff g:rows a:vAlign
+HTMLTemplateElement|HTMLElement|g:content a:htmlFor a:shadowRootClonable a:shadowRootCustomElementRegistry a:shadowRootDelegatesFocus a:shadowRootMode a:shadowRootReferenceTarget a:shadowRootSerializable a:shadowRootSlotAssignment
+HTMLTextAreaElement|HTMLElement|m:checkValidity m:createValueRange m:reportValidity m:select m:setCustomValidity m:setRangeText m:setSelectionRange a:autocomplete a:cols a:defaultValue a:dirName a:disabled g:form g:labels a:maxLength a:minLength a:name a:placeholder a:readOnly a:required a:rows a:selectionDirection a:selectionEnd a:selectionStart g:textLength g:type g:validationMessage g:validity a:value g:willValidate a:wrap
+HTMLTimeElement|HTMLElement|a:dateTime
+HTMLTitleElement|HTMLElement|a:text
+HTMLTrackElement|HTMLElement|c:ERROR=3 c:LOADED=2 c:LOADING=1 c:NONE=0 a:default a:kind a:label g:readyState a:src a:srclang g:track
+HTMLUListElement|HTMLElement|a:compact a:type
+HTMLUnknownElement|HTMLElement|
+HTMLUserMediaElement|HTMLElement|m:setConstraints g:error a:oncancel a:onerror a:onstream g:stream
+HTMLVideoElement|HTMLMediaElement|m:cancelVideoFrameCallback m:getVideoPlaybackQuality m:requestPictureInPicture m:requestVideoFrameCallback a:disablePictureInPicture a:height a:onenterpictureinpicture a:onleavepictureinpicture a:playsInline a:poster g:videoHeight g:videoWidth g:webkitDecodedFrameCount g:webkitDroppedFrameCount a:width
+HashChangeEvent|Event|g:newURL g:oldURL
+Headers||i m:append m:delete m:entries m:forEach m:get m:getSetCookie m:has m:keys m:set m:values
+Highlight||i m:add m:clear m:delete m:entries m:forEach m:has m:keys m:values a:priority g:size a:type
+HighlightRegistry||i m:clear m:delete m:entries m:forEach m:get m:has m:highlightsFromPoint m:keys m:set m:values g:size
+History||m:back m:forward m:go m:pushState m:replaceState g:length a:scrollRestoration g:state
+IDBCursor||m:advance m:continue m:continuePrimaryKey m:delete m:update g:direction g:key g:primaryKey g:request g:source
+IDBCursorWithValue|IDBCursor|g:value
+IDBDatabase|EventTarget|m:close m:createObjectStore m:deleteObjectStore m:transaction g:name g:objectStoreNames a:onabort a:onclose a:onerror a:onversionchange g:version
+IDBFactory||m:cmp m:databases m:deleteDatabase m:open
+IDBIndex||m:count m:get m:getAll m:getAllKeys m:getAllRecords m:getKey m:openCursor m:openKeyCursor g:keyPath g:multiEntry a:name g:objectStore g:unique
+IDBKeyRange||M:bound M:lowerBound M:only M:upperBound m:includes g:lower g:lowerOpen g:upper g:upperOpen
+IDBObjectStore||m:add m:clear m:count m:createIndex m:delete m:deleteIndex m:get m:getAll m:getAllKeys m:getAllRecords m:getKey m:index m:openCursor m:openKeyCursor m:put g:autoIncrement g:indexNames g:keyPath a:name g:transaction
+IDBOpenDBRequest|IDBRequest|a:onblocked a:onupgradeneeded
+IDBRecord||g:key g:primaryKey g:value
+IDBRequest|EventTarget|g:error a:onerror a:onsuccess g:readyState g:result g:source g:transaction
+IDBTransaction|EventTarget|m:abort m:commit m:objectStore g:db g:durability g:error g:mode g:objectStoreNames a:onabort a:oncomplete a:onerror
+IDBVersionChangeEvent|Event|g:dataLoss g:dataLossMessage g:newVersion g:oldVersion
+IIRFilterNode|AudioNode|m:getFrequencyResponse
+IdentityCredential|Credential|M:disconnect g:configURL g:isAutoSelected g:token
+IdentityCredentialError|DOMException|g:code g:error g:url
+IdentityProvider||M:close M:getUserInfo M:resolve
+IdleDeadline||m:timeRemaining g:didTimeout
+IdleDetector|EventTarget|M:requestPermission m:start a:onchange g:screenState g:userState
+Image||m:decode a:align a:alt a:attributionSrc a:border a:browsingTopics g:complete a:crossOrigin g:currentSrc a:decoding a:fetchPriority a:height a:hspace a:isMap a:loading a:longDesc a:lowsrc a:name g:naturalHeight g:naturalWidth a:referrerPolicy a:sharedStorageWritable a:sizes a:src a:srcset a:useMap a:vspace a:width g:x g:y
+ImageBitmap||m:close g:height g:width
+ImageBitmapRenderingContext||m:transferFromImageBitmap g:canvas
+ImageCapture||m:getPhotoCapabilities m:getPhotoSettings m:grabFrame m:takePhoto g:track
+ImageData||g:colorSpace g:data g:height g:pixelFormat g:width
+ImageDecoder||M:isTypeSupported m:close m:decode m:reset g:complete g:completed g:tracks g:type
+ImageTrack||g:animated g:frameCount g:repetitionCount a:selected
+ImageTrackList||i g:length g:ready g:selectedIndex g:selectedTrack
+Ink||m:requestPresenter
+InputDeviceCapabilities||g:firesTouchEvents
+InputDeviceInfo|MediaDeviceInfo|m:getCapabilities
+InputEvent|UIEvent|m:getTargetRanges g:data g:dataTransfer g:inputType g:isComposing
+IntegrityViolationReportBody|ReportBody|m:toJSON g:blockedURL g:destination g:documentURL g:reportOnly
+InteractionContentfulPaint|PerformanceEntry|m:toJSON g:interactionId g:largestContentfulPaint g:paintTime g:presentationTime
+InterestEvent|Event|g:source
+IntersectionObserver||m:disconnect m:observe m:takeRecords m:unobserve g:delay g:root g:rootMargin g:scrollMargin g:thresholds g:trackVisibility
+IntersectionObserverEntry||g:boundingClientRect g:intersectionRatio g:intersectionRect g:isIntersecting g:isVisible g:rootBounds g:target g:time
+Keyboard||m:getLayoutMap m:lock m:unlock
+KeyboardEvent|UIEvent|c:DOM_KEY_LOCATION_LEFT=1 c:DOM_KEY_LOCATION_NUMPAD=3 c:DOM_KEY_LOCATION_RIGHT=2 c:DOM_KEY_LOCATION_STANDARD=0 m:getModifierState m:initKeyboardEvent g:altKey g:charCode g:code g:ctrlKey g:isComposing g:key g:keyCode g:location g:metaKey g:repeat g:shiftKey
+KeyboardLayoutMap||i m:entries m:forEach m:get m:has m:keys m:values g:size
+KeyframeEffect|AnimationEffect|m:getKeyframes m:setKeyframes a:composite a:pseudoElement a:target
+LanguageDetector||M:availability M:create m:destroy m:detect m:measureInputUsage g:expectedInputLanguages g:inputQuota
+LanguageModel|EventTarget|M:availability M:create m:append m:clone m:destroy m:measureContextUsage m:prompt m:promptStreaming g:contextUsage g:contextWindow a:oncontextoverflow
+LargestContentfulPaint|PerformanceEntry|m:toJSON g:element g:id g:loadTime g:paintTime g:presentationTime g:renderTime g:size g:url
+LaunchParams||g:files g:targetURL
+LaunchQueue||m:setConsumer
+LayoutShift|PerformanceEntry|m:toJSON g:hadRecentInput g:lastInputTime g:sources g:value
+LayoutShiftAttribution||m:toJSON g:currentRect g:node g:previousRect
+LinearAccelerationSensor|Accelerometer|
+Location||
+Lock||g:mode g:name
+LockManager||m:query m:request
+MIDIAccess|EventTarget|g:inputs a:onstatechange g:outputs g:sysexEnabled
+MIDIConnectionEvent|Event|g:port
+MIDIInput|MIDIPort|a:onmidimessage
+MIDIInputMap||i m:entries m:forEach m:get m:has m:keys m:values g:size
+MIDIMessageEvent|Event|g:data
+MIDIOutput|MIDIPort|m:send
+MIDIOutputMap||i m:entries m:forEach m:get m:has m:keys m:values g:size
+MIDIPort|EventTarget|m:close m:open g:connection g:id g:manufacturer g:name a:onstatechange g:state g:type g:version
+MathMLElement|Element|m:blur m:focus g:attributeStyleMap a:autofocus g:dataset a:focusGroup a:focusGroupStart a:nonce a:onabort a:onanimationcancel a:onanimationend a:onanimationiteration a:onanimationstart a:onauxclick a:onbeforeinput a:onbeforematch a:onbeforetoggle a:onbeforexrselect a:onblur a:oncancel a:oncanplay a:oncanplaythrough a:onchange a:onclick a:onclose a:oncommand a:oncontentvisibilityautostatechange a:oncontextlost a:oncontextmenu a:oncontextrestored a:oncopy a:oncuechange a:oncut a:ondblclick a:ondrag a:ondragend a:ondragenter a:ondragleave a:ondragover a:ondragstart a:ondrop a:ondurationchange a:onemptied a:onended a:onerror a:onfocus a:onformdata a:ongotpointercapture a:oninput a:oninvalid a:onkeydown a:onkeypress a:onkeyup a:onload a:onloadeddata a:onloadedmetadata a:onloadstart a:onlostpointercapture a:onmousedown a:onmouseenter a:onmouseleave a:onmousemove a:onmouseout a:onmouseover a:onmouseup a:onmousewheel a:onpaste a:onpause a:onplay a:onplaying a:onpointercancel a:onpointerdown a:onpointerenter a:onpointerleave a:onpointermove a:onpointerout a:onpointerover a:onpointerrawupdate a:onpointerup a:onprogress a:onratechange a:onreset a:onresize a:onscroll a:onscrollend a:onscrollsnapchange a:onscrollsnapchanging a:onsecuritypolicyviolation a:onseeked a:onseeking a:onselect a:onselectionchange a:onselectstart a:onslotchange a:onstalled a:onsubmit a:onsuspend a:ontimeupdate a:ontoggle a:ontouchcancel a:ontouchend a:ontouchmove a:ontouchstart a:ontransitioncancel a:ontransitionend a:ontransitionrun a:ontransitionstart a:onvolumechange a:onwaiting a:onwebkitanimationend a:onwebkitanimationiteration a:onwebkitanimationstart a:onwebkittransitionend a:onwheel a:style a:tabIndex
+MediaCapabilities||m:decodingInfo m:encodingInfo
+MediaDeviceInfo||m:toJSON g:deviceId g:groupId g:kind g:label
+MediaDevices|EventTarget|m:enumerateDevices m:getDisplayMedia m:getSupportedConstraints m:getUserMedia m:setCaptureHandleConfig a:ondevicechange
+MediaElementAudioSourceNode|AudioNode|g:mediaElement
+MediaEncryptedEvent|Event|g:initData g:initDataType
+MediaError||c:MEDIA_ERR_ABORTED=1 c:MEDIA_ERR_DECODE=3 c:MEDIA_ERR_NETWORK=2 c:MEDIA_ERR_SRC_NOT_SUPPORTED=4 g:code g:message
+MediaKeyMessageEvent|Event|g:message g:messageType
+MediaKeySession|EventTarget|m:close m:generateRequest m:load m:remove m:update g:closed g:expiration g:keyStatuses a:onkeystatuseschange a:onmessage g:sessionId
+MediaKeyStatusMap||i m:entries m:forEach m:get m:has m:keys m:values g:size
+MediaKeySystemAccess||m:createMediaKeys m:getConfiguration g:keySystem
+MediaKeys||m:createSession m:getStatusForPolicy m:setServerCertificate
+MediaList||i m:appendMedium m:deleteMedium m:item m:toString g:length a:mediaText
+MediaMetadata||a:album a:artist a:artwork g:chapterInfo a:title
+MediaQueryList|EventTarget|m:addListener m:removeListener g:matches g:media a:onchange
+MediaQueryListEvent|Event|g:matches g:media
+MediaRecorder|EventTarget|M:isTypeSupported m:pause m:requestData m:resume m:start m:stop g:audioBitrateMode g:audioBitsPerSecond g:mimeType a:ondataavailable a:onerror a:onpause a:onresume a:onstart a:onstop g:state g:stream g:videoBitsPerSecond
+MediaSession||m:setActionHandler m:setCameraActive m:setMicrophoneActive m:setPositionState a:metadata a:playbackState
+MediaSource|EventTarget|M:isTypeSupported m:addSourceBuffer m:clearLiveSeekableRange m:endOfStream m:removeSourceBuffer m:setLiveSeekableRange G:canConstructInDedicatedWorker g:activeSourceBuffers a:duration a:onsourceclose a:onsourceended a:onsourceopen g:readyState g:sourceBuffers
+MediaSourceHandle||
+MediaStream|EventTarget|m:addTrack m:clone m:getAudioTracks m:getTrackById m:getTracks m:getVideoTracks m:removeTrack g:active g:id a:onactive a:onaddtrack a:oninactive a:onremovetrack
+MediaStreamAudioDestinationNode|AudioNode|g:stream
+MediaStreamAudioSourceNode|AudioNode|g:mediaStream
+MediaStreamEvent|Event|g:stream
+MediaStreamTrack|EventTarget|m:applyConstraints m:clone m:getCapabilities m:getCaptureHandle m:getConstraints m:getSettings m:stop a:contentHint a:enabled g:id g:kind g:label g:muted a:oncapturehandlechange a:onended a:onmute a:onunmute g:readyState g:stats
+MediaStreamTrackAudioStats||m:resetLatency m:toJSON g:averageLatency g:deliveredFrames g:deliveredFramesDuration g:latency g:maximumLatency g:minimumLatency g:totalFrames g:totalFramesDuration
+MediaStreamTrackEvent|Event|g:track
+MediaStreamTrackGenerator|MediaStreamTrack|g:writable
+MediaStreamTrackProcessor||g:discardedFrames g:readable g:totalFrames
+MediaStreamTrackVideoStats||m:toJSON g:deliveredFrames g:discardedFrames g:totalFrames
+MessageChannel||g:port1 g:port2
+MessageEvent|Event|m:initMessageEvent g:data g:lastEventId g:origin g:ports g:source g:userActivation
+MessagePort|EventTarget|m:close m:postMessage m:start a:onmessage a:onmessageerror
+MimeType||g:description g:enabledPlugin g:suffixes g:type
+MimeTypeArray||i m:item m:namedItem g:length
+MouseEvent|UIEvent|m:getModifierState m:initMouseEvent g:altKey g:button g:buttons g:clientX g:clientY g:ctrlKey g:fromElement g:layerX g:layerY g:metaKey g:movementX g:movementY g:offsetX g:offsetY g:pageX g:pageY g:relatedTarget g:screenX g:screenY g:shiftKey g:toElement g:x g:y
+MutationObserver||m:disconnect m:observe m:takeRecords
+MutationRecord||g:addedNodes g:attributeName g:attributeNamespace g:nextSibling g:oldValue g:previousSibling g:removedNodes g:target g:type
+NamedNodeMap||i m:getNamedItem m:getNamedItemNS m:item m:removeNamedItem m:removeNamedItemNS m:setNamedItem m:setNamedItemNS g:length
+NavigateEvent|Event|m:intercept m:scroll g:canIntercept g:destination g:downloadRequest g:formData g:hasUAVisualTransition g:hashChange g:info g:navigationType g:signal g:sourceElement g:userInitiated
+Navigation|EventTarget|m:back m:entries m:forward m:navigate m:reload m:traverseTo m:updateCurrentEntry g:activation g:canGoBack g:canGoForward g:currentEntry a:oncurrententrychange a:onnavigate a:onnavigateerror a:onnavigatesuccess g:transition
+NavigationActivation||g:entry g:from g:navigationType
+NavigationCurrentEntryChangeEvent|Event|g:from g:navigationType
+NavigationDestination||m:getState g:id g:index g:key g:sameDocument g:url
+NavigationHistoryEntry|EventTarget|m:getState g:id g:index g:key a:ondispose g:sameDocument g:url
+NavigationPrecommitController||m:addHandler m:redirect
+NavigationPreloadManager||m:disable m:enable m:getState m:setHeaderValue
+NavigationTransition||g:committed g:finished g:from g:navigationType g:to
+Navigator||m:adAuctionComponents m:canLoadAdAuctionFencedFrame m:clearAppBadge m:clearOriginJoinedAdInterestGroups m:createAuctionNonce m:deprecatedReplaceInURN m:deprecatedURNToURL m:getBattery m:getGamepads m:getInstalledRelatedApps m:getInterestGroupAdAuctionData m:getUserMedia m:javaEnabled m:joinAdInterestGroup m:leaveAdInterestGroup m:registerProtocolHandler m:requestMIDIAccess m:requestMediaKeySystemAccess m:runAdAuction m:sendBeacon m:setAppBadge m:unregisterProtocolHandler m:updateAdInterestGroups m:vibrate m:webkitGetUserMedia g:appCodeName g:appName g:appVersion g:clipboard g:connection g:cookieEnabled g:cpuPerformance g:credentials g:deprecatedRunAdAuctionEnforcesKAnonymity g:deviceMemory g:devicePosture g:doNotTrack g:geolocation g:gpu g:hardwareConcurrency g:hid g:ink g:keyboard g:language g:languages g:locks g:login g:managed g:maxTouchPoints g:mediaCapabilities g:mediaDevices g:mediaSession g:mimeTypes g:onLine g:pdfViewerEnabled g:permissions g:platform g:plugins g:presentation g:product g:productSub g:protectedAudience g:scheduling g:serial g:serviceWorker g:storage g:storageBuckets g:usb g:userActivation g:userAgent g:userAgentData g:vendor g:vendorSub g:virtualKeyboard g:wakeLock g:webdriver g:webkitPersistentStorage g:webkitTemporaryStorage g:windowControlsOverlay g:xr
+NavigatorLogin||m:setStatus
+NavigatorManagedData|EventTarget|m:getManagedConfiguration a:onmanagedconfigurationchange
+NavigatorUAData||m:getHighEntropyValues m:toJSON g:brands g:mobile g:platform
+NetworkInformation|EventTarget|g:downlink g:effectiveType a:onchange g:rtt g:saveData
+Node|EventTarget|c:ATTRIBUTE_NODE=2 c:CDATA_SECTION_NODE=4 c:COMMENT_NODE=8 c:DOCUMENT_FRAGMENT_NODE=11 c:DOCUMENT_NODE=9 c:DOCUMENT_POSITION_CONTAINED_BY=16 c:DOCUMENT_POSITION_CONTAINS=8 c:DOCUMENT_POSITION_DISCONNECTED=1 c:DOCUMENT_POSITION_FOLLOWING=4 c:DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC=32 c:DOCUMENT_POSITION_PRECEDING=2 c:DOCUMENT_TYPE_NODE=10 c:ELEMENT_NODE=1 c:ENTITY_NODE=6 c:ENTITY_REFERENCE_NODE=5 c:NOTATION_NODE=12 c:PROCESSING_INSTRUCTION_NODE=7 c:TEXT_NODE=3 m:appendChild m:cloneNode m:compareDocumentPosition m:contains m:getRootNode m:hasChildNodes m:insertBefore m:isDefaultNamespace m:isEqualNode m:isSameNode m:lookupNamespaceURI m:lookupPrefix m:normalize m:removeChild m:replaceChild g:baseURI g:childNodes g:firstChild g:isConnected g:lastChild g:nextSibling g:nodeName g:nodeType a:nodeValue g:ownerDocument g:parentElement g:parentNode g:previousSibling a:textContent
+NodeIterator||m:detach m:nextNode m:previousNode g:filter g:pointerBeforeReferenceNode g:referenceNode g:root g:whatToShow
+NodeList||i m:entries m:forEach m:item m:keys m:values g:length
+NodeRange|AbstractRange|g:endContainer g:startContainer
+NotRestoredReasonDetails||m:toJSON g:reason
+NotRestoredReasons||m:toJSON g:children g:id g:name g:reasons g:src g:url
+Notification|EventTarget|M:requestPermission m:close G:maxActions G:permission g:actions g:badge g:body g:data g:dir g:icon g:lang a:onclick a:onclose a:onerror a:onshow g:renotify g:requireInteraction g:silent g:tag g:timestamp g:title g:vibrate
+OTPCredential|Credential|g:code
+Observable||M:from m:catch m:drop m:every m:filter m:finally m:find m:first m:flatMap m:forEach m:inspect m:last m:map m:reduce m:some m:subscribe m:switchMap m:take m:takeUntil m:toArray
+OfflineAudioCompletionEvent|Event|g:renderedBuffer
+OfflineAudioContext|BaseAudioContext|m:resume m:startRendering m:suspend g:length a:oncomplete
+OffscreenCanvas|EventTarget|m:convertToBlob m:getContext m:transferToImageBitmap a:height a:oncontextlost a:oncontextrestored a:width
+OffscreenCanvasRenderingContext2D||m:arc m:arcTo m:beginPath m:bezierCurveTo m:clearRect m:clip m:closePath m:createConicGradient m:createImageData m:createLinearGradient m:createPattern m:createRadialGradient m:drawImage m:ellipse m:fill m:fillRect m:fillText m:getContextAttributes m:getImageData m:getLineDash m:getTransform m:isContextLost m:isPointInPath m:isPointInStroke m:lineTo m:measureText m:moveTo m:putImageData m:quadraticCurveTo m:rect m:reset m:resetTransform m:restore m:rotate m:roundRect m:save m:scale m:setLineDash m:setTransform m:stroke m:strokeRect m:strokeText m:transform m:translate g:canvas a:direction a:fillStyle a:filter a:font a:fontKerning a:fontStretch a:fontVariantCaps a:globalAlpha a:globalCompositeOperation a:imageSmoothingEnabled a:imageSmoothingQuality a:lang a:letterSpacing a:lineCap a:lineDashOffset a:lineJoin a:lineWidth a:miterLimit a:shadowBlur a:shadowColor a:shadowOffsetX a:shadowOffsetY a:strokeStyle a:textAlign a:textBaseline a:textRendering a:wordSpacing
+OpaqueRange|AbstractRange|m:disconnect m:getBoundingClientRect m:getClientRects
+Option||a:defaultSelected a:disabled g:form g:index a:label a:selected a:text a:value
+OrientationSensor|Sensor|m:populateMatrix g:quaternion
+Origin||M:from m:isSameOrigin m:isSameSite g:opaque
+OscillatorNode|AudioScheduledSourceNode|m:setPeriodicWave g:detune g:frequency a:type
+OverconstrainedError|DOMException|g:constraint
+PageRevealEvent|Event|g:viewTransition
+PageSwapEvent|Event|g:activation g:viewTransition
+PageTransitionEvent|Event|g:persisted
+PannerNode|AudioNode|m:setOrientation m:setPosition a:coneInnerAngle a:coneOuterAngle a:coneOuterGain a:distanceModel a:maxDistance g:orientationX g:orientationY g:orientationZ a:panningModel g:positionX g:positionY g:positionZ a:refDistance a:rolloffFactor
+PasswordCredential|Credential|g:iconURL g:name g:password
+Path2D||m:addPath m:arc m:arcTo m:bezierCurveTo m:closePath m:ellipse m:lineTo m:moveTo m:quadraticCurveTo m:rect m:roundRect
+PaymentAddress||m:toJSON g:addressLine g:city g:country g:dependentLocality g:organization g:phone g:postalCode g:recipient g:region g:sortingCode
+PaymentManager||m:enableDelegations a:userHint
+PaymentMethodChangeEvent|PaymentRequestUpdateEvent|g:methodDetails g:methodName
+PaymentRequest|EventTarget|M:getSecurePaymentConfirmationCapabilities M:securePaymentConfirmationAvailability m:abort m:canMakePayment m:hasEnrolledInstrument m:show g:id a:onpaymentmethodchange a:onshippingaddresschange a:onshippingoptionchange g:shippingAddress g:shippingOption g:shippingType
+PaymentRequestUpdateEvent|Event|m:updateWith
+PaymentResponse|EventTarget|m:complete m:retry m:toJSON g:details g:methodName a:onpayerdetailchange g:payerEmail g:payerName g:payerPhone g:requestId g:shippingAddress g:shippingOption
+Performance|EventTarget|m:clearMarks m:clearMeasures m:clearResourceTimings m:getEntries m:getEntriesByName m:getEntriesByType m:mark m:measure m:now m:setResourceTimingBufferSize m:toJSON g:eventCounts g:interactionCount g:memory g:navigation a:onresourcetimingbufferfull g:timeOrigin g:timing
+PerformanceElementTiming|PerformanceEntry|m:toJSON g:element g:id g:identifier g:intersectionRect g:loadTime g:naturalHeight g:naturalWidth g:paintTime g:presentationTime g:renderTime g:url
+PerformanceEntry||m:toJSON g:duration g:entryType g:name g:navigationId g:startTime
+PerformanceEventTiming|PerformanceEntry|m:toJSON g:cancelable g:interactionId g:processingEnd g:processingStart g:target
+PerformanceLongAnimationFrameTiming|PerformanceEntry|m:toJSON g:blockingDuration g:firstUIEventTimestamp g:paintTime g:presentationTime g:renderStart g:scripts g:styleAndLayoutStart
+PerformanceLongTaskTiming|PerformanceEntry|m:toJSON g:attribution
+PerformanceMark|PerformanceEntry|g:detail
+PerformanceMeasure|PerformanceEntry|g:detail
+PerformanceNavigation||c:TYPE_BACK_FORWARD=2 c:TYPE_NAVIGATE=0 c:TYPE_RELOAD=1 c:TYPE_RESERVED=255 m:toJSON g:redirectCount g:type
+PerformanceNavigationTiming|PerformanceResourceTiming|m:toJSON g:activationStart g:confidence g:criticalCHRestart g:domComplete g:domContentLoadedEventEnd g:domContentLoadedEventStart g:domInteractive g:loadEventEnd g:loadEventStart g:notRestoredReasons g:redirectCount g:type g:unloadEventEnd g:unloadEventStart
+PerformanceObserver||m:disconnect m:observe m:takeRecords G:supportedEntryTypes
+PerformanceObserverEntryList||m:getEntries m:getEntriesByName m:getEntriesByType
+PerformancePaintTiming|PerformanceEntry|m:toJSON g:paintTime g:presentationTime
+PerformanceResourceTiming|PerformanceEntry|m:toJSON g:connectEnd g:connectStart g:contentEncoding g:contentType g:decodedBodySize g:deliveryType g:domainLookupEnd g:domainLookupStart g:encodedBodySize g:fetchStart g:finalResponseHeadersStart g:firstInterimResponseStart g:initiatorType g:nextHopProtocol g:redirectEnd g:redirectStart g:renderBlockingStatus g:requestStart g:responseEnd g:responseStart g:responseStatus g:secureConnectionStart g:serverTiming g:transferSize g:workerCacheLookupStart g:workerFinalSourceType g:workerMatchedSourceType g:workerRouterEvaluationStart g:workerStart
+PerformanceScriptTiming|PerformanceEntry|m:toJSON g:executionStart g:forcedStyleAndLayoutDuration g:invoker g:invokerType g:pauseDuration g:sourceCharPosition g:sourceFunctionName g:sourceURL g:window g:windowAttribution
+PerformanceServerTiming||m:toJSON g:description g:duration g:name
+PerformanceSoftNavigation|PerformanceEntry|m:getLargestInteractionContentfulPaint g:interactionId g:navigationType g:paintTime g:presentationTime
+PerformanceTiming||m:toJSON g:connectEnd g:connectStart g:domComplete g:domContentLoadedEventEnd g:domContentLoadedEventStart g:domInteractive g:domLoading g:domainLookupEnd g:domainLookupStart g:fetchStart g:loadEventEnd g:loadEventStart g:navigationStart g:redirectEnd g:redirectStart g:requestStart g:responseEnd g:responseStart g:secureConnectionStart g:unloadEventEnd g:unloadEventStart
+PerformanceTimingConfidence||m:toJSON g:randomizedTriggerRate g:value
+PeriodicSyncManager||m:getTags m:register m:unregister
+PeriodicWave||
+PermissionStatus|EventTarget|g:name a:onchange g:state
+Permissions||m:query
+PermissionsPolicy||m:allowedFeatures m:allowsFeature m:features m:getAllowlistForFeature
+PictureInPictureEvent|Event|g:pictureInPictureWindow
+PictureInPictureWindow|EventTarget|g:height a:onresize g:width
+Plugin||i m:item m:namedItem g:description g:filename g:length g:name
+PluginArray||i m:item m:namedItem m:refresh g:length
+PointerEvent|MouseEvent|m:getCoalescedEvents m:getPredictedEvents g:altitudeAngle g:azimuthAngle g:height g:isPrimary g:persistentDeviceId g:pointerId g:pointerType g:pressure g:tangentialPressure g:tiltX g:tiltY g:twist g:width
+PopStateEvent|Event|g:hasUAVisualTransition g:state
+Presentation||a:defaultRequest g:receiver
+PresentationAvailability|EventTarget|a:onchange g:value
+PresentationConnection|EventTarget|m:close m:send m:terminate a:binaryType g:id a:onclose a:onconnect a:onmessage a:onterminate g:state g:url
+PresentationConnectionAvailableEvent|Event|g:connection
+PresentationConnectionCloseEvent|Event|g:message g:reason
+PresentationConnectionList|EventTarget|g:connections a:onconnectionavailable
+PresentationReceiver||g:connectionList
+PresentationRequest|EventTarget|m:getAvailability m:reconnect m:start a:onconnectionavailable
+PressureObserver||m:disconnect m:observe m:takeRecords m:unobserve G:knownSources
+PressureRecord||m:toJSON g:source g:state g:time
+ProcessingInstruction|CharacterData|m:getAttribute m:getAttributeNames m:hasAttribute m:hasAttributes m:removeAttribute m:setAttribute m:toggleAttribute g:sheet g:target
+Profiler|EventTarget|m:stop g:sampleInterval g:stopped
+ProgressEvent|Event|g:lengthComputable g:loaded g:total
+PromiseRejectionEvent|Event|g:promise g:reason
+ProtectedAudience||m:queryFeatureSupport
+PublicKeyCredential|Credential|M:getClientCapabilities M:isUserVerifyingPlatformAuthenticatorAvailable M:parseCreationOptionsFromJSON M:parseRequestOptionsFromJSON M:signalAllAcceptedCredentials M:signalCurrentUserDetails M:signalUnknownCredential m:getClientExtensionResults m:toJSON g:authenticatorAttachment g:rawId g:response
+PushManager||m:getSubscription m:permissionState m:subscribe G:supportedContentEncodings
+PushSubscription||m:getKey m:toJSON m:unsubscribe g:endpoint g:expirationTime g:options
+PushSubscriptionOptions||g:applicationServerKey g:userVisibleOnly
+QuotaExceededError|DOMException|g:quota g:requested
+RTCCertificate||m:getFingerprints g:expires
+RTCDTMFSender|EventTarget|m:insertDTMF g:canInsertDTMF a:ontonechange g:toneBuffer
+RTCDTMFToneChangeEvent|Event|g:tone
+RTCDataChannel|EventTarget|m:close m:send a:binaryType g:bufferedAmount a:bufferedAmountLowThreshold g:id g:label g:maxPacketLifeTime g:maxRetransmits g:negotiated a:onbufferedamountlow a:onclose a:onclosing a:onerror a:onmessage a:onopen g:ordered g:protocol g:readyState g:reliable
+RTCDataChannelEvent|Event|g:channel
+RTCDtlsTransport|EventTarget|m:getRemoteCertificates g:iceTransport a:onerror a:onstatechange g:state
+RTCEncodedAudioFrame||m:getMetadata m:toString a:data g:timestamp
+RTCEncodedVideoFrame||m:getMetadata m:toString a:data g:timestamp g:type
+RTCError|DOMException|g:errorDetail g:httpRequestStatusCode g:receivedAlert g:sctpCauseCode g:sdpLineNumber g:sentAlert
+RTCErrorEvent|Event|g:error
+RTCIceCandidate||m:toJSON g:address g:candidate g:component g:foundation g:port g:priority g:protocol g:relatedAddress g:relatedPort g:relayProtocol g:sdpMLineIndex g:sdpMid g:tcpType g:type g:url g:usernameFragment
+RTCIceTransport|EventTarget|m:getLocalCandidates m:getLocalParameters m:getRemoteCandidates m:getRemoteParameters m:getSelectedCandidatePair g:gatheringState a:ongatheringstatechange a:onselectedcandidatepairchange a:onstatechange g:role g:state
+RTCPeerConnection|EventTarget|M:generateCertificate m:addIceCandidate m:addStream m:addTrack m:addTransceiver m:close m:createAnswer m:createDTMFSender m:createDataChannel m:createOffer m:getConfiguration m:getLocalStreams m:getReceivers m:getRemoteStreams m:getSenders m:getStats m:getTransceivers m:removeStream m:removeTrack m:restartIce m:setConfiguration m:setLocalDescription m:setRemoteDescription g:canTrickleIceCandidates g:connectionState g:currentLocalDescription g:currentRemoteDescription g:iceConnectionState g:iceGatheringState g:localDescription a:onaddstream a:onconnectionstatechange a:ondatachannel a:onicecandidate a:onicecandidateerror a:oniceconnectionstatechange a:onicegatheringstatechange a:onnegotiationneeded a:onremovestream a:onsignalingstatechange a:ontrack g:pendingLocalDescription g:pendingRemoteDescription g:remoteDescription g:sctp g:signalingState
+RTCPeerConnectionIceErrorEvent|Event|g:address g:errorCode g:errorText g:hostCandidate g:port g:url
+RTCPeerConnectionIceEvent|Event|g:candidate
+RTCRtpReceiver||M:getCapabilities m:createEncodedStreams m:getContributingSources m:getParameters m:getStats m:getSynchronizationSources a:jitterBufferTarget a:playoutDelayHint g:rtcpTransport g:track a:transform g:transport
+RTCRtpScriptTransform||
+RTCRtpSender||M:getCapabilities m:createEncodedStreams m:getParameters m:getStats m:replaceTrack m:setParameters m:setStreams g:dtmf g:rtcpTransport g:track a:transform g:transport
+RTCRtpTransceiver||m:getHeaderExtensionsToNegotiate m:getNegotiatedHeaderExtensions m:setCodecPreferences m:setHeaderExtensionsToNegotiate m:stop g:currentDirection a:direction g:mid g:receiver g:sender g:stopped
+RTCSctpTransport|EventTarget|g:maxChannels g:maxMessageSize a:onstatechange g:state g:transport
+RTCSessionDescription||m:toJSON a:sdp a:type
+RTCStatsReport||i m:entries m:forEach m:get m:has m:keys m:values g:size
+RTCTrackEvent|Event|g:receiver g:streams g:track g:transceiver
+RadioNodeList|NodeList|i a:value
+Range|NodeRange|c:END_TO_END=2 c:END_TO_START=3 c:START_TO_END=1 c:START_TO_START=0 m:cloneContents m:cloneRange m:collapse m:compareBoundaryPoints m:comparePoint m:createContextualFragment m:deleteContents m:detach m:expand m:extractContents m:getBoundingClientRect m:getClientRects m:insertNode m:intersectsNode m:isPointInRange m:selectNode m:selectNodeContents m:setEnd m:setEndAfter m:setEndBefore m:setStart m:setStartAfter m:setStartBefore m:surroundContents m:toString g:commonAncestorContainer
+ReadableByteStreamController||m:close m:enqueue m:error g:byobRequest g:desiredSize
+ReadableStream||y m:cancel m:getReader m:pipeThrough m:pipeTo m:tee m:values g:locked
+ReadableStreamBYOBReader||m:cancel m:read m:releaseLock g:closed
+ReadableStreamBYOBRequest||m:respond m:respondWithNewView g:view
+ReadableStreamDefaultController||m:close m:enqueue m:error g:desiredSize
+ReadableStreamDefaultReader||m:cancel m:read m:releaseLock g:closed
+RelativeOrientationSensor|OrientationSensor|
+RemotePlayback|EventTarget|m:cancelWatchAvailability m:prompt m:watchAvailability a:onconnect a:onconnecting a:ondisconnect g:state
+ReportBody||m:toJSON
+ReportingObserver||m:disconnect m:observe m:takeRecords
+Request||m:arrayBuffer m:blob m:bytes m:clone m:formData m:json m:text m:textStream g:body g:bodyUsed g:cache g:credentials g:destination g:duplex g:headers g:integrity g:isHistoryNavigation g:isReloadNavigation g:keepalive g:method g:mode g:redirect g:referrer g:referrerPolicy g:signal g:targetAddressSpace g:url
+ResizeObserver||m:disconnect m:observe m:unobserve
+ResizeObserverEntry||g:borderBoxSize g:contentBoxSize g:contentRect g:devicePixelContentBoxSize g:target
+ResizeObserverSize||g:blockSize g:inlineSize
+Response||M:error M:redirect m:arrayBuffer m:blob m:bytes m:clone m:formData m:json m:text m:textStream g:body g:bodyUsed g:headers g:ok g:redirected g:status g:statusText g:type g:url
+RestrictionTarget||M:fromElement
+SVGAElement|SVGGraphicsElement|a:download g:href a:hreflang a:interestForElement a:ping a:referrerPolicy a:rel a:relList g:target a:type
+SVGAngle||c:SVG_ANGLETYPE_DEG=2 c:SVG_ANGLETYPE_GRAD=4 c:SVG_ANGLETYPE_RAD=3 c:SVG_ANGLETYPE_UNKNOWN=0 c:SVG_ANGLETYPE_UNSPECIFIED=1 m:convertToSpecifiedUnits m:newValueSpecifiedUnits g:unitType a:value a:valueAsString a:valueInSpecifiedUnits
+SVGAnimateElement|SVGAnimationElement|
+SVGAnimateMotionElement|SVGAnimationElement|
+SVGAnimateTransformElement|SVGAnimationElement|
+SVGAnimatedAngle||g:animVal g:baseVal
+SVGAnimatedBoolean||g:animVal a:baseVal
+SVGAnimatedEnumeration||g:animVal a:baseVal
+SVGAnimatedInteger||g:animVal a:baseVal
+SVGAnimatedLength||g:animVal g:baseVal
+SVGAnimatedLengthList||g:animVal g:baseVal
+SVGAnimatedNumber||g:animVal a:baseVal
+SVGAnimatedNumberList||g:animVal g:baseVal
+SVGAnimatedPreserveAspectRatio||g:animVal g:baseVal
+SVGAnimatedRect||g:animVal g:baseVal
+SVGAnimatedString||g:animVal a:baseVal
+SVGAnimatedTransformList||g:animVal g:baseVal
+SVGAnimationElement|SVGElement|m:beginElement m:beginElementAt m:endElement m:endElementAt m:getCurrentTime m:getSimpleDuration m:getStartTime a:onbegin a:onend a:onrepeat g:requiredExtensions g:systemLanguage g:targetElement
+SVGCircleElement|SVGGeometryElement|g:cx g:cy g:r
+SVGClipPathElement|SVGElement|g:clipPathUnits g:transform
+SVGComponentTransferFunctionElement|SVGElement|c:SVG_FECOMPONENTTRANSFER_TYPE_DISCRETE=3 c:SVG_FECOMPONENTTRANSFER_TYPE_GAMMA=5 c:SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY=1 c:SVG_FECOMPONENTTRANSFER_TYPE_LINEAR=4 c:SVG_FECOMPONENTTRANSFER_TYPE_TABLE=2 c:SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN=0 g:amplitude g:exponent g:intercept g:offset g:slope g:tableValues g:type
+SVGDefsElement|SVGGraphicsElement|
+SVGDescElement|SVGElement|
+SVGElement|Element|m:blur m:focus g:attributeStyleMap a:autofocus g:className g:dataset a:focusGroup a:focusGroupStart a:nonce a:onabort a:onanimationcancel a:onanimationend a:onanimationiteration a:onanimationstart a:onauxclick a:onbeforeinput a:onbeforematch a:onbeforetoggle a:onbeforexrselect a:onblur a:oncancel a:oncanplay a:oncanplaythrough a:onchange a:onclick a:onclose a:oncommand a:oncontentvisibilityautostatechange a:oncontextlost a:oncontextmenu a:oncontextrestored a:oncopy a:oncuechange a:oncut a:ondblclick a:ondrag a:ondragend a:ondragenter a:ondragleave a:ondragover a:ondragstart a:ondrop a:ondurationchange a:onemptied a:onended a:onerror a:onfocus a:onformdata a:ongotpointercapture a:oninput a:oninvalid a:onkeydown a:onkeypress a:onkeyup a:onload a:onloadeddata a:onloadedmetadata a:onloadstart a:onlostpointercapture a:onmousedown a:onmouseenter a:onmouseleave a:onmousemove a:onmouseout a:onmouseover a:onmouseup a:onmousewheel a:onpaste a:onpause a:onplay a:onplaying a:onpointercancel a:onpointerdown a:onpointerenter a:onpointerleave a:onpointermove a:onpointerout a:onpointerover a:onpointerrawupdate a:onpointerup a:onprogress a:onratechange a:onreset a:onresize a:onscroll a:onscrollend a:onscrollsnapchange a:onscrollsnapchanging a:onsecuritypolicyviolation a:onseeked a:onseeking a:onselect a:onselectionchange a:onselectstart a:onslotchange a:onstalled a:onsubmit a:onsuspend a:ontimeupdate a:ontoggle a:ontouchcancel a:ontouchend a:ontouchmove a:ontouchstart a:ontransitioncancel a:ontransitionend a:ontransitionrun a:ontransitionstart a:onvolumechange a:onwaiting a:onwebkitanimationend a:onwebkitanimationiteration a:onwebkitanimationstart a:onwebkittransitionend a:onwheel g:ownerSVGElement a:style a:tabIndex g:viewportElement
+SVGEllipseElement|SVGGeometryElement|g:cx g:cy g:rx g:ry
+SVGFEBlendElement|SVGElement|c:SVG_FEBLEND_MODE_COLOR=15 c:SVG_FEBLEND_MODE_COLOR_BURN=8 c:SVG_FEBLEND_MODE_COLOR_DODGE=7 c:SVG_FEBLEND_MODE_DARKEN=4 c:SVG_FEBLEND_MODE_DIFFERENCE=11 c:SVG_FEBLEND_MODE_EXCLUSION=12 c:SVG_FEBLEND_MODE_HARD_LIGHT=9 c:SVG_FEBLEND_MODE_HUE=13 c:SVG_FEBLEND_MODE_LIGHTEN=5 c:SVG_FEBLEND_MODE_LUMINOSITY=16 c:SVG_FEBLEND_MODE_MULTIPLY=2 c:SVG_FEBLEND_MODE_NORMAL=1 c:SVG_FEBLEND_MODE_OVERLAY=6 c:SVG_FEBLEND_MODE_SATURATION=14 c:SVG_FEBLEND_MODE_SCREEN=3 c:SVG_FEBLEND_MODE_SOFT_LIGHT=10 c:SVG_FEBLEND_MODE_UNKNOWN=0 g:height g:in1 g:in2 g:mode g:result g:width g:x g:y
+SVGFEColorMatrixElement|SVGElement|c:SVG_FECOLORMATRIX_TYPE_HUEROTATE=3 c:SVG_FECOLORMATRIX_TYPE_LUMINANCETOALPHA=4 c:SVG_FECOLORMATRIX_TYPE_MATRIX=1 c:SVG_FECOLORMATRIX_TYPE_SATURATE=2 c:SVG_FECOLORMATRIX_TYPE_UNKNOWN=0 g:height g:in1 g:result g:type g:values g:width g:x g:y
+SVGFEComponentTransferElement|SVGElement|g:height g:in1 g:result g:width g:x g:y
+SVGFECompositeElement|SVGElement|c:SVG_FECOMPOSITE_OPERATOR_ARITHMETIC=6 c:SVG_FECOMPOSITE_OPERATOR_ATOP=4 c:SVG_FECOMPOSITE_OPERATOR_IN=2 c:SVG_FECOMPOSITE_OPERATOR_OUT=3 c:SVG_FECOMPOSITE_OPERATOR_OVER=1 c:SVG_FECOMPOSITE_OPERATOR_UNKNOWN=0 c:SVG_FECOMPOSITE_OPERATOR_XOR=5 g:height g:in1 g:in2 g:k1 g:k2 g:k3 g:k4 g:operator g:result g:width g:x g:y
+SVGFEConvolveMatrixElement|SVGElement|c:SVG_EDGEMODE_DUPLICATE=1 c:SVG_EDGEMODE_NONE=3 c:SVG_EDGEMODE_UNKNOWN=0 c:SVG_EDGEMODE_WRAP=2 g:bias g:divisor g:edgeMode g:height g:in1 g:kernelMatrix g:kernelUnitLengthX g:kernelUnitLengthY g:orderX g:orderY g:preserveAlpha g:result g:targetX g:targetY g:width g:x g:y
+SVGFEDiffuseLightingElement|SVGElement|g:diffuseConstant g:height g:in1 g:kernelUnitLengthX g:kernelUnitLengthY g:result g:surfaceScale g:width g:x g:y
+SVGFEDisplacementMapElement|SVGElement|c:SVG_CHANNEL_A=4 c:SVG_CHANNEL_B=3 c:SVG_CHANNEL_G=2 c:SVG_CHANNEL_R=1 c:SVG_CHANNEL_UNKNOWN=0 g:height g:in1 g:in2 g:result g:scale g:width g:x g:xChannelSelector g:y g:yChannelSelector
+SVGFEDistantLightElement|SVGElement|g:azimuth g:elevation
+SVGFEDropShadowElement|SVGElement|m:setStdDeviation g:dx g:dy g:height g:in1 g:result g:stdDeviationX g:stdDeviationY g:width g:x g:y
+SVGFEFloodElement|SVGElement|g:height g:result g:width g:x g:y
+SVGFEFuncAElement|SVGComponentTransferFunctionElement|
+SVGFEFuncBElement|SVGComponentTransferFunctionElement|
+SVGFEFuncGElement|SVGComponentTransferFunctionElement|
+SVGFEFuncRElement|SVGComponentTransferFunctionElement|
+SVGFEGaussianBlurElement|SVGElement|m:setStdDeviation g:height g:in1 g:result g:stdDeviationX g:stdDeviationY g:width g:x g:y
+SVGFEImageElement|SVGElement|g:height g:href g:preserveAspectRatio g:result g:width g:x g:y
+SVGFEMergeElement|SVGElement|g:height g:result g:width g:x g:y
+SVGFEMergeNodeElement|SVGElement|g:in1
+SVGFEMorphologyElement|SVGElement|c:SVG_MORPHOLOGY_OPERATOR_DILATE=2 c:SVG_MORPHOLOGY_OPERATOR_ERODE=1 c:SVG_MORPHOLOGY_OPERATOR_UNKNOWN=0 g:height g:in1 g:operator g:radiusX g:radiusY g:result g:width g:x g:y
+SVGFEOffsetElement|SVGElement|g:dx g:dy g:height g:in1 g:result g:width g:x g:y
+SVGFEPointLightElement|SVGElement|g:x g:y g:z
+SVGFESpecularLightingElement|SVGElement|g:height g:in1 g:kernelUnitLengthX g:kernelUnitLengthY g:result g:specularConstant g:specularExponent g:surfaceScale g:width g:x g:y
+SVGFESpotLightElement|SVGElement|g:limitingConeAngle g:pointsAtX g:pointsAtY g:pointsAtZ g:specularExponent g:x g:y g:z
+SVGFETileElement|SVGElement|g:height g:in1 g:result g:width g:x g:y
+SVGFETurbulenceElement|SVGElement|c:SVG_STITCHTYPE_NOSTITCH=2 c:SVG_STITCHTYPE_STITCH=1 c:SVG_STITCHTYPE_UNKNOWN=0 c:SVG_TURBULENCE_TYPE_FRACTALNOISE=1 c:SVG_TURBULENCE_TYPE_TURBULENCE=2 c:SVG_TURBULENCE_TYPE_UNKNOWN=0 g:baseFrequencyX g:baseFrequencyY g:height g:numOctaves g:result g:seed g:stitchTiles g:type g:width g:x g:y
+SVGFilterElement|SVGElement|g:filterUnits g:height g:href g:primitiveUnits g:width g:x g:y
+SVGForeignObjectElement|SVGGraphicsElement|g:height g:width g:x g:y
+SVGGElement|SVGGraphicsElement|
+SVGGeometryElement|SVGGraphicsElement|m:getPointAtLength m:getTotalLength m:isPointInFill m:isPointInStroke g:pathLength
+SVGGradientElement|SVGElement|c:SVG_SPREADMETHOD_PAD=1 c:SVG_SPREADMETHOD_REFLECT=2 c:SVG_SPREADMETHOD_REPEAT=3 c:SVG_SPREADMETHOD_UNKNOWN=0 g:gradientTransform g:gradientUnits g:href g:spreadMethod
+SVGGraphicsElement|SVGElement|m:getBBox m:getCTM m:getScreenCTM g:farthestViewportElement g:nearestViewportElement g:requiredExtensions g:systemLanguage g:transform
+SVGImageElement|SVGGraphicsElement|m:decode a:crossOrigin a:decoding g:height g:href g:preserveAspectRatio g:width g:x g:y
+SVGLength||c:SVG_LENGTHTYPE_CM=6 c:SVG_LENGTHTYPE_EMS=3 c:SVG_LENGTHTYPE_EXS=4 c:SVG_LENGTHTYPE_IN=8 c:SVG_LENGTHTYPE_MM=7 c:SVG_LENGTHTYPE_NUMBER=1 c:SVG_LENGTHTYPE_PC=10 c:SVG_LENGTHTYPE_PERCENTAGE=2 c:SVG_LENGTHTYPE_PT=9 c:SVG_LENGTHTYPE_PX=5 c:SVG_LENGTHTYPE_UNKNOWN=0 m:convertToSpecifiedUnits m:newValueSpecifiedUnits g:unitType a:value a:valueAsString a:valueInSpecifiedUnits
+SVGLengthList||i m:appendItem m:clear m:getItem m:initialize m:insertItemBefore m:removeItem m:replaceItem g:length g:numberOfItems
+SVGLineElement|SVGGeometryElement|g:x1 g:x2 g:y1 g:y2
+SVGLinearGradientElement|SVGGradientElement|g:x1 g:x2 g:y1 g:y2
+SVGMPathElement|SVGElement|g:href
+SVGMarkerElement|SVGElement|c:SVG_MARKERUNITS_STROKEWIDTH=2 c:SVG_MARKERUNITS_UNKNOWN=0 c:SVG_MARKERUNITS_USERSPACEONUSE=1 c:SVG_MARKER_ORIENT_ANGLE=2 c:SVG_MARKER_ORIENT_AUTO=1 c:SVG_MARKER_ORIENT_UNKNOWN=0 m:setOrientToAngle m:setOrientToAuto g:markerHeight g:markerUnits g:markerWidth g:orientAngle g:orientType g:preserveAspectRatio g:refX g:refY g:viewBox
+SVGMaskElement|SVGElement|g:height g:maskContentUnits g:maskUnits g:requiredExtensions g:systemLanguage g:width g:x g:y
+SVGMatrix||m:flipX m:flipY m:inverse m:multiply m:rotate m:rotateFromVector m:scale m:scaleNonUniform m:skewX m:skewY m:translate a:a a:b a:c a:d a:e a:f
+SVGMetadataElement|SVGElement|
+SVGNumber||a:value
+SVGNumberList||i m:appendItem m:clear m:getItem m:initialize m:insertItemBefore m:removeItem m:replaceItem g:length g:numberOfItems
+SVGPathElement|SVGGeometryElement|
+SVGPatternElement|SVGElement|g:height g:href g:patternContentUnits g:patternTransform g:patternUnits g:preserveAspectRatio g:requiredExtensions g:systemLanguage g:viewBox g:width g:x g:y
+SVGPoint||m:matrixTransform a:x a:y
+SVGPointList||i m:appendItem m:clear m:getItem m:initialize m:insertItemBefore m:removeItem m:replaceItem g:length g:numberOfItems
+SVGPolygonElement|SVGGeometryElement|g:animatedPoints g:points
+SVGPolylineElement|SVGGeometryElement|g:animatedPoints g:points
+SVGPreserveAspectRatio||c:SVG_MEETORSLICE_MEET=1 c:SVG_MEETORSLICE_SLICE=2 c:SVG_MEETORSLICE_UNKNOWN=0 c:SVG_PRESERVEASPECTRATIO_NONE=1 c:SVG_PRESERVEASPECTRATIO_UNKNOWN=0 c:SVG_PRESERVEASPECTRATIO_XMAXYMAX=10 c:SVG_PRESERVEASPECTRATIO_XMAXYMID=7 c:SVG_PRESERVEASPECTRATIO_XMAXYMIN=4 c:SVG_PRESERVEASPECTRATIO_XMIDYMAX=9 c:SVG_PRESERVEASPECTRATIO_XMIDYMID=6 c:SVG_PRESERVEASPECTRATIO_XMIDYMIN=3 c:SVG_PRESERVEASPECTRATIO_XMINYMAX=8 c:SVG_PRESERVEASPECTRATIO_XMINYMID=5 c:SVG_PRESERVEASPECTRATIO_XMINYMIN=2 a:align a:meetOrSlice
+SVGRadialGradientElement|SVGGradientElement|g:cx g:cy g:fr g:fx g:fy g:r
+SVGRect||a:height a:width a:x a:y
+SVGRectElement|SVGGeometryElement|g:height g:rx g:ry g:width g:x g:y
+SVGSVGElement|SVGGraphicsElement|c:SVG_ZOOMANDPAN_DISABLE=1 c:SVG_ZOOMANDPAN_MAGNIFY=2 c:SVG_ZOOMANDPAN_UNKNOWN=0 m:animationsPaused m:checkEnclosure m:checkIntersection m:createSVGAngle m:createSVGLength m:createSVGMatrix m:createSVGNumber m:createSVGPoint m:createSVGRect m:createSVGTransform m:createSVGTransformFromMatrix m:deselectAll m:forceRedraw m:getCurrentTime m:getElementById m:getEnclosureList m:getIntersectionList m:pauseAnimations m:setCurrentTime m:suspendRedraw m:unpauseAnimations m:unsuspendRedraw m:unsuspendRedrawAll a:currentScale g:currentTranslate g:height g:preserveAspectRatio g:viewBox g:width g:x g:y a:zoomAndPan
+SVGScriptElement|SVGElement|a:async g:href a:type
+SVGSetElement|SVGAnimationElement|
+SVGStopElement|SVGElement|g:offset
+SVGStringList||i m:appendItem m:clear m:getItem m:initialize m:insertItemBefore m:removeItem m:replaceItem g:length g:numberOfItems
+SVGStyleElement|SVGElement|a:disabled a:media g:sheet a:title a:type
+SVGSwitchElement|SVGGraphicsElement|
+SVGSymbolElement|SVGGraphicsElement|g:preserveAspectRatio g:viewBox
+SVGTSpanElement|SVGTextPositioningElement|
+SVGTextContentElement|SVGGraphicsElement|c:LENGTHADJUST_SPACING=1 c:LENGTHADJUST_SPACINGANDGLYPHS=2 c:LENGTHADJUST_UNKNOWN=0 m:getCharNumAtPosition m:getComputedTextLength m:getEndPositionOfChar m:getExtentOfChar m:getNumberOfChars m:getRotationOfChar m:getStartPositionOfChar m:getSubStringLength m:selectSubString g:lengthAdjust g:textLength
+SVGTextElement|SVGTextPositioningElement|
+SVGTextPathElement|SVGTextContentElement|c:TEXTPATH_METHODTYPE_ALIGN=1 c:TEXTPATH_METHODTYPE_STRETCH=2 c:TEXTPATH_METHODTYPE_UNKNOWN=0 c:TEXTPATH_SPACINGTYPE_AUTO=1 c:TEXTPATH_SPACINGTYPE_EXACT=2 c:TEXTPATH_SPACINGTYPE_UNKNOWN=0 g:href g:method g:spacing g:startOffset
+SVGTextPositioningElement|SVGTextContentElement|g:dx g:dy g:rotate g:x g:y
+SVGTitleElement|SVGElement|
+SVGTransform||c:SVG_TRANSFORM_MATRIX=1 c:SVG_TRANSFORM_ROTATE=4 c:SVG_TRANSFORM_SCALE=3 c:SVG_TRANSFORM_SKEWX=5 c:SVG_TRANSFORM_SKEWY=6 c:SVG_TRANSFORM_TRANSLATE=2 c:SVG_TRANSFORM_UNKNOWN=0 m:setMatrix m:setRotate m:setScale m:setSkewX m:setSkewY m:setTranslate g:angle g:matrix g:type
+SVGTransformList||i m:appendItem m:clear m:consolidate m:createSVGTransformFromMatrix m:getItem m:initialize m:insertItemBefore m:removeItem m:replaceItem g:length g:numberOfItems
+SVGUnitTypes||c:SVG_UNIT_TYPE_OBJECTBOUNDINGBOX=2 c:SVG_UNIT_TYPE_UNKNOWN=0 c:SVG_UNIT_TYPE_USERSPACEONUSE=1
+SVGUseElement|SVGGraphicsElement|g:height g:href g:width g:x g:y
+SVGViewElement|SVGElement|c:SVG_ZOOMANDPAN_DISABLE=1 c:SVG_ZOOMANDPAN_MAGNIFY=2 c:SVG_ZOOMANDPAN_UNKNOWN=0 g:preserveAspectRatio g:viewBox a:zoomAndPan
+Sanitizer||m:allowAttribute m:allowElement m:allowProcessingInstruction m:get m:removeAttribute m:removeElement m:removeProcessingInstruction m:removeUnsafe m:replaceElementWithChildren m:setComments m:setDataAttributes
+Scheduler||m:postTask m:yield
+Scheduling||m:isInputPending
+Screen|EventTarget|g:availHeight g:availLeft g:availTop g:availWidth g:colorDepth g:height g:isExtended a:onchange g:orientation g:pixelDepth g:width
+ScreenDetailed|Screen|g:devicePixelRatio g:isInternal g:isPrimary g:label g:left g:top
+ScreenDetails|EventTarget|g:currentScreen a:oncurrentscreenchange a:onscreenschange g:screens
+ScreenOrientation|EventTarget|m:lock m:unlock g:angle a:onchange g:type
+ScriptProcessorNode|AudioNode|g:bufferSize a:onaudioprocess
+ScrollTimeline|AnimationTimeline|g:axis g:source
+SecurityPolicyViolationEvent|Event|g:blockedURI g:columnNumber g:disposition g:documentURI g:effectiveDirective g:lineNumber g:originalPolicy g:referrer g:sample g:sourceFile g:statusCode g:violatedDirective
+Selection||m:addRange m:collapse m:collapseToEnd m:collapseToStart m:containsNode m:deleteFromDocument m:empty m:extend m:getComposedRanges m:getRangeAt m:modify m:removeAllRanges m:removeRange m:selectAllChildren m:setBaseAndExtent m:setPosition m:toString g:anchorNode g:anchorOffset g:baseNode g:baseOffset g:direction g:extentNode g:extentOffset g:focusNode g:focusOffset g:isCollapsed g:rangeCount g:type
+Sensor|EventTarget|m:start m:stop g:activated g:hasReading a:onactivate a:onerror a:onreading g:timestamp
+SensorErrorEvent|Event|g:error
+Serial|EventTarget|m:getPorts m:requestPort a:onconnect a:ondisconnect
+SerialPort|EventTarget|m:close m:forget m:getInfo m:getSignals m:open m:setSignals g:connected a:onconnect a:ondisconnect g:readable g:writable
+ServiceWorker|EventTarget|m:postMessage a:onerror a:onstatechange g:scriptURL g:state
+ServiceWorkerContainer|EventTarget|m:getRegistration m:getRegistrations m:register m:startMessages g:controller a:oncontrollerchange a:onmessage a:onmessageerror g:ready
+ServiceWorkerRegistration|EventTarget|m:getNotifications m:showNotification m:unregister m:update g:active g:backgroundFetch g:cookies g:installing g:navigationPreload a:onupdatefound g:paymentManager g:periodicSync g:pushManager g:scope g:sync g:updateViaCache g:waiting
+ShadowRoot|DocumentFragment|m:elementFromPoint m:elementsFromPoint m:getAnimations m:getHTML m:getSelection m:setHTML m:setHTMLUnsafe g:activeElement a:adoptedStyleSheets g:clonable g:customElementRegistry g:delegatesFocus a:fullscreenElement g:host a:innerHTML g:mode a:onslotchange g:pictureInPictureElement g:pointerLockElement a:referenceTarget g:serializable g:slotAssignment g:styleSheets
+SharedStorage||m:append m:batchUpdate m:clear m:createWorklet m:delete m:run m:selectURL m:set g:worklet
+SharedStorageAppendMethod|SharedStorageModifierMethod|
+SharedStorageClearMethod|SharedStorageModifierMethod|
+SharedStorageDeleteMethod|SharedStorageModifierMethod|
+SharedStorageModifierMethod||
+SharedStorageSetMethod|SharedStorageModifierMethod|
+SharedStorageWorklet||m:addModule m:run m:selectURL
+SharedWorker|EventTarget|a:onerror g:port
+SnapEvent|Event|g:snapTargetBlock g:snapTargetInline
+SourceBuffer|EventTarget|m:abort m:appendBuffer m:changeType m:remove a:appendWindowEnd a:appendWindowStart g:buffered a:mode a:onabort a:onerror a:onupdate a:onupdateend a:onupdatestart a:timestampOffset g:updating
+SourceBufferList|EventTarget|i g:length a:onaddsourcebuffer a:onremovesourcebuffer
+SpeechGrammar||a:src a:weight
+SpeechGrammarList||i m:addFromString m:addFromUri m:item g:length
+SpeechRecognition|EventTarget|M:available M:install m:abort m:start m:stop a:continuous a:grammars a:interimResults a:lang a:maxAlternatives a:onaudioend a:onaudiostart a:onend a:onerror a:onnomatch a:onresult a:onsoundend a:onsoundstart a:onspeechend a:onspeechstart a:onstart a:phrases a:processLocally a:quality
+SpeechRecognitionErrorEvent|Event|g:error g:message
+SpeechRecognitionEvent|Event|g:resultIndex g:results
+SpeechRecognitionPhrase||g:boost g:phrase
+SpeechSynthesis|EventTarget|m:cancel m:getVoices m:pause m:resume m:speak a:onvoiceschanged g:paused g:pending g:speaking
+SpeechSynthesisErrorEvent|SpeechSynthesisEvent|g:error
+SpeechSynthesisEvent|Event|g:charIndex g:charLength g:elapsedTime g:name g:utterance
+SpeechSynthesisUtterance|EventTarget|a:lang a:onboundary a:onend a:onerror a:onmark a:onpause a:onresume a:onstart a:pitch a:rate a:text a:voice a:volume
+SpeechSynthesisVoice||g:default g:lang g:localService g:name g:voiceURI
+StaticRange|NodeRange|
+StereoPannerNode|AudioNode|g:pan
+Storage||m:clear m:getItem m:key m:removeItem m:setItem g:length
+StorageBucket||m:estimate m:expires m:getDirectory m:persist m:persisted m:setExpires g:caches g:indexedDB g:name
+StorageBucketManager||m:delete m:keys m:open
+StorageEvent|Event|m:initStorageEvent g:key g:newValue g:oldValue g:storageArea g:url
+StorageManager||m:estimate m:getDirectory m:persist m:persisted
+StylePropertyMap|StylePropertyMapReadOnly|m:append m:clear m:delete m:set
+StylePropertyMapReadOnly||i m:entries m:forEach m:get m:getAll m:has m:keys m:values g:size
+StyleSheet||a:disabled g:href a:media g:ownerNode g:parentStyleSheet g:title g:type
+StyleSheetList||i m:item g:length
+SubmitEvent|Event|g:submitter
+Subscriber||m:addTeardown m:complete m:error m:next g:active g:signal
+SubtleCrypto||m:decrypt m:deriveBits m:deriveKey m:digest m:encrypt m:exportKey m:generateKey m:importKey m:sign m:unwrapKey m:verify m:wrapKey
+Summarizer||M:availability M:create m:destroy m:measureInputUsage m:summarize m:summarizeStreaming g:expectedContextLanguages g:expectedInputLanguages g:format g:inputQuota g:length g:outputLanguage g:sharedContext g:type
+SuppressedError|Error|
+SyncManager||m:getTags m:register
+TaskAttributionTiming|PerformanceEntry|m:toJSON g:containerId g:containerName g:containerSrc g:containerType
+TaskController|AbortController|m:setPriority
+TaskPriorityChangeEvent|Event|g:previousPriority
+TaskSignal|AbortSignal|a:onprioritychange g:priority
+Text|CharacterData|m:splitText g:assignedSlot g:wholeText
+TextDecoder||m:decode g:encoding g:fatal g:ignoreBOM
+TextDecoderStream||g:encoding g:fatal g:ignoreBOM g:readable g:writable
+TextEncoder||m:encode m:encodeInto g:encoding
+TextEncoderStream||g:encoding g:readable g:writable
+TextEvent|UIEvent|m:initTextEvent g:data
+TextFormat||g:rangeEnd g:rangeStart g:underlineStyle g:underlineThickness
+TextFormatUpdateEvent|Event|m:getTextFormats
+TextMetrics||g:actualBoundingBoxAscent g:actualBoundingBoxDescent g:actualBoundingBoxLeft g:actualBoundingBoxRight g:alphabeticBaseline g:fontBoundingBoxAscent g:fontBoundingBoxDescent g:hangingBaseline g:ideographicBaseline g:width
+TextTrack|EventTarget|m:addCue m:removeCue g:activeCues g:cues g:id g:kind g:label g:language a:mode a:oncuechange
+TextTrackCue|EventTarget|a:endTime a:id a:onenter a:onexit a:pauseOnExit a:startTime g:track
+TextTrackCueList||i m:getCueById g:length
+TextTrackList|EventTarget|i m:getTrackById g:length a:onaddtrack a:onchange a:onremovetrack
+TextUpdateEvent|Event|g:selectionEnd g:selectionStart g:text g:updateRangeEnd g:updateRangeStart
+TimeRanges||m:end m:start g:length
+TimelineTrigger|AnimationTrigger|g:ranges
+TimelineTriggerRange||g:activationRangeEnd g:activationRangeStart g:activeRangeEnd g:activeRangeStart g:timeline
+TimelineTriggerRangeList||i m:entries m:forEach m:item m:keys m:values g:length
+ToggleEvent|Event|g:newState g:oldState g:source
+Touch||g:clientX g:clientY g:force g:identifier g:pageX g:pageY g:radiusX g:radiusY g:rotationAngle g:screenX g:screenY g:target
+TouchEvent|UIEvent|g:altKey g:changedTouches g:ctrlKey g:metaKey g:shiftKey g:targetTouches g:touches
+TouchList||i m:item g:length
+TrackEvent|Event|g:track
+TransformStream||g:readable g:writable
+TransformStreamDefaultController||m:enqueue m:error m:terminate g:desiredSize
+TransitionEvent|Event|g:animation g:elapsedTime g:propertyName g:pseudoElement g:pseudoTarget
+Translator||M:availability M:create m:destroy m:measureInputUsage m:translate m:translateStreaming g:inputQuota g:sourceLanguage g:targetLanguage
+TreeWalker||m:firstChild m:lastChild m:nextNode m:nextSibling m:parentNode m:previousNode m:previousSibling a:currentNode g:filter g:root g:whatToShow
+TrustedHTML||m:toJSON m:toString
+TrustedScript||m:toJSON m:toString
+TrustedScriptURL||m:toJSON m:toString
+TrustedTypePolicy||m:createHTML m:createScript m:createScriptURL g:name
+TrustedTypePolicyFactory||m:createPolicy m:getAttributeType m:getPropertyType m:getTypeMapping m:isHTML m:isScript m:isScriptURL g:defaultPolicy g:emptyHTML g:emptyScript
+UIEvent|Event|m:initUIEvent g:detail g:pseudoTarget g:sourceCapabilities g:view g:which
+URL||M:canParse M:createObjectURL M:parse M:revokeObjectURL m:toJSON m:toString a:hash a:host a:hostname a:href g:origin a:password a:pathname a:port a:protocol a:search g:searchParams a:username
+URLPattern||m:exec m:test g:hasRegExpGroups g:hash g:hostname g:password g:pathname g:port g:protocol g:search g:username
+URLSearchParams||i m:append m:delete m:entries m:forEach m:get m:getAll m:has m:keys m:set m:sort m:toString m:values g:size
+USB|EventTarget|m:getDevices m:requestDevice a:onconnect a:ondisconnect
+USBAlternateInterface||g:alternateSetting g:endpoints g:interfaceClass g:interfaceName g:interfaceProtocol g:interfaceSubclass
+USBConfiguration||g:configurationName g:configurationValue g:interfaces
+USBConnectionEvent|Event|g:device
+USBDevice||m:claimInterface m:clearHalt m:close m:controlTransferIn m:controlTransferOut m:forget m:isochronousTransferIn m:isochronousTransferOut m:open m:releaseInterface m:reset m:selectAlternateInterface m:selectConfiguration m:transferIn m:transferOut g:configuration g:configurations g:deviceClass g:deviceProtocol g:deviceSubclass g:deviceVersionMajor g:deviceVersionMinor g:deviceVersionSubminor g:manufacturerName g:opened g:productId g:productName g:serialNumber g:usbVersionMajor g:usbVersionMinor g:usbVersionSubminor g:vendorId
+USBEndpoint||g:direction g:endpointNumber g:packetSize g:type
+USBInTransferResult||g:data g:status
+USBInterface||g:alternate g:alternates g:claimed g:interfaceNumber
+USBIsochronousInTransferPacket||g:data g:status
+USBIsochronousInTransferResult||g:data g:packets
+USBIsochronousOutTransferPacket||g:bytesWritten g:status
+USBIsochronousOutTransferResult||g:packets
+USBOutTransferResult||g:bytesWritten g:status
+UserActivation||g:hasBeenActive g:isActive
+VTTCue|TextTrackCue|m:getCueAsHTML a:align a:line a:position a:size a:snapToLines a:text a:vertical
+ValidityState||g:badInput g:customError g:patternMismatch g:rangeOverflow g:rangeUnderflow g:stepMismatch g:tooLong g:tooShort g:typeMismatch g:valid g:valueMissing
+VideoColorSpace||m:toJSON g:fullRange g:matrix g:primaries g:transfer
+VideoDecoder|EventTarget|M:isConfigSupported m:close m:configure m:decode m:flush m:reset g:decodeQueueSize a:ondequeue g:state
+VideoEncoder|EventTarget|M:isConfigSupported m:close m:configure m:encode m:flush m:reset g:encodeQueueSize a:ondequeue g:state
+VideoFrame||m:allocationSize m:clone m:close m:copyTo m:metadata g:codedHeight g:codedRect g:codedWidth g:colorSpace g:displayHeight g:displayWidth g:duration g:flip g:format g:rotation g:timestamp g:visibleRect
+VideoPlaybackQuality||g:corruptedVideoFrames g:creationTime g:droppedVideoFrames g:totalVideoFrames
+ViewTimeline|ScrollTimeline|g:endOffset g:startOffset g:subject
+ViewTransition||m:skipTransition m:waitUntil g:finished g:ready g:transitionRoot g:types g:updateCallbackDone
+ViewTransitionTypeSet||i m:add m:clear m:delete m:entries m:forEach m:has m:keys m:values g:size
+Viewport||g:segments
+VirtualKeyboard|EventTarget|m:hide m:show g:boundingRect a:ongeometrychange a:overlaysContent
+VirtualKeyboardGeometryChangeEvent|Event|
+VisibilityStateEntry|PerformanceEntry|
+VisualViewport|EventTarget|g:height g:offsetLeft g:offsetTop a:onresize a:onscroll a:onscrollend g:pageLeft g:pageTop g:scale g:width
+WGSLLanguageFeatures||i m:entries m:forEach m:has m:keys m:values g:size
+WakeLock||m:request
+WakeLockSentinel|EventTarget|m:release a:onrelease g:released g:type
+WaveShaperNode|AudioNode|a:curve a:oversample
+WebGL2RenderingContext||c:ACTIVE_ATTRIBUTES=35721 c:ACTIVE_TEXTURE=34016 c:ACTIVE_UNIFORMS=35718 c:ACTIVE_UNIFORM_BLOCKS=35382 c:ALIASED_LINE_WIDTH_RANGE=33902 c:ALIASED_POINT_SIZE_RANGE=33901 c:ALPHA=6406 c:ALPHA_BITS=3413 c:ALREADY_SIGNALED=37146 c:ALWAYS=519 c:ANY_SAMPLES_PASSED=35887 c:ANY_SAMPLES_PASSED_CONSERVATIVE=36202 c:ARRAY_BUFFER=34962 c:ARRAY_BUFFER_BINDING=34964 c:ATTACHED_SHADERS=35717 c:BACK=1029 c:BLEND=3042 c:BLEND_COLOR=32773 c:BLEND_DST_ALPHA=32970 c:BLEND_DST_RGB=32968 c:BLEND_EQUATION=32777 c:BLEND_EQUATION_ALPHA=34877 c:BLEND_EQUATION_RGB=32777 c:BLEND_SRC_ALPHA=32971 c:BLEND_SRC_RGB=32969 c:BLUE_BITS=3412 c:BOOL=35670 c:BOOL_VEC2=35671 c:BOOL_VEC3=35672 c:BOOL_VEC4=35673 c:BROWSER_DEFAULT_WEBGL=37444 c:BUFFER_SIZE=34660 c:BUFFER_USAGE=34661 c:BYTE=5120 c:CCW=2305 c:CLAMP_TO_EDGE=33071 c:COLOR=6144 c:COLOR_ATTACHMENT0=36064 c:COLOR_ATTACHMENT1=36065 c:COLOR_ATTACHMENT10=36074 c:COLOR_ATTACHMENT11=36075 c:COLOR_ATTACHMENT12=36076 c:COLOR_ATTACHMENT13=36077 c:COLOR_ATTACHMENT14=36078 c:COLOR_ATTACHMENT15=36079 c:COLOR_ATTACHMENT2=36066 c:COLOR_ATTACHMENT3=36067 c:COLOR_ATTACHMENT4=36068 c:COLOR_ATTACHMENT5=36069 c:COLOR_ATTACHMENT6=36070 c:COLOR_ATTACHMENT7=36071 c:COLOR_ATTACHMENT8=36072 c:COLOR_ATTACHMENT9=36073 c:COLOR_BUFFER_BIT=16384 c:COLOR_CLEAR_VALUE=3106 c:COLOR_WRITEMASK=3107 c:COMPARE_REF_TO_TEXTURE=34894 c:COMPILE_STATUS=35713 c:COMPRESSED_TEXTURE_FORMATS=34467 c:CONDITION_SATISFIED=37148 c:CONSTANT_ALPHA=32771 c:CONSTANT_COLOR=32769 c:CONTEXT_LOST_WEBGL=37442 c:COPY_READ_BUFFER=36662 c:COPY_READ_BUFFER_BINDING=36662 c:COPY_WRITE_BUFFER=36663 c:COPY_WRITE_BUFFER_BINDING=36663 c:CULL_FACE=2884 c:CULL_FACE_MODE=2885 c:CURRENT_PROGRAM=35725 c:CURRENT_QUERY=34917 c:CURRENT_VERTEX_ATTRIB=34342 c:CW=2304 c:DECR=7683 c:DECR_WRAP=34056 c:DELETE_STATUS=35712 c:DEPTH=6145 c:DEPTH24_STENCIL8=35056 c:DEPTH32F_STENCIL8=36013 c:DEPTH_ATTACHMENT=36096 c:DEPTH_BITS=3414 c:DEPTH_BUFFER_BIT=256 c:DEPTH_CLEAR_VALUE=2931 c:DEPTH_COMPONENT=6402 c:DEPTH_COMPONENT16=33189 c:DEPTH_COMPONENT24=33190 c:DEPTH_COMPONENT32F=36012 c:DEPTH_FUNC=2932 c:DEPTH_RANGE=2928 c:DEPTH_STENCIL=34041 c:DEPTH_STENCIL_ATTACHMENT=33306 c:DEPTH_TEST=2929 c:DEPTH_WRITEMASK=2930 c:DITHER=3024 c:DONT_CARE=4352 c:DRAW_BUFFER0=34853 c:DRAW_BUFFER1=34854 c:DRAW_BUFFER10=34863 c:DRAW_BUFFER11=34864 c:DRAW_BUFFER12=34865 c:DRAW_BUFFER13=34866 c:DRAW_BUFFER14=34867 c:DRAW_BUFFER15=34868 c:DRAW_BUFFER2=34855 c:DRAW_BUFFER3=34856 c:DRAW_BUFFER4=34857 c:DRAW_BUFFER5=34858 c:DRAW_BUFFER6=34859 c:DRAW_BUFFER7=34860 c:DRAW_BUFFER8=34861 c:DRAW_BUFFER9=34862 c:DRAW_FRAMEBUFFER=36009 c:DRAW_FRAMEBUFFER_BINDING=36006 c:DST_ALPHA=772 c:DST_COLOR=774 c:DYNAMIC_COPY=35050 c:DYNAMIC_DRAW=35048 c:DYNAMIC_READ=35049 c:ELEMENT_ARRAY_BUFFER=34963 c:ELEMENT_ARRAY_BUFFER_BINDING=34965 c:EQUAL=514 c:FASTEST=4353 c:FLOAT=5126 c:FLOAT_32_UNSIGNED_INT_24_8_REV=36269 c:FLOAT_MAT2=35674 c:FLOAT_MAT2x3=35685 c:FLOAT_MAT2x4=35686 c:FLOAT_MAT3=35675 c:FLOAT_MAT3x2=35687 c:FLOAT_MAT3x4=35688 c:FLOAT_MAT4=35676 c:FLOAT_MAT4x2=35689 c:FLOAT_MAT4x3=35690 c:FLOAT_VEC2=35664 c:FLOAT_VEC3=35665 c:FLOAT_VEC4=35666 c:FRAGMENT_SHADER=35632 c:FRAGMENT_SHADER_DERIVATIVE_HINT=35723 c:FRAMEBUFFER=36160 c:FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE=33301 c:FRAMEBUFFER_ATTACHMENT_BLUE_SIZE=33300 c:FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING=33296 c:FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE=33297 c:FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE=33302 c:FRAMEBUFFER_ATTACHMENT_GREEN_SIZE=33299 c:FRAMEBUFFER_ATTACHMENT_OBJECT_NAME=36049 c:FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE=36048 c:FRAMEBUFFER_ATTACHMENT_RED_SIZE=33298 c:FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE=33303 c:FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE=36051 c:FRAMEBUFFER_ATTACHMENT_TEXTURE_LAYER=36052 c:FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL=36050 c:FRAMEBUFFER_BINDING=36006 c:FRAMEBUFFER_COMPLETE=36053 c:FRAMEBUFFER_DEFAULT=33304 c:FRAMEBUFFER_INCOMPLETE_ATTACHMENT=36054 c:FRAMEBUFFER_INCOMPLETE_DIMENSIONS=36057 c:FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT=36055 c:FRAMEBUFFER_INCOMPLETE_MULTISAMPLE=36182 c:FRAMEBUFFER_UNSUPPORTED=36061 c:FRONT=1028 c:FRONT_AND_BACK=1032 c:FRONT_FACE=2886 c:FUNC_ADD=32774 c:FUNC_REVERSE_SUBTRACT=32779 c:FUNC_SUBTRACT=32778 c:GENERATE_MIPMAP_HINT=33170 c:GEQUAL=518 c:GREATER=516 c:GREEN_BITS=3411 c:HALF_FLOAT=5131 c:HIGH_FLOAT=36338 c:HIGH_INT=36341 c:IMPLEMENTATION_COLOR_READ_FORMAT=35739 c:IMPLEMENTATION_COLOR_READ_TYPE=35738 c:INCR=7682 c:INCR_WRAP=34055 c:INT=5124 c:INTERLEAVED_ATTRIBS=35980 c:INT_2_10_10_10_REV=36255 c:INT_SAMPLER_2D=36298 c:INT_SAMPLER_2D_ARRAY=36303 c:INT_SAMPLER_3D=36299 c:INT_SAMPLER_CUBE=36300 c:INT_VEC2=35667 c:INT_VEC3=35668 c:INT_VEC4=35669 c:INVALID_ENUM=1280 c:INVALID_FRAMEBUFFER_OPERATION=1286 c:INVALID_INDEX=4294967295 c:INVALID_OPERATION=1282 c:INVALID_VALUE=1281 c:INVERT=5386 c:KEEP=7680 c:LEQUAL=515 c:LESS=513 c:LINEAR=9729 c:LINEAR_MIPMAP_LINEAR=9987 c:LINEAR_MIPMAP_NEAREST=9985 c:LINES=1 c:LINE_LOOP=2 c:LINE_STRIP=3 c:LINE_WIDTH=2849 c:LINK_STATUS=35714 c:LOW_FLOAT=36336 c:LOW_INT=36339 c:LUMINANCE=6409 c:LUMINANCE_ALPHA=6410 c:MAX=32776 c:MAX_3D_TEXTURE_SIZE=32883 c:MAX_ARRAY_TEXTURE_LAYERS=35071 c:MAX_CLIENT_WAIT_TIMEOUT_WEBGL=37447 c:MAX_COLOR_ATTACHMENTS=36063 c:MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS=35379 c:MAX_COMBINED_TEXTURE_IMAGE_UNITS=35661 c:MAX_COMBINED_UNIFORM_BLOCKS=35374 c:MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS=35377 c:MAX_CUBE_MAP_TEXTURE_SIZE=34076 c:MAX_DRAW_BUFFERS=34852 c:MAX_ELEMENTS_INDICES=33001 c:MAX_ELEMENTS_VERTICES=33000 c:MAX_ELEMENT_INDEX=36203 c:MAX_FRAGMENT_INPUT_COMPONENTS=37157 c:MAX_FRAGMENT_UNIFORM_BLOCKS=35373 c:MAX_FRAGMENT_UNIFORM_COMPONENTS=35657 c:MAX_FRAGMENT_UNIFORM_VECTORS=36349 c:MAX_PROGRAM_TEXEL_OFFSET=35077 c:MAX_RENDERBUFFER_SIZE=34024 c:MAX_SAMPLES=36183 c:MAX_SERVER_WAIT_TIMEOUT=37137 c:MAX_TEXTURE_IMAGE_UNITS=34930 c:MAX_TEXTURE_LOD_BIAS=34045 c:MAX_TEXTURE_SIZE=3379 c:MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS=35978 c:MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS=35979 c:MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS=35968 c:MAX_UNIFORM_BLOCK_SIZE=35376 c:MAX_UNIFORM_BUFFER_BINDINGS=35375 c:MAX_VARYING_COMPONENTS=35659 c:MAX_VARYING_VECTORS=36348 c:MAX_VERTEX_ATTRIBS=34921 c:MAX_VERTEX_OUTPUT_COMPONENTS=37154 c:MAX_VERTEX_TEXTURE_IMAGE_UNITS=35660 c:MAX_VERTEX_UNIFORM_BLOCKS=35371 c:MAX_VERTEX_UNIFORM_COMPONENTS=35658 c:MAX_VERTEX_UNIFORM_VECTORS=36347 c:MAX_VIEWPORT_DIMS=3386 c:MEDIUM_FLOAT=36337 c:MEDIUM_INT=36340 c:MIN=32775 c:MIN_PROGRAM_TEXEL_OFFSET=35076 c:MIRRORED_REPEAT=33648 c:NEAREST=9728 c:NEAREST_MIPMAP_LINEAR=9986 c:NEAREST_MIPMAP_NEAREST=9984 c:NEVER=512 c:NICEST=4354 c:NONE=0 c:NOTEQUAL=517 c:NO_ERROR=0 c:OBJECT_TYPE=37138 c:ONE=1 c:ONE_MINUS_CONSTANT_ALPHA=32772 c:ONE_MINUS_CONSTANT_COLOR=32770 c:ONE_MINUS_DST_ALPHA=773 c:ONE_MINUS_DST_COLOR=775 c:ONE_MINUS_SRC_ALPHA=771 c:ONE_MINUS_SRC_COLOR=769 c:OUT_OF_MEMORY=1285 c:PACK_ALIGNMENT=3333 c:PACK_ROW_LENGTH=3330 c:PACK_SKIP_PIXELS=3332 c:PACK_SKIP_ROWS=3331 c:PIXEL_PACK_BUFFER=35051 c:PIXEL_PACK_BUFFER_BINDING=35053 c:PIXEL_UNPACK_BUFFER=35052 c:PIXEL_UNPACK_BUFFER_BINDING=35055 c:POINTS=0 c:POLYGON_OFFSET_FACTOR=32824 c:POLYGON_OFFSET_FILL=32823 c:POLYGON_OFFSET_UNITS=10752 c:QUERY_RESULT=34918 c:QUERY_RESULT_AVAILABLE=34919 c:R11F_G11F_B10F=35898 c:R16F=33325 c:R16I=33331 c:R16UI=33332 c:R32F=33326 c:R32I=33333 c:R32UI=33334 c:R8=33321 c:R8I=33329 c:R8UI=33330 c:R8_SNORM=36756 c:RASTERIZER_DISCARD=35977 c:READ_BUFFER=3074 c:READ_FRAMEBUFFER=36008 c:READ_FRAMEBUFFER_BINDING=36010 c:RED=6403 c:RED_BITS=3410 c:RED_INTEGER=36244 c:RENDERBUFFER=36161 c:RENDERBUFFER_ALPHA_SIZE=36179 c:RENDERBUFFER_BINDING=36007 c:RENDERBUFFER_BLUE_SIZE=36178 c:RENDERBUFFER_DEPTH_SIZE=36180 c:RENDERBUFFER_GREEN_SIZE=36177 c:RENDERBUFFER_HEIGHT=36163 c:RENDERBUFFER_INTERNAL_FORMAT=36164 c:RENDERBUFFER_RED_SIZE=36176 c:RENDERBUFFER_SAMPLES=36011 c:RENDERBUFFER_STENCIL_SIZE=36181 c:RENDERBUFFER_WIDTH=36162 c:RENDERER=7937 c:REPEAT=10497 c:REPLACE=7681 c:RG=33319 c:RG16F=33327 c:RG16I=33337 c:RG16UI=33338 c:RG32F=33328 c:RG32I=33339 c:RG32UI=33340 c:RG8=33323 c:RG8I=33335 c:RG8UI=33336 c:RG8_SNORM=36757 c:RGB=6407 c:RGB10_A2=32857 c:RGB10_A2UI=36975 c:RGB16F=34843 c:RGB16I=36233 c:RGB16UI=36215 c:RGB32F=34837 c:RGB32I=36227 c:RGB32UI=36209 c:RGB565=36194 c:RGB5_A1=32855 c:RGB8=32849 c:RGB8I=36239 c:RGB8UI=36221 c:RGB8_SNORM=36758 c:RGB9_E5=35901 c:RGBA=6408 c:RGBA16F=34842 c:RGBA16I=36232 c:RGBA16UI=36214 c:RGBA32F=34836 c:RGBA32I=36226 c:RGBA32UI=36208 c:RGBA4=32854 c:RGBA8=32856 c:RGBA8I=36238 c:RGBA8UI=36220 c:RGBA8_SNORM=36759 c:RGBA_INTEGER=36249 c:RGB_INTEGER=36248 c:RG_INTEGER=33320 c:SAMPLER_2D=35678 c:SAMPLER_2D_ARRAY=36289 c:SAMPLER_2D_ARRAY_SHADOW=36292 c:SAMPLER_2D_SHADOW=35682 c:SAMPLER_3D=35679 c:SAMPLER_BINDING=35097 c:SAMPLER_CUBE=35680 c:SAMPLER_CUBE_SHADOW=36293 c:SAMPLES=32937 c:SAMPLE_ALPHA_TO_COVERAGE=32926 c:SAMPLE_BUFFERS=32936 c:SAMPLE_COVERAGE=32928 c:SAMPLE_COVERAGE_INVERT=32939 c:SAMPLE_COVERAGE_VALUE=32938 c:SCISSOR_BOX=3088 c:SCISSOR_TEST=3089 c:SEPARATE_ATTRIBS=35981 c:SHADER_TYPE=35663 c:SHADING_LANGUAGE_VERSION=35724 c:SHORT=5122 c:SIGNALED=37145 c:SIGNED_NORMALIZED=36764 c:SRC_ALPHA=770 c:SRC_ALPHA_SATURATE=776 c:SRC_COLOR=768 c:SRGB=35904 c:SRGB8=35905 c:SRGB8_ALPHA8=35907 c:STATIC_COPY=35046 c:STATIC_DRAW=35044 c:STATIC_READ=35045 c:STENCIL=6146 c:STENCIL_ATTACHMENT=36128 c:STENCIL_BACK_FAIL=34817 c:STENCIL_BACK_FUNC=34816 c:STENCIL_BACK_PASS_DEPTH_FAIL=34818 c:STENCIL_BACK_PASS_DEPTH_PASS=34819 c:STENCIL_BACK_REF=36003 c:STENCIL_BACK_VALUE_MASK=36004 c:STENCIL_BACK_WRITEMASK=36005 c:STENCIL_BITS=3415 c:STENCIL_BUFFER_BIT=1024 c:STENCIL_CLEAR_VALUE=2961 c:STENCIL_FAIL=2964 c:STENCIL_FUNC=2962 c:STENCIL_INDEX8=36168 c:STENCIL_PASS_DEPTH_FAIL=2965 c:STENCIL_PASS_DEPTH_PASS=2966 c:STENCIL_REF=2967 c:STENCIL_TEST=2960 c:STENCIL_VALUE_MASK=2963 c:STENCIL_WRITEMASK=2968 c:STREAM_COPY=35042 c:STREAM_DRAW=35040 c:STREAM_READ=35041 c:SUBPIXEL_BITS=3408 c:SYNC_CONDITION=37139 c:SYNC_FENCE=37142 c:SYNC_FLAGS=37141 c:SYNC_FLUSH_COMMANDS_BIT=1 c:SYNC_GPU_COMMANDS_COMPLETE=37143 c:SYNC_STATUS=37140 c:TEXTURE=5890 c:TEXTURE0=33984 c:TEXTURE1=33985 c:TEXTURE10=33994 c:TEXTURE11=33995 c:TEXTURE12=33996 c:TEXTURE13=33997 c:TEXTURE14=33998 c:TEXTURE15=33999 c:TEXTURE16=34000 c:TEXTURE17=34001 c:TEXTURE18=34002 c:TEXTURE19=34003 c:TEXTURE2=33986 c:TEXTURE20=34004 c:TEXTURE21=34005 c:TEXTURE22=34006 c:TEXTURE23=34007 c:TEXTURE24=34008 c:TEXTURE25=34009 c:TEXTURE26=34010 c:TEXTURE27=34011 c:TEXTURE28=34012 c:TEXTURE29=34013 c:TEXTURE3=33987 c:TEXTURE30=34014 c:TEXTURE31=34015 c:TEXTURE4=33988 c:TEXTURE5=33989 c:TEXTURE6=33990 c:TEXTURE7=33991 c:TEXTURE8=33992 c:TEXTURE9=33993 c:TEXTURE_2D=3553 c:TEXTURE_2D_ARRAY=35866 c:TEXTURE_3D=32879 c:TEXTURE_BASE_LEVEL=33084 c:TEXTURE_BINDING_2D=32873 c:TEXTURE_BINDING_2D_ARRAY=35869 c:TEXTURE_BINDING_3D=32874 c:TEXTURE_BINDING_CUBE_MAP=34068 c:TEXTURE_COMPARE_FUNC=34893 c:TEXTURE_COMPARE_MODE=34892 c:TEXTURE_CUBE_MAP=34067 c:TEXTURE_CUBE_MAP_NEGATIVE_X=34070 c:TEXTURE_CUBE_MAP_NEGATIVE_Y=34072 c:TEXTURE_CUBE_MAP_NEGATIVE_Z=34074 c:TEXTURE_CUBE_MAP_POSITIVE_X=34069 c:TEXTURE_CUBE_MAP_POSITIVE_Y=34071 c:TEXTURE_CUBE_MAP_POSITIVE_Z=34073 c:TEXTURE_IMMUTABLE_FORMAT=37167 c:TEXTURE_IMMUTABLE_LEVELS=33503 c:TEXTURE_MAG_FILTER=10240 c:TEXTURE_MAX_LEVEL=33085 c:TEXTURE_MAX_LOD=33083 c:TEXTURE_MIN_FILTER=10241 c:TEXTURE_MIN_LOD=33082 c:TEXTURE_WRAP_R=32882 c:TEXTURE_WRAP_S=10242 c:TEXTURE_WRAP_T=10243 c:TIMEOUT_EXPIRED=37147 c:TIMEOUT_IGNORED=-1 c:TRANSFORM_FEEDBACK=36386 c:TRANSFORM_FEEDBACK_ACTIVE=36388 c:TRANSFORM_FEEDBACK_BINDING=36389 c:TRANSFORM_FEEDBACK_BUFFER=35982 c:TRANSFORM_FEEDBACK_BUFFER_BINDING=35983 c:TRANSFORM_FEEDBACK_BUFFER_MODE=35967 c:TRANSFORM_FEEDBACK_BUFFER_SIZE=35973 c:TRANSFORM_FEEDBACK_BUFFER_START=35972 c:TRANSFORM_FEEDBACK_PAUSED=36387 c:TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN=35976 c:TRANSFORM_FEEDBACK_VARYINGS=35971 c:TRIANGLES=4 c:TRIANGLE_FAN=6 c:TRIANGLE_STRIP=5 c:UNIFORM_ARRAY_STRIDE=35388 c:UNIFORM_BLOCK_ACTIVE_UNIFORMS=35394 c:UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES=35395 c:UNIFORM_BLOCK_BINDING=35391 c:UNIFORM_BLOCK_DATA_SIZE=35392 c:UNIFORM_BLOCK_INDEX=35386 c:UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER=35398 c:UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER=35396 c:UNIFORM_BUFFER=35345 c:UNIFORM_BUFFER_BINDING=35368 c:UNIFORM_BUFFER_OFFSET_ALIGNMENT=35380 c:UNIFORM_BUFFER_SIZE=35370 c:UNIFORM_BUFFER_START=35369 c:UNIFORM_IS_ROW_MAJOR=35390 c:UNIFORM_MATRIX_STRIDE=35389 c:UNIFORM_OFFSET=35387 c:UNIFORM_SIZE=35384 c:UNIFORM_TYPE=35383 c:UNPACK_ALIGNMENT=3317 c:UNPACK_COLORSPACE_CONVERSION_WEBGL=37443 c:UNPACK_FLIP_Y_WEBGL=37440 c:UNPACK_IMAGE_HEIGHT=32878 c:UNPACK_PREMULTIPLY_ALPHA_WEBGL=37441 c:UNPACK_ROW_LENGTH=3314 c:UNPACK_SKIP_IMAGES=32877 c:UNPACK_SKIP_PIXELS=3316 c:UNPACK_SKIP_ROWS=3315 c:UNSIGNALED=37144 c:UNSIGNED_BYTE=5121 c:UNSIGNED_INT=5125 c:UNSIGNED_INT_10F_11F_11F_REV=35899 c:UNSIGNED_INT_24_8=34042 c:UNSIGNED_INT_2_10_10_10_REV=33640 c:UNSIGNED_INT_5_9_9_9_REV=35902 c:UNSIGNED_INT_SAMPLER_2D=36306 c:UNSIGNED_INT_SAMPLER_2D_ARRAY=36311 c:UNSIGNED_INT_SAMPLER_3D=36307 c:UNSIGNED_INT_SAMPLER_CUBE=36308 c:UNSIGNED_INT_VEC2=36294 c:UNSIGNED_INT_VEC3=36295 c:UNSIGNED_INT_VEC4=36296 c:UNSIGNED_NORMALIZED=35863 c:UNSIGNED_SHORT=5123 c:UNSIGNED_SHORT_4_4_4_4=32819 c:UNSIGNED_SHORT_5_5_5_1=32820 c:UNSIGNED_SHORT_5_6_5=33635 c:VALIDATE_STATUS=35715 c:VENDOR=7936 c:VERSION=7938 c:VERTEX_ARRAY_BINDING=34229 c:VERTEX_ATTRIB_ARRAY_BUFFER_BINDING=34975 c:VERTEX_ATTRIB_ARRAY_DIVISOR=35070 c:VERTEX_ATTRIB_ARRAY_ENABLED=34338 c:VERTEX_ATTRIB_ARRAY_INTEGER=35069 c:VERTEX_ATTRIB_ARRAY_NORMALIZED=34922 c:VERTEX_ATTRIB_ARRAY_POINTER=34373 c:VERTEX_ATTRIB_ARRAY_SIZE=34339 c:VERTEX_ATTRIB_ARRAY_STRIDE=34340 c:VERTEX_ATTRIB_ARRAY_TYPE=34341 c:VERTEX_SHADER=35633 c:VIEWPORT=2978 c:WAIT_FAILED=37149 c:ZERO=0 m:activeTexture m:attachShader m:beginQuery m:beginTransformFeedback m:bindAttribLocation m:bindBuffer m:bindBufferBase m:bindBufferRange m:bindFramebuffer m:bindRenderbuffer m:bindSampler m:bindTexture m:bindTransformFeedback m:bindVertexArray m:blendColor m:blendEquation m:blendEquationSeparate m:blendFunc m:blendFuncSeparate m:blitFramebuffer m:bufferData m:bufferSubData m:checkFramebufferStatus m:clear m:clearBufferfi m:clearBufferfv m:clearBufferiv m:clearBufferuiv m:clearColor m:clearDepth m:clearStencil m:clientWaitSync m:colorMask m:compileShader m:compressedTexImage2D m:compressedTexImage3D m:compressedTexSubImage2D m:compressedTexSubImage3D m:copyBufferSubData m:copyTexImage2D m:copyTexSubImage2D m:copyTexSubImage3D m:createBuffer m:createFramebuffer m:createProgram m:createQuery m:createRenderbuffer m:createSampler m:createShader m:createTexture m:createTransformFeedback m:createVertexArray m:cullFace m:deleteBuffer m:deleteFramebuffer m:deleteProgram m:deleteQuery m:deleteRenderbuffer m:deleteSampler m:deleteShader m:deleteSync m:deleteTexture m:deleteTransformFeedback m:deleteVertexArray m:depthFunc m:depthMask m:depthRange m:detachShader m:disable m:disableVertexAttribArray m:drawArrays m:drawArraysInstanced m:drawBuffers m:drawElements m:drawElementsInstanced m:drawRangeElements m:drawingBufferStorage m:enable m:enableVertexAttribArray m:endQuery m:endTransformFeedback m:fenceSync m:finish m:flush m:framebufferRenderbuffer m:framebufferTexture2D m:framebufferTextureLayer m:frontFace m:generateMipmap m:getActiveAttrib m:getActiveUniform m:getActiveUniformBlockName m:getActiveUniformBlockParameter m:getActiveUniforms m:getAttachedShaders m:getAttribLocation m:getBufferParameter m:getBufferSubData m:getContextAttributes m:getError m:getExtension m:getFragDataLocation m:getFramebufferAttachmentParameter m:getIndexedParameter m:getInternalformatParameter m:getParameter m:getProgramInfoLog m:getProgramParameter m:getQuery m:getQueryParameter m:getRenderbufferParameter m:getSamplerParameter m:getShaderInfoLog m:getShaderParameter m:getShaderPrecisionFormat m:getShaderSource m:getSupportedExtensions m:getSyncParameter m:getTexParameter m:getTransformFeedbackVarying m:getUniform m:getUniformBlockIndex m:getUniformIndices m:getUniformLocation m:getVertexAttrib m:getVertexAttribOffset m:hint m:invalidateFramebuffer m:invalidateSubFramebuffer m:isBuffer m:isContextLost m:isEnabled m:isFramebuffer m:isProgram m:isQuery m:isRenderbuffer m:isSampler m:isShader m:isSync m:isTexture m:isTransformFeedback m:isVertexArray m:lineWidth m:linkProgram m:makeXRCompatible m:pauseTransformFeedback m:pixelStorei m:polygonOffset m:readBuffer m:readPixels m:renderbufferStorage m:renderbufferStorageMultisample m:resumeTransformFeedback m:sampleCoverage m:samplerParameterf m:samplerParameteri m:scissor m:shaderSource m:stencilFunc m:stencilFuncSeparate m:stencilMask m:stencilMaskSeparate m:stencilOp m:stencilOpSeparate m:texImage2D m:texImage3D m:texParameterf m:texParameteri m:texStorage2D m:texStorage3D m:texSubImage2D m:texSubImage3D m:transformFeedbackVaryings m:uniform1f m:uniform1fv m:uniform1i m:uniform1iv m:uniform1ui m:uniform1uiv m:uniform2f m:uniform2fv m:uniform2i m:uniform2iv m:uniform2ui m:uniform2uiv m:uniform3f m:uniform3fv m:uniform3i m:uniform3iv m:uniform3ui m:uniform3uiv m:uniform4f m:uniform4fv m:uniform4i m:uniform4iv m:uniform4ui m:uniform4uiv m:uniformBlockBinding m:uniformMatrix2fv m:uniformMatrix2x3fv m:uniformMatrix2x4fv m:uniformMatrix3fv m:uniformMatrix3x2fv m:uniformMatrix3x4fv m:uniformMatrix4fv m:uniformMatrix4x2fv m:uniformMatrix4x3fv m:useProgram m:validateProgram m:vertexAttrib1f m:vertexAttrib1fv m:vertexAttrib2f m:vertexAttrib2fv m:vertexAttrib3f m:vertexAttrib3fv m:vertexAttrib4f m:vertexAttrib4fv m:vertexAttribDivisor m:vertexAttribI4i m:vertexAttribI4iv m:vertexAttribI4ui m:vertexAttribI4uiv m:vertexAttribIPointer m:vertexAttribPointer m:viewport m:waitSync g:canvas a:drawingBufferColorSpace g:drawingBufferFormat g:drawingBufferHeight g:drawingBufferWidth a:unpackColorSpace
+WebGLActiveInfo||g:name g:size g:type
+WebGLBuffer|WebGLObject|
+WebGLContextEvent|Event|g:statusMessage
+WebGLFramebuffer|WebGLObject|
+WebGLObject||
+WebGLProgram|WebGLObject|
+WebGLQuery|WebGLObject|
+WebGLRenderbuffer|WebGLObject|
+WebGLRenderingContext||c:ACTIVE_ATTRIBUTES=35721 c:ACTIVE_TEXTURE=34016 c:ACTIVE_UNIFORMS=35718 c:ALIASED_LINE_WIDTH_RANGE=33902 c:ALIASED_POINT_SIZE_RANGE=33901 c:ALPHA=6406 c:ALPHA_BITS=3413 c:ALWAYS=519 c:ARRAY_BUFFER=34962 c:ARRAY_BUFFER_BINDING=34964 c:ATTACHED_SHADERS=35717 c:BACK=1029 c:BLEND=3042 c:BLEND_COLOR=32773 c:BLEND_DST_ALPHA=32970 c:BLEND_DST_RGB=32968 c:BLEND_EQUATION=32777 c:BLEND_EQUATION_ALPHA=34877 c:BLEND_EQUATION_RGB=32777 c:BLEND_SRC_ALPHA=32971 c:BLEND_SRC_RGB=32969 c:BLUE_BITS=3412 c:BOOL=35670 c:BOOL_VEC2=35671 c:BOOL_VEC3=35672 c:BOOL_VEC4=35673 c:BROWSER_DEFAULT_WEBGL=37444 c:BUFFER_SIZE=34660 c:BUFFER_USAGE=34661 c:BYTE=5120 c:CCW=2305 c:CLAMP_TO_EDGE=33071 c:COLOR_ATTACHMENT0=36064 c:COLOR_BUFFER_BIT=16384 c:COLOR_CLEAR_VALUE=3106 c:COLOR_WRITEMASK=3107 c:COMPILE_STATUS=35713 c:COMPRESSED_TEXTURE_FORMATS=34467 c:CONSTANT_ALPHA=32771 c:CONSTANT_COLOR=32769 c:CONTEXT_LOST_WEBGL=37442 c:CULL_FACE=2884 c:CULL_FACE_MODE=2885 c:CURRENT_PROGRAM=35725 c:CURRENT_VERTEX_ATTRIB=34342 c:CW=2304 c:DECR=7683 c:DECR_WRAP=34056 c:DELETE_STATUS=35712 c:DEPTH_ATTACHMENT=36096 c:DEPTH_BITS=3414 c:DEPTH_BUFFER_BIT=256 c:DEPTH_CLEAR_VALUE=2931 c:DEPTH_COMPONENT=6402 c:DEPTH_COMPONENT16=33189 c:DEPTH_FUNC=2932 c:DEPTH_RANGE=2928 c:DEPTH_STENCIL=34041 c:DEPTH_STENCIL_ATTACHMENT=33306 c:DEPTH_TEST=2929 c:DEPTH_WRITEMASK=2930 c:DITHER=3024 c:DONT_CARE=4352 c:DST_ALPHA=772 c:DST_COLOR=774 c:DYNAMIC_DRAW=35048 c:ELEMENT_ARRAY_BUFFER=34963 c:ELEMENT_ARRAY_BUFFER_BINDING=34965 c:EQUAL=514 c:FASTEST=4353 c:FLOAT=5126 c:FLOAT_MAT2=35674 c:FLOAT_MAT3=35675 c:FLOAT_MAT4=35676 c:FLOAT_VEC2=35664 c:FLOAT_VEC3=35665 c:FLOAT_VEC4=35666 c:FRAGMENT_SHADER=35632 c:FRAMEBUFFER=36160 c:FRAMEBUFFER_ATTACHMENT_OBJECT_NAME=36049 c:FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE=36048 c:FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE=36051 c:FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL=36050 c:FRAMEBUFFER_BINDING=36006 c:FRAMEBUFFER_COMPLETE=36053 c:FRAMEBUFFER_INCOMPLETE_ATTACHMENT=36054 c:FRAMEBUFFER_INCOMPLETE_DIMENSIONS=36057 c:FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT=36055 c:FRAMEBUFFER_UNSUPPORTED=36061 c:FRONT=1028 c:FRONT_AND_BACK=1032 c:FRONT_FACE=2886 c:FUNC_ADD=32774 c:FUNC_REVERSE_SUBTRACT=32779 c:FUNC_SUBTRACT=32778 c:GENERATE_MIPMAP_HINT=33170 c:GEQUAL=518 c:GREATER=516 c:GREEN_BITS=3411 c:HIGH_FLOAT=36338 c:HIGH_INT=36341 c:IMPLEMENTATION_COLOR_READ_FORMAT=35739 c:IMPLEMENTATION_COLOR_READ_TYPE=35738 c:INCR=7682 c:INCR_WRAP=34055 c:INT=5124 c:INT_VEC2=35667 c:INT_VEC3=35668 c:INT_VEC4=35669 c:INVALID_ENUM=1280 c:INVALID_FRAMEBUFFER_OPERATION=1286 c:INVALID_OPERATION=1282 c:INVALID_VALUE=1281 c:INVERT=5386 c:KEEP=7680 c:LEQUAL=515 c:LESS=513 c:LINEAR=9729 c:LINEAR_MIPMAP_LINEAR=9987 c:LINEAR_MIPMAP_NEAREST=9985 c:LINES=1 c:LINE_LOOP=2 c:LINE_STRIP=3 c:LINE_WIDTH=2849 c:LINK_STATUS=35714 c:LOW_FLOAT=36336 c:LOW_INT=36339 c:LUMINANCE=6409 c:LUMINANCE_ALPHA=6410 c:MAX_COMBINED_TEXTURE_IMAGE_UNITS=35661 c:MAX_CUBE_MAP_TEXTURE_SIZE=34076 c:MAX_FRAGMENT_UNIFORM_VECTORS=36349 c:MAX_RENDERBUFFER_SIZE=34024 c:MAX_TEXTURE_IMAGE_UNITS=34930 c:MAX_TEXTURE_SIZE=3379 c:MAX_VARYING_VECTORS=36348 c:MAX_VERTEX_ATTRIBS=34921 c:MAX_VERTEX_TEXTURE_IMAGE_UNITS=35660 c:MAX_VERTEX_UNIFORM_VECTORS=36347 c:MAX_VIEWPORT_DIMS=3386 c:MEDIUM_FLOAT=36337 c:MEDIUM_INT=36340 c:MIRRORED_REPEAT=33648 c:NEAREST=9728 c:NEAREST_MIPMAP_LINEAR=9986 c:NEAREST_MIPMAP_NEAREST=9984 c:NEVER=512 c:NICEST=4354 c:NONE=0 c:NOTEQUAL=517 c:NO_ERROR=0 c:ONE=1 c:ONE_MINUS_CONSTANT_ALPHA=32772 c:ONE_MINUS_CONSTANT_COLOR=32770 c:ONE_MINUS_DST_ALPHA=773 c:ONE_MINUS_DST_COLOR=775 c:ONE_MINUS_SRC_ALPHA=771 c:ONE_MINUS_SRC_COLOR=769 c:OUT_OF_MEMORY=1285 c:PACK_ALIGNMENT=3333 c:POINTS=0 c:POLYGON_OFFSET_FACTOR=32824 c:POLYGON_OFFSET_FILL=32823 c:POLYGON_OFFSET_UNITS=10752 c:RED_BITS=3410 c:RENDERBUFFER=36161 c:RENDERBUFFER_ALPHA_SIZE=36179 c:RENDERBUFFER_BINDING=36007 c:RENDERBUFFER_BLUE_SIZE=36178 c:RENDERBUFFER_DEPTH_SIZE=36180 c:RENDERBUFFER_GREEN_SIZE=36177 c:RENDERBUFFER_HEIGHT=36163 c:RENDERBUFFER_INTERNAL_FORMAT=36164 c:RENDERBUFFER_RED_SIZE=36176 c:RENDERBUFFER_STENCIL_SIZE=36181 c:RENDERBUFFER_WIDTH=36162 c:RENDERER=7937 c:REPEAT=10497 c:REPLACE=7681 c:RGB=6407 c:RGB565=36194 c:RGB5_A1=32855 c:RGB8=32849 c:RGBA=6408 c:RGBA4=32854 c:RGBA8=32856 c:SAMPLER_2D=35678 c:SAMPLER_CUBE=35680 c:SAMPLES=32937 c:SAMPLE_ALPHA_TO_COVERAGE=32926 c:SAMPLE_BUFFERS=32936 c:SAMPLE_COVERAGE=32928 c:SAMPLE_COVERAGE_INVERT=32939 c:SAMPLE_COVERAGE_VALUE=32938 c:SCISSOR_BOX=3088 c:SCISSOR_TEST=3089 c:SHADER_TYPE=35663 c:SHADING_LANGUAGE_VERSION=35724 c:SHORT=5122 c:SRC_ALPHA=770 c:SRC_ALPHA_SATURATE=776 c:SRC_COLOR=768 c:STATIC_DRAW=35044 c:STENCIL_ATTACHMENT=36128 c:STENCIL_BACK_FAIL=34817 c:STENCIL_BACK_FUNC=34816 c:STENCIL_BACK_PASS_DEPTH_FAIL=34818 c:STENCIL_BACK_PASS_DEPTH_PASS=34819 c:STENCIL_BACK_REF=36003 c:STENCIL_BACK_VALUE_MASK=36004 c:STENCIL_BACK_WRITEMASK=36005 c:STENCIL_BITS=3415 c:STENCIL_BUFFER_BIT=1024 c:STENCIL_CLEAR_VALUE=2961 c:STENCIL_FAIL=2964 c:STENCIL_FUNC=2962 c:STENCIL_INDEX8=36168 c:STENCIL_PASS_DEPTH_FAIL=2965 c:STENCIL_PASS_DEPTH_PASS=2966 c:STENCIL_REF=2967 c:STENCIL_TEST=2960 c:STENCIL_VALUE_MASK=2963 c:STENCIL_WRITEMASK=2968 c:STREAM_DRAW=35040 c:SUBPIXEL_BITS=3408 c:TEXTURE=5890 c:TEXTURE0=33984 c:TEXTURE1=33985 c:TEXTURE10=33994 c:TEXTURE11=33995 c:TEXTURE12=33996 c:TEXTURE13=33997 c:TEXTURE14=33998 c:TEXTURE15=33999 c:TEXTURE16=34000 c:TEXTURE17=34001 c:TEXTURE18=34002 c:TEXTURE19=34003 c:TEXTURE2=33986 c:TEXTURE20=34004 c:TEXTURE21=34005 c:TEXTURE22=34006 c:TEXTURE23=34007 c:TEXTURE24=34008 c:TEXTURE25=34009 c:TEXTURE26=34010 c:TEXTURE27=34011 c:TEXTURE28=34012 c:TEXTURE29=34013 c:TEXTURE3=33987 c:TEXTURE30=34014 c:TEXTURE31=34015 c:TEXTURE4=33988 c:TEXTURE5=33989 c:TEXTURE6=33990 c:TEXTURE7=33991 c:TEXTURE8=33992 c:TEXTURE9=33993 c:TEXTURE_2D=3553 c:TEXTURE_BINDING_2D=32873 c:TEXTURE_BINDING_CUBE_MAP=34068 c:TEXTURE_CUBE_MAP=34067 c:TEXTURE_CUBE_MAP_NEGATIVE_X=34070 c:TEXTURE_CUBE_MAP_NEGATIVE_Y=34072 c:TEXTURE_CUBE_MAP_NEGATIVE_Z=34074 c:TEXTURE_CUBE_MAP_POSITIVE_X=34069 c:TEXTURE_CUBE_MAP_POSITIVE_Y=34071 c:TEXTURE_CUBE_MAP_POSITIVE_Z=34073 c:TEXTURE_MAG_FILTER=10240 c:TEXTURE_MIN_FILTER=10241 c:TEXTURE_WRAP_S=10242 c:TEXTURE_WRAP_T=10243 c:TRIANGLES=4 c:TRIANGLE_FAN=6 c:TRIANGLE_STRIP=5 c:UNPACK_ALIGNMENT=3317 c:UNPACK_COLORSPACE_CONVERSION_WEBGL=37443 c:UNPACK_FLIP_Y_WEBGL=37440 c:UNPACK_PREMULTIPLY_ALPHA_WEBGL=37441 c:UNSIGNED_BYTE=5121 c:UNSIGNED_INT=5125 c:UNSIGNED_SHORT=5123 c:UNSIGNED_SHORT_4_4_4_4=32819 c:UNSIGNED_SHORT_5_5_5_1=32820 c:UNSIGNED_SHORT_5_6_5=33635 c:VALIDATE_STATUS=35715 c:VENDOR=7936 c:VERSION=7938 c:VERTEX_ATTRIB_ARRAY_BUFFER_BINDING=34975 c:VERTEX_ATTRIB_ARRAY_ENABLED=34338 c:VERTEX_ATTRIB_ARRAY_NORMALIZED=34922 c:VERTEX_ATTRIB_ARRAY_POINTER=34373 c:VERTEX_ATTRIB_ARRAY_SIZE=34339 c:VERTEX_ATTRIB_ARRAY_STRIDE=34340 c:VERTEX_ATTRIB_ARRAY_TYPE=34341 c:VERTEX_SHADER=35633 c:VIEWPORT=2978 c:ZERO=0 m:activeTexture m:attachShader m:bindAttribLocation m:bindBuffer m:bindFramebuffer m:bindRenderbuffer m:bindTexture m:blendColor m:blendEquation m:blendEquationSeparate m:blendFunc m:blendFuncSeparate m:bufferData m:bufferSubData m:checkFramebufferStatus m:clear m:clearColor m:clearDepth m:clearStencil m:colorMask m:compileShader m:compressedTexImage2D m:compressedTexSubImage2D m:copyTexImage2D m:copyTexSubImage2D m:createBuffer m:createFramebuffer m:createProgram m:createRenderbuffer m:createShader m:createTexture m:cullFace m:deleteBuffer m:deleteFramebuffer m:deleteProgram m:deleteRenderbuffer m:deleteShader m:deleteTexture m:depthFunc m:depthMask m:depthRange m:detachShader m:disable m:disableVertexAttribArray m:drawArrays m:drawElements m:drawingBufferStorage m:enable m:enableVertexAttribArray m:finish m:flush m:framebufferRenderbuffer m:framebufferTexture2D m:frontFace m:generateMipmap m:getActiveAttrib m:getActiveUniform m:getAttachedShaders m:getAttribLocation m:getBufferParameter m:getContextAttributes m:getError m:getExtension m:getFramebufferAttachmentParameter m:getParameter m:getProgramInfoLog m:getProgramParameter m:getRenderbufferParameter m:getShaderInfoLog m:getShaderParameter m:getShaderPrecisionFormat m:getShaderSource m:getSupportedExtensions m:getTexParameter m:getUniform m:getUniformLocation m:getVertexAttrib m:getVertexAttribOffset m:hint m:isBuffer m:isContextLost m:isEnabled m:isFramebuffer m:isProgram m:isRenderbuffer m:isShader m:isTexture m:lineWidth m:linkProgram m:makeXRCompatible m:pixelStorei m:polygonOffset m:readPixels m:renderbufferStorage m:sampleCoverage m:scissor m:shaderSource m:stencilFunc m:stencilFuncSeparate m:stencilMask m:stencilMaskSeparate m:stencilOp m:stencilOpSeparate m:texImage2D m:texParameterf m:texParameteri m:texSubImage2D m:uniform1f m:uniform1fv m:uniform1i m:uniform1iv m:uniform2f m:uniform2fv m:uniform2i m:uniform2iv m:uniform3f m:uniform3fv m:uniform3i m:uniform3iv m:uniform4f m:uniform4fv m:uniform4i m:uniform4iv m:uniformMatrix2fv m:uniformMatrix3fv m:uniformMatrix4fv m:useProgram m:validateProgram m:vertexAttrib1f m:vertexAttrib1fv m:vertexAttrib2f m:vertexAttrib2fv m:vertexAttrib3f m:vertexAttrib3fv m:vertexAttrib4f m:vertexAttrib4fv m:vertexAttribPointer m:viewport g:canvas a:drawingBufferColorSpace g:drawingBufferFormat g:drawingBufferHeight g:drawingBufferWidth a:unpackColorSpace
+WebGLSampler|WebGLObject|
+WebGLShader|WebGLObject|
+WebGLShaderPrecisionFormat||g:precision g:rangeMax g:rangeMin
+WebGLSync|WebGLObject|
+WebGLTexture|WebGLObject|
+WebGLTransformFeedback|WebGLObject|
+WebGLUniformLocation||
+WebGLVertexArrayObject|WebGLObject|
+WebKitCSSMatrix|DOMMatrixReadOnly|m:invertSelf m:multiplySelf m:preMultiplySelf m:rotateAxisAngleSelf m:rotateFromVectorSelf m:rotateSelf m:scale3dSelf m:scaleSelf m:setMatrixValue m:skewXSelf m:skewYSelf m:translateSelf a:a a:b a:c a:d a:e a:f a:m11 a:m12 a:m13 a:m14 a:m21 a:m22 a:m23 a:m24 a:m31 a:m32 a:m33 a:m34 a:m41 a:m42 a:m43 a:m44
+WebKitMutationObserver||m:disconnect m:observe m:takeRecords
+WebSocket|EventTarget|c:CLOSED=3 c:CLOSING=2 c:CONNECTING=0 c:OPEN=1 m:close m:send a:binaryType g:bufferedAmount g:extensions a:onclose a:onerror a:onmessage a:onopen g:protocol g:readyState g:url
+WebSocketError|DOMException|g:closeCode g:reason
+WebSocketStream||m:close g:closed g:opened g:url
+WebTransport||m:close m:createBidirectionalStream m:createUnidirectionalStream g:closed g:datagrams g:incomingBidirectionalStreams g:incomingUnidirectionalStreams g:protocol g:ready
+WebTransportBidirectionalStream||g:readable g:writable
+WebTransportDatagramDuplexStream||a:incomingHighWaterMark a:incomingMaxAge a:incomingMaxBufferedDatagrams g:maxDatagramSize a:outgoingHighWaterMark a:outgoingMaxAge a:outgoingMaxBufferedDatagrams g:readable g:writable
+WebTransportError|DOMException|g:source g:streamErrorCode
+WheelEvent|MouseEvent|c:DOM_DELTA_LINE=1 c:DOM_DELTA_PAGE=2 c:DOM_DELTA_PIXEL=0 g:deltaMode g:deltaX g:deltaY g:deltaZ g:momentum g:wheelDelta g:wheelDeltaX g:wheelDeltaY
+Window|EventTarget|c:PERSISTENT=1 c:TEMPORARY=0
+WindowControlsOverlay|EventTarget|m:getTitlebarAreaRect a:ongeometrychange g:visible
+WindowControlsOverlayGeometryChangeEvent|Event|g:titlebarAreaRect g:visible
+Worker|EventTarget|m:postMessage m:terminate a:onerror a:onmessage
+Worklet||m:addModule
+WritableStream||m:abort m:close m:getWriter g:locked
+WritableStreamDefaultController||m:error g:signal
+WritableStreamDefaultWriter||m:abort m:close m:releaseLock m:write g:closed g:desiredSize g:ready
+XMLDocument|Document|
+XMLHttpRequest|XMLHttpRequestEventTarget|c:DONE=4 c:HEADERS_RECEIVED=2 c:LOADING=3 c:OPENED=1 c:UNSENT=0 m:abort m:getAllResponseHeaders m:getResponseHeader m:open m:overrideMimeType m:send m:setAttributionReporting m:setPrivateToken m:setRequestHeader a:onreadystatechange g:readyState g:response g:responseText a:responseType g:responseURL g:responseXML g:status g:statusText a:timeout g:upload a:withCredentials
+XMLHttpRequestEventTarget|EventTarget|a:onabort a:onerror a:onload a:onloadend a:onloadstart a:onprogress a:ontimeout
+XMLHttpRequestUpload|XMLHttpRequestEventTarget|
+XMLSerializer||m:serializeToString
+XPathEvaluator||m:createExpression m:createNSResolver m:evaluate
+XPathExpression||m:evaluate
+XPathResult||c:ANY_TYPE=0 c:ANY_UNORDERED_NODE_TYPE=8 c:BOOLEAN_TYPE=3 c:FIRST_ORDERED_NODE_TYPE=9 c:NUMBER_TYPE=1 c:ORDERED_NODE_ITERATOR_TYPE=5 c:ORDERED_NODE_SNAPSHOT_TYPE=7 c:STRING_TYPE=2 c:UNORDERED_NODE_ITERATOR_TYPE=4 c:UNORDERED_NODE_SNAPSHOT_TYPE=6 m:iterateNext m:snapshotItem g:booleanValue g:invalidIteratorState g:numberValue g:resultType g:singleNodeValue g:snapshotLength g:stringValue
+XRAnchor||m:delete g:anchorSpace
+XRAnchorSet||i m:entries m:forEach m:has m:keys m:values g:size
+XRBoundedReferenceSpace|XRReferenceSpace|g:boundsGeometry
+XRCPUDepthInformation|XRDepthInformation|m:getDepthInMeters g:data
+XRCamera||g:height g:width
+XRCompositionLayer|XRLayer|m:destroy a:blendTextureSourceAlpha a:forceMonoPresentation g:layout g:mipLevels g:needsRedraw a:opacity
+XRCubeLayer|XRCompositionLayer|a:onredraw a:orientation a:space
+XRCylinderLayer|XRCompositionLayer|a:aspectRatio a:centralAngle a:onredraw a:radius a:space a:transform
+XRDOMOverlayState||g:type
+XRDepthInformation||g:height g:normDepthBufferFromNormView g:projectionMatrix g:rawValueToMeters g:transform g:width
+XREquirectLayer|XRCompositionLayer|a:centralHorizontalAngle a:lowerVerticalAngle a:onredraw a:radius a:space a:transform a:upperVerticalAngle
+XRFrame||m:createAnchor m:fillJointRadii m:fillPoses m:getDepthInformation m:getHitTestResults m:getHitTestResultsForTransientInput m:getJointPose m:getLightEstimate m:getPose m:getViewerPose g:detectedPlanes g:session g:trackedAnchors
+XRHand||i m:entries m:forEach m:get m:keys m:values g:size
+XRHitTestResult||m:createAnchor m:getPose
+XRHitTestSource||m:cancel
+XRInputSource||g:gamepad g:gripSpace g:hand g:handedness g:profiles g:targetRayMode g:targetRaySpace
+XRInputSourceArray||i m:entries m:forEach m:keys m:values g:length
+XRInputSourceEvent|Event|g:frame g:inputSource
+XRInputSourcesChangeEvent|Event|g:added g:removed g:session
+XRJointPose|XRPose|g:radius
+XRJointSpace|XRSpace|g:jointName
+XRLayer|EventTarget|
+XRLayerEvent|Event|g:layer
+XRLightEstimate||g:primaryLightDirection g:primaryLightIntensity g:sphericalHarmonicsCoefficients
+XRLightProbe|EventTarget|a:onreflectionchange g:probeSpace
+XRPlane||g:lastChangedTime g:orientation g:planeSpace g:polygon g:semanticLabel
+XRPlaneSet||i m:entries m:forEach m:has m:keys m:values g:size
+XRPose||g:emulatedPosition g:transform
+XRProjectionLayer|XRCompositionLayer|a:deltaPose a:fixedFoveation g:ignoreDepthValues g:textureArrayLength g:textureHeight g:textureWidth
+XRQuadLayer|XRCompositionLayer|a:height a:onredraw a:space a:transform a:width
+XRRay||g:direction g:matrix g:origin
+XRReferenceSpace|XRSpace|m:getOffsetReferenceSpace a:onreset
+XRReferenceSpaceEvent|Event|g:referenceSpace g:transform
+XRRenderState||g:baseLayer g:depthFar g:depthNear g:inlineVerticalFieldOfView g:layers
+XRRigidTransform||g:inverse g:matrix g:orientation g:position
+XRSession|EventTarget|m:cancelAnimationFrame m:end m:initiateRoomCapture m:pauseDepthSensing m:requestAnimationFrame m:requestHitTestSource m:requestHitTestSourceForTransientInput m:requestLightProbe m:requestReferenceSpace m:resumeDepthSensing m:updateRenderState g:depthActive g:depthDataFormat g:depthType g:depthUsage g:domOverlayState g:enabledFeatures g:environmentBlendMode g:inputSources g:interactionMode g:maxRenderLayers a:onend a:oninputsourceschange a:onselect a:onselectend a:onselectstart a:onsqueeze a:onsqueezeend a:onsqueezestart a:onvisibilitychange a:onvisibilitymaskchange g:preferredReflectionFormat g:renderState g:visibilityState
+XRSessionEvent|Event|g:session
+XRSpace|EventTarget|
+XRSubImage||g:viewport
+XRSystem|EventTarget|m:isSessionSupported m:requestSession a:ondevicechange
+XRTransientInputHitTestResult||g:inputSource g:results
+XRTransientInputHitTestSource||m:cancel
+XRView||m:requestViewportScale g:camera g:eye g:index g:isFirstPersonObserver g:projectionMatrix g:recommendedViewportScale g:transform
+XRViewerPose|XRPose|g:views
+XRViewport||g:height g:width g:x g:y
+XRVisibilityMaskChangeEvent|Event|g:eye g:index g:indices g:session g:vertices
+XRWebGLBinding||m:createCubeLayer m:createCylinderLayer m:createEquirectLayer m:createProjectionLayer m:createQuadLayer m:getCameraImage m:getDepthInformation m:getReflectionCubeMap m:getSubImage m:getViewSubImage g:nativeProjectionScaleFactor g:usesDepthValues
+XRWebGLDepthInformation|XRDepthInformation|g:texture
+XRWebGLLayer|XRLayer|M:getNativeFramebufferScaleFactor m:getViewport g:antialias g:framebuffer g:framebufferHeight g:framebufferWidth g:ignoreDepthValues
+XRWebGLSubImage|XRSubImage|g:colorTexture g:colorTextureHeight g:colorTextureWidth g:depthStencilTexture g:depthStencilTextureHeight g:depthStencilTextureWidth g:imageIndex g:motionVectorTexture g:motionVectorTextureHeight g:motionVectorTextureWidth
+XSLTProcessor||m:clearParameters m:getParameter m:importStylesheet m:removeParameter m:reset m:setParameter m:transformToDocument m:transformToFragment
+webkitMediaStream|EventTarget|m:addTrack m:clone m:getAudioTracks m:getTrackById m:getTracks m:getVideoTracks m:removeTrack g:active g:id a:onactive a:onaddtrack a:oninactive a:onremovetrack
+webkitRTCPeerConnection|EventTarget|M:generateCertificate m:addIceCandidate m:addStream m:addTrack m:addTransceiver m:close m:createAnswer m:createDTMFSender m:createDataChannel m:createOffer m:getConfiguration m:getLocalStreams m:getReceivers m:getRemoteStreams m:getSenders m:getStats m:getTransceivers m:removeStream m:removeTrack m:restartIce m:setConfiguration m:setLocalDescription m:setRemoteDescription g:canTrickleIceCandidates g:connectionState g:currentLocalDescription g:currentRemoteDescription g:iceConnectionState g:iceGatheringState g:localDescription a:onaddstream a:onconnectionstatechange a:ondatachannel a:onicecandidate a:onicecandidateerror a:oniceconnectionstatechange a:onicegatheringstatechange a:onnegotiationneeded a:onremovestream a:onsignalingstatechange a:ontrack g:pendingLocalDescription g:pendingRemoteDescription g:remoteDescription g:sctp g:signalingState
+webkitSpeechGrammar||a:src a:weight
+webkitSpeechGrammarList||i m:addFromString m:addFromUri m:item g:length
+webkitSpeechRecognition|EventTarget|M:available M:install m:abort m:start m:stop a:continuous a:grammars a:interimResults a:lang a:maxAlternatives a:onaudioend a:onaudiostart a:onend a:onerror a:onnomatch a:onresult a:onsoundend a:onsoundstart a:onspeechend a:onspeechstart a:onstart a:phrases a:processLocally a:quality
+webkitSpeechRecognitionError|Event|g:error g:message
+webkitSpeechRecognitionEvent|Event|g:resultIndex g:results
+webkitURL||M:canParse M:createObjectURL M:parse M:revokeObjectURL m:toJSON m:toString a:hash a:host a:hostname a:href g:origin a:password a:pathname a:port a:protocol a:search g:searchParams a:username

@@ -10,7 +10,11 @@ fn native_hole_nan_preserves_bits_without_becoming_a_hole() {
     environment.conformance_native_main_source = Some(0);
     let source = "let n=%GetHoleNaN(),a=[n],v=new DataView(new ArrayBuffer(8));v.setFloat64(0,n,false);let r=[Number.isNaN(a[0]),0 in a,v.getUint32(0,false)===%GetHoleNaNUpper(),v.getUint32(4,false)===%GetHoleNaNLower(),%IsSmi(n)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,true,false");
 }
 
@@ -22,7 +26,11 @@ fn native_internalized_string_test_reads_real_representation() {
     environment.conformance_native_main_source = Some(0);
     let source = "let interned=%ConstructInternalizedString('internalized-example'),thin=%ConstructThinString('thin-string-long-enough');let r=[%IsInternalizedString(interned),%IsInternalizedString(thin),%IsInternalizedString('literal'),%IsInternalizedString({})].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,false,true,false");
 }
 
@@ -34,8 +42,15 @@ fn native_construct_double_preserves_bits_and_numeric_identity() {
     environment.conformance_native_main_source = Some(0);
     let source = "let min=%ConstructDouble(0,1),zero=%ConstructDouble(0,0),negative=%ConstructDouble(0x80000000,0),nan=%ConstructDouble(0x7ff80000,123);let view=new DataView(new ArrayBuffer(8));view.setFloat64(0,nan,false);let r=[min===Number.MIN_VALUE,%IsSmi(zero),%IsSmi(negative),Object.is(negative,-0),Number.isNaN(nan),view.getUint32(4,false)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,false,true,true,123");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,false,true,true,123"
+    );
 }
 
 /** Native conversion helpers use ordinary coercion and preserve existing numeric identity. */
@@ -46,8 +61,15 @@ fn native_conversion_helpers_preserve_coercion_and_number_identity() {
     environment.conformance_native_main_source = Some(0);
     let source = "let order='';let x={[Symbol.toPrimitive](hint){order+=hint;return 7n}};let n=%AllocateHeapNumberWithValue(1.5);let same=%IsSameHeapObject(n,%ToNumber(n))&&%IsSameHeapObject(n,%ToNumeric(n));let bad=false;try{%ToNumber(x)}catch(e){bad=e instanceof TypeError}let r=[same,bad,%ToNumeric(x),%ToString({toString(){return 'ok'}}),order].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,7,ok,numbernumber");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,7,ok,numbernumber"
+    );
 }
 
 /** Native Call uses normal call semantics and evaluates its operands once in order. */
@@ -58,7 +80,11 @@ fn native_call_preserves_receiver_arguments_and_evaluation_order() {
     environment.conformance_native_main_source = Some(0);
     let source = "let order='';const receiver={x:10};function f(a,b){'use strict';return this.x+a+b}let r=%Call((order+='f',f),(order+='t',receiver),(order+='a',2),(order+='b',3));let bad=false;try{%Call(1,0)}catch(e){bad=e instanceof TypeError}r=[r,order,bad].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "15,ftab,true");
 }
 
@@ -70,8 +96,15 @@ fn native_string_comparisons_follow_utf16_order() {
     environment.conformance_native_main_source = Some(0);
     let source = "let a='abc\\u0102',b='abc\\u0201';let r=[%StringLessThan(a,b),%StringLessThanOrEqual(a,a),%StringGreaterThan(b,a),%StringGreaterThanOrEqual(a,a),%StringEqual(a,a),%StringCompare(a,b),%StringCompare(a,a),%StringCompare(b,a)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,-1,0,1");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,true,true,true,-1,0,1"
+    );
 }
 
 /** Compact large spreads retain the canonical character identity across GC and saved state. */
@@ -84,7 +117,13 @@ fn large_string_spread_roots_survive_gc_and_snapshot() {
     environment.conformance_native_main_source = Some(0);
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
     assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
     assert_eq!(common::console(&resumed), ["300000 true true"]);
 }
@@ -99,7 +138,13 @@ fn one_byte_iterator_roots_keep_identity_through_gc_and_snapshot() {
     environment.conformance_native_main_source = Some(0);
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
     assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
     assert_eq!(common::console(&resumed), ["true true false"]);
 }
@@ -117,20 +162,29 @@ fn one_byte_iterator_roots_reject_forged_unit() {
     let root = roots.remove("97").unwrap();
     roots.insert("98".into(), root);
     let forged = serde_json::from_value(state).unwrap();
-    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), forged, 1.0, 1).is_err());
+    assert!(
+        mars_v9::run_timers(common::input(&sources, &host, &environment), forged, 1.0, 1).is_err()
+    );
 }
 
 /** Shell arguments remain strings and retain the same mutable array through state transport. */
 #[test]
 fn shell_arguments_survive_state_transport() {
-    let sources = vec!["arguments.push('later');setTimeout(()=>console.log(arguments.join(',')),0);".into()];
+    let sources =
+        vec!["arguments.push('later');setTimeout(()=>console.log(arguments.join(',')),0);".into()];
     let host = common::host();
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     environment.conformance_script_arguments = vec!["1".into(), "--literal".into()];
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
     assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
     assert_eq!(common::console(&resumed), ["1,--literal,later"]);
 }
@@ -144,7 +198,13 @@ fn continuation_data_survives_gc_and_pending_reaction_snapshot() {
     environment.conformance_d8 = true;
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
     assert!(resumed.failed.is_empty(), "{:?}", common::failure(&resumed));
     assert_eq!(common::console(&resumed), ["outer", "42"]);
 }
@@ -157,7 +217,11 @@ fn continuation_data_follows_queued_microtasks() {
     environment.conformance_native_main_source = Some(0);
     let source = "const {getContinuationPreservedEmbedderData:get,setContinuationPreservedEmbedderData:set}=d8.getExtrasBindingObject();let values=[];queueMicrotask(()=>values.push(get()));set('captured');queueMicrotask(()=>{values.push(get());set('inside')});set('outer');%PerformMicrotaskCheckpoint();let r=[values[0]===undefined,values[1],get()].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,captured,outer");
 }
 
@@ -169,7 +233,11 @@ fn checkpoint_drains_async_rejections_created_by_reactions() {
     environment.conformance_native_main_source = Some(0);
     let source = "let order=[];async function first(){try{await Promise.reject(1)}catch(e){order.push('first')}}first();async function f(){order.push('start');try{await Promise.reject(1)}catch(e){order.push('caught')}}Promise.resolve().then(f);%PerformMicrotaskCheckpoint();let r=order.join(',');";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "first,start,caught");
 }
 
@@ -245,7 +313,11 @@ fn optimizer_hints_are_inert_and_status_never_optimizes() {
     environment.conformance_native_main_source = Some(0);
     let source = "let calls=0;function f(){calls++;return f}const out=[%PrepareFunctionForOptimization(f()),%OptimizeFunctionOnNextCall(f(),'concurrent'),%DeoptimizeNow(),%GetOptimizationStatus(f),%GetOptimizationStatus(undefined,''),%IsMaglevEnabled(),%IsBeingInterpreted(),%DebugPrint(7),calls];const r=out.join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), ",,,3,2,false,true,7,2");
 }
 
@@ -660,7 +732,6 @@ fn weak_collection_size_counts_live_entries() {
     assert_eq!(common::global(&execution, "r"), "1,1,0,true");
 }
 
-
 #[test]
 fn shared_number_behaves_as_a_number() {
     let mut environment = common::environment();
@@ -669,8 +740,15 @@ fn shared_number_behaves_as_a_number() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5);let r=[typeof x,x===1.5,x==1.5,x+2,x*2,Object.is(x,1.5),Number.isFinite(x),Number.isNaN(x),JSON.stringify(x),new Map([[x,7]]).get(1.5),%IsInWritableSharedSpace(x)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "number,true,true,3.5,3,true,true,false,1.5,7,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "number,true,true,3.5,3,true,true,false,1.5,7,true"
+    );
 }
 
 #[test]
@@ -681,7 +759,11 @@ fn shared_number_boxing_preserves_its_real_backing() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5), a=Object(x),b=new Number(x);gc();let r=[%IsSameHeapObject(x,Number(x)),%IsSameHeapObject(x,Number(a)),%IsSameHeapObject(x,a.valueOf()),%IsSameHeapObject(x,b.valueOf()),a.valueOf()===1.5].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,true,true");
 }
 
@@ -693,7 +775,11 @@ fn share_object_rejects_unshareable_values_with_type_error() {
     environment.conformance_native_main_source = Some(0);
     let source = "let r=[];for(const value of [{},[],1n,Symbol('s')]){try{%ShareObject(value);r.push(false)}catch(e){r.push(e instanceof TypeError)}}r=r.join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,true");
 }
 
@@ -706,7 +792,11 @@ fn share_object_fuzzing_handles_unshareable_values_and_extra_arguments() {
     environment.conformance_native_main_source = Some(0);
     let source = "let side=0;let r=[%ShareObject()===undefined,%ShareObject({})===undefined,%ShareObject(1,++side)===1,side].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,true,1");
 }
 
@@ -718,7 +808,11 @@ fn explicit_shared_strings_shares_values_without_interning_all_literals() {
     environment.conformance_native_main_source = Some(0);
     let source = "const plain='share me',shared=%ShareObject(plain);let r=[%IsSharedString(plain),%IsSharedString(shared),plain===shared].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "false,true,true");
 }
 
@@ -730,7 +824,11 @@ fn shared_number_pressure_reclaims_only_unreachable_backings() {
     environment.conformance_native_main_source = Some(0);
     let source = "const keep=%ShareObject(1.5);for(let i=0;i<5000;i++){let temporary=%ShareObject(i+0.5)}let r=[keep,%IsInWritableSharedSpace(keep)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "1.5,true");
 }
 
@@ -742,8 +840,15 @@ fn shared_number_works_across_native_boundaries() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5);let r=[x.toFixed(1),Math.max(x,2),new Uint8Array([x])[0],JSON.stringify({v:x}),[0,1,2].indexOf(x),Number.isInteger(x),x<2,Boolean(x),String(x)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "1.5,2,1,{\"v\":1.5},-1,false,true,true,1.5");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "1.5,2,1,{\"v\":1.5},-1,false,true,true,1.5"
+    );
 }
 
 #[test]
@@ -754,8 +859,15 @@ fn shared_number_is_accepted_by_numeric_replacer_and_function_length() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(2.0+0.5),f=()=>{};Object.defineProperty(f,'length',{value:x});let r=[f.bind(null).length,JSON.stringify({'2.5':7,a:1},[x]),JSON.stringify({a:1},null,x)].join('|');";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "2|{\"2.5\":7}|{\n  \"a\": 1\n}");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "2|{\"2.5\":7}|{\n  \"a\": 1\n}"
+    );
 }
 
 #[test]
@@ -766,7 +878,11 @@ fn shared_number_obeys_single_number_array_constructor_rules() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5);let r=false;try{new Array(x)}catch(e){r=e instanceof RangeError}";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true");
 }
 
@@ -776,10 +892,18 @@ fn shared_number_converts_to_bigint_and_exact_sum() {
     environment.conformance_d8 = true;
     environment.conformance_shared_strings = true;
     environment.conformance_native_main_source = Some(0);
-    let source = "const x=%ShareObject(4294967296);let r=[BigInt(x),Math.sumPrecise([x,1]),+x===x].join();";
+    let source =
+        "const x=%ShareObject(4294967296);let r=[BigInt(x),Math.sumPrecise([x,1]),+x===x].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "4294967296,4294967297,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "4294967296,4294967297,true"
+    );
 }
 
 #[test]
@@ -791,7 +915,11 @@ fn shared_number_survives_shared_container_and_atomic_comparison() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5),a=new SharedArray(1);a[0]=x;let r=[%IsSameHeapObject(a[0],x),Atomics.compareExchange(a,0,1.5,2),a[0]].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,1.5,2");
 }
 
@@ -804,7 +932,11 @@ fn shared_number_atomic_comparison_uses_numeric_equality() {
     environment.conformance_native_main_source = Some(0);
     let source = "const a=new SharedArray(1),n=%ShareObject(NaN),z=%ShareObject(-0),x=%ShareObject(1.5),y=%ShareObject(1.5);a[0]=n;Atomics.compareExchange(a,0,n,9);let r=Number.isNaN(a[0]);a[0]=z;Atomics.compareExchange(a,0,0,7);r+=','+a[0];a[0]=x;Atomics.compareExchange(a,0,y,8);r+=','+a[0];";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,7,8");
 }
 
@@ -817,7 +949,11 @@ fn shared_number_root_survives_collection_and_store_reads() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%ShareObject(1.5),a=new SharedArray(1);a[0]=x;gc();%SharedGC();let r=[x,a[0],%IsSameHeapObject(x,a[0])].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "1.5,1.5,true");
 }
 
@@ -829,8 +965,15 @@ fn shared_number_preserves_nan_zero_and_collection_semantics() {
     environment.conformance_native_main_source = Some(0);
     let source = "const n=%ShareObject(NaN),z=%ShareObject(-0),i=%ShareObject(Infinity);let r=[n===n,Number.isNaN(n),Object.is(n,NaN),Object.is(z,-0),Object.is(z,0),1/z,JSON.stringify([n,z,i]),new Set([n,NaN,z,0]).size,z==0n,z===0,Object.is(new Map([[z,1]]).keys().next().value,0)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "false,true,true,true,false,-Infinity,[null,0,null],2,true,true,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "false,true,true,true,false,-Infinity,[null,0,null],2,true,true,true"
+    );
 }
 
 #[test]
@@ -843,8 +986,18 @@ fn shared_number_preserves_identity_across_state_transport() {
     environment.conformance_native_main_source = Some(0);
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let delivered = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
-    assert!(delivered.failed.is_empty(), "{:?}", common::failure(&delivered));
+    let delivered = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
+    assert!(
+        delivered.failed.is_empty(),
+        "{:?}",
+        common::failure(&delivered)
+    );
     assert_eq!(common::console(&delivered), ["true true"]);
 }
 
@@ -853,8 +1006,11 @@ fn shared_number_rejects_forged_snapshot_payload() {
     fn tamper(value: &mut serde_json::Value) -> bool {
         match value {
             serde_json::Value::Object(map) => {
-                if let Some(serde_json::Value::Array(fields)) = map.get_mut("q") {
-                    if fields.len() == 2 { fields[0] = serde_json::json!(0); return true; }
+                if let Some(serde_json::Value::Array(fields)) = map.get_mut("q")
+                    && fields.len() == 2
+                {
+                    fields[0] = serde_json::json!(0);
+                    return true;
                 }
                 map.values_mut().any(tamper)
             }
@@ -872,9 +1028,10 @@ fn shared_number_rejects_forged_snapshot_payload() {
     let mut wire = serde_json::to_value(loaded.state).unwrap();
     assert!(tamper(&mut wire));
     let state = serde_json::from_value(wire).unwrap();
-    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 10).is_err());
+    assert!(
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 10).is_err()
+    );
 }
-
 
 #[test]
 fn external_string_resources_preserve_aliases_encodings_and_snapshots() {
@@ -887,8 +1044,18 @@ fn external_string_resources_preserve_aliases_encodings_and_snapshots() {
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     assert_eq!(common::global(&loaded, "r"), "true,false,true,abc");
-    let delivered = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 1.0, 10).unwrap();
-    assert!(delivered.failed.is_empty(), "{:?}", common::failure(&delivered));
+    let delivered = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        1.0,
+        10,
+    )
+    .unwrap();
+    assert!(
+        delivered.failed.is_empty(),
+        "{:?}",
+        common::failure(&delivered)
+    );
     assert_eq!(common::console(&delivered), ["false true"]);
 }
 
@@ -899,8 +1066,15 @@ fn local_heap_number_identity_and_numeric_semantics() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%AllocateHeapNumber(), y=x, z=%AllocateHeapNumber();let r=[%IsSameHeapObject(x,y),%IsSameHeapObject(x,z),typeof x,x===0,x==0,x+2,x*3,Object.is(x,0),JSON.stringify(x),new Map([[x,7]]).get(0),%InYoungGeneration(x)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,false,number,true,true,2,0,true,0,7,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,false,number,true,true,2,0,true,0,7,true"
+    );
 }
 
 #[test]
@@ -911,8 +1085,18 @@ fn local_heap_number_identity_survives_collection_and_snapshot() {
     let sources = vec!["const x=%AllocateHeapNumber(),y=x;gc();let r='';setTimeout(()=>r=[%IsSameHeapObject(x,y),%InYoungGeneration(x),x+1].join(),0);".to_string()];
     let host = common::host();
     let execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(execution.state), execution.effects.next_timer_ms.unwrap(), 1).unwrap();
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(execution.state),
+        execution.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
     assert_eq!(common::global(&resumed, "r"), "true,false,1");
 }
 
@@ -923,8 +1107,15 @@ fn local_heap_number_numeric_consumers_and_boxing() {
     environment.conformance_native_main_source = Some(0);
     let source = "const x=%AllocateHeapNumber(),a=Object(x),b=new Number(x);let r=[%IsSameHeapObject(x,Number(x)),%IsSameHeapObject(x,a.valueOf()),%IsSameHeapObject(x,b.valueOf()),x.toFixed(1),Math.max(x,2),new Uint8Array([x])[0],JSON.stringify({v:x}),Number.isFinite(x),Number.isInteger(x),x<2,Boolean(x),String(x),BigInt(x)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,true,0.0,2,0,{\"v\":0},true,true,true,false,0,0");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,true,0.0,2,0,{\"v\":0},true,true,true,false,0,0"
+    );
 }
 
 /** A saved local-number identity cannot be forged to point at another heap object. */
@@ -933,8 +1124,11 @@ fn local_heap_number_rejects_forged_snapshot() {
     fn tamper(value: &mut serde_json::Value) -> bool {
         match value {
             serde_json::Value::Object(map) => {
-                if let Some(serde_json::Value::Array(fields)) = map.get_mut("Q") {
-                    if fields.len() == 2 { fields[0] = serde_json::json!(1); return true; }
+                if let Some(serde_json::Value::Array(fields)) = map.get_mut("Q")
+                    && fields.len() == 2
+                {
+                    fields[0] = serde_json::json!(1);
+                    return true;
                 }
                 map.values_mut().any(tamper)
             }
@@ -951,7 +1145,9 @@ fn local_heap_number_rejects_forged_snapshot() {
     let mut wire = serde_json::to_value(execution.state).unwrap();
     assert!(tamper(&mut wire));
     let state = serde_json::from_value(wire).unwrap();
-    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).is_err());
+    assert!(
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).is_err()
+    );
 }
 
 #[test]
@@ -964,8 +1160,17 @@ fn shared_slot_smi_tag_survives_numeric_operations_and_snapshot() {
     let host = common::host();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 1).unwrap();
-    assert_eq!(common::global(&resumed, "r"), "true|true|true|true|2|-14|false|true|true|7|[0,-7]");
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
+    assert_eq!(
+        common::global(&resumed, "r"),
+        "true|true|true|true|2|-14|false|true|true|7|[0,-7]"
+    );
 }
 
 #[test]
@@ -976,8 +1181,15 @@ fn tagged_smi_behaves_as_number_at_native_boundaries() {
     environment.conformance_native_main_source = Some(0);
     let source = "const a=SharedArray(2);a[0]=0;a[1]=2;const x=a[0],y=a[1];let r=[typeof x,x.toFixed(1),Math.max(x,3),new Uint8Array([y])[0],Number.isFinite(y),new Array(y).length,BigInt(y),JSON.stringify({v:x}),JSON.stringify({0:1,2:3},[y]),x==0n,x===0,Object.is(x,-0),[y].indexOf(2),({2:'yes'})[y]].join('|');";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "number|0.0|3|2|true|2|2|{\"v\":0}|{\"2\":3}|true|true|false|0|yes");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "number|0.0|3|2|true|2|2|{\"v\":0}|{\"2\":3}|true|true|false|0|yes"
+    );
 }
 
 #[test]
@@ -988,8 +1200,15 @@ fn shared_atomic_number_replacements_are_published_with_identity() {
     environment.conformance_native_main_source = Some(0);
     let source = "const a=SharedArray(1),n=%AllocateHeapNumber();a[0]=2;const old=Atomics.exchange(a,0,1.5),x=a[0];let r=[old===2,x===1.5,%IsSameHeapObject(x,a[0]),Atomics.compareExchange(a,0,1.5,n)===1.5,a[0]===0,%IsSameHeapObject(a[0],n),%IsSameHeapObject(a[0],a[0])].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,false,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,true,true,true,false,true"
+    );
 }
 
 #[test]
@@ -1015,8 +1234,15 @@ fn tagged_small_integer_arithmetic_keeps_fast_path_provenance() {
     environment.conformance_native_main_source = Some(0);
     let source = "let x=1,y=2;let r=[%IsSmi(x+y),%IsSmi(y-x),%IsSmi(x*y),%IsSmi(-x),%IsSmi(~x),%IsSmi(++y),%IsSmi(y/x),%IsSmi(y%x),%IsSmi(y&x),%IsSmi(y<<x),%IsSmi(0*-1),Object.is(0*-1,-0),%IsSmi(1073741823+1)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,true,true,true,true,true,true,true,true,false,true,false");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,true,true,true,true,true,true,true,true,false,true,false"
+    );
 }
 
 /** Heap number creation keeps real aliases and runs authored numeric conversion exactly once. */
@@ -1028,8 +1254,15 @@ fn heap_number_with_value_preserves_identity_and_numeric_coercion() {
     environment.conformance_native_main_source = Some(0);
     let source = "let gets=0;const x=%AllocateHeapNumberWithValue(42),y=%AllocateHeapNumberWithValue(x),z=%AllocateHeapNumberWithValue({valueOf(){gets++;return '123'}}),nan=%AllocateHeapNumberWithValue('not a number');let bad=false;try{%AllocateHeapNumberWithValue(Symbol.iterator)}catch(e){bad=e instanceof TypeError}let side=0;const absent=%AllocateHeapNumberWithValue(),extra=%AllocateHeapNumberWithValue(1,++side);let r=[x===42,%IsSameHeapObject(x,y),%IsSmi(x),z===123,gets,Number.isNaN(nan),bad,absent===undefined,extra===undefined,side].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "true,true,false,true,1,true,true,true,true,1");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "true,true,false,true,1,true,true,true,true,1"
+    );
 }
 
 /** Non-finite boxed values survive the same public state boundary as ordinary numbers. */
@@ -1042,7 +1275,13 @@ fn heap_number_with_nonfinite_value_survives_snapshot() {
     let host = common::host();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 1).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
     assert_eq!(common::global(&resumed, "r"), "true,true");
 }
 
@@ -1053,9 +1292,11 @@ fn heap_number_with_value_refuses_untracked_identity() {
     environment.conformance_d8 = true;
     environment.conformance_native_main_source = Some(0);
     let execution = common::load_with("%AllocateHeapNumberWithValue(Math.sqrt(2));", &environment);
-    assert!(common::failure(&execution).is_some_and(|message| message.contains("HeapNumber identity for untracked number")));
+    assert!(
+        common::failure(&execution)
+            .is_some_and(|message| message.contains("HeapNumber identity for untracked number"))
+    );
 }
-
 
 /** Bytecode number constants retain actual per-code allocation identity across GC and transport. */
 #[test]
@@ -1067,10 +1308,15 @@ fn heap_number_literals_keep_per_code_constant_identity() {
     let host = common::host();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 1).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
     assert_eq!(common::global(&resumed, "r"), "true,false,true,false,2.5");
 }
-
 
 /** Reused dynamic evaluation sites cannot alias old constants from different source text. */
 #[test]
@@ -1082,7 +1328,13 @@ fn numeric_constant_sites_follow_dynamic_source_changes() {
     let host = common::host();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(loaded.state), loaded.effects.next_timer_ms.unwrap(), 1).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        loaded.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
     assert_eq!(common::global(&resumed, "r"), "1.5,2.5,1.5,true,true");
 }
 
@@ -1094,7 +1346,11 @@ fn equal_heap_number_literals_share_their_function_pool() {
     environment.conformance_native_main_source = Some(0);
     let source = "function f(){return [1.5,1.5]}const [a,b]=f();let r=[%IsSameHeapObject(a,b),%IsSameHeapObject(a,%AllocateHeapNumberWithValue(a)),%InYoungGeneration(a)].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
     assert_eq!(common::global(&execution, "r"), "true,true,false");
 }
 
@@ -1115,7 +1371,9 @@ fn forged_numeric_constant_source_is_rejected() {
     let original = pool["source"][0].as_u64().unwrap();
     pool["source"][0] = serde_json::json!(original ^ 1);
     let state = serde_json::from_value::<mars_v9::VmState>(wire).unwrap();
-    assert!(mars_v9::run_timers(common::input(&sources, &host, &environment), state, 0.0, 1).is_err());
+    assert!(
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 0.0, 1).is_err()
+    );
 }
 
 /** Negative heap-number bit patterns remain exact through JSON map keys and state transport. */
@@ -1127,7 +1385,13 @@ fn negative_heap_number_constant_survives_snapshot() {
     let sources = vec!["function f(){return -1.5}const x=f();let r=0;setTimeout(()=>r=[x,%IsSameHeapObject(x,f())].join(),0);".to_string()];
     let host = common::host();
     let execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
-    let resumed = mars_v9::run_timers(common::input(&sources, &host, &environment), common::round_trip(execution.state), execution.effects.next_timer_ms.unwrap(), 1).unwrap();
+    let resumed = mars_v9::run_timers(
+        common::input(&sources, &host, &environment),
+        common::round_trip(execution.state),
+        execution.effects.next_timer_ms.unwrap(),
+        1,
+    )
+    .unwrap();
     assert_eq!(common::global(&resumed, "r"), "-1.5,true");
 }
 
@@ -1139,6 +1403,13 @@ fn native_numeric_and_buffer_limits_match_real_boundaries() {
     environment.conformance_native_main_source = Some(0);
     let source = "const n=%MaxSmi(),cap=%ArrayBufferMaxByteLength();let ordinary=false,shared=false;try{new ArrayBuffer(cap+1)}catch(e){ordinary=e instanceof RangeError}try{new SharedArrayBuffer(cap+1)}catch(e){shared=e instanceof RangeError}const a=new ArrayBuffer(cap),b=new SharedArrayBuffer(cap);let r=[n,%IsSmi(n),%IsSmi(n+1),%IsSmi(cap),a.byteLength,b.byteLength,ordinary,shared].join();";
     let execution = common::load_with(source, &environment);
-    assert!(execution.failed.is_empty(), "{:?}", common::failure(&execution));
-    assert_eq!(common::global(&execution, "r"), "1073741823,true,false,true,2097152,2097152,true,true");
+    assert!(
+        execution.failed.is_empty(),
+        "{:?}",
+        common::failure(&execution)
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "1073741823,true,false,true,2097152,2097152,true,true"
+    );
 }

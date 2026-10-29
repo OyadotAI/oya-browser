@@ -9,7 +9,7 @@ pub(super) fn create(vm: &mut Vm, call: Call) -> Res<JsValue> {
         if !matches!(value, JsValue::Object(_)) {
             return Err(vm.type_error("Iterator.concat called on non-object"));
         }
-        let method = vm.get(&value, &Key::Sym(symbol::ITERATOR))?;
+        let method = vm.get(value, &Key::Sym(symbol::ITERATOR))?;
         if !vm.is_callable(&method) {
             return Err(vm.type_error("Iterator.concat argument is not iterable"));
         }

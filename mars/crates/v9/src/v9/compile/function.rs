@@ -105,7 +105,10 @@ impl Compiler {
             && let Some(name) = &func.name
             && !params.contains(name)
             // The activation's implicit arguments object shadows the expression's outer self binding.
-            && !(uses.arguments && &**name == "arguments" && !func.flags.arrow && !func.flags.fields)
+            && (!uses.arguments
+                || &**name != "arguments"
+                || func.flags.arrow
+                || func.flags.fields)
             && (!vars.contains(name) || super::parameters::expressions(func))
         {
             self.declare(name, Declared::FunctionName)?;
@@ -255,12 +258,12 @@ impl Compiler {
         let initialize = !simple_parameters(func);
         for (index, param) in func.params.iter().enumerate() {
             self.emit(Op::Arg(index as Slot));
-            self.bind_pattern(param, initialize)?;
+            self.bind_pattern(param, initialize, Source::Parameter)?;
             self.emit(Op::Pop);
         }
         if let Some(rest) = &func.rest {
             self.emit(Op::RestArgs(func.params.len() as Slot));
-            self.bind_pattern(rest, initialize)?;
+            self.bind_pattern(rest, initialize, Source::Parameter)?;
             self.emit(Op::Pop);
         }
         Ok(())

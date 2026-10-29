@@ -78,8 +78,8 @@ fn a_hybrid_answer_of_the_wrong_length_is_refused() {
     assert!(client.complete(&[0; 1088]).is_err());
 }
 
-/** The extensions of the first ClientHello the shared configuration writes. */
-fn hello_extensions() -> Vec<(u16, Vec<u8>)> {
+/** The cipher suites and extensions of the first ClientHello the shared configuration writes. */
+fn hello() -> (Vec<u16>, Vec<(u16, Vec<u8>)>) {
     let name = rustls::pki_types::ServerName::try_from("example.com").expect("name");
     let mut connection =
         rustls::ClientConnection::new(super::config().expect("config"), name).expect("conn");
@@ -89,33 +89,237 @@ fn hello_extensions() -> Vec<(u16, Vec<u8>)> {
         std::fs::write(path, &wire).expect("dump");
     }
     let hello = &wire[5 + 4..];
+    let u16_at = |at: usize| u16::from_be_bytes([hello[at], hello[at + 1]]);
     let mut at = 2 + 32;
     at += 1 + usize::from(hello[at]);
-    at += 2 + usize::from(u16::from_be_bytes([hello[at], hello[at + 1]]));
+    let suites = (0..usize::from(u16_at(at)) / 2)
+        .map(|index| u16_at(at + 2 + 2 * index))
+        .collect();
+    at += 2 + usize::from(u16_at(at));
     at += 1 + usize::from(hello[at]);
-    let end = at + 2 + usize::from(u16::from_be_bytes([hello[at], hello[at + 1]]));
+    let end = at + 2 + usize::from(u16_at(at));
     at += 2;
     let mut extensions = Vec::new();
     while at < end {
-        let kind = u16::from_be_bytes([hello[at], hello[at + 1]]);
-        let length = usize::from(u16::from_be_bytes([hello[at + 2], hello[at + 3]]));
+        let (kind, length) = (u16_at(at), usize::from(u16_at(at + 2)));
         extensions.push((kind, hello[at + 4..at + 4 + length].to_vec()));
         at += 4 + length;
     }
-    extensions
+    (suites, extensions)
+}
+
+/** The extensions of the first ClientHello the shared configuration writes. */
+fn hello_extensions() -> Vec<(u16, Vec<u8>)> {
+    hello().1
+}
+
+/** The body of extension `kind`, which must be present. */
+fn extension(extensions: &[(u16, Vec<u8>)], kind: u16) -> &[u8] {
+    &extensions.iter().find(|(k, _)| *k == kind).expect("ext").1
+}
+
+/** Chrome's suites, in Chrome's order, after its leading GREASE. */
+const CHROME_SUITES: [u16; 15] = [
+    0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c,
+    0x009d, 0x002f, 0x0035,
+];
+/** Chrome's extension types, sorted; GREASE ones excluded. */
+const CHROME_EXTENSIONS: [u16; 16] = [
+    0, 5, 10, 11, 13, 16, 18, 23, 27, 35, 43, 45, 51, 17613, 65037, 65281,
+];
+
+/** The lowercase hex of a hash's first twelve characters, as JA4 abbreviates. */
+fn ja4_hash(text: &str) -> String {
+    hex(ring::digest::digest(&ring::digest::SHA256, text.as_bytes()).as_ref())[..12].to_owned()
+}
+
+/** The comma-joined four-digit hex of sorted codes, JA4's raw form. */
+fn sorted_hex(codes: impl Iterator<Item = u16>) -> String {
+    let mut codes: Vec<u16> = codes.collect();
+    codes.sort_unstable();
+    codes
+        .iter()
+        .map(|code| format!("{code:04x}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/** JA4 (FoxIO) of the first hello: version, SNI, counts, ALPN, then the two sorted-list hashes. */
+fn ja4(suites: &[u16], extensions: &[(u16, Vec<u8>)]) -> (String, String, String) {
+    let real_suites = suites
+        .iter()
+        .copied()
+        .filter(|s| !rustls::client::is_grease(*s));
+    let real_extensions = || {
+        extensions
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| !rustls::client::is_grease(*k))
+    };
+    let alpn = extension(extensions, 16);
+    let first = alpn[3] as char;
+    let last = alpn[3 + usize::from(alpn[2]) - 1] as char;
+    let a = format!(
+        "t13d{:02}{:02}{first}{last}",
+        real_suites.clone().count(),
+        real_extensions().count()
+    );
+    let signature_algorithms = extension(extensions, 13);
+    let schemes = signature_algorithms[2..]
+        .chunks(2)
+        .map(|pair| format!("{:02x}{:02x}", pair[0], pair[1]))
+        .collect::<Vec<_>>()
+        .join(",");
+    let b = sorted_hex(real_suites);
+    let c = format!(
+        "{}_{schemes}",
+        sorted_hex(real_extensions().filter(|k| *k != 0 && *k != 16))
+    );
+    (a, b, c)
 }
 
 #[test]
 fn the_hello_offers_chromes_groups_and_both_of_chromes_key_shares() {
     let extensions = hello_extensions();
-    let find = |kind| &extensions.iter().find(|(k, _)| *k == kind).expect("ext").1;
+    let groups = extension(&extensions, 10);
+    assert!(rustls::client::is_grease(u16::from_be_bytes([
+        groups[2], groups[3]
+    ])));
     assert_eq!(
-        find(10),
-        &[0, 8, 0x11, 0xec, 0x00, 0x1d, 0x00, 0x17, 0x00, 0x18]
+        &groups[4..],
+        &[0x11, 0xec, 0x00, 0x1d, 0x00, 0x17, 0x00, 0x18]
     );
-    let shares = find(51);
-    assert_eq!(&shares[2..6], &[0x11, 0xec, 0x04, 0xc0]);
-    assert_eq!(&shares[6 + 1216..6 + 1216 + 4], &[0x00, 0x1d, 0x00, 0x20]);
+    let shares = extension(&extensions, 51);
+    let grease_share = 2 + 2 + 2 + 1;
+    assert_eq!(&shares[4..7], &[0, 1, 0]);
+    assert_eq!(
+        &shares[grease_share..grease_share + 4],
+        &[0x11, 0xec, 0x04, 0xc0]
+    );
+    let x25519 = grease_share + 4 + 1216;
+    assert_eq!(&shares[x25519..x25519 + 4], &[0x00, 0x1d, 0x00, 0x20]);
+}
+
+#[test]
+fn the_hello_offers_chromes_suites_behind_a_grease_one_and_no_scsv() {
+    let (suites, _) = hello();
+    assert!(rustls::client::is_grease(suites[0]));
+    assert_eq!(&suites[1..], &CHROME_SUITES);
+}
+
+#[test]
+fn the_hello_carries_chromes_extensions_wrapped_in_grease() {
+    let extensions = hello_extensions();
+    let (first, first_body) = &extensions[0];
+    let (last, last_body) = extensions.last().expect("last");
+    assert!(rustls::client::is_grease(*first) && first_body.is_empty());
+    assert!(rustls::client::is_grease(*last) && last_body == &[0]);
+    assert_ne!(first, last);
+    let mut kinds: Vec<u16> = extensions
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| !rustls::client::is_grease(*k))
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, CHROME_EXTENSIONS);
+    assert_eq!(extension(&extensions, 65281), &[0]);
+    assert!(extension(&extensions, 18).is_empty());
+    let versions = extension(&extensions, 43);
+    assert!(rustls::client::is_grease(u16::from_be_bytes([
+        versions[1],
+        versions[2]
+    ])));
+    assert_eq!(&versions[3..], &[3, 4, 3, 3]);
+}
+
+#[test]
+fn the_grease_ech_outer_is_shaped_like_chromes() {
+    let extensions = hello_extensions();
+    let ech = extension(&extensions, 65037);
+    assert_eq!(&ech[..5], &[0, 0, 1, 0, 1]);
+    assert_eq!(&ech[6..8], &[0, 32]);
+    assert_eq!(&ech[40..42], &[0, 208]);
+    assert_eq!(ech.len(), 1 + 4 + 1 + 2 + 32 + 2 + 208);
+}
+
+#[test]
+fn grease_values_change_between_connections() {
+    let grease = |extensions: Vec<(u16, Vec<u8>)>| {
+        extensions
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| rustls::client::is_grease(*k))
+            .chain(
+                extension(&extensions, 10)[2..4]
+                    .iter()
+                    .map(|b| u16::from(*b)),
+            )
+            .collect::<Vec<_>>()
+    };
+    assert_ne!(grease(hello_extensions()), grease(hello_extensions()));
+}
+
+/** The ALPS offer names h2 alone, as Chrome's does. */
+#[test]
+fn the_hello_offers_alps_for_h2() {
+    assert_eq!(
+        extension(&hello_extensions(), 17613),
+        &[0, 3, 2, b'h', b'2']
+    );
+}
+
+/** JA4 is Chrome's, hash for hash: FoxIO's published `t13d1516h2_8daaf6152771_d8a2da3f94cd`. */
+#[test]
+fn the_ja4_is_chromes() {
+    let (suites, extensions) = hello();
+    let (a, b, c) = ja4(&suites, &extensions);
+    assert_eq!(a, "t13d1516h2");
+    assert_eq!(
+        b,
+        "002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9"
+    );
+    assert_eq!(ja4_hash(&b), "8daaf6152771");
+    assert_eq!(
+        c,
+        "0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,fe0d,ff01_\
+         0403,0804,0401,0503,0805,0501,0806,0601"
+    );
+    assert_eq!(ja4_hash(&c), "d8a2da3f94cd");
+}
+
+/** Protocol version lists, `'static` as Rustls's server builder wants them. */
+const TLS13_ONLY: &[&rustls::SupportedProtocolVersion] = &[&rustls::version::TLS13];
+const TLS12_ONLY: &[&rustls::SupportedProtocolVersion] = &[&rustls::version::TLS12];
+
+/** The shaped client completes a handshake with a server of the given versions and groups. */
+fn handshakes(
+    versions: &'static [&'static rustls::SupportedProtocolVersion],
+    groups: Vec<&'static dyn rustls::crypto::SupportedKxGroup>,
+) {
+    let (address, server) = super::super::testing::handshake_server(versions, groups);
+    let config = super::build_with(super::super::testing::test_roots()).expect("config");
+    let name = rustls::pki_types::ServerName::try_from("localhost").expect("name");
+    let mut client = rustls::ClientConnection::new(config, name).expect("client");
+    let mut socket = std::net::TcpStream::connect(address).expect("connect");
+    while client.is_handshaking() {
+        client.complete_io(&mut socket).expect("handshake");
+    }
+    server.join().expect("server");
+}
+
+#[test]
+fn the_shaped_hello_handshakes_tls13() {
+    handshakes(TLS13_ONLY, vec![rustls::crypto::ring::kx_group::X25519]);
+}
+
+#[test]
+fn the_shaped_hello_handshakes_a_tls12_only_server() {
+    handshakes(TLS12_ONLY, vec![rustls::crypto::ring::kx_group::X25519]);
+}
+
+#[test]
+fn the_shaped_hello_survives_a_hello_retry_request() {
+    handshakes(TLS13_ONLY, vec![rustls::crypto::ring::kx_group::SECP384R1]);
 }
 
 /**

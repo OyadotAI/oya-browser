@@ -7,7 +7,10 @@ use common::eval;
 fn serialize_keeps_escapes_and_namespace_of_parsed_xml() {
     let source = "const doc=new DOMParser().parseFromString('<root xmlns=\"urn:x\"><a b=\"&quot;&amp;\">t&lt;</a><!--c--></root>','application/xml');\
         const r=new XMLSerializer().serializeToString(doc.documentElement);";
-    assert_eq!(eval(source, "r"), "<root xmlns=\"urn:x\"><a b=\"&quot;&amp;\">t&lt;</a><!--c--></root>");
+    assert_eq!(
+        eval(source, "r"),
+        "<root xmlns=\"urn:x\"><a b=\"&quot;&amp;\">t&lt;</a><!--c--></root>"
+    );
 }
 
 /** An element with no children is written self-closing, as XML requires. */

@@ -4,7 +4,7 @@ the app hands back fires `message` with the data, origin and source proxy. */
 mod common;
 
 use common::{failure, global, host, input, load_with, round_trip};
-use mars_v9::{MESSAGE_PARENT, MessageData, PageEvent, PageEnvironment};
+use mars_v9::{MESSAGE_PARENT, MessageData, PageEnvironment, PageEvent};
 
 /** The environment of a page running in a frame of https://embedder.test. */
 fn framed() -> PageEnvironment {
@@ -32,10 +32,7 @@ fn a_message_to_the_own_window_arrives_from_a_task() {
         16,
     )
     .expect("timers");
-    assert_eq!(
-        global(&after, "out"),
-        "sync;got:x:https://example.com:true"
-    );
+    assert_eq!(global(&after, "out"), "sync;got:x:https://example.com:true");
 }
 
 /** In a frame, `parent` is a proxy and posting to it leaves the realm as an effect. */
@@ -82,6 +79,7 @@ fn a_message_from_the_parent_fires_with_its_proxy_as_source() {
             data: MessageData::Json("{\"n\":7}".into()),
             origin: "https://embedder.test".into(),
             source: Some(MESSAGE_PARENT),
+            ports: Vec::new(),
         },
     )
     .expect("message");

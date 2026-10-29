@@ -143,7 +143,11 @@ impl TokenSet {
         }
         let mut rest = index as i64 + 1;
         let mut found = 0;
-        let mut step = if size == 0 { 0 } else { 1 << (usize::BITS - 1 - size.leading_zeros()) };
+        let mut step = if size == 0 {
+            0
+        } else {
+            1 << (usize::BITS - 1 - size.leading_zeros())
+        };
         while step > 0 {
             if found + step <= size && self.counts[found + step] < rest {
                 found += step;
@@ -231,7 +235,10 @@ mod tests {
             } else if step % 5 == 0 {
                 let other = format!("r{step}");
                 if set.replace(&token, &other) {
-                    let at = model.iter().position(|t| *t == token).expect("model holds it");
+                    let at = model
+                        .iter()
+                        .position(|t| *t == token)
+                        .expect("model holds it");
                     model[at] = other;
                     model.dedup();
                 }
@@ -240,7 +247,11 @@ mod tests {
             }
             assert_eq!(set.len(), model.len());
             for (index, expected) in model.iter().enumerate() {
-                assert_eq!(set.nth(index), Some(expected.as_str()), "step {step} index {index}");
+                assert_eq!(
+                    set.nth(index),
+                    Some(expected.as_str()),
+                    "step {step} index {index}"
+                );
             }
             assert_eq!(set.nth(model.len()), None);
         }

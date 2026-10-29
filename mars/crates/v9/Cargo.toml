@@ -23,6 +23,9 @@ icu_normalizer = { version = "=2.3.0", default-features = false, features = ["co
 icu_properties = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
+# Pure-Rust port of musl's fdlibm-derived math: the same algorithms V8 ships in
+# src/base/ieee754.cc, so Math results match Chrome bit for bit instead of the host libm.
+libm = "=0.2.16"
 
 [dev-dependencies]
 # The test host opens fixture paths relative to an owned directory descriptor.

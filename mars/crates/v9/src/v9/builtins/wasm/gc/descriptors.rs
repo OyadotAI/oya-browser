@@ -45,10 +45,14 @@ pub(super) fn signature(
             }
             let definition = &m.definitions[index as usize];
             if op >= 32 && definition.descriptor.is_none() {
-                return Err(Error::invalid(&format!("descriptor allocation used for type {index} without descriptor")));
+                return Err(Error::invalid(&format!(
+                    "descriptor allocation used for type {index} without descriptor"
+                )));
             }
             if op < 32 && definition.descriptor.is_some() {
-                return Err(Error::invalid(&format!("non-descriptor allocation used for type {index} with descriptor")));
+                return Err(Error::invalid(&format!(
+                    "non-descriptor allocation used for type {index} with descriptor"
+                )));
             }
             let mut params = if default {
                 vec![]
@@ -74,7 +78,11 @@ pub(super) fn signature(
                 Type::Ref(i64::from(index), op == 36)
             };
             let desc = descriptor_type(m, target)?;
-            let source = if gc_types::is_shared(m, target) { Type::Shared(-18, true) } else { Type::Ref(-18, true) };
+            let source = if gc_types::is_shared(m, target) {
+                Type::Shared(-18, true)
+            } else {
+                Type::Ref(-18, true)
+            };
             Ok((vec![source, desc], vec![target]))
         }
         _ => Err(Error::unsupported("WebAssembly descriptor instruction")),
@@ -98,7 +106,11 @@ pub(super) fn equality(
         return Ok(false);
     }
     if let Some(root) = shared::handle(vm, value) {
-        let descriptor_index = root.metadata()?.3.checked_sub(1).ok_or_else(|| vm.type_error("missing shared descriptor"))?;
+        let descriptor_index = root
+            .metadata()?
+            .3
+            .checked_sub(1)
+            .ok_or_else(|| vm.type_error("missing shared descriptor"))?;
         return Ok(shared::read(vm, &root, descriptor_index)? == *desc);
     }
     Ok(value
@@ -141,10 +153,15 @@ pub(super) fn construct(
         .map(|(f, v)| packed(vm, f, &v))
         .collect::<Res<Vec<_>>>()?;
     if definition.shared {
-        if let Some(value) = &desc { vm.pin(value.clone()); }
-        if values.len() > vm.limits.array_length { return Err(trap(vm, "requested new array is too large")); }
+        if let Some(value) = &desc {
+            vm.pin(value.clone());
+        }
+        if values.len() > vm.limits.array_length {
+            return Err(trap(vm, "requested new array is too large"));
+        }
         vm.charge(values.len())?;
-        let source = get(vm, instance, INSTANCE).ok_or_else(|| vm.type_error("invalid Wasm GC instance"))?;
+        let source =
+            get(vm, instance, INSTANCE).ok_or_else(|| vm.type_error("invalid Wasm GC instance"))?;
         return shared::allocate_described(vm, &source, m, index, false, values, desc);
     }
     let prototype = if definition.describes.is_some() && js_interop_enabled(vm) {
@@ -154,10 +171,10 @@ pub(super) fn construct(
     };
     let value = allocate(vm, instance, index, false, values)?;
     let object = value.object().unwrap();
-    if definition.describes.is_some() {
-        if let Some(proto) = prototype {
-            set(vm, object, PROTOTYPE, JsValue::Object(proto))
-        }
+    if definition.describes.is_some()
+        && let Some(proto) = prototype
+    {
+        set(vm, object, PROTOTYPE, JsValue::Object(proto))
     }
     if let Some(desc) = desc {
         let proto = desc
@@ -173,7 +190,11 @@ pub(super) fn construct(
 pub(super) fn get_descriptor(vm: &mut Vm, m: &Module, index: u32, value: &JsValue) -> Res<JsValue> {
     check(vm, m, value, index)?;
     if let Some(root) = shared::handle(vm, value) {
-        let descriptor_index = root.metadata()?.3.checked_sub(1).ok_or_else(|| vm.type_error("missing shared descriptor"))?;
+        let descriptor_index = root
+            .metadata()?
+            .3
+            .checked_sub(1)
+            .ok_or_else(|| vm.type_error("missing shared descriptor"))?;
         return shared::read(vm, &root, descriptor_index);
     }
     get(vm, value.object().unwrap(), DESCRIPTOR)

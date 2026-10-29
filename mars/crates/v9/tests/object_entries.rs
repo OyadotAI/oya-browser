@@ -13,7 +13,8 @@ fn getters_that_remove_or_hide_later_keys_are_seen() {
 /** A key a getter adds is not visited, since the key list is taken before any value is read. */
 #[test]
 fn keys_added_by_a_getter_are_not_visited() {
-    let source = "const o={get x(){this.z=3;return 1},y:2};const r=JSON.stringify(Object.entries(o));";
+    let source =
+        "const o={get x(){this.z=3;return 1},y:2};const r=JSON.stringify(Object.entries(o));";
     assert_eq!(common::eval(source, "r"), "[[\"x\",1],[\"y\",2]]");
 }
 

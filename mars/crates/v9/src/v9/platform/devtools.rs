@@ -739,10 +739,9 @@ fn release(vm: &mut Vm, handle: u32) -> EngineResult<()> {
     let table = handles(vm)?;
     if let Some(index) = (handle as usize).checked_sub(1)
         && let Some(Class::Array(elements)) = vm.heap.get_mut(table).map(|object| &mut object.class)
+        && index < elements.len()
     {
-        if index < elements.len() {
-            elements.set(index, JsValue::Hole);
-        }
+        elements.set(index, JsValue::Hole);
     }
     Ok(())
 }
@@ -1092,7 +1091,9 @@ fn property_preview(vm: &mut Vm, name: &str, value: &JsValue) -> Value {
         JsValue::Smi(number) => ("number", None, number_to_string(*number)),
         JsValue::Number(number) => ("number", None, number_to_string(*number)),
         #[cfg(feature = "conformance")]
-        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => ("number", None, number_to_string(number.value)),
+        JsValue::SharedNumber(number) | JsValue::LocalNumber(number) => {
+            ("number", None, number_to_string(number.value))
+        }
         JsValue::String(string) => ("string", None, string.lossy()),
         JsValue::BigInt(big) => ("bigint", None, format!("{big}n")),
         JsValue::BigIntWide(big) => ("bigint", None, format!("{}n", big.diagnostic())),

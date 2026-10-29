@@ -8,10 +8,14 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 static MATERIALIZATION_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /** Read the epoch after observing allocations to detect concurrent publication. */
-pub(in crate::v9) fn materialization_epoch() -> u64 { MATERIALIZATION_EPOCH.load(Ordering::Acquire) }
+pub(in crate::v9) fn materialization_epoch() -> u64 {
+    MATERIALIZATION_EPOCH.load(Ordering::Acquire)
+}
 
 /** Publish a new epoch only after the backing resource is visible. */
-fn materialized() { MATERIALIZATION_EPOCH.fetch_add(1, Ordering::Release); }
+fn materialized() {
+    MATERIALIZATION_EPOCH.fetch_add(1, Ordering::Release);
+}
 
 /** Short strings keep their original single flat allocation and efficient bulk-copy concatenation. */
 #[cfg(not(feature = "conformance"))]
@@ -103,10 +107,16 @@ pub(super) struct ExternalSlot {
 #[cfg(feature = "conformance")]
 impl ExternalSlot {
     pub(super) fn get(&self) -> Option<Arc<External>> {
-        self.value.lock().unwrap_or_else(|error| error.into_inner()).clone()
+        self.value
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
     fn take(&self) -> Option<Arc<External>> {
-        self.value.lock().unwrap_or_else(|error| error.into_inner()).take()
+        self.value
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
     }
 }
 /** The host owns the exact external encoding and its immutable UTF-16 view. */
@@ -234,13 +244,28 @@ impl Storage {
     /** Register this node by allocation identity without retaining its backing. */
     pub(super) fn downgrade(&self) -> ((u8, usize), WeakStorage) {
         match self {
-            Self::Flat(value) => ((0, Arc::as_ptr(value) as *const () as usize), WeakStorage::Flat(Arc::downgrade(value))),
+            Self::Flat(value) => (
+                (0, Arc::as_ptr(value) as *const () as usize),
+                WeakStorage::Flat(Arc::downgrade(value)),
+            ),
             #[cfg(feature = "conformance")]
-            Self::Shared(value) => ((1, Arc::as_ptr(value) as usize), WeakStorage::Shared(Arc::downgrade(value))),
-            Self::Cons(value) => ((2, Arc::as_ptr(value) as usize), WeakStorage::Cons(Arc::downgrade(value))),
-            Self::Repeat(value) => ((3, Arc::as_ptr(value) as usize), WeakStorage::Repeat(Arc::downgrade(value))),
+            Self::Shared(value) => (
+                (1, Arc::as_ptr(value) as usize),
+                WeakStorage::Shared(Arc::downgrade(value)),
+            ),
+            Self::Cons(value) => (
+                (2, Arc::as_ptr(value) as usize),
+                WeakStorage::Cons(Arc::downgrade(value)),
+            ),
+            Self::Repeat(value) => (
+                (3, Arc::as_ptr(value) as usize),
+                WeakStorage::Repeat(Arc::downgrade(value)),
+            ),
             #[cfg(feature = "conformance")]
-            Self::Slice(value) => ((4, Arc::as_ptr(value) as usize), WeakStorage::Slice(Arc::downgrade(value))),
+            Self::Slice(value) => (
+                (4, Arc::as_ptr(value) as usize),
+                WeakStorage::Slice(Arc::downgrade(value)),
+            ),
         }
     }
     #[cfg(feature = "conformance")]
@@ -314,18 +339,32 @@ impl Storage {
     pub(super) fn age_reachable(&self, major: bool, seen: &mut std::collections::BTreeSet<usize>) {
         let mut pending = vec![self.clone()];
         while let Some(value) = pending.pop() {
-            if !seen.insert(value.identity()) { continue; }
-            if let Some(target) = value.forwarding_target() { pending.push(target); }
-            if major { value.mark_old(); } else { value.survived_minor(); }
+            if !seen.insert(value.identity()) {
+                continue;
+            }
+            if let Some(target) = value.forwarding_target() {
+                pending.push(target);
+            }
+            if major {
+                value.mark_old();
+            } else {
+                value.survived_minor();
+            }
             match value {
                 Self::Slice(node) => pending.push(node.parent.clone()),
                 Self::Repeat(node) => {
                     pending.push(node.child.clone());
-                    if let Some(flat) = node.flat_identity.get() { pending.push(Self::Flat(flat.clone())); }
+                    if let Some(flat) = node.flat_identity.get() {
+                        pending.push(Self::Flat(flat.clone()));
+                    }
                 }
                 Self::Cons(node) => {
-                    if let Some((left, right)) = node.children().clone() { pending.extend([left, right]); }
-                    if let Some(flat) = node.flat_identity.get() { pending.push(Self::Flat(flat.clone())); }
+                    if let Some((left, right)) = node.children().clone() {
+                        pending.extend([left, right]);
+                    }
+                    if let Some(flat) = node.flat_identity.get() {
+                        pending.push(Self::Flat(flat.clone()));
+                    }
                 }
                 Self::Flat(_) | Self::Shared(_) => {}
             }
@@ -334,7 +373,13 @@ impl Storage {
     /** A thin string holds its canonical target strongly, preserving identity of the original cell. */
     #[cfg(feature = "conformance")]
     fn forwarding_slot(&self) -> Option<&OnceLock<Storage>> {
-        match self { Self::Flat(cell) => Some(&cell.forward), Self::Cons(node) => Some(&node.forward), Self::Repeat(node) => Some(&node.forward), Self::Slice(node) => Some(&node.forward), Self::Shared(_) => None }
+        match self {
+            Self::Flat(cell) => Some(&cell.forward),
+            Self::Cons(node) => Some(&node.forward),
+            Self::Repeat(node) => Some(&node.forward),
+            Self::Slice(node) => Some(&node.forward),
+            Self::Shared(_) => None,
+        }
     }
     #[cfg(feature = "conformance")]
     pub(super) fn forwarding_target(&self) -> Option<Self> {
@@ -342,45 +387,94 @@ impl Storage {
     }
     #[cfg(feature = "conformance")]
     pub(super) fn forward_to(&self, target: &Self) -> bool {
-        if self.is_read_only_root() { return self.same(target); }
-        let Some(slot) = self.forwarding_slot() else { return false };
-        if !target.interned() || target.forwarding_target().is_some() { return false; }
-        if self.same(target) { return true; }
-        if let Some(existing) = slot.get() { return existing.same(target); }
-        let published = match slot.set(target.clone()) { Ok(()) => true, Err(_) => slot.get().is_some_and(|existing| existing.same(target)) };
+        if self.is_read_only_root() {
+            return self.same(target);
+        }
+        let Some(slot) = self.forwarding_slot() else {
+            return false;
+        };
+        if !target.interned() || target.forwarding_target().is_some() {
+            return false;
+        }
+        if self.same(target) {
+            return true;
+        }
+        if let Some(existing) = slot.get() {
+            return existing.same(target);
+        }
+        let published = match slot.set(target.clone()) {
+            Ok(()) => true,
+            Err(_) => slot.get().is_some_and(|existing| existing.same(target)),
+        };
         if published {
-            let external = match self { Self::Flat(cell) => &cell.external, Self::Cons(node) => &node.external, Self::Repeat(node) => &node.external, Self::Slice(node) => &node.external, Self::Shared(_) => return false };
-            if external.take().is_some() { materialized(); }
+            let external = match self {
+                Self::Flat(cell) => &cell.external,
+                Self::Cons(node) => &node.external,
+                Self::Repeat(node) => &node.external,
+                Self::Slice(node) => &node.external,
+                Self::Shared(_) => return false,
+            };
+            if external.take().is_some() {
+                materialized();
+            }
         }
         published
     }
     #[cfg(feature = "conformance")]
     pub(super) fn interned(&self) -> bool {
-        match self { Self::Flat(cell) | Self::Shared(cell) => &cell.interned, Self::Cons(node) => &node.interned, Self::Repeat(node) => &node.interned, Self::Slice(node) => &node.interned }.load(Ordering::Acquire)
+        match self {
+            Self::Flat(cell) | Self::Shared(cell) => &cell.interned,
+            Self::Cons(node) => &node.interned,
+            Self::Repeat(node) => &node.interned,
+            Self::Slice(node) => &node.interned,
+        }
+        .load(Ordering::Acquire)
     }
     #[cfg(feature = "conformance")]
     pub(super) fn mark_interned(&self) -> bool {
-        if self.forwarding_target().is_some() || (!matches!(self, Self::Flat(_) | Self::Shared(_)) && !self.is_external()) { return false; }
-        let flag = match self { Self::Flat(cell) | Self::Shared(cell) => &cell.interned, Self::Cons(node) => &node.interned, Self::Repeat(node) => &node.interned, Self::Slice(node) => &node.interned };
+        if self.forwarding_target().is_some()
+            || (!matches!(self, Self::Flat(_) | Self::Shared(_)) && !self.is_external())
+        {
+            return false;
+        }
+        let flag = match self {
+            Self::Flat(cell) | Self::Shared(cell) => &cell.interned,
+            Self::Cons(node) => &node.interned,
+            Self::Repeat(node) => &node.interned,
+            Self::Slice(node) => &node.interned,
+        };
         self.mark_old();
         flag.store(true, Ordering::Release);
         true
     }
     #[cfg(feature = "conformance")]
     pub(super) fn can_intern_in_place(&self) -> bool {
-        if self.is_external() { self.external_is_cached() } else { matches!(self, Self::Flat(_) | Self::Shared(_)) }
+        if self.is_external() {
+            self.external_is_cached()
+        } else {
+            matches!(self, Self::Flat(_) | Self::Shared(_))
+        }
     }
     #[cfg(feature = "conformance")]
     fn external_is_cached(&self) -> bool {
-        let minimum = if self.one_byte_representation() { EXTERNAL_ONE_BYTE_CACHED_LENGTH } else { EXTERNAL_TWO_BYTE_CACHED_LENGTH };
+        let minimum = if self.one_byte_representation() {
+            EXTERNAL_ONE_BYTE_CACHED_LENGTH
+        } else {
+            EXTERNAL_TWO_BYTE_CACHED_LENGTH
+        };
         self.len() >= minimum
     }
     #[cfg(feature = "conformance")]
-    pub(super) fn forwarded_one_byte(&self) -> Option<bool> { self.forwarding_target().map(|target| target.one_byte_representation()) }
+    pub(super) fn forwarded_one_byte(&self) -> Option<bool> {
+        self.forwarding_target()
+            .map(|target| target.one_byte_representation())
+    }
     /** Rope representation follows actual child encodings, not just code-unit values. */
     #[cfg(feature = "conformance")]
     fn one_byte_representation(&self) -> bool {
-        if let Some(target) = self.forwarding_target() { return target.one_byte_representation(); }
+        if let Some(target) = self.forwarding_target() {
+            return target.one_byte_representation();
+        }
         match self {
             Self::Flat(cell) | Self::Shared(cell) => cell.one_byte,
             Self::Repeat(node) => node.child.one_byte_representation(),
@@ -401,18 +495,14 @@ impl Storage {
             Self::Flat(units) => Some(units),
             #[cfg(feature = "conformance")]
             Self::Shared(units) => Some(units),
-            Self::Cons(node) => {
-                node.flat.get().map(AsRef::as_ref)
-            }
+            Self::Cons(node) => node.flat.get().map(AsRef::as_ref),
             #[cfg(feature = "conformance")]
             Self::Slice(node) => node.flat.get().map(AsRef::as_ref).or_else(|| {
-                    node.parent
-                        .flat_units()
-                        .map(|units| &units[node.start..node.start + node.length])
-                }),
-            Self::Repeat(node) => {
-                node.flat.get().map(AsRef::as_ref)
-            }
+                node.parent
+                    .flat_units()
+                    .map(|units| &units[node.start..node.start + node.length])
+            }),
+            Self::Repeat(node) => node.flat.get().map(AsRef::as_ref),
         }
     }
     /** New cells preserve alias identity while allowing the backing to be externalized once. */
@@ -462,10 +552,15 @@ impl Storage {
     #[cfg(feature = "conformance")]
     pub(super) fn character_root(unit: u8) -> Self {
         Self::Flat(Arc::new(FlatData {
-            units: Arc::from([u16::from(unit)]), one_byte: true,
-            external: ExternalSlot::default(), old: AtomicBool::new(true),
-            survivals: AtomicU8::new(0), id: Self::next_id(),
-            interned: AtomicBool::new(true), read_only: true, forward: OnceLock::new(),
+            units: Arc::from([u16::from(unit)]),
+            one_byte: true,
+            external: ExternalSlot::default(),
+            old: AtomicBool::new(true),
+            survivals: AtomicU8::new(0),
+            id: Self::next_id(),
+            interned: AtomicBool::new(true),
+            read_only: true,
+            forward: OnceLock::new(),
         }))
     }
     #[cfg(feature = "conformance")]
@@ -476,27 +571,42 @@ impl Storage {
     /** Publish an actual owned external allocation without changing code units or alias identity. */
     #[cfg(feature = "conformance")]
     pub(super) fn externalize(&self, one_byte: bool) -> crate::protocol::EngineResult<()> {
-        if self.is_read_only_root() { return Err(crate::protocol::EngineError::invalid("Cannot externalize a read-only string.")); }
-        if let Some(target) = self.forwarding_target() { return target.externalize(one_byte); }
+        if self.is_read_only_root() {
+            return Err(crate::protocol::EngineError::invalid(
+                "Cannot externalize a read-only string.",
+            ));
+        }
+        if let Some(target) = self.forwarding_target() {
+            return target.externalize(one_byte);
+        }
         let target = match self {
             Self::Flat(cell) | Self::Shared(cell) => &cell.external,
             Self::Cons(node) => &node.external,
             Self::Repeat(node) => &node.external,
             Self::Slice(node) => &node.external,
         };
-        let mut slot = target.value.lock().unwrap_or_else(|error| error.into_inner());
-        if slot.is_some() { return Ok(()); }
+        let mut slot = target
+            .value
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if slot.is_some() {
+            return Ok(());
+        }
         let resource = External::new(self.units(), one_byte)?;
         *slot = Some(Arc::new(resource));
         drop(slot);
         materialized();
-        if let Some(target) = self.forwarding_target() { target.externalize(target.one_byte_representation())?; }
+        if let Some(target) = self.forwarding_target() {
+            target.externalize(target.one_byte_representation())?;
+        }
         Ok(())
     }
 
     #[cfg(feature = "conformance")]
     pub(super) fn is_external(&self) -> bool {
-        if let Some(target) = self.forwarding_target() { return target.is_external(); }
+        if let Some(target) = self.forwarding_target() {
+            return target.is_external();
+        }
         match self {
             Self::Flat(cell) | Self::Shared(cell) => cell.external.get().is_some(),
             Self::Cons(node) => node.external.get().is_some(),
@@ -665,7 +775,9 @@ impl Storage {
                         .collect::<Vec<_>>()
                         .into()
                 });
-                if missing { materialized(); }
+                if missing {
+                    materialized();
+                }
                 flat
             }
             Self::Repeat(node) => {
@@ -679,7 +791,9 @@ impl Storage {
                     }
                     units.into()
                 });
-                if missing { materialized(); }
+                if missing {
+                    materialized();
+                }
                 flat
             }
             Self::Cons(node) => {
@@ -689,7 +803,9 @@ impl Storage {
                     self.append_to(&mut units);
                     units.into()
                 });
-                if missing { materialized(); }
+                if missing {
+                    materialized();
+                }
                 // OnceLock publishes first. Any competing traversal that finds no children
                 // can therefore read flat; no guard or child borrow escapes this statement.
                 let children = node.children().take();
@@ -760,7 +876,10 @@ impl Storage {
     /** Keep repeated storage compact while retaining the existing logical and depth bounds. */
     pub(super) fn repeat_will_flatten(&self, count: usize) -> bool {
         let length = self.len().saturating_mul(count);
-        length != 0 && (length <= FLAT_CONCAT_UNITS || self.shape().0 >= MAX_CONCAT_DEPTH || self.shape().1 >= MAX_CONCAT_NODES)
+        length != 0
+            && (length <= FLAT_CONCAT_UNITS
+                || self.shape().0 >= MAX_CONCAT_DEPTH
+                || self.shape().1 >= MAX_CONCAT_NODES)
     }
     pub(super) fn repeat(&self, count: usize) -> Self {
         let length = self.len() * count;
@@ -806,9 +925,13 @@ impl Storage {
     /** Retain an arbitrary nonempty range while bounding the number of rope nodes. */
     #[cfg(feature = "conformance")]
     pub(super) fn sliced_range(&self, start: usize, end: usize) -> Option<Self> {
-        if start >= end || end > self.len() || end - start < 13 { return None; }
+        if start >= end || end > self.len() || end - start < 13 {
+            return None;
+        }
         if let Self::Slice(node) = self {
-            return node.parent.sliced_range(node.start + start, node.start + end);
+            return node
+                .parent
+                .sliced_range(node.start + start, node.start + end);
         }
         let (depth, nodes) = self.shape();
         if depth >= MAX_CONCAT_DEPTH || nodes >= MAX_CONCAT_NODES {
@@ -840,7 +963,9 @@ impl Storage {
     #[cfg(feature = "conformance")]
     pub(super) fn externalizable_cons_parts(&self) -> Option<(Self, Self)> {
         let Self::Cons(node) = self else { return None };
-        if node.flat.get().is_some() || node.external.get().is_some() { return None; }
+        if node.flat.get().is_some() || node.external.get().is_some() {
+            return None;
+        }
         let (left, right) = node.children().clone()?;
         (left.len() != 0).then_some((left, right))
     }
@@ -872,9 +997,12 @@ impl Storage {
         match (self, other) {
             (Self::Flat(left), Self::Flat(right)) => left.read_only == right.read_only,
             (Self::Shared(_), Self::Shared(_))
-            | (Self::Cons(_), Self::Cons(_)) | (Self::Repeat(_), Self::Repeat(_)) => true,
+            | (Self::Cons(_), Self::Cons(_))
+            | (Self::Repeat(_), Self::Repeat(_)) => true,
             (Self::Slice(left), Self::Slice(right)) => {
-                left.start == right.start && left.length == right.length && left.parent.same(&right.parent)
+                left.start == right.start
+                    && left.length == right.length
+                    && left.parent.same(&right.parent)
             }
             _ => false,
         }
@@ -892,30 +1020,52 @@ impl Storage {
     }
     #[cfg(feature = "conformance")]
     pub(super) fn restore_flattened_cons(&self, child: &Self) -> bool {
-        let (Self::Cons(node), Self::Flat(cell)) = (self, child) else { return false };
-        if node.flat.set(cell.units.clone()).is_err() || node.flat_identity.set(cell.clone()).is_err() { return false; }
+        let (Self::Cons(node), Self::Flat(cell)) = (self, child) else {
+            return false;
+        };
+        if node.flat.set(cell.units.clone()).is_err()
+            || node.flat_identity.set(cell.clone()).is_err()
+        {
+            return false;
+        }
         node.children().take();
         materialized();
         true
     }
     #[cfg(feature = "conformance")]
     pub(super) fn flattened_repeat_parts(&self, one_byte: bool) -> Option<(Self, usize, Self)> {
-        let Self::Repeat(node) = self else { return None };
+        let Self::Repeat(node) = self else {
+            return None;
+        };
         node.flat.get()?;
-        Some((node.child.clone(), node.count, self.flatten_intrinsic(one_byte)))
+        Some((
+            node.child.clone(),
+            node.count,
+            self.flatten_intrinsic(one_byte),
+        ))
     }
     #[cfg(feature = "conformance")]
     pub(super) fn restore_flattened_repeat(&self, child: &Self) -> bool {
-        let (Self::Repeat(node), Self::Flat(cell)) = (self, child) else { return false };
-        if node.flat.set(cell.units.clone()).is_err() || node.flat_identity.set(cell.clone()).is_err() { return false; }
+        let (Self::Repeat(node), Self::Flat(cell)) = (self, child) else {
+            return false;
+        };
+        if node.flat.set(cell.units.clone()).is_err()
+            || node.flat_identity.set(cell.clone()).is_err()
+        {
+            return false;
+        }
         materialized();
         true
     }
     /** Flatten indirect strings to their stable first child without changing direct or sliced identity. */
     #[cfg(feature = "conformance")]
     pub(super) fn flatten_intrinsic(&self, one_byte: bool) -> Self {
-        if let Some(target) = self.forwarding_target() { return target; }
-        if self.is_external() { return self.clone(); }
+        if let Some(target) = self.forwarding_target() {
+            return target;
+        }
+        if self.is_external() {
+            return self.clone();
+        }
         let identity = match self {
             Self::Cons(node) => &node.flat_identity,
             Self::Repeat(node) => &node.flat_identity,
@@ -924,10 +1074,26 @@ impl Storage {
         let _ = self.units();
         let missing = identity.get().is_none();
         let flat = identity.get_or_init(|| {
-            let units = match self { Self::Cons(node) => node.flat.get().expect("flattened"), Self::Repeat(node) => node.flat.get().expect("flattened"), _ => unreachable!() };
-            Arc::new(FlatData { units: units.clone(), one_byte, external: ExternalSlot::default(), old: AtomicBool::new(false), survivals: AtomicU8::new(0), id: Self::next_id(), interned: AtomicBool::new(false), read_only: false, forward: OnceLock::new() })
+            let units = match self {
+                Self::Cons(node) => node.flat.get().expect("flattened"),
+                Self::Repeat(node) => node.flat.get().expect("flattened"),
+                _ => unreachable!(),
+            };
+            Arc::new(FlatData {
+                units: units.clone(),
+                one_byte,
+                external: ExternalSlot::default(),
+                old: AtomicBool::new(false),
+                survivals: AtomicU8::new(0),
+                id: Self::next_id(),
+                interned: AtomicBool::new(false),
+                read_only: false,
+                forward: OnceLock::new(),
+            })
         });
-        if missing { materialized(); }
+        if missing {
+            materialized();
+        }
         Self::Flat(flat.clone())
     }
 
@@ -1019,7 +1185,9 @@ impl Storage {
         let mut pending = vec![self.clone()];
         while let Some(storage) = pending.pop() {
             #[cfg(feature = "conformance")]
-            if let Some(target) = storage.forwarding_target() { pending.push(target); }
+            if let Some(target) = storage.forwarding_target() {
+                pending.push(target);
+            }
             match storage {
                 #[cfg(not(feature = "conformance"))]
                 Self::Flat(flat) => report_flat(&flat, &mut visit),
@@ -1066,7 +1234,9 @@ impl Storage {
                         report_flat(flat, &mut visit);
                     }
                     #[cfg(feature = "conformance")]
-                    if let Some(flat) = node.flat_identity.get() { pending.push(Self::Flat(flat.clone())); }
+                    if let Some(flat) = node.flat_identity.get() {
+                        pending.push(Self::Flat(flat.clone()));
+                    }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
@@ -1089,7 +1259,9 @@ impl Storage {
                         report_flat(&flat, &mut visit);
                     }
                     #[cfg(feature = "conformance")]
-                    if let Some(flat) = node.flat_identity.get() { pending.push(Self::Flat(flat.clone())); }
+                    if let Some(flat) = node.flat_identity.get() {
+                        pending.push(Self::Flat(flat.clone()));
+                    }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
@@ -1132,7 +1304,12 @@ fn report_flat(flat: &Arc<[u16]>, visit: &mut impl FnMut(bool, usize, usize, usi
 #[cfg(feature = "conformance")]
 fn report_external(external: &Arc<External>, visit: &mut impl FnMut(bool, usize, usize, usize)) {
     let overhead = std::mem::size_of::<External>() + ARC_HEADER_BYTES;
-    visit(true, Arc::as_ptr(external) as usize, overhead, overhead + ARC_ALIGNMENT_SLACK);
+    visit(
+        true,
+        Arc::as_ptr(external) as usize,
+        overhead,
+        overhead + ARC_ALIGNMENT_SLACK,
+    );
     report_flat(&external.units, visit);
     if let Some(bytes) = &external.one_byte {
         let size = bytes.len() + ARC_HEADER_BYTES;
@@ -1348,14 +1525,18 @@ mod tests {
         assert!(flat.same_backing(&flat.flatten_for_intrinsic().unwrap()));
         let slice = flat.construct_slice(3).unwrap().unwrap();
         assert!(slice.same_backing(&slice.flatten_for_intrinsic().unwrap()));
-        let wire = with_string_identity_encoding(|| serde_json::to_string(&(cons,flat)).unwrap());
-        let (cons,flat): (JsString,JsString) = with_string_identities(|| serde_json::from_str(&wire).unwrap());
+        let wire = with_string_identity_encoding(|| serde_json::to_string(&(cons, flat)).unwrap());
+        let (cons, flat): (JsString, JsString) =
+            with_string_identities(|| serde_json::from_str(&wire).unwrap());
         assert!(flat.same_backing(&cons.flatten_for_intrinsic().unwrap()));
         assert_eq!(flat.lossy(), "abcdefghijklmnopqrstuvwxyz");
         let repeated = JsString::from_utf8("abc").unwrap().repeat(9).unwrap();
         let repeated_flat = repeated.flatten_for_intrinsic().unwrap();
-        let wire = with_string_identity_encoding(|| serde_json::to_string(&(repeated,repeated_flat)).unwrap());
-        let (repeated,repeated_flat): (JsString,JsString) = with_string_identities(|| serde_json::from_str(&wire).unwrap());
+        let wire = with_string_identity_encoding(|| {
+            serde_json::to_string(&(repeated, repeated_flat)).unwrap()
+        });
+        let (repeated, repeated_flat): (JsString, JsString) =
+            with_string_identities(|| serde_json::from_str(&wire).unwrap());
         assert!(repeated_flat.same_backing(&repeated.flatten_for_intrinsic().unwrap()));
     }
 
@@ -1369,10 +1550,19 @@ mod tests {
         let mut threads = Vec::new();
         for _ in 0..8 {
             let value = cons.clone();
-            threads.push(std::thread::spawn(move || value.flatten_for_intrinsic().unwrap()));
+            threads.push(std::thread::spawn(move || {
+                value.flatten_for_intrinsic().unwrap()
+            }));
         }
-        let children: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
-        assert!(children.iter().all(|child| child.same_backing(&children[0])));
+        let children: Vec<_> = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect();
+        assert!(
+            children
+                .iter()
+                .all(|child| child.same_backing(&children[0]))
+        );
         assert_eq!(children[0].lossy(), "abcdefghijklmnopqrstuvwxyz");
     }
 
@@ -1387,8 +1577,11 @@ mod tests {
         assert!(!source.same_backing(&target));
         target.externalize().unwrap();
         assert!(source.is_external());
-        let wire = with_string_identity_encoding(|| serde_json::to_string(&(source.clone(), target.clone())).unwrap());
-        let (source, target): (JsString, JsString) = with_string_identities(|| serde_json::from_str(&wire).unwrap());
+        let wire = with_string_identity_encoding(|| {
+            serde_json::to_string(&(source.clone(), target.clone())).unwrap()
+        });
+        let (source, target): (JsString, JsString) =
+            with_string_identities(|| serde_json::from_str(&wire).unwrap());
         assert!(source.thin_target().unwrap().same_backing(&target));
         assert!(target.is_interned() && source.is_external());
     }
@@ -1398,8 +1591,11 @@ mod tests {
     fn thin_transition_releases_displaced_external_resource() {
         use super::super::JsString;
         let source = JsString::from_utf8("external migration source").unwrap();
-        source.mark_old(); source.externalize().unwrap();
-        let Storage::Flat(cell) = &source.0 else { panic!("flat") };
+        source.mark_old();
+        source.externalize().unwrap();
+        let Storage::Flat(cell) = &source.0 else {
+            panic!("flat")
+        };
         let resource = cell.external.get().unwrap();
         let weak = Arc::downgrade(&resource);
         drop(resource);
@@ -1422,15 +1618,22 @@ mod tests {
             assert!(target.mark_interned());
             let barrier = Arc::new(std::sync::Barrier::new(2));
             std::thread::scope(|scope| {
-                let source1 = source.clone(); let barrier1 = barrier.clone();
-                scope.spawn(move || { barrier1.wait(); source1.externalize().unwrap(); });
-                let source2 = source.clone(); let target2 = target.clone();
-                scope.spawn(move || { barrier.wait(); assert!(source2.forward_to(&target2)); });
+                let source1 = source.clone();
+                let barrier1 = barrier.clone();
+                scope.spawn(move || {
+                    barrier1.wait();
+                    source1.externalize().unwrap();
+                });
+                let source2 = source.clone();
+                let target2 = target.clone();
+                scope.spawn(move || {
+                    barrier.wait();
+                    assert!(source2.forward_to(&target2));
+                });
             });
             assert!(source.thin_target().unwrap().same_backing(&target));
             assert_eq!(source.is_external(), target.is_external());
             assert_eq!(source.lossy(), "concurrent external transition");
         }
     }
-
 }

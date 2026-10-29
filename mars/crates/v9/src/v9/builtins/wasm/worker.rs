@@ -42,7 +42,9 @@ pub(in crate::v9) fn wasm_worker_restore(vm: &mut Vm, packet: &WasmModulePacket)
 }
 /** Non-shared Wasm GC references have V8's inert ordinary-object diagnostic. */
 pub(in crate::v9) fn wasm_worker_nonshared_gc(vm: &Vm, value: &JsValue) -> bool {
-    value.object().is_some_and(|id| get(vm, id, "wasm.gc.module").is_some())
+    value
+        .object()
+        .is_some_and(|id| get(vm, id, "wasm.gc.module").is_some())
 }
 
 /** Other opaque wrappers cannot silently degrade to an empty ordinary object during structured cloning. */
@@ -100,7 +102,9 @@ pub(in crate::v9) fn wasm_worker_memory(vm: &Vm, value: &JsValue) -> Option<Wasm
 }
 /** Retrieve the actual memory buffer without consulting user-overridable properties. */
 pub(in crate::v9) fn wasm_worker_memory_buffer(vm: &mut Vm, value: &JsValue) -> Res<ObjectId> {
-    let memory = value.object().ok_or_else(|| vm.type_error("invalid WebAssembly memory"))?;
+    let memory = value
+        .object()
+        .ok_or_else(|| vm.type_error("invalid WebAssembly memory"))?;
     let storage = super::memory::storage(vm, value)?;
     shared_memory::refresh(vm, memory, storage)
 }
@@ -116,7 +120,7 @@ pub(in crate::v9) fn wasm_worker_restore_memory(
             MAX_WASM_PAGES
         }
         || packet.backing.backing_len() > packet.maximum as usize * PAGE_BYTES
-        || packet.backing.backing_len() % PAGE_BYTES != 0
+        || !packet.backing.backing_len().is_multiple_of(PAGE_BYTES)
     {
         return Err(vm.type_error("invalid shared Wasm memory packet"));
     }

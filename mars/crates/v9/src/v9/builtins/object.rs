@@ -111,7 +111,10 @@ fn enumerable_own_values(vm: &mut Vm, id: ObjectId) -> Res<Vec<(Key, JsValue)>> 
         if !matches!(key, Key::Str(_)) {
             continue;
         }
-        if vm.own(id, &key)?.is_some_and(|prop| prop.attrs & ENUMERABLE != 0) {
+        if vm
+            .own(id, &key)?
+            .is_some_and(|prop| prop.attrs & ENUMERABLE != 0)
+        {
             let value = vm.get(&JsValue::Object(id), &key)?;
             out.push((key, value));
         }
@@ -157,7 +160,12 @@ fn create(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let proto = match call.arg(0) {
         JsValue::Object(id) => Some(id),
         JsValue::Null => None,
-        _ => return Err(vm.type_error("Object prototype may only be an Object or null")),
+        other => {
+            let text = vm.v8_value_text(&other);
+            return Err(vm.type_error(&format!(
+                "Object prototype may only be an Object or null: {text}"
+            )));
+        }
     };
     let id = vm.alloc(Object::new(Class::Plain, proto))?;
     let properties = call.arg(1);
@@ -362,7 +370,12 @@ fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let proto = match call.arg(1) {
         JsValue::Object(id) => Some(id),
         JsValue::Null => None,
-        _ => return Err(vm.type_error("Object prototype may only be an Object or null")),
+        other => {
+            let text = vm.v8_value_text(&other);
+            return Err(vm.type_error(&format!(
+                "Object prototype may only be an Object or null: {text}"
+            )));
+        }
     };
     if let JsValue::Object(id) = target
         && !super::integrity::set_prototype_of(vm, id, proto)?

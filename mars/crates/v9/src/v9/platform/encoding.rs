@@ -45,7 +45,7 @@ static PROTO: OnceLock<u32> = OnceLock::new();
 /** Install TextDecoder over the builtin one. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
-    b.method(proto, "decode", 0, decode);
+    b.host_method(proto, "decode", 0, decode);
     for name in ["encoding", "fatal", "ignoreBOM"] {
         b.getter(proto, name, attribute);
     }

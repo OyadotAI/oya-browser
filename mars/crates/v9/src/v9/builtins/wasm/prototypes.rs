@@ -74,7 +74,10 @@ impl Setup<'_> {
         let value = gc::interop_read(vm, &self.prototypes, self.prototype_index)?;
         self.prototype_index += 1;
         #[cfg(feature = "conformance")]
-        if value.object().is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id)) {
+        if value
+            .object()
+            .is_some_and(|id| crate::v9::builtins::is_shared_object(vm, id))
+        {
             return Err(trap(vm, "illegal cast"));
         }
         if value.object().is_none() && value != JsValue::Null {
@@ -253,7 +256,9 @@ pub(super) fn configure(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let constructor = setup.constructor(vm, &prototype, &call.arg(3))?;
             let statics = setup.integer(vm)?;
             if statics > MAX_CONFIGURE_PROPERTIES {
-                return Err(vm.range_error("Out of memory: too many constructor properties in configureAll"));
+                return Err(vm.range_error(
+                    "Out of memory: too many constructor properties in configureAll",
+                ));
             }
             for _ in 0..statics {
                 vm.charge(1)?;

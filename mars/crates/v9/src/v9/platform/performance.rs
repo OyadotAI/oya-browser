@@ -9,13 +9,17 @@ const ENTRIES: &str = "performance.entries";
 /** Shell timelines advance on real monotonic time; normal page time remains deterministic. */
 pub(super) fn now(vm: &Vm) -> f64 {
     #[cfg(feature = "conformance")]
-    if vm.page.environment.conformance_d8 { return crate::v9::builtins::d8_time_origin_and_elapsed().1; }
+    if vm.page.environment.conformance_d8 {
+        return crate::v9::builtins::d8_time_origin_and_elapsed().1;
+    }
     vm.page.state.clock
 }
 /** The shell time origin shares the same process anchor as its Date.now clock. */
 pub(super) fn origin(vm: &Vm) -> f64 {
     #[cfg(feature = "conformance")]
-    if vm.page.environment.conformance_d8 { return crate::v9::builtins::d8_time_origin_and_elapsed().0; }
+    if vm.page.environment.conformance_d8 {
+        return crate::v9::builtins::d8_time_origin_and_elapsed().0;
+    }
     vm.page.state.epoch
 }
 /** The hidden brand prevents borrowing performance methods onto arbitrary objects. */
@@ -69,7 +73,13 @@ fn save(vm: &mut Vm, id: ObjectId, values: Vec<JsValue>) -> Res<()> {
 }
 
 /** Allocate an entry with real name, type and virtual monotonic timeline values. */
-fn entry(vm: &mut Vm, name: JsString, kind: &str, span: (f64, f64), detail: JsValue) -> Res<JsValue> {
+fn entry(
+    vm: &mut Vm,
+    name: JsString,
+    kind: &str,
+    span: (f64, f64),
+    detail: JsValue,
+) -> Res<JsValue> {
     let (start, duration) = span;
     let id = vm.new_object()?;
     for (key, value) in [

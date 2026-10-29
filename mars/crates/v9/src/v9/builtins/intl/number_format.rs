@@ -476,7 +476,7 @@ fn construct_number(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (mut locale, options, extension) = locale_and_matcher(vm, &call)?;
     let requested = get_string(vm, &options, "numberingSystem", &[])?;
     if let Some(system) = &requested
-        && !well_formed_type(&system)
+        && !well_formed_type(system)
     {
         return Err(vm.range_error(&format!("Invalid numberingSystem : {system}")));
     }

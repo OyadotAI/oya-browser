@@ -106,7 +106,12 @@ mod tests {
     /** V8's declared locale reaches Intl without consulting the runner process environment. */
     fn locale_metadata_removes_encoding_and_uses_the_first_directive() {
         assert_eq!(locale("const x='LC_ALL=fr-FR'"), Ok(None));
-        assert_eq!(locale("// Environment Variables: LC_ALL=pt-BR.UTF8\n// Environment Variables: LC_ALL=fr-FR"), Ok(Some("pt-BR".into())));
+        assert_eq!(
+            locale(
+                "// Environment Variables: LC_ALL=pt-BR.UTF8\n// Environment Variables: LC_ALL=fr-FR"
+            ),
+            Ok(Some("pt-BR".into()))
+        );
     }
     #[test]
     /** Canonical confinement rejects all lexical escape forms before any host file read. */

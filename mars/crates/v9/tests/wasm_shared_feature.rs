@@ -9,7 +9,11 @@ fn shared_gc_types_follow_shell_feature_state() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     let disabled = common::load_with(source, &environment);
-    assert!(disabled.failed.is_empty(), "{:?}", common::failure(&disabled));
+    assert!(
+        disabled.failed.is_empty(),
+        "{:?}",
+        common::failure(&disabled)
+    );
     assert_eq!(common::global(&disabled, "r"), "false,true");
     environment.conformance_wasm_shared = true;
     let enabled = common::load_with(source, &environment);
@@ -38,7 +42,10 @@ fn unsupported_shared_reference_hierarchies_are_rejected() {
     environment.conformance_wasm_shared = true;
     let result = common::load_with(source, &environment);
     assert!(result.failed.is_empty(), "{:?}", common::failure(&result));
-    assert_eq!(common::global(&result, "r"), "false,false,false,false,false,false");
+    assert_eq!(
+        common::global(&result, "r"),
+        "false,false,false,false,false,false"
+    );
 }
 
 /** A shared descriptor remains the same native arena reference after allocation and retrieval. */
@@ -65,7 +72,12 @@ fn shared_custom_descriptor_survives_saved_state() {
     let input = common::input(&sources, &host, &environment);
     let loaded = mars_v9::load_page(input).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    let clicked = mars_v9::click_page(common::input(&sources, &host, &environment), common::round_trip(loaded.state), 3).unwrap();
+    let clicked = mars_v9::click_page(
+        common::input(&sources, &host, &environment),
+        common::round_trip(loaded.state),
+        3,
+    )
+    .unwrap();
     assert!(clicked.failed.is_empty(), "{:?}", common::failure(&clicked));
     assert_eq!(common::console(&clicked), ["true"]);
 }

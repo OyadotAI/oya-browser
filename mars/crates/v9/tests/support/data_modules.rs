@@ -1,4 +1,4 @@
-/** The pinned d8 shell treats its exact data-module prefix as literal JavaScript source, not a web data-URL decoder. */
+/*! The pinned d8 shell treats its exact data-module prefix as literal JavaScript source, not a web data-URL decoder. */
 
 /** d8.cc's kDataURLPrefix intentionally excludes MIME parameters and base64 transport. */
 const PREFIX: &str = "data:text/javascript,";

@@ -183,7 +183,11 @@ fn read_source(vm: &mut Vm, call: &Call) -> Res<String> {
     }
 }
 /** Retained Script text uses the same dynamic-source quotas and registry validation as eval. */
-pub(super) fn script(vm: &mut Vm, source: String, bank: u32) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
+pub(super) fn script(
+    vm: &mut Vm,
+    source: String,
+    bank: u32,
+) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
     vm.prepare_dynamic(source.len())?;
     let native = vm.native_dynamic();
     let base = dynamic_base(&vm.dynamic);

@@ -7,10 +7,10 @@ pub(in crate::v9) use weak::{FinalizationCell, FinalizationData};
 mod shared;
 mod shared_gc;
 mod sparse_buffer;
-pub(in crate::v9) use sparse_buffer::SparseBuffer;
-pub(in crate::v9) use shared_gc::{SharedGc, SharedGcArena, SharedGcRecord, SharedGcValue};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use shared_gc::WaitFailure as SharedWaitFailure;
+pub(in crate::v9) use shared_gc::{SharedGc, SharedGcArena, SharedGcRecord, SharedGcValue};
+pub(in crate::v9) use sparse_buffer::SparseBuffer;
 mod function_name;
 pub(in crate::v9) use function_name::{BOUND_PREFIX, FunctionName};
 #[cfg(feature = "conformance")]
@@ -344,7 +344,9 @@ impl TableKey {
             JsValue::Null => Self::Null,
             JsValue::Boolean(value) => Self::Bool(*value),
             #[cfg(feature = "conformance")]
-            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => Self::of(&JsValue::Number(value.value)),
+            JsValue::SharedNumber(value) | JsValue::LocalNumber(value) => {
+                Self::of(&JsValue::Number(value.value))
+            }
             #[cfg(feature = "conformance")]
             JsValue::Smi(value) => Self::of(&JsValue::Number(*value)),
             JsValue::Number(value) => Self::Number(if *value == 0.0 {
@@ -502,7 +504,10 @@ pub(in crate::v9) enum Job {
     Callback(JsValue),
     /** Callback microtasks preserve the isolate data that was current at registration. */
     #[cfg(feature = "conformance")]
-    CallbackWithData { callback: JsValue, continuation_data: Option<JsValue> },
+    CallbackWithData {
+        callback: JsValue,
+        continuation_data: Option<JsValue>,
+    },
 }
 
 /** One exception handler in a frame. */
@@ -761,4 +766,21 @@ pub(in crate::v9) struct ResponseData {
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub used: bool,
+}
+
+/** A short name of an object's class, for traces only. */
+#[cfg(feature = "measure")]
+pub(in crate::v9) fn class_label(class: &Class) -> &'static str {
+    match class {
+        Class::Host(data) => match data.as_ref() {
+            HostData::Node(_) => "Node",
+            HostData::Document(_) => "Document",
+            HostData::Event(_) => "Event",
+            HostData::Style(_) | HostData::Computed(_) => "CSSStyleDeclaration",
+            _ => "Host",
+        },
+        Class::Array(_) => "Array",
+        Class::Function(_) => "Function",
+        _ => "Object",
+    }
 }

@@ -36,9 +36,9 @@ pub(in crate::v9) fn next(vm: &mut Vm) -> Res<Option<f64>> {
         return Ok(None);
     };
     let bank = vm.active_realm;
-    if !vm.page.state.math_random.contains_key(&bank) {
+    if let std::collections::btree_map::Entry::Vacant(e) = vm.page.state.math_random.entry(bank) {
         let state = initialize(seed)?;
-        vm.page.state.math_random.insert(bank, state);
+        e.insert(state);
     }
     let state = vm
         .page

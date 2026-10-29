@@ -37,7 +37,10 @@ pub(super) fn apply(
         // The box-shadow grammar without `inset` or a spread, which text shadows do not have.
         "text-shadow" => {
             let shadows = super::paint::shadows(value, style, context)?;
-            if shadows.iter().any(|shadow| shadow.inset || shadow.spread != 0.0) {
+            if shadows
+                .iter()
+                .any(|shadow| shadow.inset || shadow.spread != 0.0)
+            {
                 return Err(unsupported());
             }
             style.text_shadows = shadows;

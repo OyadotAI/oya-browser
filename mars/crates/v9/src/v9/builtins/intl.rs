@@ -121,11 +121,27 @@ const WEEKDAYS: [(&str, &str); 7] = [
     ("Saturday", "Sat"),
 ];
 
+/** The methods each service's prototype carries, as the specification lists them; a Collator's
+compare and a DateTimeFormat's format are bound getters installed separately. */
+fn kind_methods(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "DateTimeFormat" => &[
+            "resolvedOptions",
+            "formatToParts",
+            "formatRange",
+            "formatRangeToParts",
+        ],
+        "Collator" => &["resolvedOptions"],
+        "Segmenter" => &["resolvedOptions", "segment"],
+        _ => &["resolvedOptions", "format", "formatToParts"],
+    }
+}
+
 /** Spec length of a formatter method: resolvedOptions takes none, the range methods and relative-time formatting take two. */
 fn method_length(kind: &str, name: &str) -> u32 {
     match name {
         "resolvedOptions" => NO_ARGUMENTS,
-        "formatRange" | "selectRange" => TWO_ARGUMENTS,
+        "formatRange" | "formatRangeToParts" | "selectRange" => TWO_ARGUMENTS,
         "format" | "formatToParts" if kind == "RelativeTimeFormat" => TWO_ARGUMENTS,
         _ => ONE_ARGUMENT,
     }
@@ -148,18 +164,7 @@ pub(super) fn install(b: &mut Builder) {
             continue;
         }
         let proto = b.object(Some(b.ids.object_prototype));
-        for name in [
-            "format",
-            "formatToParts",
-            "formatRange",
-            "resolvedOptions",
-            "select",
-            "selectRange",
-            "segment",
-        ] {
-            if name == "format" && kind == "DateTimeFormat" {
-                continue;
-            }
+        for name in kind_methods(kind) {
             b.method(
                 proto,
                 name,
@@ -355,14 +360,12 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             single_part(vm, "literal", &formatted)
         }
         ("formatRange", "DateTimeFormat") => {
-            let from = time_value(vm, &call.arg(0))?;
-            let to = time_value(vm, &call.arg(1))?;
-            let joined = format!(
-                "{} \u{2013} {}",
-                format_date(vm, from, &data.options)?,
-                format_date(vm, to, &data.options)?
-            );
+            let joined = date_range(vm, &call, &data)?;
             text(vm, &joined)
+        }
+        ("formatRangeToParts", "DateTimeFormat") => {
+            let joined = date_range(vm, &call, &data)?;
+            single_part(vm, "literal", &joined)
         }
         ("select", "PluralRules") => {
             let value = vm.to_number(&call.arg(0))?;
@@ -389,6 +392,17 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => Err(vm.type_error("Illegal invocation")),
     }
+}
+
+/** Two dates joined by an en dash, as formatRange prints them. */
+fn date_range(vm: &mut Vm, call: &Call, data: &IntlData) -> Res<String> {
+    let from = time_value(vm, &call.arg(0))?;
+    let to = time_value(vm, &call.arg(1))?;
+    Ok(format!(
+        "{} \u{2013} {}",
+        format_date(vm, from, &data.options)?,
+        format_date(vm, to, &data.options)?
+    ))
 }
 
 /** A string result. */

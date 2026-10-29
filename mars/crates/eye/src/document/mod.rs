@@ -37,10 +37,11 @@ pub use render::{
     render_with_context, role, sliced_shadow, spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
-pub use script::{DomFragments, Fragments, script_document};
+pub use script::{DomFragments, Fragments, normalize_document_text, script_document};
 use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
 use std::collections::BTreeMap;
+pub use style::default_transform_origin;
 pub use style::{
     AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
     ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
@@ -49,7 +50,6 @@ pub use style::{
     compute_styles, compute_styles_with_context, css_imports, layer_key, rebase_urls,
 };
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
-pub use style::default_transform_origin;
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,

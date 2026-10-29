@@ -276,7 +276,10 @@ fn set_boundary(
         boundary(vm, &data.start, data.start_offset)
     };
     if root_of(vm, id) != root_of(vm, other.0) {
-        return Ok(collapse_range_on(data, node, offset));
+        return {
+            collapse_range_on(data, node, offset);
+            Ok(())
+        };
     }
     let order = compare(vm, point, other);
     if start {

@@ -48,7 +48,8 @@ use types::{Error, Module, Type};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use worker::{
     WasmMemoryPacket, WasmModulePacket, wasm_worker_memory, wasm_worker_memory_buffer,
-    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore, wasm_worker_restore_memory,
+    wasm_worker_module, wasm_worker_nonshared_gc, wasm_worker_opaque, wasm_worker_restore,
+    wasm_worker_restore_memory,
 };
 
 /** Static identities do not hold page objects or authority. */
@@ -395,8 +396,22 @@ fn module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
     let compact = get(vm, object, "wasm.feature.compact-imports") == Some(JsValue::Boolean(true));
     let testing = get(vm, object, "wasm.feature.testing-opcode") == Some(JsValue::Boolean(true));
     let ref_cast_nop = get(vm, object, "wasm.feature.ref-cast-nop") == Some(JsValue::Boolean(true));
-    let mut module = binary::parse_with_features(&bytes, true, true, true, true, true, true, true, true, MAX_DECLARED_TABLE_MINIMUM, compact, testing, ref_cast_nop)
-        .map_err(|e| compile_failure(vm, e))?;
+    let mut module = binary::parse_with_features(
+        &bytes,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        MAX_DECLARED_TABLE_MINIMUM,
+        compact,
+        testing,
+        ref_cast_nop,
+    )
+    .map_err(|e| compile_failure(vm, e))?;
     module.wasmfx_enabled = get(vm, object, "wasm.feature.wasmfx") == Some(JsValue::Boolean(true));
     Ok((object, module))
 }
@@ -423,8 +438,7 @@ fn make_module(
 fn stringref_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_stringref;
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_stringref
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -436,8 +450,8 @@ fn stringref_enabled(vm: &Vm) -> bool {
 fn custom_descriptors_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_custom_descriptors;
+        !vm.page.environment.conformance_d8
+            || vm.page.environment.conformance_wasm_custom_descriptors
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -449,8 +463,7 @@ fn custom_descriptors_enabled(vm: &Vm) -> bool {
 fn acquire_release_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_acquire_release;
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_acquire_release
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -462,7 +475,7 @@ fn acquire_release_enabled(vm: &Vm) -> bool {
 fn fp16_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_fp16;
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_fp16
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -474,8 +487,7 @@ fn fp16_enabled(vm: &Vm) -> bool {
 fn js_interop_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_js_interop;
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_js_interop
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -487,8 +499,7 @@ fn js_interop_enabled(vm: &Vm) -> bool {
 fn wide_arithmetic_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return !vm.page.environment.conformance_d8
-            || vm.page.environment.conformance_wasm_wide_arithmetic;
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_wide_arithmetic
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -500,8 +511,7 @@ fn wide_arithmetic_enabled(vm: &Vm) -> bool {
 fn allow_mixed_eh(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return vm.page.environment.conformance_d8
-            && vm.page.environment.conformance_wasm_allow_mixed_eh;
+        vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_allow_mixed_eh
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -513,7 +523,7 @@ fn allow_mixed_eh(vm: &Vm) -> bool {
 fn wasmfx_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_wasmfx;
+        vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_wasmfx
     }
     #[cfg(not(feature = "conformance"))]
     {
@@ -538,30 +548,50 @@ fn wasmfx_active(vm: &Vm) -> bool {
 /** Shared-everything syntax is controlled by the shell feature, distinct from ordinary shared memory. */
 fn shared_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
-    { return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_shared; }
+    {
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_shared
+    }
     #[cfg(not(feature = "conformance"))]
-    { let _ = vm; true }
+    {
+        let _ = vm;
+        true
+    }
 }
 /** The shell enables compact grouped imports only under its proposal flag. */
 fn compact_imports_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
-    { return !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_compact_imports; }
+    {
+        !vm.page.environment.conformance_d8 || vm.page.environment.conformance_wasm_compact_imports
+    }
     #[cfg(not(feature = "conformance"))]
-    { let _ = vm; true }
+    {
+        let _ = vm;
+        true
+    }
 }
 /** Testing-only opcodes are disabled outside the explicit shell flag. */
 fn testing_opcode_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
-    { return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_testing_opcode; }
+    {
+        vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_testing_opcode
+    }
     #[cfg(not(feature = "conformance"))]
-    { let _ = vm; false }
+    {
+        let _ = vm;
+        false
+    }
 }
 /** Unchecked casts are permitted only by the explicit d8 experiment flag. */
 fn ref_cast_nop_enabled(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
-    { return vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_ref_cast_nop; }
+    {
+        vm.page.environment.conformance_d8 && vm.page.environment.conformance_wasm_ref_cast_nop
+    }
     #[cfg(not(feature = "conformance"))]
-    { let _ = vm; false }
+    {
+        let _ = vm;
+        false
+    }
 }
 /** Host test limits can only lower the native table declaration bound. */
 fn table_limit(vm: &Vm) -> u64 {
@@ -609,9 +639,24 @@ fn finish_module(
         "wasm.feature.wasmfx",
         JsValue::Boolean(parsed.wasmfx_enabled),
     );
-    set(vm, object, "wasm.feature.compact-imports", JsValue::Boolean(compact_imports_enabled(vm)));
-    set(vm, object, "wasm.feature.testing-opcode", JsValue::Boolean(testing_opcode_enabled(vm)));
-    set(vm, object, "wasm.feature.ref-cast-nop", JsValue::Boolean(ref_cast_nop_enabled(vm)));
+    set(
+        vm,
+        object,
+        "wasm.feature.compact-imports",
+        JsValue::Boolean(compact_imports_enabled(vm)),
+    );
+    set(
+        vm,
+        object,
+        "wasm.feature.testing-opcode",
+        JsValue::Boolean(testing_opcode_enabled(vm)),
+    );
+    set(
+        vm,
+        object,
+        "wasm.feature.ref-cast-nop",
+        JsValue::Boolean(ref_cast_nop_enabled(vm)),
+    );
     imports::store(vm, object, options)?;
     imports::validate(vm, object, &parsed)?;
     Ok(object)
@@ -619,14 +664,25 @@ fn finish_module(
 /** Fuzzing intrinsics create the same typed one-element i64 Wasm GC records as V8. */
 #[cfg(feature = "conformance")]
 pub(in crate::v9) fn wasm_intrinsic_object(vm: &mut Vm, array: bool) -> Res<JsValue> {
-    const STRUCT: &[u8] = &[0,97,115,109,1,0,0,0,1,7,1,80,0,95,1,126,0];
-    const ARRAY: &[u8] = &[0,97,115,109,1,0,0,0,1,6,1,80,0,94,126,0];
+    const STRUCT: &[u8] = &[0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 80, 0, 95, 1, 126, 0];
+    const ARRAY: &[u8] = &[0, 97, 115, 109, 1, 0, 0, 0, 1, 6, 1, 80, 0, 94, 126, 0];
     const PAYLOAD: i128 = 0x7aad_f00d_baad_f00d;
     let mark = vm.pins.len();
     let result = (|| {
-        let module = finish_module(vm, if array { ARRAY } else { STRUCT }.to_vec(), (vec![], None), None)?;
+        let module = finish_module(
+            vm,
+            if array { ARRAY } else { STRUCT }.to_vec(),
+            (vec![], None),
+            None,
+        )?;
         vm.pin(JsValue::Object(module));
-        gc::allocate_record(vm, JsValue::Object(module), 0, array, vec![JsValue::BigInt(PAYLOAD)])
+        gc::allocate_record(
+            vm,
+            JsValue::Object(module),
+            0,
+            array,
+            vec![JsValue::BigInt(PAYLOAD)],
+        )
     })();
     vm.pins.truncate(mark);
     result
@@ -738,10 +794,10 @@ fn module_imports(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Custom section payloads are fresh ArrayBuffers, never aliases of the module's private bytes. */
 fn custom_sections(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if !call
+    if call
         .arg(0)
         .object()
-        .is_some_and(|id| get(vm, id, MODULE).is_some())
+        .is_none_or(|id| get(vm, id, MODULE).is_none())
     {
         return Err(vm.type_error(
             "WebAssembly.Module.customSections(): Argument 0 must be a WebAssembly.Module",
@@ -757,9 +813,9 @@ fn custom_sections(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** Static introspection checks its module argument without consulting authored properties. */
 fn introspection_module(vm: &mut Vm, value: &JsValue) -> Res<(ObjectId, Module)> {
-    if !value
+    if value
         .object()
-        .is_some_and(|id| get(vm, id, MODULE).is_some())
+        .is_none_or(|id| get(vm, id, MODULE).is_none())
     {
         return Err(vm.type_error("Argument 0 must be a WebAssembly.Module"));
     }
@@ -787,8 +843,7 @@ pub(super) fn install_conformance(b: &mut Builder, d8: ObjectId) {
 fn api_prefix(vm: &mut Vm, error: Thrown, api: &str) -> Thrown {
     if let Thrown::Value(JsValue::Object(id)) = &error
         && get(vm, *id, "wasm.compile.native") == Some(JsValue::Boolean(true))
-    {
-        if let Some(JsValue::String(message)) = vm
+        && let Some(JsValue::String(message)) = vm
             .heap
             .get(*id)
             .and_then(|o| o.props.get(&key("message")))
@@ -796,18 +851,17 @@ fn api_prefix(vm: &mut Vm, error: Thrown, api: &str) -> Thrown {
                 Slot::Data(value) => Some(value.clone()),
                 _ => None,
             })
-            && let Ok(message) = JsValue::string(&format!("{api}: {}", message.lossy()))
-        {
-            vm.heap.put(
-                *id,
-                key("message"),
-                Prop {
-                    slot: Slot::Data(message),
-                    attrs: HIDDEN_ATTRS,
-                },
-            );
-            set(vm, *id, "wasm.compile.native", JsValue::Boolean(false));
-        }
+        && let Ok(message) = JsValue::string(&format!("{api}: {}", message.lossy()))
+    {
+        vm.heap.put(
+            *id,
+            key("message"),
+            Prop {
+                slot: Slot::Data(message),
+                attrs: HIDDEN_ATTRS,
+            },
+        );
+        set(vm, *id, "wasm.compile.native", JsValue::Boolean(false));
     }
     error
 }
@@ -820,7 +874,9 @@ pub(in crate::v9) fn validate_shared_gc(
 }
 /** Mixed shared arenas validate every Wasm record before cross-domain restoration. */
 #[cfg(feature = "conformance")]
-pub(in crate::v9) fn validate_shared_wasm_arena(arena: &crate::v9::vm::data::SharedGcArena) -> crate::protocol::EngineResult<()> {
+pub(in crate::v9) fn validate_shared_wasm_arena(
+    arena: &crate::v9::vm::data::SharedGcArena,
+) -> crate::protocol::EngineResult<()> {
     gc::shared::validate_arena(arena)
 }
 /** Native sharing is restored only through grants; all other decoded graphs remain owned inert copies. */

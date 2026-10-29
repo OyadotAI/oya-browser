@@ -4,6 +4,7 @@ use super::heap::{Key, Object};
 use super::realm::{Static, realm, symbol};
 use super::{Exit, Res, Resume, Thrown, Vm};
 use crate::protocol::EngineError;
+use crate::v9::compile::SiteKind;
 mod diagnostics;
 mod enumeration;
 use crate::v9::value::{JsString, JsValue, ObjectId};
@@ -29,14 +30,50 @@ impl Vm<'_> {
     }
     /** GetIterator: native iterators for unmodified builtins, records for everything else. */
     pub fn get_iterator(&mut self, value: &JsValue) -> Res<ObjectId> {
+        self.get_iterator_at(value, None)
+    }
+    /** GetIterator for a value written at a source site, named in the message as V8 names it. */
+    pub(super) fn get_iterator_at(
+        &mut self,
+        value: &JsValue,
+        site: Option<(SiteKind, String)>,
+    ) -> Res<ObjectId> {
+        if value.nullish() {
+            return Err(self.not_iterable(value, site));
+        }
         let method = self.get(value, &Key::Sym(symbol::ITERATOR))?;
         if !self.is_callable(&method) {
-            // Name what was iterated, as V8's message does: a host collection a page expects
-            // to be iterable shows up by name.
-            let what = self.kind_name(value);
-            return Err(self.type_error(&format!("{what} is not iterable")));
+            return Err(self.not_iterable(value, site));
         }
         self.iterator_from_method(value, method)
+    }
+    /** V8's TypeError for a value with no callable Symbol.iterator: the source text when the
+    site has one, otherwise the value by its type (`number 1`) and the property it lacks. */
+    fn not_iterable(&mut self, value: &JsValue, site: Option<(SiteKind, String)>) -> Thrown {
+        let message = match site {
+            Some((SiteKind::Printed, text)) => format!("{text} is not iterable"),
+            Some((SiteKind::CallResult, text)) => {
+                format!("{text} is not a function or its return value is not iterable")
+            }
+            Some((SiteKind::SpreadArgument, text)) if value.nullish() => {
+                let value = self.v8_value_text(value);
+                format!("{text} is not iterable (cannot read property {value})")
+            }
+            Some((SiteKind::SpreadArgument, _)) => {
+                "Spread syntax requires ...iterable[Symbol.iterator] to be a function".into()
+            }
+            Some((SiteKind::ArraySpread, text))
+                if value.nullish() && matches!(text.as_str(), "null" | "undefined") =>
+            {
+                format!("{text} is not iterable (cannot read property Symbol(Symbol.iterator))")
+            }
+            Some((SiteKind::ArraySpread, text)) => format!("{text} is not iterable"),
+            None => {
+                let what = self.v8_callsite_text(value);
+                format!("{what} is not iterable (cannot read property Symbol(Symbol.iterator))")
+            }
+        };
+        self.type_error(&message)
     }
     /** GetIteratorFromMethod consumes an already observed method without repeating the source getter. */
     pub fn iterator_from_method(&mut self, value: &JsValue, method: JsValue) -> Res<ObjectId> {
@@ -410,7 +447,11 @@ impl Vm<'_> {
         self.collect_iterator(iterator)
     }
     /** Collect using the already observed iterator method without repeating its getter. */
-    pub(in crate::v9) fn iterate_to_vec_with_method(&mut self, value: &JsValue, method: JsValue) -> Res<Vec<JsValue>> {
+    pub(in crate::v9) fn iterate_to_vec_with_method(
+        &mut self,
+        value: &JsValue,
+        method: JsValue,
+    ) -> Res<Vec<JsValue>> {
         let iterator = self.iterator_from_method(value, method)?;
         self.collect_iterator(iterator)
     }

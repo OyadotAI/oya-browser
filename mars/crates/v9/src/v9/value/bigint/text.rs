@@ -83,11 +83,7 @@ impl BigInt {
         } else {
             &unsigned[2..]
         };
-        if digits.is_empty()
-            || !digits
-                .bytes()
-                .all(|byte| (byte as char).to_digit(radix).is_some())
-        {
+        if digits.is_empty() || !digits.bytes().all(|byte| (byte as char).is_digit(radix)) {
             return Err(ParseError::Syntax);
         }
         let digits = digits.trim_start_matches('0');
@@ -131,11 +127,7 @@ impl BigInt {
             top += 1;
         }
         let number = top as f64 * 2f64.powi(dropped as i32);
-        if self.negative {
-            -number
-        } else {
-            number
-        }
+        if self.negative { -number } else { number }
     }
     /** Every finite integral Number has an exact binary integer representation, including values above i128. */
     pub(in crate::v9) fn from_f64(number: f64) -> Option<Self> {
@@ -169,7 +161,7 @@ impl BigInt {
         self.words[..whole.min(self.words.len())]
             .iter()
             .any(|word| *word != 0)
-            || bits % WORD_BITS != 0
+            || !bits.is_multiple_of(WORD_BITS)
                 && self
                     .words
                     .get(whole)

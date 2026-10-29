@@ -273,7 +273,7 @@ impl Compiler {
             StmtKind::With(..) if self.f().strict => {
                 return Err(errors::syntax(
                     stmt.pos.location(),
-                    "SyntaxError: Strict mode code may not include a with statement",
+                    "Strict mode code may not include a with statement",
                 ));
             }
             StmtKind::With(object, body) => self.with_statement(object, body, labels)?,
@@ -391,12 +391,13 @@ impl Compiler {
                 Some(init) => {
                     self.expr(init)?;
                     self.resource_add(kind);
-                    self.bind_pattern(&declarator.target, kind != VarKind::Var)?;
+                    let source = Source::Expr(init);
+                    self.bind_pattern(&declarator.target, kind != VarKind::Var, source)?;
                     self.emit(Op::Pop);
                 }
                 None if kind == VarKind::Let => {
                     self.emit(Op::Undefined);
-                    self.bind_pattern(&declarator.target, true)?;
+                    self.bind_pattern(&declarator.target, true, Source::Parameter)?;
                     self.emit(Op::Pop);
                 }
                 None => {}
@@ -594,6 +595,9 @@ impl Compiler {
         let iterator = self.temp()?;
         let iteration_value = self.temp()?;
         self.iteration_rhs(head, right, scan::stmt_has_closure(stmt))?;
+        if kind == Each::Of {
+            self.record_iterable(right);
+        }
         self.emit(match kind {
             Each::In => Op::ForIn,
             Each::Of => Op::GetIterator,
@@ -660,9 +664,11 @@ impl Compiler {
             match head {
                 ForHead::Declare(kind, pattern) => {
                     this.resource_add(*kind);
-                    this.bind_pattern(pattern, lexical)?;
+                    this.bind_pattern(pattern, lexical, Source::Text(FOR_VALUE))?;
                 }
-                ForHead::Target(pattern) => this.assign_pattern(pattern)?,
+                ForHead::Target(pattern) => {
+                    this.assign_pattern(pattern, Source::Text(FOR_VALUE))?
+                }
             }
             this.emit(Op::Pop);
             this.stmt(body)
@@ -885,7 +891,7 @@ impl Compiler {
             self.set_place(place, 0);
             self.emit(Op::Pop);
         }
-        self.bind_pattern(param, true)?;
+        self.bind_pattern(param, true, Source::Text(CATCH_VALUE))?;
         self.emit(Op::Pop);
         self.block(body, Vec::new())?;
         let scope = self.scopes.pop().expect("catch scope");
@@ -933,9 +939,9 @@ pub(super) fn early_conflict(
     outer: &[Name],
 ) -> EngineResult<()> {
     match (scan::conflict(body, strict, top, outer), body.first()) {
-        (Some(_), Some(first)) => Err(errors::syntax(
+        (Some(name), Some(first)) => Err(errors::syntax(
             first.pos.location(),
-            "SyntaxError: Identifier has already been declared",
+            &format!("Identifier '{}' has already been declared", name),
         )),
         _ => Ok(()),
     }
@@ -943,13 +949,11 @@ pub(super) fn early_conflict(
 
 /** A loop's lexical head names may not be redeclared by a `var` in its body. */
 fn head_conflict(stmt: &Stmt, names: &[Name], body: &Stmt) -> EngineResult<()> {
-    if scan::stmt_var_names(body)
-        .iter()
-        .any(|name| names.contains(name))
-    {
+    let vars = scan::stmt_var_names(body);
+    if let Some(name) = vars.iter().find(|name| names.contains(name)) {
         return Err(errors::syntax(
             stmt.pos.location(),
-            "SyntaxError: Identifier has already been declared",
+            &format!("Identifier '{}' has already been declared", name),
         ));
     }
     Ok(())

@@ -30,8 +30,8 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::channel::PortMessage;
-pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::devtools;
+pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
@@ -107,16 +107,27 @@ pub struct VmState {
 }
 
 #[cfg(feature = "conformance")]
-fn serialize_state_fields<S: serde::ser::SerializeStruct>(state: &mut S, value: &VmState) -> Result<(), S::Error> {
+fn serialize_state_fields<S: serde::ser::SerializeStruct>(
+    state: &mut S,
+    value: &VmState,
+) -> Result<(), S::Error> {
     state.serialize_field("realms", &value.realms)?;
     state.serialize_field("globals", &value.globals)?;
     state.serialize_field("heap", &value.heap)?;
     state.serialize_field("symbols", &value.symbols)?;
-    if !value.jobs.is_empty() { state.serialize_field("jobs", &value.jobs)?; }
+    if !value.jobs.is_empty() {
+        state.serialize_field("jobs", &value.jobs)?;
+    }
     state.serialize_field("page", &value.page)?;
-    if !value.dynamic.is_empty() { state.serialize_field("dynamic", &value.dynamic)?; }
-    if !value.templates.is_empty() { state.serialize_field("templates", &value.templates)?; }
-    if !value.modules.is_empty() { state.serialize_field("modules", &value.modules)?; }
+    if !value.dynamic.is_empty() {
+        state.serialize_field("dynamic", &value.dynamic)?;
+    }
+    if !value.templates.is_empty() {
+        state.serialize_field("templates", &value.templates)?;
+    }
+    if !value.modules.is_empty() {
+        state.serialize_field("modules", &value.modules)?;
+    }
     Ok(())
 }
 #[cfg(feature = "conformance")]
@@ -136,7 +147,8 @@ impl Serialize for VmState {
         use serde::ser::SerializeStruct;
         crate::v9::value::with_string_identity_encoding(|| {
             crate::v9::value::with_slice_parents(Default::default(), || {
-                serde_json::to_writer(std::io::sink(), &StateFields(self)).map_err(serde::ser::Error::custom)?;
+                serde_json::to_writer(std::io::sink(), &StateFields(self))
+                    .map_err(serde::ser::Error::custom)?;
                 let mut state = serializer.serialize_struct("VmState", 10)?;
                 struct Parents;
                 impl Serialize for Parents {
@@ -191,7 +203,9 @@ thread_local! { static BUFFERED_STATE_BYTES: std::cell::Cell<usize> = const { st
 fn charge_buffered_state<E: serde::de::Error>(bytes: usize) -> Result<(), E> {
     BUFFERED_STATE_BYTES.with(|used| {
         let next = used.get().saturating_add(bytes);
-        if next > crate::constants::VM_STATE_BYTES { return Err(E::custom("V9 snapshot decoding buffer limit")); }
+        if next > crate::constants::VM_STATE_BYTES {
+            return Err(E::custom("V9 snapshot decoding buffer limit"));
+        }
         used.set(next);
         Ok(())
     })
@@ -201,7 +215,11 @@ fn with_buffered_state_limit<T>(f: impl FnOnce() -> T) -> T {
     BUFFERED_STATE_BYTES.with(|used| {
         let previous = used.replace(0);
         struct Restore<'a>(&'a std::cell::Cell<usize>, usize);
-        impl Drop for Restore<'_> { fn drop(&mut self) { self.0.set(self.1); } }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
         let _restore = Restore(used, previous);
         f()
     })
@@ -284,7 +302,9 @@ impl<'de> Deserialize<'de> for StrictJson {
                 use serde::de::Error;
                 let mut fields = serde_json::Map::new();
                 while let Some((key, value)) = map.next_entry::<String, StrictJson>()? {
-                    charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)))?;
+                    charge_buffered_state::<A::Error>(
+                        BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)),
+                    )?;
                     if fields.insert(key, value.0).is_some() {
                         return Err(A::Error::custom("duplicate JSON field"));
                     }
@@ -307,13 +327,20 @@ impl<'de> Deserialize<'de> for SliceParentTable {
         struct Entries;
         impl<'de> serde::de::Visitor<'de> for Entries {
             type Value = SliceParentTable;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("a slice parent table") }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a slice parent table")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
                 use serde::de::Error;
                 let mut parents = std::collections::BTreeMap::new();
                 while let Some((id, parent)) = seq.next_element::<(u64, value::JsString)>()? {
                     charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES)?;
-                    if id == 0 || parents.insert(id, parent).is_some() { return Err(A::Error::custom("invalid slice parent identity")); }
+                    if id == 0 || parents.insert(id, parent).is_some() {
+                        return Err(A::Error::custom("invalid slice parent identity"));
+                    }
                 }
                 Ok(SliceParentTable(parents))
             }
@@ -324,7 +351,9 @@ impl<'de> Deserialize<'de> for SliceParentTable {
 #[cfg(feature = "conformance")]
 impl<'de> serde::de::Visitor<'de> for StateVisitor {
     type Value = VmState;
-    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("a state object") }
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a state object")
+    }
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         use serde::de::Error;
         let mut wire = VmStateWire::default();
@@ -332,18 +361,27 @@ impl<'de> serde::de::Visitor<'de> for StateVisitor {
         let mut seen = std::collections::BTreeSet::new();
         let mut ready = false;
         while let Some(key) = map.next_key::<String>()? {
-            if !seen.insert(key.clone()) { return Err(A::Error::custom("duplicate state field")); }
+            if !seen.insert(key.clone()) {
+                return Err(A::Error::custom("duplicate state field"));
+            }
             if key == "$slice_parents" || key == "slice_parents" {
-                if ready { return Err(A::Error::custom("duplicate slice parent table")); }
+                if ready {
+                    return Err(A::Error::custom("duplicate slice parent table"));
+                }
                 let parents = map.next_value::<SliceParentTable>()?;
                 crate::v9::value::set_slice_parents(parents.0);
-                wire = serde_json::from_value(serde_json::Value::Object(std::mem::take(&mut deferred))).map_err(A::Error::custom)?;
+                wire = serde_json::from_value(serde_json::Value::Object(std::mem::take(
+                    &mut deferred,
+                )))
+                .map_err(A::Error::custom)?;
                 ready = true;
                 continue;
             }
             if !ready {
                 let value = map.next_value::<StrictJson>()?;
-                charge_buffered_state::<A::Error>(BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)))?;
+                charge_buffered_state::<A::Error>(
+                    BUFFERED_STATE_ENTRY_BYTES.saturating_add(key.capacity().saturating_mul(2)),
+                )?;
                 deferred.insert(key, value.0);
                 continue;
             }
@@ -360,21 +398,43 @@ impl<'de> serde::de::Visitor<'de> for StateVisitor {
                 _ => return Err(A::Error::custom("unknown state field")),
             }
         }
-        if !ready { wire = serde_json::from_value(serde_json::Value::Object(deferred)).map_err(A::Error::custom)?; }
-        Ok(VmState { realms: wire.realms, globals: wire.globals, heap: wire.heap, symbols: wire.symbols,
-            jobs: wire.jobs, page: wire.page, dynamic: wire.dynamic, templates: wire.templates, modules: wire.modules, verified: false })
+        if !ready {
+            wire = serde_json::from_value(serde_json::Value::Object(deferred))
+                .map_err(A::Error::custom)?;
+        }
+        Ok(VmState {
+            realms: wire.realms,
+            globals: wire.globals,
+            heap: wire.heap,
+            symbols: wire.symbols,
+            jobs: wire.jobs,
+            page: wire.page,
+            dynamic: wire.dynamic,
+            templates: wire.templates,
+            modules: wire.modules,
+            verified: false,
+        })
     }
 }
 #[cfg(feature = "conformance")]
 impl<'de> Deserialize<'de> for VmState {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        with_buffered_state_limit(|| crate::v9::value::with_string_identities(||
-            crate::v9::value::with_slice_parents(Default::default(), || deserializer.deserialize_map(StateVisitor))))
+        with_buffered_state_limit(|| {
+            crate::v9::value::with_string_identities(|| {
+                crate::v9::value::with_slice_parents(Default::default(), || {
+                    deserializer.deserialize_map(StateVisitor)
+                })
+            })
+        })
     }
 }
 
 /** Count encoded state bytes without allocating a second complete snapshot. */
-struct StateSizeWriter { bytes: usize, limit: usize, exceeded: bool }
+struct StateSizeWriter {
+    bytes: usize,
+    limit: usize,
+    exceeded: bool,
+}
 impl std::io::Write for StateSizeWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let next = self.bytes.saturating_add(bytes.len());
@@ -385,14 +445,20 @@ impl std::io::Write for StateSizeWriter {
         self.bytes = next;
         Ok(bytes.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 #[cfg(test)]
 mod state_size_writer_tests {
     #[test]
     fn stops_at_the_exact_encoded_byte_limit() {
         use std::io::Write;
-        let mut writer = super::StateSizeWriter { bytes: 0, limit: 3, exceeded: false };
+        let mut writer = super::StateSizeWriter {
+            bytes: 0,
+            limit: 3,
+            exceeded: false,
+        };
         writer.write_all(b"abc").unwrap();
         assert!(writer.write_all(b"d").is_err());
         assert!(writer.exceeded);
@@ -518,9 +584,17 @@ impl VmState {
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
         self.validate_bounds(limits)?;
-        let mut writer = StateSizeWriter { bytes: 0, limit: limits.state_bytes, exceeded: false };
+        let mut writer = StateSizeWriter {
+            bytes: 0,
+            limit: limits.state_bytes,
+            exceeded: false,
+        };
         if serde_json::to_writer(&mut writer, self).is_err() {
-            return Err(if writer.exceeded { EngineError::limit("V9 state bytes", limits.state_bytes) } else { EngineError::invalid("Cannot encode V9 state.") });
+            return Err(if writer.exceeded {
+                EngineError::limit("V9 state bytes", limits.state_bytes)
+            } else {
+                EngineError::invalid("Cannot encode V9 state.")
+            });
         }
         Ok(())
     }
@@ -534,8 +608,20 @@ impl VmState {
             return Err(EngineError::limit("V9 weak intern entries", limits.units));
         }
         #[cfg(feature = "conformance")]
-        if self.page.number_constants.len() > limits.objects || self.page.number_constants.values().fold(0usize, |count, pool| count.saturating_add(pool.values.len())) > limits.objects {
-            return Err(EngineError::limit("V9 numeric constant cells", limits.objects));
+        if self.page.number_constants.len() > limits.objects
+            || self
+                .page
+                .number_constants
+                .values()
+                .fold(0usize, |count, pool| {
+                    count.saturating_add(pool.values.len())
+                })
+                > limits.objects
+        {
+            return Err(EngineError::limit(
+                "V9 numeric constant cells",
+                limits.objects,
+            ));
         }
         #[cfg(feature = "conformance")]
         if self.page.code_constants.len() > limits.units {
@@ -625,9 +711,13 @@ impl VmState {
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len().saturating_add({
                 #[cfg(feature = "conformance")]
-                { self.realms.custom_job_count() }
+                {
+                    self.realms.custom_job_count()
+                }
                 #[cfg(not(feature = "conformance"))]
-                { 0 }
+                {
+                    0
+                }
             }) > limits.jobs
             || self.dynamic.len() > crate::constants::VM_DYNAMIC_SOURCES
             || self.templates.len() > limits.objects
@@ -971,7 +1061,12 @@ pub(in crate::v9) fn compile_dynamic(
 }
 
 /** Parse dynamic or handler source. */
-fn on_parse(source: &str, base: usize, strict: bool, native: bool) -> EngineResult<syntax::Program> {
+fn on_parse(
+    source: &str,
+    base: usize,
+    strict: bool,
+    native: bool,
+) -> EngineResult<syntax::Program> {
     if source.len() > SCRIPT_BYTES {
         return Err(EngineError::limit("script bytes", SCRIPT_BYTES));
     }
@@ -1047,16 +1142,16 @@ fn session<'h>(
     #[allow(unused_mut)]
     let mut limits = limits;
     #[cfg(feature = "conformance")]
-    if environment.conformance_d8 {
-        if let Some(requested) = environment.conformance_operation_limit {
-            const MAX_CONFORMANCE_OPERATIONS: usize = crate::constants::OPERATIONS * 10;
-            if requested < crate::constants::OPERATIONS || requested > MAX_CONFORMANCE_OPERATIONS {
-                return Err(EngineError::invalid(
-                    "Invalid conformance operation budget.",
-                ));
-            }
-            limits.operations = requested;
+    if environment.conformance_d8
+        && let Some(requested) = environment.conformance_operation_limit
+    {
+        const MAX_CONFORMANCE_OPERATIONS: usize = crate::constants::OPERATIONS * 10;
+        if !(crate::constants::OPERATIONS..=MAX_CONFORMANCE_OPERATIONS).contains(&requested) {
+            return Err(EngineError::invalid(
+                "Invalid conformance operation budget.",
+            ));
         }
+        limits.operations = requested;
     }
     if let Some(document) = &document {
         document.validate()?;
@@ -1107,12 +1202,26 @@ fn session<'h>(
     #[cfg(feature = "conformance")]
     if fresh && vm.page.environment.conformance_d8 {
         let arguments = vm.page.environment.conformance_script_arguments.clone();
-        if arguments.len() > SCRIPT_COUNT || arguments.iter().fold(0usize, |total, value| total.saturating_add(value.encode_utf16().count())) > crate::constants::JS_STRING_UNITS {
-            return Err(EngineError::limit("d8 script arguments", crate::constants::JS_STRING_UNITS));
+        if arguments.len() > SCRIPT_COUNT
+            || arguments.iter().fold(0usize, |total, value| {
+                total.saturating_add(value.encode_utf16().count())
+            }) > crate::constants::JS_STRING_UNITS
+        {
+            return Err(EngineError::limit(
+                "d8 script arguments",
+                crate::constants::JS_STRING_UNITS,
+            ));
         }
-        let values = arguments.iter().map(|value| crate::v9::value::JsString::from_utf8(value).map(JsValue::String)).collect::<EngineResult<Vec<_>>>()?;
+        let values = arguments
+            .iter()
+            .map(|value| crate::v9::value::JsString::from_utf8(value).map(JsValue::String))
+            .collect::<EngineResult<Vec<_>>>()?;
         let array = vm.new_array(values).map_err(fatal)?;
-        vm.heap.put(vm.global_object(), vm::heap::Key::from("arguments"), vm::heap::Prop::data(JsValue::Object(array)));
+        vm.heap.put(
+            vm.global_object(),
+            vm::heap::Key::from("arguments"),
+            vm::heap::Prop::data(JsValue::Object(array)),
+        );
     }
     #[cfg(feature = "conformance")]
     if fresh && vm.page.environment.conformance_expose_externalize_string {

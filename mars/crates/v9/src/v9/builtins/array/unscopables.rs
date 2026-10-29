@@ -2,8 +2,10 @@
 use super::*;
 use crate::v9::vm::heap::{CONFIGURABLE, DEFAULT_ATTRS};
 
-/** ES2023 additions stay out of legacy with(array) lexical lookup. */
-const NAMES: [&str; 17] = [
+/** ES2023 additions stay out of legacy with(array) lexical lookup. `with` is not listed: the
+specification leaves it out because the keyword can never resolve as an identifier, and V8
+follows it. */
+const NAMES: [&str; 16] = [
     "at",
     "copyWithin",
     "entries",
@@ -20,7 +22,6 @@ const NAMES: [&str; 17] = [
     "toSorted",
     "toSpliced",
     "values",
-    "with",
 ];
 
 /** The table has no prototype and the Array.prototype property itself is non-writable. */

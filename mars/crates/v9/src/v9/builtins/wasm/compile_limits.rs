@@ -5,12 +5,11 @@ use super::*;
 pub(super) fn maximum(vm: &Vm) -> usize {
     #[cfg(feature = "conformance")]
     {
-        return vm
-            .page
+        vm.page
             .environment
             .conformance_wasm_max_module_bytes
             .unwrap_or(BUFFER_BYTES)
-            .min(BUFFER_BYTES);
+            .min(BUFFER_BYTES)
     }
     #[cfg(not(feature = "conformance"))]
     {

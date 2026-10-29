@@ -263,7 +263,7 @@ pub(super) fn run(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let target = result
         .object()
         .ok_or_else(|| vm.type_error("Array species did not create an object"))?;
-    if compact(vm, target, &original, &call.args, fresh)? {
+    if compact(vm, target, &original, call.args, fresh)? {
         return Ok(result);
     }
     let mut items = vec![original];

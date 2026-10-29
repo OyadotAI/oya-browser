@@ -110,7 +110,7 @@ impl SparseBuffer {
     /** Restored metadata is bounded before it can be used by views or native instructions. */
     pub fn valid(&self) -> bool {
         (self.length as u64) <= MAX_LOGICAL
-            && self.length % WASM_PAGE == 0
+            && self.length.is_multiple_of(WASM_PAGE)
             && self.resident() <= MAX_RESIDENT
             && self.pages.iter().all(|(i, p)| {
                 p.len() == PAGE && i.checked_mul(PAGE).is_some_and(|at| at < self.length)

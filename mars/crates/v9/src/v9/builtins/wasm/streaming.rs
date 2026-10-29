@@ -19,7 +19,7 @@ fn options_record(vm: &mut Vm, value: &JsValue) -> Res<ObjectId> {
 fn allowed(vm: &Vm) -> bool {
     #[cfg(feature = "conformance")]
     {
-        return vm.page.environment.conformance_d8;
+        vm.page.environment.conformance_d8
     }
     #[cfg(not(feature = "conformance"))]
     {

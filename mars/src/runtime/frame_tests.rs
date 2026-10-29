@@ -39,7 +39,9 @@ fn a_frame_whose_redirect_leaves_the_origin_exposes_no_document() {
     let page = url("https://example.com/app/page");
     let requested = url("https://example.com/frame.xml");
     let landed = url("https://other.example/frame.xml");
-    assert!(script_document_for_tests(&page, Some(&requested), &landed, "<x/>", "text/xml").is_none());
+    assert!(
+        script_document_for_tests(&page, Some(&requested), &landed, "<x/>", "text/xml").is_none()
+    );
 }
 
 #[test]

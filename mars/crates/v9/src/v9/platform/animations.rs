@@ -51,9 +51,9 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     let ctor = b.constructor("Animation", 0, construct, animation, None);
     b.global("Animation", ctor);
     for name in ["play", "pause", "finish", "cancel", "reverse"] {
-        b.method(animation, name, 0, method);
+        b.host_method(animation, name, 0, method);
     }
-    b.method(animation, "updatePlaybackRate", 1, method);
+    b.host_method(animation, "updatePlaybackRate", 1, method);
     for name in ["currentTime", "startTime", "playbackRate", "effect"] {
         b.accessor(animation, name, Some(get), Some(set));
     }
@@ -77,7 +77,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     let ctor = b.constructor("KeyframeEffect", 1, effect_construct, effect, None);
     b.global("KeyframeEffect", ctor);
     for name in ["getTiming", "getComputedTiming", "getKeyframes"] {
-        b.method(effect, name, 0, effect_method);
+        b.host_method(effect, name, 0, effect_method);
     }
     b.accessor(effect, "target", Some(effect_get), None);
     b.put(
@@ -94,9 +94,9 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         tick,
         event,
     });
-    b.method(b.ids.element_prototype, "animate", 1, animate);
-    b.method(b.ids.element_prototype, "getAnimations", 0, query::element);
-    b.method(
+    b.host_method(b.ids.element_prototype, "animate", 1, animate);
+    b.host_method(b.ids.element_prototype, "getAnimations", 0, query::element);
+    b.host_method(
         b.ids.document_prototype,
         "getAnimations",
         0,

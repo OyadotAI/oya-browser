@@ -179,11 +179,13 @@ pub(super) fn signature(
             };
             gc_types::check_type(m, target)?;
             let root = root(m, args[0])?;
-            let root = if gc_types::is_shared(m, target) { let (heap, nullable) = root.reference().unwrap(); Type::Shared(heap, nullable) } else { root };
-            (
-                vec![root],
-                vec![if op <= 21 { I32 } else { target }],
-            )
+            let root = if gc_types::is_shared(m, target) {
+                let (heap, nullable) = root.reference().unwrap();
+                Type::Shared(heap, nullable)
+            } else {
+                root
+            };
+            (vec![root], vec![if op <= 21 { I32 } else { target }])
         }
         26 => (vec![Extern], vec![Ref(-18, true)]),
         27 => (vec![Ref(-18, true)], vec![Extern]),

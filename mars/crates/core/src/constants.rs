@@ -161,38 +161,6 @@ fn parse_script_deadline(raw: Option<&str>) -> Duration {
         .map_or(SCRIPT_DEADLINE_DEFAULT, Duration::from_millis)
 }
 
-/** Unit tests for the deadline override parser, the only logic in this module. */
-#[cfg(test)]
-mod script_deadline_tests {
-    use super::*;
-
-    /** A missing override keeps the product default. */
-    #[test]
-    fn unset_override_keeps_the_default() {
-        assert_eq!(parse_script_deadline(None), SCRIPT_DEADLINE_DEFAULT);
-    }
-
-    /** A positive whole number of milliseconds replaces the default. */
-    #[test]
-    fn positive_override_replaces_the_default() {
-        assert_eq!(
-            parse_script_deadline(Some(" 60000 ")),
-            Duration::from_millis(60_000)
-        );
-    }
-
-    /** Zero, negative, fractional and non-numeric text is refused and keeps the default. */
-    #[test]
-    fn malformed_override_keeps_the_default() {
-        for raw in ["0", "-5", "1.5", "soon", ""] {
-            assert_eq!(
-                parse_script_deadline(Some(raw)),
-                SCRIPT_DEADLINE_DEFAULT,
-                "{raw}"
-            );
-        }
-    }
-}
 /// A heap count this close to its bound (numerator over denominator) collects before the bounds
 /// are checked: counts only overestimate between collections, so a state is refused for being
 /// over a bound only once garbage is out of the count. Below it the running counts stand: a
@@ -267,9 +235,9 @@ pub const HISTORY_ENTRIES: usize = 64;
 /// The full Chrome version Mars reports where Chrome reports one: the high-entropy client hints
 /// Relay sends and V9's `navigator.userAgentData.getHighEntropyValues`. One constant, so the two
 /// agree; its major matches Relay's `CHROME_ENGINE` (a Relay test pins that).
-pub const CHROME_FULL_VERSION: &str = "152.0.7739.0";
+pub const CHROME_FULL_VERSION: &str = "152.0.7977.167";
 /// The macOS version Chrome reports as `Sec-CH-UA-Platform-Version` and `platformVersion`.
-pub const MACOS_PLATFORM_VERSION: &str = "15.6.1";
+pub const MACOS_PLATFORM_VERSION: &str = "26.6.2";
 /// Native windows cap retained page documents to bound aggregate tab memory.
 pub const TABS: usize = 16;
 /// Cancellation stays responsive even while a worker waits for a child reply.
@@ -577,3 +545,36 @@ pub const METADATA_BYTES: usize = 1024 * 1024;
 pub const VM_LISTENERS: usize = 512;
 /// Bytes of the `document.cookie` string the app supplies, and of one cookie a script writes.
 pub const VM_DOCUMENT_COOKIE_BYTES: usize = 4096;
+
+/** Unit tests for the deadline override parser, the only logic in this module. */
+#[cfg(test)]
+mod script_deadline_tests {
+    use super::*;
+
+    /** A missing override keeps the product default. */
+    #[test]
+    fn unset_override_keeps_the_default() {
+        assert_eq!(parse_script_deadline(None), SCRIPT_DEADLINE_DEFAULT);
+    }
+
+    /** A positive whole number of milliseconds replaces the default. */
+    #[test]
+    fn positive_override_replaces_the_default() {
+        assert_eq!(
+            parse_script_deadline(Some(" 60000 ")),
+            Duration::from_millis(60_000)
+        );
+    }
+
+    /** Zero, negative, fractional and non-numeric text is refused and keeps the default. */
+    #[test]
+    fn malformed_override_keeps_the_default() {
+        for raw in ["0", "-5", "1.5", "soon", ""] {
+            assert_eq!(
+                parse_script_deadline(Some(raw)),
+                SCRIPT_DEADLINE_DEFAULT,
+                "{raw}"
+            );
+        }
+    }
+}

@@ -2,9 +2,9 @@
 use super::*;
 use crate::v9::vm::data::{SharedGc, SharedGcArena, SharedGcValue};
 mod snapshot;
-pub(in crate::v9::builtins::wasm) use snapshot::{initialize, validate};
 #[cfg(feature = "conformance")]
 pub(in crate::v9::builtins::wasm) use snapshot::validate_arena;
+pub(in crate::v9::builtins::wasm) use snapshot::{initialize, validate};
 
 /** This inert metadata brands a real arena-owned wait queue independently of Wasm module bytes. */
 pub(in crate::v9::builtins::wasm) const WAIT_QUEUE_META: &[u8] = b"wasm-wait-queue-v1";
@@ -23,7 +23,9 @@ fn arena(vm: &Vm) -> crate::protocol::EngineResult<SharedGcArena> {
         return host.shared_gc_arena();
     }
     #[cfg(feature = "conformance")]
-    if let Some(arena) = crate::v9::builtins::existing_js_arena(vm) { return Ok(arena); }
+    if let Some(arena) = crate::v9::builtins::existing_js_arena(vm) {
+        return Ok(arena);
+    }
     vm.heap
         .objects
         .values()
@@ -44,10 +46,18 @@ pub(in crate::v9::builtins::wasm) fn new_wait_queue(vm: &mut Vm) -> Res<JsValue>
 }
 /** Only branded queue nodes may wake registered waiters. */
 #[cfg(feature = "conformance")]
-pub(in crate::v9::builtins::wasm) fn notify_queue(vm: &mut Vm, queue: &JsValue, count: u32) -> Res<u32> {
-    if *queue == JsValue::Null { return Err(trap(vm, "dereferencing a null pointer")); }
+pub(in crate::v9::builtins::wasm) fn notify_queue(
+    vm: &mut Vm,
+    queue: &JsValue,
+    count: u32,
+) -> Res<u32> {
+    if *queue == JsValue::Null {
+        return Err(trap(vm, "dereferencing a null pointer"));
+    }
     let root = handle(vm, queue).ok_or_else(|| vm.type_error("invalid Wasm wait queue"))?;
-    if root.metadata()?.0.as_ref() != WAIT_QUEUE_META { return Err(vm.type_error("invalid Wasm wait queue")); }
+    if root.metadata()?.0.as_ref() != WAIT_QUEUE_META {
+        return Err(vm.type_error("invalid Wasm wait queue"));
+    }
     Ok(root.notify_waiters(count as usize) as u32)
 }
 /** Converting a reference validates its actual backing capability before storing its arena-local node number. */
@@ -108,8 +118,13 @@ pub(super) fn allocate(
 }
 /** A described shared record stores its descriptor as a traced arena edge after its normal fields. */
 pub(super) fn allocate_described(
-    vm: &mut Vm, source: &JsValue, m: &Module, index: u32, array: bool,
-    fields: Vec<JsValue>, descriptor: Option<JsValue>,
+    vm: &mut Vm,
+    source: &JsValue,
+    m: &Module,
+    index: u32,
+    array: bool,
+    fields: Vec<JsValue>,
+    descriptor: Option<JsValue>,
 ) -> Res<JsValue> {
     let object = source
         .object()
@@ -142,8 +157,15 @@ pub(super) fn allocate_described(
         .map(|(ty, v)| value(vm, &arena, ty, &v))
         .collect::<Res<Vec<_>>>()?;
     if let Some(descriptor) = descriptor {
-        let target = m.definitions[index as usize].descriptor.ok_or_else(|| vm.type_error("missing shared descriptor type"))?;
-        values.push(value(vm, &arena, Type::Exact(i64::from(target), false), &descriptor)?);
+        let target = m.definitions[index as usize]
+            .descriptor
+            .ok_or_else(|| vm.type_error("missing shared descriptor type"))?;
+        values.push(value(
+            vm,
+            &arena,
+            Type::Exact(i64::from(target), false),
+            &descriptor,
+        )?);
     }
     let root = match arena.allocate(&bytes, index, array, values.clone()) {
         Ok(root) => root,
@@ -250,14 +272,16 @@ pub(super) fn matches(vm: &mut Vm, m: &Module, ty: Type, root: &SharedGc) -> Res
     }
     if heap < 0 {
         return Ok(match heap {
-            -18 | -19 | -17 => true,
+            -19..=-17 => true,
             -21 => !array,
             -22 => array,
             _ => false,
         });
     }
     let actual = binary::parse(&bytes).map_err(|e| compile_failure(vm, e))?;
-    if matches!(ty, Type::Exact(..)) { return Ok(gc_types::equivalent(&actual, index, m, heap as u32)); }
+    if matches!(ty, Type::Exact(..)) {
+        return Ok(gc_types::equivalent(&actual, index, m, heap as u32));
+    }
     let mut current = Some(index);
     for _ in 0..=actual.definitions.len() {
         let Some(index) = current else {
@@ -323,7 +347,9 @@ pub(super) fn atomic(
                     8 => a ^ b,
                     _ => a,
                 };
-                let result = field.packed.map_or(result, |bits| result & ((1u32 << bits) - 1));
+                let result = field
+                    .packed
+                    .map_or(result, |bits| result & ((1u32 << bits) - 1));
                 SharedGcValue::Number((result as i32 as f64).to_bits())
             }
             (SharedGcValue::BigInt(a), SharedGcValue::BigInt(b)) => {

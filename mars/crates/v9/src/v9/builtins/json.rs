@@ -452,7 +452,7 @@ fn serialize_property(vm: &mut Vm, writer: &mut Writer, holder: &JsValue, name: 
         }
         JsValue::Null => writer.ascii("null"),
         JsValue::Boolean(flag) => writer.ascii(if *flag { "true" } else { "false" }),
-        JsValue::String(text) => writer.quote(&text),
+        JsValue::String(text) => writer.quote(text),
         #[cfg(feature = "conformance")]
         JsValue::Smi(number) => writer.ascii(&crate::v9::value::number_to_string(*number)),
         JsValue::Number(number) => {
@@ -590,7 +590,9 @@ pub(in crate::v9) fn stringify(vm: &mut Vm, call: Call) -> Res<JsValue> {
         JsValue::Smi(count) => vec![0x20; count.clamp(0.0, MAX_GAP as f64) as usize],
         JsValue::Number(count) => vec![0x20; count.clamp(0.0, MAX_GAP as f64) as usize],
         #[cfg(feature = "conformance")]
-        JsValue::SharedNumber(count) | JsValue::LocalNumber(count) => vec![0x20; count.value.clamp(0.0, MAX_GAP as f64) as usize],
+        JsValue::SharedNumber(count) | JsValue::LocalNumber(count) => {
+            vec![0x20; count.value.clamp(0.0, MAX_GAP as f64) as usize]
+        }
         JsValue::String(text) => (0..text.len().min(MAX_GAP))
             .filter_map(|index| text.unit_at(index))
             .collect(),

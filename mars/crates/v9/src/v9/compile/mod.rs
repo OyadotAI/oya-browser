@@ -17,6 +17,9 @@ mod parameters;
 mod pattern;
 mod resources;
 mod scan;
+mod site_text;
+use pattern::Source;
+use site_text::{CATCH_VALUE, FOR_VALUE, YIELD_STAR_VALUE};
 mod stmt;
 mod strict;
 mod super_update;
@@ -347,6 +350,22 @@ pub(in crate::v9) enum Op {
     TemplateObject(u32),
 }
 
+/** How a recorded site text reads in the message for a value that was not what the site
+needed. V8 prints the expression as written for most sites, names the callee when the value came
+straight out of a call (`f is not a function or its return value is not iterable`), and has a
+form of its own for a spread argument. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::v9) enum SiteKind {
+    /** The text is the operand expression as the source wrote it. */
+    Printed,
+    /** The operand was a call; the text is its callee. */
+    CallResult,
+    /** The operand was spread into a call's arguments. */
+    SpreadArgument,
+    /** The operand was spread into an array literal. */
+    ArraySpread,
+}
+
 /** One compiled function or script. */
 pub(in crate::v9) struct Code {
     /// Source site identity; scripts use their start offset with the source tag.
@@ -382,21 +401,23 @@ pub(in crate::v9) struct Code {
     pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
     /// Instruction index to source position, sorted.
     pub positions: Vec<(u32, Pos)>,
-    /// Call instructions whose callee has a written name, as V8 prints it in "is not a function":
-    /// instruction index and name, sorted by index.
-    pub callees: Vec<(u32, Arc<str>)>,
+    /// Instructions whose operand has a written form that V8 prints in its message (`o.f is not
+    /// a function`, `x.y is not iterable`): instruction index, how the text reads, and the text,
+    /// sorted by index.
+    pub callees: Vec<(u32, SiteKind, Arc<str>)>,
     /// Inline caches of the property loads and stores, one per entry of `strings`.
     pub caches: crate::v9::vm::shape::SiteCaches,
 }
 
 impl Code {
-    /** The written callee name of the call instruction at `pc`, found by binary search. */
-    pub fn callee_at(&self, pc: usize) -> Option<&str> {
+    /** The written form of the operand of the instruction at `pc`, found by binary search. */
+    pub fn callee_at(&self, pc: usize) -> Option<(SiteKind, &str)> {
         let index = self
             .callees
-            .binary_search_by_key(&(pc as u32), |(at, _)| *at)
+            .binary_search_by_key(&(pc as u32), |(at, ..)| *at)
             .ok()?;
-        Some(&self.callees[index].1)
+        let (_, kind, text) = &self.callees[index];
+        Some((*kind, text))
     }
     /** Preserve comments and whitespace without interpreting the function's public name. */
     pub fn original_source(&self) -> Option<&str> {
@@ -507,7 +528,7 @@ impl Code {
             + self
                 .callees
                 .iter()
-                .map(|(_, name)| name.len() * 2)
+                .map(|(_, _, name)| name.len() * 2)
                 .sum::<usize>()
             + self.strict_ranges.len() * std::mem::size_of::<(u32, u32)>()
             + self.caches.bytes()
@@ -782,7 +803,7 @@ struct Target {
 struct FnState {
     ops: Vec<Op>,
     positions: Vec<(u32, Pos)>,
-    callees: Vec<(u32, Arc<str>)>,
+    callees: Vec<(u32, SiteKind, Arc<str>)>,
     strings: Vec<JsString>,
     /// Strong mixing avoids clustered UTF16 identifier hashes; keys share the pool's immutable string storage.
     string_index: std::collections::HashMap<JsString, u32>,

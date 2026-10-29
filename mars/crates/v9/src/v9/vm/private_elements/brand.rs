@@ -24,20 +24,21 @@ impl Vm<'_> {
             .unwrap_or_default()
     }
 
-    /** Static methods refer to the constructor; instance methods refer to its prototype. */
-    fn private_method_home(&self, home: ObjectId, key: &Key) -> Option<ObjectId> {
+    /** Static methods refer to the constructor (`true`); instance methods refer to its prototype.
+    A static field on the constructor is a plain writable slot and not a method. */
+    fn private_method_home(&self, home: ObjectId, key: &Key) -> Option<(ObjectId, bool)> {
         let object = self.heap.get(home)?;
-        if object.function().is_some() && object.props.get(key).is_some() {
-            return Some(home);
+        if object.function().is_some()
+            && object.props.get(key).is_some_and(|prop| {
+                matches!(prop.slot, Slot::Accessor(..)) || prop.attrs & WRITABLE == 0
+            })
+        {
+            return Some((home, true));
         }
         let template_home = if self.method_template(home).is_some() {
             home
         } else {
-            match object
-                .props
-                .get(&Key::prototype())
-                .map(|prop| &prop.slot)
-            {
+            match object.props.get(&Key::prototype()).map(|prop| &prop.slot) {
                 Some(Slot::Data(JsValue::Object(id))) => *id,
                 _ => return None,
             }
@@ -45,10 +46,10 @@ impl Vm<'_> {
         self.method_template(template_home)
             .and_then(|id| self.heap.get(id))
             .filter(|object| object.props.get(key).is_some())
-            .map(|_| template_home)
+            .map(|_| (template_home, false))
     }
     /** The active lexical class identifies a missing method brand for its receiver diagnostic. */
-    fn method_owner(&self, key: &Key) -> Option<ObjectId> {
+    fn method_owner(&self, key: &Key) -> Option<(ObjectId, bool)> {
         self.frames
             .iter()
             .rev()
@@ -94,11 +95,14 @@ impl Vm<'_> {
             }
             return Ok(());
         }
-        if let Some(home) = self.method_owner(key) {
-            return Err(self.type_error(&format!(
-                "Receiver must be an instance of class {}",
-                self.class_name(home)
-            )));
+        if let Some((home, is_static)) = self.method_owner(key) {
+            let class = self.class_name(home);
+            let message = if is_static {
+                format!("Receiver must be class {class}")
+            } else {
+                format!("Receiver must be an instance of class {class}")
+            };
+            return Err(self.type_error(&message));
         }
         let (operation, direction) = if write {
             ("write", "to")

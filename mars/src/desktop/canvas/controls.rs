@@ -435,10 +435,15 @@ impl Canvas {
     key press the page handles: Google submits from its keydown handler. Any other textarea
     keeps inserting the newline at the caret itself, since the engine's fallback only appends. */
     pub(super) fn multiline_enter(&self, view: &NSTextView) -> bool {
-        let id = self.ivars().widgets.borrow().iter().find_map(|(id, widget)| match widget {
-            Widget::Textarea(_, field) => std::ptr::eq(&**field, view).then_some(*id),
-            _ => None,
-        });
+        let id = self
+            .ivars()
+            .widgets
+            .borrow()
+            .iter()
+            .find_map(|(id, widget)| match widget {
+                Widget::Textarea(_, field) => std::ptr::eq(&**field, view).then_some(*id),
+                _ => None,
+            });
         let (Some(id), Some(page)) = (id, self.page_id()) else {
             return false;
         };

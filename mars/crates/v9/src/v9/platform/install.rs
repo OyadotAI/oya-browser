@@ -92,7 +92,12 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         dom::node_method,
     );
     for (name, value) in NODE_CONSTANTS {
-        b.value(node, name, JsValue::Number(value), 0);
+        b.value(
+            node,
+            name,
+            JsValue::Number(value),
+            crate::v9::vm::heap::ENUMERABLE,
+        );
     }
     let attributes = b.object(Some(b.ids.array_prototype));
     b.ids.named_node_map_prototype = attributes;
@@ -279,6 +284,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     network(b);
     singletons(b);
     global_object(b);
+    super::chrome_shapes::install(b);
 }
 
 /** The document singleton and its prototype. */
@@ -382,7 +388,7 @@ fn document(b: &mut Builder, node: u32) {
         "implementation",
         super::implementation::implementation_get,
     );
-    b.method(
+    b.host_method(
         proto,
         "createProcessingInstruction",
         super::implementation::PI_LENGTH,
@@ -411,11 +417,11 @@ already "loaded": load() resolves to no faces, check() is true and `ready` is se
 what pages that wait on fonts (Google's emoji preloads, layout code) need to carry on. */
 fn font_faces(b: &mut Builder, document: u32) {
     let fonts = b.object(Some(b.ids.event_target_prototype));
-    b.method(fonts, "load", 1, |vm, _| {
+    b.host_method(fonts, "load", 1, |vm, _| {
         let empty = vm.new_array(Vec::new())?;
         Ok(JsValue::Object(vm.promise_resolve(JsValue::Object(empty))?))
     });
-    b.method(fonts, "check", 1, yes);
+    b.host_method(fonts, "check", 1, yes);
     b.getter(fonts, "ready", |vm, call| {
         Ok(JsValue::Object(vm.promise_resolve(call.this)?))
     });
@@ -423,7 +429,7 @@ fn font_faces(b: &mut Builder, document: u32) {
     b.value(fonts, "size", JsValue::Number(0.0), CONFIGURABLE);
     methods(b, fonts, &["add", "clear", "forEach"], noop_method);
     for name in ["has", "delete"] {
-        b.method(fonts, name, 1, |_, _| Ok(JsValue::Boolean(false)));
+        b.host_method(fonts, name, 1, |_, _| Ok(JsValue::Boolean(false)));
     }
     b.value(document, "fonts", JsValue::Object(fonts), CONFIGURABLE);
 }
@@ -442,7 +448,7 @@ fn collections(b: &mut Builder) {
         ],
         dom::class_list,
     );
-    let values = b.method(class_list, "values", 0, dom::class_list);
+    let values = b.host_method(class_list, "values", 0, dom::class_list);
     b.put(
         class_list,
         Key::Sym(symbol::ITERATOR),
@@ -471,7 +477,7 @@ fn collections(b: &mut Builder) {
         dom::style_method,
     );
     b.getter(style, "length", dom::style_method);
-    let style_values = b.method(style, "values", 0, dom::style_method);
+    let style_values = b.host_method(style, "values", 0, dom::style_method);
     b.put(
         style,
         Key::Sym(symbol::ITERATOR),
@@ -495,7 +501,7 @@ fn collections(b: &mut Builder) {
         &["item", "namedItem", "forEach", "entries", "keys"],
         dom::list_method,
     );
-    let values = b.method(list, "values", 0, dom::list_method);
+    let values = b.host_method(list, "values", 0, dom::list_method);
     b.put(
         list,
         Key::Sym(symbol::ITERATOR),
@@ -544,6 +550,19 @@ const EVENT_HANDLER_ATTRIBUTES: [&str; 8] = [
     "onwebkitanimationiteration",
     "onwebkittransitionend",
 ];
+
+/** The animation and transition handler attributes on one GlobalEventHandlers owner, null until
+a script assigns them. */
+fn event_handler_attributes(b: &mut Builder, owner: u32) {
+    for name in EVENT_HANDLER_ATTRIBUTES {
+        b.value(
+            owner,
+            name,
+            JsValue::Null,
+            crate::v9::vm::heap::DEFAULT_ATTRS,
+        );
+    }
+}
 
 /** The init method a subtype owns in the DOM standard, if it has one. */
 fn legacy_init(name: &str) -> Option<&'static str> {
@@ -666,11 +685,10 @@ fn event_types(b: &mut Builder) {
         b.global(name, ctor);
     }
     let target = b.ids.event_target_prototype;
-    for name in EVENT_HANDLER_ATTRIBUTES {
-        let attrs = crate::v9::vm::heap::WRITABLE
-            | crate::v9::vm::heap::CONFIGURABLE
-            | crate::v9::vm::heap::ENUMERABLE;
-        b.value(target, name, JsValue::Null, attrs);
+    // HTML's GlobalEventHandlers: on elements, the document and the window (see global_object),
+    // not on EventTarget, whose prototype Chrome keeps to its three methods.
+    for owner in [b.ids.html_element_prototype, b.ids.document_prototype] {
+        event_handler_attributes(b, owner);
     }
     let ctor = b.constructor("EventTarget", 0, construct_event_target, target, None);
     b.global("EventTarget", ctor);
@@ -694,7 +712,7 @@ fn network(b: &mut Builder) {
         ],
         net::xhr_method,
     );
-    b.method(xhr, "overrideMimeType", 1, net::xhr_method);
+    b.host_method(xhr, "overrideMimeType", 1, net::xhr_method);
     getters(
         b,
         xhr,
@@ -796,9 +814,9 @@ fn network(b: &mut Builder) {
         net::response_method,
     );
     let ctor = b.constructor("Response", 0, net::response_construct, response, None);
-    b.method(ctor, "error", 0, net::response_static);
-    b.method(ctor, "redirect", 1, net::response_static);
-    b.method(ctor, "json", 1, net::response_static);
+    b.host_method(ctor, "error", 0, net::response_static);
+    b.host_method(ctor, "redirect", 1, net::response_static);
+    b.host_method(ctor, "json", 1, net::response_static);
     b.global("Response", ctor);
     let headers = b.object(Some(object_prototype));
     b.ids.headers_prototype = headers;
@@ -818,7 +836,7 @@ fn network(b: &mut Builder) {
         ],
         net::headers_method,
     );
-    let entries = b.method(headers, "entries", 0, net::headers_method);
+    let entries = b.host_method(headers, "entries", 0, net::headers_method);
     b.put(
         headers,
         Key::Sym(symbol::ITERATOR),
@@ -862,7 +880,7 @@ fn network(b: &mut Builder) {
         ],
         url_bindings::params_method,
     );
-    let entries = b.method(params, "entries", 0, url_bindings::params_method);
+    let entries = b.host_method(params, "entries", 0, url_bindings::params_method);
     b.put(
         params,
         Key::Sym(symbol::ITERATOR),
@@ -940,8 +958,6 @@ fn singletons(b: &mut Builder) {
             "webdriver",
             "pdfViewerEnabled",
             "doNotTrack",
-            "plugins",
-            "mimeTypes",
         ],
         window::navigator_get,
     );
@@ -958,8 +974,18 @@ fn singletons(b: &mut Builder) {
         window::navigator_method,
     );
     let ua_data = b.object(Some(object_prototype));
-    getters(b, ua_data, &["brands", "mobile", "platform"], window::ua_data_get);
-    methods(b, ua_data, &["getHighEntropyValues", "toJSON"], window::ua_data_method);
+    getters(
+        b,
+        ua_data,
+        &["brands", "mobile", "platform"],
+        window::ua_data_get,
+    );
+    methods(
+        b,
+        ua_data,
+        &["getHighEntropyValues", "toJSON"],
+        window::ua_data_method,
+    );
     b.alias(navigator, "userAgentData", ua_data);
     // As in Chrome, the members live on Navigator.prototype and `navigator` owns none.
     let navigator_proto = navigator;
@@ -1041,7 +1067,7 @@ fn singletons(b: &mut Builder) {
         HIDDEN_ATTRS,
     );
     #[cfg(feature = "conformance")]
-    b.method(
+    b.host_method(
         performance,
         "measureMemory",
         0,
@@ -1066,8 +1092,8 @@ fn singletons(b: &mut Builder) {
         &["clearResourceTimings", "setResourceTimingBufferSize"],
         noop_method,
     );
-    b.method(performance, "mark", 1, super::performance::mark);
-    b.method(performance, "measure", 1, super::performance::measure);
+    b.host_method(performance, "mark", 1, super::performance::mark);
+    b.host_method(performance, "measure", 1, super::performance::measure);
     getters(
         b,
         performance,
@@ -1079,7 +1105,7 @@ fn singletons(b: &mut Builder) {
     let crypto = b.object(Some(object_prototype));
     methods(b, crypto, &["randomUUID"], window::window_method);
     // getRandomValues fills from the operating system's CSPRNG, like randomUUID.
-    b.method(
+    b.host_method(
         crypto,
         "getRandomValues",
         1,
@@ -1092,6 +1118,7 @@ fn singletons(b: &mut Builder) {
 fn global_object(b: &mut Builder) {
     let proto = b.object(Some(b.ids.event_target_prototype));
     b.ids.window_prototype = proto;
+    event_handler_attributes(b, proto);
     getters(
         b,
         proto,
@@ -1161,7 +1188,7 @@ fn global_object(b: &mut Builder) {
         "queueMicrotask",
     ];
     methods(b, proto, &timer_names, timers::timer);
-    b.method(proto, "fetch", 1, net::fetch);
+    b.host_method(proto, "fetch", 1, net::fetch);
     methods(
         b,
         proto,
@@ -1252,7 +1279,12 @@ fn global_object(b: &mut Builder) {
         };
         if name == "Node" {
             for (name, value) in NODE_CONSTANTS {
-                b.value(ctor, name, JsValue::Number(value), 0);
+                b.value(
+                    ctor,
+                    name,
+                    JsValue::Number(value),
+                    crate::v9::vm::heap::ENUMERABLE,
+                );
             }
         }
         b.global(name, ctor);
@@ -1271,8 +1303,8 @@ fn global_object(b: &mut Builder) {
             "IntersectionObserver" | "ResizeObserver" => window::observe,
             _ => noop_method,
         };
-        b.method(observer, "observe", 1, observe);
-        b.method(observer, "takeRecords", 0, |vm, _| {
+        b.host_method(observer, "observe", 1, observe);
+        b.host_method(observer, "takeRecords", 0, |vm, _| {
             Ok(JsValue::Object(vm.new_array(Vec::new())?))
         });
         let ctor = b.constructor(name, 1, construct_observer, observer, None);
@@ -1286,7 +1318,7 @@ fn global_object(b: &mut Builder) {
     let ctor = b.constructor("Audio", 0, construct_audio, audio, None);
     b.global("Audio", ctor);
     let abort = b.object(Some(b.ids.object_prototype));
-    b.method(abort, "abort", 0, abort_controller_abort);
+    b.host_method(abort, "abort", 0, abort_controller_abort);
     let ctor = b.constructor(
         "AbortController",
         0,
@@ -1299,7 +1331,7 @@ fn global_object(b: &mut Builder) {
     css_namespace(b);
     let idle = b.object(Some(b.ids.object_prototype));
     b.ids.idle_deadline_prototype = idle;
-    b.method(idle, "timeRemaining", 0, |_, _| {
+    b.host_method(idle, "timeRemaining", 0, |_, _| {
         Ok(JsValue::Number(
             crate::constants::ANIMATION_FRAME_MS * IDLE_FRAMES,
         ))
@@ -1573,14 +1605,14 @@ fn shared_getters(b: &mut Builder, target: u32, names: &[&'static str], function
 /** Methods on a shared prototype, leaving out the members one interface owns. */
 fn shared_methods(b: &mut Builder, target: u32, names: &[&'static str], function: NativeFn) {
     for name in names.iter().filter(|name| !interfaces::specific(name)) {
-        b.method(target, name, 0, function);
+        b.host_method(target, name, 0, function);
     }
 }
 
 /** Register methods that share one native dispatching on its name. */
 fn methods(b: &mut Builder, target: u32, names: &[&'static str], function: NativeFn) {
     for name in names {
-        b.method(target, name, 0, function);
+        b.host_method(target, name, 0, function);
     }
 }
 
@@ -1712,8 +1744,8 @@ fn construct_audio(vm: &mut Vm, call: Call) -> Res<JsValue> {
 V9, decides what a declaration does; pages use it to pick modern code paths. */
 fn css_namespace(b: &mut Builder) {
     let css = b.object(Some(b.ids.object_prototype));
-    b.method(css, "supports", 1, yes);
-    b.method(css, "escape", 1, |vm, call| {
+    b.host_method(css, "supports", 1, yes);
+    b.host_method(css, "escape", 1, |vm, call| {
         let text = vm.to_string(&call.arg(0))?.lossy();
         Ok(JsValue::string(&css_escape(&text))?)
     });
@@ -1749,23 +1781,23 @@ fn abort_signal(b: &mut Builder) {
     b.ids.abort_signal_prototype = proto;
     let ctor = b.constructor("AbortSignal", 0, dom::illegal_constructor, proto, None);
     b.global("AbortSignal", ctor);
-    b.method(proto, "throwIfAborted", 0, |vm, call| {
+    b.host_method(proto, "throwIfAborted", 0, |vm, call| {
         if vm.get(&call.this, &Key::from("aborted"))?.truthy() {
             let reason = vm.get(&call.this, &Key::from("reason"))?;
             return Err(crate::v9::vm::Thrown::Value(reason));
         }
         Ok(JsValue::Undefined)
     });
-    b.method(ctor, "abort", 0, |vm, call| {
+    b.host_method(ctor, "abort", 0, |vm, call| {
         let signal = new_signal(vm)?;
         mark_aborted(vm, signal, call.arg(0))?;
         Ok(JsValue::Object(signal))
     });
     // V9 has no timer-backed signal source; a timeout signal simply never aborts.
-    b.method(ctor, "timeout", 1, |vm, _| {
+    b.host_method(ctor, "timeout", 1, |vm, _| {
         Ok(JsValue::Object(new_signal(vm)?))
     });
-    b.method(ctor, "any", 1, |vm, call| {
+    b.host_method(ctor, "any", 1, |vm, call| {
         let signal = new_signal(vm)?;
         for each in vm.iterate_to_vec(&call.arg(0))? {
             if vm.get(&each, &Key::from("aborted"))?.truthy() {

@@ -724,7 +724,6 @@ impl Heap {
             .values()
             .flat_map(|env| &env.slots)
             .for_each(&mut text);
-        drop(text);
         for object in self.objects.values() {
             if let Class::BigIntWide(integer) = &object.class {
                 bigints.insert(integer.words());

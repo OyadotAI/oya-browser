@@ -38,6 +38,42 @@ pub(super) fn node_at_scrolled(
         .map(|item| item.local_id)
 }
 
+/** A frame's painted IDs resolve against its own document before the embedder underneath. */
+pub(super) fn node_at_frames(
+    display: &DisplayList,
+    document: &Document,
+    frames: &[(usize, usize, Document)],
+    point: NSPoint,
+    top: f64,
+) -> Option<usize> {
+    display
+        .items
+        .iter()
+        .rev()
+        .filter(|item| {
+            let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
+            contains(item, NSPoint::new(point.x, point.y - shift))
+        })
+        .find_map(|item| {
+            let frame = frames
+                .iter()
+                .find(|(base, end, _)| item.local_id >= *base && item.local_id < *end);
+            if let Some((base, _, frame)) = frame {
+                let node = frame
+                    .nodes
+                    .iter()
+                    .find(|node| node.local_id == item.local_id - base)?;
+                return (!node.hidden() && !node.disabled).then_some(item.local_id);
+            }
+            document
+                .nodes
+                .iter()
+                .find(|node| node.local_id == item.local_id)
+                .filter(|node| !node.hidden() && node.style.interactive && !node.disabled)
+                .map(|_| item.local_id)
+        })
+}
+
 /** Whether the point is inside the item's box and inside its ancestors' clip. */
 fn contains(item: &DisplayItem, point: NSPoint) -> bool {
     let inside = |x: f64, y: f64, width: f64, height: f64| {
@@ -107,6 +143,26 @@ mod tests {
         assert_eq!(
             node_at(&display, &document, NSPoint::new(300.0, 300.0)),
             None
+        );
+    }
+    /** A frame tile above its iframe reaches the frame identity the runtime can resolve. */
+    #[test]
+    fn embedded_tile_wins_over_its_owner() {
+        let (display, document) = page(vec![
+            item(1, 0.0, 0.0, 200.0, 100.0),
+            item(101, 10.0, 10.0, 50.0, 20.0),
+        ]);
+        let mut frame: Document = serde_json::from_value(serde_json::json!({"nodes":[]})).unwrap();
+        frame.nodes.push(node(1));
+        assert_eq!(
+            node_at_frames(
+                &display,
+                &document,
+                &[(100, 200, frame)],
+                NSPoint::new(20.0, 20.0),
+                0.0
+            ),
+            Some(101)
         );
     }
 

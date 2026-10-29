@@ -26,7 +26,6 @@ pub(in crate::v9) fn next_generation() -> u64 {
     GENERATIONS.fetch_add(1, Ordering::Relaxed)
 }
 
-
 /** Text and attribute bytes one change adds to the request's change budget. */
 fn change_bytes(change: &ScriptChange) -> usize {
     match change {

@@ -33,7 +33,10 @@ pub(super) fn pop(stack: &mut Vec<JsValue>) -> Res<JsValue> {
 /** i32 values remain exact signed Numbers throughout interpretation. */
 pub(super) fn i32_value(value: &JsValue) -> Res<i32> {
     if let Some(n) = value.number_value()
-        && n.is_finite() && n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64
+        && n.is_finite()
+        && n.fract() == 0.0
+        && n >= i32::MIN as f64
+        && n <= i32::MAX as f64
     {
         return Ok(n as i32);
     }

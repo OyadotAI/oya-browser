@@ -1,5 +1,7 @@
 # Mars composes independent Rust browser engines and native agent control.
 [workspace]
+# vendor/rustls is its own package: a patched copy of the registry crate, see vendor/rustls/MARS.md.
+exclude = ["vendor/rustls"]
 members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
@@ -62,3 +64,7 @@ bench = false
 name = "failures"
 path = "tests/failures.rs"
 required-features = ["test-support"]
+
+[patch.crates-io]
+# Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
+rustls = { path = "vendor/rustls" }

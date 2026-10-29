@@ -13,7 +13,7 @@ fn methods_key() -> Key {
 }
 
 /** User-facing private spelling excludes evaluation and environment identities. */
-fn private_name(key: &Key) -> String {
+pub(super) fn private_name(key: &Key) -> String {
     match key {
         Key::Private(name) => name.lossy().rsplit(':').next().unwrap_or("").to_string(),
         _ => String::new(),

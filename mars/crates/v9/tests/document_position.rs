@@ -5,7 +5,13 @@ use common::eval;
 /** The implementation-specific bit is 32, as the DOM standard fixes it. */
 #[test]
 fn implementation_specific_position_constant_is_32() {
-    assert_eq!(eval("const r=String(Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC);", "r"), "32");
+    assert_eq!(
+        eval(
+            "const r=String(Node.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC);",
+            "r"
+        ),
+        "32"
+    );
 }
 
 /** Two detached nodes report disconnected, implementation-specific and following: 1 + 32 + 4. */

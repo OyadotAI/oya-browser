@@ -50,7 +50,7 @@ pub(super) fn install(b: &mut Builder) {
     }
     // A doctype is a ChildNode, so it takes the same before, after, replaceWith and remove.
     for name in ["before", "after", "replaceWith", "remove"] {
-        b.method(proto, name, 0, dom::character_data_method);
+        b.host_method(proto, name, 0, dom::character_data_method);
     }
     let ctor = b.constructor("DocumentType", 0, dom::illegal_constructor, proto, None);
     b.global("DocumentType", ctor);
@@ -69,7 +69,7 @@ pub(super) fn install(b: &mut Builder) {
         "replaceWith",
         "remove",
     ] {
-        b.method(text, name, 0, dom::character_data_method);
+        b.host_method(text, name, 0, dom::character_data_method);
     }
 }
 
@@ -369,6 +369,7 @@ pub(super) fn content_window(vm: &mut Vm, frame: usize, document: usize) -> Res<
     }
     vm.put(id, "window", JsValue::Object(id))?;
     vm.put(id, "self", JsValue::Object(id))?;
+    vm.put(id, "globalThis", JsValue::Object(id))?;
     vm.page.state.frame_windows.insert(frame, id);
     Ok(JsValue::Object(id))
 }

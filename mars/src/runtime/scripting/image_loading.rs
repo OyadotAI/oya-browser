@@ -229,10 +229,9 @@ impl Runtime {
                 .get(&node.local_id)
                 .and_then(|asset| asset.image_source.as_ref());
             if let (Some(size), Some(selected), Some(actual)) = (node.image_size, selected, actual)
+                && &selected == actual
             {
-                if &selected == actual {
-                    decoded.insert(node.local_id, (selected, size));
-                }
+                decoded.insert(node.local_id, (selected, size));
             }
         }
         let state = &mut page.scripting.image_loading;
@@ -350,16 +349,15 @@ impl Runtime {
             self.clear_failed_image(page, request.node);
             return Ok(None);
         };
-        if node.is_some() {
-            if let Some((_, size)) = page
+        if node.is_some()
+            && let Some((_, size)) = page
                 .scripting
                 .image_loading
                 .decoded
                 .get(&request.node)
                 .filter(|(old, _)| *old == selected)
-            {
-                return Ok(Some(*size));
-            }
+        {
+            return Ok(Some(*size));
         }
         let base = url::Url::parse(&page.url)
             .map_err(|_| EngineError::invalid("Invalid image base URL."))?;

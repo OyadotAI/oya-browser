@@ -159,10 +159,8 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .ok_or_else(|| vm.type_error("Worker source file was not supplied by the host"))?,
         _ => return Err(vm.type_error("Invalid Worker source or source type")),
     };
-    if object {
-        if vm.get(&options, &key("flushDenormals"))?.truthy() {
-            return Err(vm.unsupported_error("Worker flushDenormals mode"));
-        }
+    if object && vm.get(&options, &key("flushDenormals"))?.truthy() {
+        return Err(vm.unsupported_error("Worker flushDenormals mode"));
     }
     let host = host(vm)?;
     let environment = vm.page.environment.clone();
@@ -224,7 +222,9 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let requester = vm.page.environment.conformance_worker_id;
     let mark = vm.pins.len();
     vm.pin(call.this.clone());
-    let result = host.receive(id, requester, deadline, || host.collection_safepoint(requester, vm));
+    let result = host.receive(id, requester, deadline, || {
+        host.collection_safepoint(requester, vm)
+    });
     vm.pins.truncate(mark);
     match result? {
         Some(graph) => clone::decode(vm, graph),

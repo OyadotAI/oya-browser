@@ -91,7 +91,13 @@ fn normalize_radios(document: &mut Document) {
         .nodes
         .iter()
         .filter(|n| n.tag == "input" && n.input_type() == "radio" && n.checked)
-        .map(|n| (n.local_id, form_owner(document, n), n.attributes.get("name").cloned()))
+        .map(|n| {
+            (
+                n.local_id,
+                form_owner(document, n),
+                n.attributes.get("name").cloned(),
+            )
+        })
         .collect();
     let mut last = std::collections::HashMap::new();
     for (id, owner, name) in &radios {

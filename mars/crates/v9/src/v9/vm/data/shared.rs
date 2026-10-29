@@ -172,7 +172,7 @@ impl SharedBytes {
                 .backing_maximum()
                 .is_none_or(|physical| physical > maximum)
             || maximum > MAX_INDEX
-            || maximum % WASM_PAGE_BYTES != 0
+            || !maximum.is_multiple_of(WASM_PAGE_BYTES)
         {
             return None;
         }
@@ -301,7 +301,7 @@ impl SharedBytes {
     pub(in crate::v9) fn grow(&self, length: usize) -> bool {
         if self
             .logical_maximum
-            .is_some_and(|maximum| length > maximum || length % WASM_PAGE_BYTES != 0)
+            .is_some_and(|maximum| length > maximum || !length.is_multiple_of(WASM_PAGE_BYTES))
         {
             return false;
         }

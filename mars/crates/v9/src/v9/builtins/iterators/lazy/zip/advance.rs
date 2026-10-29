@@ -24,13 +24,13 @@ pub(in crate::v9::builtins::iterators::lazy) fn next(
         return Err(crate::protocol::EngineError::invalid("Invalid joint padding length.").into());
     }
     let mut output = Vec::with_capacity(records.len());
-    for index in 0..records.len() {
+    for (index, pad) in padding.iter().enumerate() {
         match item(vm, state, &mut records, index)? {
             Some(value) => {
                 vm.pin(value.clone());
                 output.push(value)
             }
-            None if state.remaining == LONGEST => output.push(padding[index].clone()),
+            None if state.remaining == LONGEST => output.push(pad.clone()),
             None => return Ok(None),
         }
     }

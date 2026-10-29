@@ -26,8 +26,11 @@ fn transport_charset_names_undeclared_page() {
 /** A legacy transport charset names the page, and a meta spelling of the same encoding agrees with it. */
 #[test]
 fn legacy_transport_charset_names_the_page() {
-    let doc = parse_with_charset(r#"<meta charset="cseucpkdfmtjapanese"><p>x</p>"#, Some("euc-jp"))
-        .expect("parses");
+    let doc = parse_with_charset(
+        r#"<meta charset="cseucpkdfmtjapanese"><p>x</p>"#,
+        Some("euc-jp"),
+    )
+    .expect("parses");
     assert_eq!(doc.charset, "EUC-JP");
 }
 

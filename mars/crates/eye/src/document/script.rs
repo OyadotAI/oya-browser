@@ -20,6 +20,13 @@ pub fn script_document(document: &Document, identity: &str) -> EngineResult<Scri
     Ok(projection)
 }
 
+/** Give a scripted document's parser text real child identities before V9 reads or changes it. */
+pub fn normalize_document_text(document: &mut Document) -> EngineResult<()> {
+    let nodes = text_children(std::mem::take(&mut document.nodes), 0)?;
+    document.nodes = nodes;
+    super::validate_content(document)
+}
+
 /** The first node holding each targeting ID, built once so projection stays linear at the node limit. */
 fn first_ids(document: &Document) -> BTreeMap<&str, usize> {
     let mut first = BTreeMap::new();

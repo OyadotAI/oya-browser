@@ -1,11 +1,14 @@
 /**
- * The one TLS client configuration, shaped like Chrome's ClientHello as far as Rustls allows:
- * Chrome's cipher suite and signature scheme order, Chrome's groups (X25519MLKEM768 from our
- * own ML-KEM, then X25519, P-256, P-384) with Chrome's two key shares, ALPN h2 then http/1.1,
- * Brotli certificate compression and a randomized extension order. Rustls cannot send GREASE,
- * ALPS, the renegotiation_info extension (it sends the SCSV), signed_certificate_timestamp, or
- * the legacy CBC and RSA key-exchange suites, and its ECH GREASE forces TLS 1.3 only, which
- * would lose every TLS 1.2 server; README.md records what tls.peet.ws measured.
+ * The one TLS client configuration, shaped like Chrome's ClientHello: Chrome's cipher suite and
+ * signature scheme order, Chrome's groups (X25519MLKEM768 from our own ML-KEM, then X25519,
+ * P-256, P-384) with Chrome's two key shares, ALPN h2 then http/1.1, Brotli certificate
+ * compression and a randomized extension order. The vendored Rustls (vendor/rustls, its
+ * `ClientHelloShaping`) adds what stock Rustls cannot send and Google's bot check keys on:
+ * GREASE values, the renegotiation_info extension in place of the SCSV,
+ * signed_certificate_timestamp, a GREASE ECH outer, ALPS for h2 (with the client
+ * EncryptedExtensions message an accepting server waits for), and Chrome's six legacy suites,
+ * which are advertised here and served by legacy.rs when a server picks one. The result is
+ * Chrome's JA4; README.md records what tls.peet.ws measured.
  */
 mod hybrid;
 mod mlkem;
@@ -13,7 +16,7 @@ mod mlkem;
 mod tests_hello;
 
 use crate::protocol::{EngineError, EngineResult};
-use rustls::client::WebPkiServerVerifier;
+use rustls::client::{ClientHelloShaping, WebPkiServerVerifier};
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::{CipherSuite, ClientConfig, RootCertStore, SignatureScheme};
 use std::sync::{Arc, OnceLock};
@@ -42,6 +45,16 @@ const SCHEMES: [SignatureScheme; 8] = [
     SignatureScheme::RSA_PSS_SHA512,
     SignatureScheme::RSA_PKCS1_SHA512,
 ];
+
+/// Chrome's legacy suites after the ones Rustls runs, in Chrome's order: ECDHE-RSA CBC, kRSA
+/// GCM, kRSA CBC. A server that picks one fails the Rustls handshake and legacy.rs takes over;
+/// it speaks the kRSA GCM pair, the CBC four are a ceiling (see README.md).
+const ADVERTISED_SUITES: [u16; 6] = [0xc013, 0xc014, 0x009c, 0x009d, 0x002f, 0x0035];
+/// signed_certificate_timestamp (RFC 6962): Chrome offers it empty; the answer is ignored.
+const SCT_EXTENSION: u16 = 18;
+/// The GREASE ECH payload Chrome sends most often, in bytes.
+// ponytail: fixed size; Chrome sizes it like a padded inner hello, vary it if a check keys on it.
+const GREASE_ECH_PAYLOAD: usize = 208;
 
 /** What Rustls's `mapping` field holds, in order. */
 type Mapping = Vec<(
@@ -93,14 +106,31 @@ fn unconfigured() -> EngineError {
 
 /** Builds the provider and configuration; None only if Rustls rejects its own defaults. */
 fn build() -> Option<Arc<ClientConfig>> {
-    let roots = roots();
+    build_with(roots())
+}
+
+/** The shared configuration over any roots: tests hand it their own CA. */
+pub(super) fn build_with(roots: Arc<RootCertStore>) -> Option<Arc<ClientConfig>> {
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider()))
         .with_safe_default_protocol_versions()
         .ok()?
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    config.hello_shaping = shaping();
     Some(Arc::new(config))
+}
+
+/** Chrome's shape beyond what Rustls negotiates; every value is inert on the wire. */
+fn shaping() -> ClientHelloShaping {
+    ClientHelloShaping {
+        grease: true,
+        advertised_cipher_suites: ADVERTISED_SUITES.to_vec(),
+        renegotiation_info_extension: true,
+        extra_extensions: vec![(SCT_EXTENSION, Vec::new())],
+        grease_ech_payload_len: Some(GREASE_ECH_PAYLOAD),
+        alps_protocols: vec![b"h2".to_vec()],
+    }
 }
 
 /** The ring provider, reordered and trimmed to Chrome's lists. */

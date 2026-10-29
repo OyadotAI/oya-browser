@@ -15,7 +15,8 @@ fn malformed_escapes_throw_uri_error() {
 /** A lone surrogate outside any escape passes through unchanged instead of becoming U+FFFD. */
 #[test]
 fn lone_surrogates_pass_through() {
-    let source = "const d=decodeURI('a\\uD800b');const r=[d.length,d.charCodeAt(1).toString(16)].join();";
+    let source =
+        "const d=decodeURI('a\\uD800b');const r=[d.length,d.charCodeAt(1).toString(16)].join();";
     assert_eq!(common::eval(source, "r"), "3,d800");
 }
 

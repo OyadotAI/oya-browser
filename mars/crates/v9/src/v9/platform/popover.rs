@@ -30,7 +30,7 @@ static TOGGLE_TASK: OnceLock<u32> = OnceLock::new();
 pub(in crate::v9::platform) fn install(b: &mut Builder, html: u32, invokers: &[u32]) {
     b.accessor(html, "popover", Some(attribute_get), Some(attribute_set));
     for name in ["showPopover", "hidePopover", "togglePopover"] {
-        b.method(html, name, 0, method);
+        b.host_method(html, name, 0, method);
     }
     for proto in invokers {
         b.accessor(
@@ -67,10 +67,10 @@ fn attribute_kind(value: Option<&str>) -> Option<&'static str> {
 /** Showing popovers retain their original internal type while a content attribute mutation fires events. */
 fn internal_kind(vm: &mut Vm, node: usize) -> Option<&'static str> {
     let id = vm.page.state.wrappers.get(&node).copied();
-    if let Some(id) = id.filter(|id| slot(vm, *id, SHOWING).is_some()) {
-        if let Some(JsValue::String(value)) = slot(vm, id, OPEN_TYPE) {
-            return attribute_kind(Some(&value.lossy()));
-        }
+    if let Some(id) = id.filter(|id| slot(vm, *id, SHOWING).is_some())
+        && let Some(JsValue::String(value)) = slot(vm, id, OPEN_TYPE)
+    {
+        return attribute_kind(Some(&value.lossy()));
     }
     kind(vm, node)
 }
@@ -88,12 +88,12 @@ pub(in crate::v9::platform) fn removed(vm: &mut Vm, root: usize) {
     let mut nodes = vec![root];
     nodes.extend(vm.page.all_descendants(root));
     for node in nodes {
-        if !vm.page.connected(node) {
-            if let Some(id) = vm.page.state.wrappers.get(&node).copied() {
-                set_slot(vm, id, SHOWING, JsValue::Undefined);
-                let _ = vm.page.mark_popover_open(node, false);
-                set_slot(vm, id, OPEN_TYPE, JsValue::Undefined);
-            }
+        if !vm.page.connected(node)
+            && let Some(id) = vm.page.state.wrappers.get(&node).copied()
+        {
+            set_slot(vm, id, SHOWING, JsValue::Undefined);
+            let _ = vm.page.mark_popover_open(node, false);
+            set_slot(vm, id, OPEN_TYPE, JsValue::Undefined);
         }
     }
 }

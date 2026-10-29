@@ -146,7 +146,7 @@ impl ArrayElements {
             repeated.span == self.length
                 && repeated.overrides.is_empty()
                 && self.sparse.is_empty()
-                && self.length % repeated.base.len() == 0
+                && self.length.is_multiple_of(repeated.base.len())
                 && repeated.base.iter().all(|value| *value != JsValue::Hole)
         } else {
             self.dense.len() == self.length
@@ -383,8 +383,8 @@ impl ArrayElements {
                     repeated
                         .base
                         .iter()
-                        .cloned()
-                        .filter(|value| *value != JsValue::Hole),
+                        .filter(|&value| *value != JsValue::Hole)
+                        .cloned(),
                 );
                 self.resident = 0;
             } else {

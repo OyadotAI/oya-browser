@@ -53,7 +53,9 @@ impl Type {
     pub fn js_compatible(self) -> bool {
         !matches!(
             self,
-            Self::V128 | Self::Ref(-32 | -31 | -26 | -24 | -23 | -12 | -11, _) | Self::Shared(-37 | -36, _)
+            Self::V128
+                | Self::Ref(-32 | -31 | -26 | -24 | -23 | -12 | -11, _)
+                | Self::Shared(-37 | -36, _)
         )
     }
     /** Changing nullability retains the exact heap-type proof instead of silently widening it. */
@@ -71,7 +73,11 @@ impl Type {
     pub fn display(self) -> String {
         match self {
             Self::Shared(heap, true) => format!("shared {}", Self::Ref(heap, true).display()),
-            Self::Shared(heap, false) => match Self::Ref(heap, false).display().strip_prefix("(ref ").and_then(|s| s.strip_suffix(')')) {
+            Self::Shared(heap, false) => match Self::Ref(heap, false)
+                .display()
+                .strip_prefix("(ref ")
+                .and_then(|s| s.strip_suffix(')'))
+            {
                 Some(name) => format!("(ref shared {name})"),
                 None => format!("(ref shared {heap})"),
             },
@@ -339,10 +345,18 @@ pub(super) struct Module {
 impl Module {
     /** Defined functions and explicitly exact function imports retain exact reference types. */
     pub fn exact_function(&self, index: u32) -> bool {
-        if !self.custom_descriptors_enabled { return false; }
+        if !self.custom_descriptors_enabled {
+            return false;
+        }
         let imported = self.imported_functions();
-        if index as usize >= imported { return true; }
-        self.imports.iter().filter(|import| matches!(import.kind, External::Function(_))).nth(index as usize).is_some_and(|import| import.exact_function)
+        if index as usize >= imported {
+            return true;
+        }
+        self.imports
+            .iter()
+            .filter(|import| matches!(import.kind, External::Function(_)))
+            .nth(index as usize)
+            .is_some_and(|import| import.exact_function)
     }
     /** Function index lookup stays separate from the type table's struct and array members. */
     pub fn function_type(&self, index: u32) -> Result<u32, Error> {

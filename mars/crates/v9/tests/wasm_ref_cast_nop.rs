@@ -9,7 +9,11 @@ fn unchecked_cast_is_gated_and_preserves_hierarchy_validation() {
     let mut environment = common::environment();
     environment.conformance_d8 = true;
     let disabled = common::load_with(source, &environment);
-    assert!(disabled.failed.is_empty(), "{:?}", common::failure(&disabled));
+    assert!(
+        disabled.failed.is_empty(),
+        "{:?}",
+        common::failure(&disabled)
+    );
     assert_eq!(common::global(&disabled, "r"), "false");
     environment.conformance_wasm_ref_cast_nop = true;
     let enabled = common::load_with(source, &environment);

@@ -60,3 +60,16 @@ fn private_method_stamping_detects_duplicate_construction() {
         "3:Cannot initialize private methods of class A twice on the same object"
     );
 }
+
+/** A static field read from the wrong object is a missing member; a static method is a brand
+check that names the class itself. */
+#[test]
+fn static_members_distinguish_fields_from_methods() {
+    assert_eq!(
+        common::eval(
+            "class A{static #x=1;static #m(){}static f(o){return o.#x}static m(o){return o.#m}}let r=[];try{A.f({})}catch(e){r.push(e.message)}try{A.m({})}catch(e){r.push(e.message)}r=r.join('|')",
+            "r"
+        ),
+        "Cannot read private member #x from an object whose class did not declare it|Receiver must be class A"
+    );
+}

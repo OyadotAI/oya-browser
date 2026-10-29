@@ -246,7 +246,10 @@ impl Scripts {
                 } else {
                     Some(url.clone())
                 };
-                let Some(snapshot) = virtual_url.as_ref().and_then(|url| confined_module(&self.root, url)) else {
+                let Some(snapshot) = virtual_url
+                    .as_ref()
+                    .and_then(|url| confined_module(&self.root, url))
+                else {
                     self.module_denied.insert(key);
                     continue;
                 };
@@ -296,8 +299,13 @@ impl Scripts {
             environment.timezone_initial_daylight = zone.initial_daylight;
         }
         #[cfg(feature = "conformance")]
-        let operation_limit = std::env::var("MJSUNIT_SLOW_OPERATION_LIMIT").ok()
-            .map(|value| value.parse::<usize>().map_err(|_| "invalid MJSUNIT_SLOW_OPERATION_LIMIT".to_string()))
+        let operation_limit = std::env::var("MJSUNIT_SLOW_OPERATION_LIMIT")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid MJSUNIT_SLOW_OPERATION_LIMIT".to_string())
+            })
             .transpose()?;
         #[cfg(feature = "conformance")]
         let environment = mars_v9::PageEnvironment {
@@ -311,34 +319,93 @@ impl Scripts {
                 != Ok("0")
                 && boolean_flag(&self.metadata_source, "allow-natives-syntax"))
             .then(|| self.source_names.len().saturating_sub(1)),
-            conformance_native_wasm_exceptions_helper: std::env::var("MJSUNIT_INCLUDE_NATIVE_INTRINSICS").as_deref() != Ok("0") && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
+            conformance_native_wasm_exceptions_helper: std::env::var(
+                "MJSUNIT_INCLUDE_NATIVE_INTRINSICS",
+            )
+            .as_deref()
+                != Ok("0")
+                && boolean_flag(&self.metadata_source, "allow-natives-syntax"),
             conformance_wasm_stringref: boolean_flag(&self.metadata_source, "wasm-stringref"),
-            conformance_wasm_custom_descriptors: boolean_flag(&self.metadata_source, "wasm-custom-descriptors") || boolean_flag(&self.metadata_source, "wasm-js-interop"),
-            conformance_wasm_acquire_release: boolean_flag(&self.metadata_source, "wasm-acquire-release"),
-            conformance_wasm_imported_strings_utf8: boolean_flag(&self.metadata_source, "wasm-imported-strings-utf8"),
+            conformance_wasm_custom_descriptors: boolean_flag(
+                &self.metadata_source,
+                "wasm-custom-descriptors",
+            ) || boolean_flag(
+                &self.metadata_source,
+                "wasm-js-interop",
+            ),
+            conformance_wasm_acquire_release: boolean_flag(
+                &self.metadata_source,
+                "wasm-acquire-release",
+            ),
+            conformance_wasm_imported_strings_utf8: boolean_flag(
+                &self.metadata_source,
+                "wasm-imported-strings-utf8",
+            ),
             conformance_wasm_fp16: boolean_flag(&self.metadata_source, "wasm-fp16"),
             conformance_wasm_js_interop: boolean_flag(&self.metadata_source, "wasm-js-interop"),
-            conformance_wasm_wide_arithmetic: boolean_flag(&self.metadata_source, "wasm-wide-arithmetic"),
-            conformance_wasm_allow_mixed_eh: boolean_flag(&self.metadata_source, "wasm-allow-mixed-eh-for-testing"),
+            conformance_wasm_wide_arithmetic: boolean_flag(
+                &self.metadata_source,
+                "wasm-wide-arithmetic",
+            ),
+            conformance_wasm_allow_mixed_eh: boolean_flag(
+                &self.metadata_source,
+                "wasm-allow-mixed-eh-for-testing",
+            ),
             conformance_wasm_wasmfx: boolean_flag(&self.metadata_source, "wasm-wasmfx"),
             conformance_wasm_shared: boolean_flag(&self.metadata_source, "wasm-shared"),
-            conformance_wasm_compact_imports: boolean_flag(&self.metadata_source, "wasm-compact-imports"),
-            conformance_wasm_testing_opcode: boolean_flag(&self.metadata_source, "enable-testing-opcode-in-wasm"),
+            conformance_wasm_compact_imports: boolean_flag(
+                &self.metadata_source,
+                "wasm-compact-imports",
+            ),
+            conformance_wasm_testing_opcode: boolean_flag(
+                &self.metadata_source,
+                "enable-testing-opcode-in-wasm",
+            ),
             conformance_wasm_ref_cast_nop: boolean_flag(&self.metadata_source, "wasm-ref-cast-nop"),
-            conformance_wasm_math_intrinsics: Some(boolean_flag_default(&self.metadata_source, "wasm-math-intrinsics", true)),
-            conformance_wasm_test_streaming: Some(boolean_flag(&self.metadata_source, "wasm-test-streaming")),
+            conformance_wasm_math_intrinsics: Some(boolean_flag_default(
+                &self.metadata_source,
+                "wasm-math-intrinsics",
+                true,
+            )),
+            conformance_wasm_test_streaming: Some(boolean_flag(
+                &self.metadata_source,
+                "wasm-test-streaming",
+            )),
             conformance_operation_limit: operation_limit,
-            conformance_shared_string_table: boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct"),
-            conformance_shared_strings: boolean_flag(&self.metadata_source, "shared-strings") || boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct") || boolean_flag(&self.metadata_source, "wasm-shared"),
-            conformance_shared_heap: boolean_flag(&self.metadata_source, "shared-heap") || boolean_flag(&self.metadata_source, "shared-strings") || boolean_flag(&self.metadata_source, "shared-string-table") || boolean_flag(&self.metadata_source, "harmony-struct") || boolean_flag(&self.metadata_source, "wasm-shared"),
-            conformance_expose_externalize_string: boolean_flag(&self.metadata_source, "expose-externalize-string"),
+            conformance_shared_string_table: boolean_flag(
+                &self.metadata_source,
+                "shared-string-table",
+            ) || boolean_flag(
+                &self.metadata_source,
+                "harmony-struct",
+            ),
+            conformance_shared_strings: boolean_flag(&self.metadata_source, "shared-strings")
+                || boolean_flag(&self.metadata_source, "shared-string-table")
+                || boolean_flag(&self.metadata_source, "harmony-struct")
+                || boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_shared_heap: boolean_flag(&self.metadata_source, "shared-heap")
+                || boolean_flag(&self.metadata_source, "shared-strings")
+                || boolean_flag(&self.metadata_source, "shared-string-table")
+                || boolean_flag(&self.metadata_source, "harmony-struct")
+                || boolean_flag(&self.metadata_source, "wasm-shared"),
+            conformance_expose_externalize_string: boolean_flag(
+                &self.metadata_source,
+                "expose-externalize-string",
+            ),
             conformance_files: self.files.clone(),
             conformance_exists: self.exists.clone(),
             conformance_d8: true,
-            conformance_script_arguments: self.metadata_source.lines().filter_map(|line| line.strip_prefix("// Flags:")).find_map(|line| {
-                let mut fields = line.split_whitespace();
-                fields.find(|field| *field == "--").map(|_| fields.map(str::to_string).collect())
-            }).unwrap_or_default(),
+            conformance_script_arguments: self
+                .metadata_source
+                .lines()
+                .filter_map(|line| line.strip_prefix("// Flags:"))
+                .find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    fields
+                        .find(|field| *field == "--")
+                        .map(|_| fields.map(str::to_string).collect())
+                })
+                .unwrap_or_default(),
             conformance_allow_unsafe_function_constructor: boolean_flag(
                 &self.metadata_source,
                 "allow-unsafe-function-constructor",
@@ -481,9 +548,17 @@ impl Scripts {
                     classic: true,
                 })
                 .collect();
-            modules.sources.extend(self.module_files.iter().map(|(url, source)| mars_v9::ModuleSource {
-                url: url.clone(), source: source.clone(), classic: false,
-            }));
+            modules
+                .sources
+                .extend(
+                    self.module_files
+                        .iter()
+                        .map(|(url, source)| mars_v9::ModuleSource {
+                            url: url.clone(),
+                            source: source.clone(),
+                            classic: false,
+                        }),
+                );
         }
         if let Some(bundle) = &self.bundle {
             modules
@@ -834,8 +909,16 @@ fn relative_literals(source: &str) -> Vec<String> {
     // Snapshot this common computed specifier regardless of import token spacing.
     let mut found = vec!["[object Object]".into()];
     for (at, _) in source.match_indices("import") {
-        if at > 0 && (source.as_bytes()[at - 1].is_ascii_alphanumeric() || matches!(source.as_bytes()[at - 1], b'_' | b'$')) { continue; }
-        let Some(rest) = skip_module_trivia(&source[at + "import".len()..]).strip_prefix('(') else { continue };
+        if at > 0
+            && (source.as_bytes()[at - 1].is_ascii_alphanumeric()
+                || matches!(source.as_bytes()[at - 1], b'_' | b'$'))
+        {
+            continue;
+        }
+        let Some(rest) = skip_module_trivia(&source[at + "import".len()..]).strip_prefix('(')
+        else {
+            continue;
+        };
         let rest = skip_module_trivia(rest);
         if let Some(tail) = rest.strip_prefix('/') {
             if let Some(end) = tail.find('/') {
@@ -848,9 +931,13 @@ fn relative_literals(source: &str) -> Vec<String> {
             }
             continue;
         }
-        let Some(quote @ ('\'' | '"')) = rest.chars().next() else { continue };
+        let Some(quote @ ('\'' | '"')) = rest.chars().next() else {
+            continue;
+        };
         let tail = &rest[1..];
-        let Some(end) = tail.find(quote) else { continue };
+        let Some(end) = tail.find(quote) else {
+            continue;
+        };
         let name = &tail[..end];
         if !name.contains(['\\', '\n', '\r']) && found.len() < mars_v9::constants::MODULES {
             found.push(name.to_string());
@@ -885,19 +972,25 @@ fn skip_module_trivia(mut text: &str) -> &str {
     loop {
         text = text.trim_start();
         if let Some(comment) = text.strip_prefix("/*") {
-            let Some(end) = comment.find("*/") else { return "" };
+            let Some(end) = comment.find("*/") else {
+                return "";
+            };
             text = &comment[end + 2..];
         } else if let Some(comment) = text.strip_prefix("//") {
-            let Some(end) = comment.find('\n') else { return "" };
+            let Some(end) = comment.find('\n') else {
+                return "";
+            };
             text = &comment[end + 1..];
-        } else { return text; }
+        } else {
+            return text;
+        }
     }
 }
 
 /** Snapshot a known file or verified absence without following a path outside the checkout. */
 fn confined_module(root: &Path, url: &url::Url) -> Option<Option<String>> {
     let path = url.to_file_path().ok()?;
-    let relative = path.strip_prefix(&root).ok()?.to_str()?;
+    let relative = path.strip_prefix(root).ok()?.to_str()?;
     let file = match confined::open(root, Path::new(relative)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(None),
@@ -1122,8 +1215,13 @@ mod tests {
     #[test]
     fn native_flag_applies_to_loaded_fixture_scripts() {
         let checkout = Checkout::new();
-        std::fs::write(checkout.root().join("native-fixture.js"), "if(%MaxSmi()<=0)throw Error('invalid Smi');").unwrap();
-        let source = "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/native-fixture.js');";
+        std::fs::write(
+            checkout.root().join("native-fixture.js"),
+            "if(%MaxSmi()<=0)throw Error('invalid Smi');",
+        )
+        .unwrap();
+        let source =
+            "// Flags: --allow-natives-syntax\nd8.file.execute('test/mjsunit/native-fixture.js');";
         assert_eq!(checkout.scripts(source, "").execute(), Ok(()));
     }
 
@@ -1263,23 +1361,46 @@ mod tests {
         let checkout = Checkout::new();
         let source = "// Flags: --allow-natives-syntax\nlet rejected=false;import('missing').catch(()=>rejected=true);%PerformMicrotaskCheckpoint();if(!rejected)throw Error('not settled');";
         let scripts = checkout.scripts(source, "");
-        assert!(relative_literals(source).iter().any(|name| name == "missing"));
-        assert!(relative_literals("import /*comment*/ ( 'bare-name' )").iter().any(|name| name == "bare-name"));
-        assert!(scripts.modules().sources.iter().any(|module| module.url.ends_with("/missing") && module.source.is_none()));
+        assert!(
+            relative_literals(source)
+                .iter()
+                .any(|name| name == "missing")
+        );
+        assert!(
+            relative_literals("import /*comment*/ ( 'bare-name' )")
+                .iter()
+                .any(|name| name == "bare-name")
+        );
+        assert!(
+            scripts
+                .modules()
+                .sources
+                .iter()
+                .any(|module| module.url.ends_with("/missing") && module.source.is_none())
+        );
     }
 
     #[test]
     /** Absolute regular-expression imports use the checkout's virtual root and never the host root. */
     fn regex_imports_snapshot_virtual_root_and_verified_absence() {
         let checkout = Checkout::new();
-        std::fs::write(checkout.0.join("checkout/present"), "export const value=42;").unwrap();
+        std::fs::write(
+            checkout.0.join("checkout/present"),
+            "export const value=42;",
+        )
+        .unwrap();
         let scripts = checkout.scripts("import('/present');import(/missing/);", "");
         for (url, expected) in [
             ("file:///present", Some("export const value=42;")),
             ("file:///missing/", None),
         ] {
-            let request = mars_v9::ModuleRequest { url: url.into(), integrity: None };
-            let module = scripts.module_source(&request, true).expect("confined snapshot");
+            let request = mars_v9::ModuleRequest {
+                url: url.into(),
+                integrity: None,
+            };
+            let module = scripts
+                .module_source(&request, true)
+                .expect("confined snapshot");
             assert_eq!(module.source.as_deref(), expected);
         }
     }
