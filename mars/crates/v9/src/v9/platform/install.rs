@@ -1355,20 +1355,6 @@ fn path2d(b: &mut Builder) {
     super::canvas::path2d::install(b);
 }
 
-/** `new X()` for an interface whose instances hold no state: a plain object over the prototype. */
-fn construct_plain(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let fallback = crate::v9::vm::realm::realm().ids.object_prototype;
-    let Some(target) = &call.new_target else {
-        return Err(vm.type_error("Constructor requires 'new'"));
-    };
-    let proto = vm.prototype_for(target, fallback)?;
-    let id = vm.alloc(crate::v9::vm::heap::Object::new(
-        crate::v9::vm::data::Class::Plain,
-        Some(proto),
-    ))?;
-    Ok(JsValue::Object(id))
-}
-
 /** Range and Selection: `document.createRange()`, `new Range()` and `getSelection()`. */
 fn ranges(b: &mut Builder) {
     let object_prototype = b.ids.object_prototype;
