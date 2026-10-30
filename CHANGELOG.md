@@ -46,6 +46,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 - Preserved accepted Mars MessagePort replies when their sender closes, released rejected transfers, and retained legacy handler sources across VM restoration. Promise executors now propagate fatal engine failures while ordinary JavaScript throws still reject their promises.
 - Replaced Mars's resident-script eviction with shared page, frame and worker admission leases, preserving active state and navigation rollback when capacity is reached.
 - Corrected Mars's dynamically inserted same-origin sandbox frames to use the existing scripted-frame path, preserving messaging identity, mixed-URL isolation, framing refusals and resource admission. Google Search still returns HTTP 429 in the live retest; full iframe compatibility remains unfinished.
+- Rate-limit buckets are reclaimed again once they are full and idle. The sweep used to reset a bucket's idle clock before checking it, so a bucket for every sign-in email and caller address the server had ever seen was kept until restart.
 - Corrected V9 typed-array `map` to recheck same-kind species destinations after callbacks and value conversion.
 - Corrected V9 Intl time-zone name validation, alias resolution and formatting at the requested instant.
 - Corrected V9 Unicode-set early errors for invalid negated string properties and malformed expressions.
