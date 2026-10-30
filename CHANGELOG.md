@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Replaced Mars's fabricated IntersectionObserver visibility with measured viewport intersections, threshold changes, root margins and asynchronous record delivery. Native layout, resize and scrolling trigger bounded observer turns without idle polling or waking unrelated timers; element roots, ancestor clipping and visibility tracking remain unfinished.
 - Implemented real Canvas `arcTo` tangent geometry in Mars, including straight-line degeneracies, current-transform handling and bounded atomic path admission. Noninvertible transforms that require inverse mapping remain explicit refusals.
 - Implemented Canvas arcs and ellipses in Mars with real transformed geometry, directed/full-turn sweeps and atomic bounded subdivision. ArcTo, roundRect and clipping remain unfinished.
 - Implemented native CSS translation transitions in Mars for `transform` values using `none`, `translate`, `translateX` and `translateY`, including percentage offsets, easing and interruption. Visual geometry moves with painting while layout offsets remain untransformed; rotation, scale, skew and 3D interpolation remain unfinished.
