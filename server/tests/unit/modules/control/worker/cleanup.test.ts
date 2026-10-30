@@ -10,6 +10,7 @@ import { runCleanup } from '../../../../../src/modules/control/worker/cleanup.ts
 import { workerHealth } from '../../../../../src/modules/control/worker/state.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
 import { sealText } from '../../../../../src/platform/secrets.ts';
+import * as usage from '../../../../../src/platform/usage.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 import { json, stubFetch } from '../../../support/http.ts';
 import { patchRow, putRow, scratchService } from '../../../support/control.ts';
@@ -52,6 +53,13 @@ describe('runCleanup', () => {
     assert.equal(registry.get('s'), undefined);
     assert.equal((await stored('s')).state, 'stopped');
     disconnectBrowser('s');
+  });
+
+  it('stops the usage clock of a browser it closes, without waiting for its socket’s close', async () => {
+    connectBrowser('s', A);
+    usage.browserConnected(A, 's');
+    await runCleanup(service, [await job('s')], NOW);
+    assert.equal(usage.current(A).openBrowsers, 0);
   });
 
   it('releases a vendor resource through its sealed release request', async () => {

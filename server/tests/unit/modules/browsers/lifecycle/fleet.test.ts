@@ -3,7 +3,7 @@
  * gauge, dropping and forgetting browsers, the per-key browser quota and the
  * name a CDP browser is listed under.
  */
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   browserQuota,
@@ -18,6 +18,8 @@ import { metrics, snapshot } from '../../../../../src/platform/metrics.ts';
 import { QUOTAS } from '../../../../../src/platform/limits.ts';
 import { MAX_NAME, OPERATOR_CLOSE } from '../../../../../src/modules/browsers/constants.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
+import * as usage from '../../../../../src/platform/usage.ts';
+import { container } from '../../../../../src/app/container.ts';
 
 const B = 'b-fleet';
 
@@ -45,6 +47,27 @@ describe('fleet', () => {
     };
     dropBrowser(B, ws, 'x');
     assert.equal(registry.isConnected(B), false);
+  });
+
+  // A FakeSocket never reports its close, as a real ws does not while its closing handshake runs.
+  it('stops a dropped browser’s usage clock and frees its persona slot without waiting for its socket’s close', () => {
+    const ws = connectBrowser(B, 'fleet-drop');
+    usage.browserConnected('fleet-drop', B);
+    const released = mock.method(container.personas, 'release', () => {});
+    try {
+      dropBrowser(B, ws, 'API key revoked');
+      assert.equal(usage.current('fleet-drop').openBrowsers, 0);
+      assert.deepEqual(released.mock.calls[0].arguments, [{ id: 'p-1' }, B]);
+    } finally {
+      released.mock.restore();
+    }
+  });
+
+  it('drops nothing for a browser already gone, but still closes its socket', () => {
+    const ws = connectBrowser(B);
+    disconnectBrowser(B);
+    dropBrowser(B, ws, 'Key disconnected by operator');
+    assert.equal(ws.closed.code, OPERATOR_CLOSE);
   });
 
   it('forgets a browser whose driver closed, and ignores one already gone', () => {

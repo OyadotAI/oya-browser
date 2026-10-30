@@ -9,7 +9,11 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { BrowserConnection } from '../../../../../src/modules/browsers/connection/browser-connection.ts';
-import { AUTH_DEADLINE_MS, CloseCode } from '../../../../../src/modules/browsers/connection/constants.ts';
+import {
+  AUTH_DEADLINE_MS,
+  CloseCode,
+  MS_PER_SECOND,
+} from '../../../../../src/modules/browsers/connection/constants.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
 import { control } from '../../../../../src/modules/control/service.ts';
 import { container } from '../../../../../src/app/container.ts';
@@ -18,8 +22,17 @@ import { stubControl } from '../../../support/browsers.ts';
 import { stubFetch, json } from '../../../support/http.ts';
 import * as keyConfig from '../../../../../src/modules/config/service.ts';
 import { track } from '../../../../../src/modules/telemetry/service.ts';
+import * as usage from '../../../../../src/platform/usage.ts';
+import { openRelay } from '../../../../../src/modules/browsers/cdp-relay.ts';
+import { WebSocket } from 'ws';
 
 const B = 'b-conn';
+/** A second browser on the same key. */
+const OTHER = 'b-conn-other';
+/** How long the first socket was connected before the reconnect. */
+const MINUTE_MS = 60_000;
+/** A wall-clock time to connect at (any non-zero one: usage reads a zero start as no clock). */
+const CONNECTED_AT = Date.UTC(2026, 0, 1, 12);
 
 /** A FakeSocket that also carries the 'message' and 'close' events ws emits. */
 class WireSocket extends FakeSocket {
@@ -36,9 +49,17 @@ class WireSocket extends FakeSocket {
     this.events.emit('message', Buffer.from(typeof msg === 'string' ? msg : JSON.stringify(msg)));
   }
 
-  /** Records the close and tells the connection, as ws does. */
+  /** When set, close() starts the closing handshake and 'close' waits for hangUp(), as it does on a real ws. */
+  lingering = false;
+
+  /** Records the close and tells the connection, at once unless the socket lingers. */
   close(code: number, reason: string) {
     super.close(code, reason);
+    if (!this.lingering) this.events.emit('close');
+  }
+
+  /** The closing handshake ends (or ws gives up on a peer that went quiet): 'close' fires now. */
+  hangUp() {
     this.events.emit('close');
   }
 }
@@ -48,9 +69,8 @@ const settle = async () => {
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
 };
 
-/** A connection on a fresh socket that has sent `auth` (when given). */
-async function connect(auth?: object) {
-  const ws = new WireSocket();
+/** A connection on a fresh socket (or `ws`) that has sent `auth` (when given). */
+async function connect(auth?: object, ws = new WireSocket()) {
   new BrowserConnection(ws, { socket: { remoteAddress: '1.2.3.4' } });
   if (auth) ws.deliver({ type: 'auth', ...auth });
   await settle();
@@ -249,5 +269,87 @@ describe('BrowserConnection', () => {
     ws.close(1000, 'bye');
     assert.equal(registry.isConnected(B), false);
     assert.equal(released.mock.callCount(), 1);
+  });
+
+  // A real ws reports a server-side close only once the closing handshake ends, or after its
+  // close timeout when the peer went quiet: the usual reason a browser reconnects at all.
+  describe('when a reconnect replaces a socket whose close has not arrived yet', () => {
+    /** Sockets left mid-close, hung up after each test so their heartbeats stop. */
+    let lingering: WireSocket[] = [];
+    /** A connection on a socket whose 'close' only fires on hangUp(), as on a real ws. */
+    const connectLingering = (extra: object = {}) => {
+      const ws = new WireSocket();
+      ws.lingering = true;
+      lingering.push(ws);
+      return connect(auth(extra), ws);
+    };
+    /** Browsers this key is billed for right now. */
+    const open = () => usage.current('k-conn').openBrowsers;
+
+    beforeEach(() => usage.reset());
+    afterEach(() => {
+      for (const ws of lingering) ws.hangUp();
+      lingering = [];
+      registry.get(OTHER)?.ws?.close?.(1000, 'test over');
+      usage.reset();
+    });
+
+    it('stops the browser being billed when the server then refuses the reconnect', async () => {
+      const first = await connectLingering();
+      mock.method(control(), 'adopt', async () => {
+        throw new Error('capacity');
+      });
+      await connect(auth());
+      first.hangUp();
+      assert.equal(registry.isConnected(B), false);
+      assert.equal(open(), 0);
+    });
+
+    it("books the replaced socket's time instead of restarting the clock over it", async () => {
+      mock.timers.enable({ apis: ['Date'], now: CONNECTED_AT });
+      await connectLingering();
+      mock.timers.tick(MINUTE_MS);
+      await connect(auth());
+      assert.equal(usage.current('k-conn').browser_seconds, MINUTE_MS / MS_PER_SECOND);
+      assert.equal(open(), 1);
+    });
+
+    it("frees the old persona's slot when the browser comes back as another persona", async () => {
+      const [solo, other] = ['solo', 'other'].map((name) =>
+        container.personas.create('k-conn', { name, maxConcurrent: 1 }),
+      );
+      await connectLingering({ persona: solo.id });
+      await connect(auth({ persona: other.id }));
+      assert.equal(container.personas.activeCount(solo.id), 0);
+      await connect(auth({ browser_id: OTHER, persona: solo.id }));
+      assert.equal(registry.isConnected(OTHER), true, 'another browser may now run as the freed persona');
+    });
+
+    it('ends the CDP relays the replaced socket carried', async () => {
+      const first = await connectLingering();
+      const opening = openRelay(registry.get(B), B);
+      first.deliver({ type: 'cdp_opened', sid: first.ofType('cdp_open')[0].sid });
+      const relay: any = await opening;
+      await connect(auth());
+      assert.equal(relay.readyState, WebSocket.CLOSED);
+    });
+
+    it('keeps a browser that reconnects as the same persona at its cap', async () => {
+      const solo = container.personas.create('k-conn', { name: 'solo', maxConcurrent: 1 });
+      await connectLingering({ persona: solo.id });
+      const second = await connect(auth({ persona: solo.id }));
+      assert.equal(registry.get(B).ws, second);
+      assert.equal(container.personas.activeCount(solo.id), 1);
+    });
+
+    it("leaves the new connection's registration, slot and clock alone when the old close arrives late", async () => {
+      const solo = container.personas.create('k-conn', { name: 'solo', maxConcurrent: 1 });
+      const first = await connectLingering({ persona: solo.id });
+      const second = await connect(auth({ persona: solo.id }));
+      first.hangUp();
+      assert.equal(registry.get(B).ws, second);
+      assert.equal(container.personas.activeCount(solo.id), 1);
+      assert.equal(open(), 1);
+    });
   });
 });
