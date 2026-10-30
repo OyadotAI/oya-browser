@@ -218,18 +218,32 @@ impl Prepared {
             .map(cache::Stored::validators)
             .unwrap_or_default();
         let get = request.method == Method::Get;
-        let (response, address) =
-            match send(channel, &url, fixture, &request, &conditional, deadline) {
-                Ok(sent) => sent,
-                Err(Failure::Retryable(_)) if reused => {
-                    drop(lease);
-                    let (fresh, _) = acquire(&url, fixture, get, false, deadline)?;
-                    let _lease = fresh.lease(deadline)?;
-                    send(fresh, &url, fixture, &request, &conditional, deadline)
-                        .map_err(Failure::error)?
-                }
-                Err(failure) => return Err(failure.error()),
-            };
+        let (response, address) = match send(
+            channel,
+            lease,
+            &url,
+            fixture,
+            &request,
+            &conditional,
+            deadline,
+        ) {
+            Ok(sent) => sent,
+            Err(Failure::Retryable(_)) if reused => {
+                let (fresh, _) = acquire(&url, fixture, get, false, deadline)?;
+                let lease = fresh.lease(deadline)?;
+                send(
+                    fresh,
+                    lease,
+                    &url,
+                    fixture,
+                    &request,
+                    &conditional,
+                    deadline,
+                )
+                .map_err(Failure::error)?
+            }
+            Err(failure) => return Err(failure.error()),
+        };
         let now = SystemTime::now();
         let body::Response {
             status,
@@ -322,6 +336,7 @@ fn open(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Channel> {
  */
 fn send(
     channel: Channel,
+    lease: Option<lease::Lease>,
     url: &Url,
     fixture: bool,
     request: &WebRequest,
@@ -339,6 +354,8 @@ fn send(
         Channel::Http1(connection) => {
             let (response, connection) =
                 send_http1(connection, url, request, conditional, deadline)?;
+            // Join the deadline closer before another request can acquire this same OS socket.
+            drop(lease);
             if response.reusable && request.method == Method::Get && request.preflight.is_none() {
                 pool::POOL.checkin(url, fixture, connection);
             }
@@ -527,7 +544,7 @@ fn exchange(url: &Url, grants: &[String], deadline: Instant) -> EngineResult<bod
     let fixture = fixture_granted(url, grants);
     let channel = open(url, fixture, deadline)?;
     let request = WebRequest::get(url.as_str());
-    send(channel, url, fixture, &request, &[], deadline)
+    send(channel, None, url, fixture, &request, &[], deadline)
         .map(|(response, _)| response)
         .map_err(Failure::error)
 }

@@ -7,6 +7,13 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+HTTP/1 prepared exchanges now transfer deadline-lease ownership into the send
+operation. The lease is stopped and joined before socket pool checkin on both
+initial and replacement exchanges. Previously the timer could outlive pool checkin
+and close a socket already reused by another request while cache/body processing
+continued. This concrete source race is repaired; its involvement in the reported
+failure is unverified. Deadlines and retry policy are unchanged; build pending.
+
 Transport errors now preserve the failing operation and typed I/O cause in safe
 human-readable text. Raw exception strings, URLs, IPs and payloads are excluded.
 Certificate and suite refusals keep their specific handling; existing error codes,
