@@ -1240,14 +1240,13 @@ fn readable(
 }
 
 /** A `data:` URL fetched by script: decoded locally, as Fetch's scheme fetch does, never sent to
-Relay. GET only, UTF-8 text within VM_RESPONSE_BYTES, with its media type as Content-Type;
+Relay. GET only, exact bytes within VM_RESPONSE_BYTES, with its media type as Content-Type;
 anything else is a network error. YouTube reads its player configuration this way. */
 fn data_response(request: &HostRequest) -> HostResponse {
     let decoded = super::images::data_body(&request.url, VM_RESPONSE_BYTES)
         .ok()
-        .filter(|_| request.method == "GET")
-        .and_then(|(mime, bytes)| Some((mime, String::from_utf8(bytes).ok()?)));
-    let Some((mime, body)) = decoded else {
+        .filter(|_| request.method == "GET");
+    let Some((mime, body_bytes)) = decoded else {
         return failed(request.id, FAILED_TO_FETCH);
     };
     HostResponse {
@@ -1256,8 +1255,8 @@ fn data_response(request: &HostRequest) -> HostResponse {
         status_text: "OK".into(),
         url: request.url.clone(),
         headers: vec![("content-type".into(), mime)],
-        body,
-        body_bytes: Vec::new(),
+        body: String::new(),
+        body_bytes,
         error: None,
     }
 }

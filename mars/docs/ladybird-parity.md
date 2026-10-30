@@ -14,6 +14,10 @@ The combined response limit remains 256 KiB; mixed text/byte representations are
 rejected and existing worst-case wire admission covers byte-array serialization.
 Focused regressions are added but unrun; the combined build is pending. This
 prerequisite alone does not implement native Blob fetch or signal cancellation.
+Native data-URL responses now use this exact-byte path as well, rather than
+rejecting non-UTF8 payloads. GET-only scheme handling and response caps are
+unchanged. Two native regressions cover byte preservation, BOM text decoding,
+XHR text and method refusal; they remain unrun pending the combined build.
 
 Canvas now implements destination-over, destination-out, source-atop and xor
 alongside source-over through one shared premultiplied compositor. Rectangles,
