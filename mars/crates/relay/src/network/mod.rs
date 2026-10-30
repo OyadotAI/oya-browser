@@ -4,6 +4,7 @@ mod cookies;
 pub mod cors;
 mod headers;
 mod mime;
+mod partition;
 pub mod policy;
 mod request;
 mod url;
@@ -13,6 +14,7 @@ use crate::constants::{
 };
 use crate::protocol::{EngineError, EngineResult};
 pub use cookies::{CookieEntry, CookieJar};
+pub use partition::partition_site;
 pub use request::{Destination, Method, Preflight, WebRequest, WebResponse};
 use std::io::{Read, Write};
 use std::net::TcpStream;
