@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+SVG-string Path2D construction now feeds real retained Canvas geometry through
+a shared Core parser, also used by Eye through its existing facade. Canvas keeps
+the completed prefix of malformed syntax; numeric and quota errors still fail.
+Input is capped at 256 KiB, command groups at 4,096, normalized segments at 1,024,
+and flattened points at the existing 1,024 limit. Seven Core cases and two V9
+regressions were added, with the old string-refusal expectation updated; these
+remain unrun. The combined production build is pending. Arc/polygon
+approximations can become visible under large later transforms.
+
 The subsequent URL binding repair preserves list mutations made during argument
 conversion, ignores arguments outside each method's signature, validates even an
 empty forEach callback, and keeps exhausted iterators done after later appends.
@@ -249,7 +258,7 @@ Frozen unsigned binary SHA-256:
 The signed, verified `mars/dist/Mars Next.app` bundle is ready to open; its
 executable SHA-256 is
 `41a7750d9f61ae8d2af5e789465c95d78eb5919b03fc983be7360054735fa312`.
-It has not been launched, preserving the already running Mars Parity preview.
+It was subsequently launched on 2026-10-30 at the maintainer's request.
 No QA, new test execution or Google retest was performed in this batch.
 
 Current substantial gaps remain in broader CSS transition/animation properties,

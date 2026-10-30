@@ -9,6 +9,7 @@ mod raster;
 mod retained;
 mod round_rect;
 mod stroke;
+mod svg;
 pub use raster::{PathPlan, paint_path, plan_fill};
 pub use stroke::{LineCap, LineJoin, StrokeStyle, plan_stroke};
 

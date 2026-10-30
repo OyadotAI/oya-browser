@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented SVG-string Path2D construction in Mars through a shared bounded path parser. Canvas preserves completed commands before malformed syntax; numeric/resource failures remain explicit. Eye reuses the parser with whole-shape rejection, and retained paths feed real fill/stroke/clipping.
 - Corrected Mars URL API argument conversion and live URLSearchParams behavior: callbacks retain their receiver, conversions cannot overwrite their own list mutations, invalid URLs convert inputs once, and exhausted iterators stay done.
 - Connected transformed Mars DOM geometry and native clicks to shared affine bounds and quadrilateral hit testing. Layout offsets/sizes remain untransformed, while visual rectangles, sticky/fixed movement and rectangular clipping follow painting. Rounded clips, masks and exact occlusion remain unfinished.
 - Added bounded scripted grandchildren to Mars frames, with recursive messages/ports, distinct parent/top identities, nested painting and shared frame/source/context limits. Framing checks include every ancestor and the final redirected origin; child work keeps the true top-level network partition. Opaque/srcdoc scripting, descendant input and cross-frame DOM access remain unfinished.

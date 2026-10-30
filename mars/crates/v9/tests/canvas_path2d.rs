@@ -45,11 +45,11 @@ fn copies_and_transformed_self_addition_are_independent() {
     assert_eq!(common::global(&execution, "r"), "255|255|0|1|255");
 }
 
-/** Forged public prototypes cannot gain native geometry ownership, and unsupported strings fail explicitly. */
+/** Forged public prototypes cannot gain native geometry ownership, and unrepresentable SVG coordinates fail explicitly. */
 #[test]
-fn forged_receivers_and_svg_strings_are_refused() {
+fn forged_receivers_and_unrepresentable_svg_coordinates_are_refused() {
     let execution = run(
-        "let r=[];const fake=Object.create(Path2D.prototype);for(const f of [()=>fake.rect(0,0,1,1),()=>a.stroke(fake),()=>new Path2D('M0 0L1 1'),()=>Path2D()]){try{f();r.push('accepted')}catch(e){r.push(e.name)}}r=r.join('|')",
+        "let r=[];const fake=Object.create(Path2D.prototype);for(const f of [()=>fake.rect(0,0,1,1),()=>a.stroke(fake),()=>new Path2D('M1e999 0'),()=>Path2D()]){try{f();r.push('accepted')}catch(e){r.push(e.name)}}r=r.join('|')",
     );
     assert_eq!(
         common::global(&execution, "r"),
@@ -87,4 +87,22 @@ fn retained_paths_survive_serialized_page_events() {
     .unwrap();
     assert_eq!(common::failure(&resumed), None);
     assert_eq!(common::global(&resumed, "r"), "255|0");
+}
+
+/** SVG strings create actual retained pixels and recover only complete preceding commands. */
+#[test]
+fn svg_strings_draw_complete_prefixes_with_use_time_transforms() {
+    let execution = run(
+        "const p=new Path2D('m0 0h2v2h-2z L4');a.translate(4,0);a.fill(p);let r=alpha(4,0)+'|'+alpha(0,0);a.resetTransform();const empty=new Path2D('L0 0L8 8');a.fill(empty);r+='|'+alpha(0,0);const q=new Path2D({toString(){return 'M0 4H2V6H0Z'}});a.fill(q);r+='|'+alpha(0,4)",
+    );
+    assert_eq!(common::global(&execution, "r"), "255|0|0|255");
+}
+
+/** Failed parsing admission does not leave an unbranded or partly retained native path. */
+#[test]
+fn svg_point_quota_failure_leaves_other_paths_usable() {
+    let execution = run(
+        "const p=new Path2D('M0 0H2V2H0Z');let r='';try{new Path2D('M0 0'+'L1 1'.repeat(1023))}catch(e){r=e.name}a.fill(p);r+='|'+alpha(0,0)",
+    );
+    assert_eq!(common::global(&execution, "r"), "QuotaExceededError|255");
 }

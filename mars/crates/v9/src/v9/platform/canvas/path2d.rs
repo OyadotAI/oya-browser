@@ -50,7 +50,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     resource_result(vm, result)
 }
 
-/** Copy construction snapshots independent geometry; unsupported SVG strings never pretend to succeed. */
+/** Copy construction snapshots independent geometry; strings use bounded SVG prefix recovery. */
 fn create(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     let target = call
         .new_target
@@ -62,11 +62,9 @@ fn create(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     } else if let Some(id) = identity(vm, &source) {
         vm.page.state.path2d[&id].path.clone()
     } else {
-        vm.to_text(&source)?;
-        return Err(vm.dom_exception(
-            "NotSupportedError",
-            "SVG string Path2D construction is not supported in this build.",
-        ));
+        let text = vm.to_text(&source)?;
+        work(vm, text.len())?;
+        limits::Path::from_svg(&text)?
     };
     let prototype = vm.prototype_for(target, *PROTOTYPE.get().expect("Path2D installed"))?;
     vm.pin(JsValue::Object(prototype));
