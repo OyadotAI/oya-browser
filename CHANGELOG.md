@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Expanded Mars script-visible metadata to a shared 8 MiB budget and 32,256 records, reserving script-node capacity. Complete records include tag and attribute-name costs; restored documents/environments enforce the same limits, and fresh head insertion avoids repeated full-head scans.
+
 - Fixed Mars clicks on painted descendants of links and buttons: native defaults resolve to the supported ancestor while JavaScript retains the original event target. Ancestor inline handlers participate in click admission, and frame hit testing now respects pointer-events.
 
 - Fixed Mars HTTP/1 handling of informational responses such as 100 Continue and 103 Early Hints: bounded interim headers are consumed before the final response, using one shared header budget. Protocol upgrades remain explicitly unsupported.
