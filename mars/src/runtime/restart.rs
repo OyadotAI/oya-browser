@@ -6,7 +6,6 @@ of stopping, and `call_until` returns `Err(self.revive(name, result.err()))` ins
 Then drop the `#[ignore]` on tests/platform_restart.rs. */
 use super::supervisor::{EnginePrograms, Runtime, Service};
 use crate::protocol::EngineError;
-use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, atomic::Ordering};
 use std::time::{Duration, Instant};
@@ -92,11 +91,41 @@ impl Runtime {
             Ok(fresh) => self.services.insert(index, fresh),
             Err(_) => return self.retire(name),
         }
-        match self.call(name, "service.ready", json!({})) {
-            Ok(ready) if ready == json!({"service":name,"ready":true}) => {
-                restarted(name, op, cause)
-            }
-            _ => self.retire(name),
+        if self.services[index].ready() {
+            restarted(name, op, cause)
+        } else {
+            self.retire(name)
+        }
+    }
+
+    /** Retire an interrupted pipe before reuse, without spending the crash-loop budget. */
+    pub(super) fn replace_cancelled(&mut self, name: &str) -> EngineError {
+        let Some(index) = self
+            .services
+            .iter()
+            .position(|service| service.name == name)
+        else {
+            return self.retire(name);
+        };
+        let name = self.services[index].name;
+        if self.cancel.load(Ordering::Relaxed) {
+            return self.retire(name);
+        }
+        drop(self.services.remove(index));
+        if name == "v9" {
+            self.v9_sources.clear();
+        }
+        let Some(program) = self.revival.program(name) else {
+            return self.retire(name);
+        };
+        match Service::spawn(name, &program, Arc::clone(&self.cancel)) {
+            Ok(fresh) => self.services.insert(index, fresh),
+            Err(_) => return self.retire(name),
+        }
+        if self.services[index].ready() {
+            super::authority::denied()
+        } else {
+            self.retire(name)
         }
     }
 

@@ -58,7 +58,8 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
         "window" | "self" | "globalThis" | "frames" => JsValue::Object(vm.global_object()),
-        "top" | "parent" => return super::messaging::parent(vm),
+        "parent" => return super::messaging::parent(vm),
+        "top" => return super::messaging::top(vm),
         "document" => JsValue::Object(realm().ids.document),
         "location" => JsValue::Object(realm().ids.location),
         "innerWidth" | "outerWidth" => JsValue::Number(environment.viewport_width),
@@ -924,6 +925,7 @@ pub(in crate::v9) fn legacy_element(vm: &mut Vm, id: &str) -> Res<Option<usize>>
         .max()
         .unwrap_or(0);
     document.nodes.push(crate::document::ScriptNode {
+        selected: None,
         local_id,
         html_id: id.into(),
         parent: None,
@@ -960,107 +962,4 @@ pub(in crate::v9) fn keep_observer_callback(
         },
     );
     Ok(())
-}
-
-/** A zero rectangle at the origin with a given size, as DOMRectReadOnly reads. */
-fn rect_object(vm: &mut Vm, width: f64, height: f64) -> Res<JsValue> {
-    rect_at(vm, (0.0, 0.0, width, height))
-}
-
-/** A DOMRect-shaped object for the box (x, y, width, height). */
-fn rect_at(vm: &mut Vm, (x, y, width, height): (f64, f64, f64, f64)) -> Res<JsValue> {
-    let id = vm.new_object()?;
-    for (name, value) in [
-        ("x", x),
-        ("y", y),
-        ("top", y),
-        ("left", x),
-        ("width", width),
-        ("height", height),
-        ("right", x + width),
-        ("bottom", y + height),
-    ] {
-        vm.put(id, name, JsValue::Number(value))?;
-    }
-    Ok(JsValue::Object(id))
-}
-
-/**
- * IntersectionObserver/ResizeObserver.observe(target): queue one task that calls the observer's
- * callback with an entry for the target, measured from the app's last layout. A target always
- * intersects the viewport (lazy loaders load, which is what an agent reading the page wants), and
- * its intersection is never empty: YouTube's lazy image loader keeps only entries whose
- * intersectionRect has a height, and with an empty one no thumbnail ever got its src.
- */
-pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let target = call.arg(0);
-    if super::events::target_of(vm, &target).is_none() || !matches!(target, JsValue::Object(_)) {
-        return Err(
-            vm.type_error("Failed to execute 'observe': parameter 1 is not of type 'Element'.")
-        );
-    }
-    let Some(observer) = call.this.object() else {
-        return Err(vm.type_error("Illegal invocation"));
-    };
-    let callback = match vm
-        .heap
-        .get(observer)
-        .and_then(|object| object.props.get(&observer_callback_key()))
-    {
-        Some(crate::v9::vm::heap::Prop {
-            slot: crate::v9::vm::heap::Slot::Data(callback),
-            ..
-        }) => callback.clone(),
-        _ => return Err(vm.type_error("Illegal invocation")),
-    };
-    let entry = vm.new_object()?;
-    vm.pin(JsValue::Object(entry));
-    let measured = match super::events::target_of(vm, &target) {
-        Some(super::Target::Node(node)) => super::dom::client_box(vm, node),
-        _ => (0.0, 0.0, 0.0, 0.0),
-    };
-    vm.put(entry, "target", target)?;
-    let rect = rect_at(vm, measured)?;
-    let resize = vm
-        .get(
-            &JsValue::Object(observer),
-            &crate::v9::vm::heap::Key::constructor(),
-        )
-        .and_then(|ctor| vm.get(&ctor, &crate::v9::vm::heap::Key::from("name")))?;
-    if vm.to_text(&resize)? == "ResizeObserver" {
-        vm.put(entry, "contentRect", rect)?;
-        let size = vm.new_object()?;
-        vm.put(size, "inlineSize", JsValue::Number(measured.2))?;
-        vm.put(size, "blockSize", JsValue::Number(measured.3))?;
-        for name in [
-            "borderBoxSize",
-            "contentBoxSize",
-            "devicePixelContentBoxSize",
-        ] {
-            let list = vm.new_array(vec![JsValue::Object(size)])?;
-            vm.put(entry, name, JsValue::Object(list))?;
-        }
-    } else {
-        let viewport = (
-            vm.page.environment.viewport_width,
-            vm.page.environment.viewport_height,
-        );
-        let root = rect_object(vm, viewport.0, viewport.1)?;
-        let (x, y, width, height) = measured;
-        let intersection = rect_at(vm, (x, y, width.max(1.0), height.max(1.0)))?;
-        vm.put(entry, "boundingClientRect", rect)?;
-        vm.put(entry, "intersectionRect", intersection)?;
-        vm.put(entry, "rootBounds", root)?;
-        vm.put(entry, "isIntersecting", JsValue::Boolean(true))?;
-        vm.put(entry, "isVisible", JsValue::Boolean(true))?;
-        vm.put(entry, "intersectionRatio", JsValue::Number(1.0))?;
-        vm.put(entry, "time", JsValue::Number(vm.page.state.clock))?;
-    }
-    let entries = vm.new_array(vec![JsValue::Object(entry)])?;
-    super::timers::schedule(
-        vm,
-        callback,
-        vec![JsValue::Object(entries), JsValue::Object(observer)],
-    )?;
-    Ok(JsValue::Undefined)
 }

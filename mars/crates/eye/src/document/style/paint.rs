@@ -10,11 +10,7 @@ use super::{
     unsupported,
     values::{angle, contextual_color, dimension, signed_length},
 };
-use crate::{
-    constants::{CSS_MAX_SCALAR, URL_BYTES},
-    document::RenderContext,
-    protocol::EngineResult,
-};
+use crate::{constants::CSS_MAX_SCALAR, document::RenderContext, protocol::EngineResult};
 /** Opaque black, the color of a shadow without one and without a current color. */
 const BLACK: &str = "#000000";
 /** `none` or up to SHADOWS comma-separated layers; extra layers are ignored. */
@@ -152,7 +148,10 @@ fn url(source: &str) -> EngineResult<String> {
         .and_then(|s| s.strip_suffix('"'))
         .or_else(|| inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
         .unwrap_or(inner);
-    if unquoted.is_empty() || unquoted.len() > URL_BYTES || unquoted.chars().any(char::is_control) {
+    if unquoted.is_empty()
+        || !mars_core::image_source::valid_url_text(unquoted)
+        || unquoted.chars().any(char::is_control)
+    {
         return Err(unsupported());
     }
     Ok(unescape(unquoted))
@@ -382,6 +381,69 @@ pub(super) fn transform(
         Err(unsupported())
     }
 }
+/** Preserve function provenance so identity rotations, matrices and 3D cannot masquerade as translations. */
+pub(super) fn translation_only(value: &str) -> bool {
+    value == "none"
+        || tokens(value)
+            .into_iter()
+            .flat_map(adjacent)
+            .all(|function| {
+                function.split_once('(').is_some_and(|(name, _)| {
+                    matches!(
+                        name.trim().to_ascii_lowercase().as_str(),
+                        "translate" | "translatex" | "translatey"
+                    )
+                })
+            })
+}
+
+/** Only one 2D rotate() is admitted for angular interpolation; matrix identities lose this provenance. */
+pub(super) fn rotation(value: &str) -> Option<f64> {
+    if value == "none" {
+        return Some(0.0);
+    }
+    let functions: Vec<_> = tokens(value).into_iter().flat_map(adjacent).collect();
+    let [function] = functions.as_slice() else {
+        return None;
+    };
+    let (name, argument) = function.strip_suffix(')')?.split_once('(')?;
+    if !name.eq_ignore_ascii_case("rotate") {
+        return None;
+    }
+    let radians = angle(argument.trim()).ok()?.to_radians();
+    (radians.is_finite() && radians.abs() <= TRANSFORM_MAX).then_some(radians)
+}
+
+/** A single 2D scale function retains independent factors; mixed lists, matrices and 3D stay excluded. */
+pub(super) fn scale(value: &str) -> Option<[f64; 2]> {
+    if value == "none" {
+        return Some([1.0; 2]);
+    }
+    let functions: Vec<_> = tokens(value).into_iter().flat_map(adjacent).collect();
+    let [function] = functions.as_slice() else {
+        return None;
+    };
+    let (name, inner) = function.strip_suffix(')')?.split_once('(')?;
+    let args = split_top(inner, b',');
+    let args = if args.len() == 1 {
+        tokens(args[0])
+    } else {
+        args
+    };
+    let number = |index: usize| super::values::signed_number(args.get(index)?).ok();
+    let factors = match name.trim().to_ascii_lowercase().as_str() {
+        "scale" if args.len() == 1 => [number(0)?, number(0)?],
+        "scale" if args.len() == 2 => [number(0)?, number(1)?],
+        "scalex" if args.len() == 1 => [number(0)?, 1.0],
+        "scaley" if args.len() == 1 => [1.0, number(0)?],
+        _ => return None,
+    };
+    factors
+        .iter()
+        .all(|factor| factor.is_finite() && factor.abs() <= TRANSFORM_MAX)
+        .then_some(factors)
+}
+
 /** Splits functions minifiers write without a space, as in `translateY(4px)scale(.9)`. */
 fn adjacent(token: &str) -> Vec<&str> {
     let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);

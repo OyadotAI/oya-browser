@@ -1,13 +1,16 @@
 /** Image lifecycle work uses the existing governed fetch/decoder and returns only inert outcomes to V9. */
 use super::{IMAGE_REQUEST_WALL, INSERTED_IMAGE_WALL, Page, Runtime};
-use crate::constants::{IMAGE_COUNT, NODES, URL_BYTES, VM_DETACHED_NODES};
+use crate::constants::{IMAGE_COUNT, NODES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
-use crate::v9::{ImageAdoption, ImageRequest, ImageResponse};
+use crate::v9::{ImageAdoption, ImageCancellation, ImageCors, ImageRequest, ImageResponse};
+use mars_core::image_source::{
+    QUEUED_TEXT_BYTES, REQUEST_TEXT_BYTES, SOURCE_TOTAL_BYTES, valid_url_text,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 /** The source selection inputs ensure a cached decode cannot be reused for another candidate. */
-type Source = (String, f64);
+type Source = super::super::images::ImageSelection;
 
 /** Per-page queues and native decode admission remain bounded even for detached Image objects. */
 #[derive(Clone, Default)]
@@ -16,29 +19,81 @@ pub(in crate::runtime) struct Loading {
     pub pending: Vec<ImageRequest>,
     /** Images managed by the lifecycle must not also enter the legacy paint-only fetch path. */
     pub managed: BTreeSet<usize>,
+    /** Latest admitted generation fences cancellations and same-URL decode reuse. */
+    generations: BTreeMap<usize, u64>,
     /** Hidden and detached decoded pixels stay owned and budgeted without entering the painted snapshot. */
     pub hidden: BTreeMap<usize, super::super::images::ImageAsset>,
     /** Genuine previously decoded source selections, including the navigation's initial assets. */
     decoded: BTreeMap<usize, (Source, (u32, u32))>,
     /** Monotonic page-wide request, transferred-byte and decoded-byte admission. */
     budget: Option<super::super::images::Budget>,
+    /** Monotonic delivery admission bounds pixels retained in the independent V9 image-source store. */
+    canvas_bytes: usize,
 }
 
 impl Loading {
     /** A sandbox result is checked before it can queue any privileged native work. */
-    pub(super) fn queue(&mut self, requests: Vec<ImageRequest>) -> EngineResult<()> {
+    pub(super) fn queue(
+        &mut self,
+        requests: Vec<ImageRequest>,
+        cancelled: &[ImageCancellation],
+    ) -> EngineResult<Vec<usize>> {
         if requests.len() > IMAGE_COUNT
+            || cancelled.len() > NODES + VM_DETACHED_NODES
+            || cancelled.iter().any(|entry| entry.generation == 0)
             || requests
                 .iter()
-                .any(|r| r.generation == 0 || r.source.len() > URL_BYTES || r.url.len() > URL_BYTES)
+                .any(|r| r.generation == 0 || !valid_url_text(&r.source) || !valid_url_text(&r.url))
+            || request_text_bytes(&requests) > REQUEST_TEXT_BYTES
         {
             return Err(EngineError::invalid("Invalid image request batch."));
         }
-        for request in requests {
+        let mut cleared = Vec::new();
+        for entry in cancelled {
+            self.pending
+                .retain(|old| old.node != entry.node || old.generation > entry.generation);
+            if self
+                .generations
+                .get(&entry.node)
+                .is_some_and(|generation| *generation <= entry.generation)
+            {
+                self.hidden.remove(&entry.node);
+                self.decoded.remove(&entry.node);
+                self.generations.remove(&entry.node);
+                cleared.push(entry.node);
+            }
+        }
+        for mut request in requests {
+            super::super::images::snapshot_bytes(&request)?;
             self.managed.insert(request.node);
+            self.generations.insert(request.node, request.generation);
             self.hidden.remove(&request.node);
             self.pending.retain(|old| old.node != request.node);
+            if request.source.len().saturating_add(request.url.len())
+                > QUEUED_TEXT_BYTES.saturating_sub(request_text_bytes(&self.pending))
+            {
+                // Preserve generation/source identity but fail optional acquisition without network work.
+                request.url.clear();
+                request.blob_source = None;
+            }
             self.pending.push(request);
+        }
+        let source_bytes = self.pending.iter().fold(0usize, |used, request| {
+            used.saturating_add(request.source.len())
+        });
+        if request_text_bytes(&self.pending) > QUEUED_TEXT_BYTES
+            || source_bytes > SOURCE_TOTAL_BYTES
+        {
+            return Err(EngineError::invalid("Invalid queued image source text."));
+        }
+        let bytes = self.pending.iter().try_fold(0usize, |used, request| {
+            Ok::<_, EngineError>(
+                used.saturating_add(super::super::images::snapshot_bytes(request)?),
+            )
+        })?;
+        let limit = crate::constants::VM_STATE_BYTES / 16;
+        if bytes > limit {
+            return Err(EngineError::limit("Blob image queued bytes", limit));
         }
         if self.managed.len() > NODES + VM_DETACHED_NODES {
             return Err(EngineError::limit(
@@ -46,15 +101,24 @@ impl Loading {
                 NODES + VM_DETACHED_NODES,
             ));
         }
-        Ok(())
+        Ok(cleared)
     }
+}
+
+/** Both copies of an embedded URL count before they enter the persistent native request queue. */
+fn request_text_bytes(requests: &[ImageRequest]) -> usize {
+    requests.iter().fold(0usize, |used, request| {
+        used.saturating_add(request.source.len())
+            .saturating_add(request.url.len())
+    })
 }
 
 /** Exact selection inputs from the current owned document, never a page-supplied native handle. */
 fn source(page: &Page, node: &crate::document::Node, viewport: f64) -> Option<Source> {
     let (url, density) = super::super::images::selected_source(&page.document, node, viewport)?;
     let base = url::Url::parse(&page.url).ok()?;
-    Some((base.join(url.trim()).ok()?.to_string(), density))
+    let cors = ImageCors::from_attribute(node.attributes.get("crossorigin").map(String::as_str));
+    Source::new(&base, &url, density, cors)
 }
 
 /** Multiple adoptions in one task may name intermediate identities absent from the final projection. */
@@ -88,6 +152,19 @@ fn adoption_target(mut node: usize, mapping: &BTreeMap<usize, usize>) -> Option<
 }
 
 impl Runtime {
+    /** Replaced generations release pending bytes and old paint assets before the next source loads. */
+    pub(super) fn queue_image_requests(
+        &self,
+        page: &mut Page,
+        requests: Vec<ImageRequest>,
+        cancelled: &[ImageCancellation],
+    ) -> EngineResult<()> {
+        let cleared = page.scripting.image_loading.queue(requests, cancelled)?;
+        for node in cleared {
+            self.clear_failed_image(page, node);
+        }
+        Ok(())
+    }
     /** Commit only validated DOM adoption associations; no page-supplied bytes or dimensions enter this path. */
     pub(super) fn adopt_image_associations(
         &self,
@@ -102,6 +179,9 @@ impl Runtime {
             let state = &mut page.scripting.image_loading;
             if state.managed.remove(&row.from) {
                 state.managed.insert(row.to);
+            }
+            if let Some(generation) = state.generations.remove(&row.from) {
+                state.generations.insert(row.to, generation);
             }
             for request in &mut state.pending {
                 if request.node == row.from {
@@ -280,7 +360,22 @@ impl Runtime {
         deadline: Instant,
         budget: &mut super::super::images::Budget,
     ) -> EngineResult<Vec<ImageResponse>> {
-        let count = page.scripting.image_loading.pending.len().min(IMAGE_COUNT);
+        let mut text_bytes = 0usize;
+        let count = page
+            .scripting
+            .image_loading
+            .pending
+            .iter()
+            .take(IMAGE_COUNT)
+            .take_while(|request| {
+                let bytes = request.source.len().saturating_add(request.url.len());
+                if bytes > REQUEST_TEXT_BYTES.saturating_sub(text_bytes) {
+                    return false;
+                }
+                text_bytes += bytes;
+                true
+            })
+            .count();
         let requests: Vec<_> = page
             .scripting
             .image_loading
@@ -300,10 +395,28 @@ impl Runtime {
                 break;
             }
             let until = deadline.max(started + IMAGE_REQUEST_WALL);
-            let dimensions = self.decode_image_request(page, &request, until, budget)?;
+            let mut decoded = None;
+            let dimensions =
+                self.decode_image_request(page, &request, until, budget, &mut decoded)?;
+            let asset = page
+                .images
+                .get(&request.node)
+                .or_else(|| page.scripting.image_loading.hidden.get(&request.node))
+                .cloned();
+            let asset = asset.as_ref().filter(|_| dimensions.is_some());
+            let used = &mut page.scripting.image_loading.canvas_bytes;
+            let (bitmap, origin_clean) = if decoded.is_some() {
+                super::super::images::canvas::source_decoded(asset, decoded, used)
+            } else {
+                super::super::images::canvas::source(asset, used)
+            };
+            let mut request = request;
+            request.blob_source = None;
             responses.push(ImageResponse {
                 request,
                 dimensions,
+                bitmap,
+                origin_clean,
             });
         }
         Ok(responses)
@@ -311,7 +424,13 @@ impl Runtime {
 
     /** Fetch the batch's in-document images in parallel; reads then find the answers waiting. */
     fn prefetch_batch(&mut self, page: &Page, requests: &[ImageRequest]) -> EngineResult<()> {
-        let wanted: BTreeSet<usize> = requests.iter().map(|request| request.node).collect();
+        let wanted: BTreeSet<usize> = requests
+            .iter()
+            .filter(|request| {
+                !request.url.is_empty() && !super::super::images::is_blob(&request.url)
+            })
+            .map(|request| request.node)
+            .collect();
         let url = page.url.clone();
         self.prefetch_images(
             &page.document,
@@ -329,26 +448,58 @@ impl Runtime {
         request: &ImageRequest,
         deadline: Instant,
         budget: &mut super::super::images::Budget,
+        decoded: &mut Option<mars_core::canvas::Bitmap>,
     ) -> EngineResult<Option<(u32, u32)>> {
+        if request.url.is_empty() {
+            self.clear_failed_image(page, request.node);
+            return Ok(None);
+        }
         let node = page
             .document
             .nodes
             .iter()
             .find(|node| node.local_id == request.node && node.tag == "img");
         let selected = if let Some(node) = node {
-            if node.attributes.get("src").map_or("", String::as_str) != request.source {
+            if node.attributes.get("src").map_or("", String::as_str) != request.source
+                || ImageCors::from_attribute(node.attributes.get("crossorigin").map(String::as_str))
+                    != request.cors
+            {
                 return Ok(None);
             }
             source(page, node, self.render_context.width)
         } else if request.source.trim().is_empty() {
             None
         } else {
-            Some((request.url.clone(), 1.0))
+            url::Url::parse(&page.url)
+                .ok()
+                .and_then(|base| Source::new(&base, &request.url, 1.0, request.cors))
         };
         let Some(selected) = selected else {
             self.clear_failed_image(page, request.node);
             return Ok(None);
         };
+        let base = url::Url::parse(&page.url)
+            .map_err(|_| EngineError::invalid("Invalid image base URL."))?;
+        if super::super::images::is_blob(&selected.url)
+            || super::super::images::is_blob(&request.url)
+        {
+            if let Some((mut fetched, bitmap)) =
+                self.read_blob_image(&base, &page.document.csp, &selected.url, request, budget)?
+            {
+                if let super::super::images::Fetched::Raster(asset, _) = &mut fetched {
+                    asset.image_source = Some(selected.clone());
+                }
+                *decoded = Some(bitmap);
+                let size = self.commit_image_decode(page, request.node, fetched, selected.density);
+                page.scripting
+                    .image_loading
+                    .decoded
+                    .insert(request.node, (selected, size));
+                return Ok(Some(size));
+            }
+            self.clear_failed_image(page, request.node);
+            return Ok(None);
+        }
         if node.is_some()
             && let Some((_, size)) = page
                 .scripting
@@ -362,8 +513,18 @@ impl Runtime {
         let base = url::Url::parse(&page.url)
             .map_err(|_| EngineError::invalid("Invalid image base URL."))?;
         let mut notes = Vec::new();
-        if let Some(fetched) = self.read_image(&base, &selected.0, deadline, budget, &mut notes)? {
-            let size = self.commit_image_decode(page, request.node, fetched, selected.1);
+        if let Some(mut fetched) = self.read_image_mode(
+            &base,
+            &selected.url,
+            selected.cors,
+            deadline,
+            budget,
+            &mut notes,
+        )? {
+            if let super::super::images::Fetched::Raster(asset, _) = &mut fetched {
+                asset.image_source = Some(selected.clone());
+            }
+            let size = self.commit_image_decode(page, request.node, fetched, selected.density);
             page.scripting
                 .image_loading
                 .decoded

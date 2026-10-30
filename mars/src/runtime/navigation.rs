@@ -58,15 +58,22 @@ impl Gaps {
     }
     /** Fold into the document's own diagnostics under the same bound. */
     fn record(&self, document: &mut Document) {
-        for message in &self.diagnostics {
-            if document.diagnostics.len() < DIAGNOSTICS && !document.diagnostics.contains(message) {
-                document.diagnostics.push(message.clone());
-            }
-        }
+        let new: Vec<_> = self
+            .diagnostics
+            .iter()
+            .filter(|message| !document.diagnostics.contains(message))
+            .cloned()
+            .collect();
+        document
+            .diagnostics
+            .truncate(DIAGNOSTICS.saturating_sub(new.len()));
+        document.diagnostics.extend(new);
     }
 }
 /** One script ready for V9, in execution order, remembering where the author put it. */
 struct Resolved {
+    /// Whether acquisition was refused rather than successfully returning empty source.
+    refused: bool,
     /// Source text.
     source: String,
     /// Zero-based position in the document.
@@ -340,6 +347,7 @@ impl Runtime {
                         .ok_or_else(|| EngineError::service("network", false))?
                         .into(),
                     image_data: false,
+                    raw_data: false,
                     url: request.url,
                     status: 200,
                     mime: "text/html".into(),
@@ -426,20 +434,15 @@ impl Runtime {
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
-        let frame_tree = if embedding.is_none() {
-            self.initial_frame_tree(&document)?
-        } else {
-            Default::default()
-        };
-        let (frames, scripted_frames) = match embedding {
+        let mut frame_tree = self.initial_frame_tree(&document)?;
+        if let Some(embedding) = embedding {
+            frame_tree.window = embedding.window;
+        }
+        let (frames, scripted_frames, inert_frame_count, inert_frame_bytes) = match embedding {
             Some(_) => Default::default(),
-            None => self.load_frames(
-                &mut document,
-                &acquired.response.url,
-                deadline,
-                &mut images,
-                &frame_tree.routes,
-            )?,
+            None => {
+                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
+            }
         };
         perf::record("page.frames", phase, || frames.len().to_string());
         phase = Instant::now();
@@ -474,15 +477,27 @@ impl Runtime {
                 .collect(),
             &document.formatting,
         );
-        environment.disallow_code_generation_from_strings = !super::csp::allows_eval(&document.csp);
+        environment.refused_scripts = resolved
+            .iter()
+            .enumerate()
+            .filter_map(|(index, script)| script.refused.then_some(index))
+            .collect();
+        super::csp::apply_environment(&document.csp, &mut environment);
         environment.frame_documents = scripted_frames
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
             .collect();
-        if embedding.is_none() {
-            environment.scripted_frame_owners =
-                self.scripted_owners(&document, &acquired.response.url);
-        }
+        environment.scripted_frame_owners = self.scripted_owners(&document, &acquired.response.url);
+        environment.context_window = Some(frame_tree.window);
+        environment.frame_contexts = embedding
+            .map(|embedding| embedding.contexts.clone())
+            .unwrap_or_default();
+        environment.frame_contexts.push(crate::v9::FrameContext {
+            window: frame_tree.window,
+            parent: embedding
+                .and_then(|embedding| embedding.contexts.last().map(|context| context.window)),
+            children: frame_tree.routes.clone(),
+        });
         if let Some(embedding) = embedding {
             environment.embedder_origin = Some(embedding.origin.clone());
             environment.window_name.clone_from(&embedding.name);
@@ -495,6 +510,7 @@ impl Runtime {
             script_identity,
             revision: 1,
             document,
+            source_bytes: acquired.response.source.len(),
             scripts: resolved
                 .iter()
                 .map(|script| script.source.clone())
@@ -503,6 +519,15 @@ impl Runtime {
             top_level_url: embedding
                 .map(|embedding| embedding.top_level_url.clone())
                 .unwrap_or_else(|| acquired.response.url.clone()),
+            frame_ancestors: embedding
+                .map(|embedding| embedding.ancestors.clone())
+                .unwrap_or_default(),
+            frame_base: embedding.map_or(0, |embedding| embedding.paint_base),
+            inert_frame_count,
+            inert_frame_bytes,
+            frame_source_limit: embedding.map_or(super::frames::FRAME_BYTES_TOTAL, |embedding| {
+                embedding.source_budget
+            }),
             url: acquired.response.url,
             sensitive,
             replayable: acquired.method == Method::Get,
@@ -525,7 +550,7 @@ impl Runtime {
             degraded: Vec::new(),
             untrusted_styles: false,
             scripting: super::scripting::Scripting {
-                attempted_frame_owners: environment.scripted_frame_owners.clone(),
+                attempted_frame_owners: Default::default(),
                 environment,
                 modules: super::modules::Modules::new(
                     resolved
@@ -536,6 +561,7 @@ impl Runtime {
                 ..Default::default()
             },
         };
+        super::animations::refresh_timelines(&mut page)?;
         phase = Instant::now();
         // First paint: people see the parsed and styled page while its scripts run, as a
         // browser paints before load. The window is the only observer; agents get the page
@@ -602,9 +628,7 @@ impl Runtime {
             Ok(step) => step,
             Err(error) if fatal(&error) => return Err(error),
             Err(error) => {
-                for script in resolved {
-                    gaps.note("scripts", script_note(script, &error.message));
-                }
+                gaps.note("scripts", load_failure_note(resolved, &error));
                 page.scripts.clear();
                 page.scripting.modules = Default::default();
                 self.script_step(page, json!({"kind":"load"}))?
@@ -754,6 +778,8 @@ impl Runtime {
             .iter()
             .filter(|node| {
                 node.tag == "img"
+                    // Legacy batch prefetch always includes credentials; CORS images use their own per-hop policy.
+                    && !node.attributes.contains_key("crossorigin")
                     && !node.hidden()
                     && wanted(node)
                     && !skip.contains(&node.local_id)
@@ -780,11 +806,15 @@ impl Runtime {
         let mut requests: Vec<(WebRequest, url::Url)> = firsts
             .chain(backgrounds)
             .take(limit)
+            .filter(|src| mars_core::image_source::valid_url_text(src))
             .filter(|src| {
                 !src.get(..5)
                     .is_some_and(|s| s.eq_ignore_ascii_case("data:"))
             })
             .filter_map(|src| base.join(src.trim()).ok())
+            .filter(|url| {
+                url.scheme() != "blob" && mars_core::image_source::valid_url_text(url.as_str())
+            })
             .map(|url| {
                 let request = WebRequest {
                     destination: crate::network::Destination::Image,
@@ -978,15 +1008,20 @@ impl Runtime {
                 base.join(src)
                     .map(|url| super::page::safe_url(url.as_str(), true))
             });
-            let skip = |gaps: &mut Gaps, url: Option<String>, reason: &str| {
+            let resources_mode = script.mode;
+            let mut skip = |gaps: &mut Gaps, url: Option<String>, reason: &str| {
                 let script = Resolved {
+                    refused: true,
                     source: String::new(),
                     index,
                     url,
                     module: None,
-                    attributes: BTreeMap::new(),
+                    attributes: script.attributes.clone(),
                 };
                 gaps.note("scripts", script_note(&script, reason));
+                if index < SCRIPT_COUNT {
+                    ready.push((resources_mode, script));
+                }
             };
             if index >= SCRIPT_COUNT {
                 skip(
@@ -1031,6 +1066,7 @@ impl Runtime {
                         ready.push((
                             script.mode,
                             Resolved {
+                                refused: false,
                                 source,
                                 index,
                                 url,
@@ -1078,6 +1114,7 @@ impl Runtime {
             ready.push((
                 script.mode,
                 Resolved {
+                    refused: false,
                     source,
                     index,
                     url,
@@ -1163,6 +1200,28 @@ fn script_note(script: &Resolved, reason: &str) -> String {
         script.index + 1
     )
 }
+/** A whole-load refusal has one cause; attribute it only when the engine supplied a valid index. */
+fn load_failure_note(resolved: &[Resolved], error: &EngineError) -> String {
+    let script = error
+        .location
+        .as_ref()
+        .and_then(|location| location.script_index)
+        .and_then(|index| index.checked_sub(1))
+        .and_then(|index| resolved.get(index));
+    let context = script.map_or_else(
+        || "Page script initialization".to_owned(),
+        |script| {
+            format!(
+                "Script {} ({}) during page initialization",
+                script.index + 1,
+                script.url.as_deref().unwrap_or("inline")
+            )
+        },
+    );
+    let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
+    let code = error.code.chars().take(REASON_CHARS).collect::<String>();
+    format!("{context} failed ({code}): {reason}")
+}
 /** Normalize browser storage ownership to the standards-defined serialized origin. */
 fn canonical_origin(value: &str) -> EngineResult<String> {
     let url =
@@ -1171,14 +1230,7 @@ fn canonical_origin(value: &str) -> EngineResult<String> {
 }
 /** Only common UTF-8 classic JavaScript media types are executable in this slice. */
 fn javascript_mime(mime: &str) -> bool {
-    [
-        "text/javascript",
-        "application/javascript",
-        "application/x-javascript",
-        "text/ecmascript",
-        "application/ecmascript",
-    ]
-    .contains(&mime)
+    mars_core::http::is_javascript_mime_essence(mime)
 }
 /** A prior POST requires an explicit new form action, never a generic Retry. */
 fn replay() -> EngineError {
@@ -1195,4 +1247,82 @@ fn no_history() -> EngineError {
         "No destination exists in that history direction.",
         "Navigate to another page first.",
     )
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    /** Recovery details retain the actual failed script when layout warnings filled the cap. */
+    #[test]
+    fn failed_resource_diagnostics_displace_old_warnings_without_growing() {
+        let mut document = crate::document::parse("<p>kept</p>").unwrap();
+        document.diagnostics = (0..DIAGNOSTICS)
+            .map(|index| format!("CSS warning {index}"))
+            .collect();
+        let mut gaps = Gaps::default();
+        gaps.note("scripts", "Script 1 did not run: download refused".into());
+        gaps.record(&mut document);
+        assert_eq!(document.diagnostics.len(), DIAGNOSTICS);
+        assert_eq!(
+            document.diagnostics.last().unwrap(),
+            "Script 1 did not run: download refused"
+        );
+        gaps.record(&mut document);
+        assert_eq!(document.diagnostics.len(), DIAGNOSTICS);
+    }
+
+    /** Synthetic entries preserve differing document order and execution order. */
+    fn script(index: usize) -> Resolved {
+        Resolved {
+            refused: false,
+            source: String::new(),
+            index,
+            url: None,
+            module: None,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn aggregate_load_failure_is_one_page_diagnostic_not_a_failure_for_every_script() {
+        let error = EngineError::limit("V9 event listeners", 16384);
+        let mut gaps = Gaps::default();
+        gaps.note(
+            "scripts",
+            load_failure_note(&[script(0), script(7)], &error),
+        );
+        let mut document = crate::document::parse("<p>kept</p>").unwrap();
+        gaps.record(&mut document);
+        let notes: Vec<_> = document
+            .diagnostics
+            .iter()
+            .filter(|note| note.contains("Page script initialization failed"))
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains(&error.code));
+        assert!(notes[0].contains(&error.message));
+        assert!(!notes[0].contains("Script 1"));
+    }
+
+    #[test]
+    fn aggregate_load_failure_uses_valid_execution_index_and_never_guesses_an_invalid_one() {
+        let mut error = EngineError::invalid("runtime stopped");
+        error.location = Some(Box::new(crate::protocol::SourceLocation {
+            script_index: Some(2),
+            ..Default::default()
+        }));
+        let scripts = [script(7), script(3)];
+        assert!(
+            load_failure_note(&scripts, &error)
+                .starts_with("Script 4 (inline) during page initialization")
+        );
+        for invalid in [0, 3, usize::MAX] {
+            error.location.as_mut().unwrap().script_index = Some(invalid);
+            assert!(
+                load_failure_note(&scripts, &error)
+                    .starts_with("Page script initialization failed")
+            );
+        }
+    }
 }

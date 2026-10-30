@@ -66,15 +66,16 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
         if document.nodes[id].attributes.contains_key("multiple") {
             continue;
         }
-        let options = options(document, id);
+        let options = select_options(document, id);
         let selected = options
             .iter()
             .rev()
-            .find(|n| n.selected && !n.disabled)
-            .or_else(|| options.iter().find(|n| !n.disabled))
+            .find(|n| n.selected)
+            .or_else(|| options.iter().find(|n| !option_disabled(document, n)))
             .map(|n| n.local_id);
+        let ids: Vec<_> = options.iter().map(|node| node.local_id).collect();
         for node in &mut document.nodes {
-            if node.tag == "option" && node.parent == Some(id) {
+            if ids.contains(&node.local_id) {
                 node.selected = Some(node.local_id) == selected;
             }
         }
@@ -343,11 +344,11 @@ fn control(node: &Node) -> bool {
     ["input", "textarea", "select", "button"].contains(&node.tag.as_str())
 }
 /** Options remain scoped to the supplied select, never another form's popup. */
-fn options(document: &Document, id: usize) -> Vec<&Node> {
+pub fn select_options(document: &Document, id: usize) -> Vec<&Node> {
     document
         .nodes
         .iter()
-        .filter(|n| n.tag == "option" && n.parent == Some(id))
+        .filter(|n| n.tag == "option" && ancestor(document, n, "select") == Some(id))
         .collect()
 }
 /// Idempotent checked state prevents agents from blindly toggling a checkbox.
@@ -404,15 +405,19 @@ pub fn select(document: &Document, id: usize, option: usize) -> EngineResult<Doc
         .iter()
         .find(|n| n.local_id == id && n.tag == "select" && !n.disabled && !n.hidden())
         .ok_or_else(invalid)?;
-    if !options(document, node.local_id)
+    if !select_options(document, node.local_id)
         .iter()
-        .any(|n| n.local_id == option && !n.disabled)
+        .any(|n| n.local_id == option && !option_disabled(document, n))
     {
         return Err(invalid());
     }
+    let ids: Vec<_> = select_options(document, id)
+        .iter()
+        .map(|node| node.local_id)
+        .collect();
     let mut candidate = document.clone();
     for node in &mut candidate.nodes {
-        if node.tag == "option" && node.parent == Some(id) {
+        if ids.contains(&node.local_id) {
             node.selected = node.local_id == option;
         }
     }
@@ -535,15 +540,10 @@ pub fn submission(
 /** Hidden/read-only fields submit; only the activated submitter is successful. */
 fn successful(document: &Document, node: &Node, submitter: Option<usize>) -> Vec<String> {
     if node.tag == "select" {
-        return options(document, node.local_id)
+        return select_options(document, node.local_id)
             .iter()
-            .filter(|n| n.selected && !n.disabled)
-            .map(|n| {
-                n.attributes
-                    .get("value")
-                    .cloned()
-                    .unwrap_or_else(|| n.text.clone())
-            })
+            .filter(|n| n.selected && !option_disabled(document, n))
+            .map(|n| option_value(document, n))
             .collect();
     }
     if ["button", "submit"].contains(&node.input_type()) || node.tag == "button" {
@@ -587,8 +587,8 @@ fn valid_required(document: &Document, node: &Node) -> bool {
         });
     }
     if node.tag == "select" {
-        return options(document, node.local_id).iter().any(|n| {
-            n.selected && !n.disabled && !n.attributes.get("value").unwrap_or(&n.text).is_empty()
+        return select_options(document, node.local_id).iter().any(|n| {
+            n.selected && !option_disabled(document, n) && !option_value(document, n).is_empty()
         });
     }
     !node.value.is_empty()
@@ -607,4 +607,62 @@ fn invalid() -> EngineError {
         "Choose an enabled visible form control.",
         "Inspect the current document and use its native node identity.",
     )
+}
+
+/** Apply an exact script selection only after every identity has been validated. */
+pub(super) fn script_selection(
+    document: &mut Document,
+    id: usize,
+    selected: &[usize],
+) -> EngineResult<()> {
+    let select = document
+        .nodes
+        .iter()
+        .find(|n| n.local_id == id && n.tag == "select")
+        .ok_or_else(invalid)?;
+    let ids: Vec<_> = select_options(document, id)
+        .iter()
+        .map(|n| n.local_id)
+        .collect();
+    let unique: std::collections::BTreeSet<_> = selected.iter().copied().collect();
+    if unique.len() != selected.len()
+        || selected.iter().any(|id| !ids.contains(id))
+        || (selected.len() > 1 && !select.attributes.contains_key("multiple"))
+    {
+        return Err(invalid());
+    }
+    for node in &mut document.nodes {
+        if ids.contains(&node.local_id) {
+            node.selected = unique.contains(&node.local_id);
+        }
+    }
+    Ok(())
+}
+
+/** Legacy value writes use the same exact selection algorithm as native script changes. */
+pub(super) fn script_value(document: &mut Document, id: usize, value: &str) -> EngineResult<()> {
+    let selected = select_options(document, id)
+        .into_iter()
+        .find(|n| option_value(document, n) == value)
+        .map(|n| n.local_id);
+    script_selection(document, id, &selected.into_iter().collect::<Vec<_>>())
+}
+
+/** An absent value attribute falls back to normalized descendant option text. */
+fn option_value(document: &Document, node: &Node) -> String {
+    node.attributes
+        .get("value")
+        .cloned()
+        .unwrap_or_else(|| text(document, node))
+}
+
+/// Disabled OPTGROUP state excludes native interaction and successful form entries.
+pub fn option_disabled(document: &Document, node: &Node) -> bool {
+    node.disabled
+        || ancestor(document, node, "optgroup").is_some_and(|id| {
+            document
+                .nodes
+                .iter()
+                .any(|n| n.local_id == id && n.disabled)
+        })
 }

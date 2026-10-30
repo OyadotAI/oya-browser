@@ -3,11 +3,13 @@ mod actions;
 mod appearance;
 #[cfg(feature = "test-support")]
 mod check;
+mod closing;
 mod commands;
 mod events;
 mod find;
 mod human;
 mod menus;
+mod navigation;
 mod page_menu;
 mod panels;
 mod scroll;
@@ -57,6 +59,7 @@ struct Window {
     snapshot: Option<BrowserSnapshot>,
     pending: VecDeque<Action>,
     busy: bool,
+    navigation: navigation::Navigation,
     ready: bool,
     error: Option<String>,
     failed_url: Option<String>,
@@ -67,6 +70,8 @@ struct Window {
     /** What the engine knows of the person's scrolling; reported only once it settles. */
     scroll: scroll::ScrollReport,
     closed: bool,
+    /** Save acknowledgement is polled without blocking native events. */
+    closing: closing::CloseState,
     last_owner: Option<Owner>,
     agent_busy: bool,
     worker_dead: bool,
@@ -145,7 +150,14 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
         .ok_or_else(|| EngineError::invalid("Desktop must start on the main thread."))?;
     let profiles = verification_profiles(&options);
     let records = record_store(&options);
-    let site = Site::start()?;
+    let mut site = Site::start()?;
+    let origins = vec![site.origin.clone()];
+    #[cfg(feature = "test-support")]
+    let origins = {
+        let mut origins = origins;
+        origins.extend(options.fixture_origin.clone());
+        origins
+    };
     let capture = Capture::new(options.capture_dir)?;
     let executable = std::env::current_exe()
         .map_err(|_| EngineError::invalid("Cannot resolve owned engine executable."))?;
@@ -175,28 +187,25 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     } else {
         Transport::Attach
     };
+    let initial_address = initial.clone();
     let broker = if let Some(profiles) = profiles {
-        Broker::start_with_profiles(
-            executable,
-            vec![site.origin.clone()],
-            transport,
-            owner,
-            initial,
-            profiles,
-        )?
+        Broker::start_with_profiles(executable, origins, transport, owner, initial, profiles)?
     } else {
-        Broker::start(
-            executable,
-            vec![site.origin.clone()],
-            transport,
-            owner,
-            initial,
-        )?
+        Broker::start(executable, origins, transport, owner, initial)?
     };
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let library = super::library::Library::load(records);
     let mut window = Window::new(mtm, broker, site.origin.clone(), capture, library);
+    if let Some(url) = initial_address {
+        window
+            .mars
+            .address
+            .setStringValue(&NSString::from_str(&url));
+        window.navigation.requested = Some(url.clone());
+        window.activity = window.activity_for("page.navigate", &json!({"url":url}));
+        window.busy = true;
+    }
     #[cfg(feature = "test-support")]
     let mut check = options.verify_ui.then(check::Check::new);
     #[cfg(feature = "test-support")]
@@ -208,15 +217,31 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
     window.window.makeFirstResponder(Some(&window.mars.address));
-    while window.window.isVisible() && !window.closed {
+    let mut failure = None;
+    loop {
+        if !window.window.isVisible() {
+            window.closed = true;
+        }
+        if window.closed {
+            window.broker.begin_shutdown();
+            let broker_done = window.broker.shutdown_finished();
+            let library_done = window.library.shutdown_finished();
+            let site_done = site.shutdown_finished();
+            if broker_done && library_done && site_done {
+                break;
+            }
+        }
         let result: EngineResult<()> = autoreleasepool(|_| {
             window.tick();
             #[cfg(feature = "test-support")]
-            if let Some(check) = &mut mcp_check {
+            if !window.closed
+                && let Some(check) = &mut mcp_check
+            {
                 check.advance(&mut window)?;
             }
             #[cfg(feature = "test-support")]
-            if let Some(check) = &mut check
+            if !window.closed
+                && let Some(check) = &mut check
                 && check.advance(&mut window)?
             {
                 window.closed = true;
@@ -238,12 +263,15 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
             app.updateWindows();
             Ok(())
         });
-        result?;
+        if let Err(error) = result {
+            failure = Some(error);
+            window.closed = true;
+        }
     }
     window.window.orderOut(None);
     drop(window);
     drop(site);
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
 /** Ephemeral runs and UI verification keep every profile in memory, away from the Keychain. */
@@ -333,6 +361,7 @@ impl Window {
             snapshot: None,
             pending: VecDeque::new(),
             busy: false,
+            navigation: Default::default(),
             ready: false,
             error: None,
             failed_url: None,
@@ -342,6 +371,7 @@ impl Window {
             pending_appearance: None,
             scroll: Default::default(),
             closed: false,
+            closing: closing::CloseState::Idle,
             last_owner: None,
             agent_busy: false,
             worker_dead: false,
@@ -370,12 +400,20 @@ impl Window {
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
         self.canvas.follow_viewport();
+        if self.closed {
+            while self.broker.events.try_recv().is_ok() {}
+            self.canvas.clear_actions();
+            self.mars.animate(true, false);
+            return;
+        }
         if self.broker.transport == Transport::Mcp
             && (!self.broker.connected.load(Ordering::Acquire)
                 || self.broker.cancel.load(Ordering::Acquire))
         {
             self.request_close();
-            return;
+            if self.closed {
+                return;
+            }
         }
         loop {
             match self.broker.events.try_recv() {
@@ -386,6 +424,11 @@ impl Window {
                     break;
                 }
             }
+        }
+        if self.poll_close() {
+            self.mars.animate(true, false);
+            self.canvas.clear_actions();
+            return;
         }
         while let Some(action) = self.canvas.pop() {
             if let Action::Activate(tag) = action
@@ -401,7 +444,9 @@ impl Window {
                             | mars::CLOSE
                             | mars::LOCATION
                             | mars::DISMISS
+                            | mars::DETAILS
                             | mars::STOP
+                            | mars::ADDRESS
                             | mars::PROFILE_CLEAR
                             | mars::PROFILE_RETRY
                             | mars::STORAGE_CLEAR
@@ -413,6 +458,9 @@ impl Window {
                     )
             ) {
                 self.action(action);
+                if !matches!(self.closing, closing::CloseState::Idle) {
+                    break;
+                }
             } else {
                 if let Action::Edit(id, _, page) = &action
                     && matches!(self.pending.back(),Some(Action::Edit(previous,_,observed)) if previous==id && observed==page)
@@ -431,10 +479,14 @@ impl Window {
                 }
             }
         }
+        if !matches!(self.closing, closing::CloseState::Idle) {
+            return;
+        }
         self.cancel_stale_appearance();
         self.ownership();
         self.layout();
         self.shell_tick();
+        self.dispatch_pending_navigation();
         if self.ready && !self.busy && self.pending_appearance.is_none() {
             if let Some(action) = self.pending.pop_front() {
                 self.action(action);
@@ -481,7 +533,7 @@ impl Window {
                     && !self.busy
                     && self.pending.is_empty()),
         );
-        self.mars.address.setEnabled(human && self.ready);
+        self.mars.address.setEnabled(human && !self.worker_dead);
         self.mars.demo.setEnabled(human && self.ready && !self.busy);
         let state = if self
             .snapshot
@@ -512,8 +564,14 @@ impl Window {
                     ""
                 }
             )));
-        self.mars.stop.setHidden(self.activity.is_none());
-        self.mars.stop.setEnabled(human && self.activity.is_some());
+        let loading = self.activity.is_some();
+        self.mars.loading_control(loading);
+        if loading {
+            self.mars
+                .reload
+                .setEnabled(human && !self.navigation.stopping);
+        }
+        self.mars.stop.setHidden(true);
     }
     /** Engine-owned geometry is set from the actual scroll viewport, including the error banner. */
     fn layout(&self) {
@@ -523,6 +581,16 @@ impl Window {
         ));
         self.mars
             .layout(size.width, size.height, self.error.is_some());
+        self.mars
+            .retry
+            .setTitle(&NSString::from_str(if self.navigation.details.is_some() {
+                "Reload"
+            } else {
+                "Retry"
+            }));
+        self.mars
+            .details
+            .setHidden(self.error.is_none() || self.navigation.details.is_none());
         self.mars
             .retry
             .setHidden(self.error.is_none() || !self.retry_allowed);

@@ -208,3 +208,47 @@ pub(in crate::v9) fn validate_and_extract(
     check_pairing(namespace, &qname, qualified)?;
     Ok(qname)
 }
+
+/** Canonical names in HTML's SVG tag adjustment table; arbitrary XML case remains exact. */
+pub(in crate::v9) fn adjusted_svg_name(name: &str) -> bool {
+    [
+        "altGlyph",
+        "altGlyphDef",
+        "altGlyphItem",
+        "animateColor",
+        "animateMotion",
+        "animateTransform",
+        "clipPath",
+        "feBlend",
+        "feColorMatrix",
+        "feComponentTransfer",
+        "feComposite",
+        "feConvolveMatrix",
+        "feDiffuseLighting",
+        "feDisplacementMap",
+        "feDistantLight",
+        "feDropShadow",
+        "feFlood",
+        "feFuncA",
+        "feFuncB",
+        "feFuncG",
+        "feFuncR",
+        "feGaussianBlur",
+        "feImage",
+        "feMerge",
+        "feMergeNode",
+        "feMorphology",
+        "feOffset",
+        "fePointLight",
+        "feSpecularLighting",
+        "feSpotLight",
+        "feTile",
+        "feTurbulence",
+        "foreignObject",
+        "glyphRef",
+        "linearGradient",
+        "radialGradient",
+        "textPath",
+    ]
+    .contains(&name)
+}

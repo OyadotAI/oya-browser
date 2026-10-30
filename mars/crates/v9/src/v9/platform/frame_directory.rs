@@ -28,6 +28,64 @@ pub struct FrameRoute {
     pub name: String,
 }
 
+/// Bounded native browsing-context metadata exposes relationships without granting document access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrameContext {
+    /// Globally stable context identity, distinct from document generations and local node IDs.
+    pub window: i64,
+    /// Immediate parent; the actual root alone has no parent.
+    pub parent: Option<i64>,
+    /// Immediate child lookup metadata in this context's current DOM order.
+    pub children: Vec<FrameRoute>,
+}
+
+/** Resolve a proxy into the native directory without interpreting local owner numbers globally. */
+pub(super) fn proxy_window(vm: &Vm, target: i64) -> Option<i64> {
+    let own = vm.page.environment.context_window?;
+    let context = vm
+        .page
+        .environment
+        .frame_contexts
+        .iter()
+        .find(|context| context.window == own)?;
+    if target == messaging::PARENT {
+        return context.parent.or(Some(own));
+    }
+    if let Ok(owner) = usize::try_from(target) {
+        return context
+            .children
+            .iter()
+            .find(|route| route.owner == owner)
+            .map(|route| route.window);
+    }
+    sibling_window(target)
+}
+
+/** Canonical proxies preserve equality across contentWindow, parent, top and message sources. */
+pub(super) fn canonical_target(vm: &Vm, window: i64) -> Option<i64> {
+    let own = vm.page.environment.context_window?;
+    let context = vm
+        .page
+        .environment
+        .frame_contexts
+        .iter()
+        .find(|context| context.window == own)?;
+    if context.parent == Some(window) {
+        return Some(messaging::PARENT);
+    }
+    if let Some(route) = context.children.iter().find(|route| route.window == window)
+        && vm
+            .page
+            .environment
+            .scripted_frame_owners
+            .contains(&route.owner)
+    {
+        return i64::try_from(route.owner).ok();
+    }
+    sibling_target(window)
+}
+
 /** Detachment retires the old context even when the same element is reinserted in one turn. */
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -145,9 +203,45 @@ pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) -> EngineRes
 
 /** Resolve virtual frame properties before the VM's ordinary-object fast path. */
 pub(in crate::v9) fn lookup(vm: &mut Vm, object: ObjectId, key: &Key) -> Res<Option<JsValue>> {
+    // Dedicated workers cannot contain WindowProxy objects or browsing contexts.
+    if vm.page.environment.worker_name.is_some() {
+        return Ok(None);
+    }
     let Key::Str(name) = key else { return Ok(None) };
-    let parent = messaging::target_of(vm, &JsValue::Object(object)) == Some(messaging::PARENT);
-    let local = object == vm.global_object() && vm.page.environment.worker_name.is_none();
+    let proxy_target = messaging::target_of(vm, &JsValue::Object(object));
+    if let Some(target) = proxy_target
+        && let Some(window) = proxy_window(vm, target)
+        && vm
+            .page
+            .environment
+            .frame_contexts
+            .iter()
+            .any(|context| context.window == window)
+    {
+        if key.index().is_none() && (name.is_empty() || ordinary_property(vm, object, key)?) {
+            return Ok(None);
+        }
+        let context = vm
+            .page
+            .environment
+            .frame_contexts
+            .iter()
+            .find(|context| context.window == window)
+            .expect("directory unchanged");
+        let route = match key.index() {
+            Some(index) => context.children.get(index as usize),
+            None => context
+                .children
+                .iter()
+                .find(|route| route.name == name.lossy()),
+        };
+        let target = route.and_then(|route| sibling_target(route.window));
+        return target
+            .map(|target| messaging::proxy(vm, target).map(Some))
+            .unwrap_or(Ok(None));
+    }
+    let parent = proxy_target == Some(messaging::PARENT);
+    let local = object == vm.global_object();
     if !parent && !local {
         return Ok(None);
     }

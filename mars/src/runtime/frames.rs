@@ -38,7 +38,7 @@ pub(super) const FRAME_BYTES_TOTAL: usize = crate::constants::HTML_BYTES;
 const FRAME_ID_SHIFT: u32 = 32;
 /// The viewport a frame's document is styled in to choose its images, before layout gives it
 /// the frame's real content box: HTML's default 300 by 150 frame.
-const DEFAULT_VIEWPORT: (f64, f64) = (300.0, 150.0);
+pub(super) const DEFAULT_VIEWPORT: (f64, f64) = (300.0, 150.0);
 /// The only HTTP status whose body is the embedded document.
 pub(super) const HTTP_OK: u16 = 200;
 /// Frame answers a page keeps in its environment, one per distinct URL its scripts asked for.
@@ -73,14 +73,23 @@ pub(super) struct Embedding {
     pub name: String,
     pub routes: Vec<crate::v9::FrameRoute>,
     pub window: i64,
+    pub ancestors: Vec<String>,
+    pub contexts: Vec<crate::v9::FrameContext>,
+    pub paint_base: usize,
+    /** Remaining tree source allowance before this new realm requests inert answers. */
+    pub source_budget: usize,
 }
 impl Frame {
     /** Detached frame resources leave the candidate together with their context lease. */
     pub(super) fn remove_images(&self, images: &mut BTreeMap<usize, ImageAsset>) {
-        let range = self.id_base..self.id_end();
+        self.remove_images_at(images, 0);
+    }
+    /** Nested display IDs are additive, so cleanup follows the same accumulated namespace. */
+    fn remove_images_at(&self, images: &mut BTreeMap<usize, ImageAsset>, offset: usize) {
+        let range = offset + self.id_base..offset + self.id_end();
         images.retain(|id, _| !range.contains(id));
         for frame in &self.frames {
-            frame.remove_images(images);
+            frame.remove_images_at(images, offset + self.id_base);
         }
     }
     /** The frame of iframe `owner` showing its own `page`, the page's images added to `images`
@@ -102,7 +111,7 @@ impl Frame {
             url: url::Url::parse(&page.url).ok().unwrap_or_else(blank),
             sheets: page.resolved_stylesheets.clone(),
             id_base,
-            frames: Vec::new(),
+            frames: page.frames.as_ref().clone(),
             page: Some(Box::new(page)),
         }
     }
@@ -113,8 +122,8 @@ impl Frame {
         };
         self.document.clone_from(&page.document);
         self.sheets.clone_from(&page.resolved_stylesheets);
-        let range = self.id_base..self.id_base + (1 << FRAME_ID_SHIFT);
-        images.retain(|id, _| !range.contains(id));
+        self.remove_images(images);
+        self.frames = page.frames.as_ref().clone();
         images.extend(
             page.images
                 .iter()
@@ -160,6 +169,103 @@ fn blank() -> url::Url {
 /** A page's frames, shared by every copy of the page. */
 pub(super) type Frames = Arc<Vec<Frame>>;
 
+/** One reconciliation pass shares limits across the whole candidate tree, never per embedded page. */
+pub(super) struct FrameBudget {
+    pub count: usize,
+    pub bytes: usize,
+    pub next_base: usize,
+}
+impl FrameBudget {
+    /** Count retained sources and initial inert acquisitions before admitting any new descendant. */
+    pub fn for_page(page: &Page) -> Self {
+        let mut budget = Self {
+            count: 0,
+            bytes: 0,
+            next_base: 1 << FRAME_ID_SHIFT,
+        };
+        budget.page(page);
+        budget
+    }
+    fn page(&mut self, page: &Page) {
+        self.count = self.count.saturating_add(page.inert_frame_count);
+        self.bytes = self
+            .bytes
+            .saturating_add(page.inert_frame_bytes)
+            .saturating_add(page.scripting.modules.frame_bytes);
+        self.frames(&page.frames, page.frame_base);
+    }
+    fn frames(&mut self, frames: &[Frame], offset: usize) {
+        for frame in frames {
+            self.next_base = self.next_base.max(offset.saturating_add(frame.id_end()));
+            if let Some(page) = &frame.page {
+                self.count = self.count.saturating_add(1);
+                self.bytes = self.bytes.saturating_add(page.source_bytes);
+                self.page(page);
+            } else {
+                self.frames(&frame.frames, offset.saturating_add(frame.id_base));
+            }
+        }
+    }
+    /** Already-retained answers share the same ceiling as newly acquired documents. */
+    pub fn validate(&self) -> EngineResult<()> {
+        if self.count > FRAME_COUNT {
+            return Err(EngineError::limit("frame tree contexts", FRAME_COUNT));
+        }
+        if self.bytes > FRAME_BYTES_TOTAL {
+            return Err(EngineError::limit(
+                "frame tree source bytes",
+                FRAME_BYTES_TOTAL,
+            ));
+        }
+        Ok(())
+    }
+    /** Reservations precede acquisition and never reuse a live descendant's painted identity. */
+    pub fn reserve(&mut self) -> EngineResult<usize> {
+        if self.count >= FRAME_COUNT {
+            return Err(EngineError::limit("frame tree contexts", FRAME_COUNT));
+        }
+        let base = self.next_base;
+        self.next_base = base
+            .checked_add(1 << FRAME_ID_SHIFT)
+            .ok_or_else(|| EngineError::limit("frame paint identities", usize::MAX))?;
+        self.count += 1;
+        Ok(base)
+    }
+    /** Source bytes are charged before parsing or running an executable frame body. */
+    pub fn source(&mut self, bytes: usize) -> EngineResult<()> {
+        let total = self.bytes.saturating_add(bytes);
+        if total > FRAME_BYTES_TOTAL {
+            return Err(EngineError::limit(
+                "frame tree source bytes",
+                FRAME_BYTES_TOTAL,
+            ));
+        }
+        self.bytes = total;
+        Ok(())
+    }
+}
+
+/** Flatten painted documents without losing the accumulated namespace of nested frames. */
+pub(super) fn documents(frames: &[Frame]) -> Vec<(usize, usize, &Document)> {
+    fn append<'a>(
+        frames: &'a [Frame],
+        offset: usize,
+        output: &mut Vec<(usize, usize, &'a Document)>,
+    ) {
+        for frame in frames {
+            output.push((
+                offset + frame.id_base(),
+                offset + frame.id_end(),
+                frame.document(),
+            ));
+            append(&frame.frames, offset + frame.id_base(), output);
+        }
+    }
+    let mut output = Vec::new();
+    append(frames, 0, &mut output);
+    output
+}
+
 /** Where a frame element's content comes from. */
 enum Source {
     /// An iframe's `srcdoc` markup, in the embedder's base URL.
@@ -177,8 +283,6 @@ enum Content {
 /** The page-wide frame allowance left. */
 #[derive(Default)]
 struct Allowance {
-    /** Root lookup metadata is available before any sibling script starts. */
-    routes: Vec<crate::v9::FrameRoute>,
     /// Frames claimed so far.
     count: usize,
     /// Frame source bytes admitted so far.
@@ -223,16 +327,12 @@ impl Runtime {
         base: &str,
         deadline: Instant,
         images: &mut BTreeMap<usize, ImageAsset>,
-        routes: &[crate::v9::FrameRoute],
-    ) -> EngineResult<(Vec<Frame>, Vec<FrameDocument>)> {
+    ) -> EngineResult<(Vec<Frame>, Vec<FrameDocument>, usize, usize)> {
         let base =
             url::Url::parse(base).map_err(|_| EngineError::invalid("Invalid frame base URL."))?;
-        let mut allowance = Allowance {
-            routes: routes.to_vec(),
-            ..Default::default()
-        };
+        let mut allowance = Allowance::default();
         let frames = self.frames_in(document, &base, deadline, images, &mut allowance, 0)?;
-        Ok((frames, allowance.scripts))
+        Ok((frames, allowance.scripts, allowance.count, allowance.bytes))
     }
     /** The frames of one document at nesting `depth`. */
     fn frames_in(
@@ -253,46 +353,22 @@ impl Runtime {
             .filter_map(|(index, node)| Some((index, source(node)?)))
             .collect();
         for (index, source) in owners {
+            // Scripted documents are admitted by the root coordinator after the page exists,
+            // so every executable descendant shares one count, byte and residency budget.
+            if depth == 0
+                && let Source::Address(address, None) = &source
+                && document.nodes[index].tag == "iframe"
+                && base.join(address).ok().is_some_and(|url| {
+                    self.scripted_frame_allowed(base, &url, &document.nodes[index].attributes)
+                })
+            {
+                continue;
+            }
             if allowance.count >= FRAME_COUNT {
                 break;
             }
             allowance.count += 1;
             let id_base = allowance.count << FRAME_ID_SHIFT;
-            if depth == 0
-                && let Source::Address(address, None) = &source
-                && document.nodes[index].tag == "iframe"
-            {
-                let owner = document.nodes[index].local_id;
-                let attributes = document.nodes[index].attributes.clone();
-                let scripted = base
-                    .join(address)
-                    .ok()
-                    .is_some_and(|url| self.scripted_frame_allowed(base, &url, &attributes));
-                let opened = match self.frame_page(
-                    owner,
-                    address,
-                    &attributes,
-                    base,
-                    id_base,
-                    deadline,
-                    images,
-                    &allowance.routes,
-                ) {
-                    Err(error) if error.code == "limit_exceeded" => {
-                        document.diagnostics.push(error.message);
-                        None
-                    }
-                    result => result?,
-                };
-                if let Some(frame) = opened {
-                    document.nodes[index].embedded = true;
-                    frames.push(frame);
-                    continue;
-                }
-                if scripted {
-                    continue;
-                }
-            }
             let node = &mut document.nodes[index];
             let Some((content, script)) = self.frame_content(source, base, deadline, allowance)?
             else {
@@ -335,6 +411,10 @@ impl Runtime {
             allowance,
             depth + 1,
         )?;
+        // Allocation and image storage use root-global ranges; painting composes parent offsets.
+        for child in &mut frame.frames {
+            child.id_base -= frame.id_base;
+        }
         Ok(frame)
     }
     /** A frame for the parsed `document` at `url`: its stylesheets, then its images styled at
@@ -547,7 +627,7 @@ impl Runtime {
 }
 /// The largest frame viewport side: Eye's window bound, past which a frame lays its document
 /// out at this size and clips the rest.
-const MAX_FRAME_VIEWPORT: f64 = 4096.0;
+pub(super) const MAX_FRAME_VIEWPORT: f64 = 4096.0;
 
 /** document.frame_render parameters, written straight to the frame. */
 #[derive(serde::Serialize)]
@@ -608,6 +688,14 @@ impl Runtime {
             && Instant::now() < deadline
             && page.scripting.environment.frame_documents.len() < SCRIPT_FRAME_ANSWERS;
         let added = admitted && self.attach_frame_pages(page, &urls, deadline)?;
+        if page.frame_ancestors.is_empty() {
+            let retained = FrameBudget::for_page(page).bytes;
+            page.frame_source_limit = page
+                .scripting
+                .modules
+                .frame_bytes
+                .saturating_add(FRAME_BYTES_TOTAL.saturating_sub(retained));
+        }
         for request in requests {
             let refuse = give_up || !super::frame_pages::needs_inert_answer(page, &request.url);
             let answer = self.answer_frame(page, &request.url, deadline, refuse)?;
@@ -650,7 +738,12 @@ impl Runtime {
             Err(_) => return Ok(refused),
         };
         let parsed = media_type == "text/html" || crate::document::xml_mime(&media_type);
-        let fits = page.scripting.modules.frame_bytes + text.len() <= FRAME_BYTES_TOTAL;
+        let fits = page
+            .scripting
+            .modules
+            .frame_bytes
+            .saturating_add(text.len())
+            <= page.frame_source_limit.min(FRAME_BYTES_TOTAL);
         if !parsed || !fits || !same_origin(&page_url, &final_url) {
             return Ok(refused);
         }

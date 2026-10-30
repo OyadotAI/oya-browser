@@ -8,7 +8,10 @@ const CLOSED_TABS: usize = 16;
 impl Window {
     /** Keep the Mars shell in step with the snapshot on screen; none of this sends engine work except a reopen. */
     pub(super) fn shell_tick(&mut self) {
-        let inspection = self.snapshot.as_ref().map(|snapshot| &snapshot.inspection);
+        self.incomplete_notice();
+        let inspection = self
+            .committed_snapshot()
+            .map(|snapshot| &snapshot.inspection);
         let url = inspection
             .and_then(|page| page["url"].as_str())
             .unwrap_or_default()
@@ -21,7 +24,10 @@ impl Window {
                     .collect()
             })
             .unwrap_or_default();
-        self.mars.sync_address(&url);
+        self.mars
+            .sync_address(&url, self.navigation.requested.as_deref());
+        self.mars
+            .loading_address(self.navigation.requested.is_some());
         self.mars.set_degraded(&degraded);
         self.mars.animate(self.activity.is_some(), self.agent_busy);
         if !url.is_empty() {

@@ -50,6 +50,8 @@ const WHEEL_LINE: f64 = 40.0;
 #[derive(Clone)]
 pub(super) enum Action {
     Activate(isize),
+    /** Captured address submissions keep their text while an old load cancels. */
+    Navigate(String),
     Edit(usize, String, String),
     /** Page generation is captured at the actual native click. */
     Click(usize, String),
@@ -246,7 +248,7 @@ impl Canvas {
     /** Adjacent input events are coalesced before entering the bounded worker queue. Page input is
     dropped while an agent holds the tab; shell controls (the control pill, the tab strip, menus)
     always reach the window, which checks ownership itself, or the person could never take control back. */
-    fn push(&self, action: Action) {
+    pub(super) fn push(&self, action: Action) {
         if !self.ivars().human.get() && !matches!(action, Action::Activate(_)) {
             return;
         }

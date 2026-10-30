@@ -52,6 +52,7 @@ impl Window {
                 #[cfg(feature = "test-support")]
                 let observation = {
                     let mut observation = observation;
+                    observation["navigation"] = json!({"busy":self.busy,"activity":self.activity,"requested":self.navigation.requested,"committed":self.mars.committed_url(),"address":self.mars.address.stringValue().to_string(),"stop_visible":self.mars.reload.tag()==mars::STOP,"stopping":self.navigation.stopping,"pending":self.navigation.pending});
                     observation["native_frames"] = self.canvas.native_frames();
                     observation["native_banner"] = self.mars.banner_observation();
                     observation["render_context"] = self

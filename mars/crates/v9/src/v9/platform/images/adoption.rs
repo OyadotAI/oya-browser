@@ -56,6 +56,11 @@ pub(super) fn adopt(page: &mut Page, from: usize, to: usize) -> EngineResult<()>
             request.node = to;
         }
     }
+    for cancellation in &mut page.effects.image_cancellations {
+        if cancellation.node == from {
+            cancellation.node = to;
+        }
+    }
     page.effects
         .image_adoptions
         .push(ImageAdoption { from, to });

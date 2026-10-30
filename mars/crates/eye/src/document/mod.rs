@@ -19,7 +19,10 @@ use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
 pub use context::{Appearance, FRAME_VIEWPORT_MIN, RenderContext};
-pub use forms::{Submission, form_owner, label, own_text, select, set_checked, submission};
+pub use forms::{
+    Submission, form_owner, label, option_disabled, own_text, select, select_options, set_checked,
+    submission,
+};
 use mars_core::dom::descendant_ids;
 pub use mars_core::dom::{
     DomChange, FragmentParser, InsertPosition, MetadataElement, ScriptChange, ScriptDocument,
@@ -49,12 +52,20 @@ pub use style::{
     TextTransform, WhiteSpace, background_owner, background_urls, canvas_key, compute_frame_styles,
     compute_styles, compute_styles_with_context, css_imports, layer_key, rebase_urls,
 };
+pub use style::{
+    AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
+};
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
     install_fonts,
 };
+pub use style::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use style::{Rotation, RotationTransitions};
+pub use style::{RotationAnimation, RotationAnimations, RotationKeyframe};
+pub use style::{Scale, ScaleAnimation, ScaleAnimations, ScaleKeyframe, ScaleTransitions};
+pub use style::{Translation, TranslationTransitions};
 pub use xml::xml_mime;
 
 /** Private computed values are validated before layout even when a Rust caller bypasses CSS parsing. */

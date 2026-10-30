@@ -48,6 +48,8 @@ pub(super) struct Page {
     pub revision: u64,
     /** Fully validated owned document. */
     pub document: Document,
+    /** Immutable acquired HTML byte count keeps frame quotas independent of later DOM mutations. */
+    pub source_bytes: usize,
     /** Resolved page scripts stay coordinator-owned and never enter document rendering. */
     pub scripts: Vec<String>,
     /** Already-governed source supports resize/theme restyling without refetch or script execution. */
@@ -56,6 +58,15 @@ pub(super) struct Page {
     pub url: String,
     /// The root document's site partitions worker loads independently of their own origin.
     pub top_level_url: String,
+    /// Ancestor document URLs, root first, retain the full framing-policy and partition chain.
+    pub frame_ancestors: Vec<String>,
+    /// Absolute painted identity base; embedded display offsets remain relative to their parent.
+    pub frame_base: usize,
+    /// Initial inert-frame acquisition consumes one shared tree budget, including refused attempts.
+    pub inert_frame_count: usize,
+    pub inert_frame_bytes: usize,
+    /** Root-issued ceiling for this realm's retained inert answers, refreshed before child turns. */
+    pub frame_source_limit: usize,
     /** Sensitive GET navigation keeps its actual query inside the runtime. */
     pub sensitive: bool,
     /** Direct POST responses must never be silently replayed by history controls. */
@@ -162,12 +173,12 @@ impl Page {
             .filter(|(node, _)| !crate::document::agent_hidden(&self.document, node))
             .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds, &derived))
             .collect::<Vec<_>>();
-        let frame_nodes = self.frames.iter().flat_map(|frame| {
-            let labels = super::names::names(frame.document());
-            frame.document().nodes.iter().zip(labels).filter_map(|(node, name)| {
-                let id = frame.id_base() + node.local_id;
+        let frame_nodes = super::frames::documents(&self.frames).into_iter().flat_map(|(base, _, document)| {
+            let labels = super::names::names(document);
+            document.nodes.iter().zip(labels).filter_map(|(node, name)| {
+                let id = base + node.local_id;
                 let item = bounds.get(&id).filter(|item| crate::document::agent_visible(item))?;
-                if crate::document::agent_hidden(frame.document(), node) { return None; }
+                if crate::document::agent_hidden(document, node) { return None; }
                 Some(json!({"node_id":self.node_id(id),"tag":node.tag,"role":crate::document::role(node),
                     "name":name,"text":node.text,"href":node.href,"enabled":!node.disabled && !node.hidden(),
                     "bounds":{"x":item.x,"y":item.y,"width":item.width,"height":item.height,"unit":"logical_points"}}))
@@ -360,15 +371,15 @@ impl Runtime {
         });
         let snapshot = self.snapshot_of(Some(page), inspection);
         if let Some(sink) = self.provisional.as_mut() {
-            sink(snapshot);
+            sink(snapshot, self.permit);
         }
     }
     /** Lays out a styled page for its first paint: the display alone, without the inspection
     and wire checks `prepare_styled` adds, which the finished page gets. */
     pub(super) fn prepare_display(&mut self, page: &mut Page) -> EngineResult<()> {
         crate::document::validate_content(&page.document)?;
-        let effective =
-            super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
+        let effects = super::animations::paint_effects(&page.scripting);
+        let effective = super::animations::effective_presentation(&page.document, &effects)?;
         let call = RenderCall {
             document: &effective,
             context: self.render_context,
@@ -378,6 +389,8 @@ impl Runtime {
         self.embed_frames(&mut display, &page.frames)?;
         page.display = Some(display);
         page.laid_out_before = next_node(&page.document);
+        super::intersections::layout(page, self.render_context, self.scroll_y);
+        page.invalidate_resized_frames();
         Ok(())
     }
     /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
@@ -389,7 +402,7 @@ impl Runtime {
         let effects = self
             .page
             .as_ref()
-            .map(|page| page.scripting.opacity_effects.clone())
+            .map(|page| super::animations::paint_effects(&page.scripting))
             .unwrap_or_default();
         self.render_effects(document, scroll, &effects)
     }
@@ -398,10 +411,10 @@ impl Runtime {
         &mut self,
         document: &Document,
         scroll: &crate::document::ScrollOffsets,
-        effects: &[crate::v9::OpacityEffect],
+        effects: &super::animations::PaintEffects,
     ) -> EngineResult<DisplayList> {
         crate::document::validate_content(document)?;
-        let effective = super::animations::effective_document(document, effects)?;
+        let effective = super::animations::effective_presentation(document, effects)?;
         let call = RenderCall {
             document: &effective,
             context: self.render_context,
@@ -419,9 +432,9 @@ impl Runtime {
             document: page.map(|page| page.document.clone()),
             frame_documents: page
                 .map(|page| {
-                    page.frames
-                        .iter()
-                        .map(|frame| (frame.id_base(), frame.id_end(), frame.document().clone()))
+                    super::frames::documents(&page.frames)
+                        .into_iter()
+                        .map(|(base, end, document)| (base, end, document.clone()))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -529,17 +542,16 @@ impl Runtime {
         if page.untrusted_styles {
             untrusted(&mut page.document);
         }
+        super::animations::refresh_timelines(page)?;
         crate::document::validate_content(&page.document)?;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)?;
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )?;
         if self.web_origins.is_some() {
-            let effective = super::animations::effective_document(
-                &page.document,
-                &page.scripting.opacity_effects,
-            )?;
+            let effects = super::animations::paint_effects(&page.scripting);
+            let effective = super::animations::effective_presentation(&page.document, &effects)?;
             let call = RenderCall {
                 document: &effective,
                 context,
@@ -550,6 +562,8 @@ impl Runtime {
             page.display = Some(display);
             page.laid_out_before = next_node(&page.document);
         }
+        super::intersections::layout(page, context, self.scroll_y);
+        page.invalidate_resized_frames();
         page.refresh_inspection();
         page.publishable()
     }

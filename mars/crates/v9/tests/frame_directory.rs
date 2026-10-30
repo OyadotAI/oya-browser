@@ -226,3 +226,80 @@ fn an_already_transferred_entry_does_not_detach_an_earlier_valid_entry() {
     assert_eq!(common::global(&execution, "result"), "true");
     assert_eq!(execution.effects.messages.len(), 2);
 }
+
+/** Three native contexts describe a grandchild without granting access to ancestor documents. */
+fn nested_environment() -> PageEnvironment {
+    use mars_v9::FrameContext;
+    PageEnvironment {
+        context_window: Some(13),
+        own_window: Some(13),
+        embedder_origin: Some("https://parent.test".into()),
+        parent_frames: vec![route(1, 13, "grand")],
+        frame_contexts: vec![
+            FrameContext {
+                window: 11,
+                parent: None,
+                children: vec![route(1, 12, "child")],
+            },
+            FrameContext {
+                window: 12,
+                parent: Some(11),
+                children: vec![route(1, 13, "grand")],
+            },
+            FrameContext {
+                window: 13,
+                parent: Some(12),
+                children: vec![],
+            },
+        ],
+        ..common::environment()
+    }
+}
+
+/** Native context relationships distinguish parent from top while all aliases share proxies. */
+#[test]
+fn nested_relationships_preserve_global_identity_and_local_owner_namespaces() {
+    assert_eq!(
+        result(
+            "const result=[parent!==top,parent.parent===top,top.parent===top,top.frames[0]===parent,parent.frames[0]===window,top.frames.child===parent,parent.document===undefined,top.document===undefined].join(',');",
+            &nested_environment()
+        ),
+        "true,true,true,true,true,true,true,true"
+    );
+}
+
+/** The two ancestor targets are separate native windows, never the same parent sentinel. */
+#[test]
+fn nested_messages_address_distinct_immediate_and_root_ancestors() {
+    let execution = common::load_with(
+        "parent.postMessage('parent','*');top.postMessage('top','*');",
+        &nested_environment(),
+    );
+    assert!(execution.failed.is_empty());
+    assert_eq!(execution.effects.messages[0].target, -1);
+    assert_eq!(
+        execution.effects.messages[1].target,
+        sibling_target(11).unwrap()
+    );
+}
+
+/** Forged cycles, missing parents and reused windows fail before page code can run. */
+#[test]
+fn malformed_nested_context_trees_are_rejected() {
+    for case in 0..6 {
+        let mut environment = nested_environment();
+        match case {
+            0 => environment.frame_contexts[0].parent = Some(13),
+            1 => environment.frame_contexts[2].parent = Some(99),
+            2 => environment.frame_contexts[1].window = 11,
+            3 => environment.context_window = Some(99),
+            4 => environment.frame_contexts[1].children[0].window = 11,
+            _ => environment.frame_contexts[0].children[0].window = 13,
+        }
+        let host = common::host();
+        let error = mars_v9::load_page(common::input(&[], &host, &environment))
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "invalid_request", "case {case}");
+    }
+}

@@ -676,3 +676,119 @@ fn transferring_both_channel_endpoints_to_a_worker_is_refused_atomically() {
         "NotSupportedError|attached"
     );
 }
+
+/** A worker creates a real child channel, and a deeper constructor refuses before acquisition. */
+#[test]
+fn nested_worker_ports_roundtrip_and_depth_is_bounded() {
+    let (fixture, counts) = Fixture::routes_counted(vec![
+        (
+            "/",
+            html(
+                "",
+                "<script>let result='waiting';const w=new Worker('/parent.js');w.onmessage=e=>result=e.data;w.onerror=e=>result='error:'+e.message;</script>",
+            ),
+        ),
+        (
+            "/parent.js",
+            script(
+                "const child=new Worker('/child.js');const c=new MessageChannel();c.port1.onmessage=e=>postMessage(e.data);child.postMessage('port',[c.port2]);c.port1.postMessage(41);",
+            ),
+        ),
+        (
+            "/child.js",
+            script(
+                "let refused=false;try{new Worker('/too-deep.js')}catch(e){refused=true}onmessage=e=>{const p=e.ports[0];p.onmessage=m=>p.postMessage([m.data+1,refused,typeof document].join('|'))};",
+            ),
+        ),
+        ("/too-deep.js", script("postMessage('wrong')")),
+    ]);
+    assert_eq!(peek(&mut load(&fixture), "result"), "42|true|undefined");
+    assert_eq!(counts.lock().unwrap().get("/too-deep.js"), None);
+}
+
+/** Child replies may complete module initialization without consuming early owner-global messages. */
+#[test]
+fn nested_blob_module_reply_resolves_parent_top_level_await() {
+    let fixture = Fixture::routes(vec![
+        (
+            "/",
+            html(
+                "",
+                "<script>let result=[];const w=new Worker('/parent.js',{type:'module'});w.onmessage=e=>result.push(e.data);w.onerror=e=>result.push('error:'+e.message);w.postMessage('early');</script>",
+            ),
+        ),
+        (
+            "/parent.js",
+            script(
+                "const url=URL.createObjectURL(new Blob(['await Promise.resolve();onmessage=e=>postMessage(e.data+1)'],{type:'text/javascript'}));const child=new Worker(url,{type:'module'});URL.revokeObjectURL(url);const answer=await new Promise(resolve=>{child.onmessage=e=>resolve(e.data);child.postMessage(41)});postMessage('child:'+answer);onmessage=e=>postMessage('owner:'+e.data);",
+            ),
+        ),
+    ]);
+    assert_eq!(
+        peek(&mut load(&fixture), "result.join('|')"),
+        "child:42|owner:early"
+    );
+}
+
+/** Recursive termination releases every descendant lease before later construction reuses capacity. */
+#[test]
+fn nested_worker_termination_releases_subtree_capacity() {
+    let fixture = Fixture::routes(vec![
+        (
+            "/",
+            html(
+                "",
+                "<script>let result='waiting';const ownerWorker=new Worker('/parent.js');ownerWorker.onmessage=e=>result=e.data;ownerWorker.onerror=e=>result='error:'+e.message;</script>",
+            ),
+        ),
+        (
+            "/parent.js",
+            script("const child=new Worker('/child.js');child.onmessage=e=>postMessage('ready');"),
+        ),
+        (
+            "/child.js",
+            script("postMessage('ready');onmessage=e=>postMessage(e.data);"),
+        ),
+        ("/replacement.js", script("postMessage('replacement')")),
+    ]);
+    let mut runtime = load(&fixture);
+    assert_eq!(peek(&mut runtime, "result"), "ready");
+    call(
+        &mut runtime,
+        "page.devtools",
+        json!({"request":{"kind":"evaluate","expression":"new Promise(resolve=>{ownerWorker.terminate();setTimeout(resolve,0)})","options":{"return_by_value":true,"await_promise":true}}}),
+    );
+    call(
+        &mut runtime,
+        "page.devtools",
+        json!({"request":{"kind":"evaluate","expression":"let replacements=0,failures=0;new Promise(resolve=>{for(let i=0;i<6;i++){const w=new Worker('/replacement.js');w.onmessage=()=>{if(++replacements+failures===6)resolve()};w.onerror=()=>{if(++failures+replacements===6)resolve()}}})","options":{"return_by_value":true,"await_promise":true}}}),
+    );
+    assert_eq!(
+        peek(&mut runtime, "[replacements,failures].join('|')"),
+        "6|0"
+    );
+}
+
+/** A nested child is checked against its creator worker response policy before source acquisition. */
+#[test]
+fn nested_worker_uses_its_creator_csp_instead_of_the_document_policy() {
+    let (fixture, counts) = Fixture::routes_counted(vec![
+        (
+            "/",
+            html(
+                "",
+                "<script>let result='waiting';const w=new Worker('/parent.js');w.onmessage=e=>result=e.data;</script>",
+            ),
+        ),
+        (
+            "/parent.js",
+            script_headers(
+                "const child=new Worker('/blocked.js');child.onerror=e=>{e.preventDefault();postMessage('blocked')};",
+                "Content-Security-Policy: worker-src 'none'\r\n",
+            ),
+        ),
+        ("/blocked.js", script("postMessage('wrong')")),
+    ]);
+    assert_eq!(peek(&mut load(&fixture), "result"), "blocked");
+    assert_eq!(counts.lock().unwrap().get("/blocked.js"), None);
+}

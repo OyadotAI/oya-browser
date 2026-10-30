@@ -66,7 +66,13 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         [state.bitmap.width, state.bitmap.height],
         values,
         state.drawing.transform,
-    )?;
+    )?
+    .with_clip(clipping::current(state)?)?
+    .with_composite(if dom::native_name(call) == "clearRect" {
+        limits::Composite::SourceOver
+    } else {
+        state.drawing.composite
+    });
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if dom::native_name(call) == "clearRect" {
@@ -108,9 +114,11 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         ));
     }
     drawable(vm, node)?;
+    let clip = clipping::current(&vm.page.state.canvases[&node])?.cloned();
+    let pixels = vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS;
     work(
         vm,
-        vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS,
+        pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some())),
     )?;
     let state = &vm.page.state.canvases[&node];
     if !state.bitmap.drawable() {
@@ -129,17 +137,28 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         return Err(EngineError::invalid("Invalid native canvas text dimensions.").into());
     }
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    for (pixel, color) in state
+    let width = state.bitmap.width as usize;
+    for (index, (pixel, color)) in state
         .bitmap
         .pixels
         .make_mut()?
         .chunks_exact_mut(4)
         .zip(ink.pixels.chunks_exact(4))
+        .enumerate()
     {
-        limits::blend(
+        let coverage = clip.as_ref().map_or(1.0, |clip| {
+            clip.coverage((index % width) as u32, (index / width) as u32)
+        });
+        if coverage == 0.0 {
+            continue;
+        }
+        limits::composite_coverage(
             pixel,
             [color[0], color[1], color[2], color[3]],
             state.drawing.alpha,
+            state.drawing.composite,
+            coverage,
+            coverage,
         );
     }
     state.dirty = true;
@@ -156,6 +175,7 @@ fn readback(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     if w == 0.0 || h == 0.0 {
         return Err(vm.dom_exception("IndexSizeError", "ImageData dimensions must be nonzero."));
     }
+    require_clean(vm, node)?;
     if w.abs() > f64::from(limits::EDGE) || h.abs() > f64::from(limits::EDGE) {
         return Err(quota(vm));
     }

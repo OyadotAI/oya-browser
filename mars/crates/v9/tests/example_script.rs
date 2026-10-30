@@ -29,6 +29,7 @@ fn node(
     attributes: &[(&str, &str)],
 ) -> ScriptNode {
     ScriptNode {
+        selected: None,
         local_id,
         html_id: String::new(),
         parent,

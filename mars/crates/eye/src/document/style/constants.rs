@@ -73,6 +73,19 @@ pub(super) const LINE_HEIGHT_FLOOR: f64 = 0.01;
 pub(super) const REVEAL_SECONDS: f64 = 5.0;
 /** Animations one element runs; later names in a longer list are ignored. */
 pub(super) const ANIMATIONS: usize = 8;
+/** Transition lists share the existing small per-element animation bound. */
+pub(super) const TRANSITIONS: usize = ANIMATIONS;
+/** CSS seconds are converted to the scheduler's millisecond timeline. */
+pub(super) const MILLISECONDS_PER_SECOND: f64 = 1000.0;
+/** Long authored transition times remain finite and inside the CSS scalar budget. */
+pub(super) const TRANSITION_TIME_MS: f64 =
+    crate::constants::CSS_MAX_SCALAR * MILLISECONDS_PER_SECOND;
+/** Native rendering asks for at most one transition sample per frame interval. */
+pub(super) const TRANSITION_FRAME_MS: f64 = 1000.0 / 60.0;
+/** Bisection gives bounded, deterministic inversion of monotone cubic-bezier time. */
+pub(super) const BEZIER_ITERATIONS: usize = 24;
+/** Steps timing functions cannot introduce an unbounded authored integer. */
+pub(super) const TRANSITION_STEPS: u32 = 65_536;
 /** Distinct `@keyframes` names one cascade keeps; past this, unknown names fail closed. */
 pub(super) const KEYFRAME_SETS: usize = 1024;
 /** Frames one `@keyframes` rule keeps; a longer rule applies nothing and only masks. */

@@ -122,10 +122,10 @@ pub(super) fn fields(
     fields
 }
 
-/// The Origin a request sends: a script request's own (the coordinator serialized it the Fetch
+/// The Origin a request sends: a script or image request's own (the coordinator serialized it the Fetch
 /// way, `null` included), or a form POST's initiator origin.
 fn origin(request: &WebRequest, initiator: Option<&Url>) -> Option<String> {
-    if request.destination == Destination::Empty {
+    if matches!(request.destination, Destination::Empty | Destination::Image) {
         return request.origin.clone();
     }
     initiator
@@ -221,7 +221,13 @@ fn fetch_metadata(
         Destination::Style => ("no-cors", "style"),
         Destination::Script | Destination::WorkerImport => ("no-cors", "script"),
         Destination::Worker => ("same-origin", "worker"),
-        Destination::Image => ("no-cors", "image"),
+        Destination::Image => (
+            request
+                .mode
+                .unwrap_or(super::super::cors::Mode::NoCors)
+                .name(),
+            "image",
+        ),
         // Chrome fetches fonts in CORS mode, as CSS Fonts requires; Mars sends the metadata and
         // does not yet refuse a font whose response lacks Access-Control-Allow-Origin.
         Destination::Font => ("cors", "font"),
@@ -514,5 +520,29 @@ mod tests {
             http1_name("upgrade-insecure-requests"),
             "Upgrade-Insecure-Requests"
         );
+    }
+
+    #[test]
+    fn cors_images_keep_image_destination_and_host_origin_without_page_headers() {
+        let mut request = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            mode: Some(crate::network::cors::Mode::Cors),
+            origin: Some("https://a.example".into()),
+            ..WebRequest::get("https://b.example/pixel.png")
+        };
+        request.validate().unwrap();
+        assert_eq!(sent(&request, "sec-fetch-mode"), "cors");
+        assert_eq!(sent(&request, "sec-fetch-dest"), "image");
+        assert_eq!(sent(&request, "origin"), "https://a.example");
+        request.headers.push(("x-token".into(), "1".into()));
+        assert!(request.validate().is_err());
+        request.headers.clear();
+        request.mode = Some(crate::network::cors::Mode::NoCors);
+        assert!(request.validate().is_err());
+        request.origin = None;
+        request.validate().unwrap();
+        assert_eq!(sent(&request, "origin"), "");
+        assert_eq!(sent(&request, "sec-fetch-mode"), "no-cors");
     }
 }

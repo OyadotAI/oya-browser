@@ -18,6 +18,26 @@ use std::sync::OnceLock;
 const QUERY_SLOT: &str = "urlQueryObject";
 /** The URLSearchParams object's private slot holding its URL. */
 const URL_SLOT: &str = "paramsUrlObject";
+/** URL parsing and named parameter operations require one explicitly supplied value. */
+const NAMED_ARGUMENTS: usize = 1;
+/** Appending and replacing a query pair require both its name and value. */
+const PAIR_ARGUMENTS: usize = 2;
+
+/** WebIDL distinguishes missing required arguments from explicitly supplied undefined. */
+fn require_arguments(vm: &mut Vm, call: &Call, minimum: usize) -> Res<()> {
+    if call.args.len() < minimum {
+        return Err(vm.type_error("Not enough arguments for this URL operation"));
+    }
+    Ok(())
+}
+
+/** Interface constructors cannot be used as ordinary functions. */
+fn require_constructor(vm: &mut Vm, call: &Call) -> Res<()> {
+    if call.new_target.is_none() {
+        return Err(vm.type_error("URL interface constructors require the new operator"));
+    }
+    Ok(())
+}
 
 /** The URLSearchParams Iterator prototype. */
 static ITERATOR_PROTO: OnceLock<u32> = OnceLock::new();
@@ -50,15 +70,17 @@ fn new_url(vm: &mut Vm, record: &UrlRecord) -> Res<JsValue> {
 
 /** `new URL(url, base)`. */
 pub(in crate::v9) fn url_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_constructor(vm, &call)?;
+    require_arguments(vm, &call, NAMED_ARGUMENTS)?;
     let Some(record) = parse_with_base(vm, &call.arg(0), &call.arg(1))? else {
-        let input = vm.to_text(&call.arg(0))?;
-        return Err(vm.type_error(&format!("Failed to construct 'URL': Invalid URL '{input}'")));
+        return Err(vm.type_error("Failed to construct 'URL': Invalid URL"));
     };
     new_url(vm, &record)
 }
 
 /** `URL.parse(url, base)` (null on failure) and `URL.canParse(url, base)`. */
 pub(in crate::v9) fn url_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_arguments(vm, &call, NAMED_ARGUMENTS)?;
     let parsed = parse_with_base(vm, &call.arg(0), &call.arg(1))?;
     match (native_name(&call), parsed) {
         ("canParse", parsed) => Ok(JsValue::Boolean(parsed.is_some())),
@@ -280,6 +302,7 @@ fn sequence_pairs(vm: &mut Vm, init: &JsValue) -> Res<Vec<(String, String)>> {
 
 /** `new URLSearchParams(init)`. */
 pub(in crate::v9) fn params_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_constructor(vm, &call)?;
     let pairs = init_pairs(vm, &call.arg(0))?;
     Ok(JsValue::Object(new_params(vm, pairs)?))
 }
@@ -296,20 +319,33 @@ fn matches(pair: &(String, String), name: &str, value: Option<&str>) -> bool {
 
 /** URLSearchParams methods. */
 pub(in crate::v9) fn params_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (Some(HostData::SearchParams(mut pairs)), JsValue::Object(id)) =
+    let (Some(HostData::SearchParams(_)), JsValue::Object(id)) =
         (super::host_data(vm, &call.this), call.this.clone())
     else {
         return Err(vm.type_error("Illegal invocation"));
     };
     let kind = native_name(&call);
+    let minimum = match kind {
+        "set" | "append" => PAIR_ARGUMENTS,
+        "delete" | "get" | "getAll" | "has" | "forEach" => NAMED_ARGUMENTS,
+        _ => 0,
+    };
+    require_arguments(vm, &call, minimum)?;
     let name = match kind {
         "toString" | "size" | "sort" | "forEach" | "keys" | "values" | "entries" => String::new(),
         _ => vm.to_text(&call.arg(0))?,
     };
-    let value = if call.args.len() > 1 && call.arg(1) != JsValue::Undefined {
+    let value = if matches!(kind, "set" | "append" | "delete" | "has")
+        && call.args.len() > 1
+        && call.arg(1) != JsValue::Undefined
+    {
         Some(vm.to_text(&call.arg(1))?)
     } else {
         None
+    };
+    // Argument conversion may run author code that changes this live list.
+    let Some(HostData::SearchParams(mut pairs)) = super::host_data(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
     };
     match kind {
         "get" => {
@@ -355,6 +391,9 @@ pub(in crate::v9) fn params_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** forEach over a live view: entries added during the walk are visited too. */
 fn for_each(vm: &mut Vm, call: &Call, id: ObjectId) -> Res<JsValue> {
+    if !vm.is_callable(&call.arg(0)) {
+        return Err(vm.type_error("URLSearchParams.forEach requires a callable callback"));
+    }
     let mut index = 0;
     loop {
         let Some(HostData::SearchParams(pairs)) = super::host_data(vm, &JsValue::Object(id)) else {
@@ -400,6 +439,7 @@ fn params_iterator(vm: &mut Vm, target: ObjectId, kind: &str) -> Res<JsValue> {
     write_slot(vm, id, "iterTarget", JsValue::Object(target));
     write_slot(vm, id, "iterIndex", JsValue::Number(0.0));
     write_slot(vm, id, "iterKind", JsValue::string(kind)?);
+    write_slot(vm, id, "iterDone", JsValue::Boolean(false));
     Ok(JsValue::Object(id))
 }
 
@@ -412,10 +452,15 @@ fn params_next(vm: &mut Vm, call: Call) -> Res<JsValue> {
     ) else {
         return Err(vm.type_error("Illegal invocation"));
     };
+    if read_slot(vm, &call.this, "iterDone").is_some_and(|value| value.truthy()) {
+        return vm.iter_result(JsValue::Undefined, true);
+    }
     let Some(HostData::SearchParams(pairs)) = super::host_data(vm, &target) else {
         return Err(vm.type_error("Illegal invocation"));
     };
     let Some((name, value)) = pairs.get(index as usize) else {
+        let id = call.this.object().expect("slots imply an object");
+        write_slot(vm, id, "iterDone", JsValue::Boolean(true));
         return vm.iter_result(JsValue::Undefined, true);
     };
     let id = call.this.object().expect("slots imply an object");

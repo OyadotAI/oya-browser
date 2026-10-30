@@ -1,12 +1,18 @@
 /**
- * `@keyframes` and the `animation` properties for static frames. Eye paints one frame, so each
- * running animation contributes the frame a person sees once it has played: the final keyframe
+ * `@keyframes` parsing, live opacity/rotation tracks, and legacy static fallback for other properties.
+ * Unsupported interpolation still contributes the frame seen once an animation has played: the final keyframe
  * under a forwards fill (direction and iteration parity decide which end that is), the base style
  * after a finite animation without one, and for an infinite animation its starting keyframe, or
  * its other end when the start hides, or else the base style. Keyframes Eye could not evaluate
  * (under an unknown condition, in a skipped sheet, past the bounds) never reveal anything; when
  * they could hide, the element stays out of agent reach.
  */
+mod collect;
+mod model;
+mod rotation;
+mod sample;
+mod scale;
+mod timeline;
 use super::{
     cascade::{Chosen, Priority, choose},
     constants::{ANIMATIONS, KEYFRAME_SETS, KEYFRAME_STEPS, PERCENT, REVEAL_SECONDS},
@@ -15,7 +21,14 @@ use super::{
     note,
     syntax::{block_end, find_top, split_top, tokens},
 };
+pub(super) use collect::{tracks, valid_value};
+pub use model::{AnimationDirection, AnimationFill, OpacityAnimation, OpacityKeyframe};
+pub(super) use rotation::tracks as rotation_tracks;
+pub use rotation::{RotationAnimation, RotationAnimations, RotationKeyframe};
+pub(super) use scale::tracks as scale_tracks;
+pub use scale::{ScaleAnimation, ScaleAnimations, ScaleKeyframe};
 use std::collections::BTreeMap;
+pub use timeline::OpacityAnimations;
 /** Animated values override every normal declaration and lose to `!important` ones, as in CSS. */
 const ANIMATED: Priority = (false, true, true, usize::MAX, usize::MAX, usize::MAX);
 /** Longhands the `animation` shorthand sets, each a comma-separated list. */
@@ -156,13 +169,16 @@ fn offset(selector: &str) -> Option<f64> {
 fn animatable(declarations: &[Declaration]) -> Vec<Declaration> {
     declarations
         .iter()
-        .filter(|d| !d.important && !d.name.starts_with("animation"))
+        .filter(|d| {
+            !d.important
+                && (!d.name.starts_with("animation") || d.name == "animation-timing-function")
+        })
         .cloned()
         .collect()
 }
 /** Expands the `animation` shorthand's layers into the comma-separated longhand lists. */
 pub(super) fn shorthand(raw: &str) -> Option<Vec<(String, String)>> {
-    let layers = split_top(raw, b',');
+    let layers = super::transition::parts(raw)?;
     if layers.is_empty() || layers.len() > ANIMATIONS {
         return None;
     }
@@ -292,7 +308,14 @@ fn pick(animation: &BTreeMap<String, String>, key: &str, index: usize) -> String
         .unwrap_or_default();
     match list.len() {
         0 => String::new(),
-        len => list[index % len].to_ascii_lowercase(),
+        len => {
+            let value = list[index % len].to_ascii_lowercase();
+            if super::declaration::wide(&value) {
+                String::new()
+            } else {
+                value
+            }
+        }
     }
 }
 /**
@@ -323,6 +346,9 @@ fn run(
     for frame in set.frames.iter().filter(|frame| frame.offset == progress) {
         hides |= frame.hides;
         for declaration in &frame.declarations {
+            if declaration.name.starts_with("animation") {
+                continue;
+            }
             revealed |= reveals(chosen, declaration);
             choose(
                 chosen,

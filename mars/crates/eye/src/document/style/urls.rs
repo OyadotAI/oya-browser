@@ -116,8 +116,11 @@ pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> 
 /** `url` resolved against `base` when the app may fetch it: http(s), or `data:` decoded
  * locally in the app within the same image budget. */
 fn fetchable(base: &url::Url, url: &str) -> Option<String> {
+    if !mars_core::image_source::valid_url_text(url) {
+        return None;
+    }
     let joined = base.join(url.trim()).ok()?;
-    ["http", "https", "data"]
-        .contains(&joined.scheme())
-        .then(|| joined.to_string())
+    (["http", "https", "data"].contains(&joined.scheme())
+        && mars_core::image_source::valid_url_text(joined.as_str()))
+    .then(|| joined.to_string())
 }

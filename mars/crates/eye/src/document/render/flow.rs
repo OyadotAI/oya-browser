@@ -340,6 +340,7 @@ pub(super) type Laid = (
     f64,
     Option<super::DisplayDecoration>,
     bool,
+    mars_core::geometry::WrapperMetrics,
 );
 /**
  * Percentage paddings and margins resolve against their containing block's width, which only a
@@ -363,9 +364,12 @@ pub(super) fn layout(
                 .iter()
                 .any(|generated| super::sizing::has_percent_sides(&generated.style))
     });
-    if !body && !nodes {
+    let html = super::sizing::has_percent_sides(&document.formatting.html.style);
+    if !html && !body && !nodes {
         return layout_once(document, presentation);
     }
+    let wrappers = (html || body).then(|| super::sizing::resolve_wrapper_sides(document, presentation.width));
+    let document = wrappers.as_ref().unwrap_or(document);
     let items = if nodes {
         layout_once(document, presentation)?.0
     } else {
@@ -398,7 +402,8 @@ fn layout_once(
     let before = super::root_flow::root_boxes(&mut context, document, &mut items, content, false)?;
     let body_margin = if authored { body.margin[0] } else { MARGIN };
     let y = y + super::root_flow::body_shift(&before, root[0], body_margin);
-    let [x, y] = super::root_box::body_origin(document, viewport, [x + root[3], y + root[0]]);
+    let flowed_y = y + root[0];
+    let [x, y] = super::root_box::body_origin(document, viewport, [x + root[3], flowed_y]);
     let mut flow = Flow::new(x, y, width);
     flow.strut = Some(strut(body));
     flow.align = alignment(body);
@@ -441,7 +446,8 @@ fn layout_once(
     let content_end = flow
         .definite
         .map_or(flow.bottom.max(flow.y), |height| y + height);
-    flow.bottom = flow.bottom.max(flow.floats_bottom());
+    let floats_end = flow.floats_bottom();
+    flow.bottom = flow.bottom.max(floats_end);
     let truncated = context.exhausted();
     context.body_block = positioned_body_block(body, [x, y, width], content_end);
     let positioned = match super::positioned::place(
@@ -484,7 +490,19 @@ fn layout_once(
     let top = collapsed_body_edge(document, &items, authored, 0).unwrap_or(y);
     let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
     let decoration = super::body::decoration(document, x, top, width, end);
-    Ok((items, height, decoration, context.exhausted()))
+    let in_flow_end = (body_end + margin).max(floats_end).max(after.end + after.margin);
+    let resize_wrappers = super::resize_wrappers::measure(
+        document, viewport, body, [width, top, end],
+        in_flow_end - (y - flowed_y), context.exhausted(),
+    );
+    // This document has resolved percentage edges and these boxes have their final layout sizes.
+    for item in &mut items {
+        let node = context.node(item.local_id)?;
+        if !item.bare && super::effects::generated_style(node, item).is_none() {
+            item.resize_box = Some(super::effects::resize_box(item, node));
+        }
+    }
+    Ok((items, height, decoration, context.exhausted(), resize_wrappers))
 }
 /** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
 and ends at `end`; None for a static body, whose top-level absolute boxes use the viewport. */
@@ -1259,6 +1277,7 @@ pub(super) fn box_item(
 ) -> DisplayItem {
     let face = super::sizing::face(&node.style);
     DisplayItem {
+        resize_box: None,
         canvas: node.canvas.clone(),
         local_id: node.local_id,
         tag: node.tag.clone(),

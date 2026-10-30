@@ -19,6 +19,8 @@ pub(super) struct Context {
 /** All lookup entries are cheap metadata, including frames whose loads were refused. */
 #[derive(Clone, Default)]
 pub(super) struct Tree {
+    /// Native context identity is global even though every child owner is document-local.
+    pub window: i64,
     pub contexts: BTreeMap<usize, Context>,
     pub incarnations: BTreeMap<usize, u64>,
     pub routes: Vec<FrameRoute>,
@@ -64,6 +66,7 @@ impl Runtime {
     /** Reserve every static iframe before executing any child, including later siblings. */
     pub(super) fn initial_frame_tree(&mut self, document: &Document) -> EngineResult<Tree> {
         let mut tree = Tree::default();
+        tree.window = self.frame_identity()?;
         self.refresh_frame_directory(&mut tree, document)?;
         Ok(tree)
     }
@@ -104,9 +107,6 @@ impl Runtime {
 
     /** Retire removed/replaced documents before delivering mail or advancing another child. */
     pub(super) fn sync_frame_tree(&mut self, page: &mut Page) -> EngineResult<Vec<String>> {
-        if page.scripting.environment.embedder_origin.is_some() {
-            return Ok(Vec::new());
-        }
         let old = page.frame_tree.contexts.clone();
         self.refresh_frame_directory(&mut page.frame_tree, &page.document)?;
         let mut reload = Vec::new();
@@ -157,13 +157,19 @@ impl Runtime {
         Ok(reload)
     }
 
-    /** Existing children receive owner renames/reorders immediately before their next VM turn. */
+    /** Every live realm sees one consistent native tree before the next receiver callback runs. */
     pub(super) fn refresh_child_directories(&self, page: &mut Page) {
-        for frame in Arc::make_mut(&mut page.frames) {
-            if let Some(child) = frame.page.as_mut() {
-                child.scripting.environment.parent_frames = page.frame_tree.routes.clone();
-            }
-        }
+        let mut directory = page.ancestor_contexts();
+        directory.retain(|context| context.window != page.frame_tree.window);
+        let parent = page
+            .scripting
+            .environment
+            .frame_contexts
+            .iter()
+            .find(|context| context.window == page.frame_tree.window)
+            .and_then(|context| context.parent);
+        collect_contexts(page, parent, &mut directory);
+        install_contexts(page, &directory);
     }
 }
 
@@ -173,5 +179,78 @@ impl Frame {
         self.page
             .as_ref()
             .is_none_or(|page| page.scripting.environment.own_window == Some(window))
+    }
+}
+
+impl Page {
+    /** A new descendant receives its complete ancestor chain before its first script executes. */
+    pub(super) fn ancestor_contexts(&self) -> Vec<crate::v9::FrameContext> {
+        let mut contexts = Vec::new();
+        let mut window = Some(self.frame_tree.window);
+        while let Some(id) = window {
+            let Some(context) = self
+                .scripting
+                .environment
+                .frame_contexts
+                .iter()
+                .find(|context| context.window == id)
+            else {
+                break;
+            };
+            let mut context = context.clone();
+            if id == self.frame_tree.window {
+                context.children = self.frame_tree.routes.clone();
+            }
+            window = context.parent;
+            contexts.push(context);
+            if contexts.len() >= super::frames::FRAME_DEPTH {
+                break;
+            }
+        }
+        contexts.reverse();
+        contexts
+    }
+    /** Replacement headroom refers to a live native window anywhere in the committed tree. */
+    pub(super) fn has_frame_window(&self, window: i64) -> bool {
+        self.frame_tree.window == window
+            || self
+                .frames
+                .iter()
+                .filter_map(|frame| frame.page.as_ref())
+                .any(|page| page.has_frame_window(window))
+    }
+}
+
+/** Native context metadata follows executable descendants only; inert documents confer no routes. */
+fn collect_contexts(page: &Page, parent: Option<i64>, out: &mut Vec<crate::v9::FrameContext>) {
+    out.push(crate::v9::FrameContext {
+        window: page.frame_tree.window,
+        parent,
+        children: page.frame_tree.routes.clone(),
+    });
+    for child in page.frames.iter().filter_map(|frame| frame.page.as_ref()) {
+        collect_contexts(child, Some(page.frame_tree.window), out);
+    }
+}
+
+/** Updating a candidate's snapshots cannot mutate an older committed page or its descendants. */
+fn install_contexts(page: &mut Page, directory: &[crate::v9::FrameContext]) {
+    page.scripting.environment.context_window = Some(page.frame_tree.window);
+    page.scripting.environment.frame_contexts = directory.to_vec();
+    if let Some(parent) = directory
+        .iter()
+        .find(|context| context.window == page.frame_tree.window)
+        .and_then(|context| context.parent)
+    {
+        page.scripting.environment.parent_frames = directory
+            .iter()
+            .find(|context| context.window == parent)
+            .map(|context| context.children.clone())
+            .unwrap_or_default();
+    }
+    for frame in Arc::make_mut(&mut page.frames) {
+        if let Some(child) = frame.page.as_mut() {
+            install_contexts(child, directory);
+        }
     }
 }

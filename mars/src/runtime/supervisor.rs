@@ -1,5 +1,5 @@
-use super::authority::{self, Owner, Permit, SharedAuthority};
 /** Supervised private pipes isolate engine processes without public listeners. */
+use super::authority::{self, Owner, Permit, SharedAuthority};
 use super::page::Page;
 use crate::constants::{RPC_POLL, RPC_TIMEOUT, WEB_RPC_TIMEOUT};
 use crate::protocol::{
@@ -18,6 +18,9 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+/** Scoped previews carry their admission so stale navigation cannot publish. */
+type FirstPaint = Box<dyn FnMut(super::page::BrowserSnapshot, Option<Permit>) + Send>;
 
 /// Explicit executable injection permits fault testing without production crash tools.
 #[derive(Clone)]
@@ -115,10 +118,12 @@ pub struct Runtime {
     pub(super) residency: super::residency::Residency,
     /** Monotonic context IDs never roll back with candidate pages. */
     pub(super) next_frame_window: i64,
+    /** Scoped root partition while an embedded page builds or executes; never persisted across turns. */
+    pub(super) frame_partition: Option<String>,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
-    pub(super) provisional: Option<Box<dyn FnMut(super::page::BrowserSnapshot) + Send>>,
+    pub(super) provisional: Option<FirstPaint>,
 }
 
 /** One inactive tab owns its document and navigation presentation state. */
@@ -145,7 +150,18 @@ impl TabState {
 
 impl Runtime {
     /// Installs where navigations show their first paint (the page before its scripts run).
-    pub fn show_first_paint(&mut self, sink: Box<dyn FnMut(super::page::BrowserSnapshot) + Send>) {
+    pub fn show_first_paint(
+        &mut self,
+        mut sink: Box<dyn FnMut(super::page::BrowserSnapshot) + Send>,
+    ) {
+        self.provisional = Some(Box::new(move |snapshot, _| sink(snapshot)));
+    }
+
+    /// Desktop previews retain their admission epoch so revoked loads cannot paint late.
+    pub fn show_first_paint_scoped(
+        &mut self,
+        sink: Box<dyn FnMut(super::page::BrowserSnapshot, Option<Permit>) + Send>,
+    ) {
         self.provisional = Some(sink);
     }
 
@@ -492,6 +508,7 @@ impl Runtime {
             v9_sources: Default::default(),
             residency: Default::default(),
             next_frame_window: 0,
+            frame_partition: None,
             provisional: None,
         };
         for (name, executable) in [
@@ -903,11 +920,14 @@ impl Runtime {
             .iter()
             .position(|service| service.name == "v9")
             .ok_or_else(|| EngineError::service("v9", false))?;
+        let cancellation =
+            super::cancellation::Cancellation::new(self.authority.clone(), self.permit);
         let mut service = self.services.remove(index);
         let result = service.call_with_imports(
             "v9.worker",
             params,
             deadline,
+            &cancellation,
             Some(&mut |url, until| load(self, url, until)),
         );
         if self.failed {
@@ -917,6 +937,7 @@ impl Runtime {
         self.services
             .insert(index.min(self.services.len()), service);
         match result {
+            Err(error) if error.code == "navigation_cancelled" => Err(self.replace_cancelled("v9")),
             Err(error) if error.service.is_some() => {
                 self.v9_sources.clear();
                 Err(self.revive("v9", Some("v9.worker"), Some(error)))
@@ -939,12 +960,15 @@ impl Runtime {
         deadline: Option<Instant>,
     ) -> EngineResult<T> {
         self.healthy()?;
+        let cancellation =
+            super::cancellation::Cancellation::new(self.authority.clone(), self.permit);
         let service = self
             .services
             .iter_mut()
             .find(|service| service.name == name)
             .ok_or_else(|| EngineError::service(name, false))?;
-        match service.call(op, params, deadline) {
+        match service.call(op, params, deadline, &cancellation) {
+            Err(error) if error.code == "navigation_cancelled" => Err(self.replace_cancelled(name)),
             Err(error) if error.service.is_some() => {
                 // A restarted engine starts empty.
                 if name == "v9" {
@@ -1063,6 +1087,12 @@ impl Service {
         })
     }
 
+    /** Readiness is supervisor maintenance, independent of a retired caller's authority. */
+    pub(super) fn ready(&mut self) -> bool {
+        let guard = super::cancellation::Cancellation::new(None, None);
+        matches!(self.call::<Value>("service.ready", &json!({}), None, &guard), Ok(Ok(value)) if value == json!({"service":self.name,"ready":true}))
+    }
+
     /** Both worker writes and reads are covered by this external deadline. The request is
     serialized once, here, so its size check and its bytes are the same work. */
     fn call<T: DeserializeOwned>(
@@ -1070,8 +1100,9 @@ impl Service {
         op: &str,
         params: &impl Serialize,
         owner_deadline: Option<Instant>,
+        cancellation: &super::cancellation::Cancellation,
     ) -> EngineResult<Result<T, Mismatch>> {
-        self.call_with_imports(op, params, owner_deadline, None)
+        self.call_with_imports(op, params, owner_deadline, cancellation, None)
     }
 
     /** The sole callback is bounded source acquisition, tied to this service and outer request. */
@@ -1080,8 +1111,13 @@ impl Service {
         op: &str,
         params: &impl Serialize,
         owner_deadline: Option<Instant>,
+        cancellation: &super::cancellation::Cancellation,
         mut imports: Option<&mut ImportLoader<'_>>,
     ) -> EngineResult<Result<T, Mismatch>> {
+        // Nothing has entered this pipe yet; revocation must preserve the idle service.
+        cancellation
+            .check()
+            .map_err(|_| super::authority::denied())?;
         let called = Instant::now();
         let rpc_deadline = called + rpc_timeout(op);
         let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
@@ -1094,6 +1130,9 @@ impl Service {
         let frame = encode_request(&id, op, params)?;
         perf::record("rpc.encode", started, || format!("{op}\t{}", frame.len()));
         perf::dump(op, self.sequence, &frame);
+        cancellation
+            .check()
+            .map_err(|_| super::authority::denied())?;
         self.requests
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
@@ -1102,6 +1141,7 @@ impl Service {
         let mut callback = 0_u32;
         let mut imported_bytes = 0_usize;
         let reply = loop {
+            cancellation.check()?;
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(EngineError::service(self.name, false));
             }
@@ -1112,13 +1152,16 @@ impl Service {
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
                 Ok(reply) => {
+                    cancellation.check()?;
                     let reply = reply?;
                     if let Some(load) = &mut imports
                         && let Some(request) = super::worker_io::request(&reply, &id, callback + 1)
                             .map_err(|_| EngineError::service(self.name, false))?
                     {
                         callback += 1;
+                        cancellation.check()?;
                         let mut source = load(&request.url, deadline);
+                        cancellation.check()?;
                         if let Ok(Some(text)) = &source {
                             imported_bytes = imported_bytes.saturating_add(text.len());
                             if text.len() > crate::constants::SCRIPT_BYTES

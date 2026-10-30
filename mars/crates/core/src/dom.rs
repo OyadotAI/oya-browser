@@ -3,6 +3,8 @@ use crate::{
     constants::{DOCUMENT_DEPTH, ID_BYTES, NODES, SCRIPT_BYTES, TEXT_BYTES},
     protocol::{EngineError, EngineResult},
 };
+mod metadata;
+pub use metadata::{metadata_attribute_bytes, metadata_element_bytes, validate_metadata};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -43,7 +45,7 @@ pub struct MetadataElement {
     /// Author attributes as parsed.
     #[serde(default)]
     pub attributes: BTreeMap<String, String>,
-    /// Raw text content (style sheet, title, data block); empty when it exceeded TEXT_BYTES.
+    /// Complete raw text (style sheet, title, data block), charged to the shared metadata budget.
     #[serde(default)]
     pub text: String,
     /// Whether it sits in the body rather than the head. A data block inside an element is that
@@ -71,6 +73,9 @@ pub struct ScriptNode {
     pub parent: Option<usize>,
     /// Only nonsecret input and textarea values may enter the bounded untainted interpreter.
     pub value: Option<String>,
+    /// Current option selectedness, independent of its default selected attribute.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// Mirrors the document mutation validator rather than inventing another target policy.
     pub text_writable: bool,
     /// Only enabled visible explicit ordinary buttons accept programmatic click listeners.
@@ -686,6 +691,13 @@ pub enum ScriptChange {
         node: usize,
         /// The new text.
         text: String,
+    },
+    /// Transfer current selected option identities without changing default markup.
+    Selection {
+        /// The owning SELECT in this document.
+        node: usize,
+        /// Exact option identities, including an intentionally empty selection.
+        selected: Vec<usize>,
     },
     /// Set a form field's current value (input and textarea).
     Value {

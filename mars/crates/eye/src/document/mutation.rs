@@ -69,6 +69,9 @@ pub fn apply_script_changes(
                 set_any_attribute(&mut candidate, *node, name, value.as_deref())?
             }
             ScriptChange::NodeText { node, text } => set_node_text(&mut candidate, *node, text)?,
+            ScriptChange::Selection { node, selected } => {
+                super::forms::script_selection(&mut candidate, *node, selected)?
+            }
             ScriptChange::Value { node, value } => set_field_value(&mut candidate, *node, value)?,
             ScriptChange::Defined { node } => mark_defined(&mut candidate, *node)?,
             ScriptChange::RootAttribute { body, name, value } => {
@@ -224,6 +227,13 @@ fn set_node_text(candidate: &mut Document, node: usize, text: &str) -> EngineRes
 /** A script-set field value is literal data on an input or textarea, never markup or source. */
 fn set_field_value(candidate: &mut Document, node: usize, value: &str) -> EngineResult<()> {
     validate_text(value)?;
+    if candidate
+        .nodes
+        .iter()
+        .any(|n| n.local_id == node && n.tag == "select")
+    {
+        return super::forms::script_value(candidate, node, value);
+    }
     let entry = candidate
         .nodes
         .iter_mut()

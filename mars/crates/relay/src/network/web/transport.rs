@@ -1,10 +1,13 @@
 /** Validated exact-address connections preserve hostname verification without DNS rebinding. */
+mod errors;
+mod retry;
 use crate::constants::DNS_ANSWERS;
 use crate::network::WebRequest;
 use crate::network::constants::{POOL_PROBE_RECORDS, READ_BYTES};
 use crate::network::policy::{denied, public_address};
 use crate::protocol::{EngineError, EngineResult};
 use ::url::{Host, Url};
+use errors::{Stage, io_error};
 use rustls::{ClientConnection, StreamOwned};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
@@ -27,8 +30,20 @@ pub(super) enum Connection {
 pub(super) fn connect(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Connection> {
     let addresses = resolve(url, fixture, deadline)?;
     remaining(deadline)?;
-    let (socket, _) = race(&addresses, deadline)?;
-    establish(socket, &addresses, url, deadline)
+    let (socket, peer) = race(&addresses, deadline)?;
+    let first = modern(socket, url, deadline);
+    retry::recover(
+        first,
+        &addresses,
+        peer,
+        deadline,
+        |peer| {
+            let socket = TcpStream::connect_timeout(&peer, remaining(deadline)?)
+                .map_err(|error| io_error(Stage::Connect, error))?;
+            modern(socket, url, deadline)
+        },
+        || legacy(&addresses, url, deadline).map_err(retry::Failure::Terminal),
+    )
 }
 
 /** One raced connection to the admitted addresses. */
@@ -36,33 +51,45 @@ fn race(addresses: &[SocketAddr], deadline: Instant) -> EngineResult<(TcpStream,
     super::eyeballs::race(addresses, deadline, |address, budget| {
         TcpStream::connect_timeout(address, budget)
     })
-    .map_err(io_error)
+    .map_err(|error| io_error(Stage::Connect, error))
 }
 
-/**
- * TLS through Rustls; when the server answers its hello with handshake_failure, once more on a
- * fresh socket to the same admitted addresses with the RSA key exchange Chromium still offers
- * (legacy.rs). Chrome sends both in one hello; a server that prefers ECDHE never reaches the
- * second attempt, so only servers Chrome would reach over kRSA take it.
- */
-fn establish(
-    socket: TcpStream,
-    addresses: &[SocketAddr],
-    url: &Url,
-    deadline: Instant,
-) -> EngineResult<Connection> {
+/** Every modern candidate keeps the identical TLS configuration, hostname and verifier.
+The temporary lease interrupts Rustls's internal complete_io loop at the absolute deadline;
+it is stopped and joined before a socket is handed off or a replacement is opened. */
+fn modern(socket: TcpStream, url: &Url, deadline: Instant) -> Result<Connection, retry::Failure> {
     let mut connection = wrap(socket, url)?;
-    if connection.handshake(deadline)? {
-        return Ok(connection);
-    }
+    let lease = if matches!(&connection, Connection::Tls(_)) {
+        Some(connection.lease(deadline)?)
+    } else {
+        None
+    };
+    let result = connection.handshake(deadline);
+    drop(lease);
+    remaining(deadline)?;
+    result?;
+    Ok(connection)
+}
+
+/** The existing explicit handshake_failure alert alone selects RSA key exchange. This is
+one recovery candidate, never an additional third attempt after a modern reset retry. */
+fn legacy(addresses: &[SocketAddr], url: &Url, deadline: Instant) -> EngineResult<Connection> {
     let (socket, _) = race(addresses, deadline)?;
+    let lease = super::lease::Lease::start(&socket, deadline)?;
     let budget = remaining(deadline)?;
-    socket.set_read_timeout(Some(budget)).map_err(io_error)?;
-    socket.set_write_timeout(Some(budget)).map_err(io_error)?;
+    socket
+        .set_read_timeout(Some(budget))
+        .map_err(|error| io_error(Stage::SocketOptions, error))?;
+    socket
+        .set_write_timeout(Some(budget))
+        .map_err(|error| io_error(Stage::SocketOptions, error))?;
     let name = url.host_str().ok_or_else(denied)?.trim_matches(['[', ']']);
-    super::legacy::connect(socket, name, &super::hello::verifier()?)
+    let result = super::legacy::connect(socket, name, &super::hello::verifier()?);
+    drop(lease);
+    remaining(deadline)?;
+    result
         .map(|stream| Connection::Legacy(Box::new(stream)))
-        .map_err(io_error)
+        .map_err(|error| io_error(Stage::Handshake, error))
 }
 
 /** Addresses for a URL: literal and loopback hosts answer at once; a domain asks the system
@@ -130,9 +157,9 @@ fn resolve_domain(host: &str, port: u16, deadline: Instant) -> EngineResult<Vec<
                 .map(|addresses| addresses.take(DNS_ANSWERS + 1).collect::<Vec<_>>());
             let _ = sender.send(answer);
         })
-        .map_err(io_error)?;
+        .map_err(|error| io_error(Stage::ResolverStart, error))?;
     match receiver.recv_timeout(remaining(deadline)?) {
-        Ok(answer) => answer.map_err(io_error),
+        Ok(answer) => answer.map_err(|error| io_error(Stage::Resolve, error)),
         Err(_) => Err(resolver_timeout()),
     }
 }
@@ -198,9 +225,9 @@ impl Connection {
                 Self::Tls(stream) => stream.write(bytes),
                 Self::Legacy(stream) => stream.write(bytes),
             }
-            .map_err(io_error)?;
+            .map_err(|error| io_error(Stage::Write, error))?;
             if count == 0 {
-                return Err(network_error());
+                return Err(io_error(Stage::Write, std::io::ErrorKind::WriteZero.into()));
             }
             bytes = &bytes[count..];
         }
@@ -228,29 +255,27 @@ impl Connection {
 
     /**
      * TLS negotiation finishes in preparation, while stale ownership can still prevent POST.
-     * False when the server refused every suite offered, so the caller may try kRSA.
+     * Preserve typed handshake I/O failures until the bounded recovery decision is made.
      */
-    fn handshake(&mut self, deadline: Instant) -> EngineResult<bool> {
+    fn handshake(&mut self, deadline: Instant) -> Result<(), retry::Failure> {
         if let Self::Tls(stream) = self {
             while stream.conn.is_handshaking() {
                 let remaining = remaining(deadline)?;
                 stream
                     .sock
                     .set_read_timeout(Some(remaining))
-                    .map_err(io_error)?;
+                    .map_err(|error| io_error(Stage::SocketOptions, error))?;
                 stream
                     .sock
                     .set_write_timeout(Some(remaining))
-                    .map_err(io_error)?;
-                if let Err(error) = stream.conn.complete_io(&mut stream.sock) {
-                    if retry_with_rsa(&error) {
-                        return Ok(false);
-                    }
-                    return Err(io_error(error));
-                }
+                    .map_err(|error| io_error(Stage::SocketOptions, error))?;
+                stream
+                    .conn
+                    .complete_io(&mut stream.sock)
+                    .map_err(retry::Failure::Handshake)?;
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     /** The exact admitted address this socket was connected to. */
@@ -312,15 +337,19 @@ impl Connection {
                 result => result,
             },
         }
-        .map_err(io_error)
+        .map_err(|error| io_error(Stage::Read, error))
     }
 
     /** Every socket operation receives both timeouts because TLS reads may also write. */
     fn deadline(&self, deadline: Instant) -> EngineResult<()> {
         let socket = self.socket();
         let duration = remaining(deadline)?;
-        socket.set_read_timeout(Some(duration)).map_err(io_error)?;
-        socket.set_write_timeout(Some(duration)).map_err(io_error)
+        socket
+            .set_read_timeout(Some(duration))
+            .map_err(|error| io_error(Stage::SocketOptions, error))?;
+        socket
+            .set_write_timeout(Some(duration))
+            .map_err(|error| io_error(Stage::SocketOptions, error))
     }
 }
 
@@ -335,21 +364,6 @@ fn remaining(deadline: Instant) -> EngineResult<Duration> {
         ));
     }
     Ok(duration)
-}
-
-/** Rustls invalid-data errors expose no certificate bypass. */
-fn io_error(error: std::io::Error) -> EngineError {
-    if error.kind() == std::io::ErrorKind::InvalidData {
-        return tls_failure(&error);
-    }
-    if [std::io::ErrorKind::TimedOut, std::io::ErrorKind::WouldBlock].contains(&error.kind()) {
-        return EngineError::new(
-            "timeout",
-            "The web request timed out.",
-            "Retry the destination.",
-        );
-    }
-    network_error()
 }
 
 /**
@@ -389,7 +403,7 @@ fn refused_suites(error: &std::io::Error) -> bool {
 }
 
 /** A certificate refusal keeps its text; a suite mismatch says so instead. */
-fn tls_failure(error: &std::io::Error) -> EngineError {
+fn tls_failure(stage: Stage, error: &std::io::Error) -> EngineError {
     let legacy = error
         .get_ref()
         .is_some_and(|inner| inner.is::<super::legacy::Mismatch>());
@@ -400,7 +414,19 @@ fn tls_failure(error: &std::io::Error) -> EngineError {
             "The site's TLS configuration is not one a browser accepts.",
         );
     }
-    tls_error()
+    if matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::InvalidCertificate(_))
+    ) {
+        return tls_error();
+    }
+    EngineError::new(
+        "tls_error",
+        stage.tls_message(),
+        "Check the destination's TLS configuration and retry.",
+    )
 }
 
 /** Native TLS copy gives the user an explicit final refusal. */
@@ -411,15 +437,6 @@ fn tls_error() -> EngineError {
         "Check the destination and its certificate; verification cannot be bypassed.",
     )
 }
-/** Errors retain the committed page and permit a later explicit retry. */
-fn network_error() -> EngineError {
-    EngineError::new(
-        "network_error",
-        "The destination could not be reached or returned an incomplete response.",
-        "Check the URL and retry.",
-    )
-}
-
 /** Drains idle TLS records on a nonblocking socket; open means no plaintext and no close. */
 fn tls_idle(stream: &mut StreamOwned<ClientConnection, TcpStream>) -> bool {
     if !stream

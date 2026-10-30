@@ -9,6 +9,10 @@ use std::collections::BTreeMap;
 /** Validate the actual document before recursive labels, projection, serialization or measurement. */
 pub fn validate_content(document: &Document) -> EngineResult<()> {
     validate_structure(document)?;
+    mars_core::dom::validate_metadata(
+        &document.metadata,
+        document.scripts.iter().map(|script| &script.attributes),
+    )?;
     let mut canvas_bytes = 0usize;
     for node in &document.nodes {
         if let Some(bitmap) = &node.canvas {

@@ -35,8 +35,11 @@ pub(in crate::v9) fn prepare_resize(
 pub(in crate::v9) fn resized(page: &mut Page, node: usize, bitmap: Bitmap) {
     let state = page.state.canvases.get_mut(&node).expect("canvas");
     state.bitmap = bitmap;
+    state.origin_clean = true;
     state.drawing = state::DrawingState::default();
     state.saved.clear();
+    state.path = limits::Path::default();
+    state.clips.clear();
     state.dirty = true;
 }
 /** Account for replacement rather than charging both old and new live backing indefinitely. */
@@ -94,6 +97,7 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     }
     for state in states.values() {
         state.bitmap.validate()?;
+        state.path.validate()?;
         state::validate(&state.drawing)?;
         if state.saved.len() > state::SAVED_STATES {
             return Err(EngineError::limit(
@@ -105,6 +109,7 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
             state::validate(saved)?;
         }
     }
+    clipping::validate(states)?;
     Ok(())
 }
 

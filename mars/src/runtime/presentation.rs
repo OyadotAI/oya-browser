@@ -114,6 +114,7 @@ impl Runtime {
             if let Some(page) = runtime.page.as_mut() {
                 page.display = Some(display);
                 page.element_scroll = offsets;
+                page.scripting.intersections.invalidate();
                 page.layout_generation = page.layout_generation.saturating_add(1);
                 page.refresh_inspection();
             }
@@ -136,6 +137,7 @@ impl Runtime {
             && page.scripting.loaded
         {
             page.scripting.scroll_pending = true;
+            page.scripting.intersections.invalidate();
             page.scripting.wake();
         }
     }

@@ -673,6 +673,9 @@ fn event_types(b: &mut Builder) {
         if let Some(init) = legacy_init(name) {
             methods(b, sub, &[init], events::event_method);
         }
+        if name == "ErrorEvent" {
+            events::error_prototype(sub);
+        }
         if name == "KeyboardEvent" {
             events::keyboard_prototype(sub);
         }
@@ -1115,11 +1118,30 @@ fn singletons(b: &mut Builder) {
     b.global("crypto", crypto);
 }
 
+/** Window handler names must resolve before their first assignment. Defaults live on the
+prototype so an untouched handler does not mask a body's inline content handler at dispatch. */
+fn window_handler_attributes(b: &mut Builder, owner: u32) {
+    for name in events::BODY_FORWARDED.into_iter().chain([
+        "ongamepadconnected",
+        "ongamepaddisconnected",
+        "onpageswap",
+        "onunhandledrejection",
+    ]) {
+        b.value(
+            owner,
+            name,
+            JsValue::Null,
+            crate::v9::vm::heap::DEFAULT_ATTRS,
+        );
+    }
+}
+
 /** The global object's prototype: every global name. */
 fn global_object(b: &mut Builder) {
     let proto = b.object(Some(b.ids.event_target_prototype));
     b.ids.window_prototype = proto;
     event_handler_attributes(b, proto);
+    window_handler_attributes(b, proto);
     getters(
         b,
         proto,
@@ -1290,21 +1312,12 @@ fn global_object(b: &mut Builder) {
         }
         b.global(name, ctor);
     }
-    for name in [
-        "IntersectionObserver",
-        "ResizeObserver",
-        "PerformanceObserver",
-        "ReportingObserver",
-    ] {
+    super::intersection_observers::install(b);
+    super::resize_observers::install(b);
+    for name in ["PerformanceObserver", "ReportingObserver"] {
         let observer = b.object(Some(b.ids.object_prototype));
         methods(b, observer, &["unobserve", "disconnect"], noop_method);
-        // Intersection and resize observers report each observed target once, asynchronously,
-        // as a browser's first observation does; the others record nothing yet.
-        let observe: NativeFn = match name {
-            "IntersectionObserver" | "ResizeObserver" => window::observe,
-            _ => noop_method,
-        };
-        b.host_method(observer, "observe", 1, observe);
+        b.host_method(observer, "observe", 1, noop_method);
         b.host_method(observer, "takeRecords", 0, |vm, _| {
             Ok(JsValue::Object(vm.new_array(Vec::new())?))
         });
@@ -1320,6 +1333,9 @@ fn global_object(b: &mut Builder) {
     b.global("Audio", ctor);
     let abort = b.object(Some(b.ids.object_prototype));
     b.host_method(abort, "abort", 0, abort_controller_abort);
+    b.getter(abort, "signal", |vm, call| {
+        net::abort::controller_signal(vm, &call.this).map(JsValue::Object)
+    });
     let ctor = b.constructor(
         "AbortController",
         0,
@@ -1355,45 +1371,9 @@ fn global_object(b: &mut Builder) {
     }
 }
 
-/** Path2D: a path object pages build for canvas drawing. V9 draws no canvas, so the path
-methods record nothing; the interface exists because polyfill bundles extend
-`Path2D.prototype` unguarded (Twitch's does, and its whole polyfill script failed without it). */
+/** Retained paths share the real Canvas geometry implementation and strict native branding. */
 fn path2d(b: &mut Builder) {
-    let proto = b.object(Some(b.ids.object_prototype));
-    methods(
-        b,
-        proto,
-        &[
-            "addPath",
-            "closePath",
-            "moveTo",
-            "lineTo",
-            "bezierCurveTo",
-            "quadraticCurveTo",
-            "arc",
-            "arcTo",
-            "ellipse",
-            "rect",
-            "roundRect",
-        ],
-        noop_method,
-    );
-    let ctor = b.constructor("Path2D", 0, construct_plain, proto, None);
-    b.global("Path2D", ctor);
-}
-
-/** `new X()` for an interface whose instances hold no state: a plain object over the prototype. */
-fn construct_plain(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let fallback = crate::v9::vm::realm::realm().ids.object_prototype;
-    let Some(target) = &call.new_target else {
-        return Err(vm.type_error("Constructor requires 'new'"));
-    };
-    let proto = vm.prototype_for(target, fallback)?;
-    let id = vm.alloc(crate::v9::vm::heap::Object::new(
-        crate::v9::vm::data::Class::Plain,
-        Some(proto),
-    ))?;
-    Ok(JsValue::Object(id))
+    super::canvas::path2d::install(b);
 }
 
 /** Range and Selection: `document.createRange()`, `new Range()` and `getSelection()`. */
@@ -1782,9 +1762,14 @@ fn abort_signal(b: &mut Builder) {
     b.ids.abort_signal_prototype = proto;
     let ctor = b.constructor("AbortSignal", 0, dom::illegal_constructor, proto, None);
     b.global("AbortSignal", ctor);
+    for name in ["aborted", "reason"] {
+        b.getter(proto, name, |vm, call| {
+            net::abort::attribute(vm, &call.this, dom::native_name(&call))
+        });
+    }
     b.host_method(proto, "throwIfAborted", 0, |vm, call| {
-        if vm.get(&call.this, &Key::from("aborted"))?.truthy() {
-            let reason = vm.get(&call.this, &Key::from("reason"))?;
+        if net::abort::attribute(vm, &call.this, "aborted")?.truthy() {
+            let reason = net::abort::attribute(vm, &call.this, "reason")?;
             return Err(crate::v9::vm::Thrown::Value(reason));
         }
         Ok(JsValue::Undefined)
@@ -1801,8 +1786,8 @@ fn abort_signal(b: &mut Builder) {
     b.host_method(ctor, "any", 1, |vm, call| {
         let signal = new_signal(vm)?;
         for each in vm.iterate_to_vec(&call.arg(0))? {
-            if vm.get(&each, &Key::from("aborted"))?.truthy() {
-                let reason = vm.get(&each, &Key::from("reason"))?;
+            if net::abort::attribute(vm, &each, "aborted")?.truthy() {
+                let reason = net::abort::attribute(vm, &each, "reason")?;
                 mark_aborted(vm, signal, reason)?;
                 break;
             }
@@ -1813,38 +1798,12 @@ fn abort_signal(b: &mut Builder) {
 
 /** A fresh, unaborted AbortSignal. */
 fn new_signal(vm: &mut Vm) -> Res<u32> {
-    let signal = vm.alloc(crate::v9::vm::heap::Object::new(
-        crate::v9::vm::data::Class::Plain,
-        Some(crate::v9::vm::realm::realm().ids.abort_signal_prototype),
-    ))?;
-    vm.put(signal, "aborted", JsValue::Boolean(false))?;
-    vm.put(signal, "reason", JsValue::Undefined)?;
-    vm.put(signal, "onabort", JsValue::Null)?;
-    Ok(signal)
+    net::abort::new_signal(vm)
 }
 
 /** Abort a signal once: set aborted and reason (an AbortError by default), then fire `abort`. */
 fn mark_aborted(vm: &mut Vm, signal: u32, reason: JsValue) -> Res<()> {
-    if vm
-        .get(&JsValue::Object(signal), &Key::from("aborted"))?
-        .truthy()
-    {
-        return Ok(());
-    }
-    let reason = match reason {
-        JsValue::Undefined => {
-            match vm.dom_exception("AbortError", "signal is aborted without reason") {
-                crate::v9::vm::Thrown::Value(value) => value,
-                crate::v9::vm::Thrown::Fatal(error) => return Err(error.into()),
-            }
-        }
-        other => other,
-    };
-    vm.put(signal, "aborted", JsValue::Boolean(true))?;
-    vm.put(signal, "reason", reason)?;
-    // Dispatch also runs the signal's onabort handler property.
-    super::fire(vm, super::Target::Object(signal), "abort", false)?;
-    Ok(())
+    net::abort::mark_aborted(vm, signal, reason)
 }
 
 /** `new AbortController()`: owns one AbortSignal. */
@@ -1852,22 +1811,20 @@ fn construct_abort_controller(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let fallback = crate::v9::vm::realm::realm().ids.object_prototype;
     let proto = match &call.new_target {
         Some(target) => vm.prototype_for(target, fallback)?,
-        None => fallback,
+        None => return Err(vm.type_error("AbortController requires the new operator")),
     };
     let controller = vm.alloc(crate::v9::vm::heap::Object::new(
         crate::v9::vm::data::Class::Plain,
         Some(proto),
     ))?;
     let signal = new_signal(vm)?;
-    vm.put(controller, "signal", JsValue::Object(signal))?;
+    net::abort::bind_controller(vm, controller, signal);
     Ok(JsValue::Object(controller))
 }
 
 /** AbortController.prototype.abort(reason). */
 fn abort_controller_abort(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let signal = vm.get(&call.this, &Key::from("signal"))?;
-    if let JsValue::Object(id) = signal {
-        mark_aborted(vm, id, call.arg(0))?;
-    }
+    let signal = net::abort::controller_signal(vm, &call.this)?;
+    mark_aborted(vm, signal, call.arg(0))?;
     Ok(JsValue::Undefined)
 }

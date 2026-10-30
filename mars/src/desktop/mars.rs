@@ -20,7 +20,7 @@ pub(super) use find::FindBar;
 use library_views::{BookmarksBar, Suggestions};
 use objc2::{DefinedClass, MainThreadOnly, rc::Retained};
 use objc2_app_kit::{
-    NSAccessibility, NSBezelStyle, NSButton, NSColor, NSFocusRingType, NSScrollView,
+    NSAccessibility, NSBezelStyle, NSButton, NSColor, NSFocusRingType, NSImage, NSScrollView,
     NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::NSString;
@@ -48,6 +48,8 @@ pub(super) const PROFILE_CLEAR: isize = -12;
 pub(super) const PROFILE_RETRY: isize = -13;
 /// Site-storage recovery stays separate from cookie-profile controls.
 pub(super) const STORAGE_CLEAR: isize = -14;
+/// Expands bounded diagnostics for the current incomplete-page notice.
+pub(super) const DETAILS: isize = -15;
 /// The native tab row uses negative actions that cannot collide with document node tags.
 pub(super) const TAB_NEW: isize = -20;
 /// Closes the selected tab (Cmd+W); the last tab closes the window instead.
@@ -165,6 +167,10 @@ pub(super) struct Mars {
     pub degraded: Retained<NSButton>,
     pub status: Retained<NSTextField>,
     pub error: Retained<NSTextField>,
+    /// Native disclosure keeps recovery copy readable without hiding diagnostics.
+    pub details: Retained<NSButton>,
+    /// Avoid rebuilding a toolbar symbol at every UI tick.
+    loading: Cell<bool>,
     /** Native message scrolling never covers the independent recovery controls. */
     banner: ErrorBanner,
     pub retry: Retained<NSButton>,
@@ -190,6 +196,8 @@ pub(super) struct Mars {
     pub bar_visible: Cell<bool>,
     /** The committed page address; the field shows it in full only while focused. */
     url: RefCell<String>,
+    /** Last displayed address may be provisional; bookmarks use url instead. */
+    presented_url: RefCell<String>,
     editing: Cell<bool>,
     /** Animation clock for the progress line and the agent ring. */
     started: Instant,
@@ -229,7 +237,9 @@ impl Mars {
         let banner = ErrorBanner::new(&error, target);
         let retry = button("Retry", RETRY, target);
         let dismiss = button("Dismiss", DISMISS, target);
-        for action in [&retry, &dismiss] {
+        let details = button("Details", DETAILS, target);
+        details.setHidden(true);
+        for action in [&retry, &dismiss, &details] {
             action.setBordered(true);
             action.setBezelStyle(NSBezelStyle::Push);
         }
@@ -237,7 +247,7 @@ impl Mars {
         stop.setContentTintColor(Some(&NSColor::systemRedColor()));
         let welcome = NSTextField::wrappingLabelWithString(
             &NSString::from_str(
-                "Mars\n\nYour browser, from the ground up. Open the demo to try forms, navigation and native agent tools.\n\nMars is Oya’s Rust browser, built for people and agents. Eye renders documents, V9 runs JavaScript, and Relay handles networking. This build is in development; compatibility is not yet at parity.",
+                "Search or enter a website address\n\nUse the address bar above to begin.",
             ),
             mtm,
         );
@@ -295,6 +305,7 @@ impl Mars {
             &*banner.scroll,
             &*retry,
             &*dismiss,
+            &*details,
             &*stop,
             &*tabs.scroll,
             &*tabs.new,
@@ -319,6 +330,8 @@ impl Mars {
             degraded,
             status,
             error,
+            details,
+            loading: Cell::new(false),
             banner,
             retry,
             dismiss,
@@ -334,6 +347,7 @@ impl Mars {
             suggestions,
             bar_visible: Cell::new(false),
             url: RefCell::new(String::new()),
+            presented_url: RefCell::new(String::new()),
             editing: Cell::new(false),
             started: Instant::now(),
         }
@@ -368,6 +382,12 @@ impl Mars {
         self.scroll
             .setFrame(rect(page.x, page.y, page.width, page.height));
         let page_top = page.y + page.height;
+        self.details.setFrame(rect(
+            banner_layout::TEXT_INSET,
+            self.dismiss.frame().origin.y,
+            banner_layout::DISMISS_WIDTH,
+            banner_layout::ACTION_HEIGHT,
+        ));
         let banner = if error {
             rect(0.0, page_top, width, toolbar_bottom - bar - page_top)
         } else {
@@ -490,7 +510,9 @@ impl Mars {
         }
     }
     /** The field shows a short address at rest and the full one, selected, once the person focuses it; text set by anything else is left alone. */
-    pub fn sync_address(&self, committed: &str) {
+    pub fn sync_address(&self, committed: &str, requested: Option<&str>) {
+        *self.url.borrow_mut() = committed.into();
+        let committed = requested.unwrap_or(committed);
         let editing = self.address.currentEditor().is_some();
         self.address_well.set_on(editing);
         self.address_well.set_symbol(security_symbol(committed));
@@ -502,12 +524,41 @@ impl Mars {
                 editor.setString(&NSString::from_str(committed));
                 unsafe { editor.selectAll(None) };
             }
-        } else if !editing && (was_editing || *self.url.borrow() != committed) {
+        } else if !editing && (was_editing || *self.presented_url.borrow() != committed) {
             self.address
                 .setStringValue(&NSString::from_str(&display_address(committed)));
         }
-        *self.url.borrow_mut() = committed.into();
+        *self.presented_url.borrow_mut() = committed.into();
     }
+    /** A requested destination has no verified security state until its document commits. */
+    pub fn loading_address(&self, loading: bool) {
+        if loading {
+            self.address_well.set_symbol("ellipsis");
+        }
+    }
+
+    /** Reload's familiar position exposes Stop throughout an active load. */
+    pub fn loading_control(&self, loading: bool) {
+        if self.loading.replace(loading) == loading {
+            return;
+        }
+        let (symbol, label, tag) = if loading {
+            ("xmark", "Stop loading", STOP)
+        } else {
+            ("arrow.clockwise", "Reload (⌘R)", RELOAD)
+        };
+        self.reload.setTag(tag);
+        self.reload
+            .setAccessibilityLabel(Some(&NSString::from_str(label)));
+        self.reload.setToolTip(Some(&NSString::from_str(label)));
+        if let Some(image) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            &NSString::from_str(symbol),
+            None,
+        ) {
+            self.reload.setImage(Some(&image));
+        }
+    }
+
     /** The committed address, which Retry uses instead of the shortened text in the field. */
     pub fn committed_url(&self) -> String {
         self.url.borrow().clone()

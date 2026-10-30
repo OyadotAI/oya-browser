@@ -1,15 +1,20 @@
 /** Image requests cross the host boundary as data; only a matching decoded outcome fires an event. */
 use super::{Page, Target, dom, events};
-use crate::constants::{IMAGE_COUNT, IMAGE_DIMENSION, NODES, URL_BYTES, VM_DETACHED_NODES};
+use crate::constants::{IMAGE_COUNT, IMAGE_DIMENSION, NODES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::value::JsValue;
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Thrown, Vm};
+use mars_core::image_source::{REQUEST_TEXT_BYTES, SOURCE_TOTAL_BYTES, valid_url_text};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod adoption;
 pub use adoption::ImageAdoption;
+mod cors;
+pub use cors::ImageCors;
+mod blob;
+pub use blob::ImageCancellation;
 
 /** Keep DOM adoption on the platform facade used by other DOM components. */
 pub(super) fn adopt(page: &mut Page, from: usize, to: usize) -> EngineResult<()> {
@@ -28,6 +33,12 @@ pub struct ImageRequest {
     pub source: String,
     /// Absolute fallback URL resolved by V9 without accessing the network.
     pub url: String,
+    /// Fetch policy is captured with the source generation, never inferred from a later DOM value.
+    #[serde(default)]
+    pub cors: ImageCors,
+    /// Immutable bytes captured from this context when the selected src generation is admitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob_source: Option<super::BlobUrlSource>,
 }
 
 /// Actual host decoding completion; missing dimensions denotes a failed fetch or decode.
@@ -38,6 +49,12 @@ pub struct ImageResponse {
     pub request: ImageRequest,
     /// Intrinsic pixel dimensions from the admitted decoder, never inferred from author attributes.
     pub dimensions: Option<(u32, u32)>,
+    /// Optional admitted RGBA data; absent data keeps oversized or unsupported sources explicit.
+    #[serde(default)]
+    pub bitmap: Option<mars_core::canvas::Bitmap>,
+    /// Only the host's actual acquisition provenance can grant clean canvas readback.
+    #[serde(default)]
+    pub origin_clean: bool,
 }
 
 /** Source and decode state contains no heap references and needs no additional GC roots. */
@@ -50,12 +67,22 @@ pub(in crate::v9) struct State {
     pub generation: u64,
     /** Literal src before URL resolution, so restored text can be bounded and compared. */
     pub source: String,
+    /** An inadmissible optional source keeps its DOM text but only queues an error completion. */
+    pub source_rejected: bool,
+    /** The crossorigin state belongs to the same generation as the pixels and pending request. */
+    pub cors: ImageCors,
     /** The host has received this generation and must eventually return its outcome. */
     pub requested: bool,
     /** No image work remains for this generation, either after success or failure. */
     pub complete: bool,
     /** Only a successful admitted decode provides intrinsic dimensions. */
     pub dimensions: Option<(u32, u32)>,
+    /** Immutable decoded pixels share candidate storage and reset with every source generation. */
+    pub bitmap: Option<mars_core::canvas::Bitmap>,
+    /** False is the safe default for hosts or restored records without acquisition provenance. */
+    pub origin_clean: bool,
+    /** Native pending captures remain charged until cancellation or matching completion. */
+    pub blob_bytes: usize,
 }
 
 /** Only actual HTML images own these getters; unrelated elements do not acquire image state. */
@@ -143,14 +170,53 @@ fn has_source(page: &mut Page, node: usize) -> bool {
 
 /** Reset on every relevant mutation, including A->B->A and repeated assignment of the same src. */
 pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> EngineResult<()> {
-    if !["src", "srcset", "sizes"].contains(&name) || page.tag(node) != "img" {
+    if !["src", "srcset", "sizes", "crossorigin"].contains(&name) || page.tag(node) != "img" {
         return Ok(());
     }
-    let source = page
+    let cors = page
         .view(node)
-        .and_then(|v| v.attributes.get("src").cloned())
+        .map(|view| {
+            ImageCors::from_attribute(view.attributes.get("crossorigin").map(String::as_str))
+        })
         .unwrap_or_default();
+    if name == "crossorigin"
+        && page
+            .state
+            .images
+            .get(&node)
+            .is_some_and(|state| state.cors == cors)
+    {
+        return Ok(());
+    }
+    let (source, mut source_rejected) = page
+        .view(node)
+        .and_then(|v| {
+            v.attributes.get("src").map(|source| {
+                if valid_url_text(source) {
+                    (source.clone(), false)
+                } else {
+                    (String::new(), true)
+                }
+            })
+        })
+        .unwrap_or_default();
+    let retained = page
+        .state
+        .images
+        .iter()
+        .filter(|(id, _)| **id != node)
+        .fold(0usize, |used, (_, state)| {
+            used.saturating_add(state.source.len())
+        });
+    // Preserve the authored DOM attribute; an unavailable optional source follows the empty-src error task.
+    let source = if source.len() <= SOURCE_TOTAL_BYTES.saturating_sub(retained) {
+        source
+    } else {
+        source_rejected = true;
+        String::new()
+    };
     let complete = !has_source(page, node);
+    blob::cancel(page, node)?;
     let state = page.state.images.entry(node).or_default();
     let generation = state
         .generation
@@ -159,6 +225,8 @@ pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> Engine
     *state = State {
         generation,
         source,
+        source_rejected,
+        cors,
         complete,
         ..State::default()
     };
@@ -207,17 +275,39 @@ fn request(vm: &mut Vm, node: usize) -> EngineResult<()> {
         return Ok(());
     }
     let source = state.source.clone();
-    let url = super::net::resolve(vm, &source).unwrap_or_default();
-    if source.len() > URL_BYTES || url.len() > URL_BYTES {
-        return Err(EngineError::limit("Image URL bytes", URL_BYTES));
+    let url = if state.source_rejected {
+        String::new()
+    } else {
+        super::net::resolve(vm, &source)
+            .filter(|url| valid_url_text(url))
+            .unwrap_or_default()
+    };
+    let retained = vm
+        .page
+        .effects
+        .image_requests
+        .iter()
+        .fold(0usize, |used, request| {
+            used.saturating_add(request.source.len())
+                .saturating_add(request.url.len())
+        });
+    if source.len().saturating_add(url.len()) > REQUEST_TEXT_BYTES.saturating_sub(retained) {
+        return Ok(());
     }
+    let blob_source = blob::capture(&vm.page, &url);
+    let blob_bytes = blob_source
+        .as_ref()
+        .map_or(0, |source| blob::charge(&url, source));
     let state = vm.page.state.images.get_mut(&node).expect("image state");
     state.requested = true;
+    state.blob_bytes = blob_bytes;
     vm.page.effects.image_requests.push(ImageRequest {
         node,
         generation: state.generation,
         source,
         url,
+        cors: state.cors,
+        blob_source,
     });
     Ok(())
 }
@@ -227,10 +317,21 @@ pub(in crate::v9) fn deliver(vm: &mut Vm, responses: Vec<ImageResponse>) -> Engi
     if responses.len() > IMAGE_COUNT {
         return Err(EngineError::limit("Image completions", IMAGE_COUNT));
     }
+    let text_bytes = responses.iter().fold(0usize, |used, response| {
+        used.saturating_add(response.request.source.len())
+            .saturating_add(response.request.url.len())
+    });
+    if text_bytes > REQUEST_TEXT_BYTES {
+        return Err(EngineError::limit(
+            "Image completion text bytes",
+            REQUEST_TEXT_BYTES,
+        ));
+    }
     for response in &responses {
         if !valid_request(&response.request) || !valid_dimensions(response.dimensions) {
             return Err(EngineError::invalid("Invalid image completion."));
         }
+        validate_bitmap(response.dimensions, response.bitmap.as_ref())?;
     }
     for response in responses {
         complete(vm, response)?;
@@ -247,13 +348,18 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
     let state = vm.page.state.images.get_mut(&node).expect("resolved image");
     if state.generation != request.generation
         || state.source != request.source
+        || state.cors != request.cors
         || !state.requested
         || state.complete
     {
         return Ok(());
     }
     state.complete = true;
+    state.blob_bytes = 0;
     state.dimensions = response.dimensions;
+    state.bitmap = response.bitmap;
+    state.origin_clean = response.origin_clean;
+    validate_pixels(&vm.page.state.images)?;
     let kind = if response.dimensions.is_some() {
         "load"
     } else {
@@ -274,7 +380,18 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
 
 /** Saved state and transport use the same finite image and URL bounds as actual host work. */
 pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<()> {
+    blob::validate(states)?;
     adoption::validate(states)?;
+    validate_pixels(states)?;
+    let source_bytes = states.values().fold(0usize, |used, state| {
+        used.saturating_add(state.source.len())
+    });
+    if source_bytes > SOURCE_TOTAL_BYTES {
+        return Err(EngineError::limit(
+            "Image source text bytes",
+            SOURCE_TOTAL_BYTES,
+        ));
+    }
     if states.len() > NODES + VM_DETACHED_NODES {
         return Err(EngineError::limit(
             "Image states",
@@ -283,11 +400,47 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     }
     if states.values().any(|s| {
         s.generation == 0
-            || s.source.len() > URL_BYTES
+            || !valid_url_text(&s.source)
+            || s.source_rejected && (!s.source.is_empty() || s.dimensions.is_some())
             || !valid_dimensions(s.dimensions)
             || s.dimensions.is_some() && (!s.complete || !s.requested)
     }) {
         return Err(EngineError::invalid("Invalid image state."));
+    }
+    Ok(())
+}
+
+/** Pixel storage cannot outlive successful decoding or exceed the page's independent source cap. */
+fn validate_pixels(states: &BTreeMap<usize, State>) -> EngineResult<()> {
+    let mut bytes = 0usize;
+    for state in states.values() {
+        validate_bitmap(state.dimensions, state.bitmap.as_ref())?;
+        bytes = bytes.saturating_add(
+            state
+                .bitmap
+                .as_ref()
+                .map_or(0, |bitmap| bitmap.pixels.len()),
+        );
+    }
+    if bytes > mars_core::canvas::IMAGE_SOURCE_BYTES {
+        return Err(EngineError::limit(
+            "Canvas image source bytes",
+            mars_core::canvas::IMAGE_SOURCE_BYTES,
+        ));
+    }
+    Ok(())
+}
+
+/** Source pixels can differ from density-adjusted natural dimensions but must be a real bitmap. */
+fn validate_bitmap(
+    dimensions: Option<(u32, u32)>,
+    bitmap: Option<&mars_core::canvas::Bitmap>,
+) -> EngineResult<()> {
+    if let Some(bitmap) = bitmap {
+        bitmap.validate()?;
+        if dimensions.is_none() || !bitmap.drawable() {
+            return Err(EngineError::invalid("Invalid decoded image bitmap."));
+        }
     }
     Ok(())
 }
@@ -329,5 +482,11 @@ fn valid_dimensions(size: Option<(u32, u32)>) -> bool {
 
 /** Requests contain inert bounded text and a nonzero generation. */
 fn valid_request(request: &ImageRequest) -> bool {
-    request.generation != 0 && request.source.len() <= URL_BYTES && request.url.len() <= URL_BYTES
+    request.generation != 0
+        && valid_url_text(&request.source)
+        && valid_url_text(&request.url)
+        && request.blob_source.as_ref().is_none_or(|source| {
+            source.bytes.len() <= crate::constants::IMAGE_BYTES
+                && source.validate(&request.url).is_ok()
+        })
 }

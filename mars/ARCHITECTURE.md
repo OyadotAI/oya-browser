@@ -57,6 +57,79 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Event listener lifetime uses native AbortSignal branding/state, independent of
+replaceable public properties. Abort prunes registrations synchronously before
+callbacks; admission at the listener ceiling prunes old aborted entries and
+invokes target-aware GC with converted arguments rooted. Remaining live listeners
+still enforce the existing ceiling. Collector node-target membership is indexed
+once per pass to avoid a wrapper-by-listener scan.
+
+CSP inline script and handler admission share source-expression grammar and the
+closed set of hash algorithms. Prefix case does not alter matching; nonce and
+digest payloads are exact. Invalid expressions do not suppress `unsafe-inline`,
+while valid nonce/hash expressions and `strict-dynamic` do. Multiple effective
+policies continue to intersect rather than replacing each other.
+
+Core's image-source text predicate preserves the 8 KiB ordinary URL bound and
+admits bounded `data:image/` payload envelopes. Eye CSS, V9 image state and native
+acquisition share that predicate. Optional rejected sources retain authored DOM
+text but queue one failed generation with an empty native acquisition URL; no
+network fetch occurs for that sentinel. Source storage, outbound/completion
+batches and persistent request queues have separate aggregate text bounds.
+Decoded input/pixel limits, CSP, CORS and origin-clean provenance remain enforced.
+
+Window event-handler bindings have null prototype defaults before any script
+assignment. Explicit Window or body-forwarded writes create the existing own
+handler slot; untouched defaults do not mask body markup during dispatch. Native
+constructor refusal messages derive interface names from immutable realm/native
+metadata rather than evaluating author-controlled function properties.
+
+TLS preparation permits at most two negotiation candidates under the original
+absolute deadline. A raw reset on the first modern handshake gets one fresh
+modern connection, preferring an already-admitted peer in the other address
+family, then another peer, then the same peer if necessary. TLS settings, SNI and
+WebPKI validation are unchanged, DNS is not repeated, and no HTTP bytes have yet
+been sent. Only the existing first-attempt handshake-failure alert may instead
+select its one legacy recovery; certificate failures and other protocol errors
+are terminal, and there is no third candidate. Temporary deadline leases cover modern and legacy internal
+handshake loops and are stopped/joined before handoff or replacement. Requested-
+group HelloRetryRequest messages emit exactly the requested key share; initial
+and cookie-only retry messages retain their existing GREASE behavior.
+
+Native close uses per-attempt save tickets and nonblocking authority admission.
+A ten-second save/admission deadline returns to explicit Keep Open, Retry or
+Close Without Saving choices; it never implies persistence succeeded. Retired
+tickets cannot close later attempts. Explicit discard suppresses the worker’s
+final session retry, but cannot undo a secure-store write already in progress.
+An owned cleanup worker joins runtime/I/O/hub resources while AppKit continues
+pumping; library and demo-server workers are also polled and joined only when
+finished. A permanently blocked external native operation can still delay cleanup
+completion. Existing untracked attach connection-thread debt is unchanged.
+
+Parser metadata shares an 8 MiB budget for tags, attribute names, values and text,
+including executable-script attributes. Up to 32,256 metadata records reserve
+512 script slots within the detached-node ceiling. Records are complete or omitted
+with an explicit diagnostic; restore and environment admission enforce the same
+rules. Metadata bootstrap appends known-fresh head entries without repeated full
+head scans. The 512 MiB wire and 64 MiB state caps remain unchanged: the V9 frame
+bound counts its single serialized state object and explicit record overhead.
+
+HTTP/1 connection leases belong to one exchange and are stopped and joined before
+the socket reenters the shared keep-alive pool, including replacement exchanges.
+Informational response heads share one bounded header budget and are consumed
+before the final response; protocol upgrades remain unsupported. Transport error
+copy uses the operation phase and typed I/O classification without including raw
+exception strings, addresses, headers or bodies. TLS verification, deadlines and
+safe retry admission remain unchanged.
+
+Resident V9 executions retain their complete heap in the service and send the
+coordinator a page summary plus state token. Coordinator checks explicitly select
+summary validation only when that token exists: page bounds, document identity,
+node associations and encoded size still apply. Complete execution and restored
+states keep native signal, Promise, observer callback and target heap validation;
+a summary is not executable VM state. Script rollback restores request admission
+and cancellation effects together.
+
 Canvas 2D uses an injected `mars_core::canvas::CanvasHost`. V9 owns its serializable
 context state; Eye supplies synchronous macOS text shaping/rasterization and PNG
 encoding. Standalone hosts default to unavailable. Immutable pixel allocations are
@@ -77,13 +150,225 @@ page, with 8 million pixel-work units per execution. Canonical pixel allocations
 and admitted native scratch share a 96 MiB process ceiling, stricter than the
 initial 128 MiB V9 design ceiling. Supported drawing includes solid fill/clear
 rectangles, generic-family text, width measurement, affine transforms, saved
-drawing state, global alpha, ImageData read/write, canvas-to-canvas copying and
-PNG export. Core plans bounded raster work before mutation, uses premultiplied
+drawing state, global alpha, ImageData read/write, canvas-to-canvas copying,
+bounded decoded PNG/JPEG/GIF/static-WebP image drawing, polygon fill/stroke and PNG export. Decoded sources retain
+fetch/redirect origin provenance, share immutable pixels and have an independent
+4 MiB per-page admission bound. Cross-origin drawing taints readback/export and
+copied canvases; reset restores origin cleanliness. Core plans bounded raster work before mutation, uses premultiplied
 bilinear sampling and preserves immutable self-copy snapshots. Eye transforms
-native text before clipping. CSS color and font parsing remain limited; paths,
-clipping paths, decoded-image drawing, full compositing and text metrics, WebGL
+native text before clipping. Current paths record construction-time transforms
+independently of saved drawing state; strokes apply the draw-time pen transform.
+Nonzero/evenodd filling and bounded cap/join outlines use 4-by-4 pixel coverage.
+Admission caps paths at 1,024 points and derived outlines at 16,384 edges, with
+work charged before bitmap mutation. StrokeRect leaves the current path intact.
+Quadratic and cubic Bezier curves flatten adaptively in bitmap coordinates to a
+one-eighth-pixel tolerance, under the existing path-point budget and a bounded
+subdivision depth. Full point batches are admitted before altering the path;
+empty and closed subpaths retain their Canvas construction semantics.
+Arcs and ellipses use parametric geometry with the same pixel tolerance and path
+budget, bounded angular segments and subdivision depth. Direction, whole-turn
+normalization and connections are admitted atomically; degenerate ellipse axes
+follow the source-guided center-line behavior.
+ArcTo constructs the shortest tangent circle through the existing adaptive arc
+path, with current-point inverse mapping and straight-line degeneracies. Singular
+transforms requiring an inverse are explicitly refused. The source-guided
+negative-radius empty-subpath side effect is retained; resource failures remain
+atomic. RoundRect expands one to four numeric or point radii, uniformly scales
+overlapping corners, reflects negative extents and appends the full rounded
+contour atomically. Iterable conversion is bounded and closes on conversion or
+quota failure. Clipping uses immutable 4-by-4 sample-bit masks and bitwise
+intersection, so repeated fractional clips are idempotent. Each context stores
+masks once in a pool; saved drawing states refer to validated IDs. Restore prunes
+unused masks and resize/reset clears the pool. Rectangles, paths, images and text
+honor clipping; putImageData, readback and export bypass it, and clipping never
+removes image-origin taint. A separate 4 MiB retained page mask allowance shares
+the existing process and work ceilings. Path2D retains branded geometry with
+independent copies and transformed addPath; fill/stroke/clip apply the context
+transform at use time without replacing the current path. Storage is bounded to
+64 wrappers, 16,384 aggregate points and the existing per-path cap. GC removes
+dead associations, and restored wrappers/paths are validated. SVG-string paths
+use Core's shared normalized parser; Eye keeps strict malformed-shape rejection
+while Canvas retains complete commands before syntax errors. Numeric/resource
+failures never become successful truncated paths. Source bytes, command groups,
+normalized segments and flattened points are independently bounded. Extreme
+use-time magnification can magnify the retained polygon and arc approximation
+error. Dash styles retain bounded canonical patterns and signed offsets across
+save/restore/reset. Stroke planning splits inverse-transformed paths in user
+space, resets phase per subpath, joins closed seams and retains cap dots for
+zero-length dashes. Input/canonical patterns are capped at 128/256 values,
+split transitions and points at 16,384 each, followed by existing outline/raster
+limits. Scratch allocations share process accounting, and all work is admitted
+before bitmap mutation. A shared premultiplied compositor supports source-over,
+destination-over, destination-out, source-atop and xor across every supported
+shape/path/image/text painter. Typed composite state survives save/restore/reset;
+clearRect, putImageData and readback keep their bypass semantics. Copy, source-in,
+source-out, destination-in and destination-atop additionally process transparent
+source across the bounded clipped destination. Source geometry bounds stay
+separate from composition bounds, avoiding unnecessary geometry scans. Joint
+source/clip coverage and independent clip coverage preserve pixels outside the
+clip; lighter clamps the premultiplied sum before coverage interpolation. Work
+is admitted before copy-on-write, with no new full-surface scratch bitmap.
+Artistic blend modes remain unaccepted. CSS color and font parsing remain limited;
+other decoded-image formats, remaining compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
+
+On macOS, Eye's ImageIO/CoreGraphics adapter decodes isolated full-canvas GIF
+first frames and static WebP into canonical straight-alpha sRGB pixels. Container
+and actual decoder dimensions must agree before output allocation; encoded input
+is capped at 2 MiB and decoder scratch shares the process allocation budget.
+Animated WebP, partial-first-frame GIF and non-macOS native decoding are explicitly
+unsupported. PNG/JPEG retain their existing Rust decoders and validate their
+declared decoded size against the source header.
+
+Image CORS mode is captured with each image generation and travels through source
+selection, completion and decoded reuse. Anonymous images omit cross-origin
+credentials; credentialed images require exact origin and credential grants.
+Relay admits narrowly scoped image Origin/mode fields and exposes only the
+bounded CORS response headers needed by the coordinator. Every redirect and final
+response passes the existing CORS flow before bytes may become origin-clean.
+Failures never retry through no-CORS or SVG fallback. Cache identities include
+mode and the CORS document origin; legacy credentialed prefetch and Relay's
+URL-only HTTP cache are bypassed for CORS images. No-CORS images retain their
+all-hop same-origin provenance rule and cross-origin taint.
+
+Eye retains bounded CSS transition metadata separately from authored opacity.
+Candidate-owned opacity timelines sample duration, delay, easing and interrupted
+or reversed transitions for HTML, body and ordinary nodes. Runtime seeds the
+initial cascade, updates timelines on recascade, and overlays transition values
+at native painting with priority over other sampled opacity effects. Background
+frames use the existing page clock and expensive-work throttle; continuing CSS
+transitions do not extend the JavaScript timer wake window. Other transition
+properties, events, discrete transitions and CSS animation API exposure remain
+unfinished. CSS opacity keyframes also retain authored styles and use the same
+native clock. Resolved tracks carry easing, delays, iterations, direction, fill
+and play state; recascades match names from the end of each list to preserve
+playback. Paused and completed fills remain visible without scheduling frames.
+Paint priority is CSS animations, V9 effects, then CSS transitions. Unsupported
+animated properties retain their earlier static fallback; full transform
+interpolation, animation events and animation API exposure remain unfinished.
+Translation-only transform transitions interpolate separate pixel and percentage
+components with the shared timing, delay, interruption and reversal machinery.
+Parser provenance excludes rotation, scale, skew, matrix, 3D and independent
+transform properties even when their flattened matrix happens to be identity.
+Runtime overlays sampled translations in ordinary and forced candidate painting;
+visual NodeBox positions follow translations while separate layout positions
+keep offsetLeft/offsetTop independent of transforms.
+Pure rotate transitions and keyframes retain authored, unwrapped radians so a
+zero-to-full-turn animation does not collapse to identical endpoint matrices.
+Native samples preserve transform origin and use the shared page clock, including
+delay/easing, interruption/reversal, pause, iteration/direction and fill behavior.
+Rotation transitions override rotation keyframes. Only one rotate function or
+none is admitted; mixed lists, matrices, 3D and individual transforms remain
+outside live rotation sampling, under the existing angle/resource bounds.
+Pure numeric scale/scaleX/scaleY transitions and keyframes retain independent axis
+factors, including zero and negative reflection, through the same bounded native
+timing machinery. Normal and forced geometry sample the scale effects without
+changing authored layout or ResizeObserver metrics. Rotation transitions take
+precedence over scale keyframes when they target the same transform, and live
+mixed meaningful rotation/scale animation stacks are explicitly excluded rather
+than resolved by painter order. Mixed lists, matrices, 3D, percentage/calc scale
+arguments and independent scale-property composition remain outside this slice.
+Native geometry now carries affine visual bounds and ordered border-box quads
+separately from raw layout position/size. Core supplies inert mapping and hit
+predicates shared by runtime export, V9 DOM geometry and native clicks. Rect and
+point queries follow rotation/scale, rectangular overflow clipping and existing
+sticky/fixed movement; layout offsets/sizes and resize measurements stay raw.
+Foreign frame IDs are filtered before choosing a realm's topmost DOM hit.
+Rounded/mask clips, fragmented inline rectangles and exact occlusion are still
+outside this geometry slice.
+
+V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
+64 URLs and 4 MiB including metadata. Classic and module worker construction capture an
+immutable source, so later revocation releases the mapping without canceling an
+already created worker. Runtime rechecks publication, origin and worker CSP,
+inherits the creator's CSP, and executes captured bytes without a network fetch.
+Captured source bytes count toward the existing worker command queue allowance.
+Module entry bytes require a JavaScript MIME essence and enter the existing
+module graph; absolute HTTP(S) dependencies retain its CSP/CORS and credential
+checks. Inherited CSP host sources match against the creator origin while URL
+resolution and import.meta retain the actual Blob address. Cross-context registry
+sharing and imported Blob dependencies remain unavailable.
+
+Programmatic image generations capture context-owned Blob bytes after source and
+CORS mode settle. Replaced/removed generations cancel retained native snapshots,
+including detached Images and adopted targets. Native admission checks owner
+origin and all img-src/default-src policies, then uses the actual existing
+PNG/JPEG/GIF/static-WebP decoders. The existing 2 MiB source cap and 4 MiB aggregate
+snapshot/metadata cap remain; decoded pixels are reused for Canvas delivery with
+clean provenance. Blob schemes bypass URL-only caches, legacy prefetch and Relay.
+Only fallback src matching the selected URL is supported; differing responsive
+candidates, Blob SVG, CSS backgrounds and cross-context registry sharing remain
+outside this path.
+
+Fetch captures a context-owned Blob source after options and signal conversion.
+The native local path validates the owning origin and document/worker connect-src
+policy, admits GET and one bounded Range, and never falls through to Relay.
+Revocation releases future lookup while admitted snapshots survive. Combined
+response bodies remain capped at 256 KiB; pending native snapshots include bytes
+and metadata in a shared 4 MiB bound. Exact bytes enter private heap-accounted
+Response storage, with immutable clone sharing and independent body readers.
+Native signals bind Requests through stable distinct dependent objects, retain
+exact abort reasons and cancel same-turn effects plus prior native page/worker
+queues. Late replies are ignored; response clones retain abort-before-read state.
+Already-running synchronous Relay I/O is not newly interrupted. Blob XHR,
+cross-context registry sharing, streaming, and full timeout/live-any signal
+semantics remain unfinished.
+
+HTTP fetch opts into a script-only raw response contract at Relay. Transfer- and
+content-decoded bytes cross the private wire as bounded base64, then enter the
+same byte-preserving Response path after native CORS admission. Redirects retain
+this contract, and cached raw bodies select representation at delivery. XHR and
+module requests keep their prior charset decoding. Fetch text/JSON readers apply
+UTF-8 independently of MIME charset. Image/navigation/preflight requests cannot
+select the raw script response flag, and existing network/VM response caps remain.
+
+Dedicated workers can create one nested worker level. A single page scheduler
+routes bounded owner paths rather than treating realm-local handles as globally
+unique. Pending and live workers share the six-worker admission ceiling; existing
+task/byte limits and the seven-context residency ceiling are unchanged. Each
+worker loads through its creator's policy/base and the true root partition.
+Parent/child messages and port endpoints retain ownership, initialization queues
+and top-level-await continuations. Termination retires descendants and pending
+sources recursively. Deeper nesting and retransferring already linked worker
+ports remain explicit refusals.
+
+IntersectionObserver owns bounded, serialized viewport-root registrations in V9,
+using actual client boxes, root margins, thresholds and a dedicated asynchronous
+record queue. One combined 4 MiB native/wire budget charges observers, thresholds, targets and
+queued records. Independent ceilings are 8,192 observers, 16,384 targets and 5,461
+records; combined storage binds first, and thresholds remain capped at 128.
+Pressure GC reclaims unreachable inactive observers after author conversions,
+with native temporaries rooted. Sampling caches geometry per target and charges
+work before allocation; removal releases excess retained capacity. Callbacks and targets participate in GC and restored-state
+validation; author timer IDs cannot cancel observer tasks. Runtime compares
+native geometry at layout boundaries and invalidates on resize/scroll. A dedicated
+Observe action delivers callbacks and their microtasks without firing unrelated
+timers, extending the author wake window or polling idle observers. Element roots,
+ancestor overflow clipping, occlusion/visibility tracking and nonzero scroll
+margins/delay remain explicitly unsupported or unavailable from current geometry.
+
+ResizeObserver retains branded registrations and last-delivered selected-box
+sizes across turns. Eye captures genuine content/border dimensions after layout
+resolves percentage padding; native transport keeps these separate from visual
+transforms. V9 samples measured changes, queues bounded records and delivers on
+the existing observer-only turns. Disconnect/unobserve, GC and restored-state
+validation cover retained callbacks, targets and records. Native resize-only
+invalidation compares raw metrics, so scrolling/transforms alone cannot wake it.
+Ordinary CSS boxes and HTML/body wrappers are covered. Dedicated wrapper metrics
+travel separately from hit-test geometry, including forced-layout retries.
+Wrapper percentage edges resolve before descendant measurement; auto root extents
+are captured from in-flow content before positioned overflow changes document
+scroll size. Incomplete auto layouts and auto roots combining an out-of-flow or
+hidden body with root pseudo siblings remain unmeasured. Fragmentation remains
+unfinished. A typed observer continuation now carries depth progression through
+fresh native layout between broadcasts. Each cycle permits at most 16 broadcasts
+and two finalization turns; skipped notifications produce a real ErrorEvent with
+cancellation-aware window.onerror handling. Error-handler mutations receive
+layout before the one final intersection delivery. Deadline exhaustion preserves
+registrations and last-delivered sizes, with one cycle per settle and a rendering
+cooldown preventing immediate restart. Callback-created resource work waits for
+ordinary processing; unrelated timers/fetch/worker turns never run inside cycles.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
@@ -103,7 +388,16 @@ but replaces its document generation; detachment retires the window even when
 the same element returns in one script task. Both ends of queued messages carry
 document-generation fences. The router supplies source origin and proxy identity,
 enforces target origin, and tracks transferred-port ownership across siblings.
-Hidden frames still execute. Nested scripted frame trees and general same-origin
+Hidden frames still execute. Scripted children may now own scripted grandchildren
+under one root coordinator: recursive mailboxes and port routing retain global
+window/document fences while parent and top identify distinct contexts. Root
+reconciliation shares frame count, source-byte and depth admission across the
+tree without increasing residency. Nested painting uses nonoverlapping identity
+ranges and local viewports; observer-only descendant turns do not wake unrelated
+timers. Every framing ancestor and the final redirected origin are checked, and
+scoped child work retains the true root network partition through errors.
+The bounded scope stops at two executable descendant levels. Opaque sandbox/srcdoc
+execution, descendant input/navigation/history expansion and general same-origin
 cross-realm DOM access remain unfinished. See [the parity evidence](docs/ladybird-parity.md).
 
 The frame layout ceiling remains 16; scripted contexts share a smaller global
@@ -134,7 +428,7 @@ A frame endpoint may forward to a third realm or return to its original peer; re
 restores local entanglement and drains bounded native queues to their correct endpoints.
 Closure releases native routes and both VM registrations without callback dispatch.
 
-Classic dedicated web workers share those leases and run cooperative, bounded
+Classic and HTTP(S) module dedicated web workers share those leases and run cooperative, bounded
 tasks in isolated worker globals. They have no document or shell capabilities.
 Their synchronous imports borrow the existing V9 service pipe: one correlated
 source callback at a time, governed by the coordinator's current permit, absolute
@@ -143,7 +437,13 @@ connection or starts an unbounded thread. Message graphs, queues, imports and
 transferred-port routes are bounded and owned by the candidate page; inspection
 cannot execute worker effects. Termination and page disposal release ownership,
 while unpublished candidates preserve the committed worker state for rollback.
-Module, blob and nested workers remain explicitly unsupported.
+Module workers reuse V9's module graph for static/dynamic imports and import.meta,
+with immutable constructor credentials and governed CSP/CORS acquisition. Entry
+evaluation readiness holds queued messages through top-level await while allowing
+initialization timers and fetches to progress. Saved worker state binds its
+classic/module kind. Blob entry sources use the captured registry described
+above. Imported Blob dependencies, nested workers and worker redirects remain
+explicitly unsupported.
 
 Native page and worker environments opt into script-visible monotonic elapsed
 time. A request-local `Instant` anchor advances `performance.now()` and

@@ -1,97 +1,119 @@
-/** Dedicated worker messaging preserves candidate ownership and bounded execution. */
+/** Native worker endpoints preserve parent/child ports without confusing realm-local handle IDs. */
 use super::*;
 
-impl Runtime {
-    /** Link ownership is local to this parent/worker pair and cannot be redirected by a message. */
-    pub(in crate::runtime) fn worker_links(
-        &self,
-        page: &mut Page,
-        id: u32,
+impl Workers {
+    /** Only fresh channel transfers are supported; existing V9 retransfer refusals remain enforced. */
+    fn link_ports(
+        &mut self,
+        from: &[u32],
+        to: &[u32],
         ports: &[u64],
         moved: &[u64],
     ) -> EngineResult<()> {
         super::super::frame_router::validate_ports(ports, moved)?;
-        let added = ports
-            .iter()
-            .filter(|link| {
-                !moved.contains(link) && !page.scripting.workers.links.contains_key(link)
-            })
-            .count();
-        if added + page.scripting.workers.links.len() > WORKER_TASKS {
+        if !moved.is_empty() {
+            return Err(EngineError::invalid(
+                "Worker port retransfer is unsupported.",
+            ));
+        }
+        if ports.iter().any(|link| self.links.contains_key(link)) {
+            return Err(EngineError::invalid(
+                "Worker port belongs to another context.",
+            ));
+        }
+        if self.links.len() + ports.len() > WORKER_TASKS {
             return Err(EngineError::limit("Worker port links", WORKER_TASKS));
         }
         for link in ports {
-            if moved.contains(link) && !page.scripting.workers.links.contains_key(link) {
-                continue;
-            }
-            if page
-                .scripting
-                .workers
-                .links
-                .get(link)
-                .is_some_and(|owner| *owner != id)
-            {
-                return Err(EngineError::invalid(
-                    "Worker port belongs to another context.",
-                ));
-            }
-            page.scripting.workers.links.insert(*link, id);
+            self.links.insert(*link, [from.to_vec(), to.to_vec()]);
         }
         Ok(())
     }
 
-    /** Consume only worker-owned port messages; frame routes retain every other message. */
+    /** Refused construction still closes every endpoint transferred to its unavailable receiver. */
+    pub(super) fn post(
+        &mut self,
+        from: &[u32],
+        to: &[u32],
+        id: u32,
+        data: crate::v9::WorkerData,
+        ports: Vec<u64>,
+        moved: Vec<u64>,
+    ) -> EngineResult<()> {
+        self.link_ports(from, to, &ports, &moved)?;
+        if to.is_empty() || self.contexts.contains_key(to) {
+            enqueue_to(self, to, PageEvent::WorkerMessage { id, data, ports })?;
+        } else {
+            for link in ports {
+                self.links.remove(&link);
+                enqueue_to(self, from, PageEvent::PortClose { link })?;
+            }
+        }
+        Ok(())
+    }
+
+    /** Port messages follow native paired endpoints, independently of each worker's local handle IDs. */
+    pub(super) fn port(&mut self, from: &[u32], message: crate::v9::PortMessage) -> EngineResult<bool> {
+        let Some(peer) = self
+            .links
+            .get(&message.link)
+            .and_then(|ends| opposite(ends, from))
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        enqueue_to(
+            self,
+            &peer,
+            PageEvent::PortMessage {
+                link: message.link,
+                data: message.data,
+            },
+        )?;
+        Ok(true)
+    }
+
+    /** A closing endpoint cannot consume its own previously queued input after closure. */
+    pub(super) fn close_port(&mut self, from: &[u32], link: u64) -> EngineResult<bool> {
+        let Some(peer) = self.close_link(link, from) else {
+            return Ok(false);
+        };
+        enqueue_to(self, &peer, PageEvent::PortClose { link })?;
+        Ok(true)
+    }
+}
+
+impl Runtime {
+    /** Root worker routes consume only their own effects; frame routes retain unrelated messages. */
     pub(in crate::runtime) fn worker_ports(&self, page: &mut Page) -> EngineResult<()> {
         let mut later = Vec::new();
         for message in std::mem::take(&mut page.scripting.port_outbox) {
-            if let Some(worker) = page
-                .scripting
-                .workers
-                .links
-                .get(&message.link)
-                .and_then(|id| page.scripting.workers.contexts.get_mut(id))
-            {
-                if worker.inbox.len() >= WORKER_TASKS {
-                    return Err(EngineError::limit("Worker inbox", WORKER_TASKS));
-                }
-                worker.inbox.push_back(PageEvent::PortMessage {
-                    link: message.link,
-                    data: message.data,
-                });
-            } else {
+            if !page.scripting.workers.port(&[], message.clone())? {
                 later.push(message);
             }
         }
         page.scripting.port_outbox = later;
-        let mut later_closes = Vec::new();
+        let mut later = Vec::new();
         for link in std::mem::take(&mut page.scripting.port_closes) {
-            let owner = page.scripting.workers.links.get(&link).copied();
-            if page.scripting.workers.close_link(link, None) {
-                if let Some(worker) =
-                    owner.and_then(|id| page.scripting.workers.contexts.get_mut(&id))
-                {
-                    if worker.inbox.len() >= WORKER_TASKS {
-                        return Err(EngineError::limit("Worker inbox", WORKER_TASKS));
-                    }
-                    worker.inbox.push_back(PageEvent::PortClose { link });
-                }
-            } else {
-                later_closes.push(link);
+            if !page.scripting.workers.close_port(&[], link)? {
+                later.push(link);
             }
         }
-        page.scripting.port_closes = later_closes;
+        page.scripting.port_closes = later;
         Ok(())
     }
 
-    /** Failures stay asynchronous and visible without fabricated messages or successful workers. */
+    /** Child errors target the creating realm's exact handle rather than the top-level document. */
     pub(in crate::runtime) fn worker_error(
         &self,
         page: &mut Page,
+        owner: &[u32],
         id: u32,
         message: &str,
     ) -> EngineResult<()> {
-        enqueue(
+        enqueue_to(
             &mut page.scripting.workers,
+            owner,
             PageEvent::WorkerError {
                 id,
                 message: message.into(),

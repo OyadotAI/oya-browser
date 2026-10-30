@@ -276,7 +276,7 @@ struct Tree<'a> {
     foreign_context: bool,
     /** An absolute `<base href>` that relative link, image, form and resource addresses resolve against. */
     base_url: Option<url::Url>,
-    /** Attribute and text bytes the page's metadata elements hold, bounded by METADATA_BYTES. */
+    /** Tags, attribute names/values and text retained for script metadata, bounded by METADATA_BYTES. */
     metadata_bytes: usize,
     /** Set just after a `<pre>` or `<listing>` start tag: a newline right after it is dropped,
     as HTML's in-body mode ignores the next LF token there. */
@@ -896,10 +896,8 @@ impl<'a> Tree<'a> {
         }
         title
     }
-    /// Keeps one page metadata element for scripts (MetadataElement): attributes recovered as a
-    /// node's are, and attribute values plus text within METADATA_BYTES for the page, so text
-    /// is dropped first and the element only when its attributes alone do not fit. Nothing past
-    /// METADATA_ELEMENTS is kept. Script-inserted markup adds none: V9 holds what it built.
+    /// Retain complete nonlayout DOM records within shared count and aggregate byte budgets.
+    /// Fragment markup is held by V9 instead. Whole omitted records remain explicitly diagnosed.
     fn metadata(&mut self, tag: &str, attrs: &markup::Attributes, text: String) {
         if self.fragment {
             return;
@@ -908,31 +906,24 @@ impl<'a> Tree<'a> {
         for message in markup::recover(tag, &mut attributes) {
             self.diagnose(message);
         }
-        let bytes = attributes.values().map(String::len).sum::<usize>();
-        let fits = |used: usize, more: usize| used + more <= METADATA_BYTES;
-        if self.document.metadata.len() >= METADATA_ELEMENTS || !fits(self.metadata_bytes, bytes) {
-            self.diagnose("Metadata past the page bound is not visible to scripts.");
-            return;
-        }
-        let text = if fits(self.metadata_bytes + bytes, text.len()) {
-            text
-        } else {
-            self.diagnose("Metadata past the page bound is not visible to scripts.");
-            String::new()
-        };
-        self.metadata_bytes += bytes + text.len();
-        // Before any body content (no open element, no node yet) it belongs to the head, as
-        // HTML's "after head" mode puts it there; otherwise it stays where the source has it.
+        // Before body content, HTML's after-head recovery places metadata in the head.
         let in_head = self.head || self.stack.is_empty() && self.document.nodes.is_empty();
-        let in_body = !in_head;
-        self.document.metadata.push(MetadataElement {
+        let element = MetadataElement {
             tag: tag.into(),
             attributes,
             text,
-            in_body,
+            in_body: !in_head,
             parent: self.stack.last().map(|index| self.local(*index)),
             next: self.base + self.document.nodes.len(),
-        });
+        };
+        let bytes = mars_core::dom::metadata_element_bytes(&element);
+        let total = self.metadata_bytes.saturating_add(bytes);
+        if self.document.metadata.len() >= METADATA_ELEMENTS || total > METADATA_BYTES {
+            self.diagnose("Metadata past the page bound is not visible to scripts.");
+            return;
+        }
+        self.metadata_bytes = total;
+        self.document.metadata.push(element);
     }
     /** Linked sheets load in source order; one with a media condition carries it to the cascade. */
     fn link(&mut self, attrs: &markup::Attributes) {
@@ -1088,8 +1079,8 @@ impl<'a> Tree<'a> {
     /// A script element's attributes for its V9 head record, charged to the same METADATA_BYTES
     /// budget as metadata elements; past it the record keeps only its `src`.
     fn script_attributes(&mut self, attrs: &markup::Attributes) -> markup::Attributes {
-        let bytes = attrs.values().map(String::len).sum::<usize>();
-        if self.metadata_bytes + bytes > METADATA_BYTES {
+        let bytes = mars_core::dom::metadata_attribute_bytes(attrs);
+        if self.metadata_bytes.saturating_add(bytes) > METADATA_BYTES {
             self.diagnose("Metadata past the page bound is not visible to scripts.");
             return markup::Attributes::new();
         }
@@ -1462,14 +1453,7 @@ fn executable(attrs: &markup::Attributes) -> bool {
         return true;
     };
     let kind = kind.trim().to_ascii_lowercase();
-    kind.is_empty()
-        || [
-            "text/javascript",
-            "application/javascript",
-            "text/ecmascript",
-            "application/ecmascript",
-        ]
-        .contains(&kind.as_str())
+    kind.is_empty() || mars_core::http::is_javascript_mime_essence(&kind)
 }
 
 /** `<template shadowrootmode=open|closed>` declares a shadow root for its parent element. */

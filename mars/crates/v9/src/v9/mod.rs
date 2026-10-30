@@ -22,9 +22,11 @@ mod value;
 mod vm;
 mod web_worker;
 mod worker_clone;
-pub use platform::workers::{WORKER_TASKS, WorkerCommand};
+pub use platform::workers::{
+    WORKER_DEPTH, WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType,
+};
 pub use web_worker::ImportScriptsHost;
-pub use web_worker::load_worker;
+pub use web_worker::{load_worker, resume_worker_modules};
 pub use worker_clone::{WORKER_MESSAGE_BYTES, WorkerData};
 #[cfg(feature = "conformance")]
 mod worker_runtime;
@@ -36,18 +38,22 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 #[cfg(feature = "conformance")]
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
+pub use platform::blob_urls::BlobUrlSource;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
 pub use platform::frame_directory::{
-    FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
+    FrameContext, FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
 };
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
+pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
-    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
-    NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
+    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
+    ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
+    SimpleFragmentParser,
 };
+pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
@@ -553,8 +559,21 @@ impl VmState {
     }
     /// Check that retained node references fit the document the app just committed.
     pub fn validate_document(&self, document: &ScriptDocument) -> EngineResult<()> {
-        document.validate()?;
         self.validate(&Limits::default())?;
+        self.validate_document_references(document)
+    }
+    /// Check a resident service's heap-less projection without treating its object IDs as a full heap.
+    /// Only coordinators holding a resident state token may use this; restoring execution still uses
+    /// full validation, including native signal identities and observer callbacks.
+    pub fn validate_summary_document(&self, document: &ScriptDocument) -> EngineResult<()> {
+        let limits = Limits::default();
+        self.validate_projection_bounds(&limits, false)?;
+        self.validate_size(&limits)?;
+        self.validate_document_references(document)
+    }
+    /// Document identity and retained node ownership apply equally to full states and summaries.
+    fn validate_document_references(&self, document: &ScriptDocument) -> EngineResult<()> {
+        document.validate()?;
         if self.page.initialized && self.page.identity != document.identity {
             return Err(EngineError::invalid(
                 "V9 state belongs to another document.",
@@ -592,6 +611,10 @@ impl VmState {
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
         self.validate_bounds(limits)?;
+        self.validate_size(limits)
+    }
+    /// Even heap-less projections retain the private wire's encoded state ceiling.
+    fn validate_size(&self, limits: &Limits) -> EngineResult<()> {
         let mut writer = StateSizeWriter {
             bytes: 0,
             limit: limits.state_bytes,
@@ -611,6 +634,10 @@ impl VmState {
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
+        self.validate_projection_bounds(limits, true)
+    }
+    /// Page bounds are always checked; heap-linked identities require the complete resident state.
+    fn validate_projection_bounds(&self, limits: &Limits, full_heap: bool) -> EngineResult<()> {
         platform::clock::validate(self.page.clock, self.page.observed_clock, self.page.epoch)?;
         if self.page.legacy_handlers.len() > crate::constants::VM_DYNAMIC_SOURCES {
             return Err(EngineError::invalid("Invalid retained legacy handler."));
@@ -626,6 +653,8 @@ impl VmState {
             return Err(EngineError::invalid("Invalid Worker handles."));
         }
         if self.page.worker_imports.len() > platform::worker_global::imports::IMPORTS
+            || self.page.worker_depth > WORKER_DEPTH
+            || self.page.worker_name.is_none() && self.page.worker_depth != 0
             || self
                 .page
                 .worker_imports
@@ -666,7 +695,18 @@ impl VmState {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
+        if full_heap {
+            platform::intersection_observers::validate(&self.page, &self.heap)?;
+            platform::resize_observers::validate(&self.page, &self.heap)?;
+            platform::validate_network_state(&self.page, &self.heap)?;
+        } else {
+            platform::intersection_observers::validate_summary(&self.page)?;
+            platform::resize_observers::validate_summary(&self.page)?;
+            platform::validate_network_summary(&self.page)?;
+        }
+        platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
+        platform::canvas::path2d::validate(&self.page.path2d)?;
         platform::frame_directory::validate_state(&self.page)?;
         platform::channel::validate_bounds(&self.page)?;
         builtins::validate_shared(&self.heap)?;
@@ -747,6 +787,13 @@ impl VmState {
         if self.page.timers.len() > crate::constants::VM_TIMERS
             || self.page.listeners.len() > platform::events::LISTENERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
+            || self
+                .page
+                .parsed_scripts
+                .as_ref()
+                .is_some_and(|scripts| scripts.len() > crate::constants::SCRIPT_COUNT)
+            || self.page.dirty_options.len() > crate::constants::VM_DETACHED_NODES
+            || self.page.selected_options.len() > crate::constants::VM_DETACHED_NODES
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len().saturating_add({
                 #[cfg(feature = "conformance")]
@@ -800,6 +847,9 @@ pub struct Execution {
     /// Scripts an isolated page load stopped and rolled back, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<ScriptFailure>,
+    /// Whole-load finalization failed and returned a validated empty state; no script is blamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_failure: Option<EngineError>,
     /// Names the full state a V9 service kept for the next step, when it keeps states resident;
     /// `state` is then only its summary (see `VmState::summary`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1204,6 +1254,8 @@ fn session<'h>(
         document.validate()?;
     }
     storage.validate()?;
+    environment.handler_policy.validate()?;
+    mars_core::dom::validate_metadata(&environment.metadata, &environment.script_attributes)?;
     platform::clock::validate(0.0, 0.0, environment.time_origin_ms)?;
     platform::frames::validate_routes(environment, document.as_ref())?;
     platform::frame_directory::validate(environment)?;
@@ -1212,7 +1264,16 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
-    if state.page.initialized && state.page.worker_name != environment.worker_name {
+    if environment.worker_depth > WORKER_DEPTH
+        || environment.worker_name.is_none() && environment.worker_depth != 0
+    {
+        return Err(EngineError::invalid("Invalid worker nesting profile."));
+    }
+    if state.page.initialized
+        && (state.page.worker_name != environment.worker_name
+            || state.page.worker_depth != environment.worker_depth
+            || state.page.worker_module != environment.worker_module)
+    {
         return Err(EngineError::invalid(
             "V9 state belongs to another global profile.",
         ));
@@ -1321,6 +1382,7 @@ fn session<'h>(
     }
     platform::images::validate_targets(&vm.page)?;
     platform::canvas::validate_targets(&mut vm)?;
+    platform::canvas::path2d::validate_targets(&mut vm)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),
@@ -1360,6 +1422,8 @@ fn initialize_page(vm: &mut Vm) {
     let environment = &vm.page.environment;
     state.identity = identity;
     state.worker_name = environment.worker_name.clone();
+    state.worker_depth = environment.worker_depth;
+    state.worker_module = environment.worker_module;
     state.charset = charset;
     state.epoch = environment.time_origin_ms;
     state.random = environment.random_seed;
@@ -1524,7 +1588,9 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.changes = saved.changes;
     vm.page.script_changes = saved.script_changes;
     vm.page.effects.requests = saved.effects.requests;
+    vm.page.effects.cancelled_requests = saved.effects.cancelled_requests;
     vm.page.effects.image_requests = saved.effects.image_requests;
+    vm.page.effects.image_cancellations = saved.effects.image_cancellations;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;
     vm.page.effects.worker_commands = saved.effects.worker_commands;
     vm.page.effects.worker_errors = saved.effects.worker_errors;
@@ -1577,8 +1643,15 @@ fn past_fraction(
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
+    if vm.page.environment.worker_name.is_some() {
+        vm.page.effects.worker_ready = Some(modules::worker_ready(&vm));
+    }
     platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
+    if !vm.page.sampled_observer_turn {
+        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
+        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+    }
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
@@ -1644,6 +1717,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         state,
         storage,
         failed: Vec::new(),
+        load_failure: None,
         state_token: None,
         effects,
         module_requests,
@@ -1705,13 +1779,11 @@ fn load_isolated(
     if resume {
         run_dynamic_imports(&mut vm);
     }
+    let mut load_failure = None;
     let execution = match finish(vm) {
         Ok(execution) => execution,
         Err(error) => {
-            failed.extend(ran.into_iter().map(|index| ScriptFailure {
-                index,
-                error: error.clone(),
-            }));
+            load_failure = Some(error);
             let empty = PageInput {
                 sources: &[],
                 source_keys: &[],
@@ -1739,6 +1811,7 @@ fn load_isolated(
     failed.sort_by_key(|failure| failure.index);
     Ok(Execution {
         failed,
+        load_failure,
         ..execution
     })
 }
@@ -1755,11 +1828,22 @@ fn run_sources(
     failed: &mut Vec<ScriptFailure>,
     ran: &mut Vec<usize>,
 ) -> EngineResult<()> {
-    let elements = vm.page.script_elements(codes.len())?;
+    let elements = vm.page.script_elements(codes.len().min(SCRIPT_COUNT))?;
     if fresh {
         platform::scripts::parsed_sheets(vm).map_err(fatal)?;
     }
     for (index, code) in codes.iter().enumerate().skip(from) {
+        if index >= SCRIPT_COUNT {
+            failed.push(failure(
+                index,
+                EngineError::limit("classic scripts", SCRIPT_COUNT),
+            ));
+            continue;
+        }
+        if vm.page.environment.refused_scripts.contains(&index) {
+            platform::scripts::completed(vm, elements[index], "error")?;
+            continue;
+        }
         if let Some(kind) = vm.modules.entry(index) {
             if kind == EntryKind::Module {
                 match modules::run_entry(vm, index) {
@@ -1780,6 +1864,7 @@ fn run_sources(
             Ok(code) => code.clone(),
             Err(error) => {
                 failed.push(failure(index, error.clone()));
+                parsed_script_completed(vm, elements[index], index)?;
                 continue;
             }
         };
@@ -1805,7 +1890,22 @@ fn run_sources(
                 failed.push(ScriptFailure { index, error });
             }
         }
-        vm.page.current_script = None;
+        parsed_script_completed(vm, elements[index], index)?;
+    }
+    Ok(())
+}
+
+/** Successful acquisition still fires load when evaluating the script reports an exception. */
+fn parsed_script_completed(vm: &mut Vm, element: usize, index: usize) -> EngineResult<()> {
+    vm.page.current_script = None;
+    if vm
+        .page
+        .environment
+        .scripts
+        .get(index)
+        .is_some_and(|src| !src.is_empty())
+    {
+        platform::scripts::completed(vm, element, "load")?;
     }
     Ok(())
 }
@@ -2064,6 +2164,32 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
     }
 }
 
+/// Resample measured viewport geometry and deliver only observer callbacks, without firing author timers.
+pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        platform::resize_observers::advance(&mut vm, true).map_err(fatal)?;
+        finish(vm)
+    })
+}
+
+/// Continue after actual host layout, or finalize at the host deadline without broadcasting again.
+pub fn continue_resize_observers(
+    input: PageInput<'_>,
+    state: VmState,
+    complete: bool,
+) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        if complete {
+            platform::resize_observers::complete(&mut vm).map_err(fatal)?;
+        } else {
+            platform::resize_observers::advance(&mut vm, false).map_err(fatal)?;
+        }
+        finish(vm)
+    })
+}
+
 /// A person typed into a field the app already updated: V9 records the value (None for a
 /// secret field, whose value never enters the engine) and fires trusted `input` and `change`
 /// events at the node, so a form's script learns what was typed.
@@ -2078,7 +2204,12 @@ pub fn input_page(
         if !vm.page.exists(target) {
             return Err(EngineError::invalid("Invalid projected input target."));
         }
-        if let Some(value) = value {
+        if vm.page.tag(target) == "select" {
+            for option in vm.page.select_options(target) {
+                vm.page.state.selected_options.remove(&option);
+                vm.page.state.dirty_options.insert(option);
+            }
+        } else if let Some(value) = value {
             vm.page.state.values.insert(target, value);
         }
         vm.remaining = vm.limits.operations;
@@ -2156,6 +2287,7 @@ fn run_timers_with(
         return Err(EngineError::invalid("Invalid V9 timer clock."));
     }
     vm.remaining = vm.limits.operations;
+    platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
     vm.run_due_timers(now_ms, budget).map_err(fatal)?;
     finish(vm)
 }
@@ -2311,6 +2443,7 @@ fn legacy_document(inputs: &[InputValue]) -> EngineResult<ScriptDocument> {
             continue;
         }
         nodes.push(ScriptNode {
+            selected: None,
             local_id: index,
             html_id: input.html_id.clone(),
             parent: None,
@@ -2639,7 +2772,7 @@ pub fn replay(
                 document.set_node_text(node, &text)?;
                 node_text.insert(node, text);
             }
-            ScriptChange::Value { .. } => {}
+            ScriptChange::Value { .. } | ScriptChange::Selection { .. } => {}
         }
     }
     if document.digest() != execution.structure {

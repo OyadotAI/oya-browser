@@ -5,6 +5,7 @@ pub mod authority;
 mod batch;
 /** Bookmarks the person saves; desktop-owned, persisted through the profile record store. */
 pub mod bookmarks;
+mod cancellation;
 mod csp;
 mod demo;
 /** Native operations behind the CDP front door: evaluation, the DOM view, cookies, emulation and
@@ -24,6 +25,7 @@ mod horizontal;
 mod images;
 mod integrity;
 mod interaction;
+mod intersections;
 mod languages;
 mod lifetime;
 /** The Oya server link's way into the runtime, under the same ownership checks as local agents. */
@@ -37,6 +39,7 @@ mod page;
 pub mod persona;
 mod presentation;
 mod residency;
+mod resize_observers;
 mod resources;
 /** Per-engine crash restart (CB-23). */
 mod restart;

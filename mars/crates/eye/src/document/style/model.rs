@@ -165,6 +165,27 @@ pub struct ComputedStyle {
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
+    /// Resolved keyframes stay separate from authored opacity and sampled runtime presentation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub opacity_animations: Vec<super::OpacityAnimation>,
+    /// Important authored opacity suppresses animation effects without restarting their clocks.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub opacity_animation_blocked: bool,
+    /// Rotation keyframes preserve authored angles separately from static transforms and paint samples.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rotation_animations: Vec<super::RotationAnimation>,
+    /// Important transform declarations suppress rotation animation without resetting its clock.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rotation_animation_blocked: bool,
+    /// Scale keyframes remain separate from both authored transforms and sampled presentation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scale_animations: Vec<super::ScaleAnimation>,
+    /// Important transform declarations suppress scale playback without resetting its clock.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scale_animation_blocked: bool,
+    /// Authored transition lists remain separate from sampled paint opacity and do not inherit.
+    #[serde(skip_serializing_if = "super::TransitionStyle::is_initial")]
+    pub transition: super::TransitionStyle,
     /// Inherited base direction from the `dir` attribute; it maps start and end alignment.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub rtl: bool,
@@ -201,6 +222,15 @@ pub struct ComputedStyle {
     /// 2D affine transform (a, b, c, d, e, f) about the box's transform origin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<[f64; 6]>,
+    /// Flattened matrices lose transform function identity; retain exclusions for bounded interpolation.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub transform_animation_excluded: bool,
+    /// A single authored 2D rotate() keeps its unwrapped angle; matrices cannot recover full turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_radians: Option<f64>,
+    /// A single authored scale/scaleX/scaleY retains independent factors; matrix lookalikes do not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_factors: Option<[f64; 2]>,
     /// Inherited: the nearest author declaration removed link underlines.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_decoration_none: bool,
@@ -850,6 +880,13 @@ impl Default for ComputedStyle {
             min_width: None,
             min_width_percent: None,
             opacity: 1.0,
+            opacity_animations: Vec::new(),
+            opacity_animation_blocked: false,
+            rotation_animations: Vec::new(),
+            rotation_animation_blocked: false,
+            scale_animations: Vec::new(),
+            scale_animation_blocked: false,
+            transition: super::TransitionStyle::default(),
             rtl: false,
             position: Position::Static,
             inset: [None; 4],
@@ -862,6 +899,9 @@ impl Default for ComputedStyle {
             text_shadows: Vec::new(),
             backgrounds: Vec::new(),
             transform: None,
+            transform_animation_excluded: false,
+            rotation_radians: None,
+            scale_factors: None,
             text_decoration_none: false,
             font_weight: super::constants::WEIGHT_NORMAL,
             letter_spacing: 0.0,

@@ -12,25 +12,37 @@ pub(super) fn may_frame(
     embedder: &url::Url,
     framed: &url::Url,
 ) -> bool {
-    let header = |name: &str| {
-        headers
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value)
-    };
-    let ancestors: Vec<&str> = header("content-security-policy")
-        .map(|value| value.split(',').filter_map(frame_ancestors).collect())
-        .unwrap_or_default();
+    let ancestors: Vec<&str> = headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case("content-security-policy"))
+        .flat_map(|(_, value)| value.split(',').filter_map(frame_ancestors))
+        .collect();
     if !ancestors.is_empty() {
         return ancestors
             .iter()
             .all(|sources| allows(sources, embedder, framed));
     }
-    !header("x-frame-options").is_some_and(|value| {
-        let value = value.split(',').next().unwrap_or("").trim();
-        value.eq_ignore_ascii_case("deny")
-            || value.eq_ignore_ascii_case("sameorigin") && embedder.origin() != framed.origin()
-    })
+    !headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case("x-frame-options"))
+        .flat_map(|(_, value)| value.split(','))
+        .any(|value| {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("deny")
+                || value.eq_ignore_ascii_case("sameorigin") && embedder.origin() != framed.origin()
+        })
+}
+
+/** Nested embedding checks every actual ancestor against the final response document's origin. */
+pub(super) fn may_frame_chain(
+    headers: &[(String, String)],
+    ancestors: &[String],
+    framed: &url::Url,
+) -> bool {
+    !ancestors.is_empty()
+        && ancestors.iter().all(|ancestor| {
+            url::Url::parse(ancestor).is_ok_and(|ancestor| may_frame(headers, &ancestor, framed))
+        })
 }
 
 /** The source list of one policy's `frame-ancestors` directive, if it has one. */
@@ -169,5 +181,57 @@ mod tests {
         let mut headers = csp("frame-ancestors https://www.google.com");
         headers.push(("x-frame-options".into(), "DENY".into()));
         assert!(may_frame(&headers, &page(), &page()));
+    }
+    /** A same-origin immediate parent cannot exempt a cross-origin root ancestor. */
+    #[test]
+    fn every_ancestor_must_match_the_final_document_policy() {
+        let ancestors = vec![page().to_string(), other().to_string()];
+        assert!(!may_frame_chain(
+            &csp("frame-ancestors 'self'"),
+            &ancestors,
+            &other()
+        ));
+        assert!(!may_frame_chain(
+            &[("X-Frame-Options".into(), "SAMEORIGIN".into())],
+            &ancestors,
+            &other()
+        ));
+        assert!(may_frame_chain(
+            &csp("frame-ancestors https://*.google.com"),
+            &ancestors,
+            &other()
+        ));
+    }
+
+    /** Redirected response origin, rather than the requested src, defines CSP self. */
+    #[test]
+    fn final_response_origin_defines_self_after_a_redirect() {
+        let ancestors = vec![page().to_string()];
+        assert!(may_frame_chain(
+            &csp("frame-ancestors 'self'"),
+            &ancestors,
+            &page()
+        ));
+        assert!(!may_frame_chain(
+            &csp("frame-ancestors 'self'"),
+            &ancestors,
+            &other()
+        ));
+    }
+
+    /** Separately delivered CSP headers all enforce their ancestor restrictions. */
+    #[test]
+    fn repeated_and_combined_policies_all_apply() {
+        let mut headers = csp("frame-ancestors https:");
+        headers.push((
+            "Content-Security-Policy".into(),
+            "frame-ancestors 'none'".into(),
+        ));
+        assert!(!may_frame_chain(&headers, &[page().to_string()], &other()));
+        assert!(!may_frame_chain(
+            &csp("frame-ancestors https:, frame-ancestors 'none'"),
+            &[page().to_string()],
+            &other()
+        ));
     }
 }

@@ -104,6 +104,8 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         }
     }
     let mut tokens: Vec<Token> = Vec::new();
+    let mut parentheses = Vec::new();
+    let mut closed_header = false;
     // True entries are open template substitutions; false entries are ordinary braces.
     let mut braces: Vec<bool> = Vec::new();
     loop {
@@ -132,7 +134,7 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         let location = source.location();
         let exact_strict = source.rest().starts_with("\"use strict\"")
             || source.rest().starts_with("'use strict'");
-        let regex = regex_allowed(tokens.last().map(|token| &token.kind));
+        let regex = closed_header || regex_allowed(tokens.last().map(|token| &token.kind));
         let text = source.rest();
         let template_close = source.peek() == Some('}') && braces.last() == Some(&true);
         let kind = match next_kind(&mut source, &mut braces, regex) {
@@ -145,6 +147,14 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
                 error.phase = Some("scan".into());
                 return Err(errors::located(error, location, "scan"));
             }
+        };
+        closed_header = match &kind {
+            Kind::Symbol('(') => {
+                parentheses.push(control_header(&tokens));
+                false
+            }
+            Kind::Symbol(')') => parentheses.pop().unwrap_or(false),
+            _ => false,
         };
         let consumed = text.len() - source.rest().len();
         let escaped = matches!(kind, Kind::Name(_)) && text[..consumed].contains('\\');
@@ -490,4 +500,27 @@ fn mutation_token(source: &str) -> Option<(&'static str, Kind)> {
     ]
     .into_iter()
     .find(|(spelling, _)| source.starts_with(spelling))
+}
+
+/** A statement header allows a following regex; calls and grouped expressions allow division.
+The stack has at most TOKENS entries, bounded by the scanner's existing token limit. */
+fn control_header(tokens: &[Token]) -> bool {
+    let mut end = tokens.len();
+    if tokens
+        .last()
+        .is_some_and(|t| !t.escaped && matches!(&t.kind, Kind::Name(n) if n == "await"))
+    {
+        end = end.saturating_sub(1);
+    }
+    let Some(keyword) = end.checked_sub(1).and_then(|i| tokens.get(i)) else {
+        return false;
+    };
+    if keyword.escaped
+        || !matches!(&keyword.kind, Kind::Name(n) if ["if", "while", "for", "with", "switch", "catch"].contains(&n.as_str()))
+    {
+        return false;
+    }
+    !end.checked_sub(2)
+        .and_then(|i| tokens.get(i))
+        .is_some_and(|t| matches!(t.kind, Kind::Symbol('.') | Kind::Punct("?.")))
 }

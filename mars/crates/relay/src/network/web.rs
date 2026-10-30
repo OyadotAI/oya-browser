@@ -124,7 +124,14 @@ impl Prepared {
             .min(WEB_TIMEOUT);
         let deadline = Instant::now() + budget;
         let fixture = fixture_granted(&url, grants);
-        let key = cache::Key::of(&request, &url, fixture);
+        // CORS images bypass the older URL-only HTTP cache; the coordinator reuses only mode-bound admitted images.
+        let key = if request.destination == Destination::Image
+            && request.mode == Some(super::cors::Mode::Cors)
+        {
+            None
+        } else {
+            cache::Key::of(&request, &url, fixture)
+        };
         let get = request.method == Method::Get;
         let lookup = match key.as_ref().filter(|_| get) {
             Some(key) => cache::lookup(key, &request, SystemTime::now()),
@@ -211,18 +218,32 @@ impl Prepared {
             .map(cache::Stored::validators)
             .unwrap_or_default();
         let get = request.method == Method::Get;
-        let (response, address) =
-            match send(channel, &url, fixture, &request, &conditional, deadline) {
-                Ok(sent) => sent,
-                Err(Failure::Retryable(_)) if reused => {
-                    drop(lease);
-                    let (fresh, _) = acquire(&url, fixture, get, false, deadline)?;
-                    let _lease = fresh.lease(deadline)?;
-                    send(fresh, &url, fixture, &request, &conditional, deadline)
-                        .map_err(Failure::error)?
-                }
-                Err(failure) => return Err(failure.error()),
-            };
+        let (response, address) = match send(
+            channel,
+            lease,
+            &url,
+            fixture,
+            &request,
+            &conditional,
+            deadline,
+        ) {
+            Ok(sent) => sent,
+            Err(Failure::Retryable(_)) if reused => {
+                let (fresh, _) = acquire(&url, fixture, get, false, deadline)?;
+                let lease = fresh.lease(deadline)?;
+                send(
+                    fresh,
+                    lease,
+                    &url,
+                    fixture,
+                    &request,
+                    &conditional,
+                    deadline,
+                )
+                .map_err(Failure::error)?
+            }
+            Err(failure) => return Err(failure.error()),
+        };
         let now = SystemTime::now();
         let body::Response {
             status,
@@ -315,6 +336,7 @@ fn open(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Channel> {
  */
 fn send(
     channel: Channel,
+    lease: Option<lease::Lease>,
     url: &Url,
     fixture: bool,
     request: &WebRequest,
@@ -332,6 +354,8 @@ fn send(
         Channel::Http1(connection) => {
             let (response, connection) =
                 send_http1(connection, url, request, conditional, deadline)?;
+            // Join the deadline closer before another request can acquire this same OS socket.
+            drop(lease);
             if response.reusable && request.method == Method::Get && request.preflight.is_none() {
                 pool::POOL.checkin(url, fixture, connection);
             }
@@ -415,12 +439,12 @@ fn finish(
     let declared = charset
         .as_deref()
         .and_then(mars_core::http::encoding_for_label)
-        .filter(|_| !image_data && !download)
+        .filter(|_| !image_data && !download && !request.raw_response)
         .map(str::to_owned);
     Ok(WebResponse {
         url: url.into(),
         status,
-        source: if image_data || download {
+        source: if image_data || download || request.raw_response {
             base64(&body)
         } else if matches!(
             request.destination,
@@ -431,6 +455,7 @@ fn finish(
             mime::decode(body, charset.as_deref())?
         },
         image_data,
+        raw_data: request.raw_response,
         mime,
         location: headers.get("location").cloned(),
         set_cookies,
@@ -442,6 +467,10 @@ fn finish(
             .cloned(),
         headers: match request.destination {
             Destination::Empty => super::cors::response_headers(&headers),
+            Destination::Image => IMAGE_CORS_HEADERS
+                .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
             // A document keeps the headers that say who may frame it, for the coordinator's
             // check before it embeds the document in another origin's page.
             Destination::Document | Destination::Worker => FRAMING_HEADERS
@@ -455,6 +484,11 @@ fn finish(
 
 /// Response headers a document carries to the coordinator: who may frame it.
 const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
+/** Only the host's CORS admission sees these image response headers; they never enter page script data. */
+const IMAGE_CORS_HEADERS: [&str; 2] = [
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+];
 
 /**
  * Whether a response is a file to save rather than a page: only a top-level GET, and only when the
@@ -510,7 +544,7 @@ fn exchange(url: &Url, grants: &[String], deadline: Instant) -> EngineResult<bod
     let fixture = fixture_granted(url, grants);
     let channel = open(url, fixture, deadline)?;
     let request = WebRequest::get(url.as_str());
-    send(channel, url, fixture, &request, &[], deadline)
+    send(channel, None, url, fixture, &request, &[], deadline)
         .map(|(response, _)| response)
         .map_err(Failure::error)
 }

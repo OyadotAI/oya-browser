@@ -373,9 +373,12 @@ fn emit_client_hello_for_retry(
             }
         }
 
-        // Mars: Chrome's one-byte GREASE key share leads the list.
-        if let Some(grease) = input.hello.grease {
-            shares.insert(0, KeyShareEntry::new(NamedGroup::from(grease.group), vec![0u8]));
+        // A requested-group HRR replaces the list with exactly that share (RFC8446
+        // section 4.1.2). Keep GREASE only on initial and cookie-only retry hellos.
+        if !retryreq.is_some_and(|rr| rr.key_share.is_some()) {
+            if let Some(grease) = input.hello.grease {
+                shares.insert(0, KeyShareEntry::new(NamedGroup::from(grease.group), vec![0u8]));
+            }
         }
 
         exts.key_shares = Some(shares);

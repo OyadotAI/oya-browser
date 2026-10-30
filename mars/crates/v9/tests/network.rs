@@ -55,6 +55,7 @@ fn fetch_records_and_resumes() {
         headers: vec![("content-type".into(), "application/json".into())],
         body: "{\"items\":[{\"name\":\"a\"},{\"name\":\"b\"}]}".into(),
         error: None,
+        ..HostResponse::default()
     };
     let resumed = answer(&sources, loaded.state, vec![response]);
     assert_eq!(console(&resumed), ["true 200 application/json", "2 b"]);

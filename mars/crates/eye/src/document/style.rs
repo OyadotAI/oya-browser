@@ -5,6 +5,9 @@ mod all;
  * refuse the page. Dropped rules that could have hidden content withdraw agent actionability.
  */
 mod animation;
+pub use animation::{
+    AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
+};
 mod apply;
 mod attr;
 pub(crate) mod background_layers;
@@ -55,6 +58,13 @@ mod shorthand;
 mod subjects;
 mod syntax;
 mod text_align;
+mod transition;
+pub use animation::{RotationAnimation, RotationAnimations, RotationKeyframe};
+pub use animation::{ScaleAnimation, ScaleAnimations, ScaleKeyframe};
+pub use transition::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use transition::{Rotation, RotationTransitions};
+pub use transition::{Scale, ScaleTransitions};
+pub use transition::{Translation, TranslationTransitions};
 pub(crate) mod text_box;
 mod ua;
 mod urls;

@@ -19,6 +19,8 @@ results to the shaped one; that is the whole reason for the fork.
 - `src/client/hs.rs`: applies the shaping while building the hello; the GREASE ECH outer from
   random bytes shares `EchStatus::Grease`, so retry configs are ignored and a retry carries it;
   extra extensions count as sent, so a server answering one is not "unsolicited".
+  A HelloRetryRequest selecting a group emits exactly that key share; GREASE key shares
+  remain on initial and cookie-only retry hellos.
 - `src/msgs/handshake.rs`: `ClientExtensions.grease` and `.extra` with their encoding,
   `SupportedProtocolVersions.grease`, and `CertificateExtensions` reads (and ignores) SCTs.
 - `Cargo.toml`: the `[[example]]` and `[[bench]]` targets whose files the registry crate does not

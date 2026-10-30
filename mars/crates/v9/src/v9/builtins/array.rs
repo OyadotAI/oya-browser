@@ -386,6 +386,21 @@ enum Walk {
     FindIndex,
 }
 
+/** Own dense data needs one lookup for both presence and value. Descriptor definitions vacate
+their element slot; holes, sparse/repeated storage and exotic receivers keep the generic path. */
+fn walk_dense_value(vm: &Vm, object: &JsValue, index: usize) -> Option<JsValue> {
+    let id = object.object()?;
+    #[cfg(feature = "conformance")]
+    if super::shared_container_active(vm, id) {
+        return None;
+    }
+    let Class::Array(elements) = &vm.heap.get(id)?.class else {
+        return None;
+    };
+    let value = elements.dense_slice()?.get(index)?;
+    (*value != JsValue::Hole).then(|| value.clone())
+}
+
 /** Shared loop for the callback methods. */
 fn walk(vm: &mut Vm, call: Call, name: &str, mode: Walk, reverse: bool) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, name)?;
@@ -401,10 +416,14 @@ fn walk(vm: &mut Vm, call: Call, name: &str, mode: Walk, reverse: bool) -> Res<J
     for step in 0..length {
         vm.charge(1)?;
         let index = if reverse { length - 1 - step } else { step };
-        if skips_holes && !has_index(vm, &object, index)? {
-            continue;
-        }
-        let value = get_index(vm, &object, index)?;
+        let value = if let Some(value) = walk_dense_value(vm, &object, index) {
+            value
+        } else {
+            if skips_holes && !has_index(vm, &object, index)? {
+                continue;
+            }
+            get_index(vm, &object, index)?
+        };
         let outcome = vm.call(
             function.clone(),
             this_arg.clone(),

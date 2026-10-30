@@ -262,6 +262,7 @@ impl Runtime {
             return Ok(None);
         }
         let script = ScriptRequest {
+            raw_response: false,
             worker_policy: None,
             url,
             method: Method::Get,
@@ -282,13 +283,7 @@ impl Runtime {
             .or_else(|| page.scripting.modules.integrity.get(&request.url));
         let verified = integrity
             .is_none_or(|metadata| super::integrity::matches(metadata, response.source.as_bytes()));
-        let javascript = [
-            "text/javascript",
-            "application/javascript",
-            "text/ecmascript",
-            "application/ecmascript",
-        ]
-        .contains(&response.mime.as_str());
+        let javascript = mars_core::http::is_javascript_mime_essence(&response.mime);
         Ok((response.status == 200 && javascript && verified).then_some(response.source))
     }
 }

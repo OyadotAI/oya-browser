@@ -399,6 +399,15 @@ fn completion(vm: &Vm, key: &str) -> Option<(ObjectId, PromiseState)> {
     }
 }
 
+/** Dedicated module workers accept messages only after their entry evaluation promise fulfills. */
+pub(in crate::v9) fn worker_ready(vm: &Vm) -> bool {
+    !vm.page.environment.worker_module
+        || matches!(
+            completion(vm, &vm.modules.entry_key(0)),
+            Some((_, PromiseState::Fulfilled(_)))
+        )
+}
+
 /** Fail a module without running it, because a dependency failed. */
 fn reject(vm: &mut Vm, key: &str, error: JsValue) -> Res<()> {
     if let Some((promise, _)) = completion(vm, key) {
@@ -714,6 +723,13 @@ pub(super) fn refused_native(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** An async module script failed after the load moved on: report it as uncaught. */
 pub(super) fn report_native(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.report_error(&call.arg(0));
+    if vm.page.environment.worker_name.is_some() {
+        crate::v9::platform::workers::report_exception(vm, &call.arg(0))?;
+        if vm.page.environment.worker_module && !worker_ready(vm) {
+            crate::v9::platform::workers::close(vm, call)?;
+        }
+    } else {
+        vm.report_error(&call.arg(0));
+    }
     Ok(JsValue::Undefined)
 }

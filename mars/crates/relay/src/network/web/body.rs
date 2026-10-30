@@ -1,5 +1,5 @@
-use super::super::headers::insert_field;
 /** Bounded HTTP status, headers and chunk framing are implemented in Oya. */
+use super::super::headers::insert_field;
 use super::encoding;
 use super::transport::{Connection, READ_CHUNK};
 use crate::constants::{CHUNK_FRAMING_BYTES, HEADER_BYTES, HTML_BYTES, IMAGE_BYTES};
@@ -23,6 +23,11 @@ pub(super) struct Response {
 
 /** RFC 9110 section 6.4.1: these statuses never carry content, whatever the headers say. */
 const BODYLESS: [u16; 2] = [204, 304];
+/** Informational heads share the total header budget and also have an independent count bound. */
+const INFORMATIONAL_RESPONSES: usize = 8;
+
+#[cfg(test)]
+mod informational_tests;
 
 /**
  * Header bytes and decoded body have independent budgets. `initial` holds bytes the caller
@@ -36,21 +41,23 @@ pub(super) fn response(
     head: bool,
     initial: Vec<u8>,
 ) -> EngineResult<Response> {
+    let mut read = |bytes: &mut [u8]| connection.read(bytes, deadline);
     let mut input = Input {
-        connection,
-        deadline,
+        read: &mut read,
         bytes: initial,
         position: 0,
     };
-    let status_line = input.line(HEADER_BYTES, header_limit)?;
-    let (persistent, status) = status(&status_line)?;
-    let mut used = status_line.len() + 2;
-    let (headers, set_cookies) = headers(&mut input, &mut used)?;
+    parsed_response(&mut input, image, head)
+}
+
+/** Parsing consumes one buffered cursor so interim heads never discard bytes of the final response. */
+fn parsed_response(input: &mut Input<'_>, image: bool, head: bool) -> EngineResult<Response> {
+    let (persistent, status, headers, set_cookies) = final_head(input)?;
     let limit = if image { IMAGE_BYTES } else { HTML_BYTES };
     let (body, framed) = if head || BODYLESS.contains(&status) {
         (Vec::new(), true)
     } else {
-        body(&mut input, &headers, limit)?
+        body(input, &headers, limit)?
     };
     let body = encoding::decode(
         body,
@@ -72,6 +79,38 @@ pub(super) fn response(
         body,
         reusable,
     })
+}
+
+/** Only final headers reach body framing; HTTP protocol upgrades are explicitly unsupported. */
+fn final_head(
+    input: &mut Input<'_>,
+) -> EngineResult<(bool, u16, BTreeMap<String, String>, Vec<String>)> {
+    let mut used = 0usize;
+    let mut informational = 0usize;
+    loop {
+        let line = input.line(HEADER_BYTES.saturating_sub(used), header_limit)?;
+        used += line.len() + 2;
+        if used > HEADER_BYTES {
+            return Err(header_limit());
+        }
+        let (persistent, status) = status(&line)?;
+        if status == 101 {
+            return Err(EngineError::unsupported(
+                "HTTP protocol upgrades are not supported.",
+            ));
+        }
+        let (headers, cookies) = headers(input, &mut used)?;
+        if !(100..200).contains(&status) {
+            return Ok((persistent, status, headers, cookies));
+        }
+        informational += 1;
+        if informational > INFORMATIONAL_RESPONSES {
+            return Err(EngineError::limit(
+                "HTTP informational responses",
+                INFORMATIONAL_RESPONSES,
+            ));
+        }
+    }
 }
 
 /** Set-Cookie stays a list of separate fields; every other name goes through `insert_field`. */
@@ -177,10 +216,8 @@ fn chunked(input: &mut Input<'_>, limit: usize) -> EngineResult<Vec<u8>> {
 
 /** A small buffered cursor avoids allocating for the entire encoded response. */
 struct Input<'a> {
-    /** Exact-address transport with an absolute deadline. */
-    connection: &'a mut Connection,
-    /** Shared across every read and redirect. */
-    deadline: Instant,
+    /** Production closure retains the exact connection and absolute deadline; buffered fixtures need no I/O. */
+    read: &'a mut dyn FnMut(&mut [u8]) -> EngineResult<usize>,
     /** At most one socket read chunk (or the caller's probe bytes) is retained. */
     bytes: Vec<u8>,
     /** Next unread byte within that chunk. */
@@ -192,7 +229,7 @@ impl Input<'_> {
     fn byte(&mut self) -> EngineResult<Option<u8>> {
         if self.position == self.bytes.len() {
             self.bytes.resize(READ_CHUNK, 0);
-            let length = self.connection.read(&mut self.bytes, self.deadline)?;
+            let length = (self.read)(&mut self.bytes)?;
             self.bytes.truncate(length);
             self.position = 0;
             if length == 0 {

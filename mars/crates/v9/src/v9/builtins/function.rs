@@ -165,6 +165,23 @@ pub(in crate::v9) fn compile_indirect_eval(
     source: String,
 ) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
     vm.check_string_codegen()?;
+    compile_global_source(vm, source)
+}
+
+/** Admit only markup source through its own policy; nested eval retains the normal refusal. */
+pub(in crate::v9) fn evaluate_markup_handler(vm: &mut Vm, source: String) -> Res<Option<JsValue>> {
+    if !vm.page.environment.handler_policy.allows(&source) {
+        return Ok(None);
+    }
+    let code = compile_global_source(vm, format!("(function(event){{\n{source}\n}})"))?;
+    vm.run_script(code).map(Some)
+}
+
+/** Shared bounded compiler; callers must admit either eval or markup before reaching it. */
+fn compile_global_source(
+    vm: &mut Vm,
+    source: String,
+) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
     let origin = vm.capture_eval_origin()?;
     vm.prepare_dynamic(source.len().saturating_add(origin.bytes()))?;
     let native = vm.native_dynamic();

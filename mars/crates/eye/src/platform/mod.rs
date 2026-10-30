@@ -2,6 +2,8 @@
 pub mod autospace;
 mod canvas;
 pub use canvas::NativeCanvas;
+mod image;
+pub use image::decode_canvas_image;
 pub mod ignorable;
 pub mod segment;
 #[cfg(target_os = "macos")]

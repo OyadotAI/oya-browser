@@ -149,7 +149,9 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
 /** Rewrite node identities after the document adopted script-created nodes. */
 pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
+        vm.page.adopt_namespaces(*old, *new);
         super::images::adopt(&mut vm.page, *old, *new)?;
+        super::resize_observers::adopt(&mut vm.page, *old, *new);
         if let Some(mut canvas) = vm.page.state.canvases.remove(old) {
             canvas.dirty = true;
             vm.page.state.canvases.insert(*new, canvas);
@@ -2051,6 +2053,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "validationMessage" => JsValue::string("").map_err(Into::into),
         "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
         "attributes" => attr_dom::named_node_map(vm, node),
+        "value" if vm.page.tag(node) == "select" => {
+            JsValue::string(&vm.page.selected_value(node)).map_err(Into::into)
+        }
+        "value" if vm.page.tag(node) == "option" => {
+            JsValue::string(&vm.page.option_value(node)).map_err(Into::into)
+        }
         "value" => {
             let value = view
                 .as_ref()
@@ -2058,23 +2066,6 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .or_else(|| attribute("value"));
             match value {
                 Some(value) => JsValue::string(&value).map_err(Into::into),
-                None if vm.page.tag(node) == "select" => {
-                    let options = vm.page.descendants(node);
-                    let selected = options.into_iter().find(|option| {
-                        vm.page.view(*option).is_some_and(|view| {
-                            view.tag == "option" && view.attributes.contains_key("selected")
-                        })
-                    });
-                    let text = selected
-                        .map(|option| {
-                            vm.page
-                                .view(option)
-                                .and_then(|view| view.attributes.get("value").cloned())
-                                .unwrap_or_else(|| vm.page.text_content(option))
-                        })
-                        .unwrap_or_default();
-                    JsValue::string(&text).map_err(Into::into)
-                }
                 None if vm.page.tag(node) == "textarea" || vm.page.tag(node) == "option" => {
                     let text = vm.page.text_content(node);
                     JsValue::string(&text).map_err(Into::into)
@@ -2084,12 +2075,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "scrollWidth" if node == HTML || node == BODY => {
             let width = super::scrolling::document_width(vm);
-            let fallback = client_box(vm, node).2;
+            let fallback = layout_size(vm, node)[0];
             Ok(JsValue::Number(width.unwrap_or(fallback)))
         }
         "offsetWidth" | "offsetHeight" | "clientWidth" | "clientHeight" | "scrollWidth"
         | "scrollHeight" => {
-            let (_, _, width, height) = client_box(vm, node);
+            let [width, height] = layout_size(vm, node);
             let laid_out = !vm.page.environment.geometry.is_empty();
             let size = if name.ends_with("Width") {
                 width
@@ -2139,22 +2130,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             node_list(vm, options)
         }
         "selectedIndex" => {
-            let options: Vec<usize> = vm
+            let index = vm
                 .page
-                .descendants(node)
-                .into_iter()
-                .filter(|child| vm.page.tag(*child) == "option")
-                .collect();
-            let index = options.iter().position(|option| {
-                vm.page
-                    .view(*option)
-                    .is_some_and(|view| view.attributes.contains_key("selected"))
-            });
-            Ok(JsValue::Number(match index {
-                Some(index) => index as f64,
-                None if options.is_empty() => -1.0,
-                None => 0.0,
-            }))
+                .select_options(node)
+                .iter()
+                .position(|option| vm.page.is_selected(*option));
+            Ok(JsValue::Number(index.map_or(-1.0, |index| index as f64)))
         }
         "text" => {
             let text = vm.page.text_content(node);
@@ -2223,7 +2204,12 @@ fn element_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         name @ ("scrollTop" | "scrollLeft") => {
             super::scrolling::set_property(vm, node, name, &value)?;
         }
-        "selectedIndex" => {}
+        "selectedIndex" => {
+            let number = vm.to_number(&value)?;
+            vm.page
+                .select_index(node, crate::v9::value::to_int32(number))
+                .map_err(|error| dom_error(vm, error))?;
+        }
         _ => {}
     }
     Ok(JsValue::Undefined)
@@ -2368,6 +2354,9 @@ pub(in crate::v9) fn reflect_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Ok(JsValue::Undefined);
     };
     let name = native_name(&call);
+    if name == "selected" && vm.page.tag(node) == "option" {
+        return Ok(JsValue::Boolean(vm.page.is_selected(node)));
+    }
     let (attribute, kind) = reflected(name);
     let value = vm
         .page
@@ -2408,6 +2397,12 @@ fn reflect_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let (attribute, kind) = reflected(native_name(&call));
     let value = call.arg(0);
+    if native_name(&call) == "selected" && vm.page.tag(node) == "option" {
+        vm.page
+            .option_selected(node, value.truthy())
+            .map_err(|error| dom_error(vm, error))?;
+        return Ok(JsValue::Undefined);
+    }
     let result = match kind {
         Reflect::Boolean => {
             if value.truthy() {
@@ -3027,7 +3022,7 @@ pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     wrap_option(vm, found)
 }
 
-/** A DOMRect-like object; V9 does not lay out, so every box is empty. */
+/** A DOMRect-like object reports the native visual rectangle without changing layout measurements. */
 pub(super) fn rect(vm: &mut Vm, node: usize) -> Res<JsValue> {
     let id = vm.new_object()?;
     let (x, y, width, height) = client_box(vm, node);
@@ -3063,17 +3058,38 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
         );
     }
     match environment.geometry.iter().find(|b| b.node == node) {
-        Some(b) => (
-            b.x - environment.scroll_x,
-            b.y - environment.scroll_y,
-            b.width,
-            b.height,
-        ),
+        Some(b) => super::geometry::client(b, environment),
         None => {
             note_stale_geometry(vm, node);
             (0.0, 0.0, 0.0, 0.0)
         }
     }
+}
+
+/** Layout sizes ignore transforms; legacy hosts and missing boxes retain their established fallback. */
+pub(super) fn layout_size(vm: &mut Vm, node: usize) -> [f64; 2] {
+    if node == HTML || node == BODY {
+        return [
+            vm.page.environment.viewport_width,
+            vm.page
+                .environment
+                .geometry
+                .iter()
+                .map(super::geometry::layout_bottom)
+                .fold(vm.page.environment.viewport_height, f64::max),
+        ];
+    }
+    if let Some(bounds) = vm
+        .page
+        .environment
+        .geometry
+        .iter()
+        .find(|bounds| bounds.node == node)
+    {
+        return super::geometry::layout_size(bounds);
+    }
+    let (_, _, width, height) = client_box(vm, node);
+    [width, height]
 }
 
 /** Reports a read of a connected node newer than the last layout, which had no chance to give
@@ -3091,17 +3107,25 @@ fn note_stale_geometry(vm: &mut Vm, node: usize) {
 
 /** `elementFromPoint`: the last painted (topmost) box containing a client point, if any. */
 fn element_from_point(vm: &mut Vm, call: &Call) -> Res<Option<usize>> {
-    let x = vm.to_number(&call.arg(0))? + vm.page.environment.scroll_x;
-    let y = vm.to_number(&call.arg(1))? + vm.page.environment.scroll_y;
-    let hit = vm
-        .page
-        .environment
-        .geometry
-        .iter()
-        .rev()
-        .find(|b| x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height)
-        .map(|b| b.node);
-    Ok(hit.filter(|node| vm.page.exists(*node)))
+    Ok(elements_from_point(vm, call)?.into_iter().next())
+}
+
+/** Host paint order and actual transformed containment determine every DOM hit in the current realm. */
+fn elements_from_point(vm: &mut Vm, call: &Call) -> Res<Vec<usize>> {
+    let point = [vm.to_number(&call.arg(0))?, vm.to_number(&call.arg(1))?];
+    let hits = super::geometry::hits(&vm.page.environment, point);
+    let mut hits: Vec<_> = hits
+        .into_iter()
+        .filter(|node| vm.page.exists(*node))
+        .collect();
+    if !hits.is_empty() {
+        for wrapper in [BODY, HTML] {
+            if !hits.contains(&wrapper) {
+                hits.push(wrapper);
+            }
+        }
+    }
+    Ok(hits)
 }
 
 /** The encoding accessors every document has; only the main page's value comes from its parse. */
@@ -3256,6 +3280,7 @@ fn qualified_name(vm: &mut Vm, node: usize) -> String {
         // Only an HTML-namespace element in an HTML document upper-cases its name; an XHTML
         // document keeps the case the script gave.
         let html_element = record.namespace.as_deref() == Some(HTML_NAMESPACE);
+        let tag = vm.page.qualified_element_name(node);
         let document = owning_document_id(vm, node);
         let html_document =
             super::frames::content_type_of(vm, document) == super::frames::HTML_TYPE;
@@ -3407,11 +3432,7 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             wrap_option(vm, hit)
         }
         "elementsFromPoint" => {
-            let hit = element_from_point(vm, &call)?;
-            let mut chain = hit.map(|node| vec![node]).unwrap_or_default();
-            if let Some(node) = hit {
-                chain.extend(vm.page.ancestors(node));
-            }
+            let chain = elements_from_point(vm, &call)?;
             let mut wrapped = Vec::with_capacity(chain.len());
             for node in chain {
                 wrapped.push(wrap(vm, node)?);
@@ -3838,7 +3859,24 @@ pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-/** Constructors scripts may not call directly but need for instanceof. */
-pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    Err(vm.type_error("Illegal constructor"))
+/** Name the refusing interface from immutable native metadata, never an author-controlled name. */
+fn constructor_interface(call: &Call) -> &'static str {
+    let realm = realm();
+    realm
+        .object(call.callee)
+        .and_then(|object| object.call)
+        .and_then(|index| realm.natives.get(index as usize))
+        .or_else(|| realm.native(call.callee))
+        .map_or("DOM interface", |native| native.name)
+}
+
+/** These interfaces remain nonconstructible; diagnostics distinguish ordinary calls from new. */
+pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let name = constructor_interface(&call);
+    let reason = if call.new_target.is_some() {
+        "Illegal constructor"
+    } else {
+        "Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+    };
+    Err(vm.type_error(&format!("Failed to construct '{name}': {reason}")))
 }

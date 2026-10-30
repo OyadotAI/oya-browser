@@ -1,4 +1,7 @@
 /** One bounded worker serializes native UI and agent operations against one Runtime. */
+mod closing;
+pub(super) use closing::SaveTicket;
+
 use crate::{
     protocol::{EngineError, EngineResult, Request, Response},
     runtime::{
@@ -58,6 +61,8 @@ pub struct ProfileStores {
 pub(super) enum Command {
     /** Locally ordered edits rebase only within the same visible page generation. */
     Human {
+        /** Native command identity releases exactly its own in-flight UI slot. */
+        command_id: u64,
         op: String,
         params: Value,
         page: Option<String>,
@@ -89,9 +94,10 @@ pub(super) enum Command {
     /** "Clear browsing data" empties the network engine's HTTP cache. */
     CacheClear,
     /** A close decision saves session state on the runtime-owning worker. */
-    SaveSession(mpsc::SyncSender<bool>),
-    /** Explicit close-without-saving prevents the worker's final retry. */
-    DiscardSession(mpsc::SyncSender<()>),
+    SaveSession {
+        reply: mpsc::SyncSender<bool>,
+        active: Arc<AtomicBool>,
+    },
     /** Save Link fetches one address as the person, through the governed network path, for saving. */
     Download {
         id: u64,
@@ -100,12 +106,27 @@ pub(super) enum Command {
     },
 }
 
+/** A completion identifies work independently of whether its presentation is still current. */
+#[derive(Clone, Copy)]
+pub(super) struct Completion {
+    pub id: u64,
+}
+
 /// Replies are acknowledged only after the UI has consumed their immutable snapshot.
 pub(super) enum Event {
     /** A long agent action leaves the committed page visible while work continues. */
-    Loading(String),
+    Loading(String, Permit),
+    /** First paint is provisional and never completes a command. */
+    Preview {
+        snapshot: Box<BrowserSnapshot>,
+        permit: Option<Permit>,
+    },
     /** Successful startup and every completed engine action feed the same view. */
     Update {
+        /** Timer observations do not release any foreground operation slot. */
+        background: bool,
+        completion: Option<Completion>,
+        admission: Option<Permit>,
         snapshot: Box<BrowserSnapshot>,
         result: EngineResult<Value>,
         agent_id: Option<String>,
@@ -130,7 +151,10 @@ pub(super) enum Event {
         result: EngineResult<crate::runtime::downloads::Fetched>,
     },
     /** A navigation answered with a file instead of a page; the UI thread lists and saves it. */
-    NavigationDownload(crate::runtime::downloads::Fetched),
+    NavigationDownload {
+        fetched: crate::runtime::downloads::Fetched,
+        permit: Option<Permit>,
+    },
 }
 
 /// All tasks are cancellable and joined before the desktop owner exits.
@@ -144,6 +168,10 @@ pub(super) struct Broker {
     /** MCP close semantics are distinct from the existing NDJSON compatibility path. */
     pub transport: Transport,
     worker: Option<JoinHandle<()>>,
+    /** Explicit discard applies before the worker's final persistence retry. */
+    discard: Arc<AtomicBool>,
+    /** Cleanup stays owned while the main thread continues pumping native events. */
+    shutdown: Option<JoinHandle<()>>,
     io: Vec<JoinHandle<()>>,
     /** The attach hub and the endpoint it bound; the socket is removed when the window closes. */
     attach: Option<(mars::mcp::attach::Hub, mars::mcp::attach::Endpoint)>,
@@ -232,13 +260,26 @@ impl Broker {
         let stop = Arc::clone(&cancel);
         let mut hub = None;
         let io = match transport {
-            Transport::Native => super::io::start(
-                commands.clone(),
-                output,
-                authority.clone(),
-                cancel.clone(),
-                connected.clone(),
-            )?,
+            Transport::Native => {
+                #[cfg(feature = "test-support")]
+                let io = super::io::start_with_events(
+                    commands.clone(),
+                    updates.clone(),
+                    output,
+                    authority.clone(),
+                    cancel.clone(),
+                    connected.clone(),
+                )?;
+                #[cfg(not(feature = "test-support"))]
+                let io = super::io::start(
+                    commands.clone(),
+                    output,
+                    authority.clone(),
+                    cancel.clone(),
+                    connected.clone(),
+                )?;
+                io
+            }
             Transport::Mcp => super::mcp_io::start(
                 commands.clone(),
                 output,
@@ -252,7 +293,9 @@ impl Broker {
             }
             Transport::None => Vec::new(),
         };
+        let discard = Arc::new(AtomicBool::new(false));
         let start = WorkerStart {
+            discard: discard.clone(),
             program,
             origins,
             initial,
@@ -271,6 +314,8 @@ impl Broker {
             connected,
             transport,
             worker: Some(worker),
+            discard,
+            shutdown: None,
             io,
             attach: hub,
         })
@@ -306,50 +351,12 @@ impl Broker {
         self.connected.store(false, Ordering::Release);
         self.cancel.store(true, Ordering::Release);
     }
-    /** Invalidate queued human and agent permits before a close-save decision. */
-    pub fn begin_close(&self) {
-        if let Ok(mut authority) = self.authority.lock() {
-            authority.change(Owner::Human);
-        }
-    }
-    /** Ask the runtime owner to write the latest session and return only success state. */
-    pub fn save_session(&self) -> bool {
-        self.session_command(Command::SaveSession)
-    }
-    /** Disable the final retry after the person explicitly chose to close without saving. */
-    pub fn discard_session(&self) -> bool {
-        self.session_command_ack(Command::DiscardSession)
-    }
-    /** Bridge one bounded close decision through the runtime-owning worker. */
-    fn session_command(&self, command: fn(mpsc::SyncSender<bool>) -> Command) -> bool {
-        let (reply, result) = mpsc::sync_channel(1);
-        self.commands.try_send(command(reply)).is_ok() && result.recv().unwrap_or(false)
-    }
-    /** Confirm an explicit discard was applied before allowing the window to close. */
-    fn session_command_ack(&self, command: fn(mpsc::SyncSender<()>) -> Command) -> bool {
-        let (reply, result) = mpsc::sync_channel(1);
-        self.commands.try_send(command(reply)).is_ok() && result.recv().is_ok()
-    }
-}
-impl Drop for Broker {
-    /** Polling I/O and child waits observe cancellation before tasks are joined. */
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        for worker in self.io.drain(..) {
-            let _ = worker.join();
-        }
-        if let Some((hub, endpoint)) = self.attach.take() {
-            drop(hub);
-            endpoint.remove();
-        }
-    }
 }
 
 /// Startup-only inputs are grouped so worker lifetime has one coherent owner.
 struct WorkerStart {
+    /** Only the native explicit-discard choice suppresses final persistence. */
+    discard: Arc<AtomicBool>,
     /// The executable shared by native network/document/V9 services.
     program: PathBuf,
     /// Fixture grants never come from page or agent input.
@@ -375,6 +382,7 @@ fn worker(
     events: SyncSender<Event>,
 ) {
     let WorkerStart {
+        discard,
         program,
         origins,
         initial,
@@ -399,18 +407,14 @@ fn worker(
         }
     };
     let first_paint = events.clone();
-    runtime.show_first_paint(Box::new(move |snapshot| {
-        let _ = first_paint.try_send(Event::Update {
+    runtime.show_first_paint_scoped(Box::new(move |snapshot, permit| {
+        let _ = first_paint.try_send(Event::Preview {
             snapshot: Box::new(snapshot),
-            result: Ok(json!({})),
-            agent_id: None,
-            appearance_update: false,
-            clear_error: false,
-            destination: None,
-            rejected_edit: None,
+            permit,
         });
     }));
     let destination = initial.clone();
+    let mut startup_permit = None;
     let result = if let Some(url) = initial {
         let state = authority::lock(&authority).expect("new authority");
         let permit = Permit {
@@ -419,6 +423,7 @@ fn worker(
             tab_id: Some(1),
         };
         drop(state);
+        startup_permit = Some(permit);
         let mut params = json!({"url":url,"tab_id":runtime.selected_tab_id()});
         if permit.owner == Owner::Agent {
             params["control_epoch"] = json!(permit.epoch);
@@ -428,6 +433,9 @@ fn worker(
         runtime.restore_session().map(|_| json!({}))
     };
     let _ = events.try_send(Event::Update {
+        background: false,
+        completion: None,
+        admission: startup_permit,
         snapshot: Box::new(runtime.snapshot()),
         result,
         agent_id: None,
@@ -438,18 +446,24 @@ fn worker(
     });
     // A command that arrived while a background run was going; it runs next, ahead of the queue.
     let mut stashed: Option<Command> = None;
-    while !cancel.load(Ordering::Relaxed) {
+    while !cancel.load(Ordering::Acquire) {
         let next = match stashed.take() {
             Some(command) => Ok(command),
             None => input.recv_timeout(POLL),
         };
         match next {
             Ok(command) => {
+                let permit = match &command {
+                    Command::Human { permit, .. } | Command::Agent(_, permit) => Some(*permit),
+                    _ => None,
+                };
                 if execute(&mut runtime, command, &events).is_err() {
                     break;
                 }
                 if let Some(fetched) = runtime.take_download()
-                    && events.try_send(Event::NavigationDownload(fetched)).is_err()
+                    && events
+                        .try_send(Event::NavigationDownload { fetched, permit })
+                        .is_err()
                 {
                     break;
                 }
@@ -465,6 +479,9 @@ fn worker(
                 if runtime.run_page_scripts_yielding(&mut waiting)
                     && events
                         .try_send(Event::Update {
+                            background: true,
+                            completion: None,
+                            admission: None,
                             snapshot: Box::new(runtime.snapshot()),
                             result: Ok(json!({})),
                             agent_id: None,
@@ -481,6 +498,9 @@ fn worker(
             Err(_) => break,
         }
     }
+    if discard.load(Ordering::Acquire) {
+        runtime.discard_pending_session();
+    }
     if !runtime.stop() && mcp {
         eprintln!("MCP window closed; the latest tab session could not be saved.");
     }
@@ -488,13 +508,10 @@ fn worker(
 
 /** UI-only requests never gain a second document model or an agent self-grant path. */
 fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) -> Result<(), ()> {
-    if let Command::SaveSession(reply) = command {
-        let _ = reply.send(runtime.save_session_now());
-        return Ok(());
-    }
-    if let Command::DiscardSession(reply) = command {
-        runtime.discard_pending_session();
-        let _ = reply.send(());
+    if let Command::SaveSession { reply, active } = command {
+        if active.load(Ordering::Acquire) {
+            let _ = reply.try_send(runtime.save_session_now());
+        }
         return Ok(());
     }
     if let Command::Download { id, url, permit } = command {
@@ -544,6 +561,9 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
             .map(|()| response);
         return events
             .try_send(Event::Update {
+                background: false,
+                completion: None,
+                admission: None,
                 snapshot: Box::new(runtime.snapshot()),
                 result,
                 agent_id: Some(id),
@@ -569,7 +589,7 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
             .map(str::to_owned);
         if clear_error {
             events
-                .try_send(Event::Loading(request.op.clone()))
+                .try_send(Event::Loading(request.op.clone(), permit))
                 .map_err(|_| ())?;
         }
         let timed = std::time::Instant::now();
@@ -580,6 +600,9 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
         crate::runtime::perf::record("broker.snapshot", timed, String::new);
         return events
             .try_send(Event::Update {
+                background: false,
+                completion: None,
+                admission: Some(permit),
                 snapshot,
                 result,
                 agent_id: Some(id),
@@ -621,8 +644,19 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
     } else {
         None
     };
+    let completion = if let Command::Human { command_id, .. } = &command {
+        Some(Completion { id: *command_id })
+    } else {
+        None
+    };
+    let admission = if let Command::Human { permit, .. } = &command {
+        Some(*permit)
+    } else {
+        None
+    };
     let result = match command {
         Command::Human {
+            command_id: _,
             op,
             mut params,
             page,
@@ -640,8 +674,10 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
                 if params.get("expected_revision").is_some() {
                     params["expected_revision"] = current["revision"].clone();
                 }
-                if op.starts_with("page.") {
-                    params["tab_id"] = current["tab_id"].clone();
+                if op.starts_with("page.")
+                    && let Some(tab) = permit.tab_id
+                {
+                    params["tab_id"] = json!(format!("tab-{tab}"));
                 }
                 runtime.handle_as(Request::new("human", &op, params), permit)
             };
@@ -662,13 +698,15 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
         | Command::ProfileRetry
         | Command::ProfileStorageClear
         | Command::CacheClear
-        | Command::SaveSession(_)
-        | Command::DiscardSession(_)
+        | Command::SaveSession { .. }
         | Command::Download { .. } => unreachable!(),
     };
     let rejected_edit = if result.is_err() { edited } else { None };
     events
         .try_send(Event::Update {
+            background: false,
+            completion,
+            admission,
             snapshot: Box::new(runtime.snapshot()),
             result,
             agent_id: None,

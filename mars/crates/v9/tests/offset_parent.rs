@@ -10,7 +10,28 @@ fn node_box(node: usize, x: f64, y: f64) -> mars_v9::NodeBox {
         y,
         width: 50.0,
         height: 50.0,
+        layout_position: None,
+        ..mars_v9::NodeBox::default()
     }
+}
+
+/** Transformed visual boxes move client rectangles while layout offsets stay relative to raw boxes. */
+#[test]
+fn translations_do_not_change_layout_offsets() {
+    let mut environment = common::environment();
+    environment.positions.insert(0, "relative".into());
+    let mut parent = node_box(0, 110.0, 300.0);
+    parent.layout_position = Some([10.0, 100.0]);
+    let mut child = node_box(1, 150.0, 360.0);
+    child.layout_position = Some([30.0, 140.0]);
+    environment.geometry = vec![parent, child];
+    environment.scroll_y = 15.0;
+    let execution = common::load_with(
+        "const first=document.getElementById('first');const rect=first.getBoundingClientRect();const r=[rect.x,rect.y,first.offsetLeft,first.offsetTop].join('|');",
+        &environment,
+    );
+    assert_eq!(common::failure(&execution), None);
+    assert_eq!(common::global(&execution, "r"), "150|345|20|40");
 }
 
 /** Inside a positioned ancestor, offsets count from it and `offsetParent` is it; its own

@@ -38,6 +38,7 @@ pub fn element(
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
     ScriptNode {
+        selected: None,
         local_id,
         html_id: attributes.get("id").cloned().unwrap_or_default(),
         parent,

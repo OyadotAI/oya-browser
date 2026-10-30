@@ -34,8 +34,15 @@ pub(super) fn apply(
         }
         None => value,
     };
-    // Animation longhands are consumed by the cascade's resting-frame step, never computed.
+    // Animation longhands are retained by the cascade after atomic declaration validation.
     if super::animation::LONGHANDS.contains(&key) {
+        return if super::animation::valid_value(key, value) {
+            Ok(true)
+        } else {
+            Err(super::unsupported())
+        };
+    }
+    if super::transition::apply(&mut style.transition, key, value)? {
         return Ok(true);
     }
     if let Some((_, part)) = super::border::longhand(key) {

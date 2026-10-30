@@ -23,6 +23,9 @@ pub struct WebRequest {
     /// Selects the smaller binary resource budget for explicitly requested images.
     #[serde(default)]
     pub image: bool,
+    /// Fetch body readers need exact decoded bytes, independently of declared text charset.
+    #[serde(default)]
+    pub raw_response: bool,
     /// URL of the top-level document this fetch serves (the navigation's own URL for a
     /// navigation). Its origin partitions the HTTP cache; without it the cache is bypassed,
     /// so no response is ever shared across sites.
@@ -98,6 +101,10 @@ impl WebRequest {
     pub fn validate(&self) -> EngineResult<()> {
         mars_core::languages::validate(&self.languages)?;
         if self.body.len() > FORM_BYTES
+            || self.raw_response
+                && (self.destination != Destination::Empty
+                    || self.image
+                    || self.preflight.is_some())
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)
             || (self.method.is_safe() && !self.body.is_empty())
@@ -163,7 +170,17 @@ impl WebRequest {
             || self.origin.is_some()
             || self.mode.is_some()
             || self.preflight.is_some();
-        (script || !used) && headers_ok && origin_ok && preflight_ok
+        // Images may carry only host-selected CORS fields, never page headers or preflights.
+        let image = self.destination == Destination::Image
+            && self.method == Method::Get
+            && self.headers.is_empty()
+            && self.preflight.is_none()
+            && match self.mode {
+                Some(super::cors::Mode::Cors) => self.origin.is_some(),
+                None | Some(super::cors::Mode::NoCors) => self.origin.is_none(),
+                _ => false,
+            };
+        (script || image || !used) && headers_ok && origin_ok && preflight_ok
     }
 }
 /// Raw response metadata is private to the coordinator; never export cookies to agents.
@@ -174,11 +191,14 @@ pub struct WebResponse {
     pub url: String,
     /// Server status is preserved for validation/error documents.
     pub status: u16,
-    /// UTF-8 source, or base64 for explicitly requested image bytes.
+    /// UTF-8 source, or base64 for explicitly requested image/raw fetch bytes and downloads.
     pub source: String,
     /// Tells the coordinator to decode source as bounded base64 image bytes.
     #[serde(default)]
     pub image_data: bool,
+    /// An admitted fetch requested exact bytes; source is bounded base64, never decoded text.
+    #[serde(default)]
+    pub raw_data: bool,
     /// Canonical media type without parameters.
     pub mime: String,
     /// A redirect is processed by the coordinator with fresh authority.
@@ -186,7 +206,7 @@ pub struct WebResponse {
     /// Repeated fields remain separate, never comma-joined.
     pub set_cookies: Vec<String>,
     /// Canonical WHATWG encoding the Content-Type header declared, so Eye can check a meta charset
-    /// against it. None when undeclared (decoded as UTF-8) or for image data.
+    /// against it. None when undeclared (decoded as UTF-8), for image data or raw fetch bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charset: Option<String>,
     /// A top-level GET the server marked as an attachment, or whose type no page can display:
@@ -200,7 +220,8 @@ pub struct WebResponse {
     /// A script request's response headers (lowercase, repeats joined, at most
     /// SCRIPT_RESPONSE_HEADERS), for the coordinator's CORS check and filtering. Set-Cookie and
     /// Set-Cookie2 are never among them. A document carries only X-Frame-Options and
-    /// Content-Security-Policy, for the framing check; other requests carry none.
+    /// Content-Security-Policy, for the framing check. Images carry only the two CORS admission
+    /// fields; other requests carry none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<(String, String)>,
 }

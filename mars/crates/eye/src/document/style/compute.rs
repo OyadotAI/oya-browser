@@ -56,8 +56,47 @@ impl Resolver<'_> {
     ) -> EngineResult<bool> {
         super::values::set_own_line(None);
         self.substitute(style, parent, &mut chosen);
+        style.opacity_animations = super::animation::tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.opacity_animation_blocked = chosen
+            .get("opacity")
+            .is_some_and(|(priority, _)| priority.0);
+        let authored_opacity = chosen.get("opacity").cloned();
+        style.rotation_animations = super::animation::rotation_tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.rotation_animation_blocked = chosen
+            .get("transform")
+            .is_some_and(|(priority, _)| priority.0);
+        style.scale_animations = super::animation::scale_tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.scale_animation_blocked = style.rotation_animation_blocked;
+        let authored_transform = chosen.get("transform").cloned();
         // Resting animation frames override the cascade; their own `var()`s substitute next.
         let mut hides = super::animation::animate(&mut chosen, self.keyframes, diagnostics);
+        // Live opacity keeps its authored base through every recascade.
+        chosen.remove("opacity");
+        if let Some(opacity) = authored_opacity {
+            chosen.insert("opacity".into(), opacity);
+        }
+        // Only fully supported pure transform tracks replace the legacy static transform fallback.
+        if !style.rotation_animations.is_empty() || !style.scale_animations.is_empty() {
+            chosen.remove("transform");
+            if let Some(transform) = authored_transform {
+                chosen.insert("transform".into(), transform);
+            }
+        }
         self.substitute(style, parent, &mut chosen);
         bottom_layer_clip(&mut chosen);
         let rtl = super::logical::rtl(&chosen, style.rtl);

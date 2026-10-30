@@ -5,6 +5,641 @@ This comparison uses the local Ladybird checkout at commit `ccadf944d59` on
 successful Google Search run in Ladybird. Ladybird was not launched. Only Mars's
 native runtime was used for these tests.
 
+## Everyday browsing candidate, 2026-10-30
+
+Page repair build `3e1ae934` passed in 1m 09s, covering image source admission,
+Window handler defaults, listener cleanup, CSP parsing and constructor diagnostics.
+Build log: `/private/tmp/mars-page-compatibility-build.log`. Frozen executable
+SHA-256: `1e161815631a5dd40db220685630ed06ece4374cd7be17ae3188ee92dc71095e`.
+`mars/dist/Mars Page Repair.app` was signed, signature-verified and opened at
+DuckDuckGo for manual testing. Signed executable SHA-256:
+`60c38d6b258af0bf6711cb77018356f8bb0f119de24c718fcf7b022a4dcf1781`.
+The desktop and three service processes were confirmed running. Twenty-four
+focused regressions were added across this batch and remain unrun; no browser QA
+ran. Compilation and launch do not establish that the reported pages now work.
+
+Listener exhaustion now triggers native aborted-listener pruning and target-aware
+collection before refusing admission. Abort removes its registrations before
+running abort callbacks; public `aborted` properties cannot hide or forge native
+state. Full restoration validates native listener signal identity. GC indexes
+listened node targets once instead of scanning every listener per wrapper. Six
+focused regressions are added unrun. The
+16,384-live-listener cap remains; this fixes concrete retention faults but does
+not establish that they caused DuckDuckGo's screenshot. The overlapping homepage
+header also remains unverified: saved local DuckDuckGo captures are older search
+pages, and no fresh browser inspection ran.
+
+CSP script admission reuses the existing validated source-expression grammar:
+nonce/hash prefixes are ASCII-case-insensitive, their payloads remain exact, and
+only valid nonce/known-hash tokens suppress `unsafe-inline`. `strict-dynamic`
+also suppresses that keyword for inline parser scripts. Explicit nonce/hash
+matches still admit, subject to every policy. Four focused regressions are added
+unrun. The user's Script 34 source and effective policy were unavailable, so its
+warning may still represent a legitimate block rather than these parser defects.
+
+Image admission now distinguishes network URLs (still 8 KiB) from `data:image/`
+text (at most 8 MiB + 8 KiB, including bounded metadata). Actual decoded input
+remains limited to 2 MiB per image. Retained source text is capped at 16 MiB;
+request/completion batches at twice the maximum data-URL text; native pending
+text at 64 MiB, with its source component independently capped at 16 MiB. Invalid
+optional sources keep their DOM attribute but receive a normal failed generation,
+without fetching the current page or aborting navigation. Seven focused
+regressions are added unrun. This directly removes the reported fatal image-URL
+check; live page rendering remains unverified.
+
+The next compatibility batch initializes Window handler bindings such as `onload`
+before first assignment. Defaults live on the Window prototype to preserve the
+existing body-markup fallback; explicit assignments still use the Window's own
+handler slot. Three focused regressions are added unrun. Forbidden constructors
+now name their interface using immutable native metadata, with four regressions
+added unrun. The exact GitHub asset was absent from local captures and Oya browser
+tools were unavailable, so this diagnostic improvement does not establish which
+unsupported constructor GitHub needs. No forbidden constructor was made legal.
+
+TLS repair build `67863fb4` passed in 42.80s with the key-share correction and
+bounded pre-HTTP reset recovery. Log: `/private/tmp/mars-tls-repair-build.log`.
+Frozen executable SHA-256:
+`c26b1c9f6350449ba5582947e989f8e4a1bac6c228d3a735ee61b026475be298`.
+`mars/dist/Mars TLS Repair.app` was signed, signature-verified and opened at Google
+for manual testing. Signed executable SHA-256:
+`41d98a9e5851e1f0cb39a4ff62321cdcf08e3d23381e7fa3ca2049130d220270`.
+Nine new focused regressions remain unrun, with no browser QA or network probes.
+Successful compilation/launch does not establish resolution of the reported reset.
+
+A raw socket reset on the first modern TLS handshake now gets one fresh modern
+connection, preferring an opposite-family or distinct already-admitted peer.
+There are at most two TLS candidates total: the existing first-alert legacy
+recovery is an alternative, never a third attempt. SNI, configuration and WebPKI
+verification stay unchanged; no DNS re-resolution or HTTP request replay occurs.
+Per-candidate deadline leases bound internal handshake I/O and are joined before
+handoff/replacement; expiration stays a timeout. Six pure regressions are added
+unrun. This addresses missing resilience in the observed failure path without
+establishing which server/network condition caused the user's reset. Build passes below.
+
+The next user report identified a raw connection reset during TLS handshake.
+Source inspection found that a requested-group HelloRetryRequest still received
+an extra GREASE key share, although its replacement list must contain only the
+requested share. That wire defect is corrected; initial and cookie-only retries
+retain GREASE. Three in-memory wire regressions are added unrun. No handshake
+capture establishes that this defect caused the reported Google reset.
+
+Recovery build `3e2b9162` passed in 1m 04s with observer storage/work budgets,
+metadata admission, descendant click activation and asynchronous native closure.
+Build log: `/private/tmp/mars-recovery-build.log`. The earlier frozen Eye/V9
+library build also passed in 33.50s. Frozen executable SHA-256:
+`aacdf95617ed0c342b3715ba24968fa2c7001381a787fa71e78105744365b02d`.
+`mars/dist/Mars Recovery.app` is packaged, signed and signature-verified; signed
+executable SHA-256:
+`4786a5a298d309d1e369c5de381f9249ce518488eca5aaa79ae64e71ad1a1aaa`.
+It was deliberately not launched after the requested forced closure. Regression
+tests and QA remain unrun. Compilation does not verify live Google compatibility
+or establish the exact cause of the user's whole-window freeze.
+
+The native close repair removes unbounded save acknowledgments and ordinary
+shutdown joins from AppKit. Each close attempt owns a polled ticket; retired
+attempts cannot consume late success. Admission/save timeout after ten seconds
+returns to explicit Keep Open/Retry/Discard choices. An explicit discard precedes
+cancellation and suppresses the final session retry. Owned runtime/I/O/hub cleanup,
+library writer completion and demo-server completion are polled while AppKit
+continues pumping events. Existing in-progress secure-store writes cannot be
+undone; permanently blocked native I/O can still delay cleanup completion. Five
+regressions are added unrun. This fixes concrete blocking close paths; the broader
+reported freeze was not reproduced before the requested forced termination.
+
+The reported IntersectionObserver cap is replaced by a shared 4 MiB native/wire
+budget: 512 bytes per observer, 32 per threshold, 256 per target and 768 per queued
+record. Individual ceilings are 8,192/16,384/5,461, with the combined budget binding
+first. Pressure reclamation follows all author conversions with temporary roots
+pinned; active/queued observers stay alive. Sampling removes quadratic record
+recounts, caches pure geometry per target and charges work before scans and
+allocations. Disconnect/takeRecords/unobserve release storage. Full and summary
+restore enforce the same accounting. Three regressions are added unrun, including
+1,000 retained active observers and discarded-observer reclamation; build passes at `3e2b9162`.
+
+The metadata warning came from separate fixed 256-record/1 MiB limits. Metadata
+now uses 32,256 records (reserving 512 script slots) and an 8 MiB shared tag/name/
+value/text budget, with complete records and explicit refusal beyond the bound.
+Eye restored documents and V9 environments validate the same accounting. Fresh
+head insertion avoids an existing quadratic bootstrap scan. The unchanged frame
+ceiling is proved using one serialized state object per request/response frame
+plus explicit record overhead; it no longer double-counts a second nonexistent
+state object. Six focused regressions are added unrun; combined build passes at `3e2b9162`.
+
+After the user reported an invalid interactive target, source tracing found that
+painted spans/icons inside native links/buttons were selected as event targets but
+rejected as default-action targets. Native activation now resolves the nearest
+supported same-document ancestor while retaining the hit node for JavaScript;
+ancestor inline handlers are admitted and frame hit testing respects pointer-events.
+Existing revision, ownership and disabled/hidden controls remain guarded. Focused
+regressions are added unrun; combined build passes at `3e2b9162`. The screenshot did not identify
+the clicked element, so this is not a verified reproduction of that exact failure.
+
+The user subsequently reported an unresponsive window that could not close.
+Mars Network Fix and its three engine processes were force-closed at their request
+and confirmed absent. The old native close flow has unbounded worker acknowledgments
+on the UI thread; that repair is implemented above. Mars remains closed during repairs.
+
+The combined transport repair build at `159613bc` passed in 37.99s. It includes
+phase-specific transport errors, deadline-lease retirement before socket reuse,
+and bounded HTTP/1 informational responses, plus the earlier signal fix.
+Build log: `/private/tmp/mars-transport-repair-build.log`.
+Frozen binary SHA-256:
+`bd4bb89503930fd779200871895d51db04f5215e92056b17996ea3b41acf584d`.
+The signed and verified `mars/dist/Mars Network Fix.app` was opened at Google
+for the user's manual testing. Signed executable SHA-256:
+`bfcc8d9dbf27c502110874bf29a0e475224db1811abf220ab4fe4b00971186f5`.
+Regression tests and browser QA remain unrun at the user's request. Compilation
+and launch do not verify the reported navigation failure is resolved.
+
+HTTP/1 now consumes up to eight informational response heads before the final
+response, retaining the buffered cursor and one cumulative header-byte budget.
+Previously a 100/103 head could be treated as a close-delimited final response,
+consuming the real response as body data and waiting for a persistent connection
+to close. Status 101 is explicitly unsupported; only final response headers and
+cookies are published. Hermetic regressions are added unrun; the combined production build passes at `159613bc`.
+This is a source-supported repair, not proof of the reported transport cause.
+
+HTTP/1 prepared exchanges now transfer deadline-lease ownership into the send
+operation. The lease is stopped and joined before socket pool checkin on both
+initial and replacement exchanges. Previously the timer could outlive pool checkin
+and close a socket already reused by another request while cache/body processing
+continued. This concrete source race is repaired; its involvement in the reported
+failure is unverified. Deadlines and retry policy are unchanged; the combined production build passes at `159613bc`.
+
+Transport errors now preserve the failing operation and typed I/O cause in safe
+human-readable text. Raw exception strings, URLs, IPs and payloads are excluded.
+Certificate and suite refusals keep their specific handling; existing error codes,
+deadlines, EOF framing and retry admission are unchanged. Three pure classification
+regressions are added unrun; production the combined production build passes at `159613bc`. This improves evidence for
+the user-reported navigation failure without claiming an identified root cause.
+
+The resident-summary repair at `8d465d28` built successfully in 54.75s;
+log: `/private/tmp/mars-resident-summary-fix-build.log`.
+Frozen executable SHA-256:
+`c6e845c484eec59f6208d4db4542ae3f9b7354359ee2ecd5bbd67262c4e9ceec`.
+`mars/dist/Mars Signal Fix.app` was signed, verified and launched at Google;
+the desktop and three engine processes were confirmed running. Signed executable
+SHA-256: `beeb8a5d4787fa4b92d6cd75bda2ed4fbc422bfe0620ccd2d42b25addf65e7f3`.
+This confirms build/startup only. The user then reported a navigation transport
+failure: “The destination could not be reached or returned an incomplete response.”
+The old transport classifier discards the underlying I/O kind and phase, so that
+report alone cannot identify a socket/DNS/TLS cause. No test or browser QA was run.
+
+The user reported every Google script failing with `Invalid native fetch signal
+state.` in the new candidate. Static tracing found the coordinator validating a
+heap-less resident summary as complete VM state: pending signal and promise IDs
+correctly reside only in the V9 service. The repair introduces explicit summary
+validation selected only with a resident token, retains page/document bounds,
+and leaves full heap identity checks on execution/restore. Observer summaries
+need the same separation. Script rollback also restores queued cancellations.
+Five focused regressions are added unrun; no live Google success is claimed.
+
+The previous combined production build at `3fc7c9c8` passed in 1m 02s, including
+all eleven Porter–Duff/additive modes, native pure scale animation, raw HTTP
+fetch response bytes and Blob image generations. Build log:
+`/private/tmp/mars-parity-full-composite-scale-blob-images-build.log`.
+Frozen binary SHA-256:
+`158a8836b53861a2922be0525dad75f171cf1bf745867e416b32172a29a7425c`.
+The packaged `mars/dist/Mars Latest.app` executable SHA-256 is
+`e5e75b5a672ca2007c3f8c8cf31bc782d969d1ce1bf9583a9898309f11ce22e1`.
+This build predates the reported signal-validation repair. Its successful
+compilation did not establish page compatibility; tests and QA remained unrun.
+
+Blob-backed programmatic images now capture owned source bytes at settled
+generation admission, retain them across later revocation, and cancel replaced
+or removed generations. Origin/img-src checks precede actual bounded raster
+decoding; the decoded pixels also feed clean Canvas drawImage without a second
+decode. Native queues account for bytes and metadata and never route Blob URLs
+through Relay, legacy prefetch or URL-only image caches. Five focused regressions
+remain unrun; the combined build passes at `3fc7c9c8`. Responsive Blob URLs differing from
+captured fallback src, SVG, CSS backgrounds and cross-context sharing stay out
+of scope, along with the existing decoder format/surface limits.
+
+Pure CSS scale/scaleX/scaleY transitions and keyframes now animate independent
+signed axes, including zero and reflected scales, using the native clock and
+existing easing/interruption/iteration/pause/fill machinery. Visual geometry and
+hits update while layout and resize measurements remain unchanged. Competing
+meaningful rotation/scale animation stacks, mixed/matrix/3D transforms,
+percentage/calc factors and independent scale-property composition stay excluded.
+Focused Eye/runtime regressions remain unrun; the combined build passes at `3fc7c9c8`.
+
+HTTP fetch now requests exact decoded bytes from Relay instead of forcing them
+through a text charset decoder. Bounded base64 crosses the private wire, then
+the native CORS coordinator admits bytes into Response storage. Fetch text/JSON
+still decodes UTF-8; legacy XHR/module charset handling remains separate. Raw
+response admission excludes navigation, image and preflight roles, and existing
+network/VM byte caps are retained. Focused Relay/native regressions cover binary
+bytes, charset separation and CORS/opaque refusal; they remain unrun. The combined
+production build passes at `3fc7c9c8`.
+
+The remaining five full-surface Porter–Duff operators plus lighter are now
+implemented. Empty/offcanvas source geometry still supplies transparent pixels
+where the operator requires it, while a source-crop-empty image remains an
+aborted draw. Separate source/paint bounds keep geometry scans bounded; joint
+source/clip coverage and independent clip coverage preserve the area outside
+fractional clips. Lighter clamps before coverage interpolation. All supported
+painters share the operator, and work is admitted before bitmap mutation without
+a new full-surface allocation. Updated/expanded regressions remain unrun; the
+combined production build passes at `3fc7c9c8`. Artistic blend modes remain unfinished.
+
+The combined production build at `10e70b14` passes in 1m 04s with five-mode
+Canvas compositing, bounded resize cycles, binary responses/data URLs, and owned
+Blob fetch with cancellation. Compiler integration fixes closed a missing cycle
+brace, exported the Blob type/validation facade and used the heap's actual property
+lookup API. Build log:
+`/private/tmp/mars-parity-compositing-resize-blob-build-final.log`.
+Frozen unsigned binary SHA-256:
+`f8bf63283d27f8d6f8436ce1f0700fc02eaeb6faf6c10f87b61dff7e5136f14e`.
+The signed, verified `mars/dist/Mars Current.app` is packaged but not launched;
+its executable SHA-256 is
+`3399f6eabcb7c3add03c7a33282ad80bfec7262307afef16180ab2d1763e66bc`.
+The earlier Mars Development preview remains separate. Regression cases remain
+unrun, with no QA, performance benchmark or Google retest in this batch.
+
+Context-owned Blob fetch now captures immutable bytes after options and effective
+signal conversion. The native path applies owning-origin and connect-src checks,
+supports GET plus one bounded Range, returns exact binary bytes/MIME/length,
+and never falls through to the network. Revocation after admission preserves the
+snapshot. Responses remain capped at 256 KiB and retained snapshots plus metadata
+at 4 MiB across pending requests. Missing/revoked/foreign entries fail explicitly.
+Requests and clones now retain distinct dependent native signals; pre-abort,
+same-turn and prior-turn cancellation, exact reasons, ignored late replies and
+abort-before-body-read use the existing Promise/GC machinery. Native page and
+worker queues release cancelled snapshots. Already-running synchronous Relay I/O
+is not newly interrupted; streaming, cross-context sharing, Blob XHR and full
+timeout/live-any signal semantics remain unfinished. Focused regressions are
+added but unrun; the combined production build passes below.
+
+ResizeObserver now advances through depth-gated broadcasts with real host layout
+between rounds. Cycle depth/state is retained across service continuations, with
+at most 16 broadcasts and two finalization turns. Skipped targets produce a real
+ErrorEvent; window.onerror gets its five arguments and can suppress reporting.
+Error-handler changes receive layout before one final IntersectionObserver
+delivery. Deadline/round exhaustion preserves registrations and defers sizes;
+one cycle per settle and a rendering cooldown prevent restart spins. Resource
+loads, unrelated timers and worker turns remain outside the cycle. Focused
+regressions were added but unrun; the combined production build passes below.
+
+The binary-response prerequisite now carries exact bytes into private
+heap-accounted Response storage. Clones share immutable backing, byte/blob readers
+return independent values, and text/JSON uses UTF-8 replacement with BOM handling.
+The combined response limit remains 256 KiB; mixed text/byte representations are
+rejected and existing worst-case wire admission covers byte-array serialization.
+Focused regressions are added but unrun; the combined build passes below. This
+prerequisite alone does not implement native Blob fetch or signal cancellation.
+Native data-URL responses now use this exact-byte path as well, rather than
+rejecting non-UTF8 payloads. GET-only scheme handling and response caps are
+unchanged. Two native regressions cover byte preservation, BOM text decoding,
+XHR text and method refusal; they remain unrun; the production build passes below.
+
+Canvas now implements destination-over, destination-out, source-atop and xor
+alongside source-over through one shared premultiplied compositor. Rectangles,
+paths (including dashes/Path2D), images and text use the same operation, with
+typed saved/restored/reset drawing state. ClearRect and putImageData bypass it,
+and origin taint remains independent. Operators that affect transparent areas
+outside the source geometry, plus lighter, remain unaccepted until their coverage
+is implemented. Focused regressions were added but not run; the combined
+production build is pending.
+
+The next combined production build at `3a530af9` passes in 1m 15s, including
+Canvas dashed strokes, HTML/body resize measurements and the two interpreter
+lookup optimizations. No performance gain or Google success has been measured.
+Build log: `/private/tmp/mars-parity-dashes-wrappers-performance-build.log`.
+Frozen unsigned binary SHA-256:
+`d7f3b41dcb326f4672cd1c428c660daace37c2083a1f8bb52ebe394784676125`.
+The signed, verified `mars/dist/Mars Development.app` was launched for the
+maintainer with an ephemeral profile; its executable SHA-256 is
+`a1d114051c6518b36e1c4a8930842914ca98b2d92f09a32e906ba1885b08a1bc`.
+Existing bundles were preserved. Focused regressions remain unrun, and no QA,
+benchmark, broad test gate or Google retest was performed.
+
+ResizeObserver now also receives genuine HTML/body wrapper metrics through a
+dedicated transport, including forced-layout retries and native invalidation.
+Percentage edges are resolved before descendant measurement, and root auto
+dimensions use in-flow extents captured before positioned overflow contributes
+to scroll size. Incomplete auto layouts remain unmeasured; so do auto roots with
+a hidden/out-of-flow body and root pseudo siblings whose independent flow extent
+is unavailable. Synchronous resize loops remain outside this slice. Focused
+regressions were added but not run; the combined production build passes below.
+
+Canvas setLineDash/getLineDash/lineDashOffset now retain genuine saved state and
+feed bounded dashed stroke geometry. Patterns are split in user space with
+per-subpath phase, closed-seam joining and round/square cap dots for zero-length
+dashes. Conversion is bounded to 128 input values and 256 canonical values;
+splitting admits at most 16,384 transitions and generated points before existing
+outline/raster limits. Process-accounted scratch and work admission precede
+painting. Focused regressions were added but not run; the combined build
+passes below. Overflowing pattern sums and excessive tiny dashes fail explicitly.
+
+The existing offline Google worker timeout sample includes frame-proxy lookup
+and UTF-16 key allocation during ordinary JavaScript property reads. Worker
+contexts now skip the browsing-context lookup they cannot use, page reads reuse
+one proxy-target result, and immutable private target/incarnation keys are cached.
+Detached proxy identity checks are preserved. The saved evidence establishes
+avoidable work, not its share of the timeout: no new benchmark, replay or Google
+query was run. This optimization's combined production build passes below.
+Array callback iteration now similarly reads present ordinary dense values once,
+instead of separate presence and value lookups. Holes, sparse storage, descriptor
+properties, proxies and shared containers retain the generic path. Each iteration
+rechecks after callback mutations, with captured length and work charges unchanged.
+The saved sample motivates this work but does not measure its improvement; no
+benchmark or replay was run. This slice is included in the successful build below.
+
+The combined release build at `7018cee9` passes with SVG Path2D, nested workers,
+persistent ResizeObserver and URL semantics. The first attempt caught a missing
+resize vector type annotation; the corrected build completed in 1m 02s.
+Initial measured zero-size boxes now receive their first observation as well.
+Build log: `/private/tmp/mars-parity-svg-workers-resize-build-resumed.log`.
+Frozen unsigned binary SHA-256:
+`e62077baf3b369b83408407bbf65e38e6525ef3b7d2ae8b500ac53b792254fad`.
+The signed, verified `mars/dist/Mars Build.app` is packaged but not launched;
+its executable SHA-256 is
+`5a7ff48fae0c56b61f49499de5a606e4b927c26fce9b0d4c63f5239d921da839`.
+The previously launched `Mars Next.app` remains separate. No test execution,
+QA, benchmark or live Google retest was performed in this batch.
+
+ResizeObserver now retains registrations, compares the selected measured box,
+and asynchronously delivers queued callbacks after actual native layout changes.
+Eye supplies content/border metrics after percentage padding is resolved; visual
+transforms and scrolling do not spuriously wake resize-only observers. Cleanup,
+GC and restored-state validation cover retained registrations and records.
+Focused Eye/V9 regressions are added but unrun; the combined build passes below.
+Root/body wrappers without native metrics, fragmented boxes and full synchronous
+resize-loop broadcasting remain unfinished; delivery is bounded to one broadcast
+per host turn.
+
+Dedicated workers now support one nested level, with page-owned bounded owner
+paths, parent/child messages and ports, creator-policy source loading, shared
+pending/live admission and recursive termination. Existing worker task/byte and
+resident-context limits remain unchanged. Child replies can resume a parent's
+top-level await while early owner-global messages stay queued. Deeper nesting
+and retransferring linked worker ports remain explicit refusals. This code-first
+slice has not been run through tests or QA; its combined build passes below.
+
+SVG-string Path2D construction now feeds real retained Canvas geometry through
+a shared Core parser, also used by Eye through its existing facade. Canvas keeps
+the completed prefix of malformed syntax; numeric and quota errors still fail.
+Input is capped at 256 KiB, command groups at 4,096, normalized segments at 1,024,
+and flattened points at the existing 1,024 limit. Seven Core cases and two V9
+regressions were added, with the old string-refusal expectation updated; these
+remain unrun. The combined production build passes below. Arc/polygon
+approximations can become visible under large later transforms.
+
+The subsequent URL binding repair preserves list mutations made during argument
+conversion, ignores arguments outside each method's signature, validates even an
+empty forEach callback, and keeps exhausted iterators done after later appends.
+Invalid URL errors no longer convert the input twice. Five focused regressions
+were added but remain unrun under the code-first instruction; the combined build
+for this slice passes below. The prior `Mars Next.app` build was launched for the
+maintainer on 2026-10-30 without running browser QA.
+URL and URLSearchParams now also enforce required argument counts and the new
+operator before conversion callbacks. Two additional focused regressions are
+unrun; these changes are included in the successful combined build.
+
+The current `ladybird-parity` working tree repairs the ordinary default-search
+journey without a site-specific response replacement or a lite-page fallback.
+This is a usability milestone, not a full Ladybird-parity result or a Google fix.
+
+The frozen native test build `3e60dbacc49b1cef1b3cae65c37a3aa347188605659442869322dd27e93e87ec`
+completed a plain DuckDuckGo query in 7.42 seconds, a real native mouse click to
+rust-lang.org, native Back, and a second query in 5.00 seconds. Result links were
+visible and enabled; the Rust destination reported no script degradation.
+Evidence: `/private/tmp/mars-usability-journey-final/report.json` and its native
+window screenshots. These observations cover those journeys, not every result
+type or website.
+
+The same build passed the isolated native navigation fixture: latest-address
+replacement in 98 ms; five Stop acknowledgements in 37–39 ms, settling in
+91–94 ms; failure Details/Dismiss; native link activation and Back; and a
+background agent completion overlapping a human Reload followed by another
+human address. The last case reproduced a permanently pending address on the
+previous frozen build before its completion bookkeeping was repaired.
+Evidence: `/private/tmp/mars-navigation-overlap-{before,after}.log`.
+
+Compatibility repairs include JavaScript MIME aliases, regular expressions after
+control headers, current SELECT/OPTION state and adoption, bounded root-style
+coalescing, SVG name adoption, and classic-script resource completion. Ignored
+vendor keyframe blocks no longer mark unrelated links noninteractive. Script
+completion handlers enforce a separate bounded CSP attribute policy, including
+fallback, policy intersection and explicitly permitted source hashes; allowing
+an attribute does not enable eval, Function or string timers.
+
+Focused checks pass: 46 native desktop tests, 39 native script/frame tests,
+10 V9 policy tests and eight host CSP tests. The desktop suite includes stopping
+at first paint before V9 admission, preserving every service PID, the committed
+page identity and a mutated JavaScript value. Correctness, security and
+reliability reviews closed their supported findings. Strict all-targets,
+all-features release Clippy passes. The maintainer stopped the final broad
+workspace run during compilation and explicitly skipped packaged QA and the
+normal stage pipeline to prioritize parallel implementation. The interrupted
+run is not a passing gate.
+
+The subsequent code-first Canvas slice adds bounded decoded PNG/JPEG sources
+for all drawImage overloads, source cropping/scaling, JPEG orientation and
+origin-clean propagation. Loaded images outside the supported formats/512-pixel
+source edge remain explicitly unsupported. Cross-origin sources are
+conservatively tainted, including redirects away and back; CORS-authorized
+clean cross-origin images remain unimplemented. Six V9 regressions and two
+native fixtures were added but have not been run in this implementation batch.
+
+The opacity-transition slice implements duration/delay/easing lists, negative
+delay, interruption, reversal shortening and target removal. Runtime connects
+the Eye timeline to recascade, native paint and background frame scheduling;
+sampled values never rewrite authored opacity. The combined production build
+passes. Eleven Eye regressions and a runtime paint-bridge regression were added
+but not run in the code-first batch. Other properties, transition events,
+discrete transitions and CSS animation API exposure remain unfinished.
+
+HTTP(S) dedicated module workers now use the existing module engine for static
+and dynamic imports and import.meta.url. Constructor credentials and CSP/CORS
+admission persist across the graph. Queued messages wait for entry evaluation,
+including top-level await, and failed initialization terminates the worker.
+The combined production build passes; new native/V9 module-worker regression
+targets have not been run in this code-first batch. Blob URLs, nested workers
+and redirects remain unsupported in this slice.
+
+Classic Blob workers now use actual immutable Blob/File bytes captured by the
+constructor. Object URLs are context-owned and revocable; existing captured
+workers survive revocation, while future loads of revoked URLs fail. Runtime
+enforces creator origin and inherited CSP without network acquisition. Registry
+storage is bounded to 64 URLs and 4 MiB, and captured commands retain the existing
+worker queue limit. Seven V9 and five native regression cases were added but not
+run in the code-first batch. Blob module workers, cross-context URL sharing and
+Blob fetch/image consumers remain unfinished.
+
+Canvas paths now rasterize real polygon fills and strokes with nonzero/evenodd
+winding, line width/caps/joins/miter and strokeRect. Construction-time path
+transforms and draw-time pen transforms are distinct; save/restore leaves the
+current path intact and resize clears it. Storage, geometry and raster work are
+bounded before mutation. Seven Core and nine V9 regressions were added but not
+run in this code-first batch. Curves, arcs, clipping, Path2D and dashes remain
+unfinished.
+
+CSS opacity keyframes now advance on the native page clock, with easing,
+positive/negative delay, fractional/infinite iterations, playback direction,
+fill and pause/resume. Recascade preserves matched animation times. Paused and
+completed fills do not keep background work pending; sampled values stay separate
+from authored opacity. Ten Eye regressions and a runtime paint/scheduling
+regression were added but not run. Other animated properties retain their
+existing static fallback; animation events and full API exposure remain gaps.
+
+The combined production binary for classic Blob workers, Canvas paths and CSS
+opacity keyframes builds successfully. Its SHA-256 is
+`096ffde044f7832ad11fc51c36079fe0e441ec9cb17a4c3e063c1c5c1304b96b`;
+build evidence is `/private/tmp/mars-parity-path-blob-keyframes-build-resumed.log`.
+The first build exhausted disk space; clearing only the regenerable debug
+incremental cache allowed it to complete. No QA or per-change tests were run.
+
+The next Blob slice admits module entry scripts from captured bytes. Module MIME
+must be JavaScript; the existing graph handles absolute HTTP(S) imports, dynamic
+imports, top-level await and early-message gating. Inherited CSP matching now
+uses the Blob creator's origin for scheme-less host sources while retaining the
+actual Blob URL for resolution and import.meta. Nine focused regressions were
+added but not run. The combined release build is recorded below.
+Imported Blob dependencies and cross-context registry sharing remain unfinished.
+
+Canvas quadraticCurveTo and bezierCurveTo now produce actual fill/stroke geometry
+through adaptive de Casteljau subdivision in bitmap coordinates. Flattening uses
+a one-eighth-pixel tolerance, bounded depth and the existing path-point allowance;
+the whole generated batch is admitted before path mutation. Six Core and seven
+V9 regressions were added but not run. The combined release build is recorded
+below; arcs and ellipses followed in the next slice.
+
+CSS transform transitions now sample two-dimensional translations in pixel and
+percentage components, including none-to-translate, delays, easing, interruption
+and reversal. Native painting and visual geometry use the sample while CSSOM
+layout offsets retain untransformed positions. Parser provenance prevents
+rotation/scale/skew/matrix/3D values from masquerading as supported translations.
+Ten Eye, two runtime and one V9 layout-position regressions were added but not
+run. The combined release build is recorded below. General transform
+interpolation and other animated properties remain unfinished.
+
+Canvas arc and ellipse now append real transformed curve geometry with directed
+sweep/full-turn normalization and current-path connections. Adaptive subdivision
+retains the existing path quota and one-eighth-pixel approximation; admission is
+atomic. Seven Core and eight V9 regressions were added but not run. Degenerate
+ellipse axes follow local Ladybird's center-line behavior. The combined build
+for this batch is recorded below; arcTo and roundRect followed in later slices.
+
+Canvas arcTo now constructs actual tangent-circle geometry with straight-line
+degeneracies, construction transforms and the existing bounded arc approximation.
+It preserves local Ladybird's negative-radius empty-subpath side effect while
+keeping resource failures atomic. Singular transforms requiring inverse mapping
+remain explicit refusals. Four Core and five V9 regressions were added but not
+run; the combined release build is recorded below.
+
+IntersectionObserver now reports measured viewport intersections instead of
+fabricated visibility. Persistent registrations retain px/% root margins,
+threshold changes and asynchronous records; unobserve/disconnect stop future
+sampling while preserving already queued records. Native layout, resize and
+scroll invalidations schedule dedicated observer-only turns, including after
+ordinary timers go idle. Seven V9, two runtime state and two native integration
+regressions were added but not run. State and queues are bounded and validated.
+Element roots, ancestor clipping, visibility tracking and nonzero scroll
+margins/delay remain unfinished. The combined release build is recorded below.
+
+Canvas image sources now include full-canvas GIF first frames and static WebP
+on macOS through actual ImageIO/CoreGraphics pixels. Container, decoder and
+declared dimensions are checked before output allocation; input and scratch
+memory are bounded. Output uses straight-alpha sRGB and preserves the existing
+immutable source and taint path. Twelve regression functions were added (eleven
+applicable on macOS) but not run. Animated WebP, partial-first-frame GIF and
+non-macOS native decoding remain unsupported. The combined release build is recorded below.
+
+Canvas roundRect now builds actual corner arcs, supports numeric/point/iterable
+radii, normalizes one to four corners, scales overlaps and handles negative
+dimensions. Conversion order and iterator cleanup are preserved under bounded
+input and atomic path admission. Seven Core and nine V9 regressions were added
+but not run; the combined release build passes as recorded below.
+
+The combined release build at `96a7766c` passes with all of the additions above.
+Build log: `/private/tmp/mars-parity-geometry-observers-images-build.log`.
+Frozen unsigned binary SHA-256:
+`6cf3646d97b1e9f6fd8d9aa9b9c4f75e03e8ffb4fd9035cb88e58005345fb8d8`.
+The separate `mars/dist/Mars Parity.app` bundle passes code-signature verification
+and was launched with an ephemeral profile and all three engine services.
+Its signed executable SHA-256 is
+`fb4956608628e9a02a4fc7dd13fb18e84eadf59f621d45b501ef50c73b9f5e27`.
+The original Mars and earlier Preview bundles were preserved. No QA, new test
+execution or Google retest was performed in this code-first batch.
+
+The next code-first slice implements CORS-enabled images with immutable request
+mode, generation-safe completion and mode/origin-aware decoded reuse. Actual
+per-hop server grants determine Canvas origin cleanliness; anonymous requests
+omit cross-origin credentials and credentialed requests require exact grants.
+Failed CORS loads do not retry as no-CORS. Initial, hidden, detached and adopted
+images retain selection policy. CORS images bypass legacy credentialed prefetch
+and Relay's URL-only HTTP cache; bounded per-page decoded reuse remains. Focused
+regressions were added but not run, and the combined release build is recorded below.
+
+Canvas clip now intersects actual immutable sample masks, including evenodd
+holes, construction transforms and fractional-edge idempotence. Saved states
+share pool IDs that survive serialization; restore prunes and resize/reset clears
+masks. Every supported painter honors clipping. Pixel writes/readback/export
+bypass it, and fully clipped cross-origin sources still taint. Retained masks
+have a separate 4 MiB page allowance under existing process/work ceilings; a
+large clip plus paint may exhaust one execution's existing work budget. Twelve
+focused regressions were added but not run; the combined release build is recorded below.
+
+Pure rotate transitions and keyframes now preserve authored full turns and
+sample on the native page clock. Easing/delay, interruption/reversal,
+iteration/direction, pause and fill are implemented without overwriting authored
+transforms or transform origins. Transition samples take priority over keyframes.
+The supported scope is one rotate function or none; mixed lists, matrices,
+3D/rotateZ and individual transforms are excluded. Focused regressions were
+added but not run, and the combined release build is recorded below.
+
+Path2D now retains genuine branded geometry rather than ignoring commands.
+Empty/copy construction, geometry methods, transformed addPath and actual
+fill/stroke/clip overloads are implemented; context transforms apply at use time
+and copies/current paths remain independent. Object/aggregate-point quotas,
+GC cleanup and serialization checks bound retention. SVG strings explicitly
+throw NotSupportedError, and large later scaling can magnify retained polygon
+approximation error. Eight focused regressions were added but not run; the
+combined release build for this batch is recorded below.
+
+Scripted frames now support root-to-child-to-grandchild execution with one
+recursive root mailbox, global window/document fences, port transfer ownership,
+distinct parent/top identities and canonical source proxies. Admission shares
+existing frame/source/depth/context limits across the tree. Framing checks cover
+every ancestor and the final redirected URL; child documents, assets, fetches
+and workers retain the true root network partition. Nested painting, local
+viewports and observer-only descendant turns are wired. Focused native/V9,
+framing and quota regressions were added but not run; the combined release build is recorded below.
+The scope is two executable descendant levels with existing sandbox admission;
+opaque/srcdoc scripting, descendant input/navigation/history expansion and
+cross-frame DOM access remain unfinished.
+
+Transformed DOM geometry and native clicks now share inert affine bounds and
+quad hit testing. Rotated/scaled rectangles use visual bounds while layout
+offsets/sizes and resize measurements remain untransformed. Rectangular clipping
+and existing sticky/fixed movement are retained, degenerate maps cannot hit,
+and foreign frame IDs do not mask a valid current-realm hit. Focused regressions
+were added but not run. This closes the rotation slice's previously unrun
+visual-bounds expectation; the combined release build is recorded below.
+Rounded/mask clips, fragmented inline boxes and exact occlusion remain unfinished.
+
+The combined release build at `1c6acbf4` passes with CORS images, clipping,
+retained Path2D, rotations, nested scripted frames and transformed geometry.
+The first build caught a frame-source accounting integration error; pages now
+retain their actual acquired HTML byte count. The retired inert Path2D
+constructor was removed after the compiler reported it unused.
+Build log: `/private/tmp/mars-parity-nested-cors-paths-rotation-build-resumed.log`.
+Frozen unsigned binary SHA-256:
+`0c52d93adf3f15cf7037db363f119d2045a009bf437d70fab39ba3b88618f69c`.
+The signed, verified `mars/dist/Mars Next.app` bundle is ready to open; its
+executable SHA-256 is
+`41a7750d9f61ae8d2af5e789465c95d78eb5919b03fc983be7360054735fa312`.
+It was subsequently launched on 2026-10-30 at the maintainer's request.
+No QA, new test execution or Google retest was performed in this batch.
+
+Current substantial gaps remain in broader CSS transition/animation properties,
+Canvas compositing and broader image sources, deeper worker trees,
+broader frame interaction and DOM/JavaScript compatibility. The local
+Test262 and WPT harnesses can measure slices, but no matched current Mars and
+Ladybird run establishes a percentage of parity. Google Search's recorded
+challenge/worker failure remains unresolved below.
+
 ## What Ladybird supplies
 
 Ladybird's `Libraries/LibWeb/HTML/WindowProxy.cpp` resolves active child windows
@@ -20,7 +655,7 @@ timestamp during execution. Merely exposing interface names cannot provide these
 behaviors. The implementation work below closes specific differences without
 claiming equivalence across either browser.
 
-## Scope and evidence
+## Initial milestone scope and historical evidence
 
 PM scoped the first milestone to immediate frame identity/routing and worker
 diagnostics, followed by Canvas state/transforms and ImageData/canvas copying.
@@ -30,7 +665,11 @@ and native text rendering. Module/blob/nested workers, nested scripted frames,
 general cross-realm DOM, full Canvas paths/compositing, decoded image provenance,
 WebGL/WebGPU and broad web-platform conformance remain outside these milestones.
 
-| Area | Implemented and tested | Remaining limits |
+The table below records the initial milestone, before the subsequent code-first
+expansion above. Its tested coverage must not be read as validation of later
+implementations.
+
+| Area | Initially implemented and tested | Limits at that milestone |
 | --- | --- | --- |
 | Frame directory | Indexed/named lookup, self identity, duplicate-name precedence, static/dynamic hidden frames | Immediate children; broader WindowProxy reflection remains incomplete |
 | Frame lifecycle | Stable context on navigation, retirement on detach/reinsert, queued-document fencing | Full same-origin cross-realm DOM and nested trees |

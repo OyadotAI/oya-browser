@@ -1,6 +1,14 @@
 /** Content-Security-Policy from metadata and responses governs script and worker acquisition. */
-use ring::digest::{SHA256, SHA384, SHA512, digest};
+use ring::digest::digest;
 use url::Url;
+
+mod handlers;
+
+/** Refresh both independent script policies from the same current document policy list. */
+pub(super) fn apply_environment(policies: &[String], environment: &mut crate::v9::PageEnvironment) {
+    environment.disallow_code_generation_from_strings = !allows_eval(policies);
+    environment.handler_policy = handlers::compile(policies);
+}
 
 /** HTTP fields may combine several serialized policies; each remains independently enforced. */
 pub(super) fn response_policies(headers: &[(String, String)]) -> Vec<String> {
@@ -61,6 +69,18 @@ pub(super) fn allows_connect(policies: &[String], origin: &Url, url: &Url) -> bo
         })
 }
 
+/** Image sources use img-src with default-src fallback and require every policy to permit the URL. */
+pub(super) fn allows_image(policies: &[String], origin: &Url, url: &Url) -> bool {
+    policies
+        .iter()
+        .filter_map(|policy| effective_sources(policy, &["img-src", "default-src"]))
+        .all(|sources| {
+            sources
+                .iter()
+                .any(|source| matches_source(source, origin, url))
+        })
+}
+
 /** Worker creation and imported scripts have distinct fallback lists from script elements. */
 pub(super) fn allows_worker(policies: &[String], origin: &Url, url: &Url, initial: bool) -> bool {
     policies.iter().all(|policy| {
@@ -107,21 +127,30 @@ fn effective_sources(policy: &str, fallback: &[&str]) -> Option<Vec<String>> {
 
 /** One source list's verdict; nonces and hashes also disable 'unsafe-inline', per CSP3. */
 fn allowed(sources: &[String], document: &Url, script: &Candidate<'_>) -> bool {
-    let lower: Vec<String> = sources.iter().map(|s| s.to_ascii_lowercase()).collect();
-    if script
-        .nonce
-        .is_some_and(|nonce| sources.iter().any(|s| s == &format!("'nonce-{nonce}'")))
-    {
+    let keyword = |name: &str| {
+        sources
+            .iter()
+            .any(|source| source.eq_ignore_ascii_case(name))
+    };
+    if script.nonce.is_some_and(|nonce| {
+        sources
+            .iter()
+            .filter_map(|source| handlers::expression(source))
+            .any(|(kind, value)| kind.eq_ignore_ascii_case("nonce") && value == nonce)
+    }) {
         return true;
     }
     let Some(url) = script.url else {
-        let keyed = lower
+        let keyed = sources
             .iter()
-            .any(|s| s.starts_with("'nonce-") || s.starts_with("'sha"));
+            .filter_map(|source| handlers::expression(source))
+            .any(|(kind, _)| {
+                kind.eq_ignore_ascii_case("nonce") || handlers::hash_algorithm(kind).is_some()
+            });
         return hash_matches(sources, script.source)
-            || (!keyed && lower.iter().any(|s| s == "'unsafe-inline'"));
+            || (!keyed && !keyword("'strict-dynamic'") && keyword("'unsafe-inline'"));
     };
-    if lower.iter().any(|s| s == "'strict-dynamic'") {
+    if keyword("'strict-dynamic'") {
         return false;
     }
     sources
@@ -131,24 +160,25 @@ fn allowed(sources: &[String], document: &Url, script: &Candidate<'_>) -> bool {
 
 /** `'sha256-…'` style sources against the inline text. */
 fn hash_matches(sources: &[String], text: &str) -> bool {
-    let algorithms = [
-        ("'sha256-", &SHA256),
-        ("'sha384-", &SHA384),
-        ("'sha512-", &SHA512),
-    ];
-    sources.iter().any(|source| {
-        algorithms.iter().any(|(prefix, algorithm)| {
-            source
-                .strip_prefix(prefix)
-                .and_then(|rest| rest.strip_suffix('\''))
-                .and_then(super::integrity::base64)
-                .is_some_and(|hash| hash == digest(algorithm, text.as_bytes()).as_ref())
+    sources
+        .iter()
+        .filter_map(|source| handlers::expression(source))
+        .any(|(kind, encoded)| {
+            handlers::hash_algorithm(kind).is_some_and(|algorithm| {
+                super::integrity::base64(encoded)
+                    .is_some_and(|hash| hash == digest(algorithm, text.as_bytes()).as_ref())
+            })
         })
-    })
 }
 
 /** 'self', scheme sources (`https:`), `*`, and host sources with optional scheme, port and path. */
 fn matches_source(source: &str, document: &Url, url: &Url) -> bool {
+    // Blob workers inherit the creator policy, including its scheme for scheme-less host sources.
+    // Keep the actual Blob URL elsewhere: it remains the module and relative-request base.
+    let inherited = (document.scheme() == "blob")
+        .then(|| Url::parse(&document.origin().ascii_serialization()).ok())
+        .flatten();
+    let document = inherited.as_ref().unwrap_or(document);
     let lower = source.to_ascii_lowercase();
     match lower.as_str() {
         "'self'" => url.origin() == document.origin(),
@@ -214,6 +244,43 @@ mod tests {
             nonce: None,
             source: "",
         }
+    }
+
+    #[test]
+    fn blob_policies_match_scheme_less_hosts_using_the_creator_origin() {
+        let blob =
+            Url::parse("blob:http://creator.test/12345678-1234-4123-8123-123456789abc").unwrap();
+        let policies = vec!["script-src cdn.test; connect-src api.test".into()];
+        assert!(super::allows_worker(
+            &policies,
+            &blob,
+            &Url::parse("http://cdn.test/module.js").unwrap(),
+            false
+        ));
+        assert!(super::allows_connect(
+            &policies,
+            &blob,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
+        assert!(!super::allows_worker(
+            &policies,
+            &blob,
+            &Url::parse("http://other.test/module.js").unwrap(),
+            false
+        ));
+        let secure =
+            Url::parse("blob:https://creator.test/12345678-1234-4123-8123-123456789abc").unwrap();
+        assert!(!super::allows_connect(
+            &policies,
+            &secure,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
+        let opaque = Url::parse("blob:null/12345678-1234-4123-8123-123456789abc").unwrap();
+        assert!(!super::allows_connect(
+            &policies,
+            &opaque,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
     }
 
     #[test]
@@ -304,5 +371,129 @@ mod tests {
         assert!(!allows(&path_policy, &page, &external(&wrong_case)));
         assert!(allows(&path_policy, &page, &external(&exact_case)));
         assert!(allows(&path_policy, &page, &external(&upper_host)));
+    }
+
+    #[test]
+    fn nonce_prefix_is_case_insensitive_but_nonce_payload_is_exact() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let candidate = |nonce| Candidate {
+            url: None,
+            nonce: Some(nonce),
+            source: "x",
+        };
+        let policy = vec!["script-src 'NONCE-AbC'".into()];
+        assert!(allows(&policy, &page, &candidate("AbC")));
+        assert!(!allows(&policy, &page, &candidate("abc")));
+        assert!(!allows(
+            &["script-src 'NONCE-'".into()],
+            &page,
+            &candidate("")
+        ));
+        let url = Url::parse("https://cdn.test/script.js").unwrap();
+        assert!(allows(
+            &policy,
+            &page,
+            &Candidate {
+                url: Some(&url),
+                nonce: Some("AbC"),
+                source: ""
+            }
+        ));
+    }
+
+    #[test]
+    fn hash_algorithm_case_does_not_change_digest_matching() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let script = Candidate {
+            url: None,
+            nonce: None,
+            source: "alert(1)",
+        };
+        for (name, algorithm) in [
+            ("SHA256", &ring::digest::SHA256),
+            ("sHa384", &ring::digest::SHA384),
+            ("SHA512", &ring::digest::SHA512),
+        ] {
+            let encoded = super::super::images::base64(
+                ring::digest::digest(algorithm, script.source.as_bytes()).as_ref(),
+            );
+            assert!(allows(
+                &[format!("script-src '{name}-{encoded}'")],
+                &page,
+                &script
+            ));
+            let changed = Candidate {
+                source: "alert(2)",
+                ..script
+            };
+            assert!(!allows(
+                &[format!("script-src '{name}-{encoded}'")],
+                &page,
+                &changed
+            ));
+        }
+    }
+
+    #[test]
+    fn only_valid_nonce_and_known_hash_expressions_suppress_unsafe_inline() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let script = Candidate {
+            url: None,
+            nonce: None,
+            source: "x",
+        };
+        for malformed in [
+            "'nonce-'",
+            "'sha999-AbC'",
+            "'sha256-$$$'",
+            "'sha256-Ab=C'",
+            "'sha256-AbC==='",
+        ] {
+            assert!(
+                allows(
+                    &[format!("script-src 'unsafe-inline' {malformed}")],
+                    &page,
+                    &script
+                ),
+                "{malformed}"
+            );
+        }
+        for valid in [
+            "'NONCE-AbC'",
+            "'SHA256-AbC'",
+            "'sha384-AbC'",
+            "'sha512-AbC'",
+        ] {
+            assert!(
+                !allows(
+                    &[format!("script-src 'unsafe-inline' {valid}")],
+                    &page,
+                    &script
+                ),
+                "{valid}"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_dynamic_suppresses_inline_keyword_without_overriding_explicit_nonce() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let mut script = Candidate {
+            url: None,
+            nonce: None,
+            source: "x",
+        };
+        assert!(!allows(
+            &["script-src 'unsafe-inline' 'STRICT-DYNAMIC'".into()],
+            &page,
+            &script
+        ));
+        let policy = vec!["script-src 'unsafe-inline' 'strict-dynamic' 'NONCE-AbC'".into()];
+        assert!(!allows(&policy, &page, &script));
+        script.nonce = Some("AbC");
+        assert!(allows(&policy, &page, &script));
+        let mut intersection = policy;
+        intersection.push("script-src 'none'".into());
+        assert!(!allows(&intersection, &page, &script));
     }
 }

@@ -9,19 +9,36 @@ use super::page::Page;
 use super::resources::{Credentials, ScriptAnswer, ScriptRequest};
 use super::supervisor::Runtime;
 use crate::constants::{DIAGNOSTICS, SCRIPT_REQUESTS_PER_STEP, VM_RESPONSE_BYTES};
-use crate::document::{Document, StyleSource};
+use crate::document::{Document, ScriptDocument, StyleSource};
 use crate::network::Method;
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
     ConsoleEntry, DomLevel, Execution, HostRequest, HostResponse, NavigationRequest,
-    PageEnvironment, ScriptFailure,
+    PageEnvironment, ScriptFailure, VmState,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+mod blob_fetch;
+mod geometry;
 mod image_loading;
+mod requests;
+pub(in crate::runtime) use requests::queue as queue_requests;
+
+/** Resident tokens identify heap-less projections; transferable states still require full heap validation. */
+pub(super) fn validate_script_state(
+    state: &VmState,
+    token: Option<u64>,
+    document: &ScriptDocument,
+) -> EngineResult<()> {
+    if token.is_some() {
+        state.validate_summary_document(document)
+    } else {
+        state.validate_document(document)
+    }
+}
 
 /// Virtual milliseconds of timers and animation frames a page runs before it first commits, so
 /// `setTimeout(0)` and requestAnimationFrame rendering is part of the first paint.
@@ -70,6 +87,22 @@ pub(super) struct Scripting {
     pub workers: super::workers::Workers,
     /// Complete sampled animation paint effects, separate from authored document styles.
     pub opacity_effects: Vec<crate::v9::OpacityEffect>,
+    /// CSS transition state belongs to the page candidate, independently of V9 animation state.
+    pub css_transitions: crate::document::OpacityTransitions,
+    /// Translation transitions share the page clock while retaining percentages until native layout.
+    pub css_translation_transitions: crate::document::TranslationTransitions,
+    /// Keyframe playback is independent from authored opacity and transition state.
+    pub css_animations: crate::document::OpacityAnimations,
+    /// Rotation retains unwrapped angles so full turns remain visible through native sampling.
+    pub css_rotation_transitions: crate::document::RotationTransitions,
+    /// Rotation keyframes share the page clock without rewriting the authored transform.
+    pub css_rotation_animations: crate::document::RotationAnimations,
+    /// Pure scale transitions retain independent axes while leaving native layout measurements unchanged.
+    pub css_scale_transitions: crate::document::ScaleTransitions,
+    /// Scale keyframe playback shares the same candidate clock and pause/fill contracts.
+    pub css_scale_animations: crate::document::ScaleAnimations,
+    /// Geometry invalidations schedule observer-only work even after ordinary timers go idle.
+    pub intersections: super::intersections::Observations,
     /// Actual image requests and retained decode admission for this page alone.
     pub image_loading: image_loading::Loading,
     /// Load stays pending across bounded slices while its image cohort still has work.
@@ -86,6 +119,10 @@ pub(super) struct Scripting {
     pub next_timer_ms: Option<f64>,
     /// Requests the page made that have not been answered yet.
     pub requests: Vec<HostRequest>,
+    /// Observer callbacks queue resource work until their rendering cycle has completed.
+    pub observer_resources: bool,
+    /// Newly connected linked sheets wait outside observer-only delivery and remain bounded.
+    pub deferred_stylesheets: Vec<String>,
     /// The last navigation a script asked for, performed after the page commits.
     pub navigation: Option<NavigationRequest>,
     /// Bounded console output for page.console.
@@ -193,6 +230,14 @@ impl Default for Scripting {
             image_loading: image_loading::Loading::default(),
             load_pending: false,
             opacity_effects: Vec::new(),
+            css_transitions: Default::default(),
+            css_translation_transitions: Default::default(),
+            css_animations: Default::default(),
+            css_rotation_transitions: Default::default(),
+            css_rotation_animations: Default::default(),
+            css_scale_transitions: Default::default(),
+            css_scale_animations: Default::default(),
+            intersections: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
             attempted_frame_owners: Default::default(),
@@ -200,6 +245,8 @@ impl Default for Scripting {
             workers: Default::default(),
             next_timer_ms: None,
             requests: Vec::new(),
+            observer_resources: false,
+            deferred_stylesheets: Vec::new(),
             navigation: None,
             console: Vec::new(),
             console_dropped: 0,
@@ -232,13 +279,25 @@ impl Scripting {
     }
     /** Whether the page has script work waiting. */
     pub(super) fn pending(&self) -> bool {
-        self.loaded
-            && (self.scroll_pending
-                || self.next_timer_ms.is_some()
-                || !self.requests.is_empty()
-                || !self.image_loading.pending.is_empty()
-                || self.workers.pending()
-                || self.load_pending)
+        super::animations::next_sample(self).is_some()
+            || self.loaded
+                && (self.scroll_pending
+                    || self.intersections.ready()
+                    || self.observer_resources
+                    || self.next_timer_ms.is_some()
+                    || !self.requests.is_empty()
+                    || !self.image_loading.pending.is_empty()
+                    || self.workers.pending()
+                    || self.load_pending)
+    }
+
+    /** Native transition frames use their next sample time while expensive work stays throttled. */
+    fn tick_interval(&self) -> Duration {
+        super::animations::next_sample(self)
+            .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
+            .unwrap_or(TICK_INTERVAL)
+            .min(TICK_INTERVAL)
+            .max(self.tick_cost)
     }
 }
 
@@ -325,6 +384,7 @@ impl Runtime {
         }
         let started = Instant::now();
         let kind = action["kind"].as_str().unwrap_or_default().to_string();
+        let observer_turn = matches!(kind.as_str(), "observe" | "resize");
         if !page.storage_dirty {
             page.storage = self.storage_for(&page.origin)?;
         }
@@ -348,7 +408,8 @@ impl Runtime {
         {
             super::supervisor::perf::record("script.retry", started, || kind.clone());
             // V9 steps are pure, so the first run is dropped whole and the second commits.
-            environment.geometry = geometry;
+            environment.geometry = geometry.0;
+            environment.resize_wrappers = geometry.1;
             environment.laid_out_before = None;
             execution = self.execute(page, &projection, &environment, &action)?;
         }
@@ -374,12 +435,13 @@ impl Runtime {
                 "The script and document engines disagree on the page structure.",
             ));
         }
-        execution.state.validate_document(&after)?;
+        validate_script_state(&execution.state, execution.state_token, &after)?;
         let Execution {
             state,
             state_token,
             storage,
             failed,
+            load_failure,
             mut effects,
             module_requests,
             script_requests,
@@ -402,16 +464,28 @@ impl Runtime {
             page.styled = false;
         }
         super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
-        changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
+        if observer_turn {
+            for href in &effects.stylesheets {
+                if page.scripting.deferred_stylesheets.len() >= crate::constants::STYLE_SHEETS {
+                    note_degraded(page);
+                    break;
+                }
+                if !page.scripting.deferred_stylesheets.contains(href) {
+                    page.scripting.deferred_stylesheets.push(href.clone());
+                }
+            }
+        } else {
+            changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
+        }
         let pending = PendingImages::of(first_new, &changes, &script_changes);
         page.scripting.pending_images = Some(match page.scripting.pending_images.take() {
             Some(earlier) => earlier.merge(pending),
             None => pending,
         });
         self.adopt_image_associations(page, effects.image_adoptions, &state)?;
-        page.scripting.image_loading.queue(effects.image_requests)?;
+        self.queue_image_requests(page, effects.image_requests, &effects.image_cancellations)?;
         self.discard_removed_image_sources(page);
-        if !page.scripting.loading {
+        if !page.scripting.loading && !observer_turn {
             self.flush_inserted_images(page)?;
         }
         page.state = state;
@@ -422,7 +496,19 @@ impl Runtime {
         scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
         scripting.next_timer_ms = effects.next_timer_ms;
-        scripting.requests.extend(effects.requests);
+        scripting.intersections.turn = effects.resize_turn;
+        scripting.intersections.sampled(
+            &environment,
+            effects.intersection_observers,
+            effects.intersection_observers_pending,
+            effects.resize_observers,
+            effects.resize_observers_pending,
+        );
+        queue_requests(
+            &mut scripting.requests,
+            effects.requests,
+            &effects.cancelled_requests,
+        )?;
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
         }
@@ -452,10 +538,21 @@ impl Runtime {
             .pending_scripts
             .extend(script_requests);
         page.scripting.modules.frame_requests.extend(frame_requests);
+        if let Some(error) = load_failure {
+            record_load_failure(page, &error);
+        }
         let mut step = Step { changed, failed };
-        if kind != "modules" {
+        if observer_turn {
+            page.scripting.observer_resources |= !page.scripting.deferred_stylesheets.is_empty()
+                || !changes.is_empty()
+                || !script_changes.is_empty()
+                || !page.scripting.modules.pending.is_empty()
+                || !page.scripting.modules.pending_scripts.is_empty()
+                || !page.scripting.modules.frame_requests.is_empty();
+        } else if kind != "modules" {
             self.follow_modules(page, &mut step)?;
         }
+        super::intersections::layout(page, self.render_context, self.scroll_y);
         Ok(step)
     }
 
@@ -517,6 +614,7 @@ impl Runtime {
             self.render_context,
         )?;
         page.styled = true;
+        super::animations::refresh_timelines(page)?;
         self.refresh_image_visibility(page);
         let restyled: std::collections::BTreeSet<usize> =
             crate::document::background_urls(&page.document, &page.url)
@@ -692,7 +790,7 @@ impl Runtime {
         &mut self,
         page: &Page,
         execution: &Execution,
-    ) -> EngineResult<Vec<crate::v9::NodeBox>> {
+    ) -> EngineResult<(Vec<crate::v9::NodeBox>, mars_core::geometry::WrapperMetrics)> {
         let applied = self.apply_all(
             &page.document,
             &execution.changes,
@@ -704,8 +802,42 @@ impl Runtime {
         // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
         let mut scroll = page.element_scroll.clone();
         scroll.extend(execution.effects.element_scroll.clone());
-        let display = self.render_effects(&styled, &scroll, &execution.effects.opacity_effects)?;
-        Ok(boxes(&display))
+        let mut transitions = page.scripting.css_transitions.clone();
+        transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut animations = page.scripting.css_animations.clone();
+        animations.update(&styled, page.scripting.clock_ms)?;
+        let mut translations = page.scripting.css_translation_transitions.clone();
+        translations.update(&styled, page.scripting.clock_ms)?;
+        let mut rotation_transitions = page.scripting.css_rotation_transitions.clone();
+        rotation_transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut rotation_animations = page.scripting.css_rotation_animations.clone();
+        rotation_animations.update(&styled, page.scripting.clock_ms)?;
+        let mut scale_transitions = page.scripting.css_scale_transitions.clone();
+        scale_transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut scale_animations = page.scripting.css_scale_animations.clone();
+        scale_animations.update(&styled, page.scripting.clock_ms)?;
+        let effects = super::animations::PaintEffects {
+            opacity: super::animations::combine_effects(
+                &execution.effects.opacity_effects,
+                &transitions,
+                &animations,
+                page.scripting.clock_ms,
+            ),
+            translations: translations.effects(page.scripting.clock_ms),
+            scales: super::animations::combine_scale_effects(
+                &scale_transitions,
+                &scale_animations,
+                &rotation_transitions,
+                page.scripting.clock_ms,
+            ),
+            rotations: super::animations::combine_rotation_effects(
+                &rotation_transitions,
+                &rotation_animations,
+                page.scripting.clock_ms,
+            ),
+        };
+        let display = self.render_effects(&styled, &scroll, &effects)?;
+        Ok((boxes(&display), display.resize_wrappers))
     }
 
     /** Per-request facts: current URL, viewport, title, node text and the jar's script cookies. */
@@ -717,12 +849,16 @@ impl Runtime {
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
-        environment.disallow_code_generation_from_strings =
-            !super::csp::allows_eval(&page.document.csp);
+        super::csp::apply_environment(&page.document.csp, &mut environment);
         environment.node_text = node_text(&page.document);
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
         // that measures one is laid out and run again (`forced_geometry`).
         environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
+        environment.resize_wrappers = page
+            .display
+            .as_ref()
+            .map(|display| display.resize_wrappers)
+            .unwrap_or_default();
         // Before the first layout no node has a box, so every node counts as new: a step that
         // reads geometry is laid out and run again, as a browser forces layout, instead of
         // measuring nominal 1px boxes (ref-rectangle.js in the sticky tests).
@@ -771,11 +907,21 @@ impl Runtime {
         virtual_end: f64,
         yield_now: &mut dyn FnMut() -> bool,
     ) -> EngineResult<bool> {
+        let previous_opacity = super::animations::paint_effects(&page.scripting);
         let mut changed = false;
         let advance_ms = (virtual_end - page.scripting.clock_ms).max(0.0);
+        let mut observed = false;
         for step in 0..SETTLE_STEPS {
             if Instant::now() >= until || !page.scripting.loaded || (step > 0 && yield_now()) {
                 break;
+            }
+            if page.scripting.observer_resources {
+                changed |= self.flush_observer_resources(page)?;
+            }
+            if !observed && page.scripting.intersections.ready() {
+                observed = true;
+                changed |= self.observe_intersections_until(page, until)?;
+                continue;
             }
             let action = if page.scripting.scroll_pending {
                 page.scripting.scroll_pending = false;
@@ -822,6 +968,7 @@ impl Runtime {
             }
         }
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
+        changed |= previous_opacity != super::animations::paint_effects(&page.scripting);
         changed |= self.run_workers(page, until)?;
         changed |= self.run_frame_pages(page, until, advance_ms)?;
         Ok(changed)
@@ -862,8 +1009,19 @@ impl Runtime {
                 break;
             };
             let deadline = until.max(started + SCRIPT_REQUEST_WALL);
+            let blob_policy = if blob_fetch::is_blob(&request.url) {
+                Some(super::worker_loading::Policy {
+                    base: base.clone(),
+                    partition: Url::parse(&page.top_level_url)
+                        .map_err(|_| EngineError::invalid("Invalid fetch partition URL."))?,
+                    csp: page.document.csp.clone(),
+                })
+            } else {
+                None
+            };
             let preflights = &mut page.scripting.preflights;
-            let response = self.script_request(&base, &request, preflights, deadline, None)?;
+            let response =
+                self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
             if request.kind != "beacon" {
                 responses.push(response);
             }
@@ -887,6 +1045,16 @@ impl Runtime {
         until: Instant,
         worker_policy: Option<&super::worker_loading::Policy>,
     ) -> EngineResult<HostResponse> {
+        if blob_fetch::is_blob(&request.url) {
+            self.publish(|_| ())?;
+            return Ok(worker_policy.map_or_else(
+                || failed(request.id, FAILED_TO_FETCH),
+                |policy| blob_fetch::response(request, policy),
+            ));
+        }
+        if request.blob_source.is_some() {
+            return Ok(failed(request.id, FAILED_TO_FETCH));
+        }
         if worker_policy.is_some_and(|policy| {
             Url::parse(&request.url)
                 .is_ok_and(|url| !super::csp::allows_connect(&policy.csp, &policy.base, &url))
@@ -934,9 +1102,12 @@ impl Runtime {
     pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
         let now = Instant::now();
         let due = self.page.as_ref().is_some_and(|page| {
-            (page.scripting.pending() || page.frames_pending())
+            ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
-                && now >= page.scripting.last_tick + TICK_INTERVAL.max(page.scripting.tick_cost)
+                || super::animations::next_sample(&page.scripting).is_some()
+                || page.scripting.loaded && page.scripting.intersections.ready()
+                || page.frame_observations_pending())
+                && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
             return false;
@@ -963,7 +1134,20 @@ impl Runtime {
             * MS_PER_SECOND;
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
-        let changed = self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?;
+        let changed = if now < page.scripting.awake_until {
+            self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
+        } else {
+            let previous = super::animations::paint_effects(&page.scripting);
+            page.scripting.clock_ms = end;
+            let animated = previous != super::animations::paint_effects(&page.scripting);
+            let observed = if page.scripting.loaded && page.scripting.intersections.ready() {
+                self.observe_intersections(&mut page)?
+            } else {
+                false
+            };
+            let descendants = self.run_frame_observers(&mut page, now + TICK_WALL)?;
+            animated || observed || descendants
+        };
         page.scripting.tick_cost = now.elapsed();
         if changed {
             self.commit_mutation(page)?;
@@ -977,6 +1161,41 @@ impl Runtime {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /** A refused observer turn follows ordinary script failure handling rather than retrying forever. */
+    pub(super) fn observe_intersections(&mut self, page: &mut Page) -> EngineResult<bool> {
+        self.observe_intersections_until(page, Instant::now() + TICK_WALL)
+    }
+
+    /** The ordinary failure policy also applies to the bounded observer-only render cycle. */
+    fn observe_intersections_until(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+    ) -> EngineResult<bool> {
+        match self.resize_observer_cycle(page, until) {
+            Ok(changed) => Ok(changed),
+            Err(error) if stops_navigation(&error) || lost_state(&error) => Err(error),
+            Err(error) => {
+                stop_scripts(page, &error);
+                Ok(false)
+            }
+        }
+    }
+
+    /** Callback-created resources are admitted on the ordinary task path, never between resize broadcasts. */
+    fn flush_observer_resources(&mut self, page: &mut Page) -> EngineResult<bool> {
+        page.scripting.observer_resources = false;
+        let hrefs = std::mem::take(&mut page.scripting.deferred_stylesheets);
+        let changed = self.load_inserted_sheets(page, &hrefs)?;
+        self.flush_inserted_images(page)?;
+        let mut step = Step {
+            changed,
+            failed: Vec::new(),
+        };
+        self.follow_modules(page, &mut step)?;
+        Ok(step.changed)
     }
 
     /** Commit engine state that changed no document: same revision, same layout. */
@@ -1024,6 +1243,9 @@ impl Runtime {
         }
         if x.is_some() || y.is_some() {
             self.clamp_scroll();
+            if let Some(page) = self.page.as_mut() {
+                page.scripting.intersections.invalidate();
+            }
         }
     }
 
@@ -1076,6 +1298,7 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         headers.push(("content-type".into(), TEXT_BODY_TYPE.into()));
     }
     Some(ScriptRequest {
+        raw_response: request.kind == "fetch",
         url: Url::parse(&request.url).ok()?,
         method,
         body,
@@ -1118,36 +1341,47 @@ fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<St
     String::from_utf8(decoded).ok()
 }
 
-/** A readable final response, handed to the page if it is text within VM_RESPONSE_BYTES, with
-only the headers the CORS rules expose. */
+/** Admit exact fetch bytes or legacy decoded text within VM_RESPONSE_BYTES, exposing only
+the headers the CORS rules permit after the response passes native admission. */
 fn readable(
     id: u32,
     response: crate::network::WebResponse,
     headers: Vec<(String, String)>,
 ) -> HostResponse {
-    if response.image_data || response.download || response.source.len() > VM_RESPONSE_BYTES {
+    if response.image_data || response.download {
         return failed(id, FAILED_TO_FETCH);
     }
+    let (body, body_bytes) = if response.raw_data {
+        let Ok(bytes) = super::images::decode_base64_within(&response.source, VM_RESPONSE_BYTES)
+        else {
+            return failed(id, FAILED_TO_FETCH);
+        };
+        (String::new(), bytes)
+    } else if response.source.len() <= VM_RESPONSE_BYTES {
+        (response.source, Vec::new())
+    } else {
+        return failed(id, FAILED_TO_FETCH);
+    };
     HostResponse {
         id,
         status: response.status,
         status_text: String::new(),
         url: response.url,
         headers,
-        body: response.source,
+        body,
+        body_bytes,
         error: None,
     }
 }
 
 /** A `data:` URL fetched by script: decoded locally, as Fetch's scheme fetch does, never sent to
-Relay. GET only, UTF-8 text within VM_RESPONSE_BYTES, with its media type as Content-Type;
+Relay. GET only, exact bytes within VM_RESPONSE_BYTES, with its media type as Content-Type;
 anything else is a network error. YouTube reads its player configuration this way. */
 fn data_response(request: &HostRequest) -> HostResponse {
     let decoded = super::images::data_body(&request.url, VM_RESPONSE_BYTES)
         .ok()
-        .filter(|_| request.method == "GET")
-        .and_then(|(mime, bytes)| Some((mime, String::from_utf8(bytes).ok()?)));
-    let Some((mime, body)) = decoded else {
+        .filter(|_| request.method == "GET");
+    let Some((mime, body_bytes)) = decoded else {
         return failed(request.id, FAILED_TO_FETCH);
     };
     HostResponse {
@@ -1156,7 +1390,8 @@ fn data_response(request: &HostRequest) -> HostResponse {
         status_text: "OK".into(),
         url: request.url.clone(),
         headers: vec![("content-type".into(), mime)],
-        body,
+        body: String::new(),
+        body_bytes,
         error: None,
     }
 }
@@ -1213,10 +1448,39 @@ fn stop_scripts(page: &mut Page, error: &EngineError) {
         "Page scripts stopped: {}",
         error.message.chars().take(REASON_CHARS).collect::<String>()
     );
-    if page.document.diagnostics.len() < DIAGNOSTICS
-        && !page.document.diagnostics.contains(&message)
-    {
+    if !page.document.diagnostics.contains(&message) {
+        // A terminal failure must remain explainable even when CSS warnings filled the list.
+        if page.document.diagnostics.len() >= DIAGNOSTICS {
+            page.document.diagnostics.pop();
+        }
         page.document.diagnostics.push(message);
+    }
+    if page.degraded.len() < DIAGNOSTICS
+        && !page.degraded.iter().any(|feature| feature == "scripts")
+    {
+        page.degraded.push("scripts".into());
+    }
+}
+
+/** Finalization rollback is one page-level failure, including on module continuation steps. */
+fn record_load_failure(page: &mut Page, error: &EngineError) {
+    const REASON_CHARS: usize = 240;
+    let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
+    let code = error.code.chars().take(REASON_CHARS).collect::<String>();
+    let message = format!("Page script state could not be retained ({code}): {reason}");
+    if !page.document.diagnostics.contains(&message) {
+        if page.document.diagnostics.len() >= DIAGNOSTICS {
+            page.document.diagnostics.pop();
+        }
+        page.document.diagnostics.push(message.clone());
+        record_console(
+            &mut page.scripting,
+            vec![ConsoleEntry {
+                level: "error".into(),
+                text: message,
+            }],
+            0,
+        );
     }
     if page.degraded.len() < DIAGNOSTICS
         && !page.degraded.iter().any(|feature| feature == "scripts")
@@ -1317,17 +1581,7 @@ pub(super) fn positions(document: &Document) -> std::collections::BTreeMap<usize
 }
 /** A display list's boxes as V9 reads them, in paint order. */
 pub(super) fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::NodeBox> {
-    display
-        .items
-        .iter()
-        .map(|item| crate::v9::NodeBox {
-            node: item.local_id,
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
-        })
-        .collect()
+    geometry::boxes(display)
 }
 pub(super) fn inserted_sheets(
     applied: &Document,

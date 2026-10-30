@@ -143,14 +143,15 @@ impl Canvas {
                     .as_ref()
                     .and_then(|s| s.document.as_ref())
                 {
-                    let selected = document
-                        .nodes
-                        .iter()
-                        .find(|n| n.parent == Some(node.local_id) && n.selected)
+                    let selected = crate::document::select_options(document, node.local_id)
+                        .into_iter()
+                        .find(|n| n.selected)
                         .map(|n| n.local_id);
-                    if let Some(index) = ids.iter().position(|id| Some(*id) == selected) {
-                        button.selectItemAtIndex(index as isize);
-                    }
+                    let index = ids
+                        .iter()
+                        .position(|id| Some(*id) == selected)
+                        .map_or(-1, |index| index as isize);
+                    button.selectItemAtIndex(index);
                 }
                 button.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
@@ -261,11 +262,7 @@ impl Canvas {
             .as_ref()
             .and_then(|s| s.document.as_ref())
         {
-            for option in document
-                .nodes
-                .iter()
-                .filter(|n| n.parent == Some(node.local_id) && n.tag == "option")
-            {
+            for option in crate::document::select_options(document, node.local_id) {
                 let entry = unsafe {
                     objc2_app_kit::NSMenuItem::initWithTitle_action_keyEquivalent(
                         objc2_app_kit::NSMenuItem::alloc(self.mtm()),
@@ -274,7 +271,7 @@ impl Canvas {
                         &NSString::from_str(""),
                     )
                 };
-                entry.setEnabled(!option.disabled);
+                entry.setEnabled(!crate::document::option_disabled(document, option));
                 if let Some(menu) = button.menu() {
                     menu.setAutoenablesItems(false);
                     menu.addItem(&entry);

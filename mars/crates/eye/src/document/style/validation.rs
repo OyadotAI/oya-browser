@@ -8,9 +8,7 @@ use super::{
 };
 use crate::document::Appearance;
 use crate::{
-    constants::{
-        CSS_MAX_BORDER_WIDTH, CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE, URL_BYTES,
-    },
+    constants::{CSS_MAX_BORDER_WIDTH, CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE},
     protocol::{EngineError, EngineResult},
 };
 impl ComputedStyle {
@@ -48,6 +46,30 @@ impl ComputedStyle {
                 .iter()
                 .any(|value| !value.is_finite() || value.abs() > CSS_MAX_SCALAR)
             || !(0.0..=1.0).contains(&self.opacity)
+            || !self.transition.valid()
+            || self.rotation_radians.is_some_and(|angle| {
+                !angle.is_finite() || angle.abs() > super::constants::TRANSFORM_MAX
+            })
+            || self.scale_factors.is_some_and(|factors| {
+                factors.iter().any(|value| {
+                    !value.is_finite() || value.abs() > super::constants::TRANSFORM_MAX
+                })
+            })
+            || self.scale_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .scale_animations
+                .iter()
+                .all(super::ScaleAnimation::valid)
+            || self.rotation_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .rotation_animations
+                .iter()
+                .all(super::RotationAnimation::valid)
+            || self.opacity_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .opacity_animations
+                .iter()
+                .all(super::OpacityAnimation::valid)
             || !self.font_size.is_finite()
             || !(self.font_size == 0.0
                 || (CSS_MIN_FONT_SIZE..=CSS_MAX_FONT_SIZE).contains(&self.font_size))
@@ -157,7 +179,9 @@ impl ComputedStyle {
 }
 /** An authored image URL: present, bounded and free of control characters. */
 fn url_ok(url: &str) -> bool {
-    !url.is_empty() && url.len() <= URL_BYTES && !url.chars().any(char::is_control)
+    !url.is_empty()
+        && mars_core::image_source::valid_url_text(url)
+        && !url.chars().any(char::is_control)
 }
 /** A gradient's stops, empty for other layers. */
 fn stops(layer: &BackgroundLayer) -> &[ColorStop] {

@@ -10,10 +10,10 @@
  * After every settle, the bounded frame router exchanges messages and retains pending rounds;
  * each frame page's timers advance by as much virtual time as the embedder's did.
  * A frame's document is spliced into the embedder's display as any frame's is; its own frames are
- * not loaded (one level), and it takes no input yet. A frame whose scripts fail stops alone.
+ * loaded through the same bounded coordinator; frame input remains unsupported. A frame whose scripts fail stops alone.
  */
 use super::frames::{Embedding, FRAME_COUNT, Frame, HTTP_OK, same_origin};
-use super::images::{ImageAsset, stops_loading};
+use super::images::stops_loading;
 use super::page::Page;
 use super::supervisor::Runtime;
 use crate::network::{Destination, WebRequest};
@@ -28,9 +28,6 @@ use std::time::{Duration, Instant};
 const MESSAGE_TRACE_CHARS: usize = 160;
 /// The longest one frame page may take to load, so a slow widget never fails the embedder.
 const FRAME_PAGE_WALL: Duration = Duration::from_secs(8);
-/// Where the identities of frames added after load start when the page had none: the first
-/// range above every page node, as FRAME_ID_SHIFT places the first loaded frame.
-const FIRST_FRAME_BASE: usize = 1 << 32;
 
 impl Runtime {
     /**
@@ -44,74 +41,103 @@ impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn frame_page(
         &mut self,
+        parent: &mut Page,
         owner: usize,
         address: &str,
         attributes: &BTreeMap<String, String>,
-        base: &url::Url,
-        id_base: usize,
+        paint_base: usize,
         deadline: Instant,
-        images: &mut BTreeMap<usize, ImageAsset>,
-        routes: &[crate::v9::FrameRoute],
+        budget: &mut super::frames::FrameBudget,
     ) -> EngineResult<Option<Frame>> {
+        let base = url::Url::parse(&parent.url)
+            .map_err(|_| EngineError::invalid("Invalid frame parent URL."))?;
         let Ok(url) = base.join(address) else {
             return Ok(None);
         };
-        if !self.scripted_frame_allowed(base, &url, attributes) {
+        if !self.scripted_frame_allowed(&base, &url, attributes) {
             return Ok(None);
         }
-        let window = routes
+        let window = parent
+            .frame_tree
+            .routes
             .iter()
             .find(|route| route.owner == owner)
-            .map(|route| route.window);
-        let replacement = self.page.as_ref().is_some_and(|root| {
-            root.frames.iter().any(|frame| {
-                frame
-                    .page
-                    .as_ref()
-                    .is_some_and(|page| page.scripting.environment.own_window == window)
-            })
-        });
+            .map(|route| route.window)
+            .ok_or_else(|| EngineError::invalid("Missing frame context."))?;
+        let replacement = self
+            .page
+            .as_ref()
+            .is_some_and(|root| root.has_frame_window(window));
         let context = self.residency.reserve(replacement)?;
         let deadline = deadline.min(Instant::now() + FRAME_PAGE_WALL);
         let request = WebRequest {
             destination: Destination::Document,
+            top_level: Some(parent.top_level_url.clone()),
             ..WebRequest::get(url.as_str())
         };
         let acquired = match self.acquire(request, deadline, Some(base.clone()), false, true) {
             Ok(acquired) => acquired,
             Err(error) if stops_loading(&error) => return Err(error),
-            Err(error) => {
-                super::supervisor::perf::record("frame.failed", Instant::now(), || {
-                    error.message.clone()
-                });
-                return Ok(None);
-            }
+            Err(_) => return Ok(None),
         };
+        let final_url = url::Url::parse(&acquired.response.url)
+            .map_err(|_| EngineError::invalid("Invalid acquired frame URL."))?;
+        let mut ancestors = parent.frame_ancestors.clone();
+        ancestors.push(parent.url.clone());
         if acquired.response.status != HTTP_OK
             || acquired.response.mime != "text/html"
-            || !super::framing::may_frame(&acquired.response.headers, base, &url)
+            || !super::framing::may_frame_chain(&acquired.response.headers, &ancestors, &final_url)
         {
             return Ok(None);
         }
+        budget.source(acquired.response.source.len())?;
         let embedding = Embedding {
-            top_level_url: base.to_string(),
+            top_level_url: parent.top_level_url.clone(),
             origin: base.origin().ascii_serialization(),
             name: attributes.get("name").cloned().unwrap_or_default(),
-            routes: routes.to_vec(),
-            window: routes
-                .iter()
-                .find(|route| route.owner == owner)
-                .map(|route| route.window)
-                .ok_or_else(|| EngineError::invalid("Missing frame context."))?,
+            routes: parent.frame_tree.routes.clone(),
+            window,
+            ancestors,
+            contexts: parent.ancestor_contexts(),
+            paint_base,
+            source_budget: super::frames::FRAME_BYTES_TOTAL.saturating_sub(budget.bytes),
         };
-        match self.build_page(acquired, deadline, false, Some(&embedding), context) {
+        if parent.display.is_none() || !parent.styled {
+            let previous = self.render_context;
+            let scroll = self.scroll_y;
+            if !parent.frame_ancestors.is_empty() {
+                self.render_context.width = parent.scripting.environment.viewport_width;
+                self.render_context.height = parent.scripting.environment.viewport_height;
+                self.scroll_y = parent.scripting.scroll_y.unwrap_or(0.0);
+            }
+            let prepared = self.prepare_current(parent);
+            self.render_context = previous;
+            self.scroll_y = scroll;
+            prepared?;
+        }
+        let dimensions = frame_dimensions(parent, owner);
+        let previous = self.render_context;
+        let scroll = self.scroll_y;
+        self.render_context.width = dimensions.0;
+        self.render_context.height = dimensions.1;
+        self.scroll_y = 0.0;
+        let partition = self.frame_partition.replace(parent.top_level_url.clone());
+        let built = self.build_page(acquired, deadline, false, Some(&embedding), context);
+        self.frame_partition = partition;
+        self.render_context = previous;
+        self.scroll_y = scroll;
+        match built {
             Ok(page) => {
-                for entry in page.scripting.console.iter().filter(|e| e.level == "error") {
-                    super::supervisor::perf::record("frame.console", Instant::now(), || {
-                        entry.text.chars().take(MESSAGE_TRACE_CHARS).collect()
-                    });
-                }
-                Ok(Some(Frame::of_page(owner, page, id_base, images)))
+                budget.source(
+                    page.inert_frame_bytes
+                        .saturating_add(page.scripting.modules.frame_bytes),
+                )?;
+                Ok(Some(Frame::of_page(
+                    owner,
+                    page,
+                    paint_base - parent.frame_base,
+                    &mut parent.images,
+                )))
             }
             Err(error) if stops_loading(&error) => Err(error),
             Err(error) => {
@@ -163,9 +189,6 @@ impl Runtime {
     /** Route only current requested owners; prune removed nodes before handing hints to V9. */
     pub(super) fn route_inserted_frames(&self, page: &mut Page, urls: &[String]) {
         prune_routes(page);
-        if page.scripting.environment.embedder_origin.is_some() {
-            return;
-        }
         let Ok(base) = url::Url::parse(&page.url) else {
             return;
         };
@@ -188,7 +211,7 @@ impl Runtime {
      * Loads admitted inserted iframes as pages of their own, selecting their route by owner.
      * The requested
      * documents V9 asked for (`urls`). Returns whether a frame was added, so the page lays out
-     * again. A frame page loads no frames itself.
+     * again. Embedded pages defer admission to the root coordinator's shared tree pass.
      */
     pub(super) fn attach_frame_pages(
         &mut self,
@@ -197,6 +220,21 @@ impl Runtime {
         deadline: Instant,
     ) -> EngineResult<bool> {
         if urls.is_empty() || page.scripting.environment.embedder_origin.is_some() {
+            return Ok(false);
+        }
+        let mut budget = super::frames::FrameBudget::for_page(page);
+        self.attach_frame_pages_budget(page, urls, deadline, &mut budget)
+    }
+
+    /** Only root reconciliation may admit descendants against the shared whole-tree allowance. */
+    fn attach_frame_pages_budget(
+        &mut self,
+        page: &mut Page,
+        urls: &[String],
+        deadline: Instant,
+        budget: &mut super::frames::FrameBudget,
+    ) -> EngineResult<bool> {
+        if urls.is_empty() || page.frame_ancestors.len() >= super::frames::FRAME_DEPTH - 1 {
             return Ok(false);
         }
         let Ok(base) = url::Url::parse(&page.url) else {
@@ -212,28 +250,22 @@ impl Runtime {
             {
                 continue;
             }
-            if page.frames.len() >= FRAME_COUNT {
+            if budget.count >= FRAME_COUNT {
                 break;
             }
             if !page.scripting.attempted_frame_owners.insert(owner) {
                 continue;
             }
-            let id_base = page
-                .frames
-                .iter()
-                .map(Frame::id_end)
-                .max()
-                .unwrap_or(FIRST_FRAME_BASE);
+            let id_base = budget.reserve()?;
             let attributes = page.document.nodes[index].attributes.clone();
             let opened = match self.frame_page(
+                page,
                 owner,
                 &address,
                 &attributes,
-                &base,
                 id_base,
                 deadline,
-                &mut page.images,
-                &page.frame_tree.routes,
+                budget,
             ) {
                 Err(error) if error.code == "limit_exceeded" => {
                     super::scripting::record_console(
@@ -271,32 +303,85 @@ impl Runtime {
         if page.scripting.environment.embedder_origin.is_some() {
             return Ok(false);
         }
-        self.exchange_frames(page, until, advance_ms)
+        self.exchange_frames(page, until, advance_ms, false)
     }
 
-    /** Refresh context lifetimes and attempt only newly changed sources through governed loading. */
+    /** Idle observation updates never run unrelated author timers in descendants. */
+    pub(super) fn run_frame_observers(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+    ) -> EngineResult<bool> {
+        self.exchange_frames(page, until, 0.0, true)
+    }
+
+    /** A single root pass prunes all retired descendants before allocating against shared limits. */
     pub(super) fn reconcile_frame_contexts(
         &mut self,
         page: &mut Page,
         until: Instant,
-    ) -> EngineResult<()> {
-        let urls = self.sync_frame_tree(page)?;
-        let urls: Vec<_> = urls
+    ) -> EngineResult<bool> {
+        let retired = self.prune_frame_branch(page)?;
+        let mut budget = super::frames::FrameBudget::for_page(page);
+        budget.validate()?;
+        let changed = retired | self.admit_frame_branch(page, until, &mut budget)?;
+        self.refresh_child_directories(page);
+        Ok(changed)
+    }
+
+    /** Dropping one parent drops its whole descendant subtree and every associated residency lease. */
+    fn prune_frame_branch(&mut self, page: &mut Page) -> EngineResult<bool> {
+        let previous = page.frames.len();
+        self.sync_frame_tree(page)?;
+        let mut changed = previous != page.frames.len();
+        self.route_inserted_frames(page, &[]);
+        for frame in Arc::make_mut(&mut page.frames) {
+            if let Some(child) = frame.page.as_mut() {
+                changed |= self.prune_frame_branch(child)?;
+                frame.follow_page(&mut page.images);
+            }
+        }
+        Ok(changed)
+    }
+
+    /** Static and newly inserted nested owners use the same admission path and never reset budgets. */
+    fn admit_frame_branch(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+        budget: &mut super::frames::FrameBudget,
+    ) -> EngineResult<bool> {
+        if Instant::now() >= until {
+            return Ok(false);
+        }
+        let base = url::Url::parse(&page.url)
+            .map_err(|_| EngineError::invalid("Invalid frame parent URL."))?;
+        let urls: Vec<_> = page
+            .document
+            .nodes
             .iter()
-            .filter_map(|src| {
-                url::Url::parse(&page.url)
-                    .ok()?
-                    .join(src)
-                    .ok()
+            .filter(|node| {
+                node.tag == "iframe"
+                    && !page
+                        .scripting
+                        .attempted_frame_owners
+                        .contains(&node.local_id)
+            })
+            .filter_map(|node| {
+                node.attributes
+                    .get("src")
+                    .and_then(|source| base.join(source).ok())
                     .map(String::from)
             })
             .collect();
-        if !urls.is_empty() {
-            self.route_inserted_frames(page, &urls);
-            self.attach_frame_pages(page, &urls, until)?;
-            self.refresh_child_directories(page);
+        let mut changed = self.attach_frame_pages_budget(page, &urls, until, budget)?;
+        for frame in Arc::make_mut(&mut page.frames) {
+            if let Some(child) = frame.page.as_mut() {
+                changed |= self.admit_frame_branch(child, until, budget)?;
+                frame.follow_page(&mut page.images);
+            }
         }
-        Ok(())
+        Ok(changed)
     }
 
     /** One frame page's turn: its mail, then its timers. Whether its document changed. */
@@ -305,16 +390,38 @@ impl Runtime {
         child: &mut Page,
         until: Instant,
         advance_ms: f64,
+        observe_only: bool,
     ) -> EngineResult<bool> {
         let mut changed = false;
+        let resized = child.scripting.environment.viewport_width != self.render_context.width
+            || child.scripting.environment.viewport_height != self.render_context.height;
+        if resized || !child.styled || child.display.is_none() {
+            child.styled = false;
+            self.prepare_current(child)?;
+            child.scripting.environment.viewport_width = self.render_context.width;
+            child.scripting.environment.viewport_height = self.render_context.height;
+            changed = true;
+        }
         if child.scripting.loaded {
             let end = child.scripting.clock_ms + advance_ms;
-            match self.settle_scripts(child, until, end) {
+            let result = if observe_only || Instant::now() >= child.scripting.awake_until {
+                if child.scripting.intersections.ready() {
+                    self.observe_intersections(child)
+                } else {
+                    Ok(false)
+                }
+            } else {
+                self.settle_scripts(child, until, end)
+            };
+            match result {
                 Ok(settled) => changed |= settled,
                 Err(error) if stops_loading(&error) => return Err(error),
                 // A frame whose state the V9 service lost stops alone; the embedder stays.
                 Err(error) => stop_frame_scripts(child, &error),
             }
+        }
+        if changed {
+            self.prepare_current(child)?;
         }
         Ok(changed)
     }
@@ -374,7 +481,11 @@ impl Runtime {
      * caller's; authority and service failures still stop everything.
      */
     fn step_in(&mut self, to: &mut Page, event: serde_json::Value) -> EngineResult<bool> {
-        match self.script_step(to, json!({"kind":"event","event":event})) {
+        to.scripting.wake();
+        let partition = self.frame_partition.replace(to.top_level_url.clone());
+        let result = self.script_step(to, json!({"kind":"event","event":event}));
+        self.frame_partition = partition;
+        match result {
             Ok(step) => Ok(step.changed),
             Err(error) if stops_loading(&error) => Err(error),
             Err(error) => {
@@ -473,6 +584,16 @@ fn trace(to: &str, wanted: &str, delivered: bool, data: &crate::v9::MessageData)
 }
 
 impl Page {
+    /** Native observer work remains schedulable after the ordinary author timer wake window closes. */
+    pub(super) fn frame_observations_pending(&self) -> bool {
+        self.frames
+            .iter()
+            .filter_map(|frame| frame.page.as_ref())
+            .any(|child| {
+                child.scripting.loaded && (!child.styled || child.scripting.intersections.ready())
+                    || child.frame_observations_pending()
+            })
+    }
     /** Whether a frame page has script work waiting or messages are waiting to cross, so the
     embedder's background run keeps going. */
     pub(super) fn frames_pending(&self) -> bool {
@@ -486,9 +607,8 @@ impl Page {
                 .filter_map(|f| f.page.as_ref())
                 .any(|child| {
                     child.scripting.pending()
-                        || !child.scripting.outbox.is_empty()
-                        || !child.scripting.port_outbox.is_empty()
-                        || !child.scripting.port_closes.is_empty()
+                        || child.scripting.intersections.ready()
+                        || child.frames_pending()
                 })
     }
 }
@@ -545,4 +665,47 @@ fn unattached(page: &Page, base: &url::Url, urls: &[String]) -> Vec<(usize, usiz
                 .then(|| (index, node.local_id, src.to_string()))
         })
         .collect()
+}
+
+/** Child geometry is measured in its parent, then interpreted as a local viewport. */
+pub(super) fn frame_dimensions(page: &Page, owner: usize) -> (f64, f64) {
+    let dimensions = page
+        .display
+        .as_ref()
+        .and_then(|display| display.items.iter().find(|item| item.local_id == owner))
+        .map(crate::document::frame_viewport)
+        .map(|rect| (rect[2], rect[3]))
+        .unwrap_or(super::frames::DEFAULT_VIEWPORT);
+    (
+        dimensions.0.clamp(1.0, super::frames::MAX_FRAME_VIEWPORT),
+        dimensions.1.clamp(1.0, super::frames::MAX_FRAME_VIEWPORT),
+    )
+}
+
+impl Page {
+    /** A native layout trigger schedules resized descendants without polling their timers. */
+    pub(super) fn invalidate_resized_frames(&mut self) {
+        let resized: Vec<_> = self
+            .frames
+            .iter()
+            .filter_map(|frame| {
+                let child = frame.page.as_ref()?;
+                let dimensions = frame_dimensions(self, frame.owner());
+                (dimensions
+                    != (
+                        child.scripting.environment.viewport_width,
+                        child.scripting.environment.viewport_height,
+                    ))
+                    .then_some(frame.owner())
+            })
+            .collect();
+        for frame in Arc::make_mut(&mut self.frames) {
+            if resized.contains(&frame.owner())
+                && let Some(child) = frame.page.as_mut()
+            {
+                child.styled = false;
+                child.scripting.intersections.invalidate_layout();
+            }
+        }
+    }
 }

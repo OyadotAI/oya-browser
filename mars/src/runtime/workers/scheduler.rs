@@ -1,8 +1,8 @@
-/** Dedicated worker scheduler preserves candidate ownership and bounded execution. */
+/** One bounded native scheduler services the complete dedicated-worker tree. */
 use super::*;
 
 impl Runtime {
-    /** One bounded task loop delivers real messages without recursively entering the V9 service. */
+    /** Context creation, delivery and execution never recursively enter the V9 service. */
     pub(in crate::runtime) fn run_workers(
         &mut self,
         page: &mut Page,
@@ -15,128 +15,152 @@ impl Runtime {
                 break;
             }
             self.publish(|_| ())?;
-            self.worker_ports(page)?;
-            if let Some(command) = page.scripting.workers.pending.pop_front() {
-                self.worker_command(page, command, until)?;
+            if let Some(task) = page.scripting.workers.pending.pop_front() {
+                self.worker_command(page, task, until)?;
                 changed = true;
                 continue;
             }
-            if let Some(event) = page.scripting.workers.deliveries.pop_front() {
-                changed |= self
-                    .script_step(page, json!({"kind":"event","event":event}))?
-                    .changed;
+            self.worker_ports(page)?;
+            self.nested_worker_ports(page)?;
+            if let Some(delivery) = page.scripting.workers.deliveries.pop_front() {
+                if delivery.owner.is_empty() {
+                    changed |= self
+                        .script_step(page, json!({"kind":"event","event":delivery.event}))?
+                        .changed;
+                } else if let Some(worker) =
+                    page.scripting.workers.contexts.get_mut(&delivery.owner)
+                {
+                    worker.inbox.push_back(delivery.event);
+                }
                 continue;
             }
-            let next = page
-                .scripting
-                .workers
+            let workers = &page.scripting.workers;
+            let next = workers
                 .contexts
                 .range((
-                    std::ops::Bound::Excluded(page.scripting.workers.cursor),
+                    std::ops::Bound::Excluded(workers.cursor.clone()),
                     std::ops::Bound::Unbounded,
                 ))
-                .chain(
-                    page.scripting
-                        .workers
-                        .contexts
-                        .range(..=page.scripting.workers.cursor),
-                )
+                .chain(workers.contexts.range(..=workers.cursor.clone()))
                 .find(|(_, worker)| {
                     worker.token.is_none()
-                        || !worker.inbox.is_empty()
+                        || worker.inbox.iter().any(|event| worker.event_ready(event))
                         || !worker.requests.is_empty()
+                        || !worker.modules.pending.is_empty()
                         || worker
                             .next_timer
                             .is_some_and(|due| due + worker.clock_origin <= page.scripting.clock_ms)
                 })
-                .map(|(id, _)| *id);
-            let Some(id) = next else {
+                .map(|(owner, _)| owner.clone());
+            let Some(owner) = next else {
                 break;
             };
-            page.scripting.workers.cursor = id;
+            page.scripting.workers.cursor = owner.clone();
             let mut worker = page
                 .scripting
                 .workers
                 .contexts
-                .remove(&id)
+                .remove(&owner)
                 .expect("selected worker");
-            let result = self.worker_turn(&mut worker, page.scripting.clock_ms, until);
-            match result {
+            match self.worker_turn(&mut worker, page.scripting.clock_ms, until) {
                 Ok(execution) => {
-                    let closed = self.worker_effects(page, id, &mut worker, execution)?;
-                    if !closed {
-                        page.scripting.workers.contexts.insert(id, worker);
+                    if self.worker_effects(page, &owner, &mut worker, execution)? {
+                        page.scripting.workers.remove(&owner, false)?;
                     } else {
-                        page.scripting.workers.close_links(id)?;
+                        page.scripting.workers.contexts.insert(owner, worker);
                     }
                 }
                 Err(error) if fatal(&error) => return Err(error),
                 Err(error) => {
-                    page.scripting.workers.remove(id)?;
-                    self.worker_error(page, id, &error.message)?;
+                    page.scripting.workers.remove(&owner, true)?;
+                    let (id, parent) = owner.split_last().expect("worker owner");
+                    self.worker_error(page, parent, *id, &error.message)?;
                 }
             }
+            page.scripting.workers.validate_queues()?;
             changed = true;
         }
         Ok(changed)
     }
 
-    /** Parent tasks preserve construction/message order; no task can address a different page. */
-    pub(in crate::runtime) fn worker_command(
-        &mut self,
-        page: &mut Page,
-        command: WorkerCommand,
-        until: Instant,
-    ) -> EngineResult<()> {
+    /** Parent-local IDs are qualified by the native sender before any load or delivery occurs. */
+    fn worker_command(&mut self, page: &mut Page, task: Task, until: Instant) -> EngineResult<()> {
+        let Task { owner, command } = task;
+        if !owner.is_empty() && !page.scripting.workers.contexts.contains_key(&owner) {
+            return Ok(());
+        }
+        let id = match &command {
+            WorkerCommand::Create { id, .. }
+            | WorkerCommand::Post { id, .. }
+            | WorkerCommand::Terminate { id } => *id,
+        };
+        if id == 0 || owner.len() >= usize::from(crate::v9::WORKER_DEPTH) {
+            return Err(EngineError::invalid("Invalid child worker identity."));
+        }
+        let mut child = owner.clone();
+        child.push(id);
         match command {
-            WorkerCommand::Create { id, url, name } => {
-                match self.create_worker(page, &url, name, until) {
+            WorkerCommand::Create {
+                url,
+                name,
+                worker_type,
+                credentials,
+                blob_source,
+                ..
+            } => {
+                if page.scripting.workers.contexts.contains_key(&child) {
+                    return Err(EngineError::invalid("Duplicate Worker identity."));
+                }
+                match self.create_worker(
+                    page,
+                    &owner,
+                    &url,
+                    name,
+                    worker_type,
+                    credentials,
+                    blob_source,
+                    until,
+                ) {
                     Ok(worker) => {
-                        page.scripting.workers.contexts.insert(id, worker);
+                        page.scripting.workers.contexts.insert(child, worker);
                     }
                     Err(error) if fatal(&error) => return Err(error),
-                    Err(error) => self.worker_error(page, id, &error.message)?,
+                    Err(error) => self.worker_error(page, &owner, id, &error.message)?,
                 }
             }
             WorkerCommand::Post {
-                id,
                 data,
                 ports,
                 moved_ports,
+                ..
             } => {
-                if page.scripting.workers.contexts.contains_key(&id) {
-                    self.worker_links(page, id, &ports, &moved_ports)?;
-                    let dead: Vec<_> = ports
-                        .iter()
-                        .filter(|link| !page.scripting.workers.links.contains_key(link))
-                        .copied()
-                        .collect();
-                    let worker = page
-                        .scripting
-                        .workers
-                        .contexts
-                        .get_mut(&id)
-                        .expect("checked worker");
-                    if worker.inbox.len() + dead.len() >= WORKER_TASKS {
-                        return Err(EngineError::limit("Worker inbox", WORKER_TASKS));
-                    }
-                    worker
-                        .inbox
-                        .push_back(PageEvent::WorkerMessage { id: 0, data, ports });
-                    for link in dead {
-                        worker.inbox.push_back(PageEvent::PortClose { link });
-                    }
-                } else {
-                    // Source acquisition may fail before the already-transferred port is admitted.
-                    self.worker_links(page, id, &ports, &moved_ports)?;
-                    for link in ports {
-                        page.scripting.workers.close_link(link, Some(id));
-                        enqueue(&mut page.scripting.workers, PageEvent::PortClose { link })?;
-                    }
-                    page.scripting.workers.validate_queues()?;
-                }
+                page.scripting
+                    .workers
+                    .post(&owner, &child, 0, data, ports, moved_ports)?;
             }
-            WorkerCommand::Terminate { id } => page.scripting.workers.remove(id)?,
+            WorkerCommand::Terminate { .. } => page.scripting.workers.remove(&child, true)?,
+        }
+        Ok(())
+    }
+
+    /** Newly admitted transfers precede the channel's already-produced messages and close effects. */
+    fn nested_worker_ports(&self, page: &mut Page) -> EngineResult<()> {
+        let owners: Vec<_> = page.scripting.workers.contexts.keys().cloned().collect();
+        for owner in owners {
+            let worker = page
+                .scripting
+                .workers
+                .contexts
+                .get_mut(&owner)
+                .expect("known worker");
+            let messages = std::mem::take(&mut worker.port_outbox);
+            let closes = std::mem::take(&mut worker.port_closes);
+            for message in messages {
+                page.scripting.workers.port(&owner, message)?;
+            }
+            for link in closes {
+                page.scripting.workers.close_port(&owner, link)?;
+            }
         }
         Ok(())
     }

@@ -4,7 +4,7 @@
  * `endings` option), BufferSources and other Blobs. `slice`, `text`, `arrayBuffer` and `bytes`
  * read it back. The bytes live in a hidden Uint8Array on the wrapper.
  *
- * ponytail: no `stream()` and no blob: URLs; the data is in memory, never in a blob registry.
+ * Object URLs retain immutable snapshots in the owning context; `stream()` remains unavailable.
  */
 use crate::v9::builtins::typed;
 use crate::v9::value::{JsString, JsValue, ObjectId};
@@ -95,7 +95,7 @@ pub(super) fn is_file(vm: &Vm, value: &JsValue) -> bool {
 }
 
 /** A Blob's normalized type. */
-fn type_of(vm: &Vm, value: &JsValue) -> String {
+pub(super) fn type_of(vm: &Vm, value: &JsValue) -> String {
     match read_slot(vm, value, "blobType") {
         Some(JsValue::String(text)) => text.lossy(),
         _ => String::new(),

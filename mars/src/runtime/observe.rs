@@ -201,14 +201,7 @@ fn actionable(node: &Node) -> bool {
 
 /** Options belong to the nearest select ancestor, through at most one optgroup. */
 fn options(document: &Document, select: usize) -> impl Iterator<Item = &Node> {
-    let parent_of = move |id: usize| {
-        local_position(&document.nodes, id, |node| node.local_id)
-            .and_then(|index| document.nodes[index].parent)
-    };
-    document.nodes.iter().filter(move |node| {
-        node.tag == "option"
-            && (node.parent == Some(select) || node.parent.and_then(parent_of) == Some(select))
-    })
+    crate::document::select_options(document, select).into_iter()
 }
 
 /** Tags a pointer click reaches: what page.click accepts, plus text areas a click focuses. */

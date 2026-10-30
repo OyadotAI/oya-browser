@@ -95,7 +95,7 @@ fn worker_global_has_no_document_or_shell_capabilities() {
     );
     assert_eq!(
         common::global(&execution, "r"),
-        "true|true|true|true|undefined|undefined|undefined|undefined|undefined|undefined|undefined|undefined"
+        "true|true|true|true|undefined|undefined|undefined|undefined|undefined|undefined|undefined|function"
     );
 }
 

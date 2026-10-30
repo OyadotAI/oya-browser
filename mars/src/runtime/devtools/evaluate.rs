@@ -204,7 +204,7 @@ impl Runtime {
                 "The script and document engines disagree on the page structure.",
             ));
         }
-        execution.state.validate_document(&after)?;
+        scripting::validate_script_state(&execution.state, execution.state_token, &after)?;
         if effects {
             self.commit_document_cookies(&page.url, &execution.effects.cookies)?;
         }
@@ -277,13 +277,17 @@ impl Runtime {
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
-        environment.disallow_code_generation_from_strings =
-            !super::super::csp::allows_eval(&page.document.csp);
+        super::super::csp::apply_environment(&page.document.csp, &mut environment);
         environment.node_text = node_text(&page.document);
         environment.geometry = page
             .display
             .as_ref()
             .map(scripting::boxes)
+            .unwrap_or_default();
+        environment.resize_wrappers = page
+            .display
+            .as_ref()
+            .map(|display| display.resize_wrappers)
             .unwrap_or_default();
         environment.scroll_y = self.scroll_y;
         environment.scroll_x = page.scroll_x;

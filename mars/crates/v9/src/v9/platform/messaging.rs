@@ -102,13 +102,20 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     let _ = IDS.set(Ids { proxy, deliver });
 }
 
-/** The private key holding a proxy's target. */
+/** Cache the immutable private key because ordinary property reads also probe proxy identity. */
 fn target_key() -> Key {
-    Key::private("remoteWindow")
+    static KEY: OnceLock<Key> = OnceLock::new();
+    KEY.get_or_init(|| Key::private("remoteWindow")).clone()
 }
 
 /** The proxy for `target`, made once and kept while referenced, so `event.source === parent`. */
-pub(in crate::v9) fn proxy(vm: &mut Vm, target: i64) -> Res<JsValue> {
+pub(in crate::v9) fn proxy(vm: &mut Vm, mut target: i64) -> Res<JsValue> {
+    if let Some(window) = super::frame_directory::sibling_window(target) {
+        if vm.page.environment.context_window == Some(window) {
+            return Ok(JsValue::Object(vm.global_object()));
+        }
+        target = super::frame_directory::canonical_target(vm, window).unwrap_or(target);
+    }
     if super::frame_directory::sibling_window(target)
         .is_some_and(|window| vm.page.environment.own_window == Some(window))
     {
@@ -157,7 +164,9 @@ pub(super) fn target_of(vm: &Vm, proxy: &JsValue) -> Option<i64> {
 
 /** An owner proxy retains its incarnation even after removal invalidates the cache entry. */
 fn incarnation_key() -> Key {
-    Key::private("remoteWindowIncarnation")
+    static KEY: OnceLock<Key> = OnceLock::new();
+    KEY.get_or_init(|| Key::private("remoteWindowIncarnation"))
+        .clone()
 }
 
 /** Missing incarnation slots represent the initial context in old serialized state. */
@@ -181,6 +190,21 @@ pub(in crate::v9) fn parent(vm: &mut Vm) -> Res<JsValue> {
         return proxy(vm, PARENT);
     }
     Ok(JsValue::Object(vm.global_object()))
+}
+
+/** Top follows native ancestry rather than aliasing the immediate embedder in nested frames. */
+pub(in crate::v9) fn top(vm: &mut Vm) -> Res<JsValue> {
+    let root = vm
+        .page
+        .environment
+        .frame_contexts
+        .iter()
+        .find(|context| context.parent.is_none())
+        .map(|context| context.window);
+    if let Some(target) = root.and_then(super::frame_directory::sibling_target) {
+        return proxy(vm, target);
+    }
+    parent(vm)
 }
 
 /** `postMessage(data, targetOrigin)` on a proxy: the message leaves as an effect. */
@@ -221,6 +245,28 @@ fn proxy_nothing(_vm: &mut Vm, _call: Call) -> Res<JsValue> {
 
 /** `closed` is false; `window`, `self` and `frames` are the proxy; `length` is 0. */
 fn proxy_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let name = super::dom::native_name(&call);
+    if let Some(target) = target_of(vm, &call.this)
+        && let Some(window) = super::frame_directory::proxy_window(vm, target)
+        && let Some(context) = vm
+            .page
+            .environment
+            .frame_contexts
+            .iter()
+            .find(|context| context.window == window)
+    {
+        if name == "length" {
+            return Ok(JsValue::Number(context.children.len() as f64));
+        }
+        if name == "parent" {
+            let target = super::frame_directory::sibling_target(context.parent.unwrap_or(window))
+                .expect("validated window");
+            return proxy(vm, target);
+        }
+        if name == "top" {
+            return top(vm);
+        }
+    }
     Ok(match super::dom::native_name(&call) {
         "closed" => JsValue::Boolean(false),
         "length" => JsValue::Number(if target_of(vm, &call.this) == Some(PARENT) {
@@ -228,7 +274,8 @@ fn proxy_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         } else {
             0.0
         }),
-        "parent" | "top" => return parent(vm),
+        "parent" => return parent(vm),
+        "top" => return top(vm),
         _ => call.this.clone(),
     })
 }

@@ -59,3 +59,28 @@ fn a_frame_with_no_requested_address_exposes_no_document() {
     let page = url("https://example.com/app/page");
     assert!(script_document_for_tests(&page, None, &page, "<x/>", "text/xml").is_none());
 }
+
+/** Child admission consumes one shared count instead of receiving a new per-document allowance. */
+#[test]
+fn shared_tree_count_does_not_reset_for_another_branch() {
+    let mut budget = super::FrameBudget {
+        count: super::FRAME_COUNT - 1,
+        bytes: 0,
+        next_base: 1 << super::FRAME_ID_SHIFT,
+    };
+    assert!(budget.reserve().is_ok());
+    assert_eq!(budget.reserve().unwrap_err().code, "limit_exceeded");
+}
+
+/** Nested HTML and inert answers draw from the same remaining source bytes. */
+#[test]
+fn shared_tree_source_bytes_reject_the_first_byte_past_the_ceiling() {
+    let mut budget = super::FrameBudget {
+        count: 0,
+        bytes: super::FRAME_BYTES_TOTAL - 1,
+        next_base: 1 << super::FRAME_ID_SHIFT,
+    };
+    budget.source(1).unwrap();
+    assert_eq!(budget.source(1).unwrap_err().code, "limit_exceeded");
+    assert_eq!(budget.bytes, super::FRAME_BYTES_TOTAL);
+}

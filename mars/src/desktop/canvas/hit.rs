@@ -63,7 +63,8 @@ pub(super) fn node_at_frames(
                     .nodes
                     .iter()
                     .find(|node| node.local_id == item.local_id - base)?;
-                return (!node.hidden() && !node.disabled).then_some(item.local_id);
+                return (!node.hidden() && node.style.interactive && !node.disabled)
+                    .then_some(item.local_id);
             }
             document
                 .nodes
@@ -76,14 +77,12 @@ pub(super) fn node_at_frames(
 
 /** Whether the point is inside the item's box and inside its ancestors' clip. */
 fn contains(item: &DisplayItem, point: NSPoint) -> bool {
-    let inside = |x: f64, y: f64, width: f64, height: f64| {
-        point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height
-    };
-    inside(item.x, item.y, item.width, item.height)
-        && item
-            .clip
-            .as_ref()
-            .is_none_or(|clip| inside(clip.x, clip.y, clip.width, clip.height))
+    let point = [point.x, point.y];
+    let quad = mars_core::geometry::quad([item.x, item.y, item.width, item.height], item.transform);
+    mars_core::geometry::contains_quad(&quad, point)
+        && item.clip.is_none_or(|clip| {
+            mars_core::geometry::contains_rect([clip.x, clip.y, clip.width, clip.height], point)
+        })
 }
 
 /** Whether a release at `up` after a press at `down` is a click rather than a drag. */
@@ -95,6 +94,26 @@ pub(super) fn is_click(down: NSPoint, up: NSPoint) -> bool {
 mod tests {
     use super::*;
     use crate::document::Node;
+
+    /** Native targeting follows the same transformed rectangle and pre-transform clip as painting. */
+    #[test]
+    fn rotated_click_targets_reject_empty_aabb_corners_and_obey_clips() {
+        let mut target = item(1, 0.0, 0.0, 100.0, 100.0);
+        target.transform = Some([0.5, 0.5, -0.5, 0.5, 50.0, 0.0]);
+        assert!(contains(&target, NSPoint::new(50.0, 50.0)));
+        assert!(!contains(&target, NSPoint::new(5.0, 5.0)));
+        target.clip = Some(crate::document::ClipRect {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 20.0,
+            radius: [0.0; 4],
+        });
+        assert!(!contains(&target, NSPoint::new(50.0, 50.0)));
+        target.clip = None;
+        target.transform = Some([0.0; 6]);
+        assert!(!contains(&target, NSPoint::new(0.0, 0.0)));
+    }
 
     /** A node whose style accepts input. */
     fn node(local_id: usize) -> Node {

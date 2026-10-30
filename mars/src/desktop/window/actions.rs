@@ -1,50 +1,8 @@
 /** Native intentions carry local authority into the single runtime worker. */
 use super::*;
 use crate::desktop::broker::Command;
-use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
-};
+use objc2_app_kit::{NSAlert, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn};
 impl Window {
-    /** Save or explicitly preserve the prior session before any app-close route completes. */
-    pub(super) fn request_close(&mut self) {
-        if self.broker.transport == Transport::Mcp {
-            self.pending.clear();
-            self.canvas.clear_actions();
-            self.broker.close_mcp();
-            self.closed = true;
-            return;
-        }
-        self.pending.clear();
-        self.canvas.clear_actions();
-        self.broker.begin_close();
-        loop {
-            if self.broker.save_session() {
-                self.closed = true;
-                return;
-            }
-            let alert = NSAlert::new(self.canvas.mtm());
-            alert.setMessageText(&NSString::from_str("Your open tabs couldn’t be saved"));
-            alert.setInformativeText(&NSString::from_str(
-                "If you close now, your tabs won’t be restored the next time you open Mars.",
-            ));
-            alert.addButtonWithTitle(&NSString::from_str("Keep Mars Open"));
-            alert.addButtonWithTitle(&NSString::from_str("Try Again"));
-            alert.addButtonWithTitle(&NSString::from_str("Close Without Saving"));
-            let response = alert.runModal();
-            if response == NSAlertSecondButtonReturn {
-                continue;
-            }
-            if response == NSAlertThirdButtonReturn && self.broker.discard_session() {
-                self.closed = true;
-                return;
-            }
-            if response == NSAlertFirstButtonReturn || response == NSAlertThirdButtonReturn {
-                self.window.makeFirstResponder(Some(&self.mars.address));
-            }
-            return;
-        }
-    }
-
     /** Toolbar takeover revokes immediately rather than waiting behind queued RPC work. */
     pub(super) fn action(&mut self, action: Action) {
         if let Action::Activate(tag) = &action
@@ -93,10 +51,7 @@ impl Window {
             return;
         }
         if let Action::Activate(mars::STOP) = action {
-            let tab_id = self.selected_tab_id();
-            let _ = self.broker.change(Owner::Human, &tab_id);
-            self.pending.clear();
-            self.activity = Some("Stopping…".into());
+            self.stop_navigation();
             return;
         }
         if let Action::Activate(mars::CONTROL) = action {
@@ -128,11 +83,28 @@ impl Window {
             }
             return;
         }
+        if let Action::Activate(mars::DETAILS) = action {
+            if self.navigation.details.is_some() {
+                self.navigation.expanded = !self.navigation.expanded;
+                self.show_incomplete_notice();
+            }
+            return;
+        }
+        if matches!(action, Action::Activate(mars::RETRY)) && self.navigation.details.is_some() {
+            self.navigation.details = None;
+            self.action(Action::Activate(mars::RELOAD));
+            return;
+        }
         if let Action::Activate(mars::DISMISS) = action {
+            self.navigation.details = None;
             self.error = None;
             return;
         }
         if matches!(&action, Action::Activate(tag) if *tag == mars::RETRY) && !self.retry_allowed {
+            return;
+        }
+        if matches!(&action, Action::Activate(mars::ADDRESS)) && (self.busy || self.agent_busy) {
+            self.replace_navigation(self.typed_address());
             return;
         }
         let selected_tab_id = self.selected_tab_id();
@@ -170,6 +142,10 @@ impl Window {
                     "x":x,"y":y,"delta_x":dx,"delta_y":dy});
                 ("page.scroll_at", params, Some(observed))
             }
+            Action::Navigate(url) => {
+                self.failed_url = Some(url.clone());
+                ("page.navigate", json!({"url":url}), None)
+            }
             Action::Activate(mars::BACK) => ("page.back", json!({}), None),
             Action::Activate(mars::FORWARD) => ("page.forward", json!({}), None),
             Action::Activate(mars::RELOAD) => ("page.reload", json!({}), None),
@@ -188,6 +164,13 @@ impl Window {
             }
             _ => return,
         };
+        if op == "page.navigate" {
+            self.navigation.requested = params["url"].as_str().map(str::to_owned);
+        }
+        let command_id = self.next_command();
+        self.navigation.details = None;
+        self.status_notice = None;
+        self.notice = None;
         self.activity = self.activity_for(op, &params);
         if self.activity.as_deref() == Some("Submitting…") {
             self.pending.clear();
@@ -202,6 +185,7 @@ impl Window {
                 self.broker
                     .commands
                     .try_send(Command::Human {
+                        command_id,
                         op: op.into(),
                         params,
                         page: target,
@@ -214,6 +198,7 @@ impl Window {
             self.error = Some(error.message);
         } else {
             self.busy = true;
+            self.navigation.inflight = Some(command_id);
             self.error = None;
         }
     }
@@ -225,7 +210,9 @@ impl Window {
         let Some((op, params)) = self.tab_operation(tag) else {
             return;
         };
+        let command_id = self.next_command();
         let result = self.broker.commands.try_send(Command::Human {
+            command_id,
             op: op.into(),
             params,
             page: None,
@@ -234,6 +221,7 @@ impl Window {
         });
         if result.is_ok() {
             self.busy = true;
+            self.navigation.inflight = Some(command_id);
             self.error = None;
         } else if let Some((_, url)) = self.reopen.take() {
             self.closed_tabs.push(url);

@@ -1,5 +1,5 @@
-/** Static frames rest animations where a person sees them, and never reveal what Eye could not evaluate. */
-use mars_eye::{Document, Node, compute_styles, parse};
+/** Sampled opacity and static fallback properties preserve bounded cascade and agent hiding rules. */
+use mars_eye::{Document, Node, OpacityAnimations, TransitionTarget, compute_styles, parse};
 
 /** Styles `markup` with one sheet. */
 fn styled(markup: &str, sheet: &str) -> Document {
@@ -11,7 +11,25 @@ fn by_id<'a>(document: &'a Document, id: &str) -> &'a Node {
 }
 /** Opacity of `#a` under `sheet`. */
 fn opacity(sheet: &str) -> f64 {
-    by_id(&styled("<p id=a>a</p>", sheet), "a").style.opacity
+    let document = styled("<p id=a>a</p>", sheet);
+    let node = by_id(&document, "a");
+    let time = if node
+        .style
+        .opacity_animations
+        .iter()
+        .any(|a| a.iterations.is_none())
+    {
+        0.0
+    } else {
+        1_000_000.0
+    };
+    let mut timeline = OpacityAnimations::default();
+    timeline.update(&document, 0.0).unwrap();
+    timeline
+        .effects(time)
+        .into_iter()
+        .find(|(target, _)| *target == TransitionTarget::Node(node.local_id))
+        .map_or(node.style.opacity, |(_, opacity)| opacity)
 }
 /** A fade-in from opacity 0, as entrance animations are written. */
 const FADE: &str = "@keyframes fade{0%{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}";
@@ -62,7 +80,7 @@ fn reverse_and_alternate_parity_pick_the_end_the_last_iteration_reaches() {
 }
 
 #[test]
-fn an_infinite_animation_rests_on_its_start_unless_the_start_hides() {
+fn an_infinite_animation_starts_at_its_actual_first_frame() {
     let pulse = "@keyframes pulse{0%{opacity:.8}50%{opacity:.2}to{opacity:.9}}";
     assert_eq!(
         opacity(&format!("{pulse} p{{animation:pulse 2s infinite}}")),
@@ -71,14 +89,14 @@ fn an_infinite_animation_rests_on_its_start_unless_the_start_hides() {
     let ping = "@keyframes ping{0%{opacity:0}to{opacity:.7}}";
     assert_eq!(
         opacity(&format!("{ping} p{{animation:ping 2s infinite}}")),
-        0.7
+        0.0
     );
     let blink = "@keyframes blink{0%{opacity:0}to{opacity:0}}";
     assert_eq!(
         opacity(&format!(
             "{blink} p{{opacity:.4;animation:blink 1s infinite}}"
         )),
-        0.4
+        0.0
     );
 }
 
@@ -132,11 +150,14 @@ fn a_finished_fade_out_hides_and_withdraws_nothing_it_should_not() {
         "<a id=a href=/x>a</a>",
         "@keyframes out{to{opacity:0}} a{animation:out 1s forwards}",
     );
-    assert_eq!(by_id(&document, "a").style.opacity, 0.0);
+    assert_eq!(by_id(&document, "a").style.opacity, 1.0);
+    let mut timeline = OpacityAnimations::default();
+    timeline.update(&document, 0.0).unwrap();
+    assert_eq!(timeline.effects(1000.0).last().unwrap().1, 0.0);
 }
 
 #[test]
-fn transitions_are_ignored_without_diagnostics() {
+fn transition_declarations_are_retained_without_diagnostics() {
     let document = styled(
         "<p id=a>a</p>",
         "p{transition:opacity .2s;-webkit-transition:all 1s}",
@@ -146,6 +167,10 @@ fn transitions_are_ignored_without_diagnostics() {
             .diagnostics
             .iter()
             .all(|d| !d.contains("transition"))
+    );
+    assert_eq!(
+        by_id(&document, "a").style.transition.durations,
+        vec![1000.0]
     );
 }
 
@@ -225,7 +250,7 @@ fn an_infinite_animation_never_reveals_for_agents() {
         &format!("{FADE} a{{opacity:0;animation:fade 1s infinite reverse}}"),
     );
     let a = &by_id(&document, "a").style;
-    assert_eq!(a.opacity, 1.0);
+    assert_eq!(a.opacity, 0.0);
     assert!(!a.interactive);
 }
 
@@ -286,4 +311,51 @@ fn a_dropped_is_list_masks_each_argument_subject_not_everything() {
     );
     assert!(by_id(&document, "a").style.interactive);
     assert!(document.formatting.body.style.interactive);
+}
+
+/** Unsupported animation percentages cannot become universal hiding selectors. */
+#[test]
+fn vendor_keyframe_descriptors_leave_unanimated_links_actionable() {
+    for prefix in ["-moz", "-o", "-ms"] {
+        let frames =
+            format!("@{prefix}-keyframes spinner{{0%,39%,100%{{opacity:0}}40%{{opacity:1}}}}");
+        for sheet in [frames.clone(), format!("@media screen{{{frames}}}")] {
+            let document = styled("<a id=a href=/next>Next</a>", &sheet);
+            assert!(document.formatting.html.style.interactive, "{sheet}");
+            assert!(document.formatting.body.style.interactive, "{sheet}");
+            assert!(by_id(&document, "a").style.interactive, "{sheet}");
+            assert!(
+                document
+                    .diagnostics
+                    .iter()
+                    .any(|message| message.contains(&format!("@{prefix}-keyframes")))
+            );
+        }
+    }
+}
+
+/** Ignoring known descriptor syntax never relaxes ordinary or uncertain hiding rules. */
+#[test]
+fn vendor_keyframes_preserve_real_and_unknown_hiding_masks() {
+    let frames = "@-moz-keyframes spinner{0%{opacity:0}to{opacity:1}}";
+    for rule in [
+        "#a{display:none}",
+        "#a{opacity:0}",
+        "@future-condition{#a{display:none}}",
+    ] {
+        let document = styled("<a id=a href=/next>Next</a>", &format!("{frames}{rule}"));
+        let node = by_id(&document, "a");
+        if rule.contains("opacity") {
+            assert_eq!(node.style.opacity, 0.0);
+            let display = mars_eye::render(&document, 800.0).unwrap();
+            assert!(
+                !display
+                    .items
+                    .iter()
+                    .any(|item| item.local_id == node.local_id && mars_eye::agent_visible(item))
+            );
+        } else {
+            assert!(!node.style.interactive, "{rule}");
+        }
+    }
 }

@@ -67,6 +67,26 @@ fn a_cross_origin_frame_in_markup_talks_to_its_page() {
     assert!(text.contains("echo hello from http:// (frame)"), "{text}");
 }
 
+/** Independently scripted frames receive their own attribute CSP rather than their parent's. */
+#[test]
+fn frame_attribute_policy_is_independent_of_parent_policy() {
+    for (child_policy, parent_policy, expected) in [
+        ("'none'", "'unsafe-inline'", "initial"),
+        ("'unsafe-inline'", "'none'", "clicked"),
+    ] {
+        let frame = serve(format!(
+            "<meta http-equiv=Content-Security-Policy content=\"script-src 'nonce-child'; script-src-attr {child_policy}\"><button id=go onclick=\"this.textContent='clicked'\">initial</button><script nonce=child>document.getElementById('go').click();parent.postMessage(document.getElementById('go').textContent,'*')</script>"
+        ));
+        let page = serve(format!(
+            "<meta http-equiv=Content-Security-Policy content=\"script-src 'nonce-parent'; script-src-attr {parent_policy}\"><p id=out>log</p><iframe src='{}/'></iframe><script nonce=parent>addEventListener('message',e=>document.getElementById('out').textContent=e.data)</script>",
+            frame.url
+        ));
+        let mut runtime = two_origins(&page.url, &frame.url);
+        let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":page.url})).unwrap();
+        assert!(texts(&loaded).contains(expected), "{loaded}");
+    }
+}
+
 /** An iframe a script inserts loads its own page the same way. */
 #[test]
 fn a_cross_origin_frame_a_script_inserts_talks_to_its_page() {

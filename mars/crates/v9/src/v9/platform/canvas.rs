@@ -10,10 +10,13 @@ use mars_core::canvas::{self as limits, Bitmap, Font};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
+mod clipping;
 mod colors;
 mod drawing;
 mod images;
 mod lifecycle;
+pub(in crate::v9) mod path2d;
+mod paths;
 mod results;
 mod state;
 use lifecycle::{admit, size};
@@ -28,12 +31,21 @@ pub(in crate::v9) const CONTEXT_SLOT: &str = "canvas.context";
 pub(in crate::v9) struct State {
     pub context: ObjectId,
     pub bitmap: Bitmap,
+    /** Drawing an unclean source permanently blocks readback until this bitmap is reset. */
+    #[serde(default = "clean_bitmap")]
+    pub origin_clean: bool,
     /** Drawing state is copied independently from the shared backing allocation. */
     #[serde(default)]
     pub drawing: state::DrawingState,
     /** A bounded save stack survives VM serialization and clears on any resize. */
     #[serde(default)]
     pub saved: Vec<state::DrawingState>,
+    /** The current path survives save/restore but clears with beginPath, reset or resize. */
+    #[serde(default)]
+    pub path: limits::Path,
+    /** Saved states reference this pool so serialization writes each immutable clipping mask only once. */
+    #[serde(default)]
+    pub clips: BTreeMap<u8, limits::ClipMask>,
     pub dirty: bool,
 }
 
@@ -59,6 +71,8 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     }
     state::install(b, proto);
     images::install(b, proto);
+    paths::install(b, proto);
+    clipping::install(b, proto);
     let _ = PROTO.set(proto);
 }
 
@@ -133,8 +147,11 @@ fn create_context(vm: &mut Vm, call: Call) -> Res<JsValue> {
         State {
             context: id,
             bitmap,
+            origin_clean: true,
             drawing: state::DrawingState::default(),
             saved: Vec::new(),
+            path: limits::Path::default(),
+            clips: BTreeMap::new(),
             dirty: true,
         },
     );
@@ -195,6 +212,7 @@ fn export(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Encoding failures are transactional and leave the source bitmap untouched. */
 fn encode(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = canvas_node(vm, &call)?;
+    require_clean(vm, node)?;
     let [width, height] = size(&mut vm.page, node);
     if width == 0 || height == 0 || Bitmap::length(width, height).is_none() {
         return Ok(JsValue::string("data:,")?);
@@ -215,4 +233,23 @@ fn encode(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "data:image/png;base64,{}",
         super::window::base64_encode(&png)
     ))?)
+}
+
+/** Old snapshots contain only canvas-owned pixels, so their initial clean flag is true. */
+fn clean_bitmap() -> bool {
+    true
+}
+
+/** Drawing-state save/restore cannot undo taint; only bitmap reset may restore readback. */
+fn require_clean(vm: &mut Vm, node: usize) -> Res<()> {
+    if vm
+        .page
+        .state
+        .canvases
+        .get(&node)
+        .is_some_and(|state| !state.origin_clean)
+    {
+        return Err(vm.dom_exception("SecurityError", "Canvas pixels are not origin-clean."));
+    }
+    Ok(())
 }
