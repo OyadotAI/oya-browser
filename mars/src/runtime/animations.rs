@@ -4,6 +4,8 @@ use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{AnimationTarget, OpacityEffect};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+mod presentation;
+pub(super) use presentation::{PaintEffects, effective_presentation};
 
 /** Each cascade updates candidate CSS timelines without altering authored styles. */
 pub(super) fn refresh_timelines(page: &mut super::page::Page) -> EngineResult<()> {
@@ -12,17 +14,25 @@ pub(super) fn refresh_timelines(page: &mut super::page::Page) -> EngineResult<()
         .update(&page.document, page.scripting.clock_ms)?;
     page.scripting
         .css_transitions
+        .update(&page.document, page.scripting.clock_ms)?;
+    page.scripting
+        .css_translation_transitions
         .update(&page.document, page.scripting.clock_ms)
 }
 
 /** CSS transitions override other sampled animation opacity at the native paint boundary. */
-pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> Vec<OpacityEffect> {
-    combine_effects(
-        &scripting.opacity_effects,
-        &scripting.css_transitions,
-        &scripting.css_animations,
-        scripting.clock_ms,
-    )
+pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> PaintEffects {
+    PaintEffects {
+        opacity: combine_effects(
+            &scripting.opacity_effects,
+            &scripting.css_transitions,
+            &scripting.css_animations,
+            scripting.clock_ms,
+        ),
+        translations: scripting
+            .css_translation_transitions
+            .effects(scripting.clock_ms),
+    }
 }
 
 /** One effect per target retains strict native validation when animation sources overlap. */
@@ -65,6 +75,9 @@ pub(super) fn next_sample(scripting: &super::scripting::Scripting) -> Option<f64
     [
         scripting.css_transitions.next_sample_ms(scripting.clock_ms),
         scripting.css_animations.next_sample_ms(scripting.clock_ms),
+        scripting
+            .css_translation_transitions
+            .next_sample_ms(scripting.clock_ms),
     ]
     .into_iter()
     .flatten()
@@ -113,7 +126,16 @@ fn validate_effects(effects: &[OpacityEffect]) -> EngineResult<()> {
 
 /** Eye already composites native style opacity, including document wrappers and nested groups. */
 fn apply_opacity(document: &mut Document, effect: &OpacityEffect) -> EngineResult<()> {
-    let style = match effect.target {
+    target_style(document, &effect.target)?.opacity = effect.value;
+    Ok(())
+}
+
+/** Both native effect families select exactly one existing style through the same identity guard. */
+fn target_style<'a>(
+    document: &'a mut Document,
+    target: &AnimationTarget,
+) -> EngineResult<&'a mut crate::document::ComputedStyle> {
+    Ok(match *target {
         AnimationTarget::Html => &mut document.formatting.html.style,
         AnimationTarget::Body => &mut document.formatting.body.style,
         AnimationTarget::Node(id) => {
@@ -124,9 +146,7 @@ fn apply_opacity(document: &mut Document, effect: &OpacityEffect) -> EngineResul
                 .ok_or_else(|| EngineError::invalid("Animation targets an absent native node."))?
                 .style
         }
-    };
-    style.opacity = effect.value;
-    Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -236,7 +256,7 @@ mod tests {
             value: 0.2,
         }];
         let effects = paint_effects(&scripting);
-        let effective = effective_document(&after, &effects).unwrap();
+        let effective = effective_presentation(&after, &effects).unwrap();
         assert!(
             (effective
                 .nodes
@@ -261,7 +281,7 @@ mod tests {
         );
         assert!(scripting.pending());
         scripting.clock_ms = 2000.0;
-        assert_eq!(paint_effects(&scripting), scripting.opacity_effects);
+        assert_eq!(paint_effects(&scripting).opacity, scripting.opacity_effects);
         assert!(!scripting.pending());
     }
 
@@ -284,6 +304,7 @@ mod tests {
         assert!(scripting.pending());
         let effects = paint_effects(&scripting);
         let opacity = effects
+            .opacity
             .iter()
             .find(|effect| effect.target == AnimationTarget::Node(target.local_id))
             .unwrap()
@@ -294,12 +315,13 @@ mod tests {
             target: AnimationTarget::Node(target.local_id),
             value: 0.25,
         }];
-        assert_eq!(paint_effects(&scripting), scripting.opacity_effects);
+        assert_eq!(paint_effects(&scripting).opacity, scripting.opacity_effects);
         scripting.opacity_effects.clear();
         scripting.clock_ms = 1000.0;
         assert!(!scripting.pending());
         assert_eq!(
             paint_effects(&scripting)
+                .opacity
                 .iter()
                 .find(|effect| effect.target == AnimationTarget::Node(target.local_id))
                 .unwrap()

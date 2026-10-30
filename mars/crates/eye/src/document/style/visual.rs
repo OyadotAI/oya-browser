@@ -51,7 +51,8 @@ pub(super) fn apply(
         }
         "transform" => {
             (style.transform, style.translate_percent) =
-                super::paint::transform(value, style.font_size, context)?
+                super::paint::transform(value, style.font_size, context)?;
+            style.transform_animation_excluded = !super::paint::translation_only(value);
         }
         // Validated here; `compute` composes them over `transform` once the cascade is done.
         "translate" | "rotate" | "scale" => {

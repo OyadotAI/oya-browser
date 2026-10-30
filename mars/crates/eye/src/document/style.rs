@@ -60,6 +60,7 @@ mod syntax;
 mod text_align;
 mod transition;
 pub use transition::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use transition::{Translation, TranslationTransitions};
 pub(crate) mod text_box;
 mod ua;
 mod urls;

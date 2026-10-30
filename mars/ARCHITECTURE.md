@@ -112,6 +112,13 @@ playback. Paused and completed fills remain visible without scheduling frames.
 Paint priority is CSS animations, V9 effects, then CSS transitions. Unsupported
 animated properties retain their earlier static fallback; full transform
 interpolation, animation events and animation API exposure remain unfinished.
+Translation-only transform transitions interpolate separate pixel and percentage
+components with the shared timing, delay, interruption and reversal machinery.
+Parser provenance excludes rotation, scale, skew, matrix, 3D and independent
+transform properties even when their flattened matrix happens to be identity.
+Runtime overlays sampled translations in ordinary and forced candidate painting;
+visual NodeBox positions follow translations while separate layout positions
+keep offsetLeft/offsetTop independent of transforms.
 
 V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
 64 URLs and 4 MiB including metadata. Classic and module worker construction capture an

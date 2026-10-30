@@ -1,6 +1,5 @@
 /** Candidate-owned transition state samples only native targets that remain in the styled document. */
-use super::TransitionEasing;
-use crate::document::style::constants::TRANSITION_FRAME_MS;
+use super::interpolation::Interpolation;
 use crate::{
     document::{ComputedStyle, Document},
     protocol::{EngineError, EngineResult},
@@ -36,17 +35,8 @@ struct Observed {
     hidden: bool,
 }
 
-/** One admitted opacity interpolation, independent of subsequent changes to timing declarations. */
-#[derive(Clone, Debug)]
-struct Running {
-    from: f64,
-    to: f64,
-    start_ms: f64,
-    duration_ms: f64,
-    easing: TransitionEasing,
-    reversing_start: f64,
-    shortening: f64,
-}
+/** Opacity is the single-component instance of the shared bounded transition interpolator. */
+type Running = Interpolation<1>;
 
 impl OpacityTransitions {
     /** Seed the first style without animation; later style changes admit or interrupt transitions atomically. */
@@ -97,7 +87,7 @@ impl OpacityTransitions {
         self.running
             .iter()
             .filter(|(_, animation)| now_ms < animation.end())
-            .map(|(target, animation)| (*target, animation.value(now_ms)))
+            .map(|(target, animation)| (*target, animation.value(now_ms)[0].clamp(0.0, 1.0)))
             .collect()
     }
 
@@ -106,20 +96,15 @@ impl OpacityTransitions {
         let now_ms = now_ms.max(self.clock_ms);
         self.running
             .values()
-            .filter(|animation| now_ms < animation.end())
-            .map(|animation| {
-                if now_ms < animation.start_ms {
-                    animation.start_ms
-                } else {
-                    (now_ms + TRANSITION_FRAME_MS).min(animation.end())
-                }
-            })
+            .filter_map(|animation| animation.next_sample_ms(now_ms))
             .min_by(f64::total_cmp)
     }
 }
 
 /** Every distinct native opacity ancestor is observed, including wrappers missing from the projected tree. */
-fn targets(document: &Document) -> impl Iterator<Item = (TransitionTarget, &ComputedStyle)> {
+pub(super) fn targets(
+    document: &Document,
+) -> impl Iterator<Item = (TransitionTarget, &ComputedStyle)> {
     [
         (TransitionTarget::Html, &document.formatting.html.style),
         (TransitionTarget::Body, &document.formatting.body.style),
@@ -141,77 +126,21 @@ fn decide(
     now_ms: f64,
 ) -> Option<Running> {
     let previous = previous.filter(|previous| !previous.hidden && !style.hidden)?;
-    let timing = style.transition.opacity()?;
+    let timing = style.transition.matching("opacity")?;
     if let Some(active) = active
-        && active.to == style.opacity
+        && active.to == [style.opacity]
     {
         return Some(active.clone());
     }
     if previous.opacity == style.opacity {
         return None;
     }
-    start(previous.opacity, active, style.opacity, timing, now_ms)
-}
-
-/** CSS reversing-shortening preserves speed when a running transition returns toward its start. */
-fn start(
-    before: f64,
-    active: Option<&Running>,
-    to: f64,
-    timing: (f64, f64, TransitionEasing),
-    now_ms: f64,
-) -> Option<Running> {
-    let (mut duration, mut delay, easing) = timing;
-    if duration + delay <= 0.0 {
-        return None;
-    }
-    let from = active.map_or(before, |active| active.value(now_ms));
-    if from == to {
-        return None;
-    }
-    let (mut shortening, mut reversing_start) = (1.0, from);
-    if let Some(active) = active
-        && active.reversing_start == to
-    {
-        shortening = (active.progress(now_ms) * active.shortening + (1.0 - active.shortening))
-            .abs()
-            .clamp(0.0, 1.0);
-        reversing_start = active.to;
-        duration *= shortening;
-        if delay < 0.0 {
-            delay *= shortening;
-        }
-    }
-    let transition = Running {
-        from,
-        to,
-        start_ms: now_ms + delay,
-        duration_ms: duration,
-        easing,
-        reversing_start,
-        shortening,
-    };
-    (transition.end() > now_ms).then_some(transition)
-}
-
-impl Running {
-    /** Positive delay retains the start value and zero active duration jumps at its end. */
-    fn progress(&self, now_ms: f64) -> f64 {
-        if now_ms < self.start_ms {
-            return 0.0;
-        }
-        if self.duration_ms == 0.0 {
-            return 1.0;
-        }
-        self.easing
-            .sample(((now_ms - self.start_ms) / self.duration_ms).clamp(0.0, 1.0))
-    }
-    /** Opacity clamps timing overshoot after interpolating the endpoints. */
-    fn value(&self, now_ms: f64) -> f64 {
-        (self.from + (self.to - self.from) * self.progress(now_ms)).clamp(0.0, 1.0)
-    }
-    /** Time includes the scaled active duration after any positive or negative delay. */
-    fn end(&self) -> f64 {
-        self.start_ms + self.duration_ms
-    }
+    Running::start(
+        [previous.opacity],
+        active,
+        [style.opacity],
+        timing,
+        now_ms,
+        |value| value.clamp(0.0, 1.0),
+    )
 }

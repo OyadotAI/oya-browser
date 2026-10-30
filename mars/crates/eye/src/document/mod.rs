@@ -62,6 +62,7 @@ pub use style::{
     install_fonts,
 };
 pub use style::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use style::{Translation, TranslationTransitions};
 pub use xml::xml_mime;
 
 /** Private computed values are validated before layout even when a Rust caller bypasses CSS parsing. */

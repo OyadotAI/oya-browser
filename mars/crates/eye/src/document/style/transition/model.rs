@@ -49,12 +49,12 @@ impl TransitionStyle {
             && self.easings.iter().all(TransitionEasing::valid)
     }
 
-    /** Only opacity is interpolated; matching uses the last list entry as CSS Transitions requires. */
-    pub(super) fn opacity(&self) -> Option<(f64, f64, TransitionEasing)> {
+    /** Each supported property uses the last matching list entry as CSS Transitions requires. */
+    pub(super) fn matching(&self, property: &str) -> Option<(f64, f64, TransitionEasing)> {
         let index = self
             .properties
             .iter()
-            .rposition(|name| matches!(name.as_str(), "all" | "opacity"))
+            .rposition(|name| name == "all" || name == property)
             .or_else(|| self.properties.is_empty().then_some(0))?;
         Some((
             repeated(&self.durations, index),

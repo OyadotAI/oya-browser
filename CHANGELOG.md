@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented native CSS translation transitions in Mars for `transform` values using `none`, `translate`, `translateX` and `translateY`, including percentage offsets, easing and interruption. Visual geometry moves with painting while layout offsets remain untransformed; rotation, scale, skew and 3D interpolation remain unfinished.
 - Implemented Canvas quadratic and cubic Bezier curves in Mars with adaptive pixel-space flattening, construction-time transforms and atomic path-budget admission. Curves feed the existing real fill/stroke rasterizer; arcs, ellipses and clipping remain unfinished.
 - Extended Mars Blob workers to module entry scripts, preserving static/dynamic HTTP imports, constructor credentials, top-level await and queued-message ordering. Module sources require JavaScript MIME, and inherited CSP host matching uses the creator origin. Blob dependency sharing remains unfinished.
 - Implemented timed CSS opacity keyframes in Mars, including easing, delays, fractional/infinite iterations, direction, fill and pause/resume. Native painting samples animations without rewriting authored opacity; other animated properties, animation events and full animation API exposure remain unfinished.

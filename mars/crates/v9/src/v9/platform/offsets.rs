@@ -39,15 +39,32 @@ pub(super) fn offset_parent(vm: &mut Vm, node: usize) -> Option<usize> {
 /** `offsetLeft` (axis 0) or `offsetTop` (axis 1): the border box's position from the offset
 parent's box, unscrolled by the parent's own scroll offset; from the document for the body. */
 pub(super) fn offset(vm: &mut Vm, node: usize, axis: usize) -> f64 {
-    let (x, y, ..) = client_box(vm, node);
-    let page = [vm.page.environment.scroll_x, vm.page.environment.scroll_y];
-    let own = [x + page[0], y + page[1]];
+    let own = layout_position(vm, node);
     match offset_parent(vm, node).filter(|parent| *parent != BODY) {
         Some(parent) => {
-            let (px, py, ..) = client_box(vm, parent);
-            let base = [px + page[0], py + page[1]];
+            let base = layout_position(vm, parent);
             own[axis] - base[axis] + super::scrolling::offset(vm, parent)[axis]
         }
         None => own[axis],
     }
+}
+
+/** Visual translation never moves CSSOM layout offsets; legacy hosts keep their former fallback. */
+fn layout_position(vm: &mut Vm, node: usize) -> [f64; 2] {
+    if let Some(position) = vm
+        .page
+        .environment
+        .geometry
+        .iter()
+        .find(|bounds| bounds.node == node)
+        .and_then(|bounds| bounds.layout_position)
+        .filter(|position| position.iter().all(|value| value.is_finite()))
+    {
+        return position;
+    }
+    let (x, y, ..) = client_box(vm, node);
+    [
+        x + vm.page.environment.scroll_x,
+        y + vm.page.environment.scroll_y,
+    ]
 }

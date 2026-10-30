@@ -116,6 +116,15 @@ the whole generated batch is admitted before path mutation. Six Core and seven
 V9 regressions were added but not run. The combined production build for this
 next batch is pending; arcs and ellipses remain unfinished.
 
+CSS transform transitions now sample two-dimensional translations in pixel and
+percentage components, including none-to-translate, delays, easing, interruption
+and reversal. Native painting and visual geometry use the sample while CSSOM
+layout offsets retain untransformed positions. Parser provenance prevents
+rotation/scale/skew/matrix/3D values from masquerading as supported translations.
+Ten Eye, two runtime and one V9 layout-position regressions were added but not
+run. The combined production build for this batch is pending. General transform
+interpolation and other animated properties remain unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas arcs/clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

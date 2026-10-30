@@ -368,7 +368,7 @@ impl Runtime {
     pub(super) fn prepare_display(&mut self, page: &mut Page) -> EngineResult<()> {
         crate::document::validate_content(&page.document)?;
         let effects = super::animations::paint_effects(&page.scripting);
-        let effective = super::animations::effective_document(&page.document, &effects)?;
+        let effective = super::animations::effective_presentation(&page.document, &effects)?;
         let call = RenderCall {
             document: &effective,
             context: self.render_context,
@@ -398,10 +398,10 @@ impl Runtime {
         &mut self,
         document: &Document,
         scroll: &crate::document::ScrollOffsets,
-        effects: &[crate::v9::OpacityEffect],
+        effects: &super::animations::PaintEffects,
     ) -> EngineResult<DisplayList> {
         crate::document::validate_content(document)?;
-        let effective = super::animations::effective_document(document, effects)?;
+        let effective = super::animations::effective_presentation(document, effects)?;
         let call = RenderCall {
             document: &effective,
             context: self.render_context,
@@ -538,7 +538,7 @@ impl Runtime {
             )?)?;
         if self.web_origins.is_some() {
             let effects = super::animations::paint_effects(&page.scripting);
-            let effective = super::animations::effective_document(&page.document, &effects)?;
+            let effective = super::animations::effective_presentation(&page.document, &effects)?;
             let call = RenderCall {
                 document: &effective,
                 context,

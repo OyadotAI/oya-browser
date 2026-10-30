@@ -210,6 +210,9 @@ pub struct ComputedStyle {
     /// 2D affine transform (a, b, c, d, e, f) about the box's transform origin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transform: Option<[f64; 6]>,
+    /// Flattened matrices lose transform function identity; retain exclusions for bounded interpolation.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub transform_animation_excluded: bool,
     /// Inherited: the nearest author declaration removed link underlines.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_decoration_none: bool,
@@ -874,6 +877,7 @@ impl Default for ComputedStyle {
             text_shadows: Vec::new(),
             backgrounds: Vec::new(),
             transform: None,
+            transform_animation_excluded: false,
             text_decoration_none: false,
             font_weight: super::constants::WEIGHT_NORMAL,
             letter_spacing: 0.0,

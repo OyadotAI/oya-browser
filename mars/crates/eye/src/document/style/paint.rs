@@ -382,6 +382,22 @@ pub(super) fn transform(
         Err(unsupported())
     }
 }
+/** Preserve function provenance so identity rotations, matrices and 3D cannot masquerade as translations. */
+pub(super) fn translation_only(value: &str) -> bool {
+    value == "none"
+        || tokens(value)
+            .into_iter()
+            .flat_map(adjacent)
+            .all(|function| {
+                function.split_once('(').is_some_and(|(name, _)| {
+                    matches!(
+                        name.trim().to_ascii_lowercase().as_str(),
+                        "translate" | "translatex" | "translatey"
+                    )
+                })
+            })
+}
+
 /** Splits functions minifiers write without a space, as in `translateY(4px)scale(.9)`. */
 fn adjacent(token: &str) -> Vec<&str> {
     let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);

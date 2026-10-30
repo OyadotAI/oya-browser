@@ -606,6 +606,9 @@ pub struct NodeBox {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// Untransformed document position keeps layout offsets independent from visual transforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_position: Option<[f64; 2]>,
 }
 
 impl Default for PageEnvironment {

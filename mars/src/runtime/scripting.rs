@@ -72,6 +72,8 @@ pub(super) struct Scripting {
     pub opacity_effects: Vec<crate::v9::OpacityEffect>,
     /// CSS transition state belongs to the page candidate, independently of V9 animation state.
     pub css_transitions: crate::document::OpacityTransitions,
+    /// Translation transitions share the page clock while retaining percentages until native layout.
+    pub css_translation_transitions: crate::document::TranslationTransitions,
     /// Keyframe playback is independent from authored opacity and transition state.
     pub css_animations: crate::document::OpacityAnimations,
     /// Actual image requests and retained decode admission for this page alone.
@@ -198,6 +200,7 @@ impl Default for Scripting {
             load_pending: false,
             opacity_effects: Vec::new(),
             css_transitions: Default::default(),
+            css_translation_transitions: Default::default(),
             css_animations: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
@@ -725,12 +728,17 @@ impl Runtime {
         transitions.update(&styled, page.scripting.clock_ms)?;
         let mut animations = page.scripting.css_animations.clone();
         animations.update(&styled, page.scripting.clock_ms)?;
-        let effects = super::animations::combine_effects(
-            &execution.effects.opacity_effects,
-            &transitions,
-            &animations,
-            page.scripting.clock_ms,
-        );
+        let mut translations = page.scripting.css_translation_transitions.clone();
+        translations.update(&styled, page.scripting.clock_ms)?;
+        let effects = super::animations::PaintEffects {
+            opacity: super::animations::combine_effects(
+                &execution.effects.opacity_effects,
+                &transitions,
+                &animations,
+                page.scripting.clock_ms,
+            ),
+            translations: translations.effects(page.scripting.clock_ms),
+        };
         let display = self.render_effects(&styled, &scroll, &effects)?;
         Ok(boxes(&display))
     }
@@ -1357,12 +1365,19 @@ pub(super) fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::No
     display
         .items
         .iter()
-        .map(|item| crate::v9::NodeBox {
-            node: item.local_id,
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
+        .map(|item| {
+            // Visual translations affect DOM rectangles and hit queries without changing layout sizes.
+            let translation = item
+                .transform
+                .filter(|matrix| matrix[..4] == [1.0, 0.0, 0.0, 1.0]);
+            crate::v9::NodeBox {
+                node: item.local_id,
+                layout_position: Some([item.x, item.y]),
+                x: item.x + translation.map_or(0.0, |matrix| matrix[4]),
+                y: item.y + translation.map_or(0.0, |matrix| matrix[5]),
+                width: item.width,
+                height: item.height,
+            }
         })
         .collect()
 }

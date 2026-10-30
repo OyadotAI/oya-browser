@@ -94,6 +94,8 @@ pub(super) fn compose(style: &mut ComputedStyle, parts: &[(Option<[f64; 6]>, [f6
         return;
     }
     let mut composed = super::paint::IDENTITY;
+    // This slice interpolates the transform property alone, not independently composed properties.
+    style.transform_animation_excluded = true;
     for (matrix, _) in parts {
         composed = super::paint::multiply(composed, matrix.unwrap_or(super::paint::IDENTITY));
     }

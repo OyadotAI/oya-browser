@@ -412,6 +412,7 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
         "transform" => {
             style.transform = source.transform;
             style.translate_percent = source.translate_percent;
+            style.transform_animation_excluded = source.transform_animation_excluded;
         }
         "transform-origin" => style.transform_origin = source.transform_origin,
         "object-fit" => style.object_fit = source.object_fit,
