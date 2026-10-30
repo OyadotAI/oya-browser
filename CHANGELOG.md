@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Replaced Mars's inert Path2D facade with branded retained geometry, independent copies, transformed addPath and actual Canvas fill/stroke/clip overloads. Object/point quotas, GC cleanup and serialized-state checks bound storage; SVG-string construction remains explicitly unsupported.
 - Implemented timed pure CSS `rotate()` transitions and keyframes in Mars, preserving full authored turns, easing, delay, interruption, iteration and pause/fill behavior. Mixed transform lists, 3D and individual-transform animation remain unfinished.
 - Implemented real Canvas clipping in Mars with immutable sample masks and saved-state sharing. Rectangles, paths, images and text honor the clip; pixel writes/readback/export retain their specified bypass behavior, and fully clipped cross-origin draws still taint. Mask retention and raster work remain bounded.
 - Implemented CORS-enabled image acquisition in Mars for anonymous and credentialed images, with per-hop server validation, mode-aware generations/caches and Canvas origin-clean provenance. Failed CORS loads stay failures; ordinary cross-origin images remain tainted. CORS images bypass legacy credentialed prefetch and the URL-only HTTP cache.

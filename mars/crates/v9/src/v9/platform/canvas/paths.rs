@@ -3,6 +3,7 @@ use super::*;
 mod arcs;
 mod curves;
 mod round_rect;
+pub(super) use round_rect::arguments as rounded_arguments;
 mod styles;
 
 /** Methods and properties are exposed only when their drawing behavior is implemented. */
@@ -39,10 +40,9 @@ fn dispatch(vm: &mut Vm, call: &Call) -> Res<JsValue> {
         return fill(vm, call);
     }
     if name == "stroke" {
-        if !matches!(call.arg(0), JsValue::Undefined) {
-            return Err(vm.type_error("Path2D stroke sources are not implemented."));
-        }
-        return paint(vm, node, true, limits::FillRule::Nonzero, None);
+        let source = path2d::stroke_argument(vm, &call.arg(0))?;
+        let path = path2d::snapshot(vm, source, node)?;
+        return paint(vm, node, true, limits::FillRule::Nonzero, path);
     }
     if name == "beginPath" {
         vm.page.state.canvases.get_mut(&node).expect("canvas").path = limits::Path::default();
@@ -62,18 +62,10 @@ fn dispatch(vm: &mut Vm, call: &Call) -> Res<JsValue> {
 
 /** Invalid fill-rule enum values throw before any state or pixels change. */
 fn fill(vm: &mut Vm, call: &Call) -> Res<JsValue> {
-    let rule = if matches!(call.arg(0), JsValue::Undefined) {
-        "nonzero".into()
-    } else {
-        vm.to_text(&call.arg(0))?
-    };
-    let rule = match rule.as_str() {
-        "nonzero" => limits::FillRule::Nonzero,
-        "evenodd" => limits::FillRule::Evenodd,
-        _ => return Err(vm.type_error("Canvas fill rule must be nonzero or evenodd.")),
-    };
+    let (source, rule) = path2d::fill_arguments(vm, call)?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    paint(vm, node, false, rule, None)
+    let path = path2d::snapshot(vm, source, node)?;
+    paint(vm, node, false, rule, path)
 }
 
 /** Nonfinite coordinates are ignored after every required conversion has run. */

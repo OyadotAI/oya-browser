@@ -2,6 +2,7 @@
 use super::*;
 use mars_core::canvas::Affine;
 mod matrix;
+pub(super) use matrix::dictionary_members as path_matrix;
 
 /** A bounded stack prevents save-only scripts from retaining unbounded native drawing state. */
 pub(super) const SAVED_STATES: usize = 64;

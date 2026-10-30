@@ -1139,6 +1139,8 @@ pub(in crate::v9) struct PageState {
     pub worker_module: bool,
     /** Each context owns real bounded pixels; detached state lives only while reachable. */
     pub canvases: BTreeMap<usize, canvas::State>,
+    /** Retained paths follow wrapper reachability rather than becoming permanent page roots. */
+    pub path2d: BTreeMap<ObjectId, canvas::path2d::Retained>,
     /** Permanent per-isolate read-only roots for one-byte iterator characters. */
     #[cfg(feature = "conformance")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1571,6 +1573,7 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        self.state.path2d.retain(|id, _| live.contains(id));
         self.state.intersection_observers.retain(|id, _| live.contains(id));
         self.state
             .canvases

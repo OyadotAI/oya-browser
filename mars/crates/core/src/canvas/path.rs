@@ -6,6 +6,7 @@ mod arc_to;
 mod arcs;
 mod curves;
 mod raster;
+mod retained;
 mod round_rect;
 mod stroke;
 pub use raster::{PathPlan, paint_path, plan_fill};

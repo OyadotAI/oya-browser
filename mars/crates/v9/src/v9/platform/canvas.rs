@@ -15,6 +15,7 @@ mod colors;
 mod drawing;
 mod images;
 mod lifecycle;
+pub(in crate::v9) mod path2d;
 mod paths;
 mod results;
 mod state;

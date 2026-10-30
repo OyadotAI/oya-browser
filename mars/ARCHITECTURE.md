@@ -109,7 +109,13 @@ masks once in a pool; saved drawing states refer to validated IDs. Restore prune
 unused masks and resize/reset clears the pool. Rectangles, paths, images and text
 honor clipping; putImageData, readback and export bypass it, and clipping never
 removes image-origin taint. A separate 4 MiB retained page mask allowance shares
-the existing process and work ceilings. CSS color and font parsing remain limited; Path2D,
+the existing process and work ceilings. Path2D retains branded geometry with
+independent copies and transformed addPath; fill/stroke/clip apply the context
+transform at use time without replacing the current path. Storage is bounded to
+64 wrappers, 16,384 aggregate points and the existing per-path cap. GC removes
+dead associations, and restored wrappers/paths are validated. SVG strings remain
+explicitly unsupported, and extreme use-time magnification can magnify the
+retained polygon approximation error. CSS color and font parsing remain limited;
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.

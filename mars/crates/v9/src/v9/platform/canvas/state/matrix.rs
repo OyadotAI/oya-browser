@@ -151,25 +151,48 @@ fn json(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** WebIDL converts dictionary members in lexical order before checking conflicting aliases. */
 pub(super) fn dictionary(vm: &mut Vm, value: &JsValue) -> Res<Affine> {
+    dictionary_members(vm, value)?.resolve(vm)
+}
+
+/** Converted members defer alias validation until addPath has checked its source path. */
+pub(in crate::v9::platform::canvas) struct Dictionary {
+    names: [Option<f64>; 6],
+    aliases: [Option<f64>; 6],
+}
+
+impl Dictionary {
+    /** Fixup is separate from conversion because empty addPath sources skip conflicting-alias checks. */
+    pub(in crate::v9::platform::canvas) fn resolve(self, vm: &mut Vm) -> Res<Affine> {
+        let mut matrix = Affine::IDENTITY;
+        for index in 0..COMPONENTS.len() {
+            matrix.0[index] = resolve(vm, self.names[index], self.aliases[index], matrix.0[index])?;
+        }
+        Ok(matrix)
+    }
+}
+
+/** Even an empty source must run every dictionary getter and numeric conversion before its no-op. */
+pub(in crate::v9::platform::canvas) fn dictionary_members(
+    vm: &mut Vm,
+    value: &JsValue,
+) -> Res<Dictionary> {
+    let mut result = Dictionary {
+        names: [None; 6],
+        aliases: [None; 6],
+    };
     if value.nullish() {
-        return Ok(Affine::IDENTITY);
+        return Ok(result);
     }
     if value.object().is_none() {
         return Err(vm.type_error("Canvas transform must be a dictionary."));
     }
-    let mut names = [None; 6];
-    let mut aliases = [None; 6];
     for (index, (name, _)) in COMPONENTS.iter().enumerate() {
-        names[index] = member(vm, value, name)?;
+        result.names[index] = member(vm, value, name)?;
     }
     for (index, (_, alias)) in COMPONENTS.iter().enumerate() {
-        aliases[index] = member(vm, value, alias)?;
+        result.aliases[index] = member(vm, value, alias)?;
     }
-    let mut matrix = Affine::IDENTITY;
-    for index in 0..COMPONENTS.len() {
-        matrix.0[index] = resolve(vm, names[index], aliases[index], matrix.0[index])?;
-    }
-    Ok(matrix)
+    Ok(result)
 }
 
 /** Undefined means absent, even when the dictionary has an own property. */

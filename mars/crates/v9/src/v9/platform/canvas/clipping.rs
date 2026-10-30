@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::BTreeSet;
 
-/** Only the implemented current-path overloads are exposed; Path2D remains outside this surface. */
+/** Current and retained paths intersect the same immutable clipping region. */
 pub(super) fn install(b: &mut Builder, proto: u32) {
     b.host_method(proto, "clip", 0, method);
 }
@@ -16,17 +16,9 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Fill-rule conversion can execute script, so context state is selected only after it finishes. */
 fn intersect(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    let text = if matches!(call.arg(0), JsValue::Undefined) {
-        "nonzero".into()
-    } else {
-        vm.to_text(&call.arg(0))?
-    };
-    let rule = match text.as_str() {
-        "nonzero" => limits::FillRule::Nonzero,
-        "evenodd" => limits::FillRule::Evenodd,
-        _ => return Err(vm.type_error("Canvas fill rule must be nonzero or evenodd.")),
-    };
+    let (source, rule) = path2d::fill_arguments(vm, call)?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
+    let retained = path2d::snapshot(vm, source, node)?;
     let state = &vm.page.state.canvases[&node];
     let size = [state.bitmap.width, state.bitmap.height];
     if Bitmap::length(size[0], size[1]).is_none() {
@@ -35,7 +27,8 @@ fn intersect(vm: &mut Vm, call: &Call) -> Res<JsValue> {
             "Canvas dimensions exceed this build's limit.",
         ));
     }
-    let plan = limits::plan_fill(size, &state.path, rule)?.with_clip(current(state)?)?;
+    let plan = limits::plan_fill(size, retained.as_ref().unwrap_or(&state.path), rule)?
+        .with_clip(current(state)?)?;
     work(vm, plan.clip_work())?;
     let mask = plan.clip_mask()?;
     if current(&vm.page.state.canvases[&node])? == Some(&mask) {

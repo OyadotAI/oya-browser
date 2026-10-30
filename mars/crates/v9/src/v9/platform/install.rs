@@ -1350,31 +1350,9 @@ fn global_object(b: &mut Builder) {
     }
 }
 
-/** Path2D: a path object pages build for canvas drawing. V9 draws no canvas, so the path
-methods record nothing; the interface exists because polyfill bundles extend
-`Path2D.prototype` unguarded (Twitch's does, and its whole polyfill script failed without it). */
+/** Retained paths share the real Canvas geometry implementation and strict native branding. */
 fn path2d(b: &mut Builder) {
-    let proto = b.object(Some(b.ids.object_prototype));
-    methods(
-        b,
-        proto,
-        &[
-            "addPath",
-            "closePath",
-            "moveTo",
-            "lineTo",
-            "bezierCurveTo",
-            "quadraticCurveTo",
-            "arc",
-            "arcTo",
-            "ellipse",
-            "rect",
-            "roundRect",
-        ],
-        noop_method,
-    );
-    let ctor = b.constructor("Path2D", 0, construct_plain, proto, None);
-    b.global("Path2D", ctor);
+    super::canvas::path2d::install(b);
 }
 
 /** `new X()` for an interface whose instances hold no state: a plain object over the prototype. */

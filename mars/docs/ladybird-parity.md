@@ -200,8 +200,17 @@ The supported scope is one rotate function or none; mixed lists, matrices,
 3D/rotateZ and individual transforms are excluded. Focused regressions were
 added but not run, and the next combined production build is pending.
 
+Path2D now retains genuine branded geometry rather than ignoring commands.
+Empty/copy construction, geometry methods, transformed addPath and actual
+fill/stroke/clip overloads are implemented; context transforms apply at use time
+and copies/current paths remain independent. Object/aggregate-point quotas,
+GC cleanup and serialization checks bound retention. SVG strings explicitly
+throw NotSupportedError, and large later scaling can magnify retained polygon
+approximation error. Eight focused regressions were added but not run; the
+combined production build for this batch is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas compositing/Path2D and broader image sources, nested workers,
+Canvas compositing/SVG Path2D and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded
