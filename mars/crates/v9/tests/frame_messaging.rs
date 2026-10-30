@@ -76,6 +76,7 @@ fn a_message_from_the_parent_fires_with_its_proxy_as_source() {
         input(&sources, &host, &environment),
         round_trip(loaded.state),
         PageEvent::Message {
+            queued_port_messages: vec![],
             data: MessageData::Json("{\"n\":7}".into()),
             origin: "https://embedder.test".into(),
             source: Some(MESSAGE_PARENT),

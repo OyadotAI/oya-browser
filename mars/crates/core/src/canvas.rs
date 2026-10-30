@@ -1,0 +1,156 @@
+/** Bounded, inert canvas pixels and synchronous native text support shared by the engines. */
+use crate::protocol::{EngineError, EngineResult};
+use serde::{Deserialize, Serialize};
+mod affine;
+mod pixels;
+mod raster;
+pub use affine::Affine;
+pub use pixels::Pixels;
+pub use pixels::Reservation as Allocation;
+pub use raster::{RasterPlan, blend, blit, clear_rect, fill_rect, plan_blit, plan_rect};
+
+/// Conservative initial edge limit; this is a Mars resource limit, not a web standard limit.
+pub const EDGE: u32 = 512;
+/// Straight-alpha sRGB channels per pixel.
+pub const CHANNELS: usize = 4;
+/// A page includes reachable detached canvases in its allocation allowance.
+pub const PAGE_BYTES: usize = 4 * 1024 * 1024;
+/// Prevent tiny canvases from multiplying context bookkeeping indefinitely.
+pub const CONTEXTS: usize = 16;
+/// Pixel work admitted per script request, including readback and export.
+pub const WORK: usize = 8_000_000;
+/// Bound synchronous native shaping input.
+pub const TEXT_UNITS: usize = 2048;
+/// PNG exports cannot consume an unbounded script string.
+pub const PNG_BYTES: usize = 2 * 1024 * 1024;
+/// HTML's default bitmap dimensions.
+pub const DEFAULT_SIZE: [u32; 2] = [300, 150];
+
+/** Share HTML content-attribute dimensions between bitmap allocation and intrinsic layout. */
+pub fn dimension(value: &str) -> Option<u32> {
+    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let negative = value.starts_with('-');
+    let value = if negative {
+        &value[1..]
+    } else {
+        value.strip_prefix('+').unwrap_or(value)
+    };
+    let digits: String = value.chars().take_while(char::is_ascii_digit).collect();
+    digits
+        .parse::<u32>()
+        .ok()
+        .filter(|n| *n <= i32::MAX as u32 && (!negative || *n == 0))
+}
+
+/// Row-major, top-left-origin sRGB pixels; no OS handles or ambient authority cross this boundary.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bitmap {
+    /// Intrinsic width, independent of CSS sizing.
+    pub width: u32,
+    /// Intrinsic height, independent of CSS sizing.
+    pub height: u32,
+    /// Unpremultiplied RGBA channels; an empty backing also represents an excessive size.
+    pub pixels: Pixels,
+}
+
+impl Bitmap {
+    /// Allocate only admitted dimensions; excessive dimensions retain their observable size.
+    pub fn new(width: u32, height: u32) -> EngineResult<Self> {
+        let len = Self::length(width, height).unwrap_or(0);
+        Ok(Self {
+            width,
+            height,
+            pixels: Pixels::zeroed(len)?,
+        })
+    }
+    /// Compute before allocating or indexing; zero and excessive surfaces have no backing.
+    pub fn length(width: u32, height: u32) -> Option<usize> {
+        if width > EDGE || height > EDGE {
+            return None;
+        }
+        Some(width as usize * height as usize * CHANNELS)
+    }
+    /// Reject malformed service/state input before any painter sees it.
+    pub fn validate(&self) -> EngineResult<()> {
+        if self.pixels.len() != Self::length(self.width, self.height).unwrap_or(0) {
+            return Err(EngineError::invalid("Invalid canvas bitmap length."));
+        }
+        Ok(())
+    }
+    /// Real pixels are present only for nonempty admitted dimensions.
+    pub fn drawable(&self) -> bool {
+        !self.pixels.is_empty()
+    }
+}
+
+/// A bounded resolved font description shared by native measurement and rasterization.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Font {
+    /// CSS pixel size.
+    pub size: f64,
+    /// Initial implementation admits the three generic families.
+    pub family: String,
+}
+impl Default for Font {
+    /// Canvas starts with the web platform's default font.
+    fn default() -> Self {
+        Self {
+            size: 10.0,
+            family: "sans-serif".into(),
+        }
+    }
+}
+
+/// Native drawing is synchronous because script readback observes each operation immediately.
+pub trait CanvasHost: Sync {
+    /// False means 2D context creation must return null rather than promise drawing support.
+    fn available(&self) -> bool {
+        false
+    }
+    /// Measure through the same font resolution as drawing.
+    fn measure(&self, _font: &Font, _text: &str) -> EngineResult<f64> {
+        Err(unavailable())
+    }
+    /// Draw text into a fresh transparent bitmap at an alphabetic baseline, without retaining it.
+    fn text(
+        &self,
+        _bitmap: &Bitmap,
+        _font: &Font,
+        _text: &str,
+        _at: [f64; 2],
+        _color: [u8; 4],
+    ) -> EngineResult<Bitmap> {
+        Err(unavailable())
+    }
+    /// Hosts that support transforms must rasterize before clipping, not transform clipped glyphs.
+    fn text_transformed(
+        &self,
+        bitmap: &Bitmap,
+        font: &Font,
+        text: &str,
+        at: [f64; 2],
+        color: [u8; 4],
+        transform: Affine,
+    ) -> EngineResult<Bitmap> {
+        if transform == Affine::IDENTITY {
+            return self.text(bitmap, font, text, at, color);
+        }
+        Err(EngineError::unsupported(
+            "Transformed Canvas text is unavailable in this host.",
+        ))
+    }
+    /// Encode actual pixels. Unsupported MIME types use this PNG path as well.
+    fn png(&self, _bitmap: &Bitmap) -> EngineResult<Vec<u8>> {
+        Err(unavailable())
+    }
+}
+
+/// Standalone V9 consumers retain their previous lack of native graphics capabilities.
+pub struct Unavailable;
+impl CanvasHost for Unavailable {}
+/** A missing host never silently fabricates drawing output. */
+fn unavailable() -> EngineError {
+    EngineError::unsupported("Canvas 2D is unavailable in this host.")
+}

@@ -167,6 +167,9 @@ pub struct DisplayDecoration {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayItem {
+    /// Canonical canvas pixels shared by native and agent presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<mars_core::canvas::Bitmap>,
     /// Stable native identity within one page generation.
     pub local_id: usize,
     /// Supported element tag, never a native class name supplied by the page.
@@ -554,7 +557,7 @@ fn canvases(document: &Document) -> Option<Document> {
         let side = |name: &str, default: u32| {
             node.attributes
                 .get(name)
-                .and_then(|value| value.trim().parse::<u32>().ok())
+                .and_then(|value| mars_core::canvas::dimension(value))
                 .unwrap_or(default)
         };
         node.image_size = Some((side("width", CANVAS_SIZE.0), side("height", CANVAS_SIZE.1)));
@@ -562,7 +565,10 @@ fn canvases(document: &Document) -> Option<Document> {
     Some(copy)
 }
 /** HTML's default canvas bitmap size. */
-const CANVAS_SIZE: (u32, u32) = (300, 150);
+const CANVAS_SIZE: (u32, u32) = (
+    mars_core::canvas::DEFAULT_SIZE[0],
+    mars_core::canvas::DEFAULT_SIZE[1],
+);
 /** A copy with the quirks-mode margin quirk applied: the UA top margin of the first box in the
  * body or a table cell is laid out as zero. None when no box has it. */
 fn quirk_margins(document: &Document) -> Option<Document> {

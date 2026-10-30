@@ -338,7 +338,9 @@ impl Vm<'_> {
             };
             match self.run_rooted_job(job) {
                 Ok(()) => {}
-                Err(Thrown::Value(error)) => self.report_error(&error),
+                Err(Thrown::Value(error)) => {
+                    crate::v9::platform::workers::report_exception(self, &error)?
+                }
                 Err(fatal) => return Err(fatal),
             }
         }
@@ -593,7 +595,7 @@ fn reject_function(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
-/** `new Promise(executor)`. */
+/** Script throws reject the promise; fatal engine failures must escape its executor. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.new_target.is_none() {
         return Err(vm.type_error("Promise constructor cannot be invoked without 'new'"));
@@ -608,12 +610,16 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.set_proto(promise, Some(proto))?;
     }
     let (resolve, reject) = vm.resolving_functions(promise)?;
-    if let Err(Thrown::Value(error)) = vm.call(
+    match vm.call(
         executor,
         JsValue::Undefined,
         vec![JsValue::Object(resolve), JsValue::Object(reject)],
     ) {
-        vm.call(JsValue::Object(reject), JsValue::Undefined, vec![error])?;
+        Ok(_) => {}
+        Err(Thrown::Value(error)) => {
+            vm.call(JsValue::Object(reject), JsValue::Undefined, vec![error])?;
+        }
+        Err(error @ Thrown::Fatal(_)) => return Err(error),
     }
     Ok(JsValue::Object(promise))
 }

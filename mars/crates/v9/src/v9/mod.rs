@@ -9,6 +9,7 @@ mod compile;
 mod errors;
 mod keyboard;
 pub use keyboard::{KeyboardKey, keyboard_page};
+mod legacy_handlers;
 mod lexer;
 mod literals;
 mod modules;
@@ -19,6 +20,12 @@ mod source;
 mod syntax;
 mod value;
 mod vm;
+mod web_worker;
+mod worker_clone;
+pub use platform::workers::{WORKER_TASKS, WorkerCommand};
+pub use web_worker::ImportScriptsHost;
+pub use web_worker::load_worker;
+pub use worker_clone::{WORKER_MESSAGE_BYTES, WorkerData};
 #[cfg(feature = "conformance")]
 mod worker_runtime;
 #[cfg(feature = "conformance")]
@@ -31,6 +38,10 @@ pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
+pub use platform::frame_directory::{
+    FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
+};
+pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
@@ -40,9 +51,8 @@ pub use platform::{
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
-    LANGUAGE_TAG_BYTES, NAVIGATOR_LANGUAGES, NEAR_BOUNDS_FRACTION, SCRIPT_BYTES, SCRIPT_COUNT,
-    SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES, STORAGE_ENTRIES, STORAGE_VALUE_BYTES, TEXT_BYTES,
-    script_deadline,
+    NEAR_BOUNDS_FRACTION, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES,
+    STORAGE_ENTRIES, STORAGE_VALUE_BYTES, TEXT_BYTES, script_deadline,
 };
 use crate::document::{
     DomChange, FragmentParser, ScriptChange, ScriptDocument, ScriptNode, TextChange,
@@ -58,8 +68,6 @@ use vm::{Limits, Symbols, Thrown, Vm};
 
 /** Dynamic code (new Function, indirect eval) gets offsets past every page source. */
 pub(in crate::v9) const DYNAMIC_OFFSET: usize = 256 * 1024 * 1024;
-/** Legacy inline handlers compile at offsets no page or dynamic source reaches. */
-const HANDLER_OFFSET: usize = 512 * 1024 * 1024;
 
 /// A page's committed engine state: heap, lexical globals and platform state. The app keeps it
 /// between requests and passes it back; it is validated on the way in.
@@ -603,6 +611,34 @@ impl VmState {
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
+        platform::clock::validate(self.page.clock, self.page.observed_clock, self.page.epoch)?;
+        if self.page.legacy_handlers.len() > crate::constants::VM_DYNAMIC_SOURCES {
+            return Err(EngineError::invalid("Invalid retained legacy handler."));
+        }
+        if self.page.workers.len() > platform::workers::HANDLES
+            || self
+                .page
+                .workers
+                .keys()
+                .enumerate()
+                .any(|(index, id)| *id as usize != index + 1)
+        {
+            return Err(EngineError::invalid("Invalid Worker handles."));
+        }
+        if self.page.worker_imports.len() > platform::worker_global::imports::IMPORTS
+            || self
+                .page
+                .worker_imports
+                .values()
+                .any(|url| url.len() > crate::constants::URL_BYTES)
+            || self
+                .page
+                .worker_name
+                .as_ref()
+                .is_some_and(|name| name.len() > crate::constants::URL_BYTES)
+        {
+            return Err(EngineError::invalid("Invalid worker metadata."));
+        }
         #[cfg(feature = "conformance")]
         if self.page.interned_strings.len() > limits.units {
             return Err(EngineError::limit("V9 weak intern entries", limits.units));
@@ -630,6 +666,9 @@ impl VmState {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
+        platform::canvas::validate(&self.page.canvases)?;
+        platform::frame_directory::validate_state(&self.page)?;
+        platform::channel::validate_bounds(&self.page)?;
         builtins::validate_shared(&self.heap)?;
         builtins::validate_shared_gc(&self.heap)?;
         #[cfg(feature = "conformance")]
@@ -850,6 +889,10 @@ fn validate_storage_area(area: &BTreeMap<String, String>) -> EngineResult<()> {
 
 /// Per-execution browser facts and the fragment parser, supplied by the app at the service edge.
 pub struct DocumentHost<'a> {
+    /// Synchronous worker script acquisition is governed by the owner, never by the VM.
+    pub imports: Option<&'a dyn ImportScriptsHost>,
+    /// Synchronous native graphics; standalone consumers can explicitly keep it unavailable.
+    pub canvas: &'a dyn mars_core::canvas::CanvasHost,
     /// Preferred language tags, most preferred first, as `navigator.languages` reports them.
     pub languages: &'a [String],
     /// Parses inserted HTML so the same run sees new nodes; V9 never imports Eye for this.
@@ -860,7 +903,9 @@ impl Default for DocumentHost<'static> {
     /** No languages and a parser that refuses every fragment. */
     fn default() -> Self {
         Self {
+            imports: None,
             languages: &[],
+            canvas: &mars_core::canvas::Unavailable,
             fragments: &RefuseFragments,
         }
     }
@@ -913,6 +958,14 @@ const NO_MODULES: &ModuleInput = ModuleInput::NONE;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PageEvent {
+    /// A cloned asynchronous worker task targets only a context-local handle.
+    WorkerMessage {
+        id: u32,
+        data: WorkerData,
+        ports: Vec<u64>,
+    },
+    /// Loading or initial execution failed for this exact Worker handle.
+    WorkerError { id: u32, message: String },
     /// readyState becomes "interactive"; DOMContentLoaded fires at the document.
     DomContentLoaded,
     /// readyState becomes "complete"; load fires at the window.
@@ -949,9 +1002,17 @@ pub enum PageEvent {
         /// Links of the MessagePorts sent with it; each arrives as a port in `event.ports`.
         #[serde(default)]
         ports: Vec<u64>,
+        /// Native messages queued before two endpoints reunited in this realm.
+        #[serde(default)]
+        queued_port_messages: Vec<QueuedPortMessage>,
     },
     /// A message posted on the far end of a port linked into this document: `message` fires at
     /// the port bound to `link`.
+    PortClose {
+        /// A native router retired this link; clear the local endpoint without firing script.
+        link: u64,
+    },
+    /// Deliver data on one current external channel endpoint.
     PortMessage {
         /// The channel link.
         link: u64,
@@ -1096,21 +1157,7 @@ fn offsets(sources: &[String]) -> Vec<usize> {
 
 /** Validate host language tags: bounded count and length, ASCII tag characters only. */
 fn validate_languages(languages: &[String]) -> EngineResult<Vec<String>> {
-    if languages.len() > NAVIGATOR_LANGUAGES {
-        return Err(EngineError::limit(
-            "navigator language tags",
-            NAVIGATOR_LANGUAGES,
-        ));
-    }
-    if languages.iter().any(|tag| {
-        tag.is_empty()
-            || tag.len() > LANGUAGE_TAG_BYTES
-            || !tag
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    }) {
-        return Err(EngineError::invalid("Invalid navigator language tag."));
-    }
+    mars_core::languages::validate(languages)?;
     Ok(languages.to_vec())
 }
 
@@ -1157,18 +1204,28 @@ fn session<'h>(
         document.validate()?;
     }
     storage.validate()?;
+    platform::clock::validate(0.0, 0.0, environment.time_origin_ms)?;
+    platform::frames::validate_routes(environment, document.as_ref())?;
+    platform::frame_directory::validate(environment)?;
     builtins::validate_timezone(environment)?;
     #[cfg(feature = "conformance")]
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
+    if state.page.initialized && state.page.worker_name != environment.worker_name {
+        return Err(EngineError::invalid(
+            "V9 state belongs to another global profile.",
+        ));
+    }
     // Only the first step of a page runs the platform bootstrap; every step compiles it (see below).
     let fresh = !state.page.initialized;
     let verified = state.verified;
     if !verified {
         state.validate(&limits)?;
+        platform::channel::validate_state(&state.page, &state.heap)?;
     }
     vm::validate_dynamic_sources(&state.dynamic)?;
+    legacy_handlers::validate(&state)?;
     if let Some(document) = &document
         && state.page.initialized
         && state.page.identity != document.identity
@@ -1180,7 +1237,7 @@ fn session<'h>(
     if sources.len() > SCRIPT_COUNT && !isolated {
         return Err(EngineError::limit("classic scripts", SCRIPT_COUNT));
     }
-    let page = platform::Page::new(
+    let mut page = platform::Page::new(
         environment.clone(),
         languages,
         host.fragments,
@@ -1188,6 +1245,8 @@ fn session<'h>(
         state.page,
         storage,
     );
+    page.canvas_host = host.canvas;
+    page.imports = host.imports;
     let mut vm = Vm::new(state.heap, page, limits);
     builtins::initialize_shared(&mut vm)?;
     builtins::initialize_shared_gc(&mut vm)?;
@@ -1233,16 +1292,25 @@ fn session<'h>(
     initialize_page(&mut vm);
     modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
     let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
+    let mut imports = Vec::new();
     for (index, source) in state.dynamic.iter().enumerate() {
         let base = vm::dynamic_source_base(&state.dynamic, index);
         let native = vm.native_dynamic();
-        compile_dynamic(
+        let code = compile_dynamic(
             &mut vm.registry,
             &source.source,
             base,
             source.context.as_deref(),
             native,
         )?;
+        if vm.page.state.worker_imports.contains_key(&base) {
+            if vm.page.environment.worker_name.is_none() || source.context.is_some() {
+                return Err(EngineError::invalid("Invalid retained worker Script."));
+            }
+            imports.push(code);
+        } else if vm.page.state.legacy_handlers.contains(&base) {
+            imports.push(code);
+        }
     }
     vm.dynamic = state.dynamic;
     vm.templates = state.templates;
@@ -1252,15 +1320,18 @@ fn session<'h>(
         vm.validate_graph()?;
     }
     platform::images::validate_targets(&vm.page)?;
+    platform::canvas::validate_targets(&mut vm)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),
         Compiled::Each(codes) => codes.iter().flatten().map(|code| &**code).collect(),
     };
     scripts.extend(loaded.iter().map(|code| &**code));
+    scripts.extend(imports.iter().map(|code| &**code));
     #[cfg(feature = "conformance")]
     scripts.extend(vm.realm_codes(0).into_iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
+    vm.page.start_execution_clock();
     vm.deadline = Some(std::time::Instant::now() + script_deadline());
     if fresh {
         platform::observable::run(&mut vm, bootstrap)?;
@@ -1288,6 +1359,7 @@ fn initialize_page(vm: &mut Vm) {
     }
     let environment = &vm.page.environment;
     state.identity = identity;
+    state.worker_name = environment.worker_name.clone();
     state.charset = charset;
     state.epoch = environment.time_origin_ms;
     state.random = environment.random_seed;
@@ -1454,6 +1526,11 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.effects.requests = saved.effects.requests;
     vm.page.effects.image_requests = saved.effects.image_requests;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;
+    vm.page.effects.worker_commands = saved.effects.worker_commands;
+    vm.page.effects.worker_errors = saved.effects.worker_errors;
+    vm.page.effects.messages = saved.effects.messages;
+    vm.page.effects.port_messages = saved.effects.port_messages;
+    vm.page.effects.port_closes = saved.effects.port_closes;
     vm.page.effects.navigation = saved.effects.navigation;
     vm.page.effects.history = saved.effects.history;
     vm.page.effects.cookies = saved.effects.cookies;
@@ -1500,6 +1577,7 @@ fn past_fraction(
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
+    platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
@@ -1530,6 +1608,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
             cross_origin: load.cross_origin.clone(),
         })
         .collect();
+    vm.page.retain_clock();
     let platform::Page {
         state: page,
         storage,
@@ -1825,6 +1904,16 @@ fn page_event_with(
     {
         let (mut vm, _) = open(&input, state, limits)?;
         match event {
+            PageEvent::WorkerMessage { id, data, ports } => {
+                let result = platform::workers::receive(&mut vm, id, &data, &ports)
+                    .and_then(|()| vm.drain_jobs());
+                report_thrown(&mut vm, result)?;
+            }
+            PageEvent::WorkerError { id, message } => {
+                let result =
+                    platform::workers::error(&mut vm, id, &message).and_then(|()| vm.drain_jobs());
+                report_thrown(&mut vm, result)?;
+            }
             PageEvent::DomContentLoaded => {
                 vm.page.state.ready = platform::ReadyState::Interactive;
                 fire_lifecycle(
@@ -1864,13 +1953,21 @@ fn page_event_with(
                 origin,
                 source,
                 ports,
+                queued_port_messages,
             } => {
                 vm.remaining = vm.limits.operations;
-                let received =
-                    platform::messaging::receive(&mut vm, &data, &origin, source, &ports)
-                        .and_then(|_| vm.drain_jobs());
+                let received = platform::messaging::receive(
+                    &mut vm,
+                    &data,
+                    &origin,
+                    source,
+                    &ports,
+                    &queued_port_messages,
+                )
+                .and_then(|_| vm.drain_jobs());
                 report_thrown(&mut vm, received)?;
             }
+            PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
             PageEvent::PortMessage { link, data } => {
                 vm.remaining = vm.limits.operations;
                 let received = platform::messaging::receive_on_port(&mut vm, link, &data)
@@ -2274,28 +2371,9 @@ fn legacy(
                 }
             }
             Some(handler) => {
-                let parse = || {
-                    parse_at(handler, HANDLER_OFFSET, None).map_err(|mut error| {
-                        error.input_kind = Some("handler".into());
-                        if let Some(location) = error.location.as_deref_mut()
-                            && location.byte_offset >= HANDLER_OFFSET
-                        {
-                            location.byte_offset -= HANDLER_OFFSET;
-                        }
-                        error
-                    })
-                };
-                let code = vm.registry.script(handler, HANDLER_OFFSET, parse)?;
-                run_one(&mut vm, code, 0).map_err(|mut error| {
-                    error.input_kind = Some("handler".into());
-                    if let Some(location) = error.location.as_deref_mut() {
-                        location.script_index = None;
-                        if location.byte_offset >= HANDLER_OFFSET {
-                            location.byte_offset -= HANDLER_OFFSET;
-                        }
-                    }
-                    error
-                })?;
+                let (code, base) = legacy_handlers::compile(&mut vm, handler)?;
+                run_one(&mut vm, code, 0)
+                    .map_err(|error| legacy_handlers::location(error, base))?;
             }
         }
         finish(vm)
@@ -2512,7 +2590,7 @@ pub fn replay(
     for change in changes {
         match change {
             // Definedness is a document-engine fact for `:defined`; the projection has no field.
-            ScriptChange::Defined { .. } => {}
+            ScriptChange::Defined { .. } | ScriptChange::Canvas { .. } => {}
             // The virtual html and body hold their attributes in V9's own state already.
             ScriptChange::RootAttribute { .. } | ScriptChange::Focus { .. } => {}
             ScriptChange::Dom { change } => match change {

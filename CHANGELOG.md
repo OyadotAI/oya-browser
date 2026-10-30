@@ -8,6 +8,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Extended Mars Canvas 2D with affine transforms, drawing-state save/restore, alpha, ImageData creation/writes and canvas-to-canvas copying. Added indexed/named sibling frame messaging with document-generation checks and transferred-port routing. Broader Ladybird compatibility and successful Google Search remain unverified.
+- Native Mars page and worker clocks now advance within synchronous JavaScript tasks, preventing time-based loops from waiting forever on a frozen timestamp. Deterministic standalone V9 timing and execution budgets are preserved.
+- Added bounded classic dedicated workers to Mars with isolated globals, synchronous imports, queued messages and MessagePort transfers. Module, blob and nested workers remain unsupported; Google Search verification is still in progress.
+- Added a bounded native macOS Canvas 2D slice to Mars: solid rectangles, text, pixel readback and PNG export, with the same bitmap used by desktop and agent painting. Corrected unavailable GPU adapter discovery and aligned request languages with JavaScript preferences. Full Canvas, WebGL/WebGPU and a GPU compositor remain unfinished.
+
 - Added V9 WebAssembly table64 support with BigInt JavaScript indices, 64-bit binary operations, and bounded growth.
 - Added opt-in V8 conformance runs for previously excluded directories, with explicit exclusion reports and confined `d8.file.exists` fixture snapshots.
 - Expanded V9 conformance coverage for supported shell flags and tests that request native syntax without using percent tokens; unsupported flags and intrinsics remain explicit.
@@ -38,6 +43,9 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Preserved accepted Mars MessagePort replies when their sender closes, released rejected transfers, and retained legacy handler sources across VM restoration. Promise executors now propagate fatal engine failures while ordinary JavaScript throws still reject their promises.
+- Replaced Mars's resident-script eviction with shared page, frame and worker admission leases, preserving active state and navigation rollback when capacity is reached.
+- Corrected Mars's dynamically inserted same-origin sandbox frames to use the existing scripted-frame path, preserving messaging identity, mixed-URL isolation, framing refusals and resource admission. Google Search still returns HTTP 429 in the live retest; full iframe compatibility remains unfinished.
 - Corrected V9 typed-array `map` to recheck same-kind species destinations after callbacks and value conversion.
 - Corrected V9 Intl time-zone name validation, alias resolution and formatting at the requested instant.
 - Corrected V9 Unicode-set early errors for invalid negated string properties and malformed expressions.

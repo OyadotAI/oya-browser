@@ -316,9 +316,21 @@ impl Canvas {
                 }
             }
         }
-        if item.tag == "img" {
+        let canvas_bitmap = item
+            .canvas
+            .as_ref()
+            .filter(|b| b.drawable())
+            .map(|b| Bitmap {
+                width: b.width,
+                height: b.height,
+                rgba: b.pixels.to_vec(),
+            });
+        if item.tag == "img" || canvas_bitmap.is_some() {
             let dest = item.content_box.unwrap_or(bounds);
-            match image.and_then(Picture::raster) {
+            match canvas_bitmap
+                .as_ref()
+                .or_else(|| image.and_then(Picture::raster))
+            {
                 Some(bitmap) => {
                     let natural = (f64::from(bitmap.width), f64::from(bitmap.height));
                     let tile = object_fit::object_rect(item, dest, natural);
@@ -1905,6 +1917,21 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /** Agent screenshots use the real bitmap and expose the background through clear pixels. */
+    #[test]
+    fn canvas_pixels_reach_agent_screenshots_with_transparency() {
+        let mut bitmap = mars_core::canvas::Bitmap::new(2, 1).unwrap();
+        bitmap
+            .pixels
+            .make_mut()
+            .unwrap()
+            .copy_from_slice(&[255, 0, 0, 255, 0, 0, 0, 0]);
+        let mut item:super::DisplayItem=serde_json::from_value(serde_json::json!({"local_id":0,"tag":"canvas","role":"group","x":0.0,"y":0.0,"width":2.0,"height":1.0,"font_size":16.0,"bold":false,"lines":[]})).unwrap();
+        item.canvas = Some(bitmap);
+        let mut target = super::Canvas::new(0.0, 0.0, 2.0, 1.0, super::WHITE);
+        target.item(&item, super::BLACK, None);
+        assert_eq!(target.pixels, [255, 0, 0, 255, 255, 255]);
+    }
     use super::{
         BorderPaint, BorderStyle, Ring, base64, best_gap, inset_outset, inside_rounded, stop_color,
     };

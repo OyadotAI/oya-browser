@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 /** The host every test uses: V9's own fragment parser. */
 pub fn host() -> DocumentHost<'static> {
     DocumentHost {
+        imports: None,
+        canvas: &mars_core::canvas::Unavailable,
         languages: &[],
         fragments: &SimpleFragmentParser,
     }

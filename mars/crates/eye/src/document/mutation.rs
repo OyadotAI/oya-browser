@@ -50,6 +50,17 @@ pub fn apply_script_changes(
         .unwrap_or(0);
     for change in changes {
         match change {
+            ScriptChange::Canvas { node, bitmap } => {
+                bitmap.validate()?;
+                let target = candidate
+                    .nodes
+                    .iter_mut()
+                    .find(|n| n.local_id == *node && n.tag == "canvas")
+                    .ok_or_else(|| {
+                        EngineError::invalid("Canvas publication requires an actual canvas.")
+                    })?;
+                target.canvas = Some(bitmap.clone());
+            }
             ScriptChange::Dom { change } => {
                 apply_change(&mut candidate, change, &mut high_water, true)?
             }

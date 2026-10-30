@@ -1,0 +1,60 @@
+<!-- Local Canvas verification draws actual pixels and reports each observed result. -->
+<!doctype html><html><head><meta charset="utf-8"><title>Canvas 2D check</title>
+<style>
+body{font:16px system-ui,sans-serif;margin:32px;max-width:620px;color-scheme:light dark}
+canvas,img{display:block;max-width:100%;height:auto}button{min-height:44px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}button:focus-visible,a:focus-visible{outline:2px solid currentColor}
+@media(max-width:640px){body{margin:16px}}
+</style></head><body>
+<h1>Canvas 2D check</h1><p>Draw rectangles and text, inspect pixels, and export a PNG.</p>
+<button id="draw" type="button" onclick="drawSample()">Draw sample</button>
+<p id="status" role="status" aria-live="polite">Ready to draw.</p>
+<h2>Canvas output</h2><p>Two colored rectangles, a cleared square, and the text “Canvas 2D”.</p>
+<canvas id="output" width="300" height="150">Expected output: red and blue rectangles with a cleared square, and Canvas 2D text.</canvas>
+<h2>PNG output</h2><img id="png" width="300" height="150" alt="PNG export will appear after drawing the sample.">
+<h2>Checks</h2><pre id="results" tabindex="0">No checks run.</pre>
+<p><a href="/">Back to the native demo</a></p>
+<script>
+/** Keep successful observations when a later operation fails. */
+function report(text){document.getElementById('results').textContent+=text+'\n'}
+/** Fixed inputs let repeated runs be compared under the same host environment. */
+function paintSample(a){
+ a.fillStyle='#cc3344';a.fillRect(12,12,100,70)
+ a.fillStyle='#2255bb';a.fillRect(130,12,120,70);a.clearRect(34,34,24,24)
+ a.fillStyle='#000000';a.font='20px sans-serif';a.fillText('Canvas 2D',12,120)
+}
+/** Resource-limit checks use a separate canvas so the visible sample stays intact. */
+function checkReset(){
+ const c=document.createElement('canvas'),a=c.getContext('2d');a.fillRect(0,0,1,1);c.width=c.width
+ report('Same context after resize: '+(a===c.getContext('2d')))
+ report('Bitmap cleared after resize: '+(a.getImageData(0,0,1,1).data[3]===0))
+ c.width=0;report('Empty bitmap: '+(c.toDataURL()==='data:,'));c.width=513
+ try{a.fillRect(0,0,1,1);report('Large bitmap accepted by this build.')}catch(e){report('Large bitmap: '+e.name)}
+ c.width=2;c.height=2;a.fillRect(0,0,1,1);report('Valid resize recovers: '+(a.getImageData(0,0,1,1).data[3]===255))
+}
+/** GPU availability is a capability result, never a successful adapter invented by the fixture. */
+async function checkGraphics(c){
+ report('WebGL context: '+String(c.getContext('webgl')))
+ if(navigator.gpu){const p=navigator.gpu.requestAdapter();report('WebGPU returns Promise: '+(p instanceof Promise));report('WebGPU adapter: '+String(await p))}
+ else{report('WebGPU: unavailable.')}
+}
+/** A run records drawing, native measurement, pixel values and actual PNG decoding separately. */
+async function checkSample(c,a){
+ paintSample(a);report('Measured text width: '+a.measureText('Canvas 2D').width)
+ report('Rectangle pixel: '+Array.from(a.getImageData(12,12,1,1).data).join(','))
+ report('Cleared pixel: '+Array.from(a.getImageData(34,34,1,1).data).join(','))
+ const image=document.getElementById('png');image.src=c.toDataURL();image.alt='PNG of the same two rectangles, cleared square and Canvas 2D text.'
+ await image.decode();report('PNG decoded: '+image.naturalWidth+' × '+image.naturalHeight)
+ checkReset();await checkGraphics(c)
+}
+/** Retry is always available; asynchronous completion keeps keyboard focus on the initiating control. */
+async function drawSample(){
+ const button=document.getElementById('draw'),status=document.getElementById('status');button.disabled=true
+ status.textContent='Checking drawing, pixels and PNG export…';document.getElementById('results').textContent=''
+ try{const c=document.getElementById('output');c.width=300;const a=c.getContext('2d')
+  if(!a){status.textContent='Canvas 2D is unavailable in this build.';return}
+  await checkSample(c,a);status.textContent='Checks completed. Review the observed results below.'
+ }catch(e){status.textContent='Check failed: '+e.message;report(e.name+': '+e.message)}
+ finally{button.disabled=false}
+}
+</script></body></html>

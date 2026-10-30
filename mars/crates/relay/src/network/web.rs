@@ -422,6 +422,11 @@ fn finish(
         status,
         source: if image_data || download {
             base64(&body)
+        } else if matches!(
+            request.destination,
+            Destination::Worker | Destination::WorkerImport
+        ) {
+            mime::worker_source(&body)
         } else {
             mime::decode(body, charset.as_deref())?
         },
@@ -439,7 +444,7 @@ fn finish(
             Destination::Empty => super::cors::response_headers(&headers),
             // A document keeps the headers that say who may frame it, for the coordinator's
             // check before it embeds the document in another origin's page.
-            Destination::Document => FRAMING_HEADERS
+            Destination::Document | Destination::Worker => FRAMING_HEADERS
                 .iter()
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),

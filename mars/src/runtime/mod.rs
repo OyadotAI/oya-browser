@@ -14,6 +14,8 @@ mod devtools;
 pub mod downloads;
 mod exif;
 mod frame_pages;
+mod frame_router;
+mod frame_tree;
 mod frames;
 mod framing;
 /** Committed pages the person visited and address-field completion. */
@@ -34,6 +36,7 @@ mod page;
 /** Applies an Oya persona to a runtime as one immutable unit. */
 pub mod persona;
 mod presentation;
+mod residency;
 mod resources;
 /** Per-engine crash restart (CB-23). */
 mod restart;
@@ -45,6 +48,9 @@ pub mod settings;
 mod supervisor;
 /** Selecting and copying painted page text. */
 pub mod text_selection;
+mod worker_io;
+mod worker_loading;
+mod workers;
 /** Standard padded base64; desktop captures return PNGs inline with it. */
 pub(crate) use agent::base64;
 pub use agent::mutating;

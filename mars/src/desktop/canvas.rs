@@ -581,6 +581,12 @@ impl Canvas {
             });
             painter.sides(&shape, item.border_widths, colors);
         }
+        if let Some(bitmap) = &item.canvas {
+            if let Some(image) = painted.canvas(item.local_id, bitmap) {
+                background::paint_replaced_image(item, &shape, painter, &image, alpha);
+            }
+            return;
+        }
         if item.tag == "img"
             && let Some(image) = &image
         {

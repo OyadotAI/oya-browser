@@ -7,7 +7,7 @@
  */
 use crate::v9::value::JsValue;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Prop, Slot};
-use crate::v9::vm::realm::{Builder, string};
+use crate::v9::vm::realm::{Builder, Static, string};
 use crate::v9::vm::{Call, Res, Vm};
 
 /** Each policy method with the interface of the value it makes. */
@@ -27,14 +27,12 @@ const NAME_SLOT: &str = "trustedName";
 pub(super) fn install(b: &mut Builder) {
     let factory_proto = b.object(Some(b.ids.object_prototype));
     super::chrome_env::interface(b, "TrustedTypePolicyFactory", factory_proto);
+    let factory = b.object(Some(factory_proto));
     let policy_proto = b.object(Some(b.ids.object_prototype));
     super::chrome_env::interface(b, "TrustedTypePolicy", policy_proto);
     for (name, interface) in CREATORS {
-        let proto = b.object(Some(b.ids.object_prototype));
-        super::chrome_env::interface(b, interface, proto);
-        b.host_method(proto, "toString", 0, trusted_text);
-        b.host_method(proto, "toJSON", 0, trusted_text);
-        b.host_method(policy_proto, name, 1, create_value);
+        let proto = install_value_interface(b, policy_proto, name, interface);
+        install_empty_value(b, factory_proto, factory, interface, proto);
     }
     b.getter(policy_proto, "name", policy_name);
     b.host_method(factory_proto, "createPolicy", 1, create_policy);
@@ -45,8 +43,57 @@ pub(super) fn install(b: &mut Builder) {
         b.host_method(factory_proto, name, 2, |_, _| Ok(JsValue::Null));
     }
     b.getter(factory_proto, "defaultPolicy", |_, _| Ok(JsValue::Null));
-    let factory = b.object(Some(factory_proto));
     b.global("trustedTypes", factory);
+}
+
+/** Install one TrustedType value interface (`TrustedHTML`, `TrustedScript`, `TrustedScriptURL`). */
+fn install_value_interface(
+    b: &mut Builder,
+    policy_proto: u32,
+    creator: &'static str,
+    interface: &'static str,
+) -> u32 {
+    let proto = b.object(Some(b.ids.object_prototype));
+    super::chrome_env::interface(b, interface, proto);
+    b.host_method(proto, "toString", 0, trusted_text);
+    b.host_method(proto, "toJSON", 0, trusted_text);
+    b.host_method(policy_proto, creator, 1, create_value);
+    proto
+}
+
+/** Attach `emptyHTML` and `emptyScript` getters on `TrustedTypePolicyFactory.prototype`. */
+fn install_empty_value(
+    b: &mut Builder,
+    factory_proto: u32,
+    factory: u32,
+    interface: &str,
+    value_proto: u32,
+) {
+    let slot = match interface {
+        "TrustedHTML" => "emptyHTML",
+        "TrustedScript" => "emptyScript",
+        _ => return,
+    };
+    let empty = b.object(Some(value_proto));
+    b.put(
+        empty,
+        Key::private(VALUE_SLOT),
+        Static::Value(string("")),
+        HIDDEN_ATTRS,
+    );
+    b.put(
+        factory,
+        Key::private(slot),
+        Static::Value(JsValue::Object(empty)),
+        HIDDEN_ATTRS,
+    );
+    b.getter(factory_proto, slot, empty_value);
+}
+
+/** `trustedTypes.emptyHTML` and `trustedTypes.emptyScript`. */
+fn empty_value(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let slot = super::dom::native_name(&call);
+    read_slot(vm, &call.this, slot).ok_or_else(|| vm.type_error("Illegal invocation"))
 }
 
 /** The prototype of a global interface, for objects made at run time. */
@@ -66,16 +113,25 @@ fn trusted(vm: &mut Vm, interface: &str, text: JsValue) -> Res<JsValue> {
     Ok(JsValue::Object(id))
 }
 
-/** Read a private slot. */
+/** Read a private slot from either a heap object or an unmaterialized static intrinsic. */
 fn read_slot(vm: &Vm, value: &JsValue, name: &str) -> Option<JsValue> {
-    match &vm
+    let id = value.object()?;
+    if let Some(prop) = vm
         .heap
-        .get(value.object()?)?
-        .props
-        .get(&Key::private(name))?
-        .slot
+        .get(id)
+        .and_then(|o| o.props.get(&Key::private(name)))
     {
-        Slot::Data(value) => Some(value.clone()),
+        return match &prop.slot {
+            Slot::Data(value) => Some(value.clone()),
+            _ => None,
+        };
+    }
+    match &crate::v9::vm::realm::realm_for(id)
+        .object(id)?
+        .get(&Key::private(name))?
+        .1
+    {
+        Static::Value(value) => Some(value.clone()),
         _ => None,
     }
 }

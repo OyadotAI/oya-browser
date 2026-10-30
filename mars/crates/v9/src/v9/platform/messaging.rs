@@ -37,12 +37,27 @@ pub enum MessageData {
     Json(String),
 }
 
+/** Native transfer-time drain keeps each queued message attached to its exact reunited endpoint. */
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedPortMessage {
+    /// The transferred channel link, validated against the enclosing Window message's ports.
+    pub link: u64,
+    /// Structured payload already captured by the original sender.
+    pub data: MessageData,
+    /// True targets the returned endpoint; false targets its original local peer.
+    pub to_transferred: bool,
+}
+
 /** A message a script posted to a window in another document. */
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrameMessage {
     /// PARENT, or the iframe element (by node identity) whose document receives it.
     pub target: i64,
+    /// Owner-local targets must still name the incarnation observed by the sending proxy.
+    #[serde(default)]
+    pub target_incarnation: u64,
     /// The data.
     pub data: MessageData,
     /// The origin the receiver must have: "*" for any, else a serialized origin.
@@ -50,6 +65,9 @@ pub struct FrameMessage {
     /// Links of the MessagePorts transferred with it (`channel::transfer`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ports: Vec<u64>,
+    /// Existing routes may move, but a retired route must never be recreated as a fresh channel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moved_ports: Vec<u64>,
 }
 
 /** The proxy prototype and the native task that delivers a message to this window. */
@@ -75,7 +93,9 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     for name in ["focus", "blur", "close"] {
         b.host_method(proxy, name, 0, proxy_nothing);
     }
-    for name in ["closed", "window", "self", "frames", "length"] {
+    for name in [
+        "closed", "window", "self", "frames", "length", "parent", "top",
+    ] {
         b.getter(proxy, name, proxy_get);
     }
     let deliver = b.function("", 4, deliver);
@@ -89,6 +109,11 @@ fn target_key() -> Key {
 
 /** The proxy for `target`, made once and kept while referenced, so `event.source === parent`. */
 pub(in crate::v9) fn proxy(vm: &mut Vm, target: i64) -> Res<JsValue> {
+    if super::frame_directory::sibling_window(target)
+        .is_some_and(|window| vm.page.environment.own_window == Some(window))
+    {
+        return Ok(JsValue::Object(vm.global_object()));
+    }
     if let Some(id) = vm.page.state.remote_windows.get(&target)
         && vm.heap.get(*id).is_some()
     {
@@ -103,12 +128,23 @@ pub(in crate::v9) fn proxy(vm: &mut Vm, target: i64) -> Res<JsValue> {
             attrs: HIDDEN_ATTRS,
         },
     );
+    if let Ok(owner) = usize::try_from(target) {
+        let incarnation = super::frame_directory::incarnation(&vm.page, owner);
+        vm.heap.put(
+            id,
+            incarnation_key(),
+            Prop {
+                slot: Slot::Data(JsValue::Number(incarnation as f64)),
+                attrs: HIDDEN_ATTRS,
+            },
+        );
+    }
     vm.page.state.remote_windows.insert(target, id);
     Ok(JsValue::Object(id))
 }
 
 /** The target a proxy stands for. */
-fn target_of(vm: &Vm, proxy: &JsValue) -> Option<i64> {
+pub(super) fn target_of(vm: &Vm, proxy: &JsValue) -> Option<i64> {
     let id = proxy.object()?;
     match vm.heap.get(id)?.props.get(&target_key()) {
         Some(Prop {
@@ -116,6 +152,26 @@ fn target_of(vm: &Vm, proxy: &JsValue) -> Option<i64> {
             ..
         }) => Some(*target as i64),
         _ => None,
+    }
+}
+
+/** An owner proxy retains its incarnation even after removal invalidates the cache entry. */
+fn incarnation_key() -> Key {
+    Key::private("remoteWindowIncarnation")
+}
+
+/** Missing incarnation slots represent the initial context in old serialized state. */
+fn incarnation_of(vm: &Vm, proxy: &JsValue) -> u64 {
+    let slot = proxy
+        .object()
+        .and_then(|id| vm.heap.get(id))
+        .and_then(|object| object.props.get(&incarnation_key()));
+    match slot {
+        Some(Prop {
+            slot: Slot::Data(JsValue::Number(value)),
+            ..
+        }) => *value as u64,
+        _ => 0,
     }
 }
 
@@ -132,20 +188,28 @@ fn proxy_post(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(target) = target_of(vm, &call.this) else {
         return Err(vm.type_error("Illegal invocation"));
     };
+    let target_incarnation = incarnation_of(vm, &call.this);
+    if let Ok(owner) = usize::try_from(target)
+        && (super::frame_directory::incarnation(&vm.page, owner) != target_incarnation
+            || !vm.page.connected(owner))
+    {
+        return Ok(JsValue::Undefined);
+    }
     let data = encode(vm, &call)?;
     let target_origin = target_origin(vm, &call)?;
     if vm.page.effects.messages.len() >= MESSAGES_PER_STEP {
         return Err(EngineError::limit("V9 frame messages", MESSAGES_PER_STEP).into());
     }
-    let mut ports = Vec::new();
-    for port in transferred(vm, &call)? {
-        ports.push(super::channel::transfer(vm, &port)?);
-    }
+    let transferred = transferred(vm, &call)?;
+    let moved_ports = super::channel::moved_links(vm, &transferred);
+    let ports = super::channel::transfer_many(vm, &transferred, super::channel::Route::Frame)?;
     vm.page.effects.messages.push(FrameMessage {
         target,
+        target_incarnation,
         data,
         target_origin,
         ports,
+        moved_ports,
     });
     Ok(JsValue::Undefined)
 }
@@ -156,16 +220,20 @@ fn proxy_nothing(_vm: &mut Vm, _call: Call) -> Res<JsValue> {
 }
 
 /** `closed` is false; `window`, `self` and `frames` are the proxy; `length` is 0. */
-fn proxy_get(_vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn proxy_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(match super::dom::native_name(&call) {
         "closed" => JsValue::Boolean(false),
-        "length" => JsValue::Number(0.0),
+        "length" => JsValue::Number(if target_of(vm, &call.this) == Some(PARENT) {
+            vm.page.environment.parent_frames.len() as f64
+        } else {
+            0.0
+        }),
+        "parent" | "top" => return parent(vm),
         _ => call.this.clone(),
     })
 }
 
-/** The MessagePorts in the transfer list (the third argument, or the `transfer` option);
-anything else in it is ignored, as V9 transfers no buffers. */
+/** Read the whole transfer list; validation rejects unsupported entries before detaching any. */
 fn transferred(vm: &mut Vm, call: &Call) -> Res<Vec<JsValue>> {
     let options = call.arg(1);
     let list = match options.object() {
@@ -176,10 +244,8 @@ fn transferred(vm: &mut Vm, call: &Call) -> Res<Vec<JsValue>> {
         return Ok(Vec::new());
     }
     let items = crate::v9::builtins::list_from_array_like(vm, &list)?;
-    Ok(items
-        .into_iter()
-        .filter(|item| super::channel::is_port(vm, item))
-        .collect())
+    super::channel::validate_transfer_list(vm, &items)?;
+    Ok(items)
 }
 
 /** The data as it crosses: a string as text, anything else as JSON (undefined as null). */
@@ -264,7 +330,9 @@ pub(in crate::v9) fn receive(
     origin: &str,
     source: Option<i64>,
     links: &[u64],
+    queued: &[QueuedPortMessage],
 ) -> Res<()> {
+    validate_queued(vm, links, queued)?;
     let value = decode(vm, data)?;
     let source = match source {
         Some(target) => proxy(vm, target)?,
@@ -273,10 +341,47 @@ pub(in crate::v9) fn receive(
     let origin = JsValue::string(origin)?;
     let mut ports = Vec::new();
     for link in links {
-        ports.push(super::channel::adopt(vm, *link)?);
+        ports.push(super::channel::adopt(
+            vm,
+            *link,
+            super::channel::Route::Frame,
+        )?);
+    }
+    for message in queued {
+        let index = links
+            .iter()
+            .position(|link| *link == message.link)
+            .expect("validated queued link");
+        let data = decode(vm, &message.data)?;
+        super::channel::queue_returned(vm, &ports[index], data, message.to_transferred)?;
     }
     let ports = JsValue::Object(vm.new_array(ports)?);
     dispatch_message(vm, value, origin, source, ports)
+}
+
+/** Inert native queue metadata is bounded and cannot target a port outside this transfer. */
+fn validate_queued(vm: &Vm, links: &[u64], queued: &[QueuedPortMessage]) -> Res<()> {
+    let unique: std::collections::BTreeSet<_> = links.iter().collect();
+    if queued.len() > MESSAGES_PER_STEP
+        || unique.len() != links.len()
+        || queued.iter().any(|message| {
+            !unique.contains(&message.link)
+                || !vm.page.state.linked_ports.contains_key(&message.link)
+        })
+    {
+        return Err(EngineError::invalid("Invalid reunited MessagePort queue.").into());
+    }
+    let bytes = serde_json::to_vec(queued)
+        .map_err(|_| EngineError::invalid("Invalid reunited MessagePort queue."))?
+        .len();
+    if bytes > crate::v9::WORKER_MESSAGE_BYTES {
+        return Err(EngineError::limit(
+            "reunited MessagePort queue",
+            crate::v9::WORKER_MESSAGE_BYTES,
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /** A message that came across a port link, fired at the port bound to it here. */

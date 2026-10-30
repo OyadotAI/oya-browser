@@ -262,6 +262,7 @@ impl Runtime {
             return Ok(None);
         }
         let script = ScriptRequest {
+            worker_policy: None,
             url,
             method: Method::Get,
             body: String::new(),

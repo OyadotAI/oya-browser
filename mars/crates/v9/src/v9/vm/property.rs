@@ -537,6 +537,9 @@ impl Vm<'_> {
     }
     /** [[Get]] starting at an object with an explicit receiver for getters. */
     pub fn get_from(&mut self, start: ObjectId, key: &Key, receiver: &JsValue) -> Res<JsValue> {
+        if let Some(value) = crate::v9::platform::frame_directory::lookup(self, start, key)? {
+            return Ok(value);
+        }
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
             // V8's GetPropertyWithFailedAccessCheck returns undefined for well-known symbols.

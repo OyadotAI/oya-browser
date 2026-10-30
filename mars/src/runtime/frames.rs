@@ -68,11 +68,21 @@ pub(super) struct Frame {
 frame's `name` (its `window.name`) and a script identity of its own, so V9 keeps its state apart
 from the embedder's. */
 pub(super) struct Embedding {
+    pub top_level_url: String,
     pub origin: String,
     pub name: String,
-    pub identity: String,
+    pub routes: Vec<crate::v9::FrameRoute>,
+    pub window: i64,
 }
 impl Frame {
+    /** Detached frame resources leave the candidate together with their context lease. */
+    pub(super) fn remove_images(&self, images: &mut BTreeMap<usize, ImageAsset>) {
+        let range = self.id_base..self.id_end();
+        images.retain(|id, _| !range.contains(id));
+        for frame in &self.frames {
+            frame.remove_images(images);
+        }
+    }
     /** The frame of iframe `owner` showing its own `page`, the page's images added to `images`
     under the frame's identity range. */
     pub(super) fn of_page(
@@ -167,6 +177,8 @@ enum Content {
 /** The page-wide frame allowance left. */
 #[derive(Default)]
 struct Allowance {
+    /** Root lookup metadata is available before any sibling script starts. */
+    routes: Vec<crate::v9::FrameRoute>,
     /// Frames claimed so far.
     count: usize,
     /// Frame source bytes admitted so far.
@@ -211,10 +223,14 @@ impl Runtime {
         base: &str,
         deadline: Instant,
         images: &mut BTreeMap<usize, ImageAsset>,
+        routes: &[crate::v9::FrameRoute],
     ) -> EngineResult<(Vec<Frame>, Vec<FrameDocument>)> {
         let base =
             url::Url::parse(base).map_err(|_| EngineError::invalid("Invalid frame base URL."))?;
-        let mut allowance = Allowance::default();
+        let mut allowance = Allowance {
+            routes: routes.to_vec(),
+            ..Default::default()
+        };
         let frames = self.frames_in(document, &base, deadline, images, &mut allowance, 0)?;
         Ok((frames, allowance.scripts))
     }
@@ -233,7 +249,7 @@ impl Runtime {
             return Ok(frames);
         }
         let owners: Vec<(usize, Source)> = (document.nodes.iter().enumerate())
-            .filter(|(_, node)| !node.hidden())
+            .filter(|(_, node)| node.tag == "iframe" || !node.hidden())
             .filter_map(|(index, node)| Some((index, source(node)?)))
             .collect();
         for (index, source) in owners {
@@ -248,11 +264,32 @@ impl Runtime {
             {
                 let owner = document.nodes[index].local_id;
                 let attributes = document.nodes[index].attributes.clone();
-                let opened =
-                    self.frame_page(owner, address, &attributes, base, id_base, deadline, images)?;
+                let scripted = base
+                    .join(address)
+                    .ok()
+                    .is_some_and(|url| self.scripted_frame_allowed(base, &url, &attributes));
+                let opened = match self.frame_page(
+                    owner,
+                    address,
+                    &attributes,
+                    base,
+                    id_base,
+                    deadline,
+                    images,
+                    &allowance.routes,
+                ) {
+                    Err(error) if error.code == "limit_exceeded" => {
+                        document.diagnostics.push(error.message);
+                        None
+                    }
+                    result => result?,
+                };
                 if let Some(frame) = opened {
                     document.nodes[index].embedded = true;
                     frames.push(frame);
+                    continue;
+                }
+                if scripted {
                     continue;
                 }
             }
@@ -547,8 +584,8 @@ impl Runtime {
     /**
      * Answers the frame documents a V9 step asked for, recording each answer in the page's
      * environment so the next step's `load` event can fire. `give_up` (the module rounds ran out)
-     * or the deadline refuses everything that is still pending. A refused frame of another
-     * origin then loads as a page of its own (`attach_frame_pages`); returns whether one did.
+     * or the deadline refuses everything pending. Owner-selected scripted pages load before
+     * inert answers, so same-origin insertion follows the markup route without duplicate fetches.
      */
     pub(super) fn fetch_frames(
         &mut self,
@@ -557,18 +594,29 @@ impl Runtime {
         give_up: bool,
     ) -> EngineResult<bool> {
         let requests = std::mem::take(&mut page.scripting.modules.frame_requests);
-        let mut others = Vec::new();
+        let mut urls: Vec<_> = requests.iter().map(|request| request.url.clone()).collect();
+        let changed = self.sync_frame_tree(page)?;
+        urls.extend(changed.iter().filter_map(|address| {
+            url::Url::parse(&page.url)
+                .ok()?
+                .join(address)
+                .ok()
+                .map(String::from)
+        }));
+        self.route_inserted_frames(page, &urls);
+        let admitted = !give_up
+            && Instant::now() < deadline
+            && page.scripting.environment.frame_documents.len() < SCRIPT_FRAME_ANSWERS;
+        let added = admitted && self.attach_frame_pages(page, &urls, deadline)?;
         for request in requests {
-            let answer = self.answer_frame(page, &request.url, deadline, give_up)?;
-            if answer.source.is_none() && !give_up {
-                others.push(request.url.clone());
-            }
+            let refuse = give_up || !super::frame_pages::needs_inert_answer(page, &request.url);
+            let answer = self.answer_frame(page, &request.url, deadline, refuse)?;
             page.scripting
                 .environment
                 .frame_documents
                 .insert(request.url, answer);
         }
-        self.attach_frame_pages(page, &others, deadline)
+        Ok(added)
     }
     /** The answer to one frame request: a same-origin document of a type Mars parses, within the
     page's frame bytes, or a refusal. The frame is never fetched cross-origin. */

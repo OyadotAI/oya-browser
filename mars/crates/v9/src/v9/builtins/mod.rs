@@ -196,6 +196,17 @@ pub(in crate::v9) fn install(builder: &mut Builder) {
     proxy::install(builder);
     temporal::install(builder);
     v8_order::install(builder);
+    // Capture only ordinary language/platform builtins, before shell-only capabilities exist.
+    let worker_globals = builder.object(None);
+    builder.ids.worker_interfaces = worker_globals;
+    for (name, value) in builder.globals.clone() {
+        builder.value(
+            worker_globals,
+            name,
+            value,
+            crate::v9::vm::heap::HIDDEN_ATTRS,
+        );
+    }
     #[cfg(feature = "conformance")]
     {
         let first = builder.natives.len();

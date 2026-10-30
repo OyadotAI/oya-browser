@@ -641,6 +641,9 @@ fn call_listener(
 
 /** Reports an uncaught listener exception, then fires `error` at the window unless that event is itself `error`. */
 fn report_exception(vm: &mut Vm, event: ObjectId, error: &JsValue) -> Res<()> {
+    if vm.page.environment.worker_name.is_some() {
+        return super::workers::report_exception(vm, error);
+    }
     vm.report_error(error);
     let dispatching_error =
         event_data(vm, &JsValue::Object(event)).is_some_and(|data| data.kind == ERROR_KIND);
@@ -689,7 +692,34 @@ fn handler_property(
     if let Some(handler) = handler
         && vm.is_callable(&handler)
     {
-        call_listener(vm, &handler, current, event, false)?;
+        if target == Target::Window
+            && kind == ERROR_KIND
+            && vm.page.environment.worker_name.is_some()
+        {
+            worker_error_handler(vm, handler, current, event)?;
+        } else {
+            call_listener(vm, &handler, current, event, false)?;
+        }
+    }
+    Ok(())
+}
+
+/** WorkerGlobalScope.onerror has the legacy five-argument contract and cancels on true. */
+fn worker_error_handler(
+    vm: &mut Vm,
+    handler: JsValue,
+    current: &JsValue,
+    event: ObjectId,
+) -> Res<()> {
+    let mut args = Vec::new();
+    for name in ["message", "filename", "lineno", "colno", "error"] {
+        args.push(vm.get(&JsValue::Object(event), &Key::from(name))?);
+    }
+    match vm.call(handler, current.clone(), args) {
+        Ok(JsValue::Boolean(true)) => cancel(vm, event),
+        Ok(_) => {}
+        Err(Thrown::Value(error)) => super::workers::report_exception(vm, &error)?,
+        Err(fatal) => return Err(fatal),
     }
     Ok(())
 }

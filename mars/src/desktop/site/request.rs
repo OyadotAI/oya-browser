@@ -119,6 +119,10 @@ pub(super) fn response(request: &Request) -> String {
             "text/html",
             include_str!("../../../fixtures/choose-option.html"),
         ),
+        "/compat/canvas" => (
+            "text/html; charset=utf-8",
+            include_str!("../../../fixtures/canvas.html"),
+        ),
         "/forms" => ("text/html", include_str!("../../../fixtures/forms.html")),
         "/forms.css" => ("text/css", include_str!("../../../fixtures/forms.css")),
         "/reading/styled" => (

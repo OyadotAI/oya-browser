@@ -141,6 +141,8 @@ fn run_with(
         .map(|tag| tag.to_string())
         .collect::<Vec<_>>();
     let host = DocumentHost {
+        imports: None,
+        canvas: &mars_core::canvas::Unavailable,
         languages: &languages,
         fragments,
     };
@@ -327,12 +329,16 @@ fn prepend_with_a_string_is_unsupported() {
     assert_eq!(failure(source, &[], &Empty).code, "unsupported_feature");
 }
 
-/** A reference to an element removed by textContent cannot be written. */
+/** Replacing parent text detaches retained elements; their attributes remain locally writable. */
 #[test]
-fn lang_setter_on_a_removed_host_fails() {
-    let source = "var d=document.body.children[0],p=d.children[0];d.textContent='';p.lang='x'";
-    let error = run_with(source, nested(), &[], &Empty).unwrap_err();
-    assert_eq!(error.code, "invalid_request");
+fn lang_setter_on_a_removed_host_preserves_the_detached_element() {
+    let source = "var d=document.body.children[0],p=d.children[0];d.textContent='';p.lang='x';const r=[p.lang,p.getAttribute('lang'),p.parentNode===null,d.childNodes.length].join('|')";
+    let result = run_with(source, nested(), &[], &Empty).unwrap();
+    assert_eq!(
+        result.state.globals()["r"].value,
+        Some(JsValue::string("x|x|true|0").unwrap())
+    );
+    assert_eq!(result.changes.len(), 1);
 }
 
 /** navigator.languages is read-only: strict writes throw, sloppy writes are ignored. */

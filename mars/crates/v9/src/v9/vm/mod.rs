@@ -844,7 +844,11 @@ impl<'h> Vm<'h> {
             .values()
             .any(|object| matches!(object.class, Class::Proxy(_)));
         if vm.heap.get(GLOBAL).is_none() {
-            let proto = realm::realm().ids.window_prototype;
+            let proto = if vm.page.environment.worker_name.is_some() {
+                realm::realm().ids.worker_prototype
+            } else {
+                realm::realm().ids.window_prototype
+            };
             #[cfg(feature = "conformance")]
             let proto = if vm.page.environment.conformance_d8 {
                 realm::realm().ids.shell_global_prototype
@@ -866,7 +870,7 @@ impl<'h> Vm<'h> {
                 vm.seed_realm_global(GLOBAL, 0);
             }
             #[cfg(feature = "conformance")]
-            if !vm.page.environment.conformance_d8 {
+            if !vm.page.environment.conformance_d8 && vm.page.environment.worker_name.is_none() {
                 crate::v9::builtins::expose_conformance_globals(&mut vm, GLOBAL, 0);
             }
         }

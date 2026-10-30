@@ -9,6 +9,16 @@ use std::collections::BTreeMap;
 /** Validate the actual document before recursive labels, projection, serialization or measurement. */
 pub fn validate_content(document: &Document) -> EngineResult<()> {
     validate_structure(document)?;
+    let mut canvas_bytes = 0usize;
+    for node in &document.nodes {
+        if let Some(bitmap) = &node.canvas {
+            bitmap.validate()?;
+            canvas_bytes = canvas_bytes.saturating_add(bitmap.pixels.len());
+            if node.tag != "canvas" || canvas_bytes > mars_core::canvas::PAGE_BYTES {
+                return Err(EngineError::invalid("Invalid document canvas storage."));
+            }
+        }
+    }
     validate_text(&document.title)?;
     if document.csp.len() > super::CSP_POLICIES {
         return Err(EngineError::limit("meta policies", super::CSP_POLICIES));

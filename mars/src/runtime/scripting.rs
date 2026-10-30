@@ -32,7 +32,7 @@ const INSERTED_IMAGE_WALL: Duration = Duration::from_millis(1500);
 /// slice made every image after the first few in a batch fail at once (YouTube's thumbnails).
 const IMAGE_REQUEST_WALL: Duration = Duration::from_secs(5);
 /// Network time a started script request always gets, however much of the slice is left.
-const SCRIPT_REQUEST_WALL: Duration = Duration::from_secs(3);
+pub(super) const SCRIPT_REQUEST_WALL: Duration = Duration::from_secs(3);
 /// Real time the first commit may spend on that settling, inside the navigation deadline.
 const SETTLE_WALL: Duration = Duration::from_millis(1500);
 /// V9 round trips one settle may make (requests and timer runs together).
@@ -66,6 +66,8 @@ const SECONDS_PER_MINUTE: f64 = 60.0;
 /// What the coordinator keeps for a page's scripts between V9 requests.
 #[derive(Clone)]
 pub(super) struct Scripting {
+    /// Dedicated worker state and queues share this page's candidate publication lifetime.
+    pub workers: super::workers::Workers,
     /// Complete sampled animation paint effects, separate from authored document styles.
     pub opacity_effects: Vec<crate::v9::OpacityEffect>,
     /// Actual image requests and retained decode admission for this page alone.
@@ -76,6 +78,8 @@ pub(super) struct Scripting {
     pub loaded: bool,
     /// Facts the page sees; the per-request fields are refreshed before each call.
     pub environment: PageEnvironment,
+    /// Owners whose scripted load completed or was refused, so siblings cannot trigger retries.
+    pub attempted_frame_owners: std::collections::BTreeSet<usize>,
     /// Virtual milliseconds since the page's time origin.
     pub clock_ms: f64,
     /// When V9 next has a timer or animation frame due, in virtual milliseconds.
@@ -122,8 +126,8 @@ pub(super) struct Scripting {
     pub outbox: Vec<crate::v9::FrameMessage>,
     /// Messages its scripts posted on ports linked to other documents, not yet delivered.
     pub port_outbox: Vec<crate::v9::PortMessage>,
-    /// Which frame (by iframe identity) each port link of this page leads to.
-    pub port_links: std::collections::BTreeMap<u64, usize>,
+    /// Closure effects await the owning worker or frame router.
+    pub port_closes: Vec<u64>,
 }
 
 /// What a step changed that may need images: the first node identity its insertions took, and
@@ -191,7 +195,9 @@ impl Default for Scripting {
             opacity_effects: Vec::new(),
             loaded: false,
             environment: PageEnvironment::default(),
+            attempted_frame_owners: Default::default(),
             clock_ms: 0.0,
+            workers: Default::default(),
             next_timer_ms: None,
             requests: Vec::new(),
             navigation: None,
@@ -212,7 +218,7 @@ impl Default for Scripting {
             scroll_x: None,
             outbox: Vec::new(),
             port_outbox: Vec::new(),
-            port_links: Default::default(),
+            port_closes: Vec::new(),
         }
     }
 }
@@ -231,6 +237,7 @@ impl Scripting {
                 || self.next_timer_ms.is_some()
                 || !self.requests.is_empty()
                 || !self.image_loading.pending.is_empty()
+                || self.workers.pending()
                 || self.load_pending)
     }
 }
@@ -247,6 +254,8 @@ struct PageCall<'a> {
     environment: &'a PageEnvironment,
     /** Always set: V9 keeps the step's state and replies with its token and summary. */
     resident: bool,
+    /** All page-owned leases, including candidates and temporarily moved children. */
+    resident_contexts: Vec<String>,
     /** The resident state the step starts from; none for a page's first load. */
     base: Option<u64>,
     /** The committed state of the same page, which V9 keeps beside `base` for an abort. */
@@ -295,6 +304,7 @@ impl Runtime {
             time_origin_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0.0, |elapsed| elapsed.as_secs_f64() * MS_PER_SECOND),
+            live_clock: true,
             timezone_offset_minutes: timezone_offset_minutes(),
             random_seed: random_seed(),
             dom_level: DomLevel::Extended,
@@ -326,6 +336,7 @@ impl Runtime {
             .max()
             .unwrap_or(0);
         page.inspection = None;
+        super::frame_pages::prune_routes(page);
         let mut environment = self.step_environment(page)?;
         if load {
             // V9 builds the head records once, at load; later steps would only resend them.
@@ -378,6 +389,8 @@ impl Runtime {
             ..
         } = execution;
         self.commit_document_cookies(&page.url, &effects.cookies)?;
+        page.frame_tree
+            .detached(std::mem::take(&mut effects.frame_detaches))?;
         changed |= page.scripting.opacity_effects != effects.opacity_effects;
         page.scripting.opacity_effects = effects.opacity_effects;
         if let Some(applied) = applied {
@@ -385,6 +398,7 @@ impl Runtime {
             page.resolved_stylesheets
                 .extend(inserted_sheets(&applied, before));
             page.document = applied;
+            super::frame_pages::prune_routes(page);
             page.styled = false;
         }
         super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
@@ -405,6 +419,7 @@ impl Runtime {
         page.storage_dirty |= storage != page.storage;
         page.storage = storage;
         let scripting = &mut page.scripting;
+        scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
         scripting.next_timer_ms = effects.next_timer_ms;
         scripting.requests.extend(effects.requests);
@@ -414,6 +429,7 @@ impl Runtime {
         record_console(scripting, effects.console, effects.console_dropped);
         scripting.outbox.append(&mut effects.messages);
         scripting.port_outbox.append(&mut effects.port_messages);
+        scripting.port_closes.append(&mut effects.port_closes);
         // A scrolled container repaints like a changed document, as Blink scrolls on assignment.
         changed |= !effects.element_scroll.is_empty();
         page.element_scroll.extend(effects.element_scroll);
@@ -607,8 +623,7 @@ impl Runtime {
     pub(super) fn committed_token(&self, page: &Page) -> Option<u64> {
         self.page
             .as_ref()
-            .filter(|committed| committed.script_identity == page.script_identity)
-            .and_then(|committed| committed.state_token)
+            .and_then(|committed| committed.context_token(&page.script_identity))
     }
 
     /** One V9 page step over `projection`, sending the sources only when V9 does not hold them. */
@@ -639,6 +654,7 @@ impl Runtime {
             languages: &languages,
             environment,
             resident: true,
+            resident_contexts: self.residency.snapshot(),
             base: if load { None } else { page.state_token },
             keep: self.committed_token(page),
             modules: if modules_resident {
@@ -701,6 +717,8 @@ impl Runtime {
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
+        environment.disallow_code_generation_from_strings =
+            !super::csp::allows_eval(&page.document.csp);
         environment.node_text = node_text(&page.document);
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
         // that measures one is laid out and run again (`forced_geometry`).
@@ -804,6 +822,7 @@ impl Runtime {
             }
         }
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
+        changed |= self.run_workers(page, until)?;
         changed |= self.run_frame_pages(page, until, advance_ms)?;
         Ok(changed)
     }
@@ -844,7 +863,7 @@ impl Runtime {
             };
             let deadline = until.max(started + SCRIPT_REQUEST_WALL);
             let preflights = &mut page.scripting.preflights;
-            let response = self.script_request(&base, &request, preflights, deadline)?;
+            let response = self.script_request(&base, &request, preflights, deadline, None)?;
             if request.kind != "beacon" {
                 responses.push(response);
             }
@@ -860,13 +879,20 @@ impl Runtime {
      * Content-Type is labeled text/plain, and only GET and POST are sent. Whatever goes wrong,
      * the page sees one bare "Failed to fetch", never a status, header or body.
      */
-    fn script_request(
+    pub(super) fn script_request(
         &mut self,
         base: &Url,
         request: &HostRequest,
         preflights: &mut crate::network::cors::PreflightCache,
         until: Instant,
+        worker_policy: Option<&super::worker_loading::Policy>,
     ) -> EngineResult<HostResponse> {
+        if worker_policy.is_some_and(|policy| {
+            Url::parse(&request.url)
+                .is_ok_and(|url| !super::csp::allows_connect(&policy.csp, &policy.base, &url))
+        }) {
+            return Ok(failed(request.id, FAILED_TO_FETCH));
+        }
         if request
             .url
             .get(..5)
@@ -874,9 +900,10 @@ impl Runtime {
         {
             return Ok(data_response(request));
         }
-        let Some(parsed) = script_request_from(request) else {
+        let Some(mut parsed) = script_request_from(request) else {
             return Ok(failed(request.id, FAILED_TO_FETCH));
         };
+        parsed.worker_policy = worker_policy.cloned();
         let id = request.id;
         let answer = self.fetch_for_script(base, parsed, preflights, until)?;
         Ok(match answer {
@@ -1055,6 +1082,7 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         headers,
         mode,
         credentials: Credentials::parse(&request.credentials)?,
+        worker_policy: None,
     })
 }
 
@@ -1257,7 +1285,7 @@ fn timezone_offset_minutes() -> f64 {
 }
 
 /** A page's Math.random seed comes from the operating system's CSPRNG. */
-fn random_seed() -> u64 {
+pub(super) fn random_seed() -> u64 {
     use ring::rand::{SecureRandom, SystemRandom};
     let mut bytes = [0u8; 8];
     if SystemRandom::new().fill(&mut bytes).is_err() {

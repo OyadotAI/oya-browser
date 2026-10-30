@@ -43,6 +43,8 @@ fn main() {
         ..PageEnvironment::default()
     };
     let host = DocumentHost {
+        imports: None,
+        canvas: &mars_core::canvas::Unavailable,
         languages: &[],
         fragments: &SimpleFragmentParser,
     };

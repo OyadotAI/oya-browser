@@ -81,7 +81,8 @@ fn hostile_listener_records_and_monotonic_counters_fail_closed() {
         let mut wire = original.clone();
         match case {
             0 => wire["page"]["listeners"][0]["target"] = json!({"node": 999}),
-            1 => wire["page"]["listeners"][0]["callback"] = json!({"o": 999}),
+            // A fixed small ID can become a valid intrinsic when another interface is installed.
+            1 => wire["page"]["listeners"][0]["callback"] = json!({"o": u32::MAX}),
             2 => wire["page"]["next_listener"] = json!(0),
             3 => wire["page"]["listeners"]
                 .as_array_mut()
@@ -130,5 +131,124 @@ fn listener_count_is_bounded_and_legacy_event_api_rejects_projected_states() {
     assert_eq!(
         event(source, "run()", loaded.state, &[]).unwrap_err().code,
         "invalid_request"
+    );
+}
+
+/** Saved-state validation marks listener callbacks, signals and object targets so forged listener
+edges on EventTarget, Window or DOM nodes are refused before dispatch. */
+#[test]
+fn listener_only_callback_and_abort_signal_graphs_are_validated_before_dispatch() {
+    let host = mars_v9::DocumentHost::default();
+    let env = mars_v9::PageEnvironment {
+        worker_name: Some("probe".into()),
+        url: "https://example.test/w.js".into(),
+        ..mars_v9::PageEnvironment::default()
+    };
+    for (source, target_kind) in [
+        (
+            "const target=new EventTarget();target.addEventListener('x',()=>{});",
+            "object",
+        ),
+        ("addEventListener('x',()=>{});", "window"),
+    ] {
+        let sources = vec![source.into()];
+        let input = || mars_v9::PageInput {
+            sources: &sources,
+            source_keys: &[],
+            document: mars_v9::document::ScriptDocument {
+                identity: "probe".into(),
+                charset: "UTF-8".into(),
+                nodes: vec![],
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &env,
+            modules: mars_v9::ModuleInput::NONE,
+        };
+        let initial = mars_v9::load_worker(input()).unwrap();
+        let original = serde_json::to_value(initial.state).unwrap();
+        for field in ["callback", "signal", "target"] {
+            if target_kind == "window" && field == "target" {
+                continue;
+            }
+            let mut wire = original.clone();
+            wire["page"]["listeners"][0][field] = if field == "target" {
+                json!({"object": u32::MAX})
+            } else {
+                json!({"o": u32::MAX})
+            };
+            let state = serde_json::from_value(wire).unwrap();
+            let data: mars_v9::WorkerData =
+                serde_json::from_value(json!({"root": {"Value": "Null"}, "nodes": []})).unwrap();
+            let err = mars_v9::page_event(
+                input(),
+                state,
+                mars_v9::PageEvent::WorkerMessage {
+                    id: 0,
+                    data,
+                    ports: vec![],
+                },
+            )
+            .unwrap_err();
+            assert_eq!(err.code, "invalid_request", "{target_kind} {field}");
+        }
+    }
+}
+
+/** Malformed structured-clone graph references, bounds and prototype keys are refused or neutralized. */
+#[test]
+fn structured_clone_wire_graphs_validate_bounds_and_neutralize_proto() {
+    for packet in [
+        json!({"root": {"Reference": 0}, "nodes": []}),
+        json!({"root": {"Reference": 0}, "nodes": [{"kind": "Plain", "fields": [["bad", {"Reference": 1}]]}]}),
+        json!({"root": {"Reference": 0}, "nodes": [{"kind": {"View": ["uint8", 1, 0, 1]}, "fields": []}]}),
+        json!({"root": {"Reference": 0}, "nodes": [{"kind": {"View": ["uint16", 1, 1, 1]}, "fields": []}, {"kind": {"Buffer": [0, 0, 0, 0]}, "fields": []}]}),
+        json!({"root": {"Reference": 0}, "nodes": [{"kind": {"View": ["uint8", 1, 0, u64::MAX]}, "fields": []}, {"kind": {"Buffer": [0]}, "fields": []}]}),
+    ] {
+        let data: mars_v9::WorkerData = serde_json::from_value(packet).unwrap();
+        assert!(data.bytes().is_err());
+    }
+    let sources = vec![
+        "let result='';onmessage=e=>{result=[Object.getPrototypeOf(e.data)===Object.prototype,Object.hasOwn(e.data,'__proto__'),e.data.__proto__===null].join('|')}".into(),
+    ];
+    let env = mars_v9::PageEnvironment {
+        worker_name: Some("probe".into()),
+        url: "https://example.test/w.js".into(),
+        ..mars_v9::PageEnvironment::default()
+    };
+    let host = mars_v9::DocumentHost::default();
+    let input = || mars_v9::PageInput {
+        sources: &sources,
+        source_keys: &[],
+        document: mars_v9::document::ScriptDocument {
+            identity: "probe".into(),
+            charset: "UTF-8".into(),
+            nodes: vec![],
+        },
+        storage: StorageState::default(),
+        host: &host,
+        environment: &env,
+        modules: mars_v9::ModuleInput::NONE,
+    };
+    let initial = mars_v9::load_worker(input()).unwrap();
+    let data: mars_v9::WorkerData = serde_json::from_value(
+        json!({"root": {"Reference": 0}, "nodes": [{"kind": "Plain", "fields": [["__proto__", {"Value": "Null"}]]}]}),
+    )
+    .unwrap();
+    let result = mars_v9::page_event(
+        input(),
+        initial.state,
+        mars_v9::PageEvent::WorkerMessage {
+            id: 0,
+            data,
+            ports: vec![],
+        },
+    )
+    .unwrap();
+    assert!(result.failed.is_empty());
+    let global = &result.state.globals()["result"].value;
+    assert!(
+        matches!(global, Some(mars_v9::JsValue::String(s)) if s.lossy() == "true|true|true"),
+        "{global:?}"
     );
 }

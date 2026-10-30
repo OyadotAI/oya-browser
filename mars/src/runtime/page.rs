@@ -38,6 +38,8 @@ const INSPECTION_RESERVE: usize = 8 * 1024;
 /** A candidate never appears here before all engine stages and wire budgets pass. */
 #[derive(Clone)]
 pub(super) struct Page {
+    /** Shared ownership pins this context across retries, clones and temporary frame moves. */
+    pub _context: std::sync::Arc<super::residency::Lease>,
     /** Changes only on successful navigation. */
     pub generation: u64,
     /** Private tab and generation identity binds retained JS host references to this page. */
@@ -52,6 +54,8 @@ pub(super) struct Page {
     pub resolved_stylesheets: Vec<String>,
     /** Final URL after policy-checked redirects. */
     pub url: String,
+    /// The root document's site partitions worker loads independently of their own origin.
+    pub top_level_url: String,
     /** Sensitive GET navigation keeps its actual query inside the runtime. */
     pub sensitive: bool,
     /** Direct POST responses must never be silently replayed by history controls. */
@@ -67,6 +71,8 @@ pub(super) struct Page {
     pub images: BTreeMap<usize, super::images::ImageAsset>,
     /** Documents the page's frames show, laid out into every display of the page. */
     pub frames: super::frames::Frames,
+    /** Context directory and queued frame deliveries publish with this candidate. */
+    pub frame_tree: super::frame_tree::Tree,
     /** Exact geometry consumed by the visible native window. */
     pub display: Option<DisplayList>,
     /** One past the highest node identity `display` laid out: a node at or above it was
@@ -103,6 +109,19 @@ pub(super) struct Page {
 }
 
 impl Page {
+    /** Find the committed child version even while a candidate advances through several steps. */
+    pub(super) fn context_token(&self, identity: &str) -> Option<u64> {
+        if self.script_identity == identity {
+            return self.state_token;
+        }
+        if let Some(token) = self.scripting.workers.token(identity) {
+            return Some(token);
+        }
+        self.frames
+            .iter()
+            .filter_map(|frame| frame.page.as_ref())
+            .find_map(|child| child.context_token(identity))
+    }
     /** Source HTML IDs never serve as native authority. */
     pub fn id(&self) -> String {
         format!("page-{}", self.generation)

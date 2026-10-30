@@ -203,6 +203,9 @@ pub(super) fn create_html_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** The document an iframe shows scripts, made on first ask: only an `about:blank` (or
 src-less) or `srcdoc` frame has one; anything else is a browsing context Mars does not load. */
 fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
+    if vm.page.environment.scripted_frame_owners.contains(&frame) {
+        return Ok(None);
+    }
     if let Some(document) = vm.page.state.frames.get(&frame) {
         return Ok(Some(*document));
     }
@@ -230,6 +233,32 @@ fn frame_document(vm: &mut Vm, frame: usize) -> Res<Option<usize>> {
     };
     remember_frame_document(vm, frame, document);
     Ok(Some(document))
+}
+
+/** Route hints are bounded projected iframe identities, never permission to execute or fetch. */
+pub(in crate::v9) fn validate_routes(
+    environment: &super::PageEnvironment,
+    document: Option<&crate::document::ScriptDocument>,
+) -> EngineResult<()> {
+    let owners = &environment.scripted_frame_owners;
+    if owners.len() > crate::constants::NODES {
+        return Err(crate::protocol::EngineError::limit(
+            "scripted frame owners",
+            crate::constants::NODES,
+        ));
+    }
+    let projected: std::collections::BTreeSet<_> = document
+        .into_iter()
+        .flat_map(|d| &d.nodes)
+        .filter(|node| node.tag == "iframe")
+        .map(|node| node.local_id)
+        .collect();
+    if !owners.is_subset(&projected) {
+        return Err(crate::protocol::EngineError::invalid(
+            "Invalid scripted frame owner.",
+        ));
+    }
+    Ok(())
 }
 
 /** Records that `document` is the document `frame` shows, both ways, so the frame's contentDocument

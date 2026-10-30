@@ -66,8 +66,11 @@ impl Vm<'_> {
     /** Reachable weak maps retain values only after their keys are independently reachable.
     Table keys compare by identity and nothing writes them while the marker runs. */
     #[allow(clippy::mutable_key_type)]
-    pub(super) fn trace_ephemerons(&self, marker: &mut Marker) {
-        let mut waiting: FastMap<TableKey, Vec<JsValue>> = FastMap::default();
+    pub(super) fn trace_ephemerons(
+        &self,
+        marker: &mut Marker,
+        waiting: &mut FastMap<TableKey, Vec<JsValue>>,
+    ) {
         while let Some(identity) = marker.weak_live.pop() {
             if let Some(values) = waiting.remove(&identity) {
                 for value in values {
@@ -75,7 +78,7 @@ impl Vm<'_> {
                 }
             }
             if let TableKey::Object(id) = identity {
-                self.mark_weak_map(id, marker, &mut waiting);
+                self.mark_weak_map(id, marker, waiting);
             }
             self.trace(marker);
         }

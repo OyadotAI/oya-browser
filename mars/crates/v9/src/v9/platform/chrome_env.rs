@@ -31,6 +31,8 @@ const MEMORY: [(&str, f64); 3] = [
 ];
 /** chrome.csi's transition type for an ordinary navigation. */
 const CSI_TRANSITION: f64 = 15.0;
+/** Sub-millisecond offset so `chrome.csi().pageT` is a fractional elapsed time like Blink's. */
+const CSI_PAGE_TIME_MS: f64 = 12.375;
 /** Milliseconds per second, for chrome.loadTimes, which reports seconds. */
 const MS_PER_SECOND: f64 = 1000.0;
 
@@ -82,6 +84,19 @@ pub(super) fn navigator(b: &mut Builder, navigator_proto: u32) {
     super::trusted_types::install(b);
     notification(b);
     chrome(b);
+}
+
+/** navigator.cookieDeprecationLabel.getValue(): a profile outside the experiment has no label. */
+/** Adapter discovery completes asynchronously even when no native GPU backend is available. */
+fn no_adapter(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let valid = match call.this.object() {
+        Some(id) => vm.own(id, &Key::private("gpu.brand"))?.is_some(),
+        None => false,
+    };
+    if !valid {
+        return Err(vm.type_error("Illegal invocation"));
+    }
+    Ok(JsValue::Object(vm.promise_resolve(JsValue::Null)?))
 }
 
 /** navigator.cookieDeprecationLabel.getValue(): a profile outside the experiment has no label. */
@@ -194,7 +209,10 @@ fn chrome_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             &[
                 ("startE", JsValue::Number(start)),
                 ("onloadT", JsValue::Number(start)),
-                ("pageT", JsValue::Number(0.0)),
+                (
+                    "pageT",
+                    JsValue::Number(super::performance::now(vm) + CSI_PAGE_TIME_MS),
+                ),
                 ("tran", JsValue::Number(CSI_TRANSITION)),
             ],
         ),
@@ -315,6 +333,14 @@ pub(super) fn navigator_objects(b: &mut Builder, known: &Known) {
     for (member, interface) in NAVIGATOR_OBJECTS {
         if let Some((_, proto)) = known.get(interface) {
             let object = b.object(Some(*proto));
+            if member == "gpu" {
+                b.put(
+                    object,
+                    Key::private("gpu.brand"),
+                    Static::Value(JsValue::Boolean(true)),
+                    crate::v9::vm::heap::HIDDEN_ATTRS,
+                );
+            }
             b.alias(navigator_proto, member, object);
         }
     }
@@ -323,6 +349,9 @@ pub(super) fn navigator_objects(b: &mut Builder, known: &Known) {
         b.host_method(*proto, "getUserMedia", 0, device_not_found);
         b.host_method(*proto, "getDisplayMedia", 0, device_not_found);
         b.host_method(*proto, "getSupportedConstraints", 0, supported_constraints);
+    }
+    if let Some((_, proto)) = known.get("GPU") {
+        b.host_method(*proto, "requestAdapter", 0, no_adapter);
     }
     if let Some((_, proto)) = known.get("StorageManager") {
         b.host_method(*proto, "estimate", 0, storage_estimate);

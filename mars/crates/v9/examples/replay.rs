@@ -125,6 +125,8 @@ fn main() {
             }
         }
         let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
             languages: &call.languages,
             fragments: &SimpleFragmentParser,
         };

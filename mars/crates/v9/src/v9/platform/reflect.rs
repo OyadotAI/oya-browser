@@ -734,6 +734,15 @@ fn get_attr(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .page
         .view(node)
         .and_then(|view| view.attributes.get(&name).cloned());
+    if vm.page.tag(node) == "canvas" && ["width", "height"].contains(&name.as_str()) {
+        let default = mars_core::canvas::DEFAULT_SIZE[usize::from(name == "height")];
+        return Ok(JsValue::Number(f64::from(
+            value
+                .as_deref()
+                .and_then(mars_core::canvas::dimension)
+                .unwrap_or(default),
+        )));
+    }
     read(vm, &attr.kind, value)
 }
 

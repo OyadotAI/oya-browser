@@ -307,6 +307,7 @@ impl Runtime {
     /** Required CSS is acquired before hidden content can gain native geometry. A response the
     network service marked as a download is held in `ready_download` and yields no page. */
     fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Option<Page>> {
+        let context = self.residency.reserve(self.page.is_some())?;
         let deadline = Instant::now() + WEB_TIMEOUT;
         let initiator = self
             .page
@@ -360,7 +361,7 @@ impl Runtime {
         }
         let post = acquired.method == Method::Post;
         self.prefetched.clear();
-        let built = self.build_page(acquired, deadline, sensitive, None);
+        let built = self.build_page(acquired, deadline, sensitive, None, context);
         self.prefetched.clear();
         built
             .map(Some)
@@ -374,6 +375,7 @@ impl Runtime {
         deadline: Instant,
         sensitive: bool,
         embedding: Option<&super::frames::Embedding>,
+        context: std::sync::Arc<super::residency::Lease>,
     ) -> EngineResult<Page> {
         // XHTML and SVG documents take Eye's XML parser, as Blink picks XMLDocumentParser.
         let xml = crate::document::xml_mime(&acquired.response.mime);
@@ -386,6 +388,9 @@ impl Runtime {
         let mut phase = Instant::now();
         let parse = json!({"source":acquired.response.source,"charset":acquired.response.charset,"xml":xml});
         let mut document: Document = self.call_typed("document", "document.parse", &parse, None)?;
+        document
+            .csp
+            .extend(super::csp::response_policies(&acquired.response.headers));
         if embedding.is_some() {
             crate::document::normalize_document_text(&mut document)?;
         }
@@ -421,11 +426,20 @@ impl Runtime {
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
+        let frame_tree = if embedding.is_none() {
+            self.initial_frame_tree(&document)?
+        } else {
+            Default::default()
+        };
         let (frames, scripted_frames) = match embedding {
             Some(_) => Default::default(),
-            None => {
-                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
-            }
+            None => self.load_frames(
+                &mut document,
+                &acquired.response.url,
+                deadline,
+                &mut images,
+                &frame_tree.routes,
+            )?,
         };
         perf::record("page.frames", phase, || frames.len().to_string());
         phase = Instant::now();
@@ -446,10 +460,7 @@ impl Runtime {
             .generation
             .checked_add(1)
             .ok_or_else(|| EngineError::limit("page generations", usize::MAX))?;
-        let script_identity = match embedding {
-            Some(embedding) => embedding.identity.clone(),
-            None => format!("{}:document-{generation}", self.active_tab_id),
-        };
+        let script_identity = context.identity.clone();
         let mut environment = self.page_environment(
             &acquired.response.url,
             self.referrer(&acquired.response.url),
@@ -463,15 +474,23 @@ impl Runtime {
                 .collect(),
             &document.formatting,
         );
+        environment.disallow_code_generation_from_strings = !super::csp::allows_eval(&document.csp);
         environment.frame_documents = scripted_frames
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
             .collect();
+        if embedding.is_none() {
+            environment.scripted_frame_owners =
+                self.scripted_owners(&document, &acquired.response.url);
+        }
         if let Some(embedding) = embedding {
             environment.embedder_origin = Some(embedding.origin.clone());
             environment.window_name.clone_from(&embedding.name);
+            environment.parent_frames.clone_from(&embedding.routes);
+            environment.own_window = Some(embedding.window);
         }
         let mut page = Page {
+            _context: context,
             generation,
             script_identity,
             revision: 1,
@@ -481,6 +500,9 @@ impl Runtime {
                 .map(|script| script.source.clone())
                 .collect(),
             resolved_stylesheets: sheets,
+            top_level_url: embedding
+                .map(|embedding| embedding.top_level_url.clone())
+                .unwrap_or_else(|| acquired.response.url.clone()),
             url: acquired.response.url,
             sensitive,
             replayable: acquired.method == Method::Get,
@@ -489,6 +511,7 @@ impl Runtime {
             state_token: None,
             images,
             frames: std::sync::Arc::new(frames),
+            frame_tree,
             display: None,
             laid_out_before: 0,
             layout_generation: 1,
@@ -502,6 +525,7 @@ impl Runtime {
             degraded: Vec::new(),
             untrusted_styles: false,
             scripting: super::scripting::Scripting {
+                attempted_frame_owners: environment.scripted_frame_owners.clone(),
                 environment,
                 modules: super::modules::Modules::new(
                     resolved

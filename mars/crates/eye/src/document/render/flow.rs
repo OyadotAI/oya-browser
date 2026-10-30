@@ -1259,6 +1259,7 @@ pub(super) fn box_item(
 ) -> DisplayItem {
     let face = super::sizing::face(&node.style);
     DisplayItem {
+        canvas: node.canvas.clone(),
         local_id: node.local_id,
         tag: node.tag.clone(),
         role: super::role(node).into(),

@@ -1,6 +1,30 @@
-/** Content-Security-Policy `script-src` from `<meta>`: scripts the page forbade do not run. */
+/** Content-Security-Policy from metadata and responses governs script and worker acquisition. */
 use ring::digest::{SHA256, SHA384, SHA512, digest};
 use url::Url;
+
+/** HTTP fields may combine several serialized policies; each remains independently enforced. */
+pub(super) fn response_policies(headers: &[(String, String)]) -> Vec<String> {
+    headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-security-policy"))
+        .flat_map(|(_, value)| value.split(','))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/** Dynamic source is allowed only when every effective response policy permits unsafe-eval. */
+pub(super) fn allows_eval(policies: &[String]) -> bool {
+    policies
+        .iter()
+        .filter_map(|policy| effective_sources(policy, &["script-src", "default-src"]))
+        .all(|sources| {
+            sources
+                .iter()
+                .any(|source| source.eq_ignore_ascii_case("'unsafe-eval'"))
+        })
+}
 
 /// The script facts a policy decides on.
 pub(super) struct Candidate<'a> {
@@ -22,6 +46,49 @@ pub(super) fn allows(policies: &[String], document: &Url, script: &Candidate<'_>
 
 /** The effective script source list: script-src-elem, then script-src, then default-src. */
 fn script_sources(policy: &str) -> Option<Vec<String>> {
+    effective_sources(policy, &["script-src-elem", "script-src", "default-src"])
+}
+
+/** Worker fetches enforce connect-src on every hop, including requests that need preflight. */
+pub(super) fn allows_connect(policies: &[String], origin: &Url, url: &Url) -> bool {
+    policies
+        .iter()
+        .filter_map(|policy| effective_sources(policy, &["connect-src", "default-src"]))
+        .all(|sources| {
+            sources
+                .iter()
+                .any(|source| matches_source(source, origin, url))
+        })
+}
+
+/** Worker creation and imported scripts have distinct fallback lists from script elements. */
+pub(super) fn allows_worker(policies: &[String], origin: &Url, url: &Url, initial: bool) -> bool {
+    policies.iter().all(|policy| {
+        if initial && let Some(sources) = effective_sources(policy, &["worker-src", "child-src"]) {
+            return sources
+                .iter()
+                .any(|source| matches_source(source, origin, url));
+        }
+        let Some(sources) = effective_sources(policy, &["script-src", "default-src"]) else {
+            return true;
+        };
+        sources
+            .iter()
+            .any(|source| source.eq_ignore_ascii_case("'strict-dynamic'"))
+            || allowed(
+                &sources,
+                origin,
+                &Candidate {
+                    url: Some(url),
+                    nonce: None,
+                    source: "",
+                },
+            )
+    })
+}
+
+/** The first effective directive wins; a later duplicate never broadens its policy. */
+fn effective_sources(policy: &str, fallback: &[&str]) -> Option<Vec<String>> {
     let directives: Vec<(String, Vec<String>)> = policy
         .split(';')
         .filter_map(|directive| {
@@ -30,14 +97,12 @@ fn script_sources(policy: &str) -> Option<Vec<String>> {
             Some((name, parts.map(str::to_owned).collect()))
         })
         .collect();
-    ["script-src-elem", "script-src", "default-src"]
-        .iter()
-        .find_map(|wanted| {
-            directives
-                .iter()
-                .find(|(name, _)| name == wanted)
-                .map(|(_, sources)| sources.clone())
-        })
+    fallback.iter().find_map(|wanted| {
+        directives
+            .iter()
+            .find(|(name, _)| name == wanted)
+            .map(|(_, sources)| sources.clone())
+    })
 }
 
 /** One source list's verdict; nonces and hashes also disable 'unsafe-inline', per CSP3. */
@@ -93,17 +158,17 @@ fn matches_source(source: &str, document: &Url, url: &Url) -> bool {
             let scheme = &lower[..lower.len() - 1];
             url.scheme() == scheme || (scheme == "http" && url.scheme() == "https")
         }
-        _ => host_source(&lower, document, url),
+        _ => host_source(source, document, url),
     }
 }
 
 /** `[scheme://]host[:port][/path]`, with `*.` host wildcards and secure-scheme upgrades. */
 fn host_source(source: &str, document: &Url, url: &Url) -> bool {
     let (scheme, rest) = match source.split_once("://") {
-        Some((scheme, rest)) => (Some(scheme), rest),
+        Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
         None => (None, source),
     };
-    let scheme_ok = match scheme {
+    let scheme_ok = match scheme.as_deref() {
         Some(scheme) => url.scheme() == scheme || (scheme == "http" && url.scheme() == "https"),
         None => url.scheme() == document.scheme() || url.scheme() == "https",
     };
@@ -112,13 +177,15 @@ fn host_source(source: &str, document: &Url, url: &Url) -> bool {
         Some((host, port)) => (host, Some(port)),
         None => (authority, None),
     };
+    let host = host.to_ascii_lowercase();
     let target = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let host_ok = match host.strip_prefix("*.") {
         Some(suffix) => target.ends_with(&format!(".{suffix}")),
         None => target == host,
     };
     let port_ok = match port {
-        None | Some("*") => true,
+        None => url.port().is_none(),
+        Some("*") => true,
         Some(port) => {
             url.port_or_known_default()
                 .map(|p| p.to_string())
@@ -217,5 +284,25 @@ mod tests {
             source: "",
         };
         assert!(allows(&policy, &page, &nonced));
+    }
+
+    #[test]
+    fn host_source_enforces_default_port_and_case_sensitive_path() {
+        let page = Url::parse("https://app.test/index.html").unwrap();
+        let port_policy = vec!["script-src https://cdn.test".to_owned()];
+        let evil_port = Url::parse("https://cdn.test:8443/worker.js").unwrap();
+        let default_port = Url::parse("https://cdn.test:443/worker.js").unwrap();
+        let wildcard_port_policy = vec!["script-src https://cdn.test:*".to_owned()];
+        assert!(!allows(&port_policy, &page, &external(&evil_port)));
+        assert!(allows(&port_policy, &page, &external(&default_port)));
+        assert!(allows(&wildcard_port_policy, &page, &external(&evil_port)));
+
+        let path_policy = vec!["script-src https://cdn.test/Allowed/worker.js".to_owned()];
+        let wrong_case = Url::parse("https://cdn.test/allowed/worker.js").unwrap();
+        let exact_case = Url::parse("https://cdn.test/Allowed/worker.js").unwrap();
+        let upper_host = Url::parse("HTTPS://CDN.TEST/Allowed/worker.js").unwrap();
+        assert!(!allows(&path_policy, &page, &external(&wrong_case)));
+        assert!(allows(&path_policy, &page, &external(&exact_case)));
+        assert!(allows(&path_policy, &page, &external(&upper_host)));
     }
 }

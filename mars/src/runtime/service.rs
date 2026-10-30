@@ -40,8 +40,8 @@ fn serve(name: &str) -> EngineResult<()> {
     if !["network", "document", "v9"].contains(&name) {
         return Err(EngineError::invalid("Unknown engine service."));
     }
-    let mut input = BufReader::new(io::stdin().lock());
-    let mut output = io::stdout().lock();
+    let mut input = BufReader::new(io::stdin());
+    let mut output = io::stdout();
     let mut prepared: Option<(u64, network::Prepared)> = None;
     let mut sequence = 0_u64;
     while let Some(frame) = read_frame(&mut input)? {
@@ -67,6 +67,9 @@ fn serve(name: &str) -> EngineResult<()> {
                     })
                     .and_then(|(_, connection)| connection.transmit())
             })
+        } else if name == "v9" && head.op == "v9.worker" {
+            let imports = super::worker_io::Pipe::new(&head.id, &mut input, &mut output);
+            typed(&frame, &head.id, |call| run_page_host(call, Some(&imports)))
         } else {
             dispatch(name, &head.op, &head.id, &frame)
         };
@@ -381,6 +384,9 @@ struct DocumentClick {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PageCall {
+    /** Runtime-owned leases; required for resident execution, never inferred from page source. */
+    #[serde(default)]
+    resident_contexts: Option<Vec<String>>,
     /** The page's classic scripts in execution order (failed ones keep their text, since their
     declarations outlive them); empty when `sources_digest` names sources this process holds. */
     sources: Vec<String>,
@@ -458,6 +464,9 @@ lifecycle step; the result rides beside the Execution the coordinator commits. *
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DevtoolsCall {
+    /** The live context snapshot shared with ordinary lifecycle admission. */
+    #[serde(default)]
+    resident_contexts: Option<Vec<String>>,
     sources: Vec<String>,
     #[serde(default)]
     sources_digest: Option<String>,
@@ -492,6 +501,14 @@ fn devtools(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
 }
 /** The request over its decoded call; sources are resident exactly as for `run_page`. */
 fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
+    if call.resident {
+        admit_resident(
+            &call.document.identity,
+            call.resident_contexts.as_deref(),
+            call.base,
+            call.keep,
+        )?;
+    }
     let sources = resident_sources(
         std::mem::take(&mut call.sources),
         call.sources_digest.take(),
@@ -501,6 +518,8 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         call.modules_digest.take(),
     )?;
     let host = v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
         languages: &call.languages,
         fragments: &document::DomFragments,
     };
@@ -529,7 +548,26 @@ fn page(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
     typed(frame, id, run_page)
 }
 /** One V9 page step over its decoded call. */
-fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
+fn run_page(call: PageCall) -> EngineResult<v9::Execution> {
+    run_page_host(call, None)
+}
+
+/** Only the explicit worker operation receives the temporary synchronous source capability. */
+fn run_page_host(
+    mut call: PageCall,
+    imports: Option<&dyn v9::ImportScriptsHost>,
+) -> EngineResult<v9::Execution> {
+    if call.environment.worker_name.is_some() != imports.is_some() {
+        return Err(EngineError::invalid("Invalid worker execution capability."));
+    }
+    if call.resident {
+        admit_resident(
+            &call.document.identity,
+            call.resident_contexts.as_deref(),
+            call.base,
+            call.keep,
+        )?;
+    }
     let sources = resident_sources(
         std::mem::take(&mut call.sources),
         call.sources_digest.take(),
@@ -539,6 +577,8 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         call.modules_digest.take(),
     )?;
     let host = v9::DocumentHost {
+        imports,
+        canvas: &mars_eye::platform::NativeCanvas,
         languages: &call.languages,
         fragments: &document::DomFragments,
     };
@@ -559,6 +599,7 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         )),
     };
     let mut execution = match call.action {
+        PageAction::Load if imports.is_some() => v9::load_worker(input),
         PageAction::Load => v9::load_page(input),
         PageAction::Event { event } => v9::page_event(input, state()?, event),
         PageAction::Click { target } => v9::click_page(input, state()?, target),
@@ -578,7 +619,7 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
 /// Pages whose states this process keeps between steps. Each keeps only its committed state,
 /// the last step's base and that step's result, so a 25 MB heap (YouTube) never crosses the
 /// pipe and memory stays bounded; a page past the limit gets `state_missing` on its next step.
-pub(super) const RESIDENT_PAGES: usize = 8;
+pub(super) const RESIDENT_PAGES: usize = super::residency::CONTEXTS;
 /// The error a step gets when its base names a state this process no longer holds (it was
 /// restarted, or dropped the page); the coordinator cannot resend it, so it reloads the page.
 pub(super) const STATE_MISSING: &str = "state_missing";
@@ -604,13 +645,59 @@ impl Resident {
     }
 }
 
-/** Frees states off the request path: freeing YouTube's half a million objects is not free. */
+/** Disposal is synchronous so retired versions cannot accumulate in unbounded detached threads. */
 fn discard(states: Vec<(u64, Resident)>) {
-    if !states.is_empty() {
-        let _ = std::thread::Builder::new()
-            .name("oya-v9-free".into())
-            .spawn(move || drop(states));
+    drop(states);
+}
+
+/** Validate ownership completely before releasing old states or executing a new context. */
+fn admit_resident(
+    identity: &str,
+    contexts: Option<&[String]>,
+    base: Option<u64>,
+    keep: Option<u64>,
+) -> EngineResult<()> {
+    let contexts =
+        contexts.ok_or_else(|| EngineError::invalid("Missing resident context leases."))?;
+    if contexts.len() > RESIDENT_PAGES {
+        return Err(EngineError::limit(
+            "resident script contexts",
+            RESIDENT_PAGES,
+        ));
     }
+    let unique: std::collections::BTreeSet<_> = contexts.iter().collect();
+    if unique.len() != contexts.len()
+        || !contexts.iter().any(|held| held == identity)
+        || contexts
+            .iter()
+            .any(|held| held.is_empty() || held.len() > crate::constants::ID_BYTES)
+    {
+        return Err(EngineError::invalid("Invalid resident context leases."));
+    }
+    PAGES.with_borrow_mut(|pages| {
+        for token in [base, keep].into_iter().flatten() {
+            let owner = pages
+                .iter()
+                .find(|page| page.states.iter().any(|(held, _)| *held == token));
+            match owner {
+                Some(owner) if owner.identity == identity => (),
+                Some(_) => {
+                    return Err(EngineError::invalid(
+                        "Resident token belongs to another context.",
+                    ));
+                }
+                None => {
+                    return Err(EngineError::new(
+                        STATE_MISSING,
+                        "The V9 service no longer holds this page's script state.",
+                        "Reload the page.",
+                    ));
+                }
+            }
+        }
+        pages.retain(|page| contexts.contains(&page.identity));
+        Ok(())
+    })
 }
 
 /** One page's resident states, by token. */
@@ -683,9 +770,7 @@ fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<
         discard(dropped);
         page.states.push((token, Resident::new(state)));
         pages.push_front(page);
-        for evicted in pages.split_off(RESIDENT_PAGES.min(pages.len())) {
-            discard(evicted.states);
-        }
+        debug_assert!(pages.len() <= RESIDENT_PAGES);
     });
 }
 
@@ -981,6 +1066,8 @@ fn document_click(params: Value) -> EngineResult<Value> {
 /** Eye's pure fragment parser runs inside the V9 process; parsing grants no authority. */
 fn host(languages: &[String]) -> v9::DocumentHost<'_> {
     v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
         languages,
         fragments: &document::Fragments,
     }
@@ -1040,14 +1127,48 @@ mod tests {
         }
     }
 
-    /** Past RESIDENT_PAGES pages, the least recently used page's states are dropped. */
+    /** Excess admission is refused before any live context or rollback token is removed. */
     #[test]
     fn resident_pages_are_bounded() {
-        let oldest = kept("page-0", None, None);
-        for page in 1..=RESIDENT_PAGES {
-            kept(&format!("page-{page}"), None, None);
+        let contexts: Vec<_> = (0..RESIDENT_PAGES).map(|n| format!("page-{n}")).collect();
+        let mut tokens = Vec::new();
+        for context in &contexts {
+            super::admit_resident(context, Some(&contexts), None, None).unwrap();
+            tokens.push(kept(context, None, None));
         }
-        assert_eq!(resident_state(oldest).unwrap_err().code, STATE_MISSING);
+        let mut excess = contexts.clone();
+        excess.push("extra".into());
+        assert_eq!(
+            super::admit_resident("extra", Some(&excess), None, None)
+                .unwrap_err()
+                .code,
+            "limit_exceeded"
+        );
+        for token in tokens {
+            assert!(resident_state(token).is_ok());
+        }
+    }
+
+    /** Invalid snapshots and cross-context tokens cannot discard another context's state. */
+    #[test]
+    fn invalid_leases_leave_resident_states_untouched() {
+        let token = kept("original", None, None);
+        for snapshot in [
+            None,
+            Some(vec!["other".into()]),
+            Some(vec!["original".into(), "original".into()]),
+        ] {
+            assert!(
+                super::admit_resident("original", snapshot.as_deref(), Some(token), None).is_err()
+            );
+            assert!(resident_state(token).is_ok());
+        }
+        assert!(
+            super::admit_resident("other", Some(&["other".into()]), Some(token), None).is_err()
+        );
+        assert!(resident_state(token).is_ok());
+        super::admit_resident("other", Some(&["other".into()]), None, None).unwrap();
+        assert_eq!(resident_state(token).unwrap_err().code, STATE_MISSING);
     }
 
     /** Modules cross once, are found by digest after, and cannot be planted under a wrong one. */

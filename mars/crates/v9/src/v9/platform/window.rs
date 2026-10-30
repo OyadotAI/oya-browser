@@ -67,7 +67,7 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "scrollY" | "pageYOffset" => JsValue::Number(environment.scroll_y),
         "scrollX" | "pageXOffset" => JsValue::Number(environment.scroll_x),
         "screenX" | "screenY" | "screenLeft" | "screenTop" => JsValue::Number(0.0),
-        "length" => JsValue::Number(0.0),
+        "length" => JsValue::Number(super::frame_directory::child_count(&mut vm.page) as f64),
         "closed" => JsValue::Boolean(false),
         "isSecureContext" => JsValue::Boolean(vm.page.state.href.starts_with("https:")),
         "origin" => {
@@ -862,7 +862,7 @@ pub(super) fn media_matches(vm: &Vm, query: &str) -> bool {
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /** Standard base64 with padding. */
-fn base64_encode(bytes: &[u8]) -> String {
+pub(super) fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let word = (u32::from(chunk[0]) << 16)

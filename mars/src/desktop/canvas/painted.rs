@@ -21,6 +21,8 @@ pub(super) struct Painted {
     text: HashMap<(u32, u32), Retained<NSAttributedString>>,
     /// Decoded images per node identity; a failed decode is remembered too.
     images: HashMap<usize, Option<Retained<NSImage>>>,
+    /// Canvas resources use a separate namespace from CSS background images on the same node.
+    canvases: HashMap<usize, Option<Retained<NSImage>>>,
     /// Runs drawn as one joined text, as the windowless raster draws them.
     pub chains: crate::document::TextChains,
 }
@@ -76,6 +78,53 @@ impl Painted {
             .or_insert_with(|| decode(bytes))
             .clone()
     }
+    /** Cache only for this display list; pixel changes invalidate the enclosing paint cache. */
+    pub fn canvas(
+        &mut self,
+        id: usize,
+        bitmap: &mars_core::canvas::Bitmap,
+    ) -> Option<Retained<NSImage>> {
+        self.canvases
+            .entry(id)
+            .or_insert_with(|| canvas_image(bitmap))
+            .clone()
+    }
+}
+
+/** Wrap actual RGBA pixels in an AppKit bitmap without encoding them or accessing a URL. */
+fn canvas_image(bitmap: &mars_core::canvas::Bitmap) -> Option<Retained<NSImage>> {
+    use objc2_app_kit::{NSBitmapImageRep, NSDeviceRGBColorSpace};
+    use objc2_foundation::NSSize;
+    bitmap.validate().ok()?;
+    if !bitmap.drawable() {
+        return None;
+    }
+    // SAFETY: validated dimensions bound the owned allocation and explicit RGBA stride.
+    let rep = unsafe {
+        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+        NSBitmapImageRep::alloc(),std::ptr::null_mut(),bitmap.width as isize,bitmap.height as isize,8,4,true,false,NSDeviceRGBColorSpace,(bitmap.width*4) as isize,32)
+    }?;
+    let target = rep.bitmapData();
+    if target.is_null() {
+        return None;
+    }
+    // SAFETY: the rep owns exactly the validated byte length until its retained image is dropped.
+    let target = unsafe { std::slice::from_raw_parts_mut(target, bitmap.pixels.len()) };
+    for (out, pixel) in target
+        .chunks_exact_mut(4)
+        .zip(bitmap.pixels.chunks_exact(4))
+    {
+        out[3] = pixel[3];
+        for channel in 0..3 {
+            out[channel] = ((u32::from(pixel[channel]) * u32::from(pixel[3]) + 127) / 255) as u8;
+        }
+    }
+    let image = NSImage::initWithSize(
+        NSImage::alloc(),
+        NSSize::new(f64::from(bitmap.width), f64::from(bitmap.height)),
+    );
+    image.addRepresentation(&rep);
+    Some(image)
 }
 
 /** First and last band of an item's painted extent, or None when it must always paint. */

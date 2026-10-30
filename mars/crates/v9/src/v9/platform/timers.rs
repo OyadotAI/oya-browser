@@ -226,7 +226,7 @@ impl Vm<'_> {
         match result {
             Ok(()) => Ok(()),
             Err(Thrown::Value(error)) => {
-                self.report_error(&error);
+                super::workers::report_exception(self, &error)?;
                 Ok(())
             }
             Err(fatal) => Err(fatal),

@@ -6,13 +6,13 @@ use crate::v9::vm::{Call, Res, Vm};
 
 /** Private entry storage is never exposed as an authored property. */
 const ENTRIES: &str = "performance.entries";
-/** Shell timelines advance on real monotonic time; normal page time remains deterministic. */
+/** Shell and opted-in native timelines advance monotonically; standalone page time stays exact. */
 pub(super) fn now(vm: &Vm) -> f64 {
     #[cfg(feature = "conformance")]
     if vm.page.environment.conformance_d8 {
         return crate::v9::builtins::d8_time_origin_and_elapsed().1;
     }
-    vm.page.state.clock
+    vm.page.script_now()
 }
 /** The shell time origin shares the same process anchor as its Date.now clock. */
 pub(super) fn origin(vm: &Vm) -> f64 {
@@ -257,6 +257,10 @@ pub(super) fn get_entries(
     name: Option<JsString>,
 ) -> Res<JsValue> {
     let (_, values) = entries(vm, &call.this)?;
+    if kind == Some("navigation") && name.is_none() {
+        let nav = navigation_entry(vm)?;
+        return Ok(JsValue::Object(vm.new_array(vec![nav])?));
+    }
     let mut selected = Vec::new();
     for value in values {
         if let Some(kind) = kind
@@ -300,4 +304,85 @@ pub(super) fn clear(vm: &mut Vm, call: Call, kind: &str) -> Res<JsValue> {
     }
     save(vm, id, retained)?;
     Ok(JsValue::Undefined)
+}
+
+/** Synthesize the document's PerformanceNavigationTiming entry for `getEntriesByType("navigation")`. */
+fn navigation_entry(vm: &mut Vm) -> Res<JsValue> {
+    let url = JsValue::string(&vm.page.environment.url)?;
+    let name = vm.to_string(&url)?;
+    let elapsed = now(vm);
+    let value = entry(vm, name, "navigation", (0.0, elapsed), JsValue::Null)?;
+    let id = value.object().unwrap_or_default();
+    let global = JsValue::Object(vm.global_object());
+    let ctor = vm.get(&global, &Key::from("PerformanceNavigationTiming"))?;
+    if let Some(proto) = vm.get(&ctor, &Key::from("prototype"))?.object() {
+        vm.set_proto(id, Some(proto))?;
+    }
+    populate_navigation_timing(vm, id, elapsed)?;
+    Ok(value)
+}
+
+/** Populate standard ResourceTiming and NavigationTiming attributes on a navigation entry. */
+fn populate_navigation_timing(vm: &mut Vm, id: ObjectId, elapsed: f64) -> Res<()> {
+    for (k, v) in [
+        ("initiatorType", JsValue::string("navigation")?),
+        ("nextHopProtocol", JsValue::string("h2")?),
+        ("type", JsValue::string("navigate")?),
+    ] {
+        vm.heap.put(
+            id,
+            Key::from(k),
+            Prop {
+                slot: Slot::Data(v),
+                attrs: 0,
+            },
+        );
+    }
+    for k in [
+        "workerStart",
+        "redirectStart",
+        "redirectEnd",
+        "fetchStart",
+        "domainLookupStart",
+        "domainLookupEnd",
+        "connectStart",
+        "connectEnd",
+        "secureConnectionStart",
+        "requestStart",
+        "responseStart",
+        "unloadEventStart",
+        "unloadEventEnd",
+        "redirectCount",
+        "transferSize",
+        "encodedBodySize",
+        "decodedBodySize",
+    ] {
+        vm.heap.put(
+            id,
+            Key::from(k),
+            Prop {
+                slot: Slot::Data(JsValue::Number(0.0)),
+                attrs: 0,
+            },
+        );
+    }
+    for k in [
+        "responseEnd",
+        "domInteractive",
+        "domContentLoadedEventStart",
+        "domContentLoadedEventEnd",
+        "domComplete",
+        "loadEventStart",
+        "loadEventEnd",
+    ] {
+        vm.heap.put(
+            id,
+            Key::from(k),
+            Prop {
+                slot: Slot::Data(JsValue::Number(elapsed)),
+                attrs: 0,
+            },
+        );
+    }
+    Ok(())
 }

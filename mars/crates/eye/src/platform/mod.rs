@@ -1,5 +1,7 @@
 /** Operating-system text primitives supply shaping, never document or navigation semantics. */
 pub mod autospace;
+mod canvas;
+pub use canvas::NativeCanvas;
 pub mod ignorable;
 pub mod segment;
 #[cfg(target_os = "macos")]

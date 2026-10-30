@@ -27,13 +27,15 @@ fn blank_iframe_has_a_same_origin_document() {
     );
 }
 
-/** A frame not yet connected, or one showing another origin, has no reachable document. */
+/** A cross-origin child hides its document but retains a stable window for safe messaging. */
 #[test]
 fn other_frames_have_no_document() {
     let source = "var a=document.createElement('iframe');var b=document.createElement('iframe');\
         b.src='https://elsewhere.example/';document.body.appendChild(b);\
-        const r=[a.contentDocument,b.contentDocument,b.contentWindow].join(',');";
-    assert_eq!(eval(source, "r"), ",,");
+        const r=[a.contentDocument===null,b.contentDocument===null,\
+        b.contentWindow!==null,b.contentWindow===b.contentWindow,\
+        typeof b.contentWindow.postMessage].join(',');";
+    assert_eq!(eval(source, "r"), "true,true,true,true,function");
 }
 
 /** open, write and close replace the document with the written markup, as the parser's

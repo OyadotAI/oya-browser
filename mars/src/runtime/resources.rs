@@ -194,15 +194,27 @@ impl Runtime {
         credentials: bool,
     ) {
         // The HTTP cache is partitioned by the top-level site, so every request names it.
+        request.languages = self.languages.clone();
         request.top_level = if top_level {
             Some(request.url.clone())
         } else {
-            initiator.map(Url::to_string)
+            request
+                .top_level
+                .clone()
+                .or_else(|| initiator.map(Url::to_string))
         };
+        let partition = request
+            .top_level
+            .as_deref()
+            .and_then(|url| Url::parse(url).ok());
         request.cookie = if credentials {
             self.cookies.header(
                 url,
-                initiator,
+                if top_level {
+                    initiator
+                } else {
+                    partition.as_ref().or(initiator)
+                },
                 top_level && request.method == Method::Get,
                 SystemTime::now(),
             )
@@ -451,6 +463,8 @@ pub(super) struct ScriptRequest {
     pub mode: cors::Mode,
     /// omit, same-origin or include.
     pub credentials: Credentials,
+    /// Worker fetches retain their creator's partition and the worker response's connect policy.
+    pub worker_policy: Option<super::worker_loading::Policy>,
 }
 
 /// What a script request delivers to the page.
@@ -482,7 +496,9 @@ impl Runtime {
         let include = request.credentials == Credentials::Include;
         let mut flow = cors::Flow::new(base.origin(), request.mode);
         for redirects in 0..=REDIRECTS {
-            if !flow.enter(&request.url)
+            if request.worker_policy.as_ref().is_some_and(|policy| {
+                !super::csp::allows_connect(&policy.csp, &policy.base, &request.url)
+            }) || !flow.enter(&request.url)
                 || !self.preflighted(base, &request, &flow, preflights, until)?
             {
                 return Ok(ScriptAnswer::Failed);
@@ -540,6 +556,10 @@ impl Runtime {
         }
         let web = WebRequest {
             destination: Destination::Empty,
+            top_level: request
+                .worker_policy
+                .as_ref()
+                .map(|policy| policy.partition.to_string()),
             origin: Some(origin.clone()),
             mode: Some(cors::Mode::Cors),
             preflight: Some(Preflight {
@@ -579,6 +599,10 @@ impl Runtime {
             .then(|| flow.serialized());
         let mut web = WebRequest {
             method: request.method.clone(),
+            top_level: request
+                .worker_policy
+                .as_ref()
+                .map(|policy| policy.partition.to_string()),
             body: request.body.clone(),
             destination: Destination::Empty,
             headers: request.headers.clone(),

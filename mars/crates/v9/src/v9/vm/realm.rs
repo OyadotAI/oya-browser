@@ -141,6 +141,10 @@ pub(in crate::v9) struct Ids {
     pub regexp_iterator_prototype: ObjectId,
     pub iterator_prototype: ObjectId,
     pub window_prototype: ObjectId,
+    /// Dedicated workers inherit only worker members and EventTarget, never Window.
+    pub worker_prototype: ObjectId,
+    /// Explicit worker-safe globals, including the ordinary ECMAScript intrinsics.
+    pub worker_interfaces: ObjectId,
     /** Shell globals have a distinct prototype rather than sharing Object.prototype. */
     #[cfg(feature = "conformance")]
     pub shell_global_prototype: ObjectId,
@@ -541,6 +545,7 @@ fn build() -> Realm {
     super::super::platform::install(&mut builder);
     super::super::modules::install(&mut builder);
     install_window_interfaces(&mut builder);
+    super::super::platform::worker_global::install(&mut builder);
     #[cfg(feature = "conformance")]
     {
         builder.ids.shell_global_prototype = builder.object(Some(builder.ids.object_prototype));
