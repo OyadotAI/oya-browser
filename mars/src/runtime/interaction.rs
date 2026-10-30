@@ -1,4 +1,5 @@
 /** Human and agent controls share native targeting, validation and V9 event execution. */
+mod activation;
 use super::{page::Page, supervisor::Runtime};
 use crate::document::{DomChange, Node};
 use crate::protocol::{EngineError, EngineResult, parameters};
@@ -153,45 +154,48 @@ impl Runtime {
         if node.disabled || !node.style.interactive {
             return Err(invalid_target());
         }
-        if node.tag != "button"
-            && !["input", "label"].contains(&node.tag.as_str())
+        // A span or icon supplies the event target; its nearest supported control owns the default.
+        let control = activation::target(&page.document, &node)?;
+        if control.tag != "button"
+            && !["input", "label"].contains(&control.tag.as_str())
             && self.click_listened(&page, &node)?
             && let Some(result) = self.script_click(page.clone(), &node)?
         {
+            // V9 follows an unprevented ancestor link itself. Never activate that link twice.
             return Ok(result);
         }
-        if node.tag == "a" {
-            return self.follow(node.href.as_deref().ok_or_else(invalid_target)?);
+        if control.tag == "a" {
+            return self.follow(control.href.as_deref().ok_or_else(invalid_target)?);
         }
-        if node.tag == "label" {
-            let control = page
+        if control.tag == "label" {
+            let input = page
                 .document
                 .nodes
                 .iter()
-                .find(|n| {
-                    node.attributes.get("for") == Some(&n.html_id)
-                        || n.parent == Some(node.local_id)
-                            && ["input", "select", "textarea"].contains(&n.tag.as_str())
+                .find(|candidate| {
+                    control.attributes.get("for") == Some(&candidate.html_id)
+                        || candidate.parent == Some(control.local_id)
+                            && ["input", "select", "textarea"].contains(&candidate.tag.as_str())
                 })
                 .cloned()
                 .ok_or_else(invalid_target)?;
-            if control.disabled || control.hidden() {
+            if input.disabled || input.hidden() {
                 return Err(invalid_target());
             }
+            return self.activate_control(page, input);
+        }
+        if control.tag == "input" {
             return self.activate_control(page, control);
         }
-        if node.tag == "input" {
-            return self.activate_control(page, node);
-        }
-        if node.tag != "button" {
+        if control.tag != "button" {
             return Err(invalid_target());
         }
-        self.button(page, node)
+        self.button(page, control, &node)
     }
     /** Whether a click on this node reaches page code: an inline handler, or a listener on the
     node, an ancestor, the document or the window. */
     fn click_listened(&self, page: &Page, node: &Node) -> EngineResult<bool> {
-        if node.handler.is_some() {
+        if activation::inline_handler(&page.document, node) {
             return Ok(true);
         }
         if !page.scripting.loaded {
@@ -238,7 +242,7 @@ impl Runtime {
      * own handler or listener runs does not also submit its form; a submit button reached only
      * by document-level listeners runs them and then submits.
      */
-    fn button(&mut self, page: Page, node: Node) -> EngineResult<Value> {
+    fn button(&mut self, page: Page, node: Node, event_target: &Node) -> EngineResult<Value> {
         let own = node.handler.is_some()
             || page
                 .state
@@ -246,15 +250,15 @@ impl Runtime {
         let submits = node.input_type() == "submit"
             && crate::document::form_owner(&page.document, &node).is_some();
         if own {
-            return self.run_click(page, &node).map_err(|mut error| {
+            return self.run_click(page, event_target).map_err(|mut error| {
                 if error.phase.is_some() {
                     error.hint = "Correct the script. No script changes were applied.".into();
                 }
                 error
             });
         }
-        if self.click_listened(&page, &node)? {
-            let result = self.script_click(page, &node)?;
+        if self.click_listened(&page, event_target)? {
+            let result = self.script_click(page, event_target)?;
             if !submits {
                 return Ok(result.unwrap_or_else(|| self.inspection()));
             }

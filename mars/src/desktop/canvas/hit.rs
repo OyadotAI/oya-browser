@@ -63,7 +63,8 @@ pub(super) fn node_at_frames(
                     .nodes
                     .iter()
                     .find(|node| node.local_id == item.local_id - base)?;
-                return (!node.hidden() && !node.disabled).then_some(item.local_id);
+                return (!node.hidden() && node.style.interactive && !node.disabled)
+                    .then_some(item.local_id);
             }
             document
                 .nodes

@@ -7,6 +7,20 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+After the user reported an invalid interactive target, source tracing found that
+painted spans/icons inside native links/buttons were selected as event targets but
+rejected as default-action targets. Native activation now resolves the nearest
+supported same-document ancestor while retaining the hit node for JavaScript;
+ancestor inline handlers are admitted and frame hit testing respects pointer-events.
+Existing revision, ownership and disabled/hidden controls remain guarded. Focused
+regressions are added unrun; combined build pending. The screenshot did not identify
+the clicked element, so this is not a verified reproduction of that exact failure.
+
+The user subsequently reported an unresponsive window that could not close.
+Mars Network Fix and its three engine processes were force-closed at their request
+and confirmed absent. The old native close flow has unbounded worker acknowledgments
+on the UI thread; that repair is in progress. Mars remains closed during repairs.
+
 The combined transport repair build at `159613bc` passed in 37.99s. It includes
 phase-specific transport errors, deadline-lease retirement before socket reuse,
 and bounded HTTP/1 informational responses, plus the earlier signal fix.

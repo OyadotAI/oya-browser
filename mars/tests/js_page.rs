@@ -749,3 +749,28 @@ fn a_large_burst_of_fetches_all_succeed() {
     let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
     assert!(texts(&now).contains("all 48"), "{now}");
 }
+
+/** Native descendants keep their real event target while the ancestor supplies button activation. */
+#[test]
+fn clicking_a_button_descendant_preserves_the_original_event_target() {
+    let (_fixture, mut runtime, page) = load(
+        "<p id=out>initial</p><button type=button onclick=\"document.getElementById('out').textContent=event.target.id\"><span id=child>Go</span></button><script>void 0</script>",
+        vec![],
+    );
+    let child = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "child")
+        .unwrap()["node_id"]
+        .clone();
+    let clicked = agent_call(
+        &mut runtime,
+        "page.click",
+        json!({
+            "page_id":page["page_id"], "node_id":child, "expected_revision":page["revision"]
+        }),
+    )
+    .unwrap();
+    assert!(texts(&clicked).contains("child"), "{clicked}");
+}
