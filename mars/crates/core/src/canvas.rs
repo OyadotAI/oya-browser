@@ -2,10 +2,12 @@
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
 mod affine;
+mod clip;
 mod path;
 mod pixels;
 mod raster;
 pub use affine::Affine;
+pub use clip::ClipMask;
 pub use path::{
     FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle, paint_path, plan_fill, plan_stroke,
 };
@@ -21,6 +23,8 @@ pub const CHANNELS: usize = 4;
 pub const PAGE_BYTES: usize = 4 * 1024 * 1024;
 /// Decoded image sources have their own bounded page allowance, shared by saved candidates.
 pub const IMAGE_SOURCE_BYTES: usize = PAGE_BYTES;
+/// Saved clipping masks share a separate retained page allowance, without changing pixel admission.
+pub const CLIP_BYTES: usize = PAGE_BYTES;
 /// Prevent tiny canvases from multiplying context bookkeeping indefinitely.
 pub const CONTEXTS: usize = 16;
 /// Pixel work admitted per script request, including readback and export.

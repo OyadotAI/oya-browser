@@ -24,6 +24,8 @@ pub(in crate::v9) struct DrawingState {
     pub alpha: f64,
     /** Image copies use this setting without changing stored source pixels. */
     pub smoothing: bool,
+    /** None is the initial unbounded clip; saved references retain one immutable mask-pool entry. */
+    pub clip: Option<u8>,
 }
 
 impl Default for DrawingState {
@@ -37,6 +39,7 @@ impl Default for DrawingState {
             transform: Affine::IDENTITY,
             alpha: 1.0,
             smoothing: true,
+            clip: None,
         }
     }
 }
@@ -155,6 +158,7 @@ fn stack(vm: &mut Vm, node: usize, name: &str) -> Res<JsValue> {
     } else if let Some(drawing) = state.saved.pop() {
         state.drawing = drawing;
     }
+    clipping::prune(state);
     Ok(JsValue::Undefined)
 }
 

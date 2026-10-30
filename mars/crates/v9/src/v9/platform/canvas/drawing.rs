@@ -66,7 +66,8 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         [state.bitmap.width, state.bitmap.height],
         values,
         state.drawing.transform,
-    )?;
+    )?
+    .with_clip(clipping::current(state)?)?;
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if dom::native_name(call) == "clearRect" {
@@ -108,10 +109,9 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         ));
     }
     drawable(vm, node)?;
-    work(
-        vm,
-        vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS,
-    )?;
+    let clip = clipping::current(&vm.page.state.canvases[&node])?.cloned();
+    let pixels = vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS;
+    work(vm, pixels * (1 + usize::from(clip.is_some())))?;
     let state = &vm.page.state.canvases[&node];
     if !state.bitmap.drawable() {
         return Ok(JsValue::Undefined);
@@ -129,17 +129,25 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         return Err(EngineError::invalid("Invalid native canvas text dimensions.").into());
     }
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    for (pixel, color) in state
+    let width = state.bitmap.width as usize;
+    for (index, (pixel, color)) in state
         .bitmap
         .pixels
         .make_mut()?
         .chunks_exact_mut(4)
         .zip(ink.pixels.chunks_exact(4))
+        .enumerate()
     {
+        let coverage = clip.as_ref().map_or(1.0, |clip| {
+            clip.coverage((index % width) as u32, (index / width) as u32)
+        });
+        if coverage == 0.0 || color[3] == 0 {
+            continue;
+        }
         limits::blend(
             pixel,
             [color[0], color[1], color[2], color[3]],
-            state.drawing.alpha,
+            state.drawing.alpha * coverage,
         );
     }
     state.dirty = true;

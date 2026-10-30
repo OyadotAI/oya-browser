@@ -1,8 +1,7 @@
 /** Scanline supersampling fills arbitrary polygon contours with bounded edge and pixel work. */
 use super::*;
+use crate::canvas::clip::{GRID as SAMPLES, SAMPLES as SAMPLE_COUNT, offset};
 
-/** Four-by-four coverage samples make fractional and diagonal edges antialiased. */
-const SAMPLES: usize = 4;
 /** A scanline crossing carries direction so coincident contours obey either fill rule. */
 type Crossing = (f64, i32);
 /** Each nonhorizontal edge contributes at most one crossing to a sample row. */
@@ -16,6 +15,7 @@ pub struct PathPlan {
     bounds: [u32; 4],
     rule: FillRule,
     work: usize,
+    clip: Option<ClipMask>,
     _allocation: Allocation,
 }
 
@@ -27,6 +27,38 @@ impl PathPlan {
     /** Fully clipped and degenerate contours do not require a bitmap copy. */
     pub fn is_empty(&self) -> bool {
         self.bounds[0] == self.bounds[2] || self.bounds[1] == self.bounds[3]
+    }
+
+    /** Attach immutable clip samples while keeping existing public paint entry points stable. */
+    pub fn with_clip(mut self, clip: Option<&ClipMask>) -> EngineResult<Self> {
+        if let Some(clip) = clip {
+            clip.validate(self.size)?;
+        }
+        let pixels =
+            (self.bounds[2] - self.bounds[0]) as usize * (self.bounds[3] - self.bounds[1]) as usize;
+        self.work = self.work - pixels * usize::from(self.clip.is_some())
+            + pixels * usize::from(clip.is_some());
+        self.clip = clip.cloned();
+        Ok(self)
+    }
+
+    /** Clip construction also zeroes a full mask and may compare it with its previous immutable value. */
+    pub fn clip_work(&self) -> usize {
+        self.work + self.size[0] as usize * self.size[1] as usize * 2
+    }
+
+    /** Build the intersection completely before the caller installs a new saved-state mask reference. */
+    pub fn clip_mask(&self) -> EngineResult<ClipMask> {
+        let mut mask = ClipMask::zeroed(self.size)?;
+        let mut crossings = Vec::with_capacity(self.edges.len());
+        let storage = mask.storage()?;
+        for y in self.bounds[1]..self.bounds[3] {
+            let coverage = coverage_row(self, y, &mut crossings);
+            for x in self.bounds[0]..self.bounds[2] {
+                ClipMask::write(storage, self.size[0], x, y, covered(self, &coverage, x, y));
+            }
+        }
+        Ok(mask)
     }
 }
 
@@ -73,6 +105,7 @@ pub(super) fn contours<'a>(
         bounds,
         rule,
         work,
+        clip: None,
         _allocation: allocation,
     })
 }
@@ -142,21 +175,17 @@ pub fn paint_path(
     let width = bitmap.width as usize;
     let pixels = bitmap.pixels.make_mut()?;
     for y in plan.bounds[1]..plan.bounds[3] {
-        let mut coverage = [0u8; EDGE as usize];
-        for sample in 0..SAMPLES {
-            scanline(
-                plan,
-                y as f64 + offset(sample),
-                &mut crossings,
-                &mut coverage,
-            );
-        }
+        let coverage = coverage_row(plan, y, &mut crossings);
         for x in plan.bounds[0]..plan.bounds[2] {
             let at = (y as usize * width + x as usize) * CHANNELS;
+            let coverage = covered(plan, &coverage, x, y).count_ones();
+            if coverage == 0 {
+                continue;
+            }
             blend(
                 &mut pixels[at..at + CHANNELS],
                 color,
-                alpha * f64::from(coverage[x as usize]) / (SAMPLES * SAMPLES) as f64,
+                alpha * f64::from(coverage) / SAMPLE_COUNT as f64,
             );
         }
     }
@@ -167,8 +196,9 @@ pub fn paint_path(
 fn scanline(
     plan: &PathPlan,
     y: f64,
+    row_sample: usize,
     crossings: &mut Vec<Crossing>,
-    coverage: &mut [u8; EDGE as usize],
+    coverage: &mut [u16; EDGE as usize],
 ) {
     crossings.clear();
     for &[from, to] in &plan.edges {
@@ -191,12 +221,27 @@ fn scanline(
                 FillRule::Nonzero => winding != 0,
                 FillRule::Evenodd => winding % 2 != 0,
             };
-            coverage[x as usize] += u8::from(inside);
+            coverage[x as usize] |= u16::from(inside) << (row_sample * SAMPLES + sample);
         }
     }
 }
 
-/** Sample centers avoid double-counting exact boundaries between neighboring pixels. */
-fn offset(sample: usize) -> f64 {
-    (sample as f64 + 0.5) / SAMPLES as f64
+/** Preserve individual sample bits through fill planning and clip intersections. */
+fn coverage_row(plan: &PathPlan, y: u32, crossings: &mut Vec<Crossing>) -> [u16; EDGE as usize] {
+    let mut coverage = [0; EDGE as usize];
+    for sample in 0..SAMPLES {
+        scanline(
+            plan,
+            y as f64 + offset(sample),
+            sample,
+            crossings,
+            &mut coverage,
+        );
+    }
+    coverage
+}
+
+/** An absent mask means the initial unbounded region, while an all-zero mask is an empty clip. */
+fn covered(plan: &PathPlan, coverage: &[u16; EDGE as usize], x: u32, y: u32) -> u16 {
+    coverage[x as usize] & plan.clip.as_ref().map_or(u16::MAX, |clip| clip.bits(x, y))
 }

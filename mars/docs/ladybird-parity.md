@@ -183,8 +183,17 @@ images retain selection policy. CORS images bypass legacy credentialed prefetch
 and Relay's URL-only HTTP cache; bounded per-page decoded reuse remains. Focused
 regressions were added but not run, and this next batch's build is pending.
 
+Canvas clip now intersects actual immutable sample masks, including evenodd
+holes, construction transforms and fractional-edge idempotence. Saved states
+share pool IDs that survive serialization; restore prunes and resize/reset clears
+masks. Every supported painter honors clipping. Pixel writes/readback/export
+bypass it, and fully clipped cross-origin sources still taint. Retained masks
+have a separate 4 MiB page allowance under existing process/work ceilings; a
+large clip plus paint may exhaust one execution's existing work budget. Twelve
+focused regressions were added but not run; this next batch's build is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas clipping/compositing and broader image sources, nested workers,
+Canvas compositing/Path2D and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

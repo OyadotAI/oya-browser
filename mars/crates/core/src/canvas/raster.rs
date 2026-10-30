@@ -1,5 +1,6 @@
+use super::clip::{GRID, SAMPLES, offset};
 /** Checked raster plans charge work before one fallible copy-on-write mutation. */
-use super::{Affine, Bitmap, CHANNELS, EDGE};
+use super::{Affine, Bitmap, CHANNELS, ClipMask, EDGE};
 use crate::protocol::{EngineError, EngineResult};
 mod geometry;
 mod sampling;
@@ -17,6 +18,9 @@ pub struct RasterPlan {
     bounds: [u32; 4],
     work: usize,
     image: Option<Image>,
+    clip: Option<ClipMask>,
+    inverse: Affine,
+    rectangle: [f64; 4],
 }
 
 /** Image coordinates stay floating point until the source lookup is clipped and bounded. */
@@ -37,6 +41,19 @@ impl RasterPlan {
     /** Singular, empty and fully clipped operations do not force a COW allocation. */
     pub fn is_empty(&self) -> bool {
         self.bounds[0] == self.bounds[2] || self.bounds[1] == self.bounds[3]
+    }
+
+    /** Optional mask samples are validated and shared before any destination COW can begin. */
+    pub fn with_clip(mut self, clip: Option<&ClipMask>) -> EngineResult<Self> {
+        if let Some(clip) = clip {
+            clip.validate(self.size)?;
+        }
+        let pixels =
+            (self.bounds[2] - self.bounds[0]) as usize * (self.bounds[3] - self.bounds[1]) as usize;
+        self.work = self.work - pixels * usize::from(self.clip.is_some())
+            + pixels * usize::from(clip.is_some());
+        self.clip = clip.cloned();
+        Ok(self)
     }
 }
 
@@ -59,6 +76,9 @@ pub fn plan_rect(size: [u32; 2], rect: [f64; 4], transform: Affine) -> EngineRes
         bounds,
         work: pixels * COVERAGE_WORK,
         image: None,
+        clip: None,
+        inverse: transform.inverse().expect("nonempty rectangle inverse"),
+        rectangle: rect,
     })
 }
 
@@ -103,19 +123,22 @@ pub fn fill_rect(
 ) -> EngineResult<()> {
     validate_alpha(alpha)?;
     paint(destination, plan, |pixel, x, y| {
-        blend(
-            pixel,
-            color,
-            alpha * geometry::coverage(&plan.polygon, x, y),
-        );
+        let coverage = coverage(plan, x, y);
+        if coverage == 0.0 {
+            return;
+        }
+        blend(pixel, color, alpha * coverage);
     })
 }
 
 /** Clearing removes the covered fraction regardless of current paint alpha. */
 pub fn clear_rect(destination: &mut Bitmap, plan: &RasterPlan) -> EngineResult<()> {
     paint(destination, plan, |pixel, x, y| {
-        pixel[3] =
-            (f64::from(pixel[3]) * (1.0 - geometry::coverage(&plan.polygon, x, y))).round() as u8;
+        let coverage = coverage(plan, x, y);
+        if coverage == 0.0 {
+            return;
+        }
+        pixel[3] = (f64::from(pixel[3]) * (1.0 - coverage)).round() as u8;
         if pixel[3] == 0 {
             pixel.fill(0);
         }
@@ -139,7 +162,7 @@ pub fn blit(
         return Err(invalid());
     }
     paint(destination, plan, |pixel, x, y| {
-        let coverage = geometry::coverage(&plan.polygon, x, y);
+        let coverage = coverage(plan, x, y);
         if coverage == 0.0 {
             return;
         }
@@ -264,10 +287,46 @@ fn empty(size: [u32; 2]) -> RasterPlan {
         bounds: [0; 4],
         work: 0,
         image: None,
+        clip: None,
+        inverse: Affine::IDENTITY,
+        rectangle: [0.0; 4],
     }
 }
 
 /** Invalid native contracts never become silent successful painting. */
 fn invalid() -> EngineError {
     EngineError::invalid("Invalid canvas raster plan or state.")
+}
+
+/** Intersect partial clip pixels with actual rectangle samples instead of multiplying two edge coverages. */
+fn coverage(plan: &RasterPlan, x: u32, y: u32) -> f64 {
+    let Some(clip) = &plan.clip else {
+        return geometry::coverage(&plan.polygon, x, y);
+    };
+    let bits = clip.bits(x, y);
+    if bits == 0 {
+        return 0.0;
+    }
+    if bits == u16::MAX {
+        return geometry::coverage(&plan.polygon, x, y);
+    }
+    let [left, top, width, height] = plan.rectangle;
+    let mut count = 0u32;
+    for row in 0..GRID {
+        for column in 0..GRID {
+            if bits & (1 << (row * GRID + column)) == 0 {
+                continue;
+            }
+            let local = plan
+                .inverse
+                .map([x as f64 + offset(column), y as f64 + offset(row)]);
+            count += u32::from(
+                local[0] >= left
+                    && local[0] < left + width
+                    && local[1] >= top
+                    && local[1] < top + height,
+            );
+        }
+    }
+    f64::from(count) / SAMPLES as f64
 }

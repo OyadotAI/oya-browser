@@ -103,7 +103,13 @@ negative-radius empty-subpath side effect is retained; resource failures remain
 atomic. RoundRect expands one to four numeric or point radii, uniformly scales
 overlapping corners, reflects negative extents and appends the full rounded
 contour atomically. Iterable conversion is bounded and closes on conversion or
-quota failure. CSS color and font parsing remain limited; clipping paths, Path2D,
+quota failure. Clipping uses immutable 4-by-4 sample-bit masks and bitwise
+intersection, so repeated fractional clips are idempotent. Each context stores
+masks once in a pool; saved drawing states refer to validated IDs. Restore prunes
+unused masks and resize/reset clears the pool. Rectangles, paths, images and text
+honor clipping; putImageData, readback and export bypass it, and clipping never
+removes image-origin taint. A separate 4 MiB retained page mask allowance shares
+the existing process and work ceilings. CSS color and font parsing remain limited; Path2D,
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.

@@ -39,6 +39,7 @@ pub(in crate::v9) fn resized(page: &mut Page, node: usize, bitmap: Bitmap) {
     state.drawing = state::DrawingState::default();
     state.saved.clear();
     state.path = limits::Path::default();
+    state.clips.clear();
     state.dirty = true;
 }
 /** Account for replacement rather than charging both old and new live backing indefinitely. */
@@ -108,6 +109,7 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
             state::validate(saved)?;
         }
     }
+    clipping::validate(states)?;
     Ok(())
 }
 

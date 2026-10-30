@@ -10,6 +10,7 @@ use mars_core::canvas::{self as limits, Bitmap, Font};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
+mod clipping;
 mod colors;
 mod drawing;
 mod images;
@@ -41,6 +42,9 @@ pub(in crate::v9) struct State {
     /** The current path survives save/restore but clears with beginPath, reset or resize. */
     #[serde(default)]
     pub path: limits::Path,
+    /** Saved states reference this pool so serialization writes each immutable clipping mask only once. */
+    #[serde(default)]
+    pub clips: BTreeMap<u8, limits::ClipMask>,
     pub dirty: bool,
 }
 
@@ -67,6 +71,7 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     state::install(b, proto);
     images::install(b, proto);
     paths::install(b, proto);
+    clipping::install(b, proto);
     let _ = PROTO.set(proto);
 }
 
@@ -145,6 +150,7 @@ fn create_context(vm: &mut Vm, call: Call) -> Res<JsValue> {
             drawing: state::DrawingState::default(),
             saved: Vec::new(),
             path: limits::Path::default(),
+            clips: BTreeMap::new(),
             dirty: true,
         },
     );
