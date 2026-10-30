@@ -109,8 +109,15 @@ actual Blob URL for resolution and import.meta. Nine focused regressions were
 added but not run; the combined production build for this next batch is pending.
 Imported Blob dependencies and cross-context registry sharing remain unfinished.
 
+Canvas quadraticCurveTo and bezierCurveTo now produce actual fill/stroke geometry
+through adaptive de Casteljau subdivision in bitmap coordinates. Flattening uses
+a one-eighth-pixel tolerance, bounded depth and the existing path-point allowance;
+the whole generated batch is admitted before path mutation. Six Core and seven
+V9 regressions were added but not run. The combined production build for this
+next batch is pending; arcs and ellipses remain unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas curves/clipping/compositing and broader image sources, nested workers,
+Canvas arcs/clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

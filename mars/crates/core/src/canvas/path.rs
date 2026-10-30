@@ -2,6 +2,7 @@
 use super::{Affine, Allocation, Bitmap, CHANNELS, EDGE, blend};
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
+mod curves;
 mod raster;
 mod stroke;
 pub use raster::{PathPlan, paint_path, plan_fill};

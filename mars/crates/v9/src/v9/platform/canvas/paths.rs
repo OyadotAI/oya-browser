@@ -1,10 +1,12 @@
 /** Current-path bindings construct real bounded geometry and paint it into the shared canvas backing. */
 use super::*;
+mod curves;
 mod styles;
 
 /** Methods and properties are exposed only when their drawing behavior is implemented. */
 pub(super) fn install(b: &mut Builder, proto: u32) {
     styles::install(b, proto);
+    curves::install(b, proto);
     for (name, length) in [
         ("beginPath", 0),
         ("closePath", 0),

@@ -88,7 +88,11 @@ independently of saved drawing state; strokes apply the draw-time pen transform.
 Nonzero/evenodd filling and bounded cap/join outlines use 4-by-4 pixel coverage.
 Admission caps paths at 1,024 points and derived outlines at 16,384 edges, with
 work charged before bitmap mutation. StrokeRect leaves the current path intact.
-CSS color and font parsing remain limited; curves, arcs, clipping paths, Path2D,
+Quadratic and cubic Bezier curves flatten adaptively in bitmap coordinates to a
+one-eighth-pixel tolerance, under the existing path-point budget and a bounded
+subdivision depth. Full point batches are admitted before altering the path;
+empty and closed subpaths retain their Canvas construction semantics.
+CSS color and font parsing remain limited; arcs, clipping paths, Path2D,
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
