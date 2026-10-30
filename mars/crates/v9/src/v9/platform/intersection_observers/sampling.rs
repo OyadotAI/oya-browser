@@ -1,8 +1,30 @@
 /** Geometry sampling and asynchronous delivery share one bounded queue per genuine observer. */
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+/** Entry materialization writes 32 properties plus four objects and an array slot; charge bounded native work. */
+const ENTRY_WORK: usize = 64;
+/** Sampling keeps one geometry result per unique target during this callback-free turn. */
+type Bounds = BTreeMap<usize, (bool, [f64; 4])>;
 
 /** Sample after a V9 turn; the host supplies refreshed visual boxes before dedicated observe turns. */
 pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
+    vm.charge(
+        vm.page
+            .state
+            .intersection_observers
+            .len()
+            .saturating_add(vm.page.environment.geometry.len()),
+    )?;
+    let mut usage = budget::sampling(vm)?;
+    let known: BTreeSet<_> = vm
+        .page
+        .environment
+        .geometry
+        .iter()
+        .map(|item| item.node)
+        .collect();
+    let mut bounds = Bounds::new();
     let observers: Vec<_> = vm
         .page
         .state
@@ -11,9 +33,21 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
         .copied()
         .collect();
     for id in observers {
+        if vm.page.state.intersection_observers[&id].targets.is_empty() {
+            continue;
+        }
+        let state = &vm.page.state.intersection_observers[&id];
+        vm.charge(
+            state
+                .targets
+                .len()
+                .saturating_add(state.queued.len())
+                .saturating_add(state.options.thresholds.len()),
+        )?;
         let mut state = vm.page.state.intersection_observers[&id].clone();
         for target in &mut state.targets {
-            let entry = measure(vm, target, &state.options)?;
+            let entry = measure(vm, target, &state.options, &known, &mut bounds)?;
+            vm.charge(state.options.thresholds.len().saturating_add(1))?;
             let previous = Previous {
                 threshold: state
                     .options
@@ -22,21 +56,12 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
                 intersects: entry.intersects,
             };
             if target.previous.as_ref() != Some(&previous) {
+                usage.record()?;
                 state.queued.push(entry);
                 target.previous = Some(previous);
             }
         }
         vm.page.state.intersection_observers.insert(id, state);
-        let count: usize = vm
-            .page
-            .state
-            .intersection_observers
-            .values()
-            .map(|state| state.queued.len())
-            .sum();
-        if count > RECORDS {
-            return Err(EngineError::limit("IntersectionObserver records", RECORDS).into());
-        }
     }
     effects(vm);
     Ok(())
@@ -50,16 +75,20 @@ pub(in crate::v9) fn effects(vm: &mut Vm) {
         .intersection_observers
         .values()
         .any(|state| !state.targets.is_empty() || !state.queued.is_empty());
-    vm.page.effects.intersection_observers_pending = vm
-        .page
-        .state
-        .intersection_observers
-        .values()
-        .any(|state| !state.queued.is_empty() || state.targets.iter().any(|target| target.previous.is_none()));
+    vm.page.effects.intersection_observers_pending =
+        vm.page.state.intersection_observers.values().any(|state| {
+            !state.queued.is_empty() || state.targets.iter().any(|target| target.previous.is_none())
+        });
 }
 
 /** Missing boxes and disconnected targets cannot be converted into visible one-pixel rectangles. */
-fn measure(vm: &mut Vm, target: &Observation, options: &options::Options) -> Res<Entry> {
+fn measure(
+    vm: &mut Vm,
+    target: &Observation,
+    options: &options::Options,
+    known: &BTreeSet<usize>,
+    cache: &mut Bounds,
+) -> Res<Entry> {
     let width = vm.page.environment.viewport_width;
     let height = vm.page.environment.viewport_height;
     let margin = options.margins.map(|margin| {
@@ -75,16 +104,7 @@ fn measure(vm: &mut Vm, target: &Observation, options: &options::Options) -> Res
         width + margin[1] + margin[3],
         height + margin[0] + margin[2],
     ];
-    let has_box = vm.page.connected(target.node)
-        && (matches!(target.node, super::super::HTML | super::super::BODY)
-            || vm
-                .page
-                .environment
-                .geometry
-                .iter()
-                .any(|item| item.node == target.node));
-    let (x, y, w, h) = dom::client_box(vm, target.node);
-    let bounds = if has_box { [x, y, w, h] } else { [0.0; 4] };
+    let (has_box, bounds) = target_bounds(vm, target.node, known, cache)?;
     if root
         .iter()
         .chain(&bounds)
@@ -97,8 +117,8 @@ fn measure(vm: &mut Vm, target: &Observation, options: &options::Options) -> Res
     let right = (bounds[0] + bounds[2]).min(root[0] + root[2]);
     let bottom = (bounds[1] + bounds[3]).min(root[1] + root[3]);
     let intersects = has_box
-        && w >= 0.0
-        && h >= 0.0
+        && bounds[2] >= 0.0
+        && bounds[3] >= 0.0
         && root[2] >= 0.0
         && root[3] >= 0.0
         && right >= left
@@ -128,8 +148,48 @@ fn measure(vm: &mut Vm, target: &Observation, options: &options::Options) -> Res
     })
 }
 
+/** Repeated observers of the same element reuse geometry without changing per-observer margins or thresholds. */
+fn target_bounds(
+    vm: &mut Vm,
+    node: usize,
+    known: &BTreeSet<usize>,
+    cache: &mut Bounds,
+) -> Res<(bool, [f64; 4])> {
+    if let Some(value) = cache.get(&node) {
+        return Ok(*value);
+    }
+    let nodes = vm
+        .page
+        .document
+        .as_ref()
+        .map_or(0, |document| document.nodes.len());
+    vm.charge(
+        vm.page
+            .environment
+            .geometry
+            .len()
+            .saturating_add(nodes)
+            .saturating_add(vm.page.state.detached.len())
+            .saturating_add(1),
+    )?;
+    let has_box = vm.page.connected(node)
+        && (matches!(node, super::super::HTML | super::super::BODY) || known.contains(&node));
+    let (x, y, width, height) = dom::client_box(vm, node);
+    let result = (
+        has_box,
+        if has_box {
+            [x, y, width, height]
+        } else {
+            [0.0; 4]
+        },
+    );
+    cache.insert(node, result);
+    Ok(result)
+}
+
 /** A dedicated host observation turn drains only this task source, leaving author timers untouched. */
 pub(in crate::v9) fn deliver_all(vm: &mut Vm) -> Res<()> {
+    vm.charge(vm.page.state.intersection_observers.len().saturating_add(1))?;
     let ids: Vec<_> = vm
         .page
         .state
@@ -180,17 +240,25 @@ fn deliver_id(vm: &mut Vm, id: ObjectId) -> Res<()> {
 
 /** takeRecords drains without invoking the callback and keeps detached targets alive while allocating. */
 pub(super) fn take_records(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
-    let records = vm.page.state.intersection_observers[&id].queued.clone();
+    vm.charge(
+        vm.page.state.intersection_observers[&id]
+            .queued
+            .len()
+            .saturating_mul(ENTRY_WORK)
+            .saturating_add(1),
+    )?;
+    let records = std::mem::take(
+        &mut vm
+            .page
+            .state
+            .intersection_observers
+            .get_mut(&id)
+            .expect("brand")
+            .queued,
+    );
     for record in &records {
         vm.pin(JsValue::Object(record.target));
     }
-    vm.page
-        .state
-        .intersection_observers
-        .get_mut(&id)
-        .expect("brand")
-        .queued
-        .clear();
     let mut values = Vec::new();
     for record in records {
         values.push(entry(vm, record)?);

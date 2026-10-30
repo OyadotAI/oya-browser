@@ -7,6 +7,16 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The reported IntersectionObserver cap is replaced by a shared 4 MiB native/wire
+budget: 512 bytes per observer, 32 per threshold, 256 per target and 768 per queued
+record. Individual ceilings are 8,192/16,384/5,461, with the combined budget binding
+first. Pressure reclamation follows all author conversions with temporary roots
+pinned; active/queued observers stay alive. Sampling removes quadratic record
+recounts, caches pure geometry per target and charges work before scans and
+allocations. Disconnect/takeRecords/unobserve release storage. Full and summary
+restore enforce the same accounting. Three regressions are added unrun, including
+1,000 retained active observers and discarded-observer reclamation; build pending.
+
 The metadata warning came from separate fixed 256-record/1 MiB limits. Metadata
 now uses 32,256 records (reserving 512 script slots) and an 8 MiB shared tag/name/
 value/text budget, with complete records and explicit refusal beyond the bound.

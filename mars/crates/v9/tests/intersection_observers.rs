@@ -170,3 +170,51 @@ fn restored_observer_records_validate_target_and_threshold_bounds() {
         assert!(state.validate_document(&common::page()).is_err());
     }
 }
+
+/** A real retained cohort beyond the old caps receives every measured entry, without dropped callbacks. */
+#[test]
+fn one_thousand_retained_observers_receive_their_measured_entries() {
+    let source = "const observers=[];let delivered=0;const target=document.getElementById('first');for(let n=0;n<1000;n++){const observer=new IntersectionObserver(entries=>{delivered+=entries.length});observer.observe(target);observers.push(observer)}";
+    let env = environment(0.0, 0.0, 20.0, 20.0);
+    let loaded = common::load_with(source, &env);
+    assert!(loaded.failed.is_empty(), "{:?}", loaded.failed);
+    let delivered = observe(source, &env, loaded.state);
+    assert!(delivered.failed.is_empty(), "{:?}", delivered.failed);
+    assert_eq!(common::global(&delivered, "delivered"), "1000");
+    assert!(!delivered.effects.intersection_observers_pending);
+}
+
+/** Unreachable inactive wrappers are reclaimed under native storage pressure before construction refuses. */
+#[test]
+fn discarded_observers_do_not_consume_a_permanent_lifetime_quota() {
+    let source = "let made=0;const threshold=Array(128).fill(0);for(let n=0;n<1200;n++){new IntersectionObserver(()=>{},{threshold});made++}";
+    let loaded = common::load(source);
+    assert!(loaded.failed.is_empty(), "{:?}", loaded.failed);
+    assert_eq!(common::global(&loaded, "made"), "1200");
+    common::round_trip(loaded.state);
+}
+
+/** Summary validation retains combined native byte accounting even though the heap remains resident. */
+#[test]
+fn full_state_and_summary_reject_combined_options_above_the_native_budget() {
+    let loaded = common::load(
+        "const observers=[];for(let n=0;n<1000;n++)observers.push(new IntersectionObserver(()=>{}));",
+    );
+    assert!(loaded.failed.is_empty());
+    let mut wire = serde_json::to_value(loaded.state).unwrap();
+    for state in wire["page"]["intersection_observers"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        state["options"]["thresholds"] = serde_json::json!(vec![0.0; 128]);
+    }
+    let malformed: VmState = serde_json::from_value(wire).unwrap();
+    assert!(malformed.validate_document(&common::page()).is_err());
+    assert!(
+        malformed
+            .summary()
+            .validate_summary_document(&common::page())
+            .is_err()
+    );
+}

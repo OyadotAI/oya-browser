@@ -286,8 +286,12 @@ ports remain explicit refusals.
 
 IntersectionObserver owns bounded, serialized viewport-root registrations in V9,
 using actual client boxes, root margins, thresholds and a dedicated asynchronous
-record queue. Limits are 64 observers, 256 aggregate targets, 512 queued records
-and 128 thresholds. Callbacks and targets participate in GC and restored-state
+record queue. One combined 4 MiB native/wire budget charges observers, thresholds, targets and
+queued records. Independent ceilings are 8,192 observers, 16,384 targets and 5,461
+records; combined storage binds first, and thresholds remain capped at 128.
+Pressure GC reclaims unreachable inactive observers after author conversions,
+with native temporaries rooted. Sampling caches geometry per target and charges
+work before allocation; removal releases excess retained capacity. Callbacks and targets participate in GC and restored-state
 validation; author timer IDs cannot cancel observer tasks. Runtime compares
 native geometry at layout boundaries and invalidates on resize/scroll. A dedicated
 Observe action delivers callbacks and their microtasks without firing unrelated

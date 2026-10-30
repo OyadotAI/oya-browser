@@ -37,6 +37,7 @@ pub(in crate::v9) fn validate_summary(state: &super::super::PageState) -> Engine
 /** Only full-state validation proves heap identity; both paths preserve every page-owned bound. */
 fn validate_with_heap(state: &super::super::PageState, heap: Option<&Heap>) -> EngineResult<()> {
     let observers = &state.intersection_observers;
+    budget::usage(observers).validate()?;
     if observers.len() > OBSERVERS
         || observers
             .values()
@@ -138,7 +139,9 @@ fn target_object(heap: &Heap, node: usize, id: ObjectId) -> bool {
 
 /** Callable proxies preserve their creation-time capability even after revocation. */
 fn callable(heap: &Heap, mut id: ObjectId) -> bool {
-    for _ in 0..OBSERVERS {
+    /** Callback proxy depth is independent of how many observer instances fit in the context. */
+    const PROXY_HOPS: usize = 64;
+    for _ in 0..PROXY_HOPS {
         match heap.get(id).map(|object| &object.class) {
             Some(Class::Function(_)) => return true,
             Some(Class::Proxy(proxy)) => {

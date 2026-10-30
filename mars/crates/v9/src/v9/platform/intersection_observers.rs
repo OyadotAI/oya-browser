@@ -1,4 +1,5 @@
 /** Persistent viewport observations use measured boxes and context-owned, branded registrations. */
+mod budget;
 mod options;
 mod sampling;
 mod validation;
@@ -14,10 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 pub(in crate::v9) use validation::{roots, validate, validate_summary};
 
-/** Bound callback identities and the aggregate work any geometry update can request. */
-const OBSERVERS: usize = 64;
-const TARGETS: usize = 256;
-const RECORDS: usize = 512;
+use budget::{OBSERVERS, RECORDS, TARGETS};
 const THRESHOLDS: usize = 128;
 const MARGIN_LIMIT: f64 = 1_000_000.0;
 const RECT_LIMIT: f64 = 1_000_000_000.0;
@@ -109,11 +107,13 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !vm.is_callable(&callback) {
         return Err(vm.type_error("IntersectionObserver requires a callback"));
     }
+    vm.pin(callback.clone());
+    vm.pin(target.clone());
     let options = options::parse(vm, &call.arg(1))?;
-    if vm.page.state.intersection_observers.len() >= OBSERVERS {
-        return Err(EngineError::limit("IntersectionObservers", OBSERVERS).into());
-    }
     let prototype = vm.prototype_for(target, IDS.get().expect("observer installed").prototype)?;
+    vm.pin(JsValue::Object(prototype));
+    // Prototype/options getters can reenter construction; admission runs only after all author code.
+    budget::admit(vm, budget::Usage::observer(options.thresholds.len()))?;
     let object = vm.alloc(Object::new(Class::Plain, Some(prototype)))?;
     vm.heap.put(
         object,
@@ -160,26 +160,37 @@ fn element(vm: &mut Vm, value: &JsValue) -> Res<(usize, ObjectId)> {
 /** Removing a registration stops future observations; already queued records retain their lifetime. */
 fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = identity(vm, &call.this)?;
+    vm.charge(
+        vm.page.state.intersection_observers[&id]
+            .targets
+            .len()
+            .saturating_add(1),
+    )?;
     match dom::native_name(&call) {
         "takeRecords" => return sampling::take_records(vm, id),
-        "disconnect" => vm
-            .page
-            .state
-            .intersection_observers
-            .get_mut(&id)
-            .expect("brand")
-            .targets
-            .clear(),
+        "disconnect" => {
+            vm.page
+                .state
+                .intersection_observers
+                .get_mut(&id)
+                .expect("brand")
+                .targets = Vec::new();
+        }
         name => {
             let (node, object) = element(vm, &call.arg(0))?;
             if name == "unobserve" {
-                vm.page
+                let targets = &mut vm
+                    .page
                     .state
                     .intersection_observers
                     .get_mut(&id)
                     .expect("brand")
-                    .targets
-                    .retain(|target| target.node != node);
+                    .targets;
+                targets.retain(|target| target.node != node);
+                // Keep retained capacity within the two-copy storage allowance after removals.
+                if targets.capacity() > targets.len().saturating_mul(2) {
+                    targets.shrink_to_fit();
+                }
             } else {
                 observe(vm, id, node, object)?;
             }
@@ -190,6 +201,14 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Duplicate observe calls preserve previous thresholds and never enqueue extra initial entries. */
 fn observe(vm: &mut Vm, id: ObjectId, node: usize, object: ObjectId) -> Res<()> {
+    vm.pin(JsValue::Object(id));
+    vm.pin(JsValue::Object(object));
+    vm.charge(
+        vm.page.state.intersection_observers[&id]
+            .targets
+            .len()
+            .saturating_add(1),
+    )?;
     if vm.page.state.intersection_observers[&id]
         .targets
         .iter()
@@ -197,16 +216,7 @@ fn observe(vm: &mut Vm, id: ObjectId, node: usize, object: ObjectId) -> Res<()> 
     {
         return Ok(());
     }
-    let count: usize = vm
-        .page
-        .state
-        .intersection_observers
-        .values()
-        .map(|state| state.targets.len())
-        .sum();
-    if count >= TARGETS {
-        return Err(EngineError::limit("IntersectionObserver targets", TARGETS).into());
-    }
+    budget::admit(vm, budget::Usage::target())?;
     vm.page
         .state
         .intersection_observers

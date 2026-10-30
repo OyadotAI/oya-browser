@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Replaced Mars’s 64-IntersectionObserver cap with a shared 4 MiB native-state budget, pressure reclamation of unused observers, and consistent restore checks. Geometry sampling caches target measurements and charges work before allocation; callbacks and queued records remain real rather than silently dropped.
+
 - Expanded Mars script-visible metadata to a shared 8 MiB budget and 32,256 records, reserving script-node capacity. Complete records include tag and attribute-name costs; restored documents/environments enforce the same limits, and fresh head insertion avoids repeated full-head scans.
 
 - Fixed Mars clicks on painted descendants of links and buttons: native defaults resolve to the supported ancestor while JavaScript retains the original event target. Ancestor inline handlers participate in click admission, and frame hit testing now respects pointer-events.
