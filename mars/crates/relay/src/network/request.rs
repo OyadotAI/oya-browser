@@ -163,7 +163,17 @@ impl WebRequest {
             || self.origin.is_some()
             || self.mode.is_some()
             || self.preflight.is_some();
-        (script || !used) && headers_ok && origin_ok && preflight_ok
+        // Images may carry only host-selected CORS fields, never page headers or preflights.
+        let image = self.destination == Destination::Image
+            && self.method == Method::Get
+            && self.headers.is_empty()
+            && self.preflight.is_none()
+            && match self.mode {
+                Some(super::cors::Mode::Cors) => self.origin.is_some(),
+                None | Some(super::cors::Mode::NoCors) => self.origin.is_none(),
+                _ => false,
+            };
+        (script || image || !used) && headers_ok && origin_ok && preflight_ok
     }
 }
 /// Raw response metadata is private to the coordinator; never export cookies to agents.
@@ -200,7 +210,8 @@ pub struct WebResponse {
     /// A script request's response headers (lowercase, repeats joined, at most
     /// SCRIPT_RESPONSE_HEADERS), for the coordinator's CORS check and filtering. Set-Cookie and
     /// Set-Cookie2 are never among them. A document carries only X-Frame-Options and
-    /// Content-Security-Policy, for the framing check; other requests carry none.
+    /// Content-Security-Policy, for the framing check. Images carry only the two CORS admission
+    /// fields; other requests carry none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub headers: Vec<(String, String)>,
 }

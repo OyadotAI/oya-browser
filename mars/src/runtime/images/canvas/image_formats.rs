@@ -12,7 +12,12 @@ fn asset(mime: &str, bytes: &[u8], clean: bool) -> ImageAsset {
         mime: mime.into(),
         bytes: std::sync::Arc::new(bytes.to_vec()),
         decoded: 16,
-        image_source: Some(("https://site.test/image".into(), 1.0)),
+        image_source: super::super::ImageSelection::new(
+            &url::Url::parse("https://site.test/").unwrap(),
+            "/image",
+            1.0,
+            crate::v9::ImageCors::NoCors,
+        ),
         origin_clean: clean,
     }
 }

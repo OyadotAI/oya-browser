@@ -33,6 +33,10 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 
 pub(super) mod canvas;
+mod source;
+use crate::v9::ImageCors;
+use source::FetchKey;
+pub(in crate::runtime) use source::Selection as ImageSelection;
 #[cfg(test)]
 #[path = "images/lifecycle_tests.rs"]
 mod lifecycle_tests;
@@ -51,9 +55,9 @@ pub struct ImageAsset {
     /// Decoded bitmap bytes this image costs, so later script-inserted images are charged
     /// against what the page already holds; zero for a drawing.
     pub decoded: u64,
-    /// An actual image decode's selected request URL and density; backgrounds have no image provenance.
-    pub(super) image_source: Option<(String, f64)>,
-    /// True only for local data or an acquisition whose every hop stayed on the document origin.
+    /// Actual decoded selection includes URL, density, CORS mode and principal; backgrounds have none.
+    pub(super) image_source: Option<ImageSelection>,
+    /// True only for local data, all-same-origin acquisition, or a successfully admitted CORS chain.
     pub(super) origin_clean: bool,
 }
 
@@ -688,7 +692,7 @@ pub(super) struct Budget {
     /// Images already fetched on this page by address: a repeated address reuses its result
     /// instead of spending another request (CSS2 tables' references draw 130 swatches from four
     /// files, and their sixty-fifth showed as alt text).
-    fetched: std::collections::HashMap<String, Fetched>,
+    fetched: std::collections::HashMap<FetchKey, Fetched>,
 }
 impl Budget {
     /// Background or legacy image work may add assets between lifecycle batches; never undercount them.
@@ -726,14 +730,13 @@ impl Budget {
     /// An image this page already fetched from `source`, reused without another request: Some
     /// with the image (or None when its bytes no longer fit the byte budgets, which still count
     /// every copy), or None when the address is new.
-    pub(super) fn reused(&mut self, source: &str) -> Option<Option<Fetched>> {
-        let seen = self.fetched.get(source.trim())?.clone();
+    fn reused(&mut self, source: &FetchKey) -> Option<Option<Fetched>> {
+        let seen = self.fetched.get(source)?.clone();
         Some(self.admit(&seen).then_some(seen))
     }
     /// Remembers what `source` fetched, for `reused`.
-    pub(super) fn remember(&mut self, source: &str, fetched: &Fetched) {
-        self.fetched
-            .insert(source.trim().to_owned(), fetched.clone());
+    fn remember(&mut self, source: &FetchKey, fetched: &Fetched) {
+        self.fetched.insert(source.clone(), fetched.clone());
     }
     /// Whether no request is left to make.
     pub(super) fn exhausted(&self) -> bool {
@@ -830,7 +833,15 @@ impl super::supervisor::Runtime {
                     && wanted(node)
                     && !skip.contains(&node.local_id)
             })
-            .map(|(position, node)| (position, sources(document, node, viewport)))
+            .map(|(position, node)| {
+                (
+                    position,
+                    sources(document, node, viewport),
+                    ImageCors::from_attribute(
+                        node.attributes.get("crossorigin").map(String::as_str),
+                    ),
+                )
+            })
             .collect::<Vec<_>>();
         let backgrounds = crate::document::background_urls(document, base.as_str())
             .into_iter()
@@ -846,16 +857,16 @@ impl super::supervisor::Runtime {
             })
             .collect::<Vec<_>>();
         let mut images = BTreeMap::new();
-        for (position, candidates) in sources {
+        for (position, candidates, cors) in sources {
             let mut fetched = None;
             for (src, density) in candidates {
                 fetched = self
-                    .read_image(base, &src, deadline, budget, notes)?
+                    .read_image_mode(base, &src, cors, deadline, budget, notes)?
                     .map(|fetched| {
                         (
                             fetched,
                             density,
-                            base.join(src.trim()).ok().map(|url| url.to_string()),
+                            ImageSelection::new(base, &src, density, cors),
                         )
                     });
                 if fetched.is_some() {
@@ -865,7 +876,7 @@ impl super::supervisor::Runtime {
             let node = &mut document.nodes[position];
             match fetched {
                 Some((Fetched::Raster(mut asset, size), density, selected)) => {
-                    asset.image_source = selected.map(|url| (url, density));
+                    asset.image_source = selected;
                     node.image_size = Some(css_size(size, density));
                     images.insert(node.local_id, asset);
                 }
@@ -1002,7 +1013,21 @@ impl super::supervisor::Runtime {
         budget: &mut Budget,
         notes: &mut Vec<String>,
     ) -> EngineResult<Option<Fetched>> {
-        if let Some(seen) = budget.reused(source) {
+        self.read_image_mode(base, source, ImageCors::NoCors, deadline, budget, notes)
+    }
+    /** Foreground images capture their CORS selection before acquisition or reuse; backgrounds stay no-CORS. */
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn read_image_mode(
+        &mut self,
+        base: &url::Url,
+        source: &str,
+        cors: ImageCors,
+        deadline: std::time::Instant,
+        budget: &mut Budget,
+        notes: &mut Vec<String>,
+    ) -> EngineResult<Option<Fetched>> {
+        let identity = FetchKey::new(base, source, cors);
+        if let Some(seen) = budget.reused(&identity) {
             return Ok(seen);
         }
         if !budget.request() {
@@ -1017,14 +1042,14 @@ impl super::supervisor::Runtime {
         {
             data_url(source)
         } else {
-            self.fetch_image(base, source, deadline)
+            self.fetch_image(base, source, cors, deadline)
         };
         if std::time::Instant::now() >= deadline {
             return Err(EngineError::navigation_timeout());
         }
         match fetched {
             Ok(fetched) if budget.admit(&fetched) => {
-                budget.remember(source, &fetched);
+                budget.remember(&identity, &fetched);
                 Ok(Some(fetched))
             }
             Ok(_) => {
@@ -1044,15 +1069,16 @@ impl super::supervisor::Runtime {
         &mut self,
         base: &url::Url,
         source: &str,
+        cors: ImageCors,
         deadline: std::time::Instant,
     ) -> EngineResult<Fetched> {
         let url = base
             .join(source.trim())
             .map_err(|_| EngineError::invalid("Invalid image URL."))?;
         let bitmap = !svg_address(&url);
-        match self.fetch_image_as(base, &url, bitmap, deadline) {
+        match self.fetch_image_as(base, &url, bitmap, cors, deadline) {
             Err(error) if bitmap && error.code == UNSUPPORTED && error.service.is_none() => {
-                self.fetch_image_as(base, &url, false, deadline)
+                self.fetch_image_as(base, &url, false, cors, deadline)
             }
             fetched => fetched,
         }
@@ -1063,9 +1089,10 @@ impl super::supervisor::Runtime {
         base: &url::Url,
         url: &url::Url,
         bitmap: bool,
+        cors: ImageCors,
         deadline: std::time::Instant,
     ) -> EngineResult<Fetched> {
-        let (response, origin_clean) = canvas::fetch(self, base, url, bitmap, deadline)?;
+        let (response, origin_clean) = canvas::fetch(self, base, url, bitmap, cors, deadline)?;
         if response.status != HTTP_OK {
             return Err(EngineError::unsupported("The image could not be loaded."));
         }
@@ -1640,10 +1667,16 @@ mod tests {
     fn repeated_addresses_reuse_their_image() {
         let mut budget = Budget::default();
         let gif = data_url("data:image/gif;base64,R0lGODlhAQABAAAAACw=").unwrap();
-        assert!(budget.reused("swatch.png").is_none());
-        budget.remember("swatch.png", &gif);
-        let copies =
-            (0..IMAGE_COUNT * 2).filter(|_| matches!(budget.reused(" swatch.png"), Some(Some(_))));
+        let base = url::Url::parse("https://site.test/").unwrap();
+        let key = FetchKey::new(&base, "swatch.png", ImageCors::NoCors);
+        assert!(budget.reused(&key).is_none());
+        budget.remember(&key, &gif);
+        let copies = (0..IMAGE_COUNT * 2).filter(|_| {
+            matches!(
+                budget.reused(&FetchKey::new(&base, " swatch.png", ImageCors::NoCors)),
+                Some(Some(_))
+            )
+        });
         assert_eq!(copies.count(), IMAGE_COUNT * 2);
         assert!(!budget.exhausted());
     }

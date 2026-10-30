@@ -767,6 +767,8 @@ impl Runtime {
             .iter()
             .filter(|node| {
                 node.tag == "img"
+                    // Legacy batch prefetch always includes credentials; CORS images use their own per-hop policy.
+                    && !node.attributes.contains_key("crossorigin")
                     && !node.hidden()
                     && wanted(node)
                     && !skip.contains(&node.local_id)

@@ -74,7 +74,7 @@ pub(in crate::v9) mod workers;
 
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
-pub use images::{ImageAdoption, ImageRequest, ImageResponse};
+pub use images::{ImageAdoption, ImageCors, ImageRequest, ImageResponse};
 
 pub(in crate::v9) use install::install;
 pub(in crate::v9) use net::XhrState;

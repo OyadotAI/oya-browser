@@ -1,11 +1,12 @@
 /** Decoded canvas sources retain actual image acquisition provenance and bounded shared pixels. */
 use super::ImageAsset;
-use crate::network::{Destination, WebRequest, WebResponse};
+use crate::network::WebResponse;
 use crate::protocol::{EngineError, EngineResult};
 use crate::runtime::{resources::Redirects, supervisor::Runtime};
 use mars_core::canvas::{Bitmap, IMAGE_SOURCE_BYTES};
 use std::time::Instant;
 use url::Url;
+mod cors;
 mod decoder;
 mod formats;
 #[cfg(all(test, target_os = "macos"))]
@@ -32,36 +33,31 @@ pub(in crate::runtime) fn source(
     (bitmap, asset.origin_clean)
 }
 
-/** Every redirect hop is observed before marking a no-CORS image origin-clean. */
+/** Governed redirects retain credential policy and validate CORS before granting clean image pixels. */
 pub(super) fn fetch(
     runtime: &mut Runtime,
     base: &Url,
     initial: &Url,
     bitmap: bool,
+    mode: crate::v9::ImageCors,
     deadline: Instant,
 ) -> EngineResult<(WebResponse, bool)> {
     let mut url = initial.clone();
-    let mut origin_clean = true;
+    let mut flow = cors::ImageFlow::new(base, mode);
     for hops in 0..=crate::constants::REDIRECTS {
-        origin_clean &= url.origin() == base.origin();
-        let request = WebRequest {
-            destination: Destination::Image,
-            image: bitmap,
-            ..WebRequest::get(url.as_str())
-        };
+        let (request, credentials) = flow.request(&url, bitmap);
         let acquired = runtime.acquire_with(
             request,
             deadline,
             Some(base.clone()),
             false,
             Redirects::Return,
-            true,
+            credentials,
         )?;
         let response = acquired.response;
-        origin_clean &=
-            Url::parse(&response.url).is_ok_and(|final_url| final_url.origin() == base.origin());
+        flow.admit(&url, &response)?;
         if ![301, 302, 303, 307, 308].contains(&response.status) {
-            return Ok((response, origin_clean));
+            return Ok((response, flow.origin_clean()));
         }
         if hops == crate::constants::REDIRECTS {
             return Err(EngineError::unsupported("Redirect limit exceeded."));
@@ -74,7 +70,9 @@ pub(super) fn fetch(
             .location
             .as_deref()
             .ok_or_else(|| EngineError::unsupported("Redirect has no Location."))?;
-        url = crate::network::redirect_url(&url, location, grants)?;
+        let next = crate::network::redirect_url(&url, location, grants)?;
+        flow.redirect(&url, &next);
+        url = next;
     }
     Err(EngineError::unsupported("Redirect limit exceeded."))
 }

@@ -328,3 +328,117 @@ fn decode_settles_with_the_image() {
     let failed = deliver(&sources, loaded.state, vec![response]);
     assert_eq!(console(&failed), ["failed error"]);
 }
+
+#[test]
+fn detached_image_requests_capture_crossorigin_enumerated_states() {
+    let (_, loaded) = load(
+        "for(const mode of [null,'','invalid','USE-CREDENTIALS']){const i=new Image();if(mode!==null)i.crossOrigin=mode;i.src='/pixel.png';}",
+    );
+    assert_eq!(
+        loaded
+            .effects
+            .image_requests
+            .iter()
+            .map(|r| r.cors)
+            .collect::<Vec<_>>(),
+        [
+            mars_v9::ImageCors::NoCors,
+            mars_v9::ImageCors::Anonymous,
+            mars_v9::ImageCors::Anonymous,
+            mars_v9::ImageCors::UseCredentials,
+        ]
+    );
+}
+
+#[test]
+fn changing_and_restoring_crossorigin_invalidates_old_generation() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.crossOrigin='anonymous';i.onload=()=>console.log('load');i.src='/pixel.png';setTimeout(()=>{i.crossOrigin='use-credentials';i.crossOrigin='anonymous';},0);",
+    );
+    let old = reply(&loaded, Some((2, 1)));
+    let changed = mars_v9::run_timers(
+        input(&sources, &host(), &environment()),
+        loaded.state,
+        0.0,
+        1,
+    )
+    .unwrap();
+    let new = reply(&changed, Some((3, 4)));
+    assert_eq!(old.request.cors, new.request.cors);
+    assert!(new.request.generation > old.request.generation);
+    let stale = deliver(&sources, changed.state, vec![old]);
+    assert!(console(&stale).is_empty());
+    assert_eq!(
+        console(&deliver(&sources, stale.state, vec![new])),
+        ["load"]
+    );
+}
+
+#[test]
+fn a_reply_with_a_different_cors_policy_cannot_complete_the_image() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.crossOrigin='anonymous';i.onload=()=>console.log('load');i.src='/pixel.png';",
+    );
+    let correct = reply(&loaded, Some((2, 1)));
+    let mut incorrect = correct.clone();
+    incorrect.request.cors = mars_v9::ImageCors::NoCors;
+    let pending = deliver(&sources, loaded.state, vec![incorrect]);
+    assert!(console(&pending).is_empty());
+    assert_eq!(
+        console(&deliver(&sources, pending.state, vec![correct])),
+        ["load"]
+    );
+}
+
+#[test]
+fn adopted_images_keep_the_request_mode_without_another_request() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.crossOrigin='use-credentials';i.onload=()=>console.log(i.crossOrigin,i.naturalWidth);i.src='/pixel.png';document.body.append(i);",
+    );
+    let response = reply(&loaded, Some((2, 1)));
+    assert_eq!(response.request.cors, mars_v9::ImageCors::UseCredentials);
+    let document = projected(&loaded);
+    let finished = deliver_on(&sources, loaded.state, vec![response], document);
+    assert_eq!(console(&finished), ["use-credentials 2"]);
+    assert!(finished.effects.image_requests.is_empty());
+}
+
+#[test]
+fn changing_crossorigin_discards_an_already_decoded_result() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.onload=()=>{i.crossOrigin='anonymous';console.log(i.complete,i.naturalWidth);};i.src='/pixel.png';",
+    );
+    let response = reply(&loaded, Some((2, 1)));
+    let changed = deliver(&sources, loaded.state, vec![response]);
+    assert_eq!(console(&changed), ["false 0"]);
+    assert_eq!(
+        changed.effects.image_requests[0].cors,
+        mars_v9::ImageCors::Anonymous
+    );
+}
+
+#[test]
+fn initial_hidden_markup_images_use_their_authored_cors_policy() {
+    let mut document = common::page();
+    document.nodes.push(common::element(
+        4,
+        Some(0),
+        "img",
+        &[
+            ("src", "/hidden.png"),
+            ("crossorigin", "anonymous"),
+            ("hidden", ""),
+        ],
+    ));
+    let loaded = mars_v9::load_page(mars_v9::PageInput {
+        document,
+        ..input(&[], &host(), &environment())
+    })
+    .unwrap();
+    assert!(loaded.failed.is_empty());
+    assert_eq!(loaded.effects.image_requests.len(), 1);
+    assert_eq!(
+        loaded.effects.image_requests[0].cors,
+        mars_v9::ImageCors::Anonymous
+    );
+}

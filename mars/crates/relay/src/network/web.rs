@@ -124,7 +124,14 @@ impl Prepared {
             .min(WEB_TIMEOUT);
         let deadline = Instant::now() + budget;
         let fixture = fixture_granted(&url, grants);
-        let key = cache::Key::of(&request, &url, fixture);
+        // CORS images bypass the older URL-only HTTP cache; the coordinator reuses only mode-bound admitted images.
+        let key = if request.destination == Destination::Image
+            && request.mode == Some(super::cors::Mode::Cors)
+        {
+            None
+        } else {
+            cache::Key::of(&request, &url, fixture)
+        };
         let get = request.method == Method::Get;
         let lookup = match key.as_ref().filter(|_| get) {
             Some(key) => cache::lookup(key, &request, SystemTime::now()),
@@ -442,6 +449,10 @@ fn finish(
             .cloned(),
         headers: match request.destination {
             Destination::Empty => super::cors::response_headers(&headers),
+            Destination::Image => IMAGE_CORS_HEADERS
+                .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
             // A document keeps the headers that say who may frame it, for the coordinator's
             // check before it embeds the document in another origin's page.
             Destination::Document | Destination::Worker => FRAMING_HEADERS
@@ -455,6 +466,11 @@ fn finish(
 
 /// Response headers a document carries to the coordinator: who may frame it.
 const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
+/** Only the host's CORS admission sees these image response headers; they never enter page script data. */
+const IMAGE_CORS_HEADERS: [&str; 2] = [
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+];
 
 /**
  * Whether a response is a file to save rather than a page: only a top-level GET, and only when the

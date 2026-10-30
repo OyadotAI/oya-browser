@@ -116,6 +116,17 @@ Animated WebP, partial-first-frame GIF and non-macOS native decoding are explici
 unsupported. PNG/JPEG retain their existing Rust decoders and validate their
 declared decoded size against the source header.
 
+Image CORS mode is captured with each image generation and travels through source
+selection, completion and decoded reuse. Anonymous images omit cross-origin
+credentials; credentialed images require exact origin and credential grants.
+Relay admits narrowly scoped image Origin/mode fields and exposes only the
+bounded CORS response headers needed by the coordinator. Every redirect and final
+response passes the existing CORS flow before bytes may become origin-clean.
+Failures never retry through no-CORS or SVG fallback. Cache identities include
+mode and the CORS document origin; legacy credentialed prefetch and Relay's
+URL-only HTTP cache are bypassed for CORS images. No-CORS images retain their
+all-hop same-origin provenance rule and cross-origin taint.
+
 Eye retains bounded CSS transition metadata separately from authored opacity.
 Candidate-owned opacity timelines sample duration, delay, easing and interrupted
 or reversed transitions for HTML, body and ordinary nodes. Runtime seeds the

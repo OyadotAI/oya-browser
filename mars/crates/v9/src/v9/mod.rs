@@ -46,7 +46,7 @@ pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
-    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
+    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCors, ImageRequest, ImageResponse,
     NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};

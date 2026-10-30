@@ -174,6 +174,15 @@ Its signed executable SHA-256 is
 The original Mars and earlier Preview bundles were preserved. No QA, new test
 execution or Google retest was performed in this code-first batch.
 
+The next code-first slice implements CORS-enabled images with immutable request
+mode, generation-safe completion and mode/origin-aware decoded reuse. Actual
+per-hop server grants determine Canvas origin cleanliness; anonymous requests
+omit cross-origin credentials and credentialed requests require exact grants.
+Failed CORS loads do not retry as no-CORS. Initial, hidden, detached and adopted
+images retain selection policy. CORS images bypass legacy credentialed prefetch
+and Relay's URL-only HTTP cache; bounded per-page decoded reuse remains. Focused
+regressions were added but not run, and this next batch's build is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

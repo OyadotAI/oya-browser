@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 
 mod adoption;
 pub use adoption::ImageAdoption;
+mod cors;
+pub use cors::ImageCors;
 
 /** Keep DOM adoption on the platform facade used by other DOM components. */
 pub(super) fn adopt(page: &mut Page, from: usize, to: usize) -> EngineResult<()> {
@@ -28,6 +30,9 @@ pub struct ImageRequest {
     pub source: String,
     /// Absolute fallback URL resolved by V9 without accessing the network.
     pub url: String,
+    /// Fetch policy is captured with the source generation, never inferred from a later DOM value.
+    #[serde(default)]
+    pub cors: ImageCors,
 }
 
 /// Actual host decoding completion; missing dimensions denotes a failed fetch or decode.
@@ -56,6 +61,8 @@ pub(in crate::v9) struct State {
     pub generation: u64,
     /** Literal src before URL resolution, so restored text can be bounded and compared. */
     pub source: String,
+    /** The crossorigin state belongs to the same generation as the pixels and pending request. */
+    pub cors: ImageCors,
     /** The host has received this generation and must eventually return its outcome. */
     pub requested: bool,
     /** No image work remains for this generation, either after success or failure. */
@@ -153,7 +160,22 @@ fn has_source(page: &mut Page, node: usize) -> bool {
 
 /** Reset on every relevant mutation, including A->B->A and repeated assignment of the same src. */
 pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> EngineResult<()> {
-    if !["src", "srcset", "sizes"].contains(&name) || page.tag(node) != "img" {
+    if !["src", "srcset", "sizes", "crossorigin"].contains(&name) || page.tag(node) != "img" {
+        return Ok(());
+    }
+    let cors = page
+        .view(node)
+        .map(|view| {
+            ImageCors::from_attribute(view.attributes.get("crossorigin").map(String::as_str))
+        })
+        .unwrap_or_default();
+    if name == "crossorigin"
+        && page
+            .state
+            .images
+            .get(&node)
+            .is_some_and(|state| state.cors == cors)
+    {
         return Ok(());
     }
     let source = page
@@ -169,6 +191,7 @@ pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> Engine
     *state = State {
         generation,
         source,
+        cors,
         complete,
         ..State::default()
     };
@@ -228,6 +251,7 @@ fn request(vm: &mut Vm, node: usize) -> EngineResult<()> {
         generation: state.generation,
         source,
         url,
+        cors: state.cors,
     });
     Ok(())
 }
@@ -258,6 +282,7 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
     let state = vm.page.state.images.get_mut(&node).expect("resolved image");
     if state.generation != request.generation
         || state.source != request.source
+        || state.cors != request.cors
         || !state.requested
         || state.complete
     {

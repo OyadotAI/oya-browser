@@ -2,12 +2,12 @@
 use super::{IMAGE_REQUEST_WALL, INSERTED_IMAGE_WALL, Page, Runtime};
 use crate::constants::{IMAGE_COUNT, NODES, URL_BYTES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
-use crate::v9::{ImageAdoption, ImageRequest, ImageResponse};
+use crate::v9::{ImageAdoption, ImageCors, ImageRequest, ImageResponse};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 /** The source selection inputs ensure a cached decode cannot be reused for another candidate. */
-type Source = (String, f64);
+type Source = super::super::images::ImageSelection;
 
 /** Per-page queues and native decode admission remain bounded even for detached Image objects. */
 #[derive(Clone, Default)]
@@ -56,7 +56,8 @@ impl Loading {
 fn source(page: &Page, node: &crate::document::Node, viewport: f64) -> Option<Source> {
     let (url, density) = super::super::images::selected_source(&page.document, node, viewport)?;
     let base = url::Url::parse(&page.url).ok()?;
-    Some((base.join(url.trim()).ok()?.to_string(), density))
+    let cors = ImageCors::from_attribute(node.attributes.get("crossorigin").map(String::as_str));
+    Source::new(&base, &url, density, cors)
 }
 
 /** Multiple adoptions in one task may name intermediate identities absent from the final projection. */
@@ -349,14 +350,19 @@ impl Runtime {
             .iter()
             .find(|node| node.local_id == request.node && node.tag == "img");
         let selected = if let Some(node) = node {
-            if node.attributes.get("src").map_or("", String::as_str) != request.source {
+            if node.attributes.get("src").map_or("", String::as_str) != request.source
+                || ImageCors::from_attribute(node.attributes.get("crossorigin").map(String::as_str))
+                    != request.cors
+            {
                 return Ok(None);
             }
             source(page, node, self.render_context.width)
         } else if request.source.trim().is_empty() {
             None
         } else {
-            Some((request.url.clone(), 1.0))
+            url::Url::parse(&page.url)
+                .ok()
+                .and_then(|base| Source::new(&base, &request.url, 1.0, request.cors))
         };
         let Some(selected) = selected else {
             self.clear_failed_image(page, request.node);
@@ -375,8 +381,18 @@ impl Runtime {
         let base = url::Url::parse(&page.url)
             .map_err(|_| EngineError::invalid("Invalid image base URL."))?;
         let mut notes = Vec::new();
-        if let Some(fetched) = self.read_image(&base, &selected.0, deadline, budget, &mut notes)? {
-            let size = self.commit_image_decode(page, request.node, fetched, selected.1);
+        if let Some(mut fetched) = self.read_image_mode(
+            &base,
+            &selected.url,
+            selected.cors,
+            deadline,
+            budget,
+            &mut notes,
+        )? {
+            if let super::super::images::Fetched::Raster(asset, _) = &mut fetched {
+                asset.image_source = Some(selected.clone());
+            }
+            let size = self.commit_image_decode(page, request.node, fetched, selected.density);
             page.scripting
                 .image_loading
                 .decoded
