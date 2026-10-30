@@ -57,6 +57,40 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+SVGElement derives from Element, SVGGraphicsElement derives from SVGElement, and
+SVGSVGElement derives from SVGGraphicsElement. Shape completion never writes SVG
+members onto HTMLElement. Wrappers use their established namespace and local
+name; creation relinks foreign wrappers after namespace registration while
+preserving HTML custom classes. Native common style/event behavior is inherited
+from Element, and SVG focus/blur reuse existing native implementations.
+
+BroadcastChannel state belongs to V9; only inert ordered Open/Post/Close commands
+and a complete live endpoint snapshot cross to the coordinator. UTF-16 names are
+exact, IDs never recycle, closed calls fail before cloning, and relevant message
+listeners retain otherwise unreachable open channels. Native MessageEvents carry
+structured cloned data and the sender's origin; delivery rechecks receiver state.
+The shared worker clone supports cycles, aliases, plain objects/arrays, buffers
+and typed views; Map, Set, Date and shared-buffer payloads remain explicit clone
+refusals. No transfer-list API is exposed.
+
+The Runtime broker captures recipients at Post, excludes only the sender endpoint,
+and isolates authoritative exact origins plus schemeful registrable-domain sites.
+The site helper reuses Relay's Public Suffix List logic; paths, queries and ports
+do not partition top-level sites. Candidate commands, snapshots and acknowledgments
+are promoted with the same authority-guarded navigation/mutation/quiet publication.
+Detached frames, terminated workers, navigation replacement and tab closure revoke
+reception; earlier accepted posts can still complete. Terminal callback failure
+publishes one diagnostic and task acknowledgment with the unchanged page rather
+than retrying a poisoned callback forever. Inactive tab tasks use current tab
+authority and restore the selected tab, with one broadcast delivery per idle slice.
+Channels do not span independent Runtime/app instances.
+
+V9 admits 256 handles/context, 4,096 UTF-16 name units, 256 commands/turn and 16 MiB
+effect storage. Native endpoints share the seven ordinary context ceiling; the
+broker permits 1,024 tasks and 16 MiB accounted queue/metadata storage. Full and
+summary validation retain the same endpoint bounds. Per-message WorkerData bounds
+and the total VM-state limit are unchanged.
+
 Document's event parent is null for the case-sensitive `load` event. Resource
 loads retain element and Document delivery but cannot reach Window capture;
 direct Window load remains unchanged. Other non-bubbling events still traverse

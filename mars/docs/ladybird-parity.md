@@ -7,6 +7,73 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The YouTube transform failure was caused by SVGElement/SVGGraphicsElement aliases
+sharing HTMLElement.prototype: generated SVG shape completion installed a
+getter-only transform on the shared HTML prototype. SVG now has separate
+Element-based prototype chains, including namespace-aware specialized wrappers,
+while existing style/events and root width/height behavior remain. This permits
+Polymer's legitimate HTMLElement-derived prototype method assignment. Three
+focused regressions are added unrun. Build `c37c38bc` passed in 58.87s; log:
+`/private/tmp/mars-svg-prototype-repair-build.log`. Frozen executable SHA-256:
+`687095f3cb193df99f360e6a913daed873dbbd8a1d1b8529585c3a49a88b921d`.
+Signed and signature-verified `mars/dist/Mars Interface Repair.app` executable:
+`ab7c197e13808ac32a1c6e6bbb333923f4121b494983d397ccd3b15a5f30264c`.
+Its YouTube startup loaded 42 scripts, published 1,325 document nodes, and recorded
+no script-failure diagnostics. Four observed same-origin Innertube POSTs returned
+HTTP 200; the captured document no longer contained the offline fallback copy.
+Evidence: `/private/tmp/mars-youtube-interface-20261030/perf.log` and `captured/`.
+The capture directory was sealed after startup to stop repetitive frame dumps;
+the desktop and three engines remain running for manual testing. This does not
+verify video playback, all interactions or complete YouTube compatibility.
+
+
+BroadcastChannel build `63a005e0` passed in 37.13s with final HTTP-status diagnostics
+after the initial full build. Log: `/private/tmp/mars-broadcast-final-build.log`.
+Frozen executable SHA-256:
+`0946daac3810b858e535eada87fdafeb0cde6ae0b4cab2a2ca01abb05c332a2b`.
+Signed `mars/dist/Mars Channel Repair.app` executable SHA-256:
+`c7771c8bf544867eba566f76baea086c342a2ed324468d7784fca6c888ef831f`.
+Its captured GitHub startup published 2,116 document nodes with no script failure
+diagnostics, resolving the observed BroadcastChannel-constructor failure in that
+startup. Cross-tab interaction and full rendering remain unverified; suites were
+not run. Capture: `/private/tmp/mars-github-broadcast-20261030/inputs`.
+
+The same build captured YouTube's newly reported getter-only `transform` failure
+exactly. Script 29's reported line 5655 rethrows through `_DumpException`; line
+9277 assigns Polymer's `Y.prototype.transform` during construction of its
+HTMLElement mixin. This identifies an interface-binding conflict before ordinary
+API requests rather than proving a network connectivity failure. Capture:
+`/private/tmp/mars-youtube-requests-20261030/inputs`. Both temporary diagnostic
+instances were stopped after their startup evidence was retained.
+
+GitHub's improved error identified BroadcastChannel as the previously unnamed
+illegal constructor. V9 now exposes real construction, immutable names, post/close,
+native message events and listener-sensitive lifetime; the coordinator routes
+committed tasks across same-origin/same-schemeful-partition tabs, frames and workers.
+Receiver sets are captured at post time, ordered by endpoint creation, and checked
+again for close/teardown at delivery. Same-context sibling channels receive; the
+sender object does not. Cross-runtime messaging and Map/Set/Date/shared-buffer
+clone payloads remain unsupported. Seven V9 and seven native broker regressions,
+plus three site-partition checks, are added unrun. Library compilation passed in
+33.39s; the first complete application build passed in 1m 00s.
+
+The YouTube screenshot matches its local API-failure fallback, not a false
+navigator.onLine default: Mars reports true and the inspected binding is correct.
+Private opt-in diagnostics now retain native request identity, fixed endpoint
+category/method, same-origin flag, failure stage/code and HTTP response status.
+They exclude URL/query/header/body and raw error text; POST retry/uncertainty and
+CORS behavior are unchanged. Three focused diagnostics regressions are unrun.
+
+A fresh Oya-site diagnostic startup fetched 85,517 HTML bytes, parsed 523 nodes,
+loaded 13 scripts (697,417 source bytes) and published the page; retained document
+inputs include visible main headings and no script failure diagnostic. This does
+not establish visual correctness or reproduce the user's reported load failure.
+The inline Script 8 indexOf error could not be matched to 654 saved V9 inputs or
+880 standalone HTML/JS artifacts, nor the fresh Oya-site/Google homepage captures;
+its receiver remains unidentified and no speculative fallback was added.
+Temporary capture instances were stopped; repetitive render inputs were removed
+while first/last renders, scripts, network inputs and logs were retained.
+
 Load-event repair build `e73ff8a5` passed in 55.49s. Final build log:
 `/private/tmp/mars-load-event-repair-final-build.log`. Frozen executable SHA-256:
 `a45fb1a90fd1c008d344580002cf3e673214b1d38276cc411526303b03a432e6`.

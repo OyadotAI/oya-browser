@@ -8,6 +8,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
+
+- Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
+
+- Added opt-in, privacy-limited script request diagnostics for native failure stages and HTTP response statuses, retaining the original POST failure before uncertainty wrapping without changing web-visible fetch behavior.
+
 - Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
 
 - Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
