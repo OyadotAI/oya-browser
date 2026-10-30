@@ -8,6 +8,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; the 16,384-live-listener bound remains.
+
+- Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
+
+- Separated embedded Mars image payload admission from the 8 KiB network-address limit. Bounded data images retain normal decoding and CSP checks; oversized optional sources finish as image errors instead of aborting navigation, with aggregate source and request text limits.
+
+- Initialized Mars Window event-handler globals, including `onload`, so reads before assignment return null and strict assignments share the existing body-forwarded dispatch path. Forbidden native constructors now identify their actual interface without consulting page-controlled names.
+
 - Added one bounded Mars TLS reconnect after a raw handshake reset, preferring another already-validated address. The same TLS settings and certificate checks remain in force, no HTTP data is replayed, and per-candidate deadline leases interrupt negotiation at the original deadline.
 
 - Corrected Mars TLS HelloRetryRequest key shares: when a server requests a specific group, the next ClientHello contains exactly that share. Initial and cookie-only retries retain GREASE and existing TLS verification.
