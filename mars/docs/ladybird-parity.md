@@ -7,6 +7,18 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The next combined production build at `3a530af9` passes in 1m 15s, including
+Canvas dashed strokes, HTML/body resize measurements and the two interpreter
+lookup optimizations. No performance gain or Google success has been measured.
+Build log: `/private/tmp/mars-parity-dashes-wrappers-performance-build.log`.
+Frozen unsigned binary SHA-256:
+`d7f3b41dcb326f4672cd1c428c660daace37c2083a1f8bb52ebe394784676125`.
+The signed, verified `mars/dist/Mars Development.app` was launched for the
+maintainer with an ephemeral profile; its executable SHA-256 is
+`a1d114051c6518b36e1c4a8930842914ca98b2d92f09a32e906ba1885b08a1bc`.
+Existing bundles were preserved. Focused regressions remain unrun, and no QA,
+benchmark, broad test gate or Google retest was performed.
+
 ResizeObserver now also receives genuine HTML/body wrapper metrics through a
 dedicated transport, including forced-layout retries and native invalidation.
 Percentage edges are resolved before descendant measurement, and root auto
@@ -14,7 +26,7 @@ dimensions use in-flow extents captured before positioned overflow contributes
 to scroll size. Incomplete auto layouts remain unmeasured; so do auto roots with
 a hidden/out-of-flow body and root pseudo siblings whose independent flow extent
 is unavailable. Synchronous resize loops remain outside this slice. Focused
-regressions are being added but not run; the combined production build is pending.
+regressions were added but not run; the combined production build passes below.
 
 Canvas setLineDash/getLineDash/lineDashOffset now retain genuine saved state and
 feed bounded dashed stroke geometry. Patterns are split in user space with
@@ -22,8 +34,8 @@ per-subpath phase, closed-seam joining and round/square cap dots for zero-length
 dashes. Conversion is bounded to 128 input values and 256 canonical values;
 splitting admits at most 16,384 transitions and generated points before existing
 outline/raster limits. Process-accounted scratch and work admission precede
-painting. Focused regressions are being added but not run; the combined build
-is pending. Overflowing pattern sums and excessive tiny dashes fail explicitly.
+painting. Focused regressions were added but not run; the combined build
+passes below. Overflowing pattern sums and excessive tiny dashes fail explicitly.
 
 The existing offline Google worker timeout sample includes frame-proxy lookup
 and UTF-16 key allocation during ordinary JavaScript property reads. Worker
@@ -31,13 +43,13 @@ contexts now skip the browsing-context lookup they cannot use, page reads reuse
 one proxy-target result, and immutable private target/incarnation keys are cached.
 Detached proxy identity checks are preserved. The saved evidence establishes
 avoidable work, not its share of the timeout: no new benchmark, replay or Google
-query was run. This optimization's combined production build is pending.
+query was run. This optimization's combined production build passes below.
 Array callback iteration now similarly reads present ordinary dense values once,
 instead of separate presence and value lookups. Holes, sparse storage, descriptor
 properties, proxies and shared containers retain the generic path. Each iteration
 rechecks after callback mutations, with captured length and work charges unchanged.
 The saved sample motivates this work but does not measure its improvement; no
-benchmark or replay was run. This slice joins the next combined build.
+benchmark or replay was run. This slice is included in the successful build below.
 
 The combined release build at `7018cee9` passes with SVG Path2D, nested workers,
 persistent ResizeObserver and URL semantics. The first attempt caught a missing
