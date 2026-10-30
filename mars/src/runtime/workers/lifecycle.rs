@@ -10,6 +10,7 @@ impl Runtime {
         name: String,
         worker_type: WorkerType,
         credentials: WorkerCredentials,
+        blob_source: Option<crate::v9::BlobUrlSource>,
         until: Instant,
     ) -> EngineResult<Context> {
         let started = Instant::now();
@@ -30,10 +31,23 @@ impl Runtime {
             csp: page.document.csp.clone(),
         };
         let deadline = until.max(Instant::now() + crate::runtime::scripting::SCRIPT_REQUEST_WALL);
-        let source = match worker_type {
-            WorkerType::Classic => self.worker_source(&creator, url, true, deadline),
-            WorkerType::Module => {
-                self.worker_module_source(&creator, url, true, credentials, deadline)
+        let source = if url.starts_with("blob:") {
+            if worker_type != WorkerType::Classic {
+                return Err(EngineError::unsupported(
+                    "Blob module workers are unavailable.",
+                ));
+            }
+            self.worker_blob_source(&creator, url, blob_source.as_ref())
+        } else if blob_source.is_some() {
+            return Err(EngineError::invalid(
+                "Blob source requires a Blob worker URL.",
+            ));
+        } else {
+            match worker_type {
+                WorkerType::Classic => self.worker_source(&creator, url, true, deadline),
+                WorkerType::Module => {
+                    self.worker_module_source(&creator, url, true, credentials, deadline)
+                }
             }
         }?
         .ok_or_else(|| EngineError::unsupported("The worker script could not be loaded."))?;

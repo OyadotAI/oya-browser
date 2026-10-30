@@ -1501,5 +1501,9 @@ pub(in crate::v9) fn encode_pairs(pairs: &[(String, String)]) -> String {
 
 /** URL statics that need blobs. */
 pub(in crate::v9) fn url_object_url(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    Err(vm.unsupported_error(&format!("URL.{}", native_name(&call))))
+    match native_name(&call) {
+        "createObjectURL" => super::blob_urls::create(vm, call),
+        "revokeObjectURL" => super::blob_urls::revoke(vm, call),
+        _ => Err(vm.unsupported_error("Unknown object URL operation")),
+    }
 }

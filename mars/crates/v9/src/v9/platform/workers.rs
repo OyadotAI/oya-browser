@@ -58,6 +58,9 @@ pub enum WorkerCommand {
         worker_type: WorkerType,
         #[serde(default)]
         credentials: WorkerCredentials,
+        /// Capture while the creator still owns the URL; later revocation cannot cancel admission.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blob_source: Option<super::blob_urls::BlobUrlSource>,
     },
     /// Zero denotes a worker's owner; positive identities denote a page's exact handle.
     Post {
@@ -70,6 +73,34 @@ pub enum WorkerCommand {
     },
     /// Zero closes the current worker; other values terminate a child handle.
     Terminate { id: u32 },
+}
+
+impl WorkerCommand {
+    /// Bound captured sources alongside message bodies before retaining or serializing a queue.
+    pub fn bytes(&self) -> crate::protocol::EngineResult<usize> {
+        match self {
+            Self::Create {
+                url,
+                name,
+                blob_source,
+                ..
+            } => {
+                let bytes = if let Some(source) = blob_source {
+                    source.validate(url)?;
+                    source
+                        .bytes
+                        .len()
+                        .saturating_add(source.mime_type.len())
+                        .saturating_add(source.origin.len())
+                } else {
+                    0
+                };
+                Ok(bytes.saturating_add(url.len()).saturating_add(name.len()))
+            }
+            Self::Post { data, .. } => data.bytes(),
+            Self::Terminate { .. } => Ok(0),
+        }
+    }
 }
 /** A handle remains branded after termination, but cannot enqueue new work. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -157,17 +188,14 @@ fn send(vm: &mut Vm, call: &Call, id: u32) -> Res<JsValue> {
     }
     let ports = transfers(vm, call.arg(1))?;
     let data = worker_clone::encode(vm, &call.arg(0))?;
-    let queued =
-        vm.page
-            .effects
-            .worker_commands
-            .iter()
-            .try_fold(data.bytes()?, |total, command| {
-                Ok::<_, EngineError>(total.saturating_add(match command {
-                    WorkerCommand::Post { data, .. } => data.bytes()?,
-                    _ => 0,
-                }))
-            })?;
+    let queued = vm
+        .page
+        .effects
+        .worker_commands
+        .iter()
+        .try_fold(data.bytes()?, |total, command| {
+            Ok::<_, EngineError>(total.saturating_add(command.bytes()?))
+        })?;
     if queued > crate::v9::WORKER_MESSAGE_BYTES {
         return Err(
             EngineError::limit("Worker queued bytes", crate::v9::WORKER_MESSAGE_BYTES).into(),
@@ -192,10 +220,7 @@ fn capacity(vm: &mut Vm) -> Res<()> {
         .worker_commands
         .iter()
         .try_fold(0usize, |sum, command| {
-            Ok::<_, EngineError>(sum.saturating_add(match command {
-                WorkerCommand::Post { data, .. } => data.bytes()?,
-                _ => 0,
-            }))
+            Ok::<_, EngineError>(sum.saturating_add(command.bytes()?))
         })?;
     if vm.page.effects.worker_commands.len() >= WORKER_TASKS
         || bytes >= crate::v9::WORKER_MESSAGE_BYTES

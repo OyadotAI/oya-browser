@@ -7,6 +7,7 @@
 pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
+pub(in crate::v9) mod blob_urls;
 pub(in crate::v9) mod canvas;
 pub(in crate::v9) mod channel;
 mod chrome_env;
@@ -1113,6 +1114,8 @@ pub(in crate::v9) struct NumberConstantPool {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /// Object URL bytes survive Blob wrapper collection until revocation or context disposal.
+    pub blob_urls: BTreeMap<String, blob_urls::BlobUrlSource>,
     /// Handles root their event targets until the owning document is destroyed.
     pub workers: BTreeMap<u32, workers::Handle>,
     /// close() prevents future owner posts while allowing the current synchronous task to finish.

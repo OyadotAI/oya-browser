@@ -96,7 +96,16 @@ impl Runtime {
                 name,
                 worker_type,
                 credentials,
-            } => match self.create_worker(page, &url, name, worker_type, credentials, until) {
+                blob_source,
+            } => match self.create_worker(
+                page,
+                &url,
+                name,
+                worker_type,
+                credentials,
+                blob_source,
+                until,
+            ) {
                 Ok(worker) => {
                     page.scripting.workers.contexts.insert(id, worker);
                 }

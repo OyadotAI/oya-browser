@@ -69,8 +69,17 @@ The combined production build passes; new native/V9 module-worker regression
 targets have not been run in this code-first batch. Blob URLs, nested workers
 and redirects remain unsupported in this slice.
 
+Classic Blob workers now use actual immutable Blob/File bytes captured by the
+constructor. Object URLs are context-owned and revocable; existing captured
+workers survive revocation, while future loads of revoked URLs fail. Runtime
+enforces creator origin and inherited CSP without network acquisition. Registry
+storage is bounded to 64 URLs and 4 MiB, and captured commands retain the existing
+worker queue limit. Seven V9 and five native regression cases were added but not
+run in the code-first batch. Blob module workers, cross-context URL sharing and
+Blob fetch/image consumers remain unfinished.
+
 Current substantial gaps remain in broader CSS transition properties/animation rendering,
-Canvas paths/clipping/compositing and broader image sources, blob/nested workers,
+Canvas paths/clipping/compositing and broader image sources, Blob module/nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

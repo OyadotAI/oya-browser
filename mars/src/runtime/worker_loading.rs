@@ -1,3 +1,4 @@
+mod blob;
 /** Worker scripts use distinct origin, CSP, MIME and partition rules through governed acquisition. */
 mod diagnostics;
 use super::{csp, resources::Redirects, supervisor::Runtime};

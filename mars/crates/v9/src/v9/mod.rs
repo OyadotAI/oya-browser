@@ -36,6 +36,7 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 #[cfg(feature = "conformance")]
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
+pub use platform::blob_urls::BlobUrlSource;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
 pub use platform::frame_directory::{
@@ -667,6 +668,7 @@ impl VmState {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
+        platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::frame_directory::validate_state(&self.page)?;
         platform::channel::validate_bounds(&self.page)?;

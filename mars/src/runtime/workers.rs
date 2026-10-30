@@ -84,10 +84,7 @@ impl Workers {
             .iter()
             .chain(&commands)
             .try_fold(0usize, |sum, command| {
-                Ok::<_, EngineError>(sum.saturating_add(match command {
-                    WorkerCommand::Post { data, .. } => data.bytes()?,
-                    _ => 0,
-                }))
+                Ok::<_, EngineError>(sum.saturating_add(command.bytes()?))
             })?;
         if bytes > crate::v9::WORKER_MESSAGE_BYTES {
             return Err(EngineError::limit(
