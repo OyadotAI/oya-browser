@@ -165,6 +165,12 @@ pub struct ComputedStyle {
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
+    /// Resolved keyframes stay separate from authored opacity and sampled runtime presentation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub opacity_animations: Vec<super::OpacityAnimation>,
+    /// Important authored opacity suppresses animation effects without restarting their clocks.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub opacity_animation_blocked: bool,
     /// Authored transition lists remain separate from sampled paint opacity and do not inherit.
     #[serde(skip_serializing_if = "super::TransitionStyle::is_initial")]
     pub transition: super::TransitionStyle,
@@ -853,6 +859,8 @@ impl Default for ComputedStyle {
             min_width: None,
             min_width_percent: None,
             opacity: 1.0,
+            opacity_animations: Vec::new(),
+            opacity_animation_blocked: false,
             transition: super::TransitionStyle::default(),
             rtl: false,
             position: Position::Static,

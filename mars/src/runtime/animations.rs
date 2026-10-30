@@ -5,8 +5,11 @@ use crate::v9::{AnimationTarget, OpacityEffect};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-/** Each cascade updates the candidate's transition timeline without altering authored styles. */
-pub(super) fn refresh_transitions(page: &mut super::page::Page) -> EngineResult<()> {
+/** Each cascade updates candidate CSS timelines without altering authored styles. */
+pub(super) fn refresh_timelines(page: &mut super::page::Page) -> EngineResult<()> {
+    page.scripting
+        .css_animations
+        .update(&page.document, page.scripting.clock_ms)?;
     page.scripting
         .css_transitions
         .update(&page.document, page.scripting.clock_ms)
@@ -17,6 +20,7 @@ pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> Vec<Opac
     combine_effects(
         &scripting.opacity_effects,
         &scripting.css_transitions,
+        &scripting.css_animations,
         scripting.clock_ms,
     )
 }
@@ -25,24 +29,46 @@ pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> Vec<Opac
 pub(super) fn combine_effects(
     effects: &[OpacityEffect],
     transitions: &crate::document::OpacityTransitions,
+    animations: &crate::document::OpacityAnimations,
     now_ms: f64,
 ) -> Vec<OpacityEffect> {
-    let mut merged = effects
-        .iter()
-        .map(|effect| (effect.target.clone(), effect.value))
+    let mut merged = animations
+        .effects(now_ms)
+        .into_iter()
+        .map(|(target, value)| (native_target(target), value))
         .collect::<std::collections::BTreeMap<_, _>>();
+    merged.extend(
+        effects
+            .iter()
+            .map(|effect| (effect.target.clone(), effect.value)),
+    );
     for (target, value) in transitions.effects(now_ms) {
-        let target = match target {
-            crate::document::TransitionTarget::Html => AnimationTarget::Html,
-            crate::document::TransitionTarget::Body => AnimationTarget::Body,
-            crate::document::TransitionTarget::Node(id) => AnimationTarget::Node(id),
-        };
-        merged.insert(target, value);
+        merged.insert(native_target(target), value);
     }
     merged
         .into_iter()
         .map(|(target, value)| OpacityEffect { target, value })
         .collect()
+}
+
+/** Eye and V9 preserve the same wrapper/node distinction without depending on each other. */
+fn native_target(target: crate::document::TransitionTarget) -> AnimationTarget {
+    match target {
+        crate::document::TransitionTarget::Html => AnimationTarget::Html,
+        crate::document::TransitionTarget::Body => AnimationTarget::Body,
+        crate::document::TransitionTarget::Node(id) => AnimationTarget::Node(id),
+    }
+}
+
+/** Either CSS timeline can keep native paint advancing without extending script execution. */
+pub(super) fn next_sample(scripting: &super::scripting::Scripting) -> Option<f64> {
+    [
+        scripting.css_transitions.next_sample_ms(scripting.clock_ms),
+        scripting.css_animations.next_sample_ms(scripting.clock_ms),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by(f64::total_cmp)
 }
 
 /** The real tree and its two document wrappers bound all distinct paint targets. */
@@ -237,5 +263,48 @@ mod tests {
         scripting.clock_ms = 2000.0;
         assert_eq!(paint_effects(&scripting), scripting.opacity_effects);
         assert!(!scripting.pending());
+    }
+
+    /** Initial CSS animations drive paint without JavaScript and keep completed fill without ticks. */
+    #[test]
+    fn css_keyframes_keep_native_paint_active_and_preserve_authored_opacity() {
+        let source = crate::document::parse("<p id=target>text</p>").unwrap();
+        let document = crate::document::compute_styles(
+            &source,
+            &["@keyframes fade{from{opacity:0}to{opacity:1}}p{opacity:.8;animation:fade 1s linear forwards}".into()],
+        ).unwrap();
+        let target = document
+            .nodes
+            .iter()
+            .find(|node| node.html_id == "target")
+            .unwrap();
+        let mut scripting = super::super::scripting::Scripting::default();
+        scripting.css_animations.update(&document, 0.0).unwrap();
+        scripting.clock_ms = 500.0;
+        assert!(scripting.pending());
+        let effects = paint_effects(&scripting);
+        let opacity = effects
+            .iter()
+            .find(|effect| effect.target == AnimationTarget::Node(target.local_id))
+            .unwrap()
+            .value;
+        assert!((opacity - 0.5).abs() < 0.001);
+        assert_eq!(target.style.opacity, 0.8);
+        scripting.opacity_effects = vec![OpacityEffect {
+            target: AnimationTarget::Node(target.local_id),
+            value: 0.25,
+        }];
+        assert_eq!(paint_effects(&scripting), scripting.opacity_effects);
+        scripting.opacity_effects.clear();
+        scripting.clock_ms = 1000.0;
+        assert!(!scripting.pending());
+        assert_eq!(
+            paint_effects(&scripting)
+                .iter()
+                .find(|effect| effect.target == AnimationTarget::Node(target.local_id))
+                .unwrap()
+                .value,
+            1.0
+        );
     }
 }

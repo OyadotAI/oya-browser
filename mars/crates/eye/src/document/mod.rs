@@ -52,6 +52,9 @@ pub use style::{
     TextTransform, WhiteSpace, background_owner, background_urls, canvas_key, compute_frame_styles,
     compute_styles, compute_styles_with_context, css_imports, layer_key, rebase_urls,
 };
+pub use style::{
+    AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
+};
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,

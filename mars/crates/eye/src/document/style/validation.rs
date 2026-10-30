@@ -49,6 +49,11 @@ impl ComputedStyle {
                 .any(|value| !value.is_finite() || value.abs() > CSS_MAX_SCALAR)
             || !(0.0..=1.0).contains(&self.opacity)
             || !self.transition.valid()
+            || self.opacity_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .opacity_animations
+                .iter()
+                .all(super::OpacityAnimation::valid)
             || !self.font_size.is_finite()
             || !(self.font_size == 0.0
                 || (CSS_MIN_FONT_SIZE..=CSS_MAX_FONT_SIZE).contains(&self.font_size))

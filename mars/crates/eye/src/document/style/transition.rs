@@ -7,4 +7,5 @@ mod timeline;
 pub use easing::TransitionEasing;
 pub use model::TransitionStyle;
 pub(super) use parse::{LONGHANDS, apply, copy, shorthand};
+pub(super) use parse::{parts, time};
 pub use timeline::{OpacityTransitions, TransitionTarget};

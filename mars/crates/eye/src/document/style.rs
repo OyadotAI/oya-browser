@@ -5,6 +5,9 @@ mod all;
  * refuse the page. Dropped rules that could have hidden content withdraw agent actionability.
  */
 mod animation;
+pub use animation::{
+    AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
+};
 mod apply;
 mod attr;
 pub(crate) mod background_layers;

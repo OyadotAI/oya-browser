@@ -56,8 +56,23 @@ impl Resolver<'_> {
     ) -> EngineResult<bool> {
         super::values::set_own_line(None);
         self.substitute(style, parent, &mut chosen);
+        style.opacity_animations = super::animation::tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.opacity_animation_blocked = chosen
+            .get("opacity")
+            .is_some_and(|(priority, _)| priority.0);
+        let authored_opacity = chosen.get("opacity").cloned();
         // Resting animation frames override the cascade; their own `var()`s substitute next.
         let mut hides = super::animation::animate(&mut chosen, self.keyframes, diagnostics);
+        // Only opacity has a live timeline; its authored base must survive every recascade.
+        chosen.remove("opacity");
+        if let Some(opacity) = authored_opacity {
+            chosen.insert("opacity".into(), opacity);
+        }
         self.substitute(style, parent, &mut chosen);
         bottom_layer_clip(&mut chosen);
         let rtl = super::logical::rtl(&chosen, style.rtl);

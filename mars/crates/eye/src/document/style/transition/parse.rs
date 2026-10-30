@@ -80,7 +80,7 @@ pub(super) fn property(value: &str) -> bool {
 }
 
 /** Parse finite CSS times in milliseconds; unitless zero is not a CSS time. */
-fn time(value: &str) -> Option<f64> {
+pub(in crate::document::style) fn time(value: &str) -> Option<f64> {
     let (number, scale) = value
         .strip_suffix("ms")
         .map(|number| (number, 1.0))
@@ -103,7 +103,7 @@ fn list<T>(value: &str, parse: impl Fn(&str) -> Option<T>) -> EngineResult<Vec<T
 }
 
 /** Comma lists reject empty items instead of accidentally accepting trailing or doubled separators. */
-pub(super) fn parts(value: &str) -> Option<Vec<&str>> {
+pub(in crate::document::style) fn parts(value: &str) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
     let mut start = 0;
     loop {

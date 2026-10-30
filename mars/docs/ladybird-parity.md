@@ -86,7 +86,22 @@ bounded before mutation. Seven Core and nine V9 regressions were added but not
 run in this code-first batch. Curves, arcs, clipping, Path2D and dashes remain
 unfinished.
 
-Current substantial gaps remain in broader CSS transition properties/animation rendering,
+CSS opacity keyframes now advance on the native page clock, with easing,
+positive/negative delay, fractional/infinite iterations, playback direction,
+fill and pause/resume. Recascade preserves matched animation times. Paused and
+completed fills do not keep background work pending; sampled values stay separate
+from authored opacity. Ten Eye regressions and a runtime paint/scheduling
+regression were added but not run. Other animated properties retain their
+existing static fallback; animation events and full API exposure remain gaps.
+
+The combined production binary for classic Blob workers, Canvas paths and CSS
+opacity keyframes builds successfully. Its SHA-256 is
+`096ffde044f7832ad11fc51c36079fe0e441ec9cb17a4c3e063c1c5c1304b96b`;
+build evidence is `/private/tmp/mars-parity-path-blob-keyframes-build-resumed.log`.
+The first build exhausted disk space; clearing only the regenerable debug
+incremental cache allowed it to complete. No QA or per-change tests were run.
+
+Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas curves/clipping/compositing and broader image sources, Blob module/nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and

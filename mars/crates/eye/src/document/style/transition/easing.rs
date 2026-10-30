@@ -35,7 +35,7 @@ impl Default for TransitionEasing {
 
 impl TransitionEasing {
     /** Accept the bounded easing grammar and reject malformed control points and steps counts. */
-    pub(super) fn parse(value: &str) -> Option<Self> {
+    pub(in crate::document::style) fn parse(value: &str) -> Option<Self> {
         let easing = match value {
             "linear" => Self::Linear,
             "ease" => Self::default(),
@@ -56,7 +56,7 @@ impl TransitionEasing {
     }
 
     /** Wire values obey the same constraints as CSS parsing before any sampling occurs. */
-    pub(super) fn valid(&self) -> bool {
+    pub(in crate::document::style) fn valid(&self) -> bool {
         match self {
             Self::Linear => true,
             Self::CubicBezier(points) => {
@@ -73,11 +73,16 @@ impl TransitionEasing {
     }
 
     /** Return eased active progress; interpolation clamps opacity after permitted overshoot. */
-    pub(super) fn sample(&self, progress: f64) -> f64 {
+    pub(in crate::document::style) fn sample(&self, progress: f64) -> f64 {
+        self.sample_before(progress, false)
+    }
+
+    /** Filled before/after phases select the appropriate side of an exact step discontinuity. */
+    pub(in crate::document::style) fn sample_before(&self, progress: f64, before: bool) -> f64 {
         match self {
             Self::Linear => progress,
             Self::CubicBezier(points) => bezier(*points, progress),
-            Self::Steps { count, position } => steps(*count, *position, progress),
+            Self::Steps { count, position } => steps(*count, *position, progress, before),
         }
     }
 }
@@ -136,7 +141,7 @@ fn component(first: f64, second: f64, time: f64) -> f64 {
 }
 
 /** Step sampling follows the jump position, including the terminal value at progress one. */
-fn steps(count: u32, position: StepPosition, progress: f64) -> f64 {
+fn steps(count: u32, position: StepPosition, progress: f64, before: bool) -> f64 {
     let count = f64::from(count);
     let initial = if matches!(position, StepPosition::Start | StepPosition::Both) {
         1.0
@@ -148,5 +153,10 @@ fn steps(count: u32, position: StepPosition, progress: f64) -> f64 {
         StepPosition::None => count - 1.0,
         _ => count,
     };
-    ((progress * count).floor() + initial).clamp(0.0, jumps) / jumps
+    let boundary = if before && (progress * count).fract() == 0.0 {
+        1.0
+    } else {
+        0.0
+    };
+    ((progress * count).floor() + initial - boundary).clamp(0.0, jumps) / jumps
 }

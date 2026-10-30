@@ -101,7 +101,13 @@ at native painting with priority over other sampled opacity effects. Background
 frames use the existing page clock and expensive-work throttle; continuing CSS
 transitions do not extend the JavaScript timer wake window. Other transition
 properties, events, discrete transitions and CSS animation API exposure remain
-unfinished.
+unfinished. CSS opacity keyframes also retain authored styles and use the same
+native clock. Resolved tracks carry easing, delays, iterations, direction, fill
+and play state; recascades match names from the end of each list to preserve
+playback. Paused and completed fills remain visible without scheduling frames.
+Paint priority is CSS animations, V9 effects, then CSS transitions. Unsupported
+animated properties retain their earlier static fallback; full transform
+interpolation, animation events and animation API exposure remain unfinished.
 
 V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
 64 URLs and 4 MiB including metadata. Classic worker construction captures an

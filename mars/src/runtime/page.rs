@@ -529,7 +529,7 @@ impl Runtime {
         if page.untrusted_styles {
             untrusted(&mut page.document);
         }
-        super::animations::refresh_transitions(page)?;
+        super::animations::refresh_timelines(page)?;
         crate::document::validate_content(&page.document)?;
         page.state
             .validate_document(&crate::document::script_document(

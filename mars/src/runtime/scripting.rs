@@ -72,6 +72,8 @@ pub(super) struct Scripting {
     pub opacity_effects: Vec<crate::v9::OpacityEffect>,
     /// CSS transition state belongs to the page candidate, independently of V9 animation state.
     pub css_transitions: crate::document::OpacityTransitions,
+    /// Keyframe playback is independent from authored opacity and transition state.
+    pub css_animations: crate::document::OpacityAnimations,
     /// Actual image requests and retained decode admission for this page alone.
     pub image_loading: image_loading::Loading,
     /// Load stays pending across bounded slices while its image cohort still has work.
@@ -196,6 +198,7 @@ impl Default for Scripting {
             load_pending: false,
             opacity_effects: Vec::new(),
             css_transitions: Default::default(),
+            css_animations: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
             attempted_frame_owners: Default::default(),
@@ -235,7 +238,7 @@ impl Scripting {
     }
     /** Whether the page has script work waiting. */
     pub(super) fn pending(&self) -> bool {
-        self.css_transitions.next_sample_ms(self.clock_ms).is_some()
+        super::animations::next_sample(self).is_some()
             || self.loaded
                 && (self.scroll_pending
                     || self.next_timer_ms.is_some()
@@ -247,8 +250,7 @@ impl Scripting {
 
     /** Native transition frames use their next sample time while expensive work stays throttled. */
     fn tick_interval(&self) -> Duration {
-        self.css_transitions
-            .next_sample_ms(self.clock_ms)
+        super::animations::next_sample(self)
             .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
             .unwrap_or(TICK_INTERVAL)
             .min(TICK_INTERVAL)
@@ -531,7 +533,7 @@ impl Runtime {
             self.render_context,
         )?;
         page.styled = true;
-        super::animations::refresh_transitions(page)?;
+        super::animations::refresh_timelines(page)?;
         self.refresh_image_visibility(page);
         let restyled: std::collections::BTreeSet<usize> =
             crate::document::background_urls(&page.document, &page.url)
@@ -721,9 +723,12 @@ impl Runtime {
         scroll.extend(execution.effects.element_scroll.clone());
         let mut transitions = page.scripting.css_transitions.clone();
         transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut animations = page.scripting.css_animations.clone();
+        animations.update(&styled, page.scripting.clock_ms)?;
         let effects = super::animations::combine_effects(
             &execution.effects.opacity_effects,
             &transitions,
+            &animations,
             page.scripting.clock_ms,
         );
         let display = self.render_effects(&styled, &scroll, &effects)?;
@@ -959,11 +964,7 @@ impl Runtime {
         let due = self.page.as_ref().is_some_and(|page| {
             ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
-                || page
-                    .scripting
-                    .css_transitions
-                    .next_sample_ms(page.scripting.clock_ms)
-                    .is_some())
+                || super::animations::next_sample(&page.scripting).is_some())
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
