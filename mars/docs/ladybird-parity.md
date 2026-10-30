@@ -40,11 +40,21 @@ Focused checks pass: 46 native desktop tests, 39 native script/frame tests,
 at first paint before V9 admission, preserving every service PID, the committed
 page identity and a mutated JavaScript value. Correctness, security and
 reliability reviews closed their supported findings. Strict all-targets,
-all-features release Clippy passes. The final broad workspace run and packaged
-app QA are still pending; these focused results are not a release gate.
+all-features release Clippy passes. The maintainer stopped the final broad
+workspace run during compilation and explicitly skipped packaged QA and the
+normal stage pipeline to prioritize parallel implementation. The interrupted
+run is not a passing gate.
+
+The subsequent code-first Canvas slice adds bounded decoded PNG/JPEG sources
+for all drawImage overloads, source cropping/scaling, JPEG orientation and
+origin-clean propagation. Loaded images outside the supported formats/512-pixel
+source edge remain explicitly unsupported. Cross-origin sources are
+conservatively tainted, including redirects away and back; CORS-authorized
+clean cross-origin images remain unimplemented. Six V9 regressions and two
+native fixtures were added but have not been run in this implementation batch.
 
 Current substantial gaps remain in CSS transitions/animation rendering,
-Canvas paths/clipping/compositing and decoded-image drawing, module/blob workers,
+Canvas paths/clipping/compositing and broader image sources, module/blob workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

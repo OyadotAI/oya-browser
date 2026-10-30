@@ -22,6 +22,8 @@ pub(in crate::runtime) struct Loading {
     decoded: BTreeMap<usize, (Source, (u32, u32))>,
     /** Monotonic page-wide request, transferred-byte and decoded-byte admission. */
     budget: Option<super::super::images::Budget>,
+    /** Monotonic delivery admission bounds pixels retained in the independent V9 image-source store. */
+    canvas_bytes: usize,
 }
 
 impl Loading {
@@ -301,9 +303,20 @@ impl Runtime {
             }
             let until = deadline.max(started + IMAGE_REQUEST_WALL);
             let dimensions = self.decode_image_request(page, &request, until, budget)?;
+            let asset = page
+                .images
+                .get(&request.node)
+                .or_else(|| page.scripting.image_loading.hidden.get(&request.node))
+                .cloned();
+            let (bitmap, origin_clean) = super::super::images::canvas::source(
+                asset.as_ref().filter(|_| dimensions.is_some()),
+                &mut page.scripting.image_loading.canvas_bytes,
+            );
             responses.push(ImageResponse {
                 request,
                 dimensions,
+                bitmap,
+                origin_clean,
             });
         }
         Ok(responses)

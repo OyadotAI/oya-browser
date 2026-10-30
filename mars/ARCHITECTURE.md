@@ -77,11 +77,14 @@ page, with 8 million pixel-work units per execution. Canonical pixel allocations
 and admitted native scratch share a 96 MiB process ceiling, stricter than the
 initial 128 MiB V9 design ceiling. Supported drawing includes solid fill/clear
 rectangles, generic-family text, width measurement, affine transforms, saved
-drawing state, global alpha, ImageData read/write, canvas-to-canvas copying and
-PNG export. Core plans bounded raster work before mutation, uses premultiplied
+drawing state, global alpha, ImageData read/write, canvas-to-canvas copying,
+bounded decoded PNG/JPEG image drawing and PNG export. Decoded sources retain
+fetch/redirect origin provenance, share immutable pixels and have an independent
+4 MiB per-page admission bound. Cross-origin drawing taints readback/export and
+copied canvases; reset restores origin cleanliness. Core plans bounded raster work before mutation, uses premultiplied
 bilinear sampling and preserves immutable self-copy snapshots. Eye transforms
 native text before clipping. CSS color and font parsing remain limited; paths,
-clipping paths, decoded-image drawing, full compositing and text metrics, WebGL
+clipping paths, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
 

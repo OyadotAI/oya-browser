@@ -15,6 +15,8 @@ pub const EDGE: u32 = 512;
 pub const CHANNELS: usize = 4;
 /// A page includes reachable detached canvases in its allocation allowance.
 pub const PAGE_BYTES: usize = 4 * 1024 * 1024;
+/// Decoded image sources have their own bounded page allowance, shared by saved candidates.
+pub const IMAGE_SOURCE_BYTES: usize = PAGE_BYTES;
 /// Prevent tiny canvases from multiplying context bookkeeping indefinitely.
 pub const CONTEXTS: usize = 16;
 /// Pixel work admitted per script request, including readback and export.

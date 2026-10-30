@@ -86,6 +86,8 @@ fn reply(execution: &Execution, dimensions: Option<(u32, u32)>) -> ImageResponse
     ImageResponse {
         request: execution.effects.image_requests[0].clone(),
         dimensions,
+        bitmap: None,
+        origin_clean: false,
     }
 }
 

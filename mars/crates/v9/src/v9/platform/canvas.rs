@@ -28,6 +28,9 @@ pub(in crate::v9) const CONTEXT_SLOT: &str = "canvas.context";
 pub(in crate::v9) struct State {
     pub context: ObjectId,
     pub bitmap: Bitmap,
+    /** Drawing an unclean source permanently blocks readback until this bitmap is reset. */
+    #[serde(default = "clean_bitmap")]
+    pub origin_clean: bool,
     /** Drawing state is copied independently from the shared backing allocation. */
     #[serde(default)]
     pub drawing: state::DrawingState,
@@ -133,6 +136,7 @@ fn create_context(vm: &mut Vm, call: Call) -> Res<JsValue> {
         State {
             context: id,
             bitmap,
+            origin_clean: true,
             drawing: state::DrawingState::default(),
             saved: Vec::new(),
             dirty: true,
@@ -195,6 +199,7 @@ fn export(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Encoding failures are transactional and leave the source bitmap untouched. */
 fn encode(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = canvas_node(vm, &call)?;
+    require_clean(vm, node)?;
     let [width, height] = size(&mut vm.page, node);
     if width == 0 || height == 0 || Bitmap::length(width, height).is_none() {
         return Ok(JsValue::string("data:,")?);
@@ -215,4 +220,23 @@ fn encode(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "data:image/png;base64,{}",
         super::window::base64_encode(&png)
     ))?)
+}
+
+/** Old snapshots contain only canvas-owned pixels, so their initial clean flag is true. */
+fn clean_bitmap() -> bool {
+    true
+}
+
+/** Drawing-state save/restore cannot undo taint; only bitmap reset may restore readback. */
+fn require_clean(vm: &mut Vm, node: usize) -> Res<()> {
+    if vm
+        .page
+        .state
+        .canvases
+        .get(&node)
+        .is_some_and(|state| !state.origin_clean)
+    {
+        return Err(vm.dom_exception("SecurityError", "Canvas pixels are not origin-clean."));
+    }
+    Ok(())
 }

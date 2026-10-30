@@ -35,6 +35,7 @@ pub(in crate::v9) fn prepare_resize(
 pub(in crate::v9) fn resized(page: &mut Page, node: usize, bitmap: Bitmap) {
     let state = page.state.canvases.get_mut(&node).expect("canvas");
     state.bitmap = bitmap;
+    state.origin_clean = true;
     state.drawing = state::DrawingState::default();
     state.saved.clear();
     state.dirty = true;

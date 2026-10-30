@@ -156,6 +156,7 @@ fn readback(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     if w == 0.0 || h == 0.0 {
         return Err(vm.dom_exception("IndexSizeError", "ImageData dimensions must be nonzero."));
     }
+    require_clean(vm, node)?;
     if w.abs() > f64::from(limits::EDGE) || h.abs() > f64::from(limits::EDGE) {
         return Err(quota(vm));
     }

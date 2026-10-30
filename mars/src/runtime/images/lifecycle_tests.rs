@@ -60,6 +60,8 @@ fn decoded_events(source: &str) -> Vec<String> {
         vec![ImageResponse {
             request,
             dimensions,
+            bitmap: None,
+            origin_clean: false,
         }],
     )
     .unwrap();

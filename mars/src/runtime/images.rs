@@ -32,6 +32,7 @@ const FONT_TABLES: usize = 64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+pub(super) mod canvas;
 #[cfg(test)]
 #[path = "images/lifecycle_tests.rs"]
 mod lifecycle_tests;
@@ -52,6 +53,8 @@ pub struct ImageAsset {
     pub decoded: u64,
     /// An actual image decode's selected request URL and density; backgrounds have no image provenance.
     pub(super) image_source: Option<(String, f64)>,
+    /// True only for local data or an acquisition whose every hop stayed on the document origin.
+    pub(super) origin_clean: bool,
 }
 
 /** PNG and JPEG are decoded by audited Rust libraries; WebP and GIF headers give their size. */
@@ -603,6 +606,7 @@ impl Fetched {
                 bytes: std::sync::Arc::new(markup.into_bytes()),
                 decoded: 0,
                 image_source: None,
+                origin_clean: false,
             },
         }
     }
@@ -1061,18 +1065,16 @@ impl super::supervisor::Runtime {
         bitmap: bool,
         deadline: std::time::Instant,
     ) -> EngineResult<Fetched> {
-        let request = crate::network::WebRequest {
-            destination: crate::network::Destination::Image,
-            image: bitmap,
-            ..crate::network::WebRequest::get(url.as_str())
-        };
-        let acquired = self.acquire(request, deadline, Some(base.clone()), false, true)?;
-        let response = acquired.response;
+        let (response, origin_clean) = canvas::fetch(self, base, url, bitmap, deadline)?;
         if response.status != HTTP_OK {
             return Err(EngineError::unsupported("The image could not be loaded."));
         }
         if response.image_data {
-            raster(response.mime, decode_base64(&response.source)?)
+            let mut fetched = raster(response.mime, decode_base64(&response.source)?)?;
+            if let Fetched::Raster(asset, _) = &mut fetched {
+                asset.origin_clean = origin_clean;
+            }
+            Ok(fetched)
         } else {
             vector(&response.mime, &response.source)
         }
@@ -1222,6 +1224,7 @@ pub(super) fn raster(mime: String, bytes: Vec<u8>) -> EngineResult<Fetched> {
             bytes: std::sync::Arc::new(bytes),
             decoded: u64::from(size.width) * u64::from(size.height) * 4,
             image_source: None,
+            origin_clean: false,
         },
         (size.width, size.height),
     ))
@@ -1348,7 +1351,11 @@ pub(super) fn data_url(src: &str) -> EngineResult<Fetched> {
     if mime == SVG_MIME {
         vector(&mime, std::str::from_utf8(&bytes).map_err(|_| invalid())?)
     } else {
-        raster(mime, bytes)
+        let mut fetched = raster(mime, bytes)?;
+        if let Fetched::Raster(asset, _) = &mut fetched {
+            asset.origin_clean = true;
+        }
+        Ok(fetched)
     }
 }
 
@@ -1654,6 +1661,7 @@ mod tests {
                     bytes: Default::default(),
                     decoded: 0,
                     image_source: None,
+                    origin_clean: false,
                 },
                 (SIDE, SIDE),
             )
@@ -1670,6 +1678,7 @@ mod tests {
                 bytes: std::sync::Arc::new(vec![0; IMAGE_TOTAL_BYTES]),
                 decoded: 4,
                 image_source: None,
+                origin_clean: false,
             },
         );
         let mut spent = Budget::spent(&images);

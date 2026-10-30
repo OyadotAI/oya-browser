@@ -1,13 +1,14 @@
 /** Canvas image copying snapshots source pixels before a destination can acquire mutable storage. */
 use super::*;
 
-/** Canvas sources are real branded elements; unsupported external image types are explicit. */
+/** Only genuine supported element wrappers enter pixel-source selection. */
 fn source(vm: &mut Vm, value: &JsValue) -> Res<usize> {
-    let node = dom::node_of(vm, value).filter(|node| vm.page.tag(*node) == "canvas");
+    let node = dom::node_of(vm, value)
+        .filter(|node| matches!(vm.page.tag(*node).as_str(), "canvas" | "img"));
     node.ok_or_else(|| {
         vm.dom_exception(
             "NotSupportedError",
-            "drawImage currently requires a canvas source.",
+            "drawImage requires a supported canvas or image source.",
         )
     })
 }
@@ -22,12 +23,55 @@ pub(super) fn draw(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     }
     let from = source(vm, &value)?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    let dimensions = size(&mut vm.page, from);
-    if dimensions.contains(&0) {
-        return Err(vm.dom_exception("InvalidStateError", "Source canvas has no pixels."));
-    }
+    let Some(source) = snapshot(vm, from)? else {
+        return Ok(JsValue::Undefined);
+    };
     drawable(vm, node)?;
-    copy(vm, node, from, dimensions, &values)
+    copy(vm, node, source, &values)
+}
+
+/** Natural dimensions determine overload defaults; bitmap dimensions determine sample coordinates. */
+struct Source {
+    bitmap: Bitmap,
+    dimensions: [u32; 2],
+    origin_clean: bool,
+}
+
+/** Pending images are no-ops, broken images throw, and unavailable decoded formats stay explicit. */
+fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
+    if vm.page.tag(from) == "canvas" {
+        let dimensions = size(&mut vm.page, from);
+        if dimensions.contains(&0) || Bitmap::length(dimensions[0], dimensions[1]).is_none() {
+            return Err(
+                vm.dom_exception("InvalidStateError", "Source canvas has no admitted pixels.")
+            );
+        }
+        return Ok(vm.page.state.canvases.get(&from).map(|state| Source {
+            bitmap: state.bitmap.clone(),
+            dimensions,
+            origin_clean: state.origin_clean,
+        }));
+    }
+    let Some(state) = vm.page.state.images.get(&from) else {
+        return Ok(None);
+    };
+    if !state.complete || !state.requested {
+        return Ok(None);
+    }
+    let Some((width, height)) = state.dimensions else {
+        return Err(vm.dom_exception("InvalidStateError", "Source image is broken."));
+    };
+    let Some(bitmap) = state.bitmap.clone() else {
+        return Err(vm.dom_exception(
+            "NotSupportedError",
+            "Decoded image pixels exceed this build's supported source formats or budget.",
+        ));
+    };
+    Ok(Some(Source {
+        bitmap,
+        dimensions: [width, height],
+        origin_clean: state.origin_clean,
+    }))
 }
 
 /** Overload arity determines which numeric conversions can execute author code. */
@@ -59,20 +103,16 @@ fn geometry(size: [u32; 2], values: &[f64]) -> ([f64; 4], [f64; 4]) {
 }
 
 /** Source snapshots share immutable backing until the destination performs fallible COW. */
-fn copy(
-    vm: &mut Vm,
-    node: usize,
-    from: usize,
-    dimensions: [u32; 2],
-    values: &[f64],
-) -> Res<JsValue> {
-    if Bitmap::length(dimensions[0], dimensions[1]).is_none() {
-        return Err(vm.dom_exception(
-            "InvalidStateError",
-            "Source canvas dimensions exceed this build's limit.",
-        ));
+fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue> {
+    let (mut crop, placement) = geometry(source.dimensions, values);
+    if crop[2] == 0.0 || crop[3] == 0.0 || placement[2] == 0.0 || placement[3] == 0.0 {
+        return Ok(JsValue::Undefined);
     }
-    let (crop, placement) = geometry(dimensions, values);
+    let dimensions = [source.bitmap.width, source.bitmap.height];
+    for index in 0..crop.len() {
+        let axis = index % 2;
+        crop[index] *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
+    }
     let state = &vm.page.state.canvases[&node];
     let plan = limits::plan_blit(
         dimensions,
@@ -83,21 +123,18 @@ fn copy(
         state.drawing.smoothing,
     )?;
     work(vm, plan.work())?;
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if plan.is_empty() {
+        state.origin_clean &= source.origin_clean;
         return Ok(JsValue::Undefined);
     }
-    // An untouched canvas is transparent; source-over cannot change the destination.
-    let Some(source) = vm
-        .page
-        .state
-        .canvases
-        .get(&from)
-        .map(|state| state.bitmap.clone())
-    else {
-        return Ok(JsValue::Undefined);
-    };
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    limits::blit(&mut state.bitmap, &source, &plan, state.drawing.alpha)?;
+    limits::blit(
+        &mut state.bitmap,
+        &source.bitmap,
+        &plan,
+        state.drawing.alpha,
+    )?;
+    state.origin_clean &= source.origin_clean;
     state.dirty = true;
     Ok(JsValue::Undefined)
 }

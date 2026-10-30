@@ -38,6 +38,12 @@ pub struct ImageResponse {
     pub request: ImageRequest,
     /// Intrinsic pixel dimensions from the admitted decoder, never inferred from author attributes.
     pub dimensions: Option<(u32, u32)>,
+    /// Optional admitted RGBA data; absent data keeps oversized or unsupported sources explicit.
+    #[serde(default)]
+    pub bitmap: Option<mars_core::canvas::Bitmap>,
+    /// Only the host's actual acquisition provenance can grant clean canvas readback.
+    #[serde(default)]
+    pub origin_clean: bool,
 }
 
 /** Source and decode state contains no heap references and needs no additional GC roots. */
@@ -56,6 +62,10 @@ pub(in crate::v9) struct State {
     pub complete: bool,
     /** Only a successful admitted decode provides intrinsic dimensions. */
     pub dimensions: Option<(u32, u32)>,
+    /** Immutable decoded pixels share candidate storage and reset with every source generation. */
+    pub bitmap: Option<mars_core::canvas::Bitmap>,
+    /** False is the safe default for hosts or restored records without acquisition provenance. */
+    pub origin_clean: bool,
 }
 
 /** Only actual HTML images own these getters; unrelated elements do not acquire image state. */
@@ -231,6 +241,7 @@ pub(in crate::v9) fn deliver(vm: &mut Vm, responses: Vec<ImageResponse>) -> Engi
         if !valid_request(&response.request) || !valid_dimensions(response.dimensions) {
             return Err(EngineError::invalid("Invalid image completion."));
         }
+        validate_bitmap(response.dimensions, response.bitmap.as_ref())?;
     }
     for response in responses {
         complete(vm, response)?;
@@ -254,6 +265,9 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
     }
     state.complete = true;
     state.dimensions = response.dimensions;
+    state.bitmap = response.bitmap;
+    state.origin_clean = response.origin_clean;
+    validate_pixels(&vm.page.state.images)?;
     let kind = if response.dimensions.is_some() {
         "load"
     } else {
@@ -275,6 +289,7 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
 /** Saved state and transport use the same finite image and URL bounds as actual host work. */
 pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<()> {
     adoption::validate(states)?;
+    validate_pixels(states)?;
     if states.len() > NODES + VM_DETACHED_NODES {
         return Err(EngineError::limit(
             "Image states",
@@ -288,6 +303,41 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
             || s.dimensions.is_some() && (!s.complete || !s.requested)
     }) {
         return Err(EngineError::invalid("Invalid image state."));
+    }
+    Ok(())
+}
+
+/** Pixel storage cannot outlive successful decoding or exceed the page's independent source cap. */
+fn validate_pixels(states: &BTreeMap<usize, State>) -> EngineResult<()> {
+    let mut bytes = 0usize;
+    for state in states.values() {
+        validate_bitmap(state.dimensions, state.bitmap.as_ref())?;
+        bytes = bytes.saturating_add(
+            state
+                .bitmap
+                .as_ref()
+                .map_or(0, |bitmap| bitmap.pixels.len()),
+        );
+    }
+    if bytes > mars_core::canvas::IMAGE_SOURCE_BYTES {
+        return Err(EngineError::limit(
+            "Canvas image source bytes",
+            mars_core::canvas::IMAGE_SOURCE_BYTES,
+        ));
+    }
+    Ok(())
+}
+
+/** Source pixels can differ from density-adjusted natural dimensions but must be a real bitmap. */
+fn validate_bitmap(
+    dimensions: Option<(u32, u32)>,
+    bitmap: Option<&mars_core::canvas::Bitmap>,
+) -> EngineResult<()> {
+    if let Some(bitmap) = bitmap {
+        bitmap.validate()?;
+        if dimensions.is_none() || !bitmap.drawable() {
+            return Err(EngineError::invalid("Invalid decoded image bitmap."));
+        }
     }
     Ok(())
 }
