@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Improved Mars's everyday navigation with an address that can replace a pending load, toolbar Stop, and expandable script-failure details. Restored the tested DuckDuckGo search/result/Back journey through JavaScript MIME, script-completion, SVG, selection and vendor-keyframe fixes. Kept markup-handler CSP separate from eval policy and preserved committed script state when cancellation occurs before request admission. Full Ladybird parity and Google Search remain unresolved.
 - Extended Mars Canvas 2D with affine transforms, drawing-state save/restore, alpha, ImageData creation/writes and canvas-to-canvas copying. Added indexed/named sibling frame messaging with document-generation checks and transferred-port routing. Broader Ladybird compatibility and successful Google Search remain unverified.
 - Native Mars page and worker clocks now advance within synchronous JavaScript tasks, preventing time-based loops from waiting forever on a frozen timestamp. Deterministic standalone V9 timing and execution budgets are preserved.
 - Added bounded classic dedicated workers to Mars with isolated globals, synchronous imports, queued messages and MessagePort transfers. Module, blob and nested workers remain unsupported; Google Search verification is still in progress.
