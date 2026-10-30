@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The existing offline Google worker timeout sample includes frame-proxy lookup
+and UTF-16 key allocation during ordinary JavaScript property reads. Worker
+contexts now skip the browsing-context lookup they cannot use, page reads reuse
+one proxy-target result, and immutable private target/incarnation keys are cached.
+Detached proxy identity checks are preserved. The saved evidence establishes
+avoidable work, not its share of the timeout: no new benchmark, replay or Google
+query was run. This optimization's combined production build is pending.
+
 The combined release build at `7018cee9` passes with SVG Path2D, nested workers,
 persistent ResizeObserver and URL semantics. The first attempt caught a missing
 resize vector type annotation; the corrected build completed in 1m 02s.

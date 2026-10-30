@@ -102,9 +102,10 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     let _ = IDS.set(Ids { proxy, deliver });
 }
 
-/** The private key holding a proxy's target. */
+/** Cache the immutable private key because ordinary property reads also probe proxy identity. */
 fn target_key() -> Key {
-    Key::private("remoteWindow")
+    static KEY: OnceLock<Key> = OnceLock::new();
+    KEY.get_or_init(|| Key::private("remoteWindow")).clone()
 }
 
 /** The proxy for `target`, made once and kept while referenced, so `event.source === parent`. */
@@ -163,7 +164,9 @@ pub(super) fn target_of(vm: &Vm, proxy: &JsValue) -> Option<i64> {
 
 /** An owner proxy retains its incarnation even after removal invalidates the cache entry. */
 fn incarnation_key() -> Key {
-    Key::private("remoteWindowIncarnation")
+    static KEY: OnceLock<Key> = OnceLock::new();
+    KEY.get_or_init(|| Key::private("remoteWindowIncarnation"))
+        .clone()
 }
 
 /** Missing incarnation slots represent the initial context in old serialized state. */

@@ -203,8 +203,13 @@ pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) -> EngineRes
 
 /** Resolve virtual frame properties before the VM's ordinary-object fast path. */
 pub(in crate::v9) fn lookup(vm: &mut Vm, object: ObjectId, key: &Key) -> Res<Option<JsValue>> {
+    // Dedicated workers cannot contain WindowProxy objects or browsing contexts.
+    if vm.page.environment.worker_name.is_some() {
+        return Ok(None);
+    }
     let Key::Str(name) = key else { return Ok(None) };
-    if let Some(target) = messaging::target_of(vm, &JsValue::Object(object))
+    let proxy_target = messaging::target_of(vm, &JsValue::Object(object));
+    if let Some(target) = proxy_target
         && let Some(window) = proxy_window(vm, target)
         && vm
             .page
@@ -235,8 +240,8 @@ pub(in crate::v9) fn lookup(vm: &mut Vm, object: ObjectId, key: &Key) -> Res<Opt
             .map(|target| messaging::proxy(vm, target).map(Some))
             .unwrap_or(Ok(None));
     }
-    let parent = messaging::target_of(vm, &JsValue::Object(object)) == Some(messaging::PARENT);
-    let local = object == vm.global_object() && vm.page.environment.worker_name.is_none();
+    let parent = proxy_target == Some(messaging::PARENT);
+    let local = object == vm.global_object();
     if !parent && !local {
         return Ok(None);
     }
