@@ -57,11 +57,27 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+V9 Execution carries aggregate finalization rollback in an optional `load_failure`
+separate from indexed script failures. Native consumers surface it once as a page
+diagnostic. Whole-load transport failures use an explicit valid script index when
+available and otherwise remain page-level failures; successful scripts are never
+invented as the sources of an aggregate failure.
+
+Intrinsic keyword width lookups belong to an active layout context. A thread-bound
+scope guard starts with empty measurements and restores the enclosing map when
+nested orthogonal layout exits. Completed child widths are published during
+premeasurement, so parent contributions never depend on previous-page node IDs.
+
 Event listener lifetime uses native AbortSignal branding/state, independent of
 replaceable public properties. Abort prunes registrations synchronously before
-callbacks; admission at the listener ceiling prunes old aborted entries and
+callbacks; admission at the listener storage ceiling prunes old aborted entries and
 invokes target-aware GC with converted arguments rooted. Remaining live listeners
-still enforce the existing ceiling. Collector node-target membership is indexed
+share a 16 MiB native/wire budget derived from the unchanged 64 MiB state ceiling.
+Accounting includes conservative tree slack, both event-name string capacities,
+and worst-case JSON escaping. Cached charges follow every mutation; restoration
+streams bounded registrations with unique identities. Full and summary checks
+share validation; dispatch snapshots consume work and IDs cannot wrap or reuse.
+Collector node-target membership is indexed
 once per pass to avoid a wrapper-by-listener scan.
 
 CSP inline script and handler admission share source-expression grammar and the

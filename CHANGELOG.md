@@ -8,7 +8,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
-- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; the 16,384-live-listener bound remains.
+- Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
+
+- Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
+
+- Scoped Mars intrinsic keyword width caches to each layout, publishing measured child constraints immediately and restoring enclosing widths after nested vertical layout. Earlier pages can no longer seed current-node measurements with stale widths.
+
+- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; listener storage remains bounded.
 
 - Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
 

@@ -7,6 +7,51 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Listener repair build `497f3126` passed in 1m 00s after the final stored-signal
+shape guard, including the layout-cache and aggregate-diagnostic repairs. Final
+log: `/private/tmp/mars-listener-storage-final-build.log`; the earlier production
+compile also passed in 1m 02s. Frozen executable SHA-256:
+`22ecbcde74cab620e134083d2fe2d1808c2bb5aecfe5b4e70f13021a1b1976b6`.
+`mars/dist/Mars Listener Repair.app` was signed, signature-verified and opened at
+DuckDuckGo for manual testing; its desktop and three service processes were
+confirmed running. Signed executable SHA-256:
+`b8fa99c93e2110e67805bb3a44dd694d9c1b11f97dbde248e6f11a80708d6983`.
+Tests and browser QA remain unrun. This replaces the fixed listener ceiling in
+the earlier Page Repair candidate; live DuckDuckGo success and the screenshot's
+overlap remain unverified.
+
+The repeated DuckDuckGo report prompted replacement of the fixed 16,384-listener
+ceiling with a 16 MiB storage budget, one quarter of the unchanged total state cap.
+Each registration accounts for the larger of conservative native tree allocation
+and worst-case escaped JSON, including both retained event-kind strings. Capacity
+therefore depends on event names and platform representation; the earlier rough
+50,000–65,000 estimate was too high once native tree overhead was included.
+Cached usage follows removal, pruning, cloning and node renumbering. Restoration
+streams records into the admitted index, rejecting duplicates and excess storage;
+full and summary validation agree. Dispatch copies are work-charged, IDs fail
+before wrapping, and the total 64 MiB serialized-state writer remains unchanged.
+Focused regressions cover 20,000 retained short-name registrations, storage
+pressure collection, long names, budget recovery, identity/shape rejection and
+full/summary restoration; they remain unrun. No live-page success is inferred
+from this capacity/lifetime repair.
+
+Whole-load errors no longer manufacture one failure per script. Native load
+fallback uses an engine-provided execution index only when valid; otherwise it
+reports one page initialization failure. V9 finalization rollback now carries an
+optional aggregate `load_failure` separately from actual indexed failures; native
+code records it once, including module continuations. Empty-state validation and
+rollback behavior remain unchanged. Five focused regressions are added unrun.
+Source tracing found no registration accumulation from geometry/source-cache
+retries or resident summary restoration.
+
+After the user repeated the listener failure, a second repair batch isolated
+intrinsic keyword measurements per layout. Each context starts with an empty
+cache, publishes completed child widths during premeasurement, and restores the
+enclosing cache after nested vertical layouts, including error returns. Three
+focused regressions are added unrun. Local homepage CSS contains the reported
+search/Duck.ai selectors, but this source-confirmed cache defect is not proven to
+be the screenshot's cause.
+
 Page repair build `3e1ae934` passed in 1m 09s, covering image source admission,
 Window handler defaults, listener cleanup, CSP parsing and constructor diagnostics.
 Build log: `/private/tmp/mars-page-compatibility-build.log`. Frozen executable
