@@ -157,6 +157,12 @@ immutable source and taint path. Twelve regression functions were added (eleven
 applicable on macOS) but not run. Animated WebP, partial-first-frame GIF and
 non-macOS native decoding remain unsupported. The combined build is pending.
 
+Canvas roundRect now builds actual corner arcs, supports numeric/point/iterable
+radii, normalizes one to four corners, scales overlaps and handles negative
+dimensions. Conversion order and iterator cleanup are preserved under bounded
+input and atomic path admission. Seven Core and nine V9 regressions were added
+but not run; this batch's combined production build is in progress.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

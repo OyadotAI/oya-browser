@@ -2,6 +2,7 @@
 use super::*;
 mod arcs;
 mod curves;
+mod round_rect;
 mod styles;
 
 /** Methods and properties are exposed only when their drawing behavior is implemented. */
@@ -9,6 +10,7 @@ pub(super) fn install(b: &mut Builder, proto: u32) {
     styles::install(b, proto);
     arcs::install(b, proto);
     curves::install(b, proto);
+    round_rect::install(b, proto);
     for (name, length) in [
         ("beginPath", 0),
         ("closePath", 0),

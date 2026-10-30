@@ -100,7 +100,10 @@ ArcTo constructs the shortest tangent circle through the existing adaptive arc
 path, with current-point inverse mapping and straight-line degeneracies. Singular
 transforms requiring an inverse are explicitly refused. The source-guided
 negative-radius empty-subpath side effect is retained; resource failures remain
-atomic. CSS color and font parsing remain limited; roundRect, clipping paths, Path2D,
+atomic. RoundRect expands one to four numeric or point radii, uniformly scales
+overlapping corners, reflects negative extents and appends the full rounded
+contour atomically. Iterable conversion is bounded and closes on conversion or
+quota failure. CSS color and font parsing remain limited; clipping paths, Path2D,
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
