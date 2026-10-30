@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented real Canvas clipping in Mars with immutable sample masks and saved-state sharing. Rectangles, paths, images and text honor the clip; pixel writes/readback/export retain their specified bypass behavior, and fully clipped cross-origin draws still taint. Mask retention and raster work remain bounded.
 - Implemented CORS-enabled image acquisition in Mars for anonymous and credentialed images, with per-hop server validation, mode-aware generations/caches and Canvas origin-clean provenance. Failed CORS loads stay failures; ordinary cross-origin images remain tainted. CORS images bypass legacy credentialed prefetch and the URL-only HTTP cache.
 - Implemented real Canvas `roundRect` paths in Mars with numeric/point/iterable corner radii, overlap scaling, negative dimensions and bounded atomic path admission.
 - Added actual GIF first-frame and static WebP pixel sources for Mars Canvas on macOS through bounded native decoding, retaining origin taint and shared pixel accounting. Animated WebP, partial-first-frame GIF and non-macOS decoding remain explicitly unsupported.
