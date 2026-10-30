@@ -7,6 +7,13 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Transport errors now preserve the failing operation and typed I/O cause in safe
+human-readable text. Raw exception strings, URLs, IPs and payloads are excluded.
+Certificate and suite refusals keep their specific handling; existing error codes,
+deadlines, EOF framing and retry admission are unchanged. Three pure classification
+regressions are added unrun; production build pending. This improves evidence for
+the user-reported navigation failure without claiming an identified root cause.
+
 The resident-summary repair at `8d465d28` built successfully in 54.75s;
 log: `/private/tmp/mars-resident-summary-fix-build.log`.
 Frozen executable SHA-256:

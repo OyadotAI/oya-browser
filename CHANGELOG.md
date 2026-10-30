@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Made Mars transport failures identify DNS lookup, connection, TLS handshake, send or receive errors using typed causes, without exposing raw destination or payload details. Existing TLS checks, error codes, deadlines and retry rules remain intact.
+
 - Corrected Mars resident-state validation so pending fetches and observers are checked against the heap retained by V9, while the app validates their bounded page summaries. This addresses false `Invalid native fetch signal state` page failures without weakening full-state restore checks.
 
 - Added context-owned Blob image loading in Mars with generation snapshots, cancellation, origin/img-src checks, bounded actual raster decoding and clean Canvas pixels. Blob images never fall through to network/cache/prefetch; SVG, CSS backgrounds and unmatched responsive Blob candidates remain unsupported.
