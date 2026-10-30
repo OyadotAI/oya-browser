@@ -484,6 +484,13 @@ fn layout_once(
     let top = collapsed_body_edge(document, &items, authored, 0).unwrap_or(y);
     let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
     let decoration = super::body::decoration(document, x, top, width, end);
+    // This document has resolved percentage edges and these boxes have their final layout sizes.
+    for item in &mut items {
+        let node = context.node(item.local_id)?;
+        if !item.bare && super::effects::generated_style(node, item).is_none() {
+            item.resize_box = Some(super::effects::resize_box(item, node));
+        }
+    }
     Ok((items, height, decoration, context.exhausted()))
 }
 /** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
@@ -1259,6 +1266,7 @@ pub(super) fn box_item(
 ) -> DisplayItem {
     let face = super::sizing::face(&node.style);
     DisplayItem {
+        resize_box: None,
         canvas: node.canvas.clone(),
         local_id: node.local_id,
         tag: node.tag.clone(),

@@ -1291,15 +1291,11 @@ fn global_object(b: &mut Builder) {
         b.global(name, ctor);
     }
     super::intersection_observers::install(b);
-    for name in ["ResizeObserver", "PerformanceObserver", "ReportingObserver"] {
+    super::resize_observers::install(b);
+    for name in ["PerformanceObserver", "ReportingObserver"] {
         let observer = b.object(Some(b.ids.object_prototype));
         methods(b, observer, &["unobserve", "disconnect"], noop_method);
-        // ResizeObserver retains its existing initial measurement; other observer types remain inert.
-        let observe: NativeFn = match name {
-            "ResizeObserver" => window::observe,
-            _ => noop_method,
-        };
-        b.host_method(observer, "observe", 1, observe);
+        b.host_method(observer, "observe", 1, noop_method);
         b.host_method(observer, "takeRecords", 0, |vm, _| {
             Ok(JsValue::Object(vm.new_array(Vec::new())?))
         });

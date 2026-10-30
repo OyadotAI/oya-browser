@@ -671,6 +671,7 @@ impl VmState {
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
         platform::intersection_observers::validate(&self.page, &self.heap)?;
+        platform::resize_observers::validate(&self.page, &self.heap)?;
         platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
@@ -1610,6 +1611,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
     platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
+    platform::resize_observers::sample(&mut vm).map_err(fatal)?;
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
@@ -2126,6 +2128,8 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
 pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
+        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+        platform::resize_observers::deliver_all(&mut vm).map_err(fatal)?;
         platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
         platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
         finish(vm)
@@ -2230,6 +2234,8 @@ fn run_timers_with(
     }
     vm.remaining = vm.limits.operations;
     platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
+    platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+    platform::resize_observers::deliver_all(&mut vm).map_err(fatal)?;
     vm.run_due_timers(now_ms, budget).map_err(fatal)?;
     finish(vm)
 }

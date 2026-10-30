@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Replaced Mars's one-shot ResizeObserver with persistent measured registrations, selected-box change detection, queued callbacks, real disconnect/unobserve cleanup and native layout invalidation. Content/border metrics use resolved layout edges; root/body wrappers without native metrics and full resize-loop iteration remain unfinished.
 - Added one nested dedicated-worker level to Mars, with parent/child messages and ports, creator-policy source loading, shared live/pending capacity, queued initialization messages and recursive termination. Retransferring already linked worker ports and deeper worker trees remain explicitly unsupported.
 - Enforced required URL/URLSearchParams arguments and constructor-only invocation before conversion hooks run, while preserving explicit `undefined` values.
 - Implemented SVG-string Path2D construction in Mars through a shared bounded path parser. Canvas preserves completed commands before malformed syntax; numeric/resource failures remain explicit. Eye reuses the parser with whole-shape rejection, and retained paths feed real fill/stroke/clipping.

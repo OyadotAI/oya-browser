@@ -1811,3 +1811,42 @@ fn place(item: &mut DisplayItem, matrix: Matrix) {
         path.translate(dx, dy);
     }
 }
+
+/** Resize observers consume actual padding/border measurements, never the transformed visual rectangle. */
+pub(super) fn resize_box(item: &DisplayItem, node: &Node) -> mars_core::geometry::BoxMetrics {
+    let style = &node.style;
+    let non_replaced_inline = style.inline
+        && !style.inline_block
+        && !matches!(
+            node.tag.as_str(),
+            "img"
+                | "input"
+                | "textarea"
+                | "select"
+                | "button"
+                | "canvas"
+                | "iframe"
+                | "video"
+                | "audio"
+                | "svg"
+        );
+    if non_replaced_inline {
+        return mars_core::geometry::BoxMetrics {
+            content: [0.0; 4],
+            border: [0.0; 2],
+            vertical: style.vertical_writing,
+        };
+    }
+    let [bt, br, bb, bl] = sizing::border_sides(style);
+    let [pt, pr, pb, pl] = style.padding;
+    mars_core::geometry::BoxMetrics {
+        content: [
+            pl,
+            pt,
+            (item.width - bl - br - pl - pr).max(0.0),
+            (item.height - bt - bb - pt - pb).max(0.0),
+        ],
+        border: [item.width, item.height],
+        vertical: style.vertical_writing,
+    }
+}

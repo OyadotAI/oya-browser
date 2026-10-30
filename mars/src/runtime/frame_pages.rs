@@ -704,7 +704,7 @@ impl Page {
                 && let Some(child) = frame.page.as_mut()
             {
                 child.styled = false;
-                child.scripting.intersections.invalidate();
+                child.scripting.intersections.invalidate_layout();
             }
         }
     }

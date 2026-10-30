@@ -34,6 +34,7 @@ mod implementation;
 mod install;
 mod interfaces;
 pub(in crate::v9) mod intersection_observers;
+pub(in crate::v9) mod resize_observers;
 mod keyboard;
 pub(in crate::v9) mod messaging;
 mod xml_frames;
@@ -620,6 +621,9 @@ pub struct NodeBox {
     /// Raw border-box dimensions keep layout measurements independent from visual transforms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_size: Option<[f64; 2]>,
+    /// Distinct native content and border measurements; absent hosts cannot claim resize box support.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resize_box: Option<mars_core::geometry::BoxMetrics>,
     /// Ordered transformed border-box corners reject empty corners of the visual bounding rectangle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quad: Option<mars_core::geometry::Quad>,
@@ -983,6 +987,10 @@ pub struct HostEffects {
     pub intersection_observers: bool,
     /// Queued observer entries need a dedicated native observation turn even outside author wake windows.
     pub intersection_observers_pending: bool,
+    /// Persistent resize registrations need measured layout invalidation without author timers.
+    pub resize_observers: bool,
+    /// At least one measured resize entry is waiting for an observer-only delivery turn.
+    pub resize_observers_pending: bool,
     /// Absolute URLs of `<link rel=stylesheet>` elements scripts connected (in the head too,
     /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1227,6 +1235,8 @@ pub(in crate::v9) struct PageState {
     pub active_animations: Vec<ObjectId>,
     /// Branded viewport observers retain measured records and thresholds across native layout updates.
     pub intersection_observers: BTreeMap<ObjectId, intersection_observers::State>,
+    /// Branded resize observations retain last delivered raw dimensions independently of transforms.
+    pub resize_observers: BTreeMap<ObjectId, resize_observers::State>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
     pub listeners: listener_store::ListenerStore,
@@ -1526,6 +1536,7 @@ impl<'h> Page<'h> {
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
         intersection_observers::roots(&self.state, out);
+        resize_observers::roots(&self.state, out);
         #[cfg(feature = "conformance")]
         out.extend(
             self.state
@@ -1599,6 +1610,7 @@ impl<'h> Page<'h> {
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         self.state.path2d.retain(|id, _| live.contains(id));
+        self.state.resize_observers.retain(|id, _| live.contains(id));
         self.state
             .intersection_observers
             .retain(|id, _| live.contains(id));

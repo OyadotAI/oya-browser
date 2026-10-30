@@ -167,6 +167,9 @@ pub struct DisplayDecoration {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayItem {
+    /// Measured content and border boxes for layout observers, independent from paint transforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resize_box: Option<mars_core::geometry::BoxMetrics>,
     /// Canonical canvas pixels shared by native and agent presentation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canvas: Option<mars_core::canvas::Bitmap>,

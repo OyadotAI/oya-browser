@@ -214,6 +214,17 @@ timers, extending the author wake window or polling idle observers. Element root
 ancestor overflow clipping, occlusion/visibility tracking and nonzero scroll
 margins/delay remain explicitly unsupported or unavailable from current geometry.
 
+ResizeObserver retains branded registrations and last-delivered selected-box
+sizes across turns. Eye captures genuine content/border dimensions after layout
+resolves percentage padding; native transport keeps these separate from visual
+transforms. V9 samples measured changes, queues bounded records and delivers on
+the existing observer-only turns. Disconnect/unobserve, GC and restored-state
+validation cover retained callbacks, targets and records. Native resize-only
+invalidation compares raw metrics, so scrolling/transforms alone cannot wake it.
+Ordinary CSS boxes are covered; root/body wrappers without measured box metadata
+remain unmeasured. Fragmentation and full synchronous depth-loop broadcasting
+remain unfinished; this slice broadcasts once per bounded host turn.
+
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
 an independent child page. Runtime supplies bounded owner IDs to V9, which selects

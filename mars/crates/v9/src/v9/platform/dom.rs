@@ -151,6 +151,7 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
         vm.page.adopt_namespaces(*old, *new);
         super::images::adopt(&mut vm.page, *old, *new)?;
+        super::resize_observers::adopt(&mut vm.page, *old, *new);
         if let Some(mut canvas) = vm.page.state.canvases.remove(old) {
             canvas.dirty = true;
             vm.page.state.canvases.insert(*new, canvas);

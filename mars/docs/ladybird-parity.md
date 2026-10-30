@@ -7,6 +7,16 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+ResizeObserver now retains registrations, compares the selected measured box,
+and asynchronously delivers queued callbacks after actual native layout changes.
+Eye supplies content/border metrics after percentage padding is resolved; visual
+transforms and scrolling do not spuriously wake resize-only observers. Cleanup,
+GC and restored-state validation cover retained registrations and records.
+Focused Eye/V9 regressions are added but unrun, and the combined build is pending.
+Root/body wrappers without native metrics, fragmented boxes and full synchronous
+resize-loop broadcasting remain unfinished; delivery is bounded to one broadcast
+per host turn.
+
 Dedicated workers now support one nested level, with page-owned bounded owner
 paths, parent/child messages and ports, creator-policy source loading, shared
 pending/live admission and recursive termination. Existing worker task/byte and

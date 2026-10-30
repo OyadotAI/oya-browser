@@ -62,8 +62,7 @@ fn css_namespace_escapes_identifiers() {
     assert_eq!(eval(source, "r"), "a\\.b \\31 x \\- ok_-1 true");
 }
 
-/** Missing layout boxes are not fabricated as intersecting; resize
-observers get their first observation; idle callbacks get a deadline. */
+/** Missing layout boxes cannot fabricate intersection or resize sizes; idle callbacks get a deadline. */
 #[test]
 fn observers_deliver_first_observations_and_idle_callbacks_get_deadlines() {
     let sources = vec!["const img=document.getElementById('first');new IntersectionObserver((entries,o)=>{console.log('io '+entries[0].isIntersecting+' '+(entries[0].target===img)+' '+(o instanceof IntersectionObserver))}).observe(img);\
@@ -82,6 +81,6 @@ fn observers_deliver_first_observations_and_idle_callbacks_get_deadlines() {
     .unwrap();
     assert_eq!(
         common::console(&ran),
-        ["io false true true", "ro 0 0", "idle true false"]
+        ["io false true true", "idle true false"]
     );
 }

@@ -3,6 +3,30 @@ use crate::canvas::Affine;
 
 /** Ordered corners follow the rectangle perimeter, retaining orientation under mirrored transforms. */
 pub type Quad = [[f64; 2]; 4];
+/** Layout observers reject dimensions beyond the native geometry transport's finite scalar envelope. */
+const BOX_METRICS_LIMIT: f64 = 1_000_000_000.0;
+
+/** Actual untransformed layout measurements; absence means the host has not measured these boxes. */
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoxMetrics {
+    /// Content rectangle relative to the padding edge: padding-left, padding-top, content width and height.
+    pub content: [f64; 4],
+    /// Physical border-box width and height, excluding visual transforms.
+    pub border: [f64; 2],
+    /// Logical inline/block axes exchange physical width/height in vertical writing modes.
+    pub vertical: bool,
+}
+
+impl BoxMetrics {
+    /** Transport cannot introduce negative extents, nonfinite values or unbounded observer arithmetic. */
+    pub fn valid(&self) -> bool {
+        self.content
+            .iter()
+            .chain(&self.border)
+            .all(|value| value.is_finite() && (0.0..=BOX_METRICS_LIMIT).contains(value))
+    }
+}
 
 /** Map the untransformed border rectangle through the same affine matrix used by native paint. */
 pub fn quad([x, y, width, height]: [f64; 4], transform: Option<[f64; 6]>) -> Quad {

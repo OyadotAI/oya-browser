@@ -456,6 +456,8 @@ impl Runtime {
             &environment,
             effects.intersection_observers,
             effects.intersection_observers_pending,
+            effects.resize_observers,
+            effects.resize_observers_pending,
         );
         scripting.requests.extend(effects.requests);
         if effects.navigation.is_some() {

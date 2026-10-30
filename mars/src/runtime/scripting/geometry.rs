@@ -21,6 +21,7 @@ pub(super) fn boxes(display: &DisplayList) -> Vec<NodeBox> {
                 height,
                 layout_position: Some([item.x, item.y]),
                 layout_size: Some([item.width, item.height]),
+                resize_box: item.resize_box,
                 quad: visual.and(item.transform.map(|_| quad)),
                 clip: item
                     .clip
