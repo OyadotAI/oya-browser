@@ -27,11 +27,18 @@ fn environment(width: f64) -> PageEnvironment {
 fn observe(source: &str, environment: &PageEnvironment, state: VmState) -> Execution {
     let host = common::host();
     let sources = vec![source.into()];
-    let result = mars_v9::observe_page(
+    let mut result = mars_v9::observe_page(
         common::input(&sources, &host, environment),
         common::round_trip(state),
     )
     .unwrap();
+    for _ in 0..=mars_v9::RESIZE_BROADCAST_LIMIT + 1 {
+        if result.effects.resize_turn != Some(mars_v9::ResizeTurn::Relayout) { break; }
+        result = mars_v9::continue_resize_observers(
+            common::input(&sources, &host, environment), common::round_trip(result.state), false,
+        ).unwrap();
+    }
+    assert_ne!(result.effects.resize_turn, Some(mars_v9::ResizeTurn::Relayout));
     assert!(result.failed.is_empty(), "{:?}", result.failed);
     result
 }
