@@ -7,12 +7,24 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The combined transport repair build at `159613bc` passed in 37.99s. It includes
+phase-specific transport errors, deadline-lease retirement before socket reuse,
+and bounded HTTP/1 informational responses, plus the earlier signal fix.
+Build log: `/private/tmp/mars-transport-repair-build.log`.
+Frozen binary SHA-256:
+`bd4bb89503930fd779200871895d51db04f5215e92056b17996ea3b41acf584d`.
+The signed and verified `mars/dist/Mars Network Fix.app` was opened at Google
+for the user's manual testing. Signed executable SHA-256:
+`bfcc8d9dbf27c502110874bf29a0e475224db1811abf220ab4fe4b00971186f5`.
+Regression tests and browser QA remain unrun at the user's request. Compilation
+and launch do not verify the reported navigation failure is resolved.
+
 HTTP/1 now consumes up to eight informational response heads before the final
 response, retaining the buffered cursor and one cumulative header-byte budget.
 Previously a 100/103 head could be treated as a close-delimited final response,
 consuming the real response as body data and waiting for a persistent connection
 to close. Status 101 is explicitly unsupported; only final response headers and
-cookies are published. Hermetic regressions are added unrun; build pending.
+cookies are published. Hermetic regressions are added unrun; the combined production build passes at `159613bc`.
 This is a source-supported repair, not proof of the reported transport cause.
 
 HTTP/1 prepared exchanges now transfer deadline-lease ownership into the send
@@ -20,13 +32,13 @@ operation. The lease is stopped and joined before socket pool checkin on both
 initial and replacement exchanges. Previously the timer could outlive pool checkin
 and close a socket already reused by another request while cache/body processing
 continued. This concrete source race is repaired; its involvement in the reported
-failure is unverified. Deadlines and retry policy are unchanged; build pending.
+failure is unverified. Deadlines and retry policy are unchanged; the combined production build passes at `159613bc`.
 
 Transport errors now preserve the failing operation and typed I/O cause in safe
 human-readable text. Raw exception strings, URLs, IPs and payloads are excluded.
 Certificate and suite refusals keep their specific handling; existing error codes,
 deadlines, EOF framing and retry admission are unchanged. Three pure classification
-regressions are added unrun; production build pending. This improves evidence for
+regressions are added unrun; production the combined production build passes at `159613bc`. This improves evidence for
 the user-reported navigation failure without claiming an identified root cause.
 
 The resident-summary repair at `8d465d28` built successfully in 54.75s;
