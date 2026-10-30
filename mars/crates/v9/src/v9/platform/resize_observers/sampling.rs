@@ -65,7 +65,7 @@ fn measure(vm: &mut Vm, target: &Observation) -> Res<Option<Entry>> {
     {
         return Err(EngineError::invalid("Invalid ResizeObserver measurements.").into());
     }
-    let logical = |[width, height]| {
+    let logical = |[width, height]: [f64; 2]| {
         if metrics.vertical {
             [height, width]
         } else {
