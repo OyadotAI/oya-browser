@@ -7,6 +7,26 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+TLS repair build `67863fb4` passed in 42.80s with the key-share correction and
+bounded pre-HTTP reset recovery. Log: `/private/tmp/mars-tls-repair-build.log`.
+Frozen executable SHA-256:
+`c26b1c9f6350449ba5582947e989f8e4a1bac6c228d3a735ee61b026475be298`.
+`mars/dist/Mars TLS Repair.app` was signed, signature-verified and opened at Google
+for manual testing. Signed executable SHA-256:
+`41d98a9e5851e1f0cb39a4ff62321cdcf08e3d23381e7fa3ca2049130d220270`.
+Nine new focused regressions remain unrun, with no browser QA or network probes.
+Successful compilation/launch does not establish resolution of the reported reset.
+
+A raw socket reset on the first modern TLS handshake now gets one fresh modern
+connection, preferring an opposite-family or distinct already-admitted peer.
+There are at most two TLS candidates total: the existing first-alert legacy
+recovery is an alternative, never a third attempt. SNI, configuration and WebPKI
+verification stay unchanged; no DNS re-resolution or HTTP request replay occurs.
+Per-candidate deadline leases bound internal handshake I/O and are joined before
+handoff/replacement; expiration stays a timeout. Six pure regressions are added
+unrun. This addresses missing resilience in the observed failure path without
+establishing which server/network condition caused the user's reset. Build passes below.
+
 The next user report identified a raw connection reset during TLS handshake.
 Source inspection found that a requested-group HelloRetryRequest still received
 an extra GREASE key share, although its replacement list must contain only the

@@ -57,6 +57,18 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+TLS preparation permits at most two negotiation candidates under the original
+absolute deadline. A raw reset on the first modern handshake gets one fresh
+modern connection, preferring an already-admitted peer in the other address
+family, then another peer, then the same peer if necessary. TLS settings, SNI and
+WebPKI validation are unchanged, DNS is not repeated, and no HTTP bytes have yet
+been sent. Only the existing first-attempt handshake-failure alert may instead
+select its one legacy recovery; certificate failures and other protocol errors
+are terminal, and there is no third candidate. Temporary deadline leases cover modern and legacy internal
+handshake loops and are stopped/joined before handoff or replacement. Requested-
+group HelloRetryRequest messages emit exactly the requested key share; initial
+and cookie-only retry messages retain their existing GREASE behavior.
+
 Native close uses per-attempt save tickets and nonblocking authority admission.
 A ten-second save/admission deadline returns to explicit Keep Open, Retry or
 Close Without Saving choices; it never implies persistence succeeded. Retired
