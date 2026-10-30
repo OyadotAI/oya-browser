@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented real Canvas `arcTo` tangent geometry in Mars, including straight-line degeneracies, current-transform handling and bounded atomic path admission. Noninvertible transforms that require inverse mapping remain explicit refusals.
 - Implemented Canvas arcs and ellipses in Mars with real transformed geometry, directed/full-turn sweeps and atomic bounded subdivision. ArcTo, roundRect and clipping remain unfinished.
 - Implemented native CSS translation transitions in Mars for `transform` values using `none`, `translate`, `translateX` and `translateY`, including percentage offsets, easing and interruption. Visual geometry moves with painting while layout offsets remain untransformed; rotation, scale, skew and 3D interpolation remain unfinished.
 - Implemented Canvas quadratic and cubic Bezier curves in Mars with adaptive pixel-space flattening, construction-time transforms and atomic path-budget admission. Curves feed the existing real fill/stroke rasterizer; arcs, ellipses and clipping remain unfinished.
