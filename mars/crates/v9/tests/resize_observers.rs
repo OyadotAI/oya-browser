@@ -131,3 +131,22 @@ fn forged_receivers_and_invalid_box_options_are_rejected_without_registration() 
     );
     assert!(!result.effects.resize_observers);
 }
+
+#[test]
+fn initially_measured_zero_size_is_delivered_once_instead_of_being_treated_as_already_reported() {
+    let source =
+        "let result=0;new ResizeObserver(()=>result++).observe(document.getElementById('first'));";
+    let mut env = environment(0.0);
+    env.geometry[0].resize_box = Some(BoxMetrics {
+        content: [0.0; 4],
+        border: [0.0; 2],
+        vertical: false,
+    });
+    let initial = common::load_with(source, &env);
+    assert!(initial.effects.resize_observers_pending);
+    let first = observe(source, &env, initial.state);
+    assert_eq!(common::global(&first, "result"), "1");
+    assert!(!first.effects.resize_observers_pending);
+    let second = observe(source, &env, first.state);
+    assert_eq!(common::global(&second, "result"), "1");
+}

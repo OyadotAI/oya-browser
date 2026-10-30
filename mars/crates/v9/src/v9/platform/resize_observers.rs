@@ -37,7 +37,7 @@ struct Observation {
     node: usize,
     object: ObjectId,
     kind: BoxKind,
-    previous: [f64; 2],
+    previous: Option<[f64; 2]>,
 }
 
 /** Snapshot metadata contains only actual measurements and genuine target wrappers. */
@@ -209,7 +209,7 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     node,
                     object,
                     kind,
-                    previous: [0.0; 2],
+                    previous: None,
                 });
             }
         }

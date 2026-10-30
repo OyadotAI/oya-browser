@@ -57,10 +57,10 @@ pub(in crate::v9) fn validate(state: &super::super::PageState, heap: &Heap) -> E
             if !seen.insert(target.node)
                 || state.wrappers.get(&target.node) != Some(&target.object)
                 || !target_object(heap, target.node, target.object)
-                || target
-                    .previous
-                    .iter()
-                    .any(|value| !value.is_finite() || !(0.0..=SIZE_LIMIT).contains(value))
+                || target.previous.as_ref().is_some_and(|size| {
+                    size.iter()
+                        .any(|value| !value.is_finite() || !(0.0..=SIZE_LIMIT).contains(value))
+                })
             {
                 return Err(invalid());
             }

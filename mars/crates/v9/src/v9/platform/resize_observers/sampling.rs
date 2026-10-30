@@ -9,7 +9,7 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
         state.queued.clear();
         for target in &state.targets {
             if let Some(entry) = measure(vm, target)?
-                && entry.observed != target.previous
+                && Some(entry.observed) != target.previous
             {
                 state.queued.push(entry);
             }

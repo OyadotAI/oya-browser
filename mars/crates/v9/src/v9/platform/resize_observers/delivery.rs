@@ -75,7 +75,7 @@ pub(super) fn take_records(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
             .iter_mut()
             .find(|target| target.node == record.node)
         {
-            target.previous = record.observed;
+            target.previous = Some(record.observed);
         }
     }
     let mut values = Vec::with_capacity(records.len());
