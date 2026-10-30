@@ -7,6 +7,20 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The combined production build at `10e70b14` passes in 1m 04s with five-mode
+Canvas compositing, bounded resize cycles, binary responses/data URLs, and owned
+Blob fetch with cancellation. Compiler integration fixes closed a missing cycle
+brace, exported the Blob type/validation facade and used the heap's actual property
+lookup API. Build log:
+`/private/tmp/mars-parity-compositing-resize-blob-build-final.log`.
+Frozen unsigned binary SHA-256:
+`f8bf63283d27f8d6f8436ce1f0700fc02eaeb6faf6c10f87b61dff7e5136f14e`.
+The signed, verified `mars/dist/Mars Current.app` is packaged but not launched;
+its executable SHA-256 is
+`3399f6eabcb7c3add03c7a33282ad80bfec7262307afef16180ab2d1763e66bc`.
+The earlier Mars Development preview remains separate. Regression cases remain
+unrun, with no QA, performance benchmark or Google retest in this batch.
+
 Context-owned Blob fetch now captures immutable bytes after options and effective
 signal conversion. The native path applies owning-origin and connect-src checks,
 supports GET plus one bounded Range, returns exact binary bytes/MIME/length,
@@ -19,7 +33,7 @@ abort-before-body-read use the existing Promise/GC machinery. Native page and
 worker queues release cancelled snapshots. Already-running synchronous Relay I/O
 is not newly interrupted; streaming, cross-context sharing, Blob XHR and full
 timeout/live-any signal semantics remain unfinished. Focused regressions are
-added but unrun; the combined production build is pending.
+added but unrun; the combined production build passes below.
 
 ResizeObserver now advances through depth-gated broadcasts with real host layout
 between rounds. Cycle depth/state is retained across service continuations, with
@@ -29,19 +43,19 @@ Error-handler changes receive layout before one final IntersectionObserver
 delivery. Deadline/round exhaustion preserves registrations and defers sizes;
 one cycle per settle and a rendering cooldown prevent restart spins. Resource
 loads, unrelated timers and worker turns remain outside the cycle. Focused
-regressions are being added but unrun; the combined production build is pending.
+regressions were added but unrun; the combined production build passes below.
 
 The binary-response prerequisite now carries exact bytes into private
 heap-accounted Response storage. Clones share immutable backing, byte/blob readers
 return independent values, and text/JSON uses UTF-8 replacement with BOM handling.
 The combined response limit remains 256 KiB; mixed text/byte representations are
 rejected and existing worst-case wire admission covers byte-array serialization.
-Focused regressions are added but unrun; the combined build is pending. This
+Focused regressions are added but unrun; the combined build passes below. This
 prerequisite alone does not implement native Blob fetch or signal cancellation.
 Native data-URL responses now use this exact-byte path as well, rather than
 rejecting non-UTF8 payloads. GET-only scheme handling and response caps are
 unchanged. Two native regressions cover byte preservation, BOM text decoding,
-XHR text and method refusal; they remain unrun pending the combined build.
+XHR text and method refusal; they remain unrun; the production build passes below.
 
 Canvas now implements destination-over, destination-out, source-atop and xor
 alongside source-over through one shared premultiplied compositor. Rectangles,
@@ -49,7 +63,7 @@ paths (including dashes/Path2D), images and text use the same operation, with
 typed saved/restored/reset drawing state. ClearRect and putImageData bypass it,
 and origin taint remains independent. Operators that affect transparent areas
 outside the source geometry, plus lighter, remain unaccepted until their coverage
-is implemented. Focused regressions are being added but not run; the combined
+is implemented. Focused regressions were added but not run; the combined
 production build is pending.
 
 The next combined production build at `3a530af9` passes in 1m 15s, including
