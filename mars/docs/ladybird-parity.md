@@ -7,6 +7,18 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Recovery build `3e2b9162` passed in 1m 04s with observer storage/work budgets,
+metadata admission, descendant click activation and asynchronous native closure.
+Build log: `/private/tmp/mars-recovery-build.log`. The earlier frozen Eye/V9
+library build also passed in 33.50s. Frozen executable SHA-256:
+`aacdf95617ed0c342b3715ba24968fa2c7001381a787fa71e78105744365b02d`.
+`mars/dist/Mars Recovery.app` is packaged, signed and signature-verified; signed
+executable SHA-256:
+`4786a5a298d309d1e369c5de381f9249ce518488eca5aaa79ae64e71ad1a1aaa`.
+It was deliberately not launched after the requested forced closure. Regression
+tests and QA remain unrun. Compilation does not verify live Google compatibility
+or establish the exact cause of the user's whole-window freeze.
+
 The native close repair removes unbounded save acknowledgments and ordinary
 shutdown joins from AppKit. Each close attempt owns a polled ticket; retired
 attempts cannot consume late success. Admission/save timeout after ten seconds
@@ -26,7 +38,7 @@ pinned; active/queued observers stay alive. Sampling removes quadratic record
 recounts, caches pure geometry per target and charges work before scans and
 allocations. Disconnect/takeRecords/unobserve release storage. Full and summary
 restore enforce the same accounting. Three regressions are added unrun, including
-1,000 retained active observers and discarded-observer reclamation; build pending.
+1,000 retained active observers and discarded-observer reclamation; build passes at `3e2b9162`.
 
 The metadata warning came from separate fixed 256-record/1 MiB limits. Metadata
 now uses 32,256 records (reserving 512 script slots) and an 8 MiB shared tag/name/
@@ -35,7 +47,7 @@ Eye restored documents and V9 environments validate the same accounting. Fresh
 head insertion avoids an existing quadratic bootstrap scan. The unchanged frame
 ceiling is proved using one serialized state object per request/response frame
 plus explicit record overhead; it no longer double-counts a second nonexistent
-state object. Six focused regressions are added unrun; combined build pending.
+state object. Six focused regressions are added unrun; combined build passes at `3e2b9162`.
 
 After the user reported an invalid interactive target, source tracing found that
 painted spans/icons inside native links/buttons were selected as event targets but
@@ -43,7 +55,7 @@ rejected as default-action targets. Native activation now resolves the nearest
 supported same-document ancestor while retaining the hit node for JavaScript;
 ancestor inline handlers are admitted and frame hit testing respects pointer-events.
 Existing revision, ownership and disabled/hidden controls remain guarded. Focused
-regressions are added unrun; combined build pending. The screenshot did not identify
+regressions are added unrun; combined build passes at `3e2b9162`. The screenshot did not identify
 the clicked element, so this is not a verified reproduction of that exact failure.
 
 The user subsequently reported an unresponsive window that could not close.
