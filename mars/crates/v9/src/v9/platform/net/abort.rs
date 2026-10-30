@@ -253,11 +253,11 @@ pub(super) fn validate(page: &PageState, heap: &Heap) -> EngineResult<()> {
         }
     }
     for (id, object) in &heap.objects {
-        if object.props.contains_key(key(ABORTED)) {
+        if object.props.get(key(ABORTED)).is_some() {
             validate_signal(heap, *id)?;
         }
         for name in [SIGNAL, CONTROLLER] {
-            if object.props.contains_key(key(name))
+            if object.props.get(key(name)).is_some()
                 && !private(heap, *id, name)
                     .and_then(|value| value.object())
                     .is_some_and(|signal| branded(heap, signal))
@@ -281,7 +281,7 @@ fn validate_signal(heap: &Heap, id: ObjectId) -> EngineResult<()> {
     }
     let has_source = heap
         .get(id)
-        .is_some_and(|object| object.props.contains_key(key(SOURCE)));
+        .is_some_and(|object| object.props.get(key(SOURCE)).is_some());
     if has_source {
         let source = private(heap, id, SOURCE).ok_or_else(invalid)?;
         let source = source.object().ok_or_else(invalid)?;
