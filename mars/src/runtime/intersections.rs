@@ -3,6 +3,9 @@ use super::page::Page;
 use crate::document::RenderContext;
 use crate::v9::{NodeBox, PageEnvironment};
 
+/** A bounded observer cycle yields to the next rendering opportunity even inside a long settle slice. */
+const RENDER_YIELD: std::time::Duration = std::time::Duration::from_millis(16);
+
 /** One page candidate retains only its last sampled geometry and whether delivery is needed. */
 #[derive(Clone, Default)]
 pub(super) struct Observations {
@@ -12,6 +15,10 @@ pub(super) struct Observations {
     resize_active: bool,
     /// Native geometry changed or the realm retained asynchronous delivery records.
     pub pending: bool,
+    /// The most recent V9 phase result belongs to the candidate, never a global scheduler.
+    pub turn: Option<crate::v9::ResizeTurn>,
+    /// Deferred resize work waits for another rendering opportunity instead of spinning within settle.
+    not_before: Option<std::time::Instant>,
     /// Comparing only at layout boundaries avoids rebuilding boxes on every idle tick.
     sampled: Option<Geometry>,
 }
@@ -46,6 +53,18 @@ impl Observations {
             scroll: [environment.scroll_x, environment.scroll_y],
             device_pixel_ratio: environment.device_pixel_ratio,
         });
+    }
+
+    /** A finished cycle cannot restart during the same rendering opportunity. */
+    pub fn ready(&self) -> bool {
+        self.pending && self.not_before.is_none_or(|at| std::time::Instant::now() >= at)
+    }
+
+    /** Retain undelivered sizes for a later frame; geometry invalidation cannot bypass this yield. */
+    pub fn completed(&mut self, deferred: bool) {
+        self.pending |= deferred;
+        self.turn = None;
+        self.not_before = Some(std::time::Instant::now() + RENDER_YIELD);
     }
 
     /** Scrolling already has an external trigger and needs no perpetual background timer. */
@@ -165,6 +184,19 @@ mod tests {
         assert!(observations.pending);
         observations.sampled(&environment, true, false, false, false);
         assert!(!observations.pending);
+    }
+
+    /** Skipped sizes stay pending, but neither a late layout nor settle can bypass the rendering yield. */
+    #[test]
+    fn completed_cycles_defer_without_discarding_pending_work() {
+        let mut observations = Observations::default();
+        observations.sampled(&PageEnvironment::default(), false, false, true, false);
+        observations.completed(true);
+        observations.invalidate_layout();
+        assert!(observations.pending);
+        assert!(!observations.ready());
+        observations.not_before = Some(std::time::Instant::now() - RENDER_YIELD);
+        assert!(observations.ready());
     }
 
     /** Queued records survive unchanged geometry; disposing the last registration and queue stops work. */

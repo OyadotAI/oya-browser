@@ -99,6 +99,10 @@ pub(super) struct Scripting {
     pub next_timer_ms: Option<f64>,
     /// Requests the page made that have not been answered yet.
     pub requests: Vec<HostRequest>,
+    /// Observer callbacks queue resource work until their rendering cycle has completed.
+    pub observer_resources: bool,
+    /// Newly connected linked sheets wait outside observer-only delivery and remain bounded.
+    pub deferred_stylesheets: Vec<String>,
     /// The last navigation a script asked for, performed after the page commits.
     pub navigation: Option<NavigationRequest>,
     /// Bounded console output for page.console.
@@ -219,6 +223,8 @@ impl Default for Scripting {
             workers: Default::default(),
             next_timer_ms: None,
             requests: Vec::new(),
+            observer_resources: false,
+            deferred_stylesheets: Vec::new(),
             navigation: None,
             console: Vec::new(),
             console_dropped: 0,
@@ -254,7 +260,8 @@ impl Scripting {
         super::animations::next_sample(self).is_some()
             || self.loaded
                 && (self.scroll_pending
-                    || self.intersections.pending
+                    || self.intersections.ready()
+                    || self.observer_resources
                     || self.next_timer_ms.is_some()
                     || !self.requests.is_empty()
                     || !self.image_loading.pending.is_empty()
@@ -355,6 +362,7 @@ impl Runtime {
         }
         let started = Instant::now();
         let kind = action["kind"].as_str().unwrap_or_default().to_string();
+        let observer_turn = matches!(kind.as_str(), "observe" | "resize");
         if !page.storage_dirty {
             page.storage = self.storage_for(&page.origin)?;
         }
@@ -433,7 +441,19 @@ impl Runtime {
             page.styled = false;
         }
         super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
-        changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
+        if observer_turn {
+            for href in &effects.stylesheets {
+                if page.scripting.deferred_stylesheets.len() >= crate::constants::STYLE_SHEETS {
+                    note_degraded(page);
+                    break;
+                }
+                if !page.scripting.deferred_stylesheets.contains(href) {
+                    page.scripting.deferred_stylesheets.push(href.clone());
+                }
+            }
+        } else {
+            changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
+        }
         let pending = PendingImages::of(first_new, &changes, &script_changes);
         page.scripting.pending_images = Some(match page.scripting.pending_images.take() {
             Some(earlier) => earlier.merge(pending),
@@ -442,7 +462,7 @@ impl Runtime {
         self.adopt_image_associations(page, effects.image_adoptions, &state)?;
         page.scripting.image_loading.queue(effects.image_requests)?;
         self.discard_removed_image_sources(page);
-        if !page.scripting.loading {
+        if !page.scripting.loading && !observer_turn {
             self.flush_inserted_images(page)?;
         }
         page.state = state;
@@ -453,6 +473,7 @@ impl Runtime {
         scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
         scripting.next_timer_ms = effects.next_timer_ms;
+        scripting.intersections.turn = effects.resize_turn;
         scripting.intersections.sampled(
             &environment,
             effects.intersection_observers,
@@ -491,7 +512,13 @@ impl Runtime {
             .extend(script_requests);
         page.scripting.modules.frame_requests.extend(frame_requests);
         let mut step = Step { changed, failed };
-        if kind != "modules" {
+        if observer_turn {
+            page.scripting.observer_resources |= !page.scripting.deferred_stylesheets.is_empty()
+                || !changes.is_empty() || !script_changes.is_empty()
+                || !page.scripting.modules.pending.is_empty()
+                || !page.scripting.modules.pending_scripts.is_empty()
+                || !page.scripting.modules.frame_requests.is_empty();
+        } else if kind != "modules" {
             self.follow_modules(page, &mut step)?;
         }
         super::intersections::layout(page, self.render_context, self.scroll_y);
@@ -838,9 +865,18 @@ impl Runtime {
         let previous_opacity = super::animations::paint_effects(&page.scripting);
         let mut changed = false;
         let advance_ms = (virtual_end - page.scripting.clock_ms).max(0.0);
+        let mut observed = false;
         for step in 0..SETTLE_STEPS {
             if Instant::now() >= until || !page.scripting.loaded || (step > 0 && yield_now()) {
                 break;
+            }
+            if page.scripting.observer_resources {
+                changed |= self.flush_observer_resources(page)?;
+            }
+            if !observed && page.scripting.intersections.ready() {
+                observed = true;
+                changed |= self.observe_intersections_until(page, until)?;
+                continue;
             }
             let action = if page.scripting.scroll_pending {
                 page.scripting.scroll_pending = false;
@@ -857,8 +893,7 @@ impl Runtime {
                     changed = true;
                 }
                 json!({"kind":"images","responses":responses})
-            } else if page.scripting.intersections.pending {
-                json!({"kind":"observe"})
+
             } else if page.scripting.load_pending {
                 page.scripting.load_pending = false;
                 json!({"kind":"event","event":"load"})
@@ -1005,7 +1040,7 @@ impl Runtime {
             ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
                 || super::animations::next_sample(&page.scripting).is_some()
-                || page.scripting.loaded && page.scripting.intersections.pending
+                || page.scripting.loaded && page.scripting.intersections.ready()
                 || page.frame_observations_pending())
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
@@ -1040,7 +1075,7 @@ impl Runtime {
             let previous = super::animations::paint_effects(&page.scripting);
             page.scripting.clock_ms = end;
             let animated = previous != super::animations::paint_effects(&page.scripting);
-            let observed = if page.scripting.loaded && page.scripting.intersections.pending {
+            let observed = if page.scripting.loaded && page.scripting.intersections.ready() {
                 self.observe_intersections(&mut page)?
             } else {
                 false
@@ -1065,14 +1100,30 @@ impl Runtime {
 
     /** A refused observer turn follows ordinary script failure handling rather than retrying forever. */
     pub(super) fn observe_intersections(&mut self, page: &mut Page) -> EngineResult<bool> {
-        match self.script_step(page, json!({"kind":"observe"})) {
-            Ok(step) => Ok(step.changed),
+        self.observe_intersections_until(page, Instant::now() + TICK_WALL)
+    }
+
+    /** The ordinary failure policy also applies to the bounded observer-only render cycle. */
+    fn observe_intersections_until(&mut self, page: &mut Page, until: Instant) -> EngineResult<bool> {
+        match self.resize_observer_cycle(page, until) {
+            Ok(changed) => Ok(changed),
             Err(error) if stops_navigation(&error) || lost_state(&error) => Err(error),
             Err(error) => {
                 stop_scripts(page, &error);
                 Ok(false)
             }
         }
+    }
+
+    /** Callback-created resources are admitted on the ordinary task path, never between resize broadcasts. */
+    fn flush_observer_resources(&mut self, page: &mut Page) -> EngineResult<bool> {
+        page.scripting.observer_resources = false;
+        let hrefs = std::mem::take(&mut page.scripting.deferred_stylesheets);
+        let changed = self.load_inserted_sheets(page, &hrefs)?;
+        self.flush_inserted_images(page)?;
+        let mut step = Step { changed, failed: Vec::new() };
+        self.follow_modules(page, &mut step)?;
+        Ok(step.changed)
     }
 
     /** Commit engine state that changed no document: same revision, same layout. */

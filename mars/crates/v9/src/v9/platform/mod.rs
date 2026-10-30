@@ -997,6 +997,8 @@ pub struct HostEffects {
     pub resize_observers: bool,
     /// At least one measured resize entry is waiting for an observer-only delivery turn.
     pub resize_observers_pending: bool,
+    /// An observer-only render cycle either needs fresh layout or has finalized this rendering opportunity.
+    pub resize_turn: Option<resize_observers::ResizeTurn>,
     /// Absolute URLs of `<link rel=stylesheet>` elements scripts connected (in the head too,
     /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1243,6 +1245,8 @@ pub(in crate::v9) struct PageState {
     pub intersection_observers: BTreeMap<ObjectId, intersection_observers::State>,
     /// Branded resize observations retain last delivered raw dimensions independently of transforms.
     pub resize_observers: BTreeMap<ObjectId, resize_observers::State>,
+    /// Depth gating survives resident and serialized continuations between fresh host layouts.
+    pub resize_cycle: Option<resize_observers::Cycle>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
     pub listeners: listener_store::ListenerStore,
@@ -1386,6 +1390,10 @@ pub(in crate::v9) struct Page<'h> {
     pub import_bytes: usize,
     /// Error-handler exceptions propagate without recursively firing the worker error handler.
     pub reporting_worker_error: bool,
+    /// Observer continuations already sampled the supplied layout; finish must not resample stale boxes.
+    pub sampled_observer_turn: bool,
+    /// A final intersection callback may register resize work for the next rendering opportunity.
+    pub resize_registration_changed: bool,
     /** Native graphics is injected for each request and is never serialized. */
     pub canvas_host: &'h dyn mars_core::canvas::CanvasHost,
     /** Synchronous raster/readback work left in this execution. */
@@ -1475,6 +1483,8 @@ impl<'h> Page<'h> {
             import_count: 0,
             import_bytes: 0,
             reporting_worker_error: false,
+            sampled_observer_turn: false,
+            resize_registration_changed: false,
             languages,
             fragments,
             canvas_host: &mars_core::canvas::Unavailable,

@@ -405,7 +405,7 @@ impl Runtime {
         if child.scripting.loaded {
             let end = child.scripting.clock_ms + advance_ms;
             let result = if observe_only || Instant::now() >= child.scripting.awake_until {
-                if child.scripting.intersections.pending {
+                if child.scripting.intersections.ready() {
                     self.observe_intersections(child)
                 } else {
                     Ok(false)
@@ -590,7 +590,7 @@ impl Page {
             .iter()
             .filter_map(|frame| frame.page.as_ref())
             .any(|child| {
-                child.scripting.loaded && (!child.styled || child.scripting.intersections.pending)
+                child.scripting.loaded && (!child.styled || child.scripting.intersections.ready())
                     || child.frame_observations_pending()
             })
     }
@@ -607,7 +607,7 @@ impl Page {
                 .filter_map(|f| f.page.as_ref())
                 .any(|child| {
                     child.scripting.pending()
-                        || child.scripting.intersections.pending
+                        || child.scripting.intersections.ready()
                         || child.frames_pending()
                 })
     }

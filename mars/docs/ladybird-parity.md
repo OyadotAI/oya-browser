@@ -7,6 +7,16 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+ResizeObserver now advances through depth-gated broadcasts with real host layout
+between rounds. Cycle depth/state is retained across service continuations, with
+at most 16 broadcasts and two finalization turns. Skipped targets produce a real
+ErrorEvent; window.onerror gets its five arguments and can suppress reporting.
+Error-handler changes receive layout before one final IntersectionObserver
+delivery. Deadline/round exhaustion preserves registrations and defers sizes;
+one cycle per settle and a rendering cooldown prevent restart spins. Resource
+loads, unrelated timers and worker turns remain outside the cycle. Focused
+regressions are being added but unrun; the combined production build is pending.
+
 The binary-response prerequisite now carries exact bytes into private
 heap-accounted Response storage. Clones share immutable backing, byte/blob readers
 return independent values, and text/JSON uses UTF-8 replacement with BOM handling.

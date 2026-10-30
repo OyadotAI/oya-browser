@@ -39,6 +39,7 @@ mod page;
 pub mod persona;
 mod presentation;
 mod residency;
+mod resize_observers;
 mod resources;
 /** Per-engine crash restart (CB-23). */
 mod restart;

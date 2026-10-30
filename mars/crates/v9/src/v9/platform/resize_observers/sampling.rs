@@ -3,32 +3,41 @@ use super::*;
 
 /** Sample once per host turn; author callbacks that alter layout are remeasured by the next native layout. */
 pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
+    if vm.page.state.resize_cycle.is_some() {
+        return Ok(());
+    }
+    gather(vm, 0)?;
+    Ok(())
+}
+
+/** Every fresh layout replaces both active and skipped classifications; only delivered sizes advance. */
+pub(super) fn gather(vm: &mut Vm, depth: usize) -> Res<bool> {
+    let mut skipped = false;
     let ids: Vec<_> = vm.page.state.resize_observers.keys().copied().collect();
     for id in ids {
         let mut state = vm.page.state.resize_observers[&id].clone();
         state.queued.clear();
         for target in &state.targets {
-            if let Some(entry) = measure(vm, target)?
+            if let Some(mut entry) = measure(vm, target)?
                 && Some(entry.observed) != target.previous
             {
-                state.queued.push(entry);
+                entry.depth = cycle::depth(vm, target.node)?;
+                if entry.depth > depth { state.queued.push(entry); }
+                else { skipped = true; }
             }
         }
         vm.page.state.resize_observers.insert(id, state);
     }
-    vm.page.effects.resize_observers = vm
-        .page
-        .state
-        .resize_observers
-        .values()
+    effects(vm);
+    Ok(skipped)
+}
+
+/** Snapshot flags describe live registrations and records without re-reading pre-callback geometry. */
+pub(super) fn effects(vm: &mut Vm) {
+    vm.page.effects.resize_observers = vm.page.state.resize_observers.values()
         .any(|state| !state.targets.is_empty());
-    vm.page.effects.resize_observers_pending = vm
-        .page
-        .state
-        .resize_observers
-        .values()
+    vm.page.effects.resize_observers_pending = vm.page.state.resize_observers.values()
         .any(|state| !state.queued.is_empty());
-    Ok(())
 }
 
 /** Disconnected and laid-out absent boxes are genuinely zero; unmeasured connected boxes remain pending. */
@@ -96,5 +105,6 @@ fn measure(vm: &mut Vm, target: &Observation) -> Res<Option<Entry>> {
         border_size,
         device_size,
         observed,
+        depth: 0,
     }))
 }

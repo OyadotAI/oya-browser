@@ -9,7 +9,7 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object, Prop, Slot};
 use crate::v9::vm::realm::{Builder, symbol};
 use crate::v9::vm::{Call, Res, Vm};
-pub(in crate::v9) use sampling::{deliver_all, sample};
+pub(in crate::v9) use sampling::{deliver_all, effects, sample};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 pub(in crate::v9) use validation::{roots, validate};

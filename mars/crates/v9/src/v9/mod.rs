@@ -36,6 +36,7 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 #[cfg(feature = "conformance")]
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
+pub use platform::resize_observers::{ResizeTurn, RESIZE_BROADCAST_LIMIT};
 pub use platform::blob_urls::BlobUrlSource;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
@@ -1611,8 +1612,10 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     }
     platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
-    platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
-    platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+    if !vm.page.sampled_observer_turn {
+        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
+        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+    }
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
@@ -2129,10 +2132,17 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
 pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
-        platform::resize_observers::deliver_all(&mut vm).map_err(fatal)?;
-        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
-        platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
+        platform::resize_observers::advance(&mut vm, true).map_err(fatal)?;
+        finish(vm)
+    })
+}
+
+/// Continue after actual host layout, or finalize at the host deadline without broadcasting again.
+pub fn continue_resize_observers(input: PageInput<'_>, state: VmState, complete: bool) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        if complete { platform::resize_observers::complete(&mut vm).map_err(fatal)?; }
+        else { platform::resize_observers::advance(&mut vm, false).map_err(fatal)?; }
         finish(vm)
     })
 }
@@ -2235,8 +2245,6 @@ fn run_timers_with(
     }
     vm.remaining = vm.limits.operations;
     platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
-    platform::resize_observers::sample(&mut vm).map_err(fatal)?;
-    platform::resize_observers::deliver_all(&mut vm).map_err(fatal)?;
     vm.run_due_timers(now_ms, budget).map_err(fatal)?;
     finish(vm)
 }

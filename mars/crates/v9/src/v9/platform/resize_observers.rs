@@ -1,4 +1,5 @@
 /** Persistent ResizeObservers retain branded registrations and deliver only measured layout changes. */
+mod cycle;
 mod delivery;
 mod sampling;
 mod validation;
@@ -9,7 +10,8 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object, Prop, Slot};
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Vm};
-pub(in crate::v9) use delivery::deliver_all;
+pub use cycle::{ResizeTurn, RESIZE_BROADCAST_LIMIT};
+pub(in crate::v9) use cycle::{Cycle, advance, complete};
 pub(in crate::v9) use sampling::sample;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
@@ -51,6 +53,8 @@ struct Entry {
     border_size: [f64; 2],
     device_size: [f64; 2],
     observed: [f64; 2],
+    /// Depth belongs to the gathered snapshot, before callbacks can reparent its target.
+    depth: usize,
 }
 
 /** Registry state is candidate-owned and participates in heap collection and transport validation. */
@@ -205,6 +209,7 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             state.targets.retain(|target| target.node != node);
             state.queued.retain(|entry| entry.node != node);
             if let Some(kind) = kind {
+                vm.page.resize_registration_changed = true;
                 state.targets.push(Observation {
                     node,
                     object,

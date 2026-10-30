@@ -38,6 +38,12 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
             return Err(EngineError::limit("IntersectionObserver records", RECORDS).into());
         }
     }
+    effects(vm);
+    Ok(())
+}
+
+/** Delivery refreshes queue flags without sampling geometry invalidated by an author callback. */
+pub(in crate::v9) fn effects(vm: &mut Vm) {
     vm.page.effects.intersection_observers = vm
         .page
         .state
@@ -49,8 +55,7 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
         .state
         .intersection_observers
         .values()
-        .any(|state| !state.queued.is_empty());
-    Ok(())
+        .any(|state| !state.queued.is_empty() || state.targets.iter().any(|target| target.previous.is_none()));
 }
 
 /** Missing boxes and disconnected targets cannot be converted into visible one-pixel rectangles. */

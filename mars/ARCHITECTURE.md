@@ -238,9 +238,15 @@ travel separately from hit-test geometry, including forced-layout retries.
 Wrapper percentage edges resolve before descendant measurement; auto root extents
 are captured from in-flow content before positioned overflow changes document
 scroll size. Incomplete auto layouts and auto roots combining an out-of-flow or
-hidden body with root pseudo siblings remain unmeasured. Fragmentation and full
-synchronous depth-loop broadcasting remain unfinished; this slice broadcasts
-once per bounded host turn.
+hidden body with root pseudo siblings remain unmeasured. Fragmentation remains
+unfinished. A typed observer continuation now carries depth progression through
+fresh native layout between broadcasts. Each cycle permits at most 16 broadcasts
+and two finalization turns; skipped notifications produce a real ErrorEvent with
+cancellation-aware window.onerror handling. Error-handler mutations receive
+layout before the one final intersection delivery. Deadline exhaustion preserves
+registrations and last-delivered sizes, with one cycle per settle and a rendering
+cooldown preventing immediate restart. Callback-created resource work waits for
+ordinary processing; unrelated timers/fetch/worker turns never run inside cycles.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use

@@ -2,7 +2,8 @@
 use super::*;
 
 /** One broadcast pass per native turn prevents callback-driven resize loops from monopolizing the engine. */
-pub(in crate::v9) fn deliver_all(vm: &mut Vm) -> Res<()> {
+pub(super) fn deliver_all(vm: &mut Vm) -> Res<Option<usize>> {
+    let mut shallowest: Option<usize> = None;
     let ids: Vec<_> = vm
         .page
         .state
@@ -12,6 +13,11 @@ pub(in crate::v9) fn deliver_all(vm: &mut Vm) -> Res<()> {
         .map(|(id, _)| *id)
         .collect();
     for id in ids {
+        let depth = vm.page.state.resize_observers.get(&id)
+            .and_then(|state| state.queued.iter().map(|entry| entry.depth).min());
+        if let Some(depth) = depth {
+            shallowest = Some(shallowest.map_or(depth, |previous| previous.min(depth)));
+        }
         let result = deliver_id(vm, id).and_then(|_| vm.drain_jobs());
         match result {
             Err(crate::v9::vm::Thrown::Value(error)) => {
@@ -20,7 +26,7 @@ pub(in crate::v9) fn deliver_all(vm: &mut Vm) -> Res<()> {
             result => result?,
         }
     }
-    Ok(())
+    Ok(shallowest)
 }
 
 /** A callback may disconnect another observer before its turn, so check its live queue again. */

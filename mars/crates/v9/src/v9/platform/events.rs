@@ -1,4 +1,7 @@
 /** EventTarget, Event and CustomEvent, and dispatch through capture, target and bubble phases. */
+mod errors;
+pub(in crate::v9::platform) use errors::error_prototype;
+pub(in crate::v9) use errors::report_window_error;
 use super::dom::{DOCUMENT, native_name, node_of, wrap};
 use super::{Listener, Target};
 use crate::protocol::EngineError;
@@ -691,11 +694,9 @@ fn handler_property(
     if let Some(handler) = handler
         && vm.is_callable(&handler)
     {
-        if target == Target::Window
-            && kind == ERROR_KIND
-            && vm.page.environment.worker_name.is_some()
-        {
-            worker_error_handler(vm, handler, current, event)?;
+        if target == Target::Window && kind == ERROR_KIND
+            && (vm.page.environment.worker_name.is_some() || errors::is_error_event(vm, event)) {
+            window_error_handler(vm, handler, current, event)?;
         } else {
             call_listener(vm, &handler, current, event, false)?;
         }
@@ -703,8 +704,8 @@ fn handler_property(
     Ok(())
 }
 
-/** WorkerGlobalScope.onerror has the legacy five-argument contract and cancels on true. */
-fn worker_error_handler(
+/** Window and WorkerGlobalScope onerror share the legacy five-argument contract and cancel on true. */
+fn window_error_handler(
     vm: &mut Vm,
     handler: JsValue,
     current: &JsValue,

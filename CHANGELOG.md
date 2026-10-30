@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added bounded ResizeObserver delivery cycles to Mars with fresh layout between depth-gated broadcasts, skipped-notification ErrorEvents, five-argument window.onerror handling and one final intersection delivery. Deadline/round limits retain registrations and defer remaining work without restarting the settle loop immediately.
 - Extended Mars data-URL fetches to exact binary bytes through the new response transport, preserving text decoding, XHR text behavior, GET-only admission and existing size limits.
 - Added exact binary body transport and heap-accounted Response storage to Mars, with independent byte readers, shared immutable clone backing and UTF-8 replacement/BOM handling for text. Combined response limits and wire admission remain unchanged.
 - Added Mars Canvas destination-over, destination-out, source-atop and xor compositing alongside source-over, consistently across rectangles, paths, images and text. Modes persist through save/restore; unsupported full-surface operators and lighter remain unaccepted.

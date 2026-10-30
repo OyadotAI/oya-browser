@@ -673,6 +673,9 @@ fn event_types(b: &mut Builder) {
         if let Some(init) = legacy_init(name) {
             methods(b, sub, &[init], events::event_method);
         }
+        if name == "ErrorEvent" {
+            events::error_prototype(sub);
+        }
         if name == "KeyboardEvent" {
             events::keyboard_prototype(sub);
         }

@@ -26,6 +26,7 @@ pub(in crate::v9) fn roots(state: &super::super::PageState, out: &mut Vec<JsValu
 
 /** Aggregate caps cover all observers, including records queued before registrations were removed. */
 pub(in crate::v9) fn validate(state: &super::super::PageState, heap: &Heap) -> EngineResult<()> {
+    cycle::validate(state.resize_cycle.as_ref())?;
     let observers = &state.resize_observers;
     if observers.len() > OBSERVERS
         || observers
@@ -88,7 +89,8 @@ pub(in crate::v9) fn validate(state: &super::super::PageState, heap: &Heap) -> E
 
 /** A restored record can reference only a retained genuine target and finite nonnegative extents. */
 fn record(state: &super::super::PageState, heap: &Heap, entry: &Entry) -> EngineResult<()> {
-    if state.wrappers.get(&entry.node) != Some(&entry.target)
+    if entry.depth == 0 || entry.depth > cycle::DEPTH_LIMIT
+        || state.wrappers.get(&entry.node) != Some(&entry.target)
         || !target_object(heap, entry.node, entry.target)
         || entry
             .content
