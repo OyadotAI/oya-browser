@@ -1,5 +1,6 @@
 /** Validated exact-address connections preserve hostname verification without DNS rebinding. */
 mod errors;
+mod retry;
 use crate::constants::DNS_ANSWERS;
 use crate::network::WebRequest;
 use crate::network::constants::{POOL_PROBE_RECORDS, READ_BYTES};
@@ -29,8 +30,20 @@ pub(super) enum Connection {
 pub(super) fn connect(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Connection> {
     let addresses = resolve(url, fixture, deadline)?;
     remaining(deadline)?;
-    let (socket, _) = race(&addresses, deadline)?;
-    establish(socket, &addresses, url, deadline)
+    let (socket, peer) = race(&addresses, deadline)?;
+    let first = modern(socket, url, deadline);
+    retry::recover(
+        first,
+        &addresses,
+        peer,
+        deadline,
+        |peer| {
+            let socket = TcpStream::connect_timeout(&peer, remaining(deadline)?)
+                .map_err(|error| io_error(Stage::Connect, error))?;
+            modern(socket, url, deadline)
+        },
+        || legacy(&addresses, url, deadline).map_err(retry::Failure::Terminal),
+    )
 }
 
 /** One raced connection to the admitted addresses. */
@@ -41,23 +54,28 @@ fn race(addresses: &[SocketAddr], deadline: Instant) -> EngineResult<(TcpStream,
     .map_err(|error| io_error(Stage::Connect, error))
 }
 
-/**
- * TLS through Rustls; when the server answers its hello with handshake_failure, once more on a
- * fresh socket to the same admitted addresses with the RSA key exchange Chromium still offers
- * (legacy.rs). Chrome sends both in one hello; a server that prefers ECDHE never reaches the
- * second attempt, so only servers Chrome would reach over kRSA take it.
- */
-fn establish(
-    socket: TcpStream,
-    addresses: &[SocketAddr],
-    url: &Url,
-    deadline: Instant,
-) -> EngineResult<Connection> {
+/** Every modern candidate keeps the identical TLS configuration, hostname and verifier.
+The temporary lease interrupts Rustls's internal complete_io loop at the absolute deadline;
+it is stopped and joined before a socket is handed off or a replacement is opened. */
+fn modern(socket: TcpStream, url: &Url, deadline: Instant) -> Result<Connection, retry::Failure> {
     let mut connection = wrap(socket, url)?;
-    if connection.handshake(deadline)? {
-        return Ok(connection);
-    }
+    let lease = if matches!(&connection, Connection::Tls(_)) {
+        Some(connection.lease(deadline)?)
+    } else {
+        None
+    };
+    let result = connection.handshake(deadline);
+    drop(lease);
+    remaining(deadline)?;
+    result?;
+    Ok(connection)
+}
+
+/** The existing explicit handshake_failure alert alone selects RSA key exchange. This is
+one recovery candidate, never an additional third attempt after a modern reset retry. */
+fn legacy(addresses: &[SocketAddr], url: &Url, deadline: Instant) -> EngineResult<Connection> {
     let (socket, _) = race(addresses, deadline)?;
+    let lease = super::lease::Lease::start(&socket, deadline)?;
     let budget = remaining(deadline)?;
     socket
         .set_read_timeout(Some(budget))
@@ -66,7 +84,10 @@ fn establish(
         .set_write_timeout(Some(budget))
         .map_err(|error| io_error(Stage::SocketOptions, error))?;
     let name = url.host_str().ok_or_else(denied)?.trim_matches(['[', ']']);
-    super::legacy::connect(socket, name, &super::hello::verifier()?)
+    let result = super::legacy::connect(socket, name, &super::hello::verifier()?);
+    drop(lease);
+    remaining(deadline)?;
+    result
         .map(|stream| Connection::Legacy(Box::new(stream)))
         .map_err(|error| io_error(Stage::Handshake, error))
 }
@@ -234,9 +255,9 @@ impl Connection {
 
     /**
      * TLS negotiation finishes in preparation, while stale ownership can still prevent POST.
-     * False when the server refused every suite offered, so the caller may try kRSA.
+     * Preserve typed handshake I/O failures until the bounded recovery decision is made.
      */
-    fn handshake(&mut self, deadline: Instant) -> EngineResult<bool> {
+    fn handshake(&mut self, deadline: Instant) -> Result<(), retry::Failure> {
         if let Self::Tls(stream) = self {
             while stream.conn.is_handshaking() {
                 let remaining = remaining(deadline)?;
@@ -248,15 +269,13 @@ impl Connection {
                     .sock
                     .set_write_timeout(Some(remaining))
                     .map_err(|error| io_error(Stage::SocketOptions, error))?;
-                if let Err(error) = stream.conn.complete_io(&mut stream.sock) {
-                    if retry_with_rsa(&error) {
-                        return Ok(false);
-                    }
-                    return Err(io_error(Stage::Handshake, error));
-                }
+                stream
+                    .conn
+                    .complete_io(&mut stream.sock)
+                    .map_err(retry::Failure::Handshake)?;
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     /** The exact admitted address this socket was connected to. */
