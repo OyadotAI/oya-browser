@@ -15,7 +15,7 @@ pub(in crate::v9) use cycle::{Cycle, advance, complete};
 pub(in crate::v9) use sampling::sample;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-pub(in crate::v9) use validation::{roots, validate};
+pub(in crate::v9) use validation::{roots, validate, validate_summary};
 
 /** Per-page admission bounds callback work, retained DOM wrappers and queued measurements. */
 const OBSERVERS: usize = 64;

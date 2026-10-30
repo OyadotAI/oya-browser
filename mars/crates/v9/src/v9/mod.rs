@@ -559,8 +559,21 @@ impl VmState {
     }
     /// Check that retained node references fit the document the app just committed.
     pub fn validate_document(&self, document: &ScriptDocument) -> EngineResult<()> {
-        document.validate()?;
         self.validate(&Limits::default())?;
+        self.validate_document_references(document)
+    }
+    /// Check a resident service's heap-less projection without treating its object IDs as a full heap.
+    /// Only coordinators holding a resident state token may use this; restoring execution still uses
+    /// full validation, including native signal identities and observer callbacks.
+    pub fn validate_summary_document(&self, document: &ScriptDocument) -> EngineResult<()> {
+        let limits = Limits::default();
+        self.validate_projection_bounds(&limits, false)?;
+        self.validate_size(&limits)?;
+        self.validate_document_references(document)
+    }
+    /// Document identity and retained node ownership apply equally to full states and summaries.
+    fn validate_document_references(&self, document: &ScriptDocument) -> EngineResult<()> {
+        document.validate()?;
         if self.page.initialized && self.page.identity != document.identity {
             return Err(EngineError::invalid(
                 "V9 state belongs to another document.",
@@ -598,6 +611,10 @@ impl VmState {
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
         self.validate_bounds(limits)?;
+        self.validate_size(limits)
+    }
+    /// Even heap-less projections retain the private wire's encoded state ceiling.
+    fn validate_size(&self, limits: &Limits) -> EngineResult<()> {
         let mut writer = StateSizeWriter {
             bytes: 0,
             limit: limits.state_bytes,
@@ -617,6 +634,10 @@ impl VmState {
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
+        self.validate_projection_bounds(limits, true)
+    }
+    /// Page bounds are always checked; heap-linked identities require the complete resident state.
+    fn validate_projection_bounds(&self, limits: &Limits, full_heap: bool) -> EngineResult<()> {
         platform::clock::validate(self.page.clock, self.page.observed_clock, self.page.epoch)?;
         if self.page.legacy_handlers.len() > crate::constants::VM_DYNAMIC_SOURCES {
             return Err(EngineError::invalid("Invalid retained legacy handler."));
@@ -674,10 +695,16 @@ impl VmState {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
-        platform::intersection_observers::validate(&self.page, &self.heap)?;
-        platform::resize_observers::validate(&self.page, &self.heap)?;
+        if full_heap {
+            platform::intersection_observers::validate(&self.page, &self.heap)?;
+            platform::resize_observers::validate(&self.page, &self.heap)?;
+            platform::validate_network_state(&self.page, &self.heap)?;
+        } else {
+            platform::intersection_observers::validate_summary(&self.page)?;
+            platform::resize_observers::validate_summary(&self.page)?;
+            platform::validate_network_summary(&self.page)?;
+        }
         platform::blob_urls::validate(&self.page.blob_urls)?;
-        platform::validate_network_state(&self.page, &self.heap)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
         platform::frame_directory::validate_state(&self.page)?;
@@ -1557,6 +1584,7 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.changes = saved.changes;
     vm.page.script_changes = saved.script_changes;
     vm.page.effects.requests = saved.effects.requests;
+    vm.page.effects.cancelled_requests = saved.effects.cancelled_requests;
     vm.page.effects.image_requests = saved.effects.image_requests;
     vm.page.effects.image_cancellations = saved.effects.image_cancellations;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;

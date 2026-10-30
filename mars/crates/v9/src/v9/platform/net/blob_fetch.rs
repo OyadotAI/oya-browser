@@ -48,6 +48,22 @@ pub(super) fn admits(page: &PageState, request: &HostRequest) -> bool {
 
 /** Saved Requests cannot carry capabilities; only actual fetch effects contain captured sources. */
 pub(super) fn validate(page: &PageState, heap: &Heap) -> crate::protocol::EngineResult<()> {
+    validate_summary(page)?;
+    for object in heap.objects.values() {
+        if let Class::Host(host) = &object.class
+            && let HostData::Request(request) = host.as_ref()
+            && request.blob_source.is_some()
+        {
+            return Err(EngineError::invalid(
+                "Request cannot retain a Blob fetch snapshot.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/** Queued native capture accounting remains present in a resident page summary. */
+pub(super) fn validate_summary(page: &PageState) -> crate::protocol::EngineResult<()> {
     let mut total = 0usize;
     for pending in &page.pending {
         if pending.xhr && pending.blob_bytes != 0 {
@@ -60,16 +76,6 @@ pub(super) fn validate(page: &PageState, heap: &Heap) -> crate::protocol::Engine
             "Blob fetch queued bytes",
             SNAPSHOT_BYTES,
         ));
-    }
-    for object in heap.objects.values() {
-        if let Class::Host(host) = &object.class
-            && let HostData::Request(request) = host.as_ref()
-            && request.blob_source.is_some()
-        {
-            return Err(EngineError::invalid(
-                "Request cannot retain a Blob fetch snapshot.",
-            ));
-        }
     }
     Ok(())
 }

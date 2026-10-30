@@ -32,6 +32,14 @@ pub(in crate::v9) fn validate_state(
     abort::validate(page, heap)
 }
 
+/** Resident summaries retain pending ownership and capture budgets without duplicating service heap objects. */
+pub(in crate::v9) fn validate_summary(
+    page: &super::PageState,
+) -> crate::protocol::EngineResult<()> {
+    blob_fetch::validate_summary(page)?;
+    abort::validate_summary(page)
+}
+
 /** Parse an absolute URL. */
 pub(in crate::v9) fn parse_url(text: &str) -> Option<url::Url> {
     url::Url::parse(text).ok()

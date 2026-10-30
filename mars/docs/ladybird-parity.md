@@ -7,13 +7,33 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The user reported every Google script failing with `Invalid native fetch signal
+state.` in the new candidate. Static tracing found the coordinator validating a
+heap-less resident summary as complete VM state: pending signal and promise IDs
+correctly reside only in the V9 service. The repair introduces explicit summary
+validation selected only with a resident token, retains page/document bounds,
+and leaves full heap identity checks on execution/restore. Observer summaries
+need the same separation. Script rollback also restores queued cancellations.
+Focused regressions are being added unrun; no live Google success is claimed.
+
+The previous combined production build at `3fc7c9c8` passed in 1m 02s, including
+all eleven Porter–Duff/additive modes, native pure scale animation, raw HTTP
+fetch response bytes and Blob image generations. Build log:
+`/private/tmp/mars-parity-full-composite-scale-blob-images-build.log`.
+Frozen binary SHA-256:
+`158a8836b53861a2922be0525dad75f171cf1bf745867e416b32172a29a7425c`.
+The packaged `mars/dist/Mars Latest.app` executable SHA-256 is
+`e5e75b5a672ca2007c3f8c8cf31bc782d969d1ce1bf9583a9898309f11ce22e1`.
+This build predates the reported signal-validation repair. Its successful
+compilation did not establish page compatibility; tests and QA remained unrun.
+
 Blob-backed programmatic images now capture owned source bytes at settled
 generation admission, retain them across later revocation, and cancel replaced
 or removed generations. Origin/img-src checks precede actual bounded raster
 decoding; the decoded pixels also feed clean Canvas drawImage without a second
 decode. Native queues account for bytes and metadata and never route Blob URLs
 through Relay, legacy prefetch or URL-only image caches. Five focused regressions
-remain unrun; the combined build is pending. Responsive Blob URLs differing from
+remain unrun; the combined build passes at `3fc7c9c8`. Responsive Blob URLs differing from
 captured fallback src, SVG, CSS backgrounds and cross-context sharing stay out
 of scope, along with the existing decoder format/surface limits.
 
@@ -23,7 +43,7 @@ existing easing/interruption/iteration/pause/fill machinery. Visual geometry and
 hits update while layout and resize measurements remain unchanged. Competing
 meaningful rotation/scale animation stacks, mixed/matrix/3D transforms,
 percentage/calc factors and independent scale-property composition stay excluded.
-Focused Eye/runtime regressions remain unrun; the combined build is pending.
+Focused Eye/runtime regressions remain unrun; the combined build passes at `3fc7c9c8`.
 
 HTTP fetch now requests exact decoded bytes from Relay instead of forcing them
 through a text charset decoder. Bounded base64 crosses the private wire, then
@@ -32,7 +52,7 @@ still decodes UTF-8; legacy XHR/module charset handling remains separate. Raw
 response admission excludes navigation, image and preflight roles, and existing
 network/VM byte caps are retained. Focused Relay/native regressions cover binary
 bytes, charset separation and CORS/opaque refusal; they remain unrun. The combined
-production build is pending.
+production build passes at `3fc7c9c8`.
 
 The remaining five full-surface Porter–Duff operators plus lighter are now
 implemented. Empty/offcanvas source geometry still supplies transparent pixels
@@ -42,7 +62,7 @@ source/clip coverage and independent clip coverage preserve the area outside
 fractional clips. Lighter clamps before coverage interpolation. All supported
 painters share the operator, and work is admitted before bitmap mutation without
 a new full-surface allocation. Updated/expanded regressions remain unrun; the
-combined production build is pending. Artistic blend modes remain unfinished.
+combined production build passes at `3fc7c9c8`. Artistic blend modes remain unfinished.
 
 The combined production build at `10e70b14` passes in 1m 04s with five-mode
 Canvas compositing, bounded resize cycles, binary responses/data URLs, and owned

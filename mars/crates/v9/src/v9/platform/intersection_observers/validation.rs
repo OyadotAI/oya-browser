@@ -26,6 +26,16 @@ pub(in crate::v9) fn roots(state: &super::super::PageState, out: &mut Vec<JsValu
 
 /** Aggregate caps cover all observers, including records queued before registrations were removed. */
 pub(in crate::v9) fn validate(state: &super::super::PageState, heap: &Heap) -> EngineResult<()> {
+    validate_with_heap(state, Some(heap))
+}
+
+/** Resident summaries retain page-owned invariants; their callback and node objects remain in the service. */
+pub(in crate::v9) fn validate_summary(state: &super::super::PageState) -> EngineResult<()> {
+    validate_with_heap(state, None)
+}
+
+/** Only full-state validation proves heap identity; both paths preserve every page-owned bound. */
+fn validate_with_heap(state: &super::super::PageState, heap: Option<&Heap>) -> EngineResult<()> {
     let observers = &state.intersection_observers;
     if observers.len() > OBSERVERS
         || observers
@@ -42,22 +52,24 @@ pub(in crate::v9) fn validate(state: &super::super::PageState, heap: &Heap) -> E
         return Err(invalid());
     }
     for (id, observer) in observers {
-        let callback = heap
-            .get(*id)
-            .and_then(|object| object.props.get(&callback_key()))
-            .and_then(|prop| match &prop.slot {
-                Slot::Data(value) => value.object(),
-                _ => None,
-            });
-        if callback.is_none_or(|id| !callable(heap, id)) {
-            return Err(invalid());
+        if let Some(heap) = heap {
+            let callback = heap
+                .get(*id)
+                .and_then(|object| object.props.get(&callback_key()))
+                .and_then(|prop| match &prop.slot {
+                    Slot::Data(value) => value.object(),
+                    _ => None,
+                });
+            if callback.is_none_or(|id| !callable(heap, id)) {
+                return Err(invalid());
+            }
         }
         options(&observer.options)?;
         let mut seen = std::collections::BTreeSet::new();
         for target in &observer.targets {
             if !seen.insert(target.node)
                 || state.wrappers.get(&target.node) != Some(&target.object)
-                || !target_object(heap, target.node, target.object)
+                || heap.is_some_and(|heap| !target_object(heap, target.node, target.object))
                 || target
                     .previous
                     .as_ref()
@@ -93,9 +105,9 @@ fn options(options: &options::Options) -> EngineResult<()> {
 }
 
 /** A restored record can reference only a retained genuine target and finite nonnegative extents. */
-fn record(state: &super::super::PageState, heap: &Heap, entry: &Entry) -> EngineResult<()> {
+fn record(state: &super::super::PageState, heap: Option<&Heap>, entry: &Entry) -> EngineResult<()> {
     if state.wrappers.get(&entry.node) != Some(&entry.target)
-        || !target_object(heap, entry.node, entry.target)
+        || heap.is_some_and(|heap| !target_object(heap, entry.node, entry.target))
         || !entry.ratio.is_finite()
         || !(0.0..=1.0).contains(&entry.ratio)
         || !entry.time.is_finite()

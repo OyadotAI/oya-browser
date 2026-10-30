@@ -57,6 +57,14 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Resident V9 executions retain their complete heap in the service and send the
+coordinator a page summary plus state token. Coordinator checks explicitly select
+summary validation only when that token exists: page bounds, document identity,
+node associations and encoded size still apply. Complete execution and restored
+states keep native signal, Promise, observer callback and target heap validation;
+a summary is not executable VM state. Script rollback restores request admission
+and cancellation effects together.
+
 Canvas 2D uses an injected `mars_core::canvas::CanvasHost`. V9 owns its serializable
 context state; Eye supplies synchronous macOS text shaping/rasterization and PNG
 encoding. Standalone hosts default to unavailable. Immutable pixel allocations are

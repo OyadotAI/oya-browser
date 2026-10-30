@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Corrected Mars resident-state validation so pending fetches and observers are checked against the heap retained by V9, while the app validates their bounded page summaries. This addresses false `Invalid native fetch signal state` page failures without weakening full-state restore checks.
+
 - Added context-owned Blob image loading in Mars with generation snapshots, cancellation, origin/img-src checks, bounded actual raster decoding and clean Canvas pixels. Blob images never fall through to network/cache/prefetch; SVG, CSS backgrounds and unmatched responsive Blob candidates remain unsupported.
 - Added native pure CSS scale transitions and keyframes to Mars, including independent signed axes, zero scales, easing, interruption, direction and pause/fill behavior. Visual geometry and hit testing follow scaling while layout/resize measurements remain unchanged; mixed and 3D transform animation remains unfinished.
 - Made Mars HTTP fetch response bodies binary-safe through Relay and the native CORS coordinator. Fetch text readers use UTF-8 while legacy XHR/module decoding stays separate; cache, redirect, body-size and header filtering rules remain in force.

@@ -233,25 +233,44 @@ fn cancel_effect(vm: &mut Vm, pending: &Pending) -> Res<()> {
 
 /** Serialized fetch and signal links must retain genuine native identities and canonical roots. */
 pub(super) fn validate(page: &PageState, heap: &Heap) -> EngineResult<()> {
+    validate_summary(page)?;
+    for pending in &page.pending {
+        if pending.signal.is_some_and(|id| !branded(heap, id))
+            || !heap
+                .get(pending.owner)
+                .is_some_and(|object| pending.xhr || matches!(object.class, Class::Promise(_)))
+        {
+            return Err(invalid());
+        }
+    }
+    validate_heap(heap)
+}
+
+/** Native pending IDs and ownership relationships remain verifiable without resident heap objects. */
+pub(super) fn validate_summary(page: &PageState) -> EngineResult<()> {
+    if page.pending.len() > VM_HOST_REQUESTS {
+        return Err(EngineError::limit(
+            "pending host requests",
+            VM_HOST_REQUESTS,
+        ));
+    }
     let mut requests = BTreeSet::new();
     for pending in &page.pending {
         if pending.id == 0
             || pending.id > page.next_request
             || !requests.insert(pending.id)
             || pending.xhr && pending.signal.is_some()
-            || pending.signal.is_some_and(|id| !branded(heap, id))
             || !pending.xhr && pending.signal.is_none()
-            || !heap.get(pending.owner).is_some_and(|object| {
-                if pending.xhr {
-                    page.xhrs.contains_key(&pending.owner)
-                } else {
-                    matches!(object.class, Class::Promise(_))
-                }
-            })
+            || pending.xhr && !page.xhrs.contains_key(&pending.owner)
         {
             return Err(invalid());
         }
     }
+    Ok(())
+}
+
+/** Full state retains all native signal branding, binding and dependency checks. */
+fn validate_heap(heap: &Heap) -> EngineResult<()> {
     for (id, object) in &heap.objects {
         if object.props.get(key(ABORTED)).is_some() {
             validate_signal(heap, *id)?;

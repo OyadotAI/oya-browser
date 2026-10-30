@@ -47,6 +47,7 @@ mod namespaces;
 mod net;
 pub use blob_urls::BlobUrlSource;
 pub(in crate::v9) use net::validate_state as validate_network_state;
+pub(in crate::v9) use net::validate_summary as validate_network_summary;
 mod nodes;
 pub(in crate::v9) mod observable;
 mod offsets;

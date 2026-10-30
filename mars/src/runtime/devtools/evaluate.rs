@@ -204,7 +204,7 @@ impl Runtime {
                 "The script and document engines disagree on the page structure.",
             ));
         }
-        execution.state.validate_document(&after)?;
+        scripting::validate_script_state(&execution.state, execution.state_token, &after)?;
         if effects {
             self.commit_document_cookies(&page.url, &execution.effects.cookies)?;
         }
@@ -284,7 +284,11 @@ impl Runtime {
             .as_ref()
             .map(scripting::boxes)
             .unwrap_or_default();
-        environment.resize_wrappers = page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default();
+        environment.resize_wrappers = page
+            .display
+            .as_ref()
+            .map(|display| display.resize_wrappers)
+            .unwrap_or_default();
         environment.scroll_y = self.scroll_y;
         environment.scroll_x = page.scroll_x;
         environment.positions = scripting::positions(&page.document);

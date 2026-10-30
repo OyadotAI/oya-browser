@@ -544,11 +544,11 @@ impl Runtime {
         }
         super::animations::refresh_timelines(page)?;
         crate::document::validate_content(&page.document)?;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)?;
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )?;
         if self.web_origins.is_some() {
             let effects = super::animations::paint_effects(&page.scripting);
             let effective = super::animations::effective_presentation(&page.document, &effects)?;

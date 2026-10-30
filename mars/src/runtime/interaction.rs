@@ -63,11 +63,11 @@ impl Runtime {
             return Err(invalid_target());
         }
         validate_text_target(&page, &node)?;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)?;
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )?;
         page.document = self.apply(
             &page.document,
             &[DomChange::Text {
@@ -76,16 +76,16 @@ impl Runtime {
             }],
         )?;
         page.styled = false;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)
-            .map_err(|_| {
-                EngineError::unsupported(
-                    "Retaining references or listeners to removed elements is not supported.",
-                )
-            })?;
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )
+        .map_err(|_| {
+            EngineError::unsupported(
+                "Retaining references or listeners to removed elements is not supported.",
+            )
+        })?;
         let result = self.finish_mutation(page)?;
         Ok(edit_result(result, &input.node_id))
     }

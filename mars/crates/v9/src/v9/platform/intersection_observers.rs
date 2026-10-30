@@ -12,7 +12,7 @@ use crate::v9::vm::{Call, Res, Vm};
 pub(in crate::v9) use sampling::{deliver_all, effects, sample};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
-pub(in crate::v9) use validation::{roots, validate};
+pub(in crate::v9) use validation::{roots, validate, validate_summary};
 
 /** Bound callback identities and the aggregate work any geometry update can request. */
 const OBSERVERS: usize = 64;

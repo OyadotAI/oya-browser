@@ -9,12 +9,12 @@ use super::page::Page;
 use super::resources::{Credentials, ScriptAnswer, ScriptRequest};
 use super::supervisor::Runtime;
 use crate::constants::{DIAGNOSTICS, SCRIPT_REQUESTS_PER_STEP, VM_RESPONSE_BYTES};
-use crate::document::{Document, StyleSource};
+use crate::document::{Document, ScriptDocument, StyleSource};
 use crate::network::Method;
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
     ConsoleEntry, DomLevel, Execution, HostRequest, HostResponse, NavigationRequest,
-    PageEnvironment, ScriptFailure,
+    PageEnvironment, ScriptFailure, VmState,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -26,6 +26,19 @@ mod geometry;
 mod image_loading;
 mod requests;
 pub(in crate::runtime) use requests::queue as queue_requests;
+
+/** Resident tokens identify heap-less projections; transferable states still require full heap validation. */
+pub(super) fn validate_script_state(
+    state: &VmState,
+    token: Option<u64>,
+    document: &ScriptDocument,
+) -> EngineResult<()> {
+    if token.is_some() {
+        state.validate_summary_document(document)
+    } else {
+        state.validate_document(document)
+    }
+}
 
 /// Virtual milliseconds of timers and animation frames a page runs before it first commits, so
 /// `setTimeout(0)` and requestAnimationFrame rendering is part of the first paint.
@@ -422,7 +435,7 @@ impl Runtime {
                 "The script and document engines disagree on the page structure.",
             ));
         }
-        execution.state.validate_document(&after)?;
+        validate_script_state(&execution.state, execution.state_token, &after)?;
         let Execution {
             state,
             state_token,
