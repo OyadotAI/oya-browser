@@ -18,8 +18,15 @@ pub(in crate::runtime) struct Selection {
 impl Selection {
     /** Resolve an owned source against its document rather than trusting a script-provided clean flag. */
     pub fn new(base: &Url, source: &str, density: f64, cors: ImageCors) -> Option<Self> {
+        if !mars_core::image_source::valid_url_text(source) {
+            return None;
+        }
+        let url = base.join(source.trim()).ok()?.to_string();
+        if !mars_core::image_source::valid_url_text(&url) {
+            return None;
+        }
         Some(Self {
-            url: base.join(source.trim()).ok()?.to_string(),
+            url,
             density,
             cors,
             origin: origin(base, cors),

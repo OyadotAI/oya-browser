@@ -1028,6 +1028,9 @@ impl super::supervisor::Runtime {
         budget: &mut Budget,
         notes: &mut Vec<String>,
     ) -> EngineResult<Option<Fetched>> {
+        if !mars_core::image_source::valid_url_text(source) {
+            return Ok(None);
+        }
         if base
             .join(source.trim())
             .is_ok_and(|url| url.scheme() == "blob")
@@ -1383,6 +1386,9 @@ fn svg_size(svg: &Node) -> (u32, u32) {
 /// An image carried in a `data:` URL: base64 or percent-encoded bytes, a bitmap or a drawing,
 /// under the same bounds as fetched images. Nothing is fetched.
 pub(super) fn data_url(src: &str) -> EngineResult<Fetched> {
+    if !mars_core::image_source::valid_url_text(src) {
+        return Err(invalid());
+    }
     let (mime, bytes) = data_body(src, crate::constants::IMAGE_BYTES)?;
     if mime == SVG_MIME {
         vector(&mime, std::str::from_utf8(&bytes).map_err(|_| invalid())?)
@@ -1668,6 +1674,16 @@ mod tests {
         assert!(matches!(svg, Some(Fetched::Vector(_, (8, 4)))));
         assert!(data_url("data:text/html,<b>").is_err());
         assert!(data_url("data:image/png;base64,!!!").is_err());
+    }
+
+    /** Source text beyond 8KiB still produces pixels only when the bounded image decoder accepts it. */
+    #[test]
+    fn long_inline_image_text_decodes_real_pixels_with_existing_byte_limits() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mN8XA8AAksBZG7LpHYAAAAASUVORK5CYII=";
+        let source = format!("data:image/png;base64,{}{png}", " ".repeat(9000));
+        assert!(matches!(data_url(&source), Ok(Fetched::Raster(_, (1, 1)))));
+        let oversized = format!("data:image/png,{}", "x".repeat(IMAGE_BYTES + 1));
+        assert!(data_url(&oversized).is_err());
     }
 
     /** A repeated address reuses its image without a request, so a page drawing many copies of

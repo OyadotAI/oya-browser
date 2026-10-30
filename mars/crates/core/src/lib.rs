@@ -5,6 +5,7 @@ pub mod constants;
 pub mod dom;
 pub mod geometry;
 pub mod http;
+pub mod image_source;
 pub mod languages;
 pub mod profile;
 pub mod protocol;

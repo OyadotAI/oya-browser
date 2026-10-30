@@ -1,10 +1,11 @@
 /** Image requests cross the host boundary as data; only a matching decoded outcome fires an event. */
 use super::{Page, Target, dom, events};
-use crate::constants::{IMAGE_COUNT, IMAGE_DIMENSION, NODES, URL_BYTES, VM_DETACHED_NODES};
+use crate::constants::{IMAGE_COUNT, IMAGE_DIMENSION, NODES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::value::JsValue;
 use crate::v9::vm::realm::Builder;
 use crate::v9::vm::{Call, Res, Thrown, Vm};
+use mars_core::image_source::{REQUEST_TEXT_BYTES, SOURCE_TOTAL_BYTES, valid_url_text};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -66,6 +67,8 @@ pub(in crate::v9) struct State {
     pub generation: u64,
     /** Literal src before URL resolution, so restored text can be bounded and compared. */
     pub source: String,
+    /** An inadmissible optional source keeps its DOM text but only queues an error completion. */
+    pub source_rejected: bool,
     /** The crossorigin state belongs to the same generation as the pixels and pending request. */
     pub cors: ImageCors,
     /** The host has received this generation and must eventually return its outcome. */
@@ -185,10 +188,33 @@ pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> Engine
     {
         return Ok(());
     }
-    let source = page
+    let (source, mut source_rejected) = page
         .view(node)
-        .and_then(|v| v.attributes.get("src").cloned())
+        .and_then(|v| {
+            v.attributes.get("src").map(|source| {
+                if valid_url_text(source) {
+                    (source.clone(), false)
+                } else {
+                    (String::new(), true)
+                }
+            })
+        })
         .unwrap_or_default();
+    let retained = page
+        .state
+        .images
+        .iter()
+        .filter(|(id, _)| **id != node)
+        .fold(0usize, |used, (_, state)| {
+            used.saturating_add(state.source.len())
+        });
+    // Preserve the authored DOM attribute; an unavailable optional source follows the empty-src error task.
+    let source = if source.len() <= SOURCE_TOTAL_BYTES.saturating_sub(retained) {
+        source
+    } else {
+        source_rejected = true;
+        String::new()
+    };
     let complete = !has_source(page, node);
     blob::cancel(page, node)?;
     let state = page.state.images.entry(node).or_default();
@@ -199,6 +225,7 @@ pub(super) fn source_changed(page: &mut Page, node: usize, name: &str) -> Engine
     *state = State {
         generation,
         source,
+        source_rejected,
         cors,
         complete,
         ..State::default()
@@ -248,9 +275,24 @@ fn request(vm: &mut Vm, node: usize) -> EngineResult<()> {
         return Ok(());
     }
     let source = state.source.clone();
-    let url = super::net::resolve(vm, &source).unwrap_or_default();
-    if source.len() > URL_BYTES || url.len() > URL_BYTES {
-        return Err(EngineError::limit("Image URL bytes", URL_BYTES));
+    let url = if state.source_rejected {
+        String::new()
+    } else {
+        super::net::resolve(vm, &source)
+            .filter(|url| valid_url_text(url))
+            .unwrap_or_default()
+    };
+    let retained = vm
+        .page
+        .effects
+        .image_requests
+        .iter()
+        .fold(0usize, |used, request| {
+            used.saturating_add(request.source.len())
+                .saturating_add(request.url.len())
+        });
+    if source.len().saturating_add(url.len()) > REQUEST_TEXT_BYTES.saturating_sub(retained) {
+        return Ok(());
     }
     let blob_source = blob::capture(&vm.page, &url);
     let blob_bytes = blob_source
@@ -274,6 +316,16 @@ fn request(vm: &mut Vm, node: usize) -> EngineResult<()> {
 pub(in crate::v9) fn deliver(vm: &mut Vm, responses: Vec<ImageResponse>) -> EngineResult<()> {
     if responses.len() > IMAGE_COUNT {
         return Err(EngineError::limit("Image completions", IMAGE_COUNT));
+    }
+    let text_bytes = responses.iter().fold(0usize, |used, response| {
+        used.saturating_add(response.request.source.len())
+            .saturating_add(response.request.url.len())
+    });
+    if text_bytes > REQUEST_TEXT_BYTES {
+        return Err(EngineError::limit(
+            "Image completion text bytes",
+            REQUEST_TEXT_BYTES,
+        ));
     }
     for response in &responses {
         if !valid_request(&response.request) || !valid_dimensions(response.dimensions) {
@@ -331,6 +383,15 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     blob::validate(states)?;
     adoption::validate(states)?;
     validate_pixels(states)?;
+    let source_bytes = states.values().fold(0usize, |used, state| {
+        used.saturating_add(state.source.len())
+    });
+    if source_bytes > SOURCE_TOTAL_BYTES {
+        return Err(EngineError::limit(
+            "Image source text bytes",
+            SOURCE_TOTAL_BYTES,
+        ));
+    }
     if states.len() > NODES + VM_DETACHED_NODES {
         return Err(EngineError::limit(
             "Image states",
@@ -339,7 +400,8 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     }
     if states.values().any(|s| {
         s.generation == 0
-            || s.source.len() > URL_BYTES
+            || !valid_url_text(&s.source)
+            || s.source_rejected && (!s.source.is_empty() || s.dimensions.is_some())
             || !valid_dimensions(s.dimensions)
             || s.dimensions.is_some() && (!s.complete || !s.requested)
     }) {
@@ -421,8 +483,8 @@ fn valid_dimensions(size: Option<(u32, u32)>) -> bool {
 /** Requests contain inert bounded text and a nonzero generation. */
 fn valid_request(request: &ImageRequest) -> bool {
     request.generation != 0
-        && request.source.len() <= URL_BYTES
-        && request.url.len() <= URL_BYTES
+        && valid_url_text(&request.source)
+        && valid_url_text(&request.url)
         && request.blob_source.as_ref().is_none_or(|source| {
             source.bytes.len() <= crate::constants::IMAGE_BYTES
                 && source.validate(&request.url).is_ok()

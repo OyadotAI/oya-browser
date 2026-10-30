@@ -1,8 +1,11 @@
 /** Image lifecycle work uses the existing governed fetch/decoder and returns only inert outcomes to V9. */
 use super::{IMAGE_REQUEST_WALL, INSERTED_IMAGE_WALL, Page, Runtime};
-use crate::constants::{IMAGE_COUNT, NODES, URL_BYTES, VM_DETACHED_NODES};
+use crate::constants::{IMAGE_COUNT, NODES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{ImageAdoption, ImageCancellation, ImageCors, ImageRequest, ImageResponse};
+use mars_core::image_source::{
+    QUEUED_TEXT_BYTES, REQUEST_TEXT_BYTES, SOURCE_TOTAL_BYTES, valid_url_text,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
@@ -40,7 +43,8 @@ impl Loading {
             || cancelled.iter().any(|entry| entry.generation == 0)
             || requests
                 .iter()
-                .any(|r| r.generation == 0 || r.source.len() > URL_BYTES || r.url.len() > URL_BYTES)
+                .any(|r| r.generation == 0 || !valid_url_text(&r.source) || !valid_url_text(&r.url))
+            || request_text_bytes(&requests) > REQUEST_TEXT_BYTES
         {
             return Err(EngineError::invalid("Invalid image request batch."));
         }
@@ -59,13 +63,28 @@ impl Loading {
                 cleared.push(entry.node);
             }
         }
-        for request in requests {
+        for mut request in requests {
             super::super::images::snapshot_bytes(&request)?;
             self.managed.insert(request.node);
             self.generations.insert(request.node, request.generation);
             self.hidden.remove(&request.node);
             self.pending.retain(|old| old.node != request.node);
+            if request.source.len().saturating_add(request.url.len())
+                > QUEUED_TEXT_BYTES.saturating_sub(request_text_bytes(&self.pending))
+            {
+                // Preserve generation/source identity but fail optional acquisition without network work.
+                request.url.clear();
+                request.blob_source = None;
+            }
             self.pending.push(request);
+        }
+        let source_bytes = self.pending.iter().fold(0usize, |used, request| {
+            used.saturating_add(request.source.len())
+        });
+        if request_text_bytes(&self.pending) > QUEUED_TEXT_BYTES
+            || source_bytes > SOURCE_TOTAL_BYTES
+        {
+            return Err(EngineError::invalid("Invalid queued image source text."));
         }
         let bytes = self.pending.iter().try_fold(0usize, |used, request| {
             Ok::<_, EngineError>(
@@ -84,6 +103,14 @@ impl Loading {
         }
         Ok(cleared)
     }
+}
+
+/** Both copies of an embedded URL count before they enter the persistent native request queue. */
+fn request_text_bytes(requests: &[ImageRequest]) -> usize {
+    requests.iter().fold(0usize, |used, request| {
+        used.saturating_add(request.source.len())
+            .saturating_add(request.url.len())
+    })
 }
 
 /** Exact selection inputs from the current owned document, never a page-supplied native handle. */
@@ -333,7 +360,22 @@ impl Runtime {
         deadline: Instant,
         budget: &mut super::super::images::Budget,
     ) -> EngineResult<Vec<ImageResponse>> {
-        let count = page.scripting.image_loading.pending.len().min(IMAGE_COUNT);
+        let mut text_bytes = 0usize;
+        let count = page
+            .scripting
+            .image_loading
+            .pending
+            .iter()
+            .take(IMAGE_COUNT)
+            .take_while(|request| {
+                let bytes = request.source.len().saturating_add(request.url.len());
+                if bytes > REQUEST_TEXT_BYTES.saturating_sub(text_bytes) {
+                    return false;
+                }
+                text_bytes += bytes;
+                true
+            })
+            .count();
         let requests: Vec<_> = page
             .scripting
             .image_loading
@@ -384,7 +426,9 @@ impl Runtime {
     fn prefetch_batch(&mut self, page: &Page, requests: &[ImageRequest]) -> EngineResult<()> {
         let wanted: BTreeSet<usize> = requests
             .iter()
-            .filter(|request| !super::super::images::is_blob(&request.url))
+            .filter(|request| {
+                !request.url.is_empty() && !super::super::images::is_blob(&request.url)
+            })
             .map(|request| request.node)
             .collect();
         let url = page.url.clone();
@@ -406,6 +450,10 @@ impl Runtime {
         budget: &mut super::super::images::Budget,
         decoded: &mut Option<mars_core::canvas::Bitmap>,
     ) -> EngineResult<Option<(u32, u32)>> {
+        if request.url.is_empty() {
+            self.clear_failed_image(page, request.node);
+            return Ok(None);
+        }
         let node = page
             .document
             .nodes

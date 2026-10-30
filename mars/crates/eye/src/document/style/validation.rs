@@ -8,9 +8,7 @@ use super::{
 };
 use crate::document::Appearance;
 use crate::{
-    constants::{
-        CSS_MAX_BORDER_WIDTH, CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE, URL_BYTES,
-    },
+    constants::{CSS_MAX_BORDER_WIDTH, CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE},
     protocol::{EngineError, EngineResult},
 };
 impl ComputedStyle {
@@ -181,7 +179,9 @@ impl ComputedStyle {
 }
 /** An authored image URL: present, bounded and free of control characters. */
 fn url_ok(url: &str) -> bool {
-    !url.is_empty() && url.len() <= URL_BYTES && !url.chars().any(char::is_control)
+    !url.is_empty()
+        && mars_core::image_source::valid_url_text(url)
+        && !url.chars().any(char::is_control)
 }
 /** A gradient's stops, empty for other layers. */
 fn stops(layer: &BackgroundLayer) -> &[ColorStop] {

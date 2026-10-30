@@ -808,12 +808,15 @@ impl Runtime {
         let mut requests: Vec<(WebRequest, url::Url)> = firsts
             .chain(backgrounds)
             .take(limit)
+            .filter(|src| mars_core::image_source::valid_url_text(src))
             .filter(|src| {
                 !src.get(..5)
                     .is_some_and(|s| s.eq_ignore_ascii_case("data:"))
             })
             .filter_map(|src| base.join(src.trim()).ok())
-            .filter(|url| url.scheme() != "blob")
+            .filter(|url| {
+                url.scheme() != "blob" && mars_core::image_source::valid_url_text(url.as_str())
+            })
             .map(|url| {
                 let request = WebRequest {
                     destination: crate::network::Destination::Image,

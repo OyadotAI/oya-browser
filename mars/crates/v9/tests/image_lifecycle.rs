@@ -52,6 +52,34 @@ fn load(source: &str) -> (Vec<String>, Execution) {
     (sources, execution)
 }
 
+/** Inline payload text uses the encoded image envelope rather than the HTTP address ceiling. */
+#[test]
+fn embedded_image_sources_larger_than_network_urls_reach_the_decoder_task() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.onload=()=>console.log('loaded');i.src='data:image/png;base64,'+'A'.repeat(9000);",
+    );
+    let request = &loaded.effects.image_requests[0];
+    assert_eq!(request.source.len(), 9022);
+    assert!(request.url.starts_with("data:image/png;base64,"));
+    let completion = reply(&loaded, None);
+    let completed = deliver(&sources, loaded.state, vec![completion]);
+    assert!(completed.failed.is_empty());
+}
+
+/** Invalid optional addresses keep the document and original attribute while reporting image failure. */
+#[test]
+fn oversized_network_image_sources_fail_the_image_without_aborting_the_page() {
+    let (sources, loaded) = load(
+        "const i=new Image();i.onerror=()=>console.log('error',i.complete,i.getAttribute('src').length);i.src='https://example.test/'+'a'.repeat(9000);console.log('page continued');",
+    );
+    assert_eq!(console(&loaded), ["page continued"]);
+    let request = &loaded.effects.image_requests[0];
+    assert!(request.source.is_empty() && request.url.is_empty());
+    let completion = reply(&loaded, None);
+    let completed = deliver(&sources, loaded.state, vec![completion]);
+    assert_eq!(console(&completed), ["error true 9021"]);
+}
+
 /** Deliver inert metadata through the same public seam the embedding decoder uses. */
 fn deliver(sources: &[String], state: VmState, responses: Vec<ImageResponse>) -> Execution {
     mars_v9::resume_images(input(sources, &host(), &environment()), state, responses).unwrap()

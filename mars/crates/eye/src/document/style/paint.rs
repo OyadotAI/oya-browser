@@ -10,11 +10,7 @@ use super::{
     unsupported,
     values::{angle, contextual_color, dimension, signed_length},
 };
-use crate::{
-    constants::{CSS_MAX_SCALAR, URL_BYTES},
-    document::RenderContext,
-    protocol::EngineResult,
-};
+use crate::{constants::CSS_MAX_SCALAR, document::RenderContext, protocol::EngineResult};
 /** Opaque black, the color of a shadow without one and without a current color. */
 const BLACK: &str = "#000000";
 /** `none` or up to SHADOWS comma-separated layers; extra layers are ignored. */
@@ -152,7 +148,10 @@ fn url(source: &str) -> EngineResult<String> {
         .and_then(|s| s.strip_suffix('"'))
         .or_else(|| inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
         .unwrap_or(inner);
-    if unquoted.is_empty() || unquoted.len() > URL_BYTES || unquoted.chars().any(char::is_control) {
+    if unquoted.is_empty()
+        || !mars_core::image_source::valid_url_text(unquoted)
+        || unquoted.chars().any(char::is_control)
+    {
         return Err(unsupported());
     }
     Ok(unescape(unquoted))
