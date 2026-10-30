@@ -7,6 +7,55 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Page repair build `3e1ae934` passed in 1m 09s, covering image source admission,
+Window handler defaults, listener cleanup, CSP parsing and constructor diagnostics.
+Build log: `/private/tmp/mars-page-compatibility-build.log`. Frozen executable
+SHA-256: `1e161815631a5dd40db220685630ed06ece4374cd7be17ae3188ee92dc71095e`.
+`mars/dist/Mars Page Repair.app` was signed, signature-verified and opened at
+DuckDuckGo for manual testing. Signed executable SHA-256:
+`60c38d6b258af0bf6711cb77018356f8bb0f119de24c718fcf7b022a4dcf1781`.
+The desktop and three service processes were confirmed running. Twenty-four
+focused regressions were added across this batch and remain unrun; no browser QA
+ran. Compilation and launch do not establish that the reported pages now work.
+
+Listener exhaustion now triggers native aborted-listener pruning and target-aware
+collection before refusing admission. Abort removes its registrations before
+running abort callbacks; public `aborted` properties cannot hide or forge native
+state. Full restoration validates native listener signal identity. GC indexes
+listened node targets once instead of scanning every listener per wrapper. Six
+focused regressions are added unrun. The
+16,384-live-listener cap remains; this fixes concrete retention faults but does
+not establish that they caused DuckDuckGo's screenshot. The overlapping homepage
+header also remains unverified: saved local DuckDuckGo captures are older search
+pages, and no fresh browser inspection ran.
+
+CSP script admission reuses the existing validated source-expression grammar:
+nonce/hash prefixes are ASCII-case-insensitive, their payloads remain exact, and
+only valid nonce/known-hash tokens suppress `unsafe-inline`. `strict-dynamic`
+also suppresses that keyword for inline parser scripts. Explicit nonce/hash
+matches still admit, subject to every policy. Four focused regressions are added
+unrun. The user's Script 34 source and effective policy were unavailable, so its
+warning may still represent a legitimate block rather than these parser defects.
+
+Image admission now distinguishes network URLs (still 8 KiB) from `data:image/`
+text (at most 8 MiB + 8 KiB, including bounded metadata). Actual decoded input
+remains limited to 2 MiB per image. Retained source text is capped at 16 MiB;
+request/completion batches at twice the maximum data-URL text; native pending
+text at 64 MiB, with its source component independently capped at 16 MiB. Invalid
+optional sources keep their DOM attribute but receive a normal failed generation,
+without fetching the current page or aborting navigation. Seven focused
+regressions are added unrun. This directly removes the reported fatal image-URL
+check; live page rendering remains unverified.
+
+The next compatibility batch initializes Window handler bindings such as `onload`
+before first assignment. Defaults live on the Window prototype to preserve the
+existing body-markup fallback; explicit assignments still use the Window's own
+handler slot. Three focused regressions are added unrun. Forbidden constructors
+now name their interface using immutable native metadata, with four regressions
+added unrun. The exact GitHub asset was absent from local captures and Oya browser
+tools were unavailable, so this diagnostic improvement does not establish which
+unsupported constructor GitHub needs. No forbidden constructor was made legal.
+
 TLS repair build `67863fb4` passed in 42.80s with the key-share correction and
 bounded pre-HTTP reset recovery. Log: `/private/tmp/mars-tls-repair-build.log`.
 Frozen executable SHA-256:

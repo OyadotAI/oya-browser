@@ -57,6 +57,33 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Event listener lifetime uses native AbortSignal branding/state, independent of
+replaceable public properties. Abort prunes registrations synchronously before
+callbacks; admission at the listener ceiling prunes old aborted entries and
+invokes target-aware GC with converted arguments rooted. Remaining live listeners
+still enforce the existing ceiling. Collector node-target membership is indexed
+once per pass to avoid a wrapper-by-listener scan.
+
+CSP inline script and handler admission share source-expression grammar and the
+closed set of hash algorithms. Prefix case does not alter matching; nonce and
+digest payloads are exact. Invalid expressions do not suppress `unsafe-inline`,
+while valid nonce/hash expressions and `strict-dynamic` do. Multiple effective
+policies continue to intersect rather than replacing each other.
+
+Core's image-source text predicate preserves the 8 KiB ordinary URL bound and
+admits bounded `data:image/` payload envelopes. Eye CSS, V9 image state and native
+acquisition share that predicate. Optional rejected sources retain authored DOM
+text but queue one failed generation with an empty native acquisition URL; no
+network fetch occurs for that sentinel. Source storage, outbound/completion
+batches and persistent request queues have separate aggregate text bounds.
+Decoded input/pixel limits, CSP, CORS and origin-clean provenance remain enforced.
+
+Window event-handler bindings have null prototype defaults before any script
+assignment. Explicit Window or body-forwarded writes create the existing own
+handler slot; untouched defaults do not mask body markup during dispatch. Native
+constructor refusal messages derive interface names from immutable realm/native
+metadata rather than evaluating author-controlled function properties.
+
 TLS preparation permits at most two negotiation candidates under the original
 absolute deadline. A raw reset on the first modern handshake gets one fresh
 modern connection, preferring an already-admitted peer in the other address
