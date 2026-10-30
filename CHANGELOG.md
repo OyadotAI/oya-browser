@@ -60,6 +60,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Kept same-origin CORS-mode images usable when irrelevant CORS response headers are malformed; strict grant validation still applies to cross-origin responses.
 - Preserved accepted Mars MessagePort replies when their sender closes, released rejected transfers, and retained legacy handler sources across VM restoration. Promise executors now propagate fatal engine failures while ordinary JavaScript throws still reject their promises.
 - Replaced Mars's resident-script eviction with shared page, frame and worker admission leases, preserving active state and navigation rollback when capacity is reached.
 - Corrected Mars's dynamically inserted same-origin sandbox frames to use the existing scripted-frame path, preserving messaging identity, mixed-URL isolation, framing refusals and resource admission. Google Search still returns HTTP 429 in the live retest; full iframe compatibility remains unfinished.
