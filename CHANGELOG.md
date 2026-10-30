@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added one bounded Mars TLS reconnect after a raw handshake reset, preferring another already-validated address. The same TLS settings and certificate checks remain in force, no HTTP data is replayed, and per-candidate deadline leases interrupt negotiation at the original deadline.
+
 - Corrected Mars TLS HelloRetryRequest key shares: when a server requests a specific group, the next ClientHello contains exactly that share. Initial and cookie-only retries retain GREASE and existing TLS verification.
 
 - Removed blocking Mars close-save acknowledgements and shutdown joins from the AppKit event loop. Close attempts poll bounded save tickets, retain explicit retry/discard choices, and retire late replies; owned engine, library writer and demo-server cleanup is polled while native events continue.
