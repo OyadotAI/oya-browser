@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Connected transformed Mars DOM geometry and native clicks to shared affine bounds and quadrilateral hit testing. Layout offsets/sizes remain untransformed, while visual rectangles, sticky/fixed movement and rectangular clipping follow painting. Rounded clips, masks and exact occlusion remain unfinished.
 - Added bounded scripted grandchildren to Mars frames, with recursive messages/ports, distinct parent/top identities, nested painting and shared frame/source/context limits. Framing checks include every ancestor and the final redirected origin; child work keeps the true top-level network partition. Opaque/srcdoc scripting, descendant input and cross-frame DOM access remain unfinished.
 - Replaced Mars's inert Path2D facade with branded retained geometry, independent copies, transformed addPath and actual Canvas fill/stroke/clip overloads. Object/point quotas, GC cleanup and serialized-state checks bound storage; SVG-string construction remains explicitly unsupported.
 - Implemented timed pure CSS `rotate()` transitions and keyframes in Mars, preserving full authored turns, easing, delay, interruption, iteration and pause/fill behavior. Mixed transform lists, 3D and individual-transform animation remain unfinished.
