@@ -8,6 +8,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
+
+- Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
+
+- Added bounded listener-refusal counts and stages, with opt-in numeric startup logging, to distinguish registration pressure from restore or validation failures.
+
 - Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
 
 - Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
