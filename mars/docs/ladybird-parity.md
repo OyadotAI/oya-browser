@@ -7,6 +7,46 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Load-event repair build `e73ff8a5` passed in 55.49s. Final build log:
+`/private/tmp/mars-load-event-repair-final-build.log`. Frozen executable SHA-256:
+`a45fb1a90fd1c008d344580002cf3e673214b1d38276cc411526303b03a432e6`.
+`mars/dist/Mars Load Repair.app` was signed, signature-verified and opened at
+DuckDuckGo; its desktop and three service processes were confirmed running.
+Signed executable SHA-256:
+`5ff7d16bcedf606dd4d268cf4314841019f4a5f5b231b080496bf04aa8cfa91d`.
+The normal startup log at `/private/tmp/mars-load-repair-startup-20261030.log`
+records the same 36-script/1,054,188-byte workload as the diagnostic startup,
+followed by script processing and page publication with no listener refusal.
+This is startup diagnostic evidence for the reported failure, not a full page
+rendering/interaction verification. Regression suites and browser QA remain
+unrun; no offline replay or automated browser interactions were performed.
+
+The repeated 16 MiB failure now has a captured cause. A diagnostic app startup at
+DuckDuckGo recorded 28,332 listeners: 28,328 on Window, three on Document and one
+on a node. Admission failed at source offset 52385, line 1, column 9925. The exact
+homepage input (`/private/tmp/mars-listener-startup-20261030/inputs/000002-v9.page.json`)
+maps this to inline script 11's web-vitals readiness callback, which registers
+another capture Window `load` callback while readyState is not complete.
+Mars incorrectly propagated each script-resource load through Window capture.
+Listener dispatch snapshots were correct: growth doubled across subsequent
+resource events rather than within one invocation. The capture has 21 later
+external scripts. Ladybird's `Document.cpp:5213` explicitly returns no parent
+for `load`; Mars now applies that same event-path boundary. Element/Document
+delivery, direct Window load and other event types remain intact. The listener
+budget was not increased. `composedPath()` reports the same boundary; the initial
+compile caught its remaining old call signature, which was corrected before the
+final build. Three focused regressions are added unrun.
+
+The diagnostic build at `f0c154b4` passed in 55.64s and its temporary app was stopped
+after collecting the startup. Numeric evidence is in
+`/private/tmp/mars-listener-startup-20261030/perf.log`. Error details contain bounded
+native counts/stage/name sizes rather than event-name strings; the native opt-in
+perf sink additionally records numeric source coordinates. No replay or browser
+QA was run. Separate source inspection found async setup and async iterator
+temporary pins outliving their setup call; scoped release now preserves pending
+reaction/caller roots, with three regressions added unrun. That independent leak
+does not explain the Window listener growth observed here.
+
 Listener repair build `497f3126` passed in 1m 00s after the final stored-signal
 shape guard, including the layout-cache and aggregate-diagnostic repairs. Final
 log: `/private/tmp/mars-listener-storage-final-build.log`; the earlier production

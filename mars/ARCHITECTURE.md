@@ -57,6 +57,12 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Document's event parent is null for the case-sensitive `load` event. Resource
+loads retain element and Document delivery but cannot reach Window capture;
+direct Window load remains unchanged. Other non-bubbling events still traverse
+ancestors in capture. Async function/iterator setup releases temporary pin scopes
+only after results, pending reactions or abrupt values have an owning root.
+
 V9 Execution carries aggregate finalization rollback in an optional `load_failure`
 separate from indexed script failures. Native consumers surface it once as a page
 diagnostic. Whole-load transport failures use an explicit valid script index when
