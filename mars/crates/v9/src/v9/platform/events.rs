@@ -699,7 +699,9 @@ fn handler_property(
 ) -> Res<()> {
     let name = format!("on{kind}");
     let key = Key::Str(crate::v9::value::JsString::from_utf8(&name)?);
-    let mut handler = if let JsValue::Object(id) = current {
+    let mut handler = if let Some(handler) = super::broadcast::handler(vm, current, &name) {
+        Some(handler)
+    } else if let JsValue::Object(id) = current {
         vm.own(*id, &key)?.and_then(|prop| match prop.slot {
             crate::v9::vm::heap::Slot::Data(value) => Some(value),
             _ => None,

@@ -29,6 +29,7 @@ const GLOBALS: &[&str] = &[
     "crypto",
     "structuredClone",
     "MessageChannel",
+    "BroadcastChannel",
     "MessagePort",
     "Worker",
 ];

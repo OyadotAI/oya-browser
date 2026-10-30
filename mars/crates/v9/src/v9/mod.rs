@@ -39,6 +39,10 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::blob_urls::BlobUrlSource;
+pub use platform::broadcast::{
+    BROADCAST_CHANNELS, BROADCAST_COMMANDS, BROADCAST_EFFECT_BYTES, BROADCAST_NAME_UNITS,
+    BroadcastCommand, BroadcastEndpoint,
+};
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
 pub use platform::frame_directory::{
@@ -785,6 +789,7 @@ impl VmState {
             return Err(EngineError::invalid("Invalid V9 heap identities."));
         }
         self.page.listeners.validate(self.page.next_listener)?;
+        platform::broadcast::validate(&self.page.broadcast, full_heap.then_some(&self.heap))?;
         if self.page.timers.len() > crate::constants::VM_TIMERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self
@@ -1056,8 +1061,16 @@ pub enum PageEvent {
         #[serde(default)]
         queued_port_messages: Vec<QueuedPortMessage>,
     },
-    /// A message posted on the far end of a port linked into this document: `message` fires at
-    /// the port bound to `link`.
+    /// A fenced native task delivers one structured packet to an exact local channel identity.
+    BroadcastMessage {
+        /// A never-reused channel identity within the task's owning context incarnation.
+        id: u64,
+        /// An immutable graph captured before the sender returned from postMessage.
+        data: WorkerData,
+        /// Sender origin is assigned by the native broker, never by page script.
+        origin: String,
+    },
+    /// A native router retired the far end of one linked port.
     PortClose {
         /// A native router retired this link; clear the local endpoint without firing script.
         link: u64,
@@ -1597,6 +1610,8 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.effects.messages = saved.effects.messages;
     vm.page.effects.port_messages = saved.effects.port_messages;
     vm.page.effects.port_closes = saved.effects.port_closes;
+    vm.page.effects.broadcast_commands = saved.effects.broadcast_commands;
+    vm.page.effects.broadcast_channels = saved.effects.broadcast_channels;
     vm.page.effects.navigation = saved.effects.navigation;
     vm.page.effects.history = saved.effects.history;
     vm.page.effects.cookies = saved.effects.cookies;
@@ -1666,6 +1681,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     }
     #[cfg(feature = "conformance")]
     vm.save_interned_strings();
+    platform::broadcast::publish(&mut vm.page);
     let effects_timer = vm.next_timer();
     let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
@@ -2066,6 +2082,11 @@ fn page_event_with(
                 )
                 .and_then(|_| vm.drain_jobs());
                 report_thrown(&mut vm, received)?;
+            }
+            PageEvent::BroadcastMessage { id, data, origin } => {
+                let result = platform::broadcast::receive(&mut vm, id, &data, &origin)
+                    .and_then(|()| vm.drain_jobs());
+                report_thrown(&mut vm, result)?;
             }
             PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
             PageEvent::PortMessage { link, data } => {

@@ -242,6 +242,7 @@ impl Vm<'_> {
         self.module_roots(&mut marker);
         let mut roots = Vec::new();
         self.page.roots(&mut roots);
+        super::super::platform::broadcast::roots(self, &mut roots);
         // Connected DOM owns observable wrapper data; detached trees need actual reachability.
         let wrappers: Vec<(usize, ObjectId)> = self
             .page

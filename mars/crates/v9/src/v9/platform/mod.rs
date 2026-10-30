@@ -8,6 +8,7 @@ pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 pub(in crate::v9) mod blob_urls;
+pub(in crate::v9) mod broadcast;
 pub(in crate::v9) mod canvas;
 pub(in crate::v9) mod channel;
 mod chrome_env;
@@ -1045,6 +1046,12 @@ pub struct HostEffects {
     /// Closed external links retire native routes before later queued deliveries.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub port_closes: Vec<u64>,
+    /// Ordered candidate-owned registrations, posts and explicit closures for native publication.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub broadcast_commands: Vec<broadcast::BroadcastCommand>,
+    /// Full final open-endpoint snapshot, including empty, reconciles GC after ordered commands.
+    #[serde(default)]
+    pub broadcast_channels: Vec<broadcast::BroadcastEndpoint>,
 }
 
 /** A scheduled callback. */
@@ -1362,6 +1369,9 @@ pub(in crate::v9) struct PageState {
     an entangled port is, so a message across the link still finds its handler. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub linked_ports: BTreeMap<u64, ObjectId>,
+    /** Branded endpoints are weak unless open message listeners retain them. */
+    #[serde(default)]
+    pub broadcast: broadcast::State,
     /** The reverse of `frames`: the iframe a frame document belongs to, so defaultView finds
     the frame's window without scanning every frame. */
     pub document_frames: BTreeMap<usize, usize>,
@@ -1662,6 +1672,7 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        broadcast::sweep(&mut self.state.broadcast, live);
         self.state.path2d.retain(|id, _| live.contains(id));
         self.state
             .resize_observers

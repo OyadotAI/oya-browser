@@ -673,6 +673,9 @@ fn event_types(b: &mut Builder) {
         if let Some(init) = legacy_init(name) {
             methods(b, sub, &[init], events::event_method);
         }
+        if name == "MessageEvent" {
+            super::broadcast::message_prototype(sub);
+        }
         if name == "ErrorEvent" {
             events::error_prototype(sub);
         }
@@ -1355,6 +1358,7 @@ fn global_object(b: &mut Builder) {
     });
     super::animations::install(b);
     super::channel::install(b);
+    super::broadcast::install(b);
     super::messaging::install(b);
     super::dom_parser::install(b);
     super::xml_serializer::install(b);
