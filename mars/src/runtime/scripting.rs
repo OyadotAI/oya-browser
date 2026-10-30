@@ -1464,6 +1464,7 @@ fn stop_scripts(page: &mut Page, error: &EngineError) {
 
 /** Finalization rollback is one page-level failure, including on module continuation steps. */
 fn record_load_failure(page: &mut Page, error: &EngineError) {
+    super::navigation::record_listener_refusal(error);
     const REASON_CHARS: usize = 240;
     let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
     let code = error.code.chars().take(REASON_CHARS).collect::<String>();

@@ -5,10 +5,12 @@
  * the plain registration list older builds wrote, so existing state still loads.
  */
 mod budget;
+mod diagnostic;
 mod wire;
 use super::{Listener, Target};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::value::ObjectId;
+use diagnostic::Stage;
 use std::collections::{BTreeMap, BTreeSet};
 
 /** The lowest registration id: the smallest key a range scan over one callback starts from. */
@@ -147,16 +149,25 @@ impl ListenerStore {
 
     /** Admit a prospective registration before copying its event kind into the index. */
     pub fn admit(&self, kind: &String) -> EngineResult<()> {
-        budget::validate(self.bytes.saturating_add(budget::record(
-            kind,
-            kind.capacity(),
-            kind.len(),
-        )))
+        self.admit_at(kind, Stage::Add)
+    }
+
+    /** The wire reader labels admission separately from an actual script registration. */
+    fn admit_at(&self, kind: &String, stage: Stage) -> EngineResult<()> {
+        let bytes = self
+            .bytes
+            .saturating_add(budget::record(kind, kind.capacity(), kind.len()));
+        self.check_storage(bytes, stage, Some(kind))
+    }
+
+    /** Only a failed budget check scans native counts; no author getters or event names are read. */
+    fn check_storage(&self, bytes: usize, stage: Stage, kind: Option<&String>) -> EngineResult<()> {
+        budget::validate(bytes).map_err(|error| diagnostic::annotate(self, error, stage, kind))
     }
 
     /** Full and heap-less restored states enforce identical storage and identity constraints. */
     pub fn validate(&self, next: u32) -> EngineResult<()> {
-        budget::validate(self.bytes)?;
+        self.check_storage(self.bytes, Stage::Validate, None)?;
         let mut ids = BTreeSet::new();
         let mut bytes = 0usize;
         for (key, listener) in &self.entries {
@@ -174,15 +185,20 @@ impl ListenerStore {
 
     /** Invalid callback identities and excess storage fail before the index is mutated. */
     pub fn insert(&mut self, listener: Listener) -> EngineResult<()> {
+        self.insert_at(listener, Stage::Add)
+    }
+
+    /** Preserve the originating operation when the allocated index key reaches the budget. */
+    fn insert_at(&mut self, listener: Listener, stage: Stage) -> EngineResult<()> {
         validate_references(&listener)?;
-        self.admit(&listener.kind)?;
+        self.admit_at(&listener.kind, stage)?;
         let key = key_of(&listener)
             .ok_or_else(|| EngineError::invalid("Invalid event listener callback."))?;
         if self.entries.contains_key(&key) {
             return Err(EngineError::invalid("Duplicate event listener identity."));
         }
         let bytes = self.bytes.saturating_add(record_bytes(&key, &listener));
-        budget::validate(bytes)?;
+        self.check_storage(bytes, stage, Some(&listener.kind))?;
         self.entries.insert(key, listener);
         self.bytes = bytes;
         Ok(())
@@ -394,11 +410,27 @@ mod tests {
         store
             .insert(listener(Target::Window, &kind, false, 2, 2))
             .unwrap();
+        let error = store
+            .insert(listener(Target::Window, &kind, false, 3, 3))
+            .unwrap_err();
+        assert_eq!(error.code, "limit_exceeded");
         assert!(
-            store
-                .insert(listener(Target::Window, &kind, false, 3, 3))
-                .is_err()
+            error.message.contains("[add n=2 used="),
+            "{}",
+            error.message
         );
+        assert!(
+            error.message.contains("kind=1048576/1048576"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("W/D/N/O=2/0/0/0"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.len() <= 220);
+        assert!(!error.message.contains(&kind));
         assert_eq!(store.len(), 2);
         store.validate(3).unwrap();
     }
@@ -438,10 +470,9 @@ mod tests {
         let entries: Vec<_> = (1..=3)
             .map(|id| listener(Target::Window, &kind, false, id, id))
             .collect();
-        assert!(
-            serde_json::from_slice::<ListenerStore>(&serde_json::to_vec(&entries).unwrap())
-                .is_err()
-        );
+        let error = serde_json::from_slice::<ListenerStore>(&serde_json::to_vec(&entries).unwrap())
+            .unwrap_err();
+        assert!(error.to_string().contains("[restore n=2 used="), "{error}");
         let duplicate = vec![
             listener(Target::Window, "x", false, 1, 1),
             listener(Target::Window, "y", false, 2, 1),
@@ -461,5 +492,35 @@ mod tests {
         assert!(store.insert(bad.clone()).is_err());
         let encoded = serde_json::to_vec(&vec![bad]).unwrap();
         assert!(serde_json::from_slice::<ListenerStore>(&encoded).is_err());
+    }
+
+    /** Invariant validation uses its own label and cannot expose event text through diagnostics. */
+    #[test]
+    fn storage_validation_diagnostic_identifies_native_stage_and_targets() {
+        let mut store = ListenerStore::default();
+        store
+            .insert(listener(
+                Target::Document,
+                "private-event-name",
+                false,
+                1,
+                1,
+            ))
+            .unwrap();
+        store.bytes = budget::STORAGE_BYTES;
+        let error = store.validate(2).unwrap_err();
+        assert_eq!(error.code, "limit_exceeded");
+        assert!(
+            error.message.contains("[validate n=1 used="),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("kind=0/0 W/D/N/O=0/1/0/0"),
+            "{}",
+            error.message
+        );
+        assert!(!error.message.contains("private-event-name"));
+        assert!(error.message.len() <= 220);
     }
 }

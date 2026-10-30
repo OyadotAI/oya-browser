@@ -628,6 +628,7 @@ impl Runtime {
             Ok(step) => step,
             Err(error) if fatal(&error) => return Err(error),
             Err(error) => {
+                record_listener_refusal(&error);
                 gaps.note("scripts", load_failure_note(resolved, &error));
                 page.scripts.clear();
                 page.scripting.modules = Default::default();
@@ -635,6 +636,7 @@ impl Runtime {
             }
         };
         for failure in &loaded.failed {
+            record_listener_refusal(&failure.error);
             if let Some(script) = resolved.get(failure.index) {
                 let note = script_note(script, &failure.error.message);
                 let entry = crate::v9::ConsoleEntry {
@@ -1180,6 +1182,26 @@ fn data_text(url: &str, limit: usize) -> Option<(String, String)> {
 }
 /** Characters of an engine reason a diagnostic quotes. */
 const REASON_CHARS: usize = 240;
+/** Opt-in numeric quota evidence reuses the existing perf sink without capturing page sources. */
+pub(super) fn record_listener_refusal(error: &EngineError) {
+    if let Some(detail) = listener_refusal_detail(error) {
+        perf::record("listeners.refused", Instant::now(), || detail);
+    }
+}
+/** Restrict diagnostics to the owned listener error and numeric source coordinates. */
+fn listener_refusal_detail(error: &EngineError) -> Option<String> {
+    if error.code != "limit_exceeded"
+        || !error.message.starts_with("V9 event listener storage bytes")
+    {
+        return None;
+    }
+    let message: String = error.message.chars().take(REASON_CHARS).collect();
+    let location = error.location.as_deref().copied().unwrap_or_default();
+    Some(format!(
+        "{message} script={:?} line={} column={} offset={}",
+        location.script_index, location.line, location.column, location.byte_offset
+    ))
+}
 /** A navigation-stopping script error names the script's document position, never its URL. */
 fn at_script(mut error: EngineError, index: usize) -> EngineError {
     let location = error.location.get_or_insert_with(Default::default);
@@ -1325,4 +1347,24 @@ mod diagnostic_tests {
             );
         }
     }
+}
+/** Other engine and page-thrown messages must never enter the listener-specific log. */
+#[test]
+fn listener_diagnostics_filter_other_failures_and_bound_owned_messages() {
+    assert!(listener_refusal_detail(&EngineError::invalid("private data")).is_none());
+    assert!(listener_refusal_detail(&EngineError::limit("different resource", 1)).is_none());
+    let mut error = EngineError::limit("V9 event listener storage bytes", 16_777_216);
+    error.message.push_str(&"x".repeat(REASON_CHARS));
+    error.location = Some(Box::new(crate::protocol::SourceLocation {
+        line: 3,
+        column: 17,
+        byte_offset: 42,
+        script_index: Some(8),
+    }));
+    let detail = listener_refusal_detail(&error).unwrap();
+    assert!(detail.ends_with("script=Some(8) line=3 column=17 offset=42"));
+    assert_eq!(
+        detail.split(" script=").next().unwrap().chars().count(),
+        REASON_CHARS
+    );
 }

@@ -1,5 +1,5 @@
 /** Stream bounded listener restoration and serialize borrowed records without cloning their strings. */
-use super::{Listener, ListenerStore, validate_references};
+use super::{Listener, ListenerStore, diagnostic::Stage, validate_references};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error, SeqAccess, Visitor},
@@ -48,7 +48,7 @@ impl<'de> Visitor<'de> for Records {
                 .object()
                 .ok_or_else(|| A::Error::custom("Invalid listener callback"))?;
             store
-                .admit(&listener.kind)
+                .admit_at(&listener.kind, Stage::Restore)
                 .map_err(|error| A::Error::custom(error.message))?;
             if !ids.insert(listener.id)
                 || store
@@ -58,7 +58,7 @@ impl<'de> Visitor<'de> for Records {
                 return Err(A::Error::custom("Duplicate event listener registration"));
             }
             store
-                .insert(listener)
+                .insert_at(listener, Stage::Restore)
                 .map_err(|error| A::Error::custom(error.message))?;
         }
         Ok(store)
