@@ -7,12 +7,25 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The combined release build at `7018cee9` passes with SVG Path2D, nested workers,
+persistent ResizeObserver and URL semantics. The first attempt caught a missing
+resize vector type annotation; the corrected build completed in 1m 02s.
+Initial measured zero-size boxes now receive their first observation as well.
+Build log: `/private/tmp/mars-parity-svg-workers-resize-build-resumed.log`.
+Frozen unsigned binary SHA-256:
+`e62077baf3b369b83408407bbf65e38e6525ef3b7d2ae8b500ac53b792254fad`.
+The signed, verified `mars/dist/Mars Build.app` is packaged but not launched;
+its executable SHA-256 is
+`5a7ff48fae0c56b61f49499de5a606e4b927c26fce9b0d4c63f5239d921da839`.
+The previously launched `Mars Next.app` remains separate. No test execution,
+QA, benchmark or live Google retest was performed in this batch.
+
 ResizeObserver now retains registrations, compares the selected measured box,
 and asynchronously delivers queued callbacks after actual native layout changes.
 Eye supplies content/border metrics after percentage padding is resolved; visual
 transforms and scrolling do not spuriously wake resize-only observers. Cleanup,
 GC and restored-state validation cover retained registrations and records.
-Focused Eye/V9 regressions are added but unrun, and the combined build is pending.
+Focused Eye/V9 regressions are added but unrun; the combined build passes below.
 Root/body wrappers without native metrics, fragmented boxes and full synchronous
 resize-loop broadcasting remain unfinished; delivery is bounded to one broadcast
 per host turn.
@@ -23,7 +36,7 @@ pending/live admission and recursive termination. Existing worker task/byte and
 resident-context limits remain unchanged. Child replies can resume a parent's
 top-level await while early owner-global messages stay queued. Deeper nesting
 and retransferring linked worker ports remain explicit refusals. This code-first
-slice has not been run through tests or QA; its combined build is pending.
+slice has not been run through tests or QA; its combined build passes below.
 
 SVG-string Path2D construction now feeds real retained Canvas geometry through
 a shared Core parser, also used by Eye through its existing facade. Canvas keeps
@@ -31,7 +44,7 @@ the completed prefix of malformed syntax; numeric and quota errors still fail.
 Input is capped at 256 KiB, command groups at 4,096, normalized segments at 1,024,
 and flattened points at the existing 1,024 limit. Seven Core cases and two V9
 regressions were added, with the old string-refusal expectation updated; these
-remain unrun. The combined production build is pending. Arc/polygon
+remain unrun. The combined production build passes below. Arc/polygon
 approximations can become visible under large later transforms.
 
 The subsequent URL binding repair preserves list mutations made during argument
@@ -39,11 +52,11 @@ conversion, ignores arguments outside each method's signature, validates even an
 empty forEach callback, and keeps exhausted iterators done after later appends.
 Invalid URL errors no longer convert the input twice. Five focused regressions
 were added but remain unrun under the code-first instruction; the combined build
-for this slice is pending. The prior `Mars Next.app` build was launched for the
+for this slice passes below. The prior `Mars Next.app` build was launched for the
 maintainer on 2026-10-30 without running browser QA.
 URL and URLSearchParams now also enforce required argument counts and the new
 operator before conversion callbacks. Two additional focused regressions are
-unrun; these changes join the same pending combined build.
+unrun; these changes are included in the successful combined build.
 
 The current `ladybird-parity` working tree repairs the ordinary default-search
 journey without a site-specific response replacement or a lite-page fallback.
