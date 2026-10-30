@@ -115,3 +115,18 @@ fn hidden_redirects_and_duplicate_grants_cannot_create_clean_pixels() {
         .push(("Access-Control-Allow-Origin".into(), "*".into()));
     assert!(flow.admit(&cross, &duplicated).is_err());
 }
+
+/** A Basic same-origin response needs no cross-origin permission even if its CORS headers are malformed. */
+#[test]
+fn same_origin_images_ignore_irrelevant_duplicate_cors_headers() {
+    let base = Url::parse("https://a.test/page").unwrap();
+    let image = Url::parse("https://a.test/pixel").unwrap();
+    let mut flow = ImageFlow::new(&base, ImageCors::Anonymous);
+    assert!(flow.request(&image, true).1);
+    let mut duplicated = response(&image, Some("https://unrelated.test"), false);
+    duplicated
+        .headers
+        .push(("Access-Control-Allow-Origin".into(), "*".into()));
+    flow.admit(&image, &duplicated).unwrap();
+    assert!(flow.origin_clean());
+}

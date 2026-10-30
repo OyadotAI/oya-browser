@@ -57,19 +57,21 @@ impl ImageFlow {
         if self.cors == ImageCors::NoCors {
             return Ok(());
         }
-        if [
-            "access-control-allow-origin",
-            "access-control-allow-credentials",
-        ]
-        .iter()
-        .any(|name| {
-            response
-                .headers
-                .iter()
-                .filter(|(key, _)| key.eq_ignore_ascii_case(name))
-                .count()
-                > 1
-        }) {
+        if self.flow.tainting() == Tainting::Cors
+            && [
+                "access-control-allow-origin",
+                "access-control-allow-credentials",
+            ]
+            .iter()
+            .any(|name| {
+                response
+                    .headers
+                    .iter()
+                    .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .count()
+                    > 1
+            })
+        {
             return Err(refused());
         }
         // A hidden cross-origin redirect would omit a required response check; never trust its final URL alone.
