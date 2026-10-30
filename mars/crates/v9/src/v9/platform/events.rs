@@ -375,7 +375,7 @@ fn event_data(vm: &Vm, value: &JsValue) -> Option<EventData> {
 
 /** The propagation path from the window down to the target. Through shadow trees it runs from
 a slotted node to its slot, and from a shadow root to its host only for composed events. */
-fn path(vm: &mut Vm, target: Target, composed: bool) -> Vec<Target> {
+fn path(vm: &mut Vm, target: Target, composed: bool, kind: &str) -> Vec<Target> {
     let mut path = vec![target];
     match target {
         Target::Node(node) => {
@@ -395,10 +395,14 @@ fn path(vm: &mut Vm, target: Target, composed: bool) -> Vec<Target> {
             }
             if reached_document {
                 path.push(Target::Document);
-                path.push(Target::Window);
+                // Document's event parent is null for load, including capture. Resource loads
+                // must not repeatedly invoke Window's page-load listeners while parsing.
+                if kind != "load" {
+                    path.push(Target::Window);
+                }
             }
         }
-        Target::Document => path.push(Target::Window),
+        Target::Document if kind != "load" => path.push(Target::Window),
         _ => {}
     }
     path.reverse();
@@ -438,7 +442,7 @@ fn propagate(vm: &mut Vm, target: Target, event: ObjectId, data: &EventData) -> 
     }
     let composed =
         data.trusted && data.kind != "slotchange" || super::components::composed(vm, event);
-    let route = path(vm, target, composed);
+    let route = path(vm, target, composed, &data.kind);
     let last = route.len().saturating_sub(1);
     // Each "inner invoke" returns at once when propagation already stopped, so a flag set
     // before dispatch, or by an earlier target, keeps every later listener from running.
