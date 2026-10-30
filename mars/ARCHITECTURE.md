@@ -125,8 +125,14 @@ space, resets phase per subpath, joins closed seams and retains cap dots for
 zero-length dashes. Input/canonical patterns are capped at 128/256 values,
 split transitions and points at 16,384 each, followed by existing outline/raster
 limits. Scratch allocations share process accounting, and all work is admitted
-before bitmap mutation. CSS color and font parsing remain limited;
-other decoded-image formats, full compositing and text metrics, WebGL
+before bitmap mutation. A shared premultiplied compositor supports source-over,
+destination-over, destination-out, source-atop and xor across every supported
+shape/path/image/text painter. Typed composite state survives save/restore/reset;
+clearRect, putImageData and readback keep their bypass semantics. These modes
+leave the destination unchanged at zero source alpha, retaining bounded paint
+regions and clipping. Full-surface operators and lighter remain unaccepted until
+their distinct coverage handling exists. CSS color and font parsing remain limited;
+other decoded-image formats, remaining compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
 

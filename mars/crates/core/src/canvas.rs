@@ -3,11 +3,13 @@ use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
 mod affine;
 mod clip;
+mod composite;
 mod path;
 mod pixels;
 mod raster;
 pub use affine::Affine;
 pub use clip::ClipMask;
+pub use composite::{Composite, composite};
 pub use path::{
     DASH_INPUTS, DASH_VALUES, DashStyle, FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle,
     paint_path, plan_fill, plan_stroke, plan_stroke_dashed,

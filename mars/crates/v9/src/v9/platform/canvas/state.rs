@@ -1,6 +1,7 @@
 /** Canvas state is copied independently of pixels and applied only after argument conversion. */
 use super::*;
 use mars_core::canvas::Affine;
+mod composite;
 mod matrix;
 pub(super) use matrix::dictionary_members as path_matrix;
 
@@ -25,6 +26,8 @@ pub(in crate::v9) struct DrawingState {
     pub transform: Affine,
     /** Invalid assignments retain the prior finite value in the unit interval. */
     pub alpha: f64,
+    /** Only genuinely implemented composition operators can survive serialization or save/restore. */
+    pub composite: limits::Composite,
     /** Image copies use this setting without changing stored source pixels. */
     pub smoothing: bool,
     /** None is the initial unbounded clip; saved references retain one immutable mask-pool entry. */
@@ -42,6 +45,7 @@ impl Default for DrawingState {
             font: Font::default(),
             transform: Affine::IDENTITY,
             alpha: 1.0,
+            composite: limits::Composite::default(),
             smoothing: true,
             clip: None,
         }
@@ -51,6 +55,7 @@ impl Default for DrawingState {
 /** Install state operations separately from drawing and image-data dispatch. */
 pub(super) fn install(b: &mut Builder, proto: u32) {
     matrix::install(b);
+    composite::install(b, proto);
     for name in ["globalAlpha", "imageSmoothingEnabled"] {
         b.accessor(proto, name, Some(get), Some(set));
     }

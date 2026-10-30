@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Canvas now implements destination-over, destination-out, source-atop and xor
+alongside source-over through one shared premultiplied compositor. Rectangles,
+paths (including dashes/Path2D), images and text use the same operation, with
+typed saved/restored/reset drawing state. ClearRect and putImageData bypass it,
+and origin taint remains independent. Operators that affect transparent areas
+outside the source geometry, plus lighter, remain unaccepted until their coverage
+is implemented. Focused regressions are being added but not run; the combined
+production build is pending.
+
 The next combined production build at `3a530af9` passes in 1m 15s, including
 Canvas dashed strokes, HTML/body resize measurements and the two interpreter
 lookup optimizations. No performance gain or Google success has been measured.

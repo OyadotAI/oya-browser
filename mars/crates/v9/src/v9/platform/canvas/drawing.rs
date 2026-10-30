@@ -67,7 +67,8 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         values,
         state.drawing.transform,
     )?
-    .with_clip(clipping::current(state)?)?;
+    .with_clip(clipping::current(state)?)?
+    .with_composite(state.drawing.composite);
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if dom::native_name(call) == "clearRect" {
@@ -144,10 +145,11 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         if coverage == 0.0 || color[3] == 0 {
             continue;
         }
-        limits::blend(
+        limits::composite(
             pixel,
             [color[0], color[1], color[2], color[3]],
             state.drawing.alpha * coverage,
+            state.drawing.composite,
         );
     }
     state.dirty = true;

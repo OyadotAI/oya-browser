@@ -136,7 +136,8 @@ fn paint(
     } else {
         limits::plan_fill(size, path, rule)?
     }
-    .with_clip(clipping::current(state)?)?;
+    .with_clip(clipping::current(state)?)?
+    .with_composite(state.drawing.composite);
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     let color = if stroke {

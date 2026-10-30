@@ -122,7 +122,8 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         state.drawing.transform,
         state.drawing.smoothing,
     )?
-    .with_clip(clipping::current(state)?)?;
+    .with_clip(clipping::current(state)?)?
+    .with_composite(state.drawing.composite);
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if plan.is_empty() {

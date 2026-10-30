@@ -1,6 +1,6 @@
 use super::clip::{GRID, SAMPLES, offset};
 /** Checked raster plans charge work before one fallible copy-on-write mutation. */
-use super::{Affine, Bitmap, CHANNELS, ClipMask, EDGE};
+use super::{Affine, Bitmap, CHANNELS, ClipMask, Composite, EDGE, composite};
 use crate::protocol::{EngineError, EngineResult};
 mod geometry;
 mod sampling;
@@ -19,6 +19,7 @@ pub struct RasterPlan {
     work: usize,
     image: Option<Image>,
     clip: Option<ClipMask>,
+    mode: Composite,
     inverse: Affine,
     rectangle: [f64; 4],
 }
@@ -34,6 +35,12 @@ struct Image {
 }
 
 impl RasterPlan {
+    /** Supported operators preserve existing bounds, clipping and fixed per-pixel work admission. */
+    pub fn with_composite(mut self, mode: Composite) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /** The interpreter admits this amount before any backing allocation or mutation. */
     pub fn work(&self) -> usize {
         self.work
@@ -77,6 +84,7 @@ pub fn plan_rect(size: [u32; 2], rect: [f64; 4], transform: Affine) -> EngineRes
         work: pixels * COVERAGE_WORK,
         image: None,
         clip: None,
+        mode: Composite::default(),
         inverse: transform.inverse().expect("nonempty rectangle inverse"),
         rectangle: rect,
     })
@@ -114,7 +122,7 @@ pub fn plan_blit(
     Ok(plan)
 }
 
-/** Solid source-over paint preserves exact fractional coverage for axis-aligned rectangles. */
+/** Solid paint preserves exact fractional coverage and composites with the selected supported operator. */
 pub fn fill_rect(
     destination: &mut Bitmap,
     plan: &RasterPlan,
@@ -127,7 +135,7 @@ pub fn fill_rect(
         if coverage == 0.0 {
             return;
         }
-        blend(pixel, color, alpha * coverage);
+        composite(pixel, color, alpha * coverage, plan.mode);
     })
 }
 
@@ -169,28 +177,13 @@ pub fn blit(
         let local = image.inverse.map([f64::from(x) + 0.5, f64::from(y) + 0.5]);
         let at = image_position(image, local);
         let color = sampling::sample(source, at, image.crop, image.smoothing);
-        blend(pixel, color, alpha * coverage);
+        composite(pixel, color, alpha * coverage, plan.mode);
     })
 }
 
-/** Straight-alpha source-over is shared by native text and pure raster drawing. */
+/** Preserve the public source-over entry point while every painter shares the same compositor. */
 pub fn blend(pixel: &mut [u8], color: [u8; 4], alpha: f64) {
-    if pixel.len() != CHANNELS || !alpha.is_finite() {
-        return;
-    }
-    let source = f64::from(color[3]) / 255.0 * alpha.clamp(0.0, 1.0);
-    let back = f64::from(pixel[3]) / 255.0 * (1.0 - source);
-    let combined = source + back;
-    if combined == 0.0 {
-        pixel.fill(0);
-        return;
-    }
-    for channel in 0..3 {
-        pixel[channel] = ((f64::from(color[channel]) * source + f64::from(pixel[channel]) * back)
-            / combined)
-            .round() as u8;
-    }
-    pixel[3] = (combined * 255.0).round() as u8;
+    composite(pixel, color, alpha, Composite::SourceOver);
 }
 
 /** Once backing is acquired, the loop has no fallible allocation or callback into script. */
@@ -288,6 +281,7 @@ fn empty(size: [u32; 2]) -> RasterPlan {
         work: 0,
         image: None,
         clip: None,
+        mode: Composite::default(),
         inverse: Affine::IDENTITY,
         rectangle: [0.0; 4],
     }

@@ -1,5 +1,5 @@
 /** Bounded polygon paths retain construction coordinates independently from the saved drawing state. */
-use super::{Affine, Allocation, Bitmap, CHANNELS, ClipMask, EDGE, blend};
+use super::{Affine, Allocation, Bitmap, CHANNELS, ClipMask, Composite, EDGE, composite};
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
 mod arc_to;

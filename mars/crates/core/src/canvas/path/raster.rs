@@ -16,10 +16,17 @@ pub struct PathPlan {
     rule: FillRule,
     work: usize,
     clip: Option<ClipMask>,
+    mode: Composite,
     _allocation: Allocation,
 }
 
 impl PathPlan {
+    /** These operators preserve transparent-source pixels, so path coverage and clip plans remain valid. */
+    pub fn with_composite(mut self, mode: Composite) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /** Native dash preparation is charged together with raster work before backing pixels become mutable. */
     pub(super) fn add_work(mut self, additional: usize) -> EngineResult<Self> {
         self.work = self.work.checked_add(additional).ok_or_else(quota)?;
@@ -112,6 +119,7 @@ pub(super) fn contours<'a>(
         rule,
         work,
         clip: None,
+        mode: Composite::default(),
         _allocation: allocation,
     })
 }
@@ -160,7 +168,7 @@ fn bounds(size: [u32; 2], edges: &[Edge]) -> [u32; 4] {
     ]
 }
 
-/** One source-over blend per pixel prevents self-overlap from multiplying global alpha. */
+/** One composite per pixel prevents self-overlap from multiplying global alpha. */
 pub fn paint_path(
     bitmap: &mut Bitmap,
     plan: &PathPlan,
@@ -188,10 +196,11 @@ pub fn paint_path(
             if coverage == 0 {
                 continue;
             }
-            blend(
+            composite(
                 &mut pixels[at..at + CHANNELS],
                 color,
                 alpha * f64::from(coverage) / SAMPLE_COUNT as f64,
+                plan.mode,
             );
         }
     }
