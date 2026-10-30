@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed a Mars HTTP/1 connection reuse race: each completed request now stops and joins its deadline lease before returning the socket to the shared pool, preventing an old timer from closing a later request.
+
 - Made Mars transport failures identify DNS lookup, connection, TLS handshake, send or receive errors using typed causes, without exposing raw destination or payload details. Existing TLS checks, error codes, deadlines and retry rules remain intact.
 
 - Corrected Mars resident-state validation so pending fetches and observers are checked against the heap retained by V9, while the app validates their bounded page summaries. This addresses false `Invalid native fetch signal state` page failures without weakening full-state restore checks.
