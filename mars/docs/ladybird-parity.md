@@ -106,15 +106,15 @@ must be JavaScript; the existing graph handles absolute HTTP(S) imports, dynamic
 imports, top-level await and early-message gating. Inherited CSP matching now
 uses the Blob creator's origin for scheme-less host sources while retaining the
 actual Blob URL for resolution and import.meta. Nine focused regressions were
-added but not run; the combined production build for this next batch is pending.
+added but not run. The combined release build is recorded below.
 Imported Blob dependencies and cross-context registry sharing remain unfinished.
 
 Canvas quadraticCurveTo and bezierCurveTo now produce actual fill/stroke geometry
 through adaptive de Casteljau subdivision in bitmap coordinates. Flattening uses
 a one-eighth-pixel tolerance, bounded depth and the existing path-point allowance;
 the whole generated batch is admitted before path mutation. Six Core and seven
-V9 regressions were added but not run. The combined production build for this
-next batch is pending; arcs and ellipses remain unfinished.
+V9 regressions were added but not run. The combined release build is recorded
+below; arcs and ellipses followed in the next slice.
 
 CSS transform transitions now sample two-dimensional translations in pixel and
 percentage components, including none-to-translate, delays, easing, interruption
@@ -122,7 +122,7 @@ and reversal. Native painting and visual geometry use the sample while CSSOM
 layout offsets retain untransformed positions. Parser provenance prevents
 rotation/scale/skew/matrix/3D values from masquerading as supported translations.
 Ten Eye, two runtime and one V9 layout-position regressions were added but not
-run. The combined production build for this batch is pending. General transform
+run. The combined release build is recorded below. General transform
 interpolation and other animated properties remain unfinished.
 
 Canvas arc and ellipse now append real transformed curve geometry with directed
@@ -130,14 +130,14 @@ sweep/full-turn normalization and current-path connections. Adaptive subdivision
 retains the existing path quota and one-eighth-pixel approximation; admission is
 atomic. Seven Core and eight V9 regressions were added but not run. Degenerate
 ellipse axes follow local Ladybird's center-line behavior. The combined build
-for this batch remains pending; arcTo, roundRect and clipping are unfinished.
+for this batch is recorded below; arcTo and roundRect followed in later slices.
 
 Canvas arcTo now constructs actual tangent-circle geometry with straight-line
 degeneracies, construction transforms and the existing bounded arc approximation.
 It preserves local Ladybird's negative-radius empty-subpath side effect while
 keeping resource failures atomic. Singular transforms requiring inverse mapping
 remain explicit refusals. Four Core and five V9 regressions were added but not
-run; the combined production build for this batch is pending.
+run; the combined release build is recorded below.
 
 IntersectionObserver now reports measured viewport intersections instead of
 fabricated visibility. Persistent registrations retain px/% root margins,
@@ -147,7 +147,7 @@ scroll invalidations schedule dedicated observer-only turns, including after
 ordinary timers go idle. Seven V9, two runtime state and two native integration
 regressions were added but not run. State and queues are bounded and validated.
 Element roots, ancestor clipping, visibility tracking and nonzero scroll
-margins/delay remain unfinished. The combined production build is pending.
+margins/delay remain unfinished. The combined release build is recorded below.
 
 Canvas image sources now include full-canvas GIF first frames and static WebP
 on macOS through actual ImageIO/CoreGraphics pixels. Container, decoder and
@@ -155,13 +155,24 @@ declared dimensions are checked before output allocation; input and scratch
 memory are bounded. Output uses straight-alpha sRGB and preserves the existing
 immutable source and taint path. Twelve regression functions were added (eleven
 applicable on macOS) but not run. Animated WebP, partial-first-frame GIF and
-non-macOS native decoding remain unsupported. The combined build is pending.
+non-macOS native decoding remain unsupported. The combined release build is recorded below.
 
 Canvas roundRect now builds actual corner arcs, supports numeric/point/iterable
 radii, normalizes one to four corners, scales overlaps and handles negative
 dimensions. Conversion order and iterator cleanup are preserved under bounded
 input and atomic path admission. Seven Core and nine V9 regressions were added
-but not run; this batch's combined production build is in progress.
+but not run; the combined release build passes as recorded below.
+
+The combined release build at `96a7766c` passes with all of the additions above.
+Build log: `/private/tmp/mars-parity-geometry-observers-images-build.log`.
+Frozen unsigned binary SHA-256:
+`6cf3646d97b1e9f6fd8d9aa9b9c4f75e03e8ffb4fd9035cb88e58005345fb8d8`.
+The separate `mars/dist/Mars Parity.app` bundle passes code-signature verification
+and was launched with an ephemeral profile and all three engine services.
+Its signed executable SHA-256 is
+`fb4956608628e9a02a4fc7dd13fb18e84eadf59f621d45b501ef50c73b9f5e27`.
+The original Mars and earlier Preview bundles were preserved. No QA, new test
+execution or Google retest was performed in this code-first batch.
 
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
