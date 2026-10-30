@@ -91,6 +91,7 @@ pub(in crate::v9) use error::formatted_stack as error_stack;
 pub(in crate::v9) use error::legacy_code;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use function::compile_indirect_eval;
+pub(in crate::v9) use function::evaluate_markup_handler;
 pub(in crate::v9) use function::{dynamic_base, evaluate as evaluate_source};
 pub(in crate::v9) use integrity::{
     get_prototype_of as object_get_prototype, is_extensible as object_is_extensible,

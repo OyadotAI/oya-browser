@@ -149,6 +149,63 @@ fn meta_csp_nonce_allows_inline_scripts() {
     assert_eq!(text(&page, "out"), "inline");
 }
 
+/** Refused resources still dispatch errors, but unsafe-eval cannot authorize markup attributes. */
+#[test]
+fn csp_attribute_refusal_preserves_callable_resource_handlers() {
+    let page = load(
+        "<meta http-equiv=Content-Security-Policy content=\"script-src 'nonce-n' 'unsafe-eval'; script-src-attr 'none'\">\
+        <script nonce=n>document.addEventListener('error',()=>{document.getElementById('out').textContent+=':listener'},true)</script>\
+        <script src=/a.js onerror=\"document.getElementById('out').textContent='blocked'\"></script>\
+        <script nonce=n>const s=document.getElementById('callable');s.onerror=()=>{document.getElementById('out').textContent+=':callable'}</script>\
+        <script id=callable src=/a.js onerror=\"document.getElementById('out').textContent='blocked'\"></script>",
+    );
+    assert_eq!(text(&page, "out"), "initial:listener:listener:callable");
+}
+
+/** Allowed attributes compile independently, while their own eval and Function remain blocked. */
+#[test]
+fn csp_unsafe_inline_handlers_do_not_grant_dynamic_code() {
+    let page = load(
+        "<meta http-equiv=Content-Security-Policy content=\"script-src 'self'; script-src-attr 'unsafe-inline'\">\
+        <script src=/a.js onload=\"let n=0;try{eval('1')}catch(e){if(e instanceof EvalError)n++}try{Function('return 1')}catch(e){if(e instanceof EvalError)n++}document.getElementById('out').textContent='allowed:'+n\"></script>",
+    );
+    assert_eq!(text(&page, "out"), "allowed:2");
+}
+
+/** CSP hashes apply to original attribute source only with explicit unsafe-hashes permission. */
+#[test]
+fn csp_attribute_hashes_require_permission_and_exact_source() {
+    for (keyword, source, expected) in [
+        ("'unsafe-hashes'", MARK, "ran"),
+        ("", MARK, "initial"),
+        (
+            "'unsafe-hashes'",
+            "document.getElementById('out').textContent='wrong';",
+            "initial",
+        ),
+    ] {
+        let page = load(&format!(
+            "<meta http-equiv=Content-Security-Policy content=\"script-src 'none'; script-src-attr {keyword} '{MARK_SHA256}'\"><script src=/a.js onerror=\"{source}\"></script>"
+        ));
+        assert_eq!(text(&page, "out"), expected);
+    }
+}
+
+/** DevTools-triggered dispatch refreshes the document's handler policy as normal events do. */
+#[test]
+fn devtools_dispatch_cannot_bypass_attribute_policy() {
+    for (policy, expected) in [("'none'", "initial"), ("'unsafe-inline'", "clicked")] {
+        let body = format!(
+            "<meta http-equiv=Content-Security-Policy content=\"script-src 'self' 'unsafe-eval'; script-src-attr {policy}\"><p id=out>initial</p><button id=go onclick=\"document.getElementById('out').textContent='clicked'\">Go</button>"
+        );
+        let fixture = Fixture::routes(vec![("/", html("", &body))]);
+        let mut runtime = desktop(&fixture.url);
+        agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+        let result = agent_call(&mut runtime, "page.devtools_peek", json!({"request":{"kind":"evaluate","expression":"document.getElementById('go').click();document.getElementById('out').textContent","options":{"return_by_value":true}}})).unwrap();
+        assert_eq!(result["result"]["value"], expected);
+    }
+}
+
 /** Repeated list headers such as Vary and X-Content-Type-Options are joined and the page commits. */
 #[test]
 fn repeated_list_headers_commit() {
@@ -222,4 +279,28 @@ fn module_integrity_and_media_type_are_enforced() {
     let diagnostics = page["diagnostics"].to_string();
     assert!(diagnostics.contains("dep.js"), "{diagnostics}");
     assert!(diagnostics.contains("plain.js"), "{diagnostics}");
+}
+
+/** Parsed resource completion distinguishes empty JavaScript from a refused media type. */
+#[test]
+fn parsed_script_completion_reports_success_and_acquisition_refusal() {
+    let page = "<p id=out>initial</p><script>var events='';</script>\
+        <script src=/empty.js onload=\"events+='load';\"></script>\
+        <script src=/refused.js onerror=\"events+='error';\"></script>\
+        <script>document.getElementById('out').textContent=events;</script>";
+    let fixture = Fixture::routes(vec![
+        ("/", html("", page)),
+        ("/empty.js", script("")),
+        ("/refused.js", html("", "events='executed';")),
+    ]);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert_eq!(text(&page, "out"), "loaderror");
+    assert!(
+        page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature == "scripts")
+    );
 }

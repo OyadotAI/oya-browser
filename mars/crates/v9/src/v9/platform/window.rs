@@ -924,6 +924,7 @@ pub(in crate::v9) fn legacy_element(vm: &mut Vm, id: &str) -> Res<Option<usize>>
         .max()
         .unwrap_or(0);
     document.nodes.push(crate::document::ScriptNode {
+        selected: None,
         local_id,
         html_id: id.into(),
         parent: None,

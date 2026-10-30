@@ -149,6 +149,7 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
 /** Rewrite node identities after the document adopted script-created nodes. */
 pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
+        vm.page.adopt_namespaces(*old, *new);
         super::images::adopt(&mut vm.page, *old, *new)?;
         if let Some(mut canvas) = vm.page.state.canvases.remove(old) {
             canvas.dirty = true;
@@ -2051,6 +2052,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "validationMessage" => JsValue::string("").map_err(Into::into),
         "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
         "attributes" => attr_dom::named_node_map(vm, node),
+        "value" if vm.page.tag(node) == "select" => {
+            JsValue::string(&vm.page.selected_value(node)).map_err(Into::into)
+        }
+        "value" if vm.page.tag(node) == "option" => {
+            JsValue::string(&vm.page.option_value(node)).map_err(Into::into)
+        }
         "value" => {
             let value = view
                 .as_ref()
@@ -2058,23 +2065,6 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .or_else(|| attribute("value"));
             match value {
                 Some(value) => JsValue::string(&value).map_err(Into::into),
-                None if vm.page.tag(node) == "select" => {
-                    let options = vm.page.descendants(node);
-                    let selected = options.into_iter().find(|option| {
-                        vm.page.view(*option).is_some_and(|view| {
-                            view.tag == "option" && view.attributes.contains_key("selected")
-                        })
-                    });
-                    let text = selected
-                        .map(|option| {
-                            vm.page
-                                .view(option)
-                                .and_then(|view| view.attributes.get("value").cloned())
-                                .unwrap_or_else(|| vm.page.text_content(option))
-                        })
-                        .unwrap_or_default();
-                    JsValue::string(&text).map_err(Into::into)
-                }
                 None if vm.page.tag(node) == "textarea" || vm.page.tag(node) == "option" => {
                     let text = vm.page.text_content(node);
                     JsValue::string(&text).map_err(Into::into)
@@ -2139,22 +2129,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             node_list(vm, options)
         }
         "selectedIndex" => {
-            let options: Vec<usize> = vm
+            let index = vm
                 .page
-                .descendants(node)
-                .into_iter()
-                .filter(|child| vm.page.tag(*child) == "option")
-                .collect();
-            let index = options.iter().position(|option| {
-                vm.page
-                    .view(*option)
-                    .is_some_and(|view| view.attributes.contains_key("selected"))
-            });
-            Ok(JsValue::Number(match index {
-                Some(index) => index as f64,
-                None if options.is_empty() => -1.0,
-                None => 0.0,
-            }))
+                .select_options(node)
+                .iter()
+                .position(|option| vm.page.is_selected(*option));
+            Ok(JsValue::Number(index.map_or(-1.0, |index| index as f64)))
         }
         "text" => {
             let text = vm.page.text_content(node);
@@ -2223,7 +2203,12 @@ fn element_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         name @ ("scrollTop" | "scrollLeft") => {
             super::scrolling::set_property(vm, node, name, &value)?;
         }
-        "selectedIndex" => {}
+        "selectedIndex" => {
+            let number = vm.to_number(&value)?;
+            vm.page
+                .select_index(node, crate::v9::value::to_int32(number))
+                .map_err(|error| dom_error(vm, error))?;
+        }
         _ => {}
     }
     Ok(JsValue::Undefined)
@@ -2368,6 +2353,9 @@ pub(in crate::v9) fn reflect_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Ok(JsValue::Undefined);
     };
     let name = native_name(&call);
+    if name == "selected" && vm.page.tag(node) == "option" {
+        return Ok(JsValue::Boolean(vm.page.is_selected(node)));
+    }
     let (attribute, kind) = reflected(name);
     let value = vm
         .page
@@ -2408,6 +2396,12 @@ fn reflect_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let (attribute, kind) = reflected(native_name(&call));
     let value = call.arg(0);
+    if native_name(&call) == "selected" && vm.page.tag(node) == "option" {
+        vm.page
+            .option_selected(node, value.truthy())
+            .map_err(|error| dom_error(vm, error))?;
+        return Ok(JsValue::Undefined);
+    }
     let result = match kind {
         Reflect::Boolean => {
             if value.truthy() {
@@ -3256,6 +3250,7 @@ fn qualified_name(vm: &mut Vm, node: usize) -> String {
         // Only an HTML-namespace element in an HTML document upper-cases its name; an XHTML
         // document keeps the case the script gave.
         let html_element = record.namespace.as_deref() == Some(HTML_NAMESPACE);
+        let tag = vm.page.qualified_element_name(node);
         let document = owning_document_id(vm, node);
         let html_document =
             super::frames::content_type_of(vm, document) == super::frames::HTML_TYPE;

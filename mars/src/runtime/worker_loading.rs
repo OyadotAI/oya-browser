@@ -108,19 +108,17 @@ fn response_failure(response: &crate::network::WebResponse) -> Option<Failure> {
 
 /** Script responses require an actual JavaScript type; HTML errors never become executable. */
 fn javascript(mime: &str) -> bool {
-    [
-        "text/javascript",
-        "application/javascript",
-        "text/ecmascript",
-        "application/ecmascript",
-        "application/x-javascript",
-        "text/x-javascript",
-    ]
-    .contains(&mime)
+    mars_core::http::is_javascript_mime_essence(mime)
 }
 
 /** Ownership, service failure and cancellation cannot be converted into catchable load failures. */
 pub(super) fn fatal(error: &EngineError) -> bool {
     error.service.is_some()
-        || ["permission_denied", "control_denied", "state_missing"].contains(&error.code.as_str())
+        || [
+            "permission_denied",
+            "control_denied",
+            "state_missing",
+            "navigation_cancelled",
+        ]
+        .contains(&error.code.as_str())
 }

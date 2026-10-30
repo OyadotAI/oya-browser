@@ -277,8 +277,7 @@ impl Runtime {
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
-        environment.disallow_code_generation_from_strings =
-            !super::super::csp::allows_eval(&page.document.csp);
+        super::super::csp::apply_environment(&page.document.csp, &mut environment);
         environment.node_text = node_text(&page.document);
         environment.geometry = page
             .display

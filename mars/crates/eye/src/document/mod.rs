@@ -19,7 +19,10 @@ use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
 pub use context::{Appearance, FRAME_VIEWPORT_MIN, RenderContext};
-pub use forms::{Submission, form_owner, label, own_text, select, set_checked, submission};
+pub use forms::{
+    Submission, form_owner, label, option_disabled, own_text, select, select_options, set_checked,
+    submission,
+};
 use mars_core::dom::descendant_ids;
 pub use mars_core::dom::{
     DomChange, FragmentParser, InsertPosition, MetadataElement, ScriptChange, ScriptDocument,

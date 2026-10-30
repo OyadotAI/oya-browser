@@ -51,6 +51,45 @@ impl Page<'_> {
         self.state.element_ns.insert(node, record);
     }
 
+    /** Adoption changes native identities without changing namespace or attached Attr identity. */
+    pub fn adopt_namespaces(&mut self, old: usize, new: usize) {
+        if let Some(record) = self.state.element_ns.remove(&old) {
+            self.state.element_ns.insert(new, record);
+        }
+        if let Some(record) = self.state.attr_ns.remove(&old) {
+            self.state.attr_ns.insert(new, record);
+        }
+        if let Some(record) = self.state.attr_index.remove(&old) {
+            self.state.attr_index.insert(new, record);
+        }
+        self.adopt_attributes(old, new);
+    }
+
+    /** Serialized foreign elements retain their qualified DOM name despite lowercase layout tags. */
+    pub fn qualified_element_name(&mut self, node: usize) -> String {
+        if let Some(record) = self.state.element_ns.get(&node) {
+            return record.prefix.as_ref().map_or_else(
+                || record.local.clone(),
+                |prefix| format!("{prefix}:{}", record.local),
+            );
+        }
+        self.tag(node)
+    }
+
+    /** Only HTML's recognized SVG adjustments may differ at the fragment bridge. */
+    pub fn adoption_tag(&mut self, node: usize) -> String {
+        let tag = self.tag(node);
+        let svg = self.state.element_ns.get(&node).is_some_and(|record| {
+            record.namespace.as_deref() == Some(super::super::namespaces::SVG_NAMESPACE)
+                && record.prefix.is_none()
+        });
+        if svg && super::super::namespaces::adjusted_svg_name(&tag) {
+            tag.to_ascii_lowercase()
+        } else {
+            tag
+        }
+    }
+
     /** Give a copy the namespace records of the node it was cloned from. */
     pub fn copy_namespaces(&mut self, from: usize, to: usize) {
         if let Some(record) = self.state.element_ns.get(&from).cloned() {

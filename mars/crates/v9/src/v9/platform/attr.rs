@@ -42,6 +42,18 @@ impl Page<'_> {
         id
     }
 
+    /** Attached Attr wrappers keep their identity when their owner's native ID changes. */
+    pub fn adopt_attributes(&mut self, old: usize, new: usize) {
+        if let Some(attributes) = self.state.attr_of.remove(&old) {
+            for id in attributes.values() {
+                if let Some(record) = self.state.attr_nodes.get_mut(id) {
+                    record.owner = Some(new);
+                }
+            }
+            self.state.attr_of.insert(new, attributes);
+        }
+    }
+
     /** The id of the Attr currently attached under `name` on `node`, if one was made. */
     fn attached_attr(&self, node: usize, name: &str) -> Option<u64> {
         self.state.attr_of.get(&node)?.get(name).copied()

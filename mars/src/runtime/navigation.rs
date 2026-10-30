@@ -58,15 +58,22 @@ impl Gaps {
     }
     /** Fold into the document's own diagnostics under the same bound. */
     fn record(&self, document: &mut Document) {
-        for message in &self.diagnostics {
-            if document.diagnostics.len() < DIAGNOSTICS && !document.diagnostics.contains(message) {
-                document.diagnostics.push(message.clone());
-            }
-        }
+        let new: Vec<_> = self
+            .diagnostics
+            .iter()
+            .filter(|message| !document.diagnostics.contains(message))
+            .cloned()
+            .collect();
+        document
+            .diagnostics
+            .truncate(DIAGNOSTICS.saturating_sub(new.len()));
+        document.diagnostics.extend(new);
     }
 }
 /** One script ready for V9, in execution order, remembering where the author put it. */
 struct Resolved {
+    /// Whether acquisition was refused rather than successfully returning empty source.
+    refused: bool,
     /// Source text.
     source: String,
     /// Zero-based position in the document.
@@ -474,7 +481,12 @@ impl Runtime {
                 .collect(),
             &document.formatting,
         );
-        environment.disallow_code_generation_from_strings = !super::csp::allows_eval(&document.csp);
+        environment.refused_scripts = resolved
+            .iter()
+            .enumerate()
+            .filter_map(|(index, script)| script.refused.then_some(index))
+            .collect();
+        super::csp::apply_environment(&document.csp, &mut environment);
         environment.frame_documents = scripted_frames
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
@@ -978,15 +990,20 @@ impl Runtime {
                 base.join(src)
                     .map(|url| super::page::safe_url(url.as_str(), true))
             });
-            let skip = |gaps: &mut Gaps, url: Option<String>, reason: &str| {
+            let resources_mode = script.mode;
+            let mut skip = |gaps: &mut Gaps, url: Option<String>, reason: &str| {
                 let script = Resolved {
+                    refused: true,
                     source: String::new(),
                     index,
                     url,
                     module: None,
-                    attributes: BTreeMap::new(),
+                    attributes: script.attributes.clone(),
                 };
                 gaps.note("scripts", script_note(&script, reason));
+                if index < SCRIPT_COUNT {
+                    ready.push((resources_mode, script));
+                }
             };
             if index >= SCRIPT_COUNT {
                 skip(
@@ -1031,6 +1048,7 @@ impl Runtime {
                         ready.push((
                             script.mode,
                             Resolved {
+                                refused: false,
                                 source,
                                 index,
                                 url,
@@ -1078,6 +1096,7 @@ impl Runtime {
             ready.push((
                 script.mode,
                 Resolved {
+                    refused: false,
                     source,
                     index,
                     url,
@@ -1171,14 +1190,7 @@ fn canonical_origin(value: &str) -> EngineResult<String> {
 }
 /** Only common UTF-8 classic JavaScript media types are executable in this slice. */
 fn javascript_mime(mime: &str) -> bool {
-    [
-        "text/javascript",
-        "application/javascript",
-        "application/x-javascript",
-        "text/ecmascript",
-        "application/ecmascript",
-    ]
-    .contains(&mime)
+    mars_core::http::is_javascript_mime_essence(mime)
 }
 /** A prior POST requires an explicit new form action, never a generic Retry. */
 fn replay() -> EngineError {
@@ -1195,4 +1207,28 @@ fn no_history() -> EngineError {
         "No destination exists in that history direction.",
         "Navigate to another page first.",
     )
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    /** Recovery details retain the actual failed script when layout warnings filled the cap. */
+    #[test]
+    fn failed_resource_diagnostics_displace_old_warnings_without_growing() {
+        let mut document = crate::document::parse("<p>kept</p>").unwrap();
+        document.diagnostics = (0..DIAGNOSTICS)
+            .map(|index| format!("CSS warning {index}"))
+            .collect();
+        let mut gaps = Gaps::default();
+        gaps.note("scripts", "Script 1 did not run: download refused".into());
+        gaps.record(&mut document);
+        assert_eq!(document.diagnostics.len(), DIAGNOSTICS);
+        assert_eq!(
+            document.diagnostics.last().unwrap(),
+            "Script 1 did not run: download refused"
+        );
+        gaps.record(&mut document);
+        assert_eq!(document.diagnostics.len(), DIAGNOSTICS);
+    }
 }

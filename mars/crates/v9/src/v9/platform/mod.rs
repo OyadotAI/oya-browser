@@ -23,6 +23,8 @@ mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
 mod form_submit;
+mod handler_policy;
+pub use handler_policy::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub(in crate::v9) mod frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
@@ -52,6 +54,7 @@ mod range_contents;
 mod range_index;
 mod range_live;
 pub(in crate::v9) mod scripts;
+mod select;
 mod trusted_types;
 pub(in crate::v9) use trusted_types::trusted_script_text;
 pub(in crate::v9) mod frame_directory;
@@ -80,6 +83,18 @@ impl Page<'_> {
     /** Give every page script a head `<script>` element (once per page), after the page's
     metadata elements. */
     pub fn script_elements(&mut self, count: usize) -> EngineResult<Vec<usize>> {
+        if let Some(elements) = self.state.parsed_scripts.clone() {
+            let unique: std::collections::BTreeSet<_> = elements.iter().copied().collect();
+            if elements.len() != count
+                || unique.len() != count
+                || elements.iter().any(|id| self.tag(*id) != "script")
+            {
+                return Err(crate::protocol::EngineError::invalid(
+                    "Invalid parsed script identities.",
+                ));
+            }
+            return Ok(elements);
+        }
         self.metadata_elements()?;
         let mut elements = Vec::with_capacity(count);
         for index in 0..count {
@@ -100,6 +115,7 @@ impl Page<'_> {
             self.insert(HEAD, node, None)?;
             elements.push(node);
         }
+        self.state.parsed_scripts = Some(elements.clone());
         Ok(elements)
     }
 }
@@ -290,6 +306,9 @@ pub struct PageEnvironment {
     pub random_seed: u64,
     /// Refuse eval and dynamic Function compilation while retaining normal host Script loading.
     pub disallow_code_generation_from_strings: bool,
+    /// Host-compiled attribute policy, separate from eval and refreshed on each request.
+    #[serde(default)]
+    pub handler_policy: HandlerPolicy,
     /// `navigator.onLine`.
     pub online: bool,
     /// `document.title` at load.
@@ -304,6 +323,9 @@ pub struct PageEnvironment {
     /// Each page script element's own attributes, by source index (empty when the app has
     /// none), so its head record carries the `id` and `data-*` values scripts look it up by.
     pub script_attributes: Vec<BTreeMap<String, String>>,
+    /// Source indices whose acquisition was refused; empty source alone is a successful load.
+    #[serde(default)]
+    pub refused_scripts: Vec<usize>,
     /// Metadata elements Eye keeps out of layout, in source order; V9 makes each a head
     /// element at load so scripts find and read them.
     pub metadata: Vec<crate::document::MetadataElement>,
@@ -610,12 +632,14 @@ impl Default for PageEnvironment {
             timezone_initial_daylight: false,
             random_seed: 0,
             disallow_code_generation_from_strings: false,
+            handler_policy: HandlerPolicy::default(),
             online: true,
             title: String::new(),
             dom_level: DomLevel::Legacy,
             node_text: BTreeMap::new(),
             scripts: Vec::new(),
             script_attributes: Vec::new(),
+            refused_scripts: Vec::new(),
             metadata: Vec::new(),
             frame_documents: BTreeMap::new(),
             scripted_frame_owners: BTreeSet::new(),
@@ -1192,6 +1216,12 @@ pub(in crate::v9) struct PageState {
     pub xhrs: BTreeMap<ObjectId, XhrState>,
     /** Field values scripts set. */
     pub values: BTreeMap<usize, String>,
+    /** Current option state; presence marks script-dirty selectedness. */
+    #[serde(default)]
+    pub selected_options: BTreeMap<usize, bool>,
+    /** Attribute changes affect selectedness only until a script or user dirties an option. */
+    #[serde(default)]
+    pub dirty_options: std::collections::BTreeSet<usize>,
     /** Children of the virtual head, which the projection does not carry. */
     pub head: Vec<usize>,
     /** Extra children of the virtual html element after head and body. */
@@ -1210,6 +1240,9 @@ pub(in crate::v9) struct PageState {
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
+    /** Stable parser-created script identities survive module loading pauses. */
+    #[serde(default)]
+    pub parsed_scripts: Option<Vec<usize>>,
     /** Iframes scripts connected whose documents the app has not answered yet, by element: the
     URL each asked for. The answer fires the element's `load` event and leaves the list. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

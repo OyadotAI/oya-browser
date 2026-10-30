@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 /** Construct ordinary inert nodes with no native handles or capability grants. */
 fn node(local_id: usize, parent: Option<usize>) -> ScriptNode {
     ScriptNode {
+        selected: None,
         local_id,
         html_id: format!("node-{local_id}"),
         parent,

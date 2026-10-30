@@ -200,6 +200,18 @@ impl Authority {
     pub fn tab_status(&self, id: u64) -> Option<(Owner, u64)> {
         self.tabs.get(&id).copied()
     }
+    /// Cancellation observes epochs only; read-only observation never requires mutation ownership.
+    pub fn validate_epoch(&self, permit: Permit) -> EngineResult<()> {
+        let epoch = match permit.tab_id {
+            Some(tab) => self.tabs.get(&tab).map(|(_, epoch)| *epoch),
+            None => Some(self.epoch),
+        };
+        if epoch == Some(permit.epoch) {
+            Ok(())
+        } else {
+            Err(denied())
+        }
+    }
     /// Both caller and exact generation must remain current.
     pub fn validate(&self, permit: Permit) -> EngineResult<()> {
         if self.owner != permit.owner || self.epoch != permit.epoch {

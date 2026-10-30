@@ -2,6 +2,14 @@
 use ring::digest::{SHA256, SHA384, SHA512, digest};
 use url::Url;
 
+mod handlers;
+
+/** Refresh both independent script policies from the same current document policy list. */
+pub(super) fn apply_environment(policies: &[String], environment: &mut crate::v9::PageEnvironment) {
+    environment.disallow_code_generation_from_strings = !allows_eval(policies);
+    environment.handler_policy = handlers::compile(policies);
+}
+
 /** HTTP fields may combine several serialized policies; each remains independently enforced. */
 pub(super) fn response_policies(headers: &[(String, String)]) -> Vec<String> {
     headers

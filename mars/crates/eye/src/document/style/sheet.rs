@@ -303,7 +303,11 @@ impl Parser<'_> {
                 }
                 return Ok(());
             }
-            "page"
+            // Vendor animation steps are descriptors, never selectors that can hide the page.
+            "-moz-keyframes"
+            | "-o-keyframes"
+            | "-ms-keyframes"
+            | "page"
             | "counter-style"
             | "font-feature-values"
             | "font-palette-values"

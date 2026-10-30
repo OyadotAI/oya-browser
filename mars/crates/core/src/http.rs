@@ -71,3 +71,28 @@ pub const WINDOWS_1252: &str = "windows-1252";
 pub fn encoding_for_label(label: &str) -> Option<&'static str> {
     crate::charset::for_label(label).map(crate::charset::Encoding::name)
 }
+
+/// Classifies a parsed MIME essence using the WHATWG JavaScript MIME type group.
+/// Parameters belong to the HTTP parser; accepting them here would hide malformed types.
+pub fn is_javascript_mime_essence(value: &str) -> bool {
+    [
+        "application/ecmascript",
+        "application/javascript",
+        "application/x-ecmascript",
+        "application/x-javascript",
+        "text/ecmascript",
+        "text/javascript",
+        "text/javascript1.0",
+        "text/javascript1.1",
+        "text/javascript1.2",
+        "text/javascript1.3",
+        "text/javascript1.4",
+        "text/javascript1.5",
+        "text/jscript",
+        "text/livescript",
+        "text/x-ecmascript",
+        "text/x-javascript",
+    ]
+    .iter()
+    .any(|mime| value.eq_ignore_ascii_case(mime))
+}

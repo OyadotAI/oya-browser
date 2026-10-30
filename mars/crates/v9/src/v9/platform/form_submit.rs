@@ -180,19 +180,7 @@ fn entries(vm: &mut Vm, form: usize, submitter: Option<usize>) -> Vec<(String, S
 fn values(vm: &mut Vm, node: usize, view: &NodeView, kind: &str) -> Vec<String> {
     let attribute = view.attributes.get("value").cloned();
     match view.tag.as_str() {
-        "select" => vm
-            .page
-            .descendants(node)
-            .into_iter()
-            .filter_map(|o| vm.page.view(o))
-            .filter(|o| o.tag == "option" && o.attributes.contains_key("selected"))
-            .map(|o| {
-                o.attributes
-                    .get("value")
-                    .cloned()
-                    .unwrap_or_else(|| o.text.clone().unwrap_or_default())
-            })
-            .collect(),
+        "select" => vm.page.successful_options(node),
         "textarea" => vec![view.value.clone().unwrap_or_else(|| text(vm, node))],
         _ if matches!(kind, "checkbox" | "radio") => vec![attribute.unwrap_or_else(|| "on".into())],
         _ if kind == "file" => vec![String::new()],

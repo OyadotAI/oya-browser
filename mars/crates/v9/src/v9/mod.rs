@@ -48,6 +48,7 @@ pub use platform::{
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageRequest, ImageResponse,
     NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
 };
+pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
@@ -747,6 +748,13 @@ impl VmState {
         if self.page.timers.len() > crate::constants::VM_TIMERS
             || self.page.listeners.len() > platform::events::LISTENERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
+            || self
+                .page
+                .parsed_scripts
+                .as_ref()
+                .is_some_and(|scripts| scripts.len() > crate::constants::SCRIPT_COUNT)
+            || self.page.dirty_options.len() > crate::constants::VM_DETACHED_NODES
+            || self.page.selected_options.len() > crate::constants::VM_DETACHED_NODES
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len().saturating_add({
                 #[cfg(feature = "conformance")]
@@ -1204,6 +1212,7 @@ fn session<'h>(
         document.validate()?;
     }
     storage.validate()?;
+    environment.handler_policy.validate()?;
     platform::clock::validate(0.0, 0.0, environment.time_origin_ms)?;
     platform::frames::validate_routes(environment, document.as_ref())?;
     platform::frame_directory::validate(environment)?;
@@ -1755,11 +1764,22 @@ fn run_sources(
     failed: &mut Vec<ScriptFailure>,
     ran: &mut Vec<usize>,
 ) -> EngineResult<()> {
-    let elements = vm.page.script_elements(codes.len())?;
+    let elements = vm.page.script_elements(codes.len().min(SCRIPT_COUNT))?;
     if fresh {
         platform::scripts::parsed_sheets(vm).map_err(fatal)?;
     }
     for (index, code) in codes.iter().enumerate().skip(from) {
+        if index >= SCRIPT_COUNT {
+            failed.push(failure(
+                index,
+                EngineError::limit("classic scripts", SCRIPT_COUNT),
+            ));
+            continue;
+        }
+        if vm.page.environment.refused_scripts.contains(&index) {
+            platform::scripts::completed(vm, elements[index], "error")?;
+            continue;
+        }
         if let Some(kind) = vm.modules.entry(index) {
             if kind == EntryKind::Module {
                 match modules::run_entry(vm, index) {
@@ -1780,6 +1800,7 @@ fn run_sources(
             Ok(code) => code.clone(),
             Err(error) => {
                 failed.push(failure(index, error.clone()));
+                parsed_script_completed(vm, elements[index], index)?;
                 continue;
             }
         };
@@ -1805,7 +1826,22 @@ fn run_sources(
                 failed.push(ScriptFailure { index, error });
             }
         }
-        vm.page.current_script = None;
+        parsed_script_completed(vm, elements[index], index)?;
+    }
+    Ok(())
+}
+
+/** Successful acquisition still fires load when evaluating the script reports an exception. */
+fn parsed_script_completed(vm: &mut Vm, element: usize, index: usize) -> EngineResult<()> {
+    vm.page.current_script = None;
+    if vm
+        .page
+        .environment
+        .scripts
+        .get(index)
+        .is_some_and(|src| !src.is_empty())
+    {
+        platform::scripts::completed(vm, element, "load")?;
     }
     Ok(())
 }
@@ -2078,7 +2114,12 @@ pub fn input_page(
         if !vm.page.exists(target) {
             return Err(EngineError::invalid("Invalid projected input target."));
         }
-        if let Some(value) = value {
+        if vm.page.tag(target) == "select" {
+            for option in vm.page.select_options(target) {
+                vm.page.state.selected_options.remove(&option);
+                vm.page.state.dirty_options.insert(option);
+            }
+        } else if let Some(value) = value {
             vm.page.state.values.insert(target, value);
         }
         vm.remaining = vm.limits.operations;
@@ -2311,6 +2352,7 @@ fn legacy_document(inputs: &[InputValue]) -> EngineResult<ScriptDocument> {
             continue;
         }
         nodes.push(ScriptNode {
+            selected: None,
             local_id: index,
             html_id: input.html_id.clone(),
             parent: None,
@@ -2639,7 +2681,7 @@ pub fn replay(
                 document.set_node_text(node, &text)?;
                 node_text.insert(node, text);
             }
-            ScriptChange::Value { .. } => {}
+            ScriptChange::Value { .. } | ScriptChange::Selection { .. } => {}
         }
     }
     if document.digest() != execution.structure {

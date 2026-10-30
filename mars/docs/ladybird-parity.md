@@ -5,6 +5,51 @@ This comparison uses the local Ladybird checkout at commit `ccadf944d59` on
 successful Google Search run in Ladybird. Ladybird was not launched. Only Mars's
 native runtime was used for these tests.
 
+## Everyday browsing candidate, 2026-10-30
+
+The current `ladybird-parity` working tree repairs the ordinary default-search
+journey without a site-specific response replacement or a lite-page fallback.
+This is a usability milestone, not a full Ladybird-parity result or a Google fix.
+
+The frozen native test build `3e60dbacc49b1cef1b3cae65c37a3aa347188605659442869322dd27e93e87ec`
+completed a plain DuckDuckGo query in 7.42 seconds, a real native mouse click to
+rust-lang.org, native Back, and a second query in 5.00 seconds. Result links were
+visible and enabled; the Rust destination reported no script degradation.
+Evidence: `/private/tmp/mars-usability-journey-final/report.json` and its native
+window screenshots. These observations cover those journeys, not every result
+type or website.
+
+The same build passed the isolated native navigation fixture: latest-address
+replacement in 98 ms; five Stop acknowledgements in 37–39 ms, settling in
+91–94 ms; failure Details/Dismiss; native link activation and Back; and a
+background agent completion overlapping a human Reload followed by another
+human address. The last case reproduced a permanently pending address on the
+previous frozen build before its completion bookkeeping was repaired.
+Evidence: `/private/tmp/mars-navigation-overlap-{before,after}.log`.
+
+Compatibility repairs include JavaScript MIME aliases, regular expressions after
+control headers, current SELECT/OPTION state and adoption, bounded root-style
+coalescing, SVG name adoption, and classic-script resource completion. Ignored
+vendor keyframe blocks no longer mark unrelated links noninteractive. Script
+completion handlers enforce a separate bounded CSP attribute policy, including
+fallback, policy intersection and explicitly permitted source hashes; allowing
+an attribute does not enable eval, Function or string timers.
+
+Focused checks pass: 46 native desktop tests, 39 native script/frame tests,
+10 V9 policy tests and eight host CSP tests. The desktop suite includes stopping
+at first paint before V9 admission, preserving every service PID, the committed
+page identity and a mutated JavaScript value. Correctness, security and
+reliability reviews closed their supported findings. Strict all-targets,
+all-features release Clippy passes. The final broad workspace run and packaged
+app QA are still pending; these focused results are not a release gate.
+
+Current substantial gaps remain in CSS transitions/animation rendering,
+Canvas paths/clipping/compositing and decoded-image drawing, module/blob workers,
+nested scripted frames and broader DOM/JavaScript compatibility. The local
+Test262 and WPT harnesses can measure slices, but no matched current Mars and
+Ladybird run establishes a percentage of parity. Google Search's recorded
+challenge/worker failure remains unresolved below.
+
 ## What Ladybird supplies
 
 Ladybird's `Libraries/LibWeb/HTML/WindowProxy.cpp` resolves active child windows

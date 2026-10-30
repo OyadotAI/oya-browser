@@ -71,6 +71,9 @@ pub struct ScriptNode {
     pub parent: Option<usize>,
     /// Only nonsecret input and textarea values may enter the bounded untainted interpreter.
     pub value: Option<String>,
+    /// Current option selectedness, independent of its default selected attribute.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// Mirrors the document mutation validator rather than inventing another target policy.
     pub text_writable: bool,
     /// Only enabled visible explicit ordinary buttons accept programmatic click listeners.
@@ -686,6 +689,13 @@ pub enum ScriptChange {
         node: usize,
         /// The new text.
         text: String,
+    },
+    /// Transfer current selected option identities without changing default markup.
+    Selection {
+        /// The owning SELECT in this document.
+        node: usize,
+        /// Exact option identities, including an intentionally empty selection.
+        selected: Vec<usize>,
     },
     /// Set a form field's current value (input and textarea).
     Value {

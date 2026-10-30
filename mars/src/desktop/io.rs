@@ -40,6 +40,7 @@ impl Drop for Descriptor {
 }
 
 /// Separate pollable reader observes EOF even while a previous agent mutation is in flight.
+#[cfg_attr(feature = "test-support", allow(dead_code))]
 pub(super) fn start(
     commands: SyncSender<Command>,
     output: Receiver<Response>,
@@ -53,7 +54,32 @@ pub(super) fn start(
         input, stdout, commands, output, authority, cancel, connected,
     ))
 }
+/** Test builds can inject native UI actions while a runtime request is blocked. Production
+transports retain their existing ordering and never expose the human-input test seam. */
+#[cfg(feature = "test-support")]
+pub(super) fn start_with_events(
+    commands: SyncSender<Command>,
+    events: SyncSender<super::broker::Event>,
+    output: Receiver<Response>,
+    authority: SharedAuthority,
+    cancel: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
+) -> EngineResult<Vec<JoinHandle<()>>> {
+    let input = Descriptor::new(libc::STDIN_FILENO)?;
+    let stdout = Descriptor::new(libc::STDOUT_FILENO)?;
+    Ok(start_routed(
+        input,
+        stdout,
+        (commands, Some(events)),
+        output,
+        authority,
+        cancel,
+        connected,
+    ))
+}
+
 /** Private descriptor injection preserves the native EOF compatibility path in hermetic tests. */
+#[cfg_attr(feature = "test-support", allow(dead_code))]
 pub(super) fn start_descriptors(
     input: Descriptor,
     stdout: Descriptor,
@@ -63,9 +89,33 @@ pub(super) fn start_descriptors(
     cancel: Arc<AtomicBool>,
     connected: Arc<AtomicBool>,
 ) -> Vec<JoinHandle<()>> {
+    start_routed(
+        input,
+        stdout,
+        (commands, None),
+        output,
+        authority,
+        cancel,
+        connected,
+    )
+}
+
+/** Optional native test routing shares the same bounded framing and shutdown path. */
+fn start_routed(
+    input: Descriptor,
+    stdout: Descriptor,
+    route: (
+        SyncSender<Command>,
+        Option<SyncSender<super::broker::Event>>,
+    ),
+    output: Receiver<Response>,
+    authority: SharedAuthority,
+    cancel: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
+) -> Vec<JoinHandle<()>> {
     let (guard, stop, live) = (authority.clone(), cancel.clone(), connected.clone());
     let reader = thread::spawn(move || {
-        read(input, &commands, &guard, &stop);
+        read(input, &route, &guard, &stop);
         disconnect(&guard, &live);
     });
     let writer = thread::spawn(move || {
@@ -77,7 +127,10 @@ pub(super) fn start_descriptors(
 /** EOF, malformed framing and saturated admission all revoke ownership immediately. */
 fn read(
     input: Descriptor,
-    commands: &SyncSender<Command>,
+    route: &(
+        SyncSender<Command>,
+        Option<SyncSender<super::broker::Event>>,
+    ),
     authority: &SharedAuthority,
     cancel: &AtomicBool,
 ) {
@@ -119,7 +172,19 @@ fn read(
                         tab_id: key,
                     });
                 drop(state);
-                if commands.try_send(Command::Agent(request, permit)).is_err() {
+                #[cfg(feature = "test-support")]
+                if matches!(request.op.as_str(), "window.human" | "window.inspect")
+                    && let Some(events) = &route.1
+                {
+                    if events
+                        .try_send(super::broker::Event::Window(request, permit))
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+                if route.0.try_send(Command::Agent(request, permit)).is_err() {
                     return;
                 }
             } else {

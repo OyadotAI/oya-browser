@@ -8,6 +8,7 @@ mod events;
 mod find;
 mod human;
 mod menus;
+mod navigation;
 mod page_menu;
 mod panels;
 mod scroll;
@@ -57,6 +58,7 @@ struct Window {
     snapshot: Option<BrowserSnapshot>,
     pending: VecDeque<Action>,
     busy: bool,
+    navigation: navigation::Navigation,
     ready: bool,
     error: Option<String>,
     failed_url: Option<String>,
@@ -146,6 +148,13 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     let profiles = verification_profiles(&options);
     let records = record_store(&options);
     let site = Site::start()?;
+    let origins = vec![site.origin.clone()];
+    #[cfg(feature = "test-support")]
+    let origins = {
+        let mut origins = origins;
+        origins.extend(options.fixture_origin.clone());
+        origins
+    };
     let capture = Capture::new(options.capture_dir)?;
     let executable = std::env::current_exe()
         .map_err(|_| EngineError::invalid("Cannot resolve owned engine executable."))?;
@@ -175,28 +184,25 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     } else {
         Transport::Attach
     };
+    let initial_address = initial.clone();
     let broker = if let Some(profiles) = profiles {
-        Broker::start_with_profiles(
-            executable,
-            vec![site.origin.clone()],
-            transport,
-            owner,
-            initial,
-            profiles,
-        )?
+        Broker::start_with_profiles(executable, origins, transport, owner, initial, profiles)?
     } else {
-        Broker::start(
-            executable,
-            vec![site.origin.clone()],
-            transport,
-            owner,
-            initial,
-        )?
+        Broker::start(executable, origins, transport, owner, initial)?
     };
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let library = super::library::Library::load(records);
     let mut window = Window::new(mtm, broker, site.origin.clone(), capture, library);
+    if let Some(url) = initial_address {
+        window
+            .mars
+            .address
+            .setStringValue(&NSString::from_str(&url));
+        window.navigation.requested = Some(url.clone());
+        window.activity = window.activity_for("page.navigate", &json!({"url":url}));
+        window.busy = true;
+    }
     #[cfg(feature = "test-support")]
     let mut check = options.verify_ui.then(check::Check::new);
     #[cfg(feature = "test-support")]
@@ -333,6 +339,7 @@ impl Window {
             snapshot: None,
             pending: VecDeque::new(),
             busy: false,
+            navigation: Default::default(),
             ready: false,
             error: None,
             failed_url: None,
@@ -401,7 +408,9 @@ impl Window {
                             | mars::CLOSE
                             | mars::LOCATION
                             | mars::DISMISS
+                            | mars::DETAILS
                             | mars::STOP
+                            | mars::ADDRESS
                             | mars::PROFILE_CLEAR
                             | mars::PROFILE_RETRY
                             | mars::STORAGE_CLEAR
@@ -435,6 +444,7 @@ impl Window {
         self.ownership();
         self.layout();
         self.shell_tick();
+        self.dispatch_pending_navigation();
         if self.ready && !self.busy && self.pending_appearance.is_none() {
             if let Some(action) = self.pending.pop_front() {
                 self.action(action);
@@ -481,7 +491,7 @@ impl Window {
                     && !self.busy
                     && self.pending.is_empty()),
         );
-        self.mars.address.setEnabled(human && self.ready);
+        self.mars.address.setEnabled(human && !self.worker_dead);
         self.mars.demo.setEnabled(human && self.ready && !self.busy);
         let state = if self
             .snapshot
@@ -512,8 +522,14 @@ impl Window {
                     ""
                 }
             )));
-        self.mars.stop.setHidden(self.activity.is_none());
-        self.mars.stop.setEnabled(human && self.activity.is_some());
+        let loading = self.activity.is_some();
+        self.mars.loading_control(loading);
+        if loading {
+            self.mars
+                .reload
+                .setEnabled(human && !self.navigation.stopping);
+        }
+        self.mars.stop.setHidden(true);
     }
     /** Engine-owned geometry is set from the actual scroll viewport, including the error banner. */
     fn layout(&self) {
@@ -523,6 +539,16 @@ impl Window {
         ));
         self.mars
             .layout(size.width, size.height, self.error.is_some());
+        self.mars
+            .retry
+            .setTitle(&NSString::from_str(if self.navigation.details.is_some() {
+                "Reload"
+            } else {
+                "Retry"
+            }));
+        self.mars
+            .details
+            .setHidden(self.error.is_none() || self.navigation.details.is_none());
         self.mars
             .retry
             .setHidden(self.error.is_none() || !self.retry_allowed);

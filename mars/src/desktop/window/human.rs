@@ -195,7 +195,10 @@ impl Window {
 
     /** Record each newly committed top-level page once; the demo origin and pages Mars may not keep are skipped. */
     fn record_history(&mut self) {
-        let Some(inspection) = self.snapshot.as_ref().map(|snapshot| &snapshot.inspection) else {
+        let Some(inspection) = self
+            .committed_snapshot()
+            .map(|snapshot| &snapshot.inspection)
+        else {
             return;
         };
         let (Some(page), Some(url)) = (inspection["page_id"].as_str(), inspection["url"].as_str())
@@ -206,11 +209,12 @@ impl Window {
             return;
         }
         let title = inspection["title"].as_str().unwrap_or_default().to_owned();
+        let page = page.to_owned();
         let url = url.to_owned();
         if self.recorded.len() == RECORDED {
             self.recorded.pop_front();
         }
-        self.recorded.push_back(page.into());
+        self.recorded.push_back(page);
         if !url.starts_with(&self.demo) && self.library.history.record(&url, &title, now()) {
             self.library_changed(Record::History);
         }
@@ -269,7 +273,9 @@ impl Window {
                 continue;
             }
             self.remember_closed(id);
+            let command_id = self.next_command();
             let command = Command::Human {
+                command_id,
                 op: "tab.close".into(),
                 params: json!({"tab_id": id}),
                 page: None,
@@ -278,6 +284,7 @@ impl Window {
             };
             if self.broker.commands.try_send(command).is_ok() {
                 self.busy = true;
+                self.navigation.inflight = Some(command_id);
             }
         }
     }
@@ -299,8 +306,7 @@ impl Window {
     fn toggle_bookmark(&mut self) {
         let url = self.mars.committed_url();
         let title = self
-            .snapshot
-            .as_ref()
+            .committed_snapshot()
             .and_then(|snapshot| snapshot.inspection["title"].as_str())
             .unwrap_or_default()
             .to_owned();
@@ -653,7 +659,8 @@ impl Window {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        let human = self.last_owner == Some(Owner::Human);
+        let human =
+            self.last_owner == Some(Owner::Human) && snapshot.inspection["settling"] != true;
         let key = format!(
             "{}:{}:{}:{human}",
             snapshot.inspection["page_id"],
@@ -697,6 +704,23 @@ impl Window {
         let index = input.index.unwrap_or_default() as isize;
         let text = input.text.clone().unwrap_or_default();
         let tag = match input.action.as_str() {
+            "back" | "reload" | "details" | "dismiss" | "stop" => {
+                let tags = [
+                    ("back", mars::BACK),
+                    ("reload", mars::RELOAD),
+                    ("details", mars::DETAILS),
+                    ("dismiss", mars::DISMISS),
+                    ("stop", mars::STOP),
+                ];
+                if let Some((_, tag)) = tags.iter().find(|(action, _)| *action == input.action) {
+                    self.canvas.push(Action::Activate(*tag));
+                }
+                return Ok(self.human_observation());
+            }
+            "control" => {
+                self.canvas.push(Action::Activate(mars::CONTROL));
+                return Ok(self.human_observation());
+            }
             "bookmark" => mars::BOOKMARK_TOGGLE,
             "bookmarks_bar" => mars::BOOKMARKS_BAR,
             "history" => mars::HISTORY_SHOW,
@@ -731,7 +755,7 @@ impl Window {
             }
             "enter" => {
                 self.mars.address.setStringValue(&NSString::from_str(&text));
-                self.action(Action::Activate(mars::ADDRESS));
+                self.canvas.push(Action::Activate(mars::ADDRESS));
                 return Ok(self.human_observation());
             }
             "capture" => return self.capture_panel(&text),

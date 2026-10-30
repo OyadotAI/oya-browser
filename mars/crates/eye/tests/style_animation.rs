@@ -287,3 +287,50 @@ fn a_dropped_is_list_masks_each_argument_subject_not_everything() {
     assert!(by_id(&document, "a").style.interactive);
     assert!(document.formatting.body.style.interactive);
 }
+
+/** Unsupported animation percentages cannot become universal hiding selectors. */
+#[test]
+fn vendor_keyframe_descriptors_leave_unanimated_links_actionable() {
+    for prefix in ["-moz", "-o", "-ms"] {
+        let frames =
+            format!("@{prefix}-keyframes spinner{{0%,39%,100%{{opacity:0}}40%{{opacity:1}}}}");
+        for sheet in [frames.clone(), format!("@media screen{{{frames}}}")] {
+            let document = styled("<a id=a href=/next>Next</a>", &sheet);
+            assert!(document.formatting.html.style.interactive, "{sheet}");
+            assert!(document.formatting.body.style.interactive, "{sheet}");
+            assert!(by_id(&document, "a").style.interactive, "{sheet}");
+            assert!(
+                document
+                    .diagnostics
+                    .iter()
+                    .any(|message| message.contains(&format!("@{prefix}-keyframes")))
+            );
+        }
+    }
+}
+
+/** Ignoring known descriptor syntax never relaxes ordinary or uncertain hiding rules. */
+#[test]
+fn vendor_keyframes_preserve_real_and_unknown_hiding_masks() {
+    let frames = "@-moz-keyframes spinner{0%{opacity:0}to{opacity:1}}";
+    for rule in [
+        "#a{display:none}",
+        "#a{opacity:0}",
+        "@future-condition{#a{display:none}}",
+    ] {
+        let document = styled("<a id=a href=/next>Next</a>", &format!("{frames}{rule}"));
+        let node = by_id(&document, "a");
+        if rule.contains("opacity") {
+            assert_eq!(node.style.opacity, 0.0);
+            let display = mars_eye::render(&document, 800.0).unwrap();
+            assert!(
+                !display
+                    .items
+                    .iter()
+                    .any(|item| item.local_id == node.local_id && mars_eye::agent_visible(item))
+            );
+        } else {
+            assert!(!node.style.interactive, "{rule}");
+        }
+    }
+}

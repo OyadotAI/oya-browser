@@ -40,6 +40,7 @@ fn change_bytes(change: &ScriptChange) -> usize {
             value.as_ref().map_or(0, String::len)
         }
         ScriptChange::Value { value, .. } => value.len(),
+        ScriptChange::Selection { selected, .. } => selected.len() * std::mem::size_of::<usize>(),
         _ => 0,
     }
 }
@@ -499,8 +500,8 @@ impl Page<'_> {
     pub fn record(&mut self, change: ScriptChange) -> EngineResult<()> {
         self.touch();
         if self.environment.dom_level == DomLevel::Extended
-            && let ScriptChange::Attribute { node, name, .. } = &change
-            && let Some(slot) = self.attribute_slot(*node, name)
+            && let Some((node, name)) = attribute_key(&change)
+            && let Some(slot) = self.attribute_slot(node, name)
         {
             return self.supersede(slot, change);
         }
@@ -509,9 +510,10 @@ impl Page<'_> {
         match (self.environment.dom_level, change) {
             (DomLevel::Legacy, ScriptChange::Dom { change }) => self.changes.push(change),
             (DomLevel::Extended, change) => {
-                if let ScriptChange::Attribute { node, name, .. } = &change {
+                if let Some((node, name)) = attribute_key(&change) {
                     let position = self.script_changes.len();
-                    self.attribute_slots.insert((*node, name.clone()), position);
+                    self.attribute_slots
+                        .insert((node, name.to_owned()), position);
                 }
                 self.script_changes.push(change);
             }
@@ -545,8 +547,12 @@ impl Page<'_> {
      * for the same attribute adds no entry, and its bytes are counted as the new value's size.
      */
     fn admit_attribute(&self, node: usize, name: &str, value: Option<&str>) -> EngineResult<()> {
-        let entries = usize::from(self.attribute_slot(node, name).is_none());
-        self.admit(value.map_or(0, str::len), entries)
+        let slot = self.attribute_slot(node, name);
+        let previous = slot.map_or(0, |slot| change_bytes(&self.script_changes[slot]));
+        self.admit(
+            value.map_or(0, str::len).saturating_sub(previous),
+            usize::from(slot.is_none()),
+        )
     }
     /**
      * The log position of the latest write to this attribute. The hint is verified against the log,
@@ -554,12 +560,11 @@ impl Page<'_> {
      */
     fn attribute_slot(&self, node: usize, name: &str) -> Option<usize> {
         let slot = *self.attribute_slots.get(&(node, name.to_string()))?;
-        match self.script_changes.get(slot) {
-            Some(ScriptChange::Attribute {
-                node: at, name: an, ..
-            }) if *at == node && an.as_str() == name => Some(slot),
-            _ => None,
-        }
+        self.script_changes
+            .get(slot)
+            .and_then(attribute_key)
+            .filter(|(at, attribute)| *at == node && *attribute == name)
+            .map(|_| slot)
     }
     /**
      * Replaces an earlier write to the same attribute in place. Attribute writes only set data, so
@@ -654,6 +659,10 @@ impl Page<'_> {
     }
     /** One node's record: its view, and its projected children for the parent links. */
     fn detached_record(&mut self, node: usize) -> Detached {
+        if self.tag(node) == "option" {
+            let selected = self.is_selected(node);
+            self.state.selected_options.insert(node, selected);
+        }
         let children = self.all_children(node);
         match self.view(node) {
             Some(view) => Detached {
@@ -687,6 +696,15 @@ impl Page<'_> {
     }
     /** Remove a node from its parent. */
     pub fn remove(&mut self, id: usize) -> EngineResult<()> {
+        let owner = self.changed_option_owner(id);
+        self.remove_node(id)?;
+        if let Some(owner) = owner {
+            self.normalize_selection(owner)?;
+        }
+        Ok(())
+    }
+    /** Detach storage and native projection before repairing the old SELECT's current state. */
+    fn remove_node(&mut self, id: usize) -> EngineResult<()> {
         self.touch();
         if matches!(id, HTML | HEAD | BODY) {
             return Err(EngineError::unsupported(
@@ -724,6 +742,30 @@ impl Page<'_> {
     }
     /** Insert `child` into `parent` before `reference` (or at the end). Returns new identities. */
     pub fn insert(
+        &mut self,
+        parent: usize,
+        child: usize,
+        reference: Option<usize>,
+    ) -> EngineResult<Vec<(usize, usize)>> {
+        let old_owner = self.changed_option_owner(child);
+        let mapping = self.insert_node(parent, child, reference)?;
+        let adopted = mapping
+            .iter()
+            .find(|(old, _)| *old == child)
+            .map_or(child, |(_, new)| *new);
+        let new_owner = self.changed_option_owner(adopted);
+        if old_owner != new_owner
+            && let Some(owner) = old_owner
+        {
+            self.normalize_selection(owner)?;
+        }
+        if let Some(owner) = new_owner {
+            self.normalize_selection(owner)?;
+        }
+        Ok(mapping)
+    }
+    /** Structural insertion keeps its mapping so option state can follow adopted native identities. */
+    fn insert_node(
         &mut self,
         parent: usize,
         child: usize,
@@ -876,7 +918,7 @@ impl Page<'_> {
         let (target, position) = self.placement(parent, child, reference);
         let context = self.tag(parent);
         let nodes = self.parse_fragment(&context, &html)?;
-        let tags: Vec<String> = old.iter().map(|id| self.tag(*id)).collect();
+        let tags: Vec<String> = old.iter().map(|id| self.adoption_tag(*id)).collect();
         let Some(mapping) =
             adopted(&old, &tags, &nodes).filter(|m| m.first().map(|p| p.0) == Some(child))
         else {
@@ -919,6 +961,12 @@ impl Page<'_> {
             if let Some(text) = text {
                 self.state.texts.insert(*new_id, text);
             }
+            if self.state.dirty_options.remove(old_id) {
+                self.state.dirty_options.insert(*new_id);
+            }
+            if let Some(selected) = self.state.selected_options.remove(old_id) {
+                self.state.selected_options.insert(*new_id, selected);
+            }
             if let Some(value) = self.state.values.remove(old_id) {
                 self.state.values.insert(*new_id, value);
             }
@@ -926,6 +974,26 @@ impl Page<'_> {
         for (old_id, text) in blanks {
             if let Some((_, new_id)) = mapping.iter().find(|(id, _)| *id == old_id) {
                 self.set_text(*new_id, &text)?;
+            }
+        }
+        let mut owners = std::collections::BTreeSet::new();
+        for (_, id) in &mapping {
+            if self.state.selected_options.contains_key(id)
+                && let Some(owner) = self.option_owner(*id)
+            {
+                owners.insert(owner);
+            }
+        }
+        for owner in owners {
+            let selected: Vec<_> = self
+                .select_options(owner)
+                .into_iter()
+                .filter(|id| self.is_selected(*id))
+                .collect();
+            if mapping.iter().any(|(_, adopted)| *adopted == owner) {
+                self.select_exact(owner, &selected)?;
+            } else {
+                self.normalize_selection(owner)?;
             }
         }
         Ok(mapping)
@@ -1155,6 +1223,9 @@ impl Page<'_> {
             .and_then(|view| view.attributes.get(name).cloned());
         let canvas_reset = super::canvas::prepare_resize(self, id, name, value)?;
         self.write_attribute(id, name, value)?;
+        if name == "selected" && self.tag(id) == "option" {
+            self.selected_attribute(id, value.is_some())?;
+        }
         if value.is_none() {
             self.detach_attr(id, name, old.clone());
         }
@@ -1187,8 +1258,16 @@ impl Page<'_> {
         let name = name.to_string();
         if matches!(id, HTML | HEAD | BODY) {
             let seed = self.root_attributes(id);
+            let unchanged = seed.get(&name).map(String::as_str) == value;
+            if !unchanged
+                && id != HEAD
+                && !self.legacy_changes()
+                && crate::document::script_attribute_allowed(&name)
+            {
+                crate::document::validate_text(value.unwrap_or_default())?;
+                self.admit_attribute(id, &name, value)?;
+            }
             let attributes = self.state.virtual_attributes.entry(id).or_insert(seed);
-            let unchanged = attributes.get(&name).map(String::as_str) == value;
             match value {
                 Some(value) => attributes.insert(name.clone(), value.into()),
                 None => attributes.remove(&name),
@@ -1248,6 +1327,12 @@ impl Page<'_> {
     pub fn set_value(&mut self, id: usize, value: &str) -> EngineResult<()> {
         self.touch();
         crate::document::validate_text(value)?;
+        if self.tag(id) == "select" {
+            return self.select_value(id, value);
+        }
+        if self.tag(id) == "option" {
+            return self.set_attribute(id, "value", Some(value));
+        }
         self.state.values.insert(id, value.into());
         if self.is_projected(id) && self.environment.dom_level == DomLevel::Extended {
             self.record(ScriptChange::Value {
@@ -1345,4 +1430,15 @@ fn adopted(old: &[usize], tags: &[String], nodes: &[ScriptNode]) -> Option<Vec<(
         next += 1;
     }
     Some(mapping)
+}
+
+/** Virtual root attributes share bounded replacement accounting with ordinary attributes. */
+fn attribute_key(change: &ScriptChange) -> Option<(usize, &str)> {
+    match change {
+        ScriptChange::Attribute { node, name, .. } => Some((*node, name)),
+        ScriptChange::RootAttribute { body, name, .. } => {
+            Some((if *body { BODY } else { HTML }, name))
+        }
+        _ => None,
+    }
 }

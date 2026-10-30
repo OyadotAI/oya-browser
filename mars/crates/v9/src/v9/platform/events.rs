@@ -686,8 +686,7 @@ fn handler_property(
     if handler.is_none()
         && let Some(source) = inline_source(vm, target, kind)
     {
-        let source = format!("(function(event){{\n{source}\n}})");
-        handler = Some(crate::v9::builtins::evaluate_source(vm, source)?);
+        handler = crate::v9::builtins::evaluate_markup_handler(vm, source)?;
     }
     if let Some(handler) = handler
         && vm.is_callable(&handler)

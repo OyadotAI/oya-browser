@@ -53,6 +53,7 @@ pub(super) fn project_node(first: &BTreeMap<&str, usize>, node: &Node) -> Script
     // Over-long names are inert to scripts; dropping them keeps such pages loadable.
     attributes.retain(|name, _| name.len() <= ID_BYTES);
     ScriptNode {
+        selected: (node.tag == "option").then_some(node.selected),
         tag: node.tag.clone(),
         attributes,
         local_id: node.local_id,

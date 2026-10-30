@@ -122,7 +122,8 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
             out.push_str("</template>");
         }
         tag => {
-            write_open(tag, &view, out);
+            let qualified = page.qualified_element_name(id);
+            write_open(&qualified, &view, out);
             if VOID.contains(&tag) || depth > DOCUMENT_DEPTH * 4 {
                 return;
             }
@@ -146,7 +147,7 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
                 write_node(page, child, out, depth + 1, shadow);
             }
             out.push_str("</");
-            out.push_str(tag);
+            out.push_str(&qualified);
             out.push('>');
         }
     }
@@ -363,6 +364,7 @@ impl crate::document::FragmentParser for SimpleFragmentParser {
             kept.push(Some(local_id));
             let html_id = node.attributes.get("id").cloned().unwrap_or_default();
             out.push(crate::document::ScriptNode {
+                selected: None,
                 local_id,
                 html_id,
                 parent,

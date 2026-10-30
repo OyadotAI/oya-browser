@@ -1462,14 +1462,7 @@ fn executable(attrs: &markup::Attributes) -> bool {
         return true;
     };
     let kind = kind.trim().to_ascii_lowercase();
-    kind.is_empty()
-        || [
-            "text/javascript",
-            "application/javascript",
-            "text/ecmascript",
-            "application/ecmascript",
-        ]
-        .contains(&kind.as_str())
+    kind.is_empty() || mars_core::http::is_javascript_mime_essence(&kind)
 }
 
 /** `<template shadowrootmode=open|closed>` declares a shadow root for its parent element. */

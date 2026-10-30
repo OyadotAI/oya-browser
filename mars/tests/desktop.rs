@@ -713,7 +713,17 @@ fn switching_tabs_refreshes_viewport_layout_and_scroll_bounds() {
             json!({"tab_id":"tab-2"}),
         ))
         .unwrap();
-    let second_layout = call(&mut runtime, "page.layout", json!({"tab_id":"tab-2"}), 2).unwrap();
+    let second_layout = runtime
+        .handle_as(
+            Request::new("test", "page.layout", json!({"tab_id":"tab-2"})),
+            Permit {
+                owner: Owner::Agent,
+                epoch: 1,
+                tab_id: Some(2),
+            },
+        )
+        .unwrap();
+    assert_eq!(second_layout["tab_id"], "tab-2");
     assert_eq!(second_layout["viewport"]["width"], 280.0);
     assert_eq!(second_layout["viewport"]["scroll_y"], 0.0);
     assert_ne!(first["page_id"], second["page_id"]);
@@ -2059,4 +2069,262 @@ fn window_cancellation_reaps_engines_during_network_wait() {
     assert!(worker.join().unwrap().is_err());
     assert!(started.elapsed() < Duration::from_secs(1));
     support::assert_gone(&pids);
+}
+
+/** Voluntary cancellation interrupts blocked I/O without exhausting the crash-recovery budget. */
+#[test]
+fn repeated_navigation_stop_retires_only_the_waiting_service() {
+    use std::time::{Duration, Instant};
+    let authority = Authority::shared(Owner::Agent);
+    let mut fixtures = (0..5).map(|_| Fixture::slow()).collect::<Vec<_>>();
+    let fast = fixture();
+    let mut origins = fixtures
+        .iter()
+        .map(|fixture| fixture.url.clone())
+        .collect::<Vec<_>>();
+    origins.push(fast.url.clone());
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars"))),
+        origins,
+        authority.clone(),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    call(&mut runtime, "page.navigate", json!({"url":fast.url}), 1).unwrap();
+    let committed = runtime.snapshot().inspection["page_id"].clone();
+    for slow in fixtures.drain(..) {
+        let before = runtime
+            .process_ids()
+            .into_iter()
+            .map(|(name, pid)| (name.to_owned(), pid))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let permit = authority
+            .lock()
+            .unwrap()
+            .permit_for(Owner::Agent, 1)
+            .unwrap();
+        let url = slow.url.clone();
+        let worker = thread::spawn(move || {
+            let result = runtime.handle_as(
+                Request::new(
+                    "stop",
+                    "page.navigate",
+                    json!({"url":url,"tab_id":"tab-1","control_epoch":permit.epoch}),
+                ),
+                permit,
+            );
+            (runtime, result)
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while slow.requests.load(Ordering::Relaxed) == 0 {
+            assert!(Instant::now() < deadline);
+            thread::sleep(support::POLL);
+        }
+        let started = Instant::now();
+        authority
+            .lock()
+            .unwrap()
+            .change_tab(1, Owner::Agent)
+            .unwrap();
+        let (returned, result) = worker.join().unwrap();
+        runtime = returned;
+        assert_eq!(result.unwrap_err().code, "control_denied");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(runtime.snapshot().inspection["page_id"], committed);
+        let after = runtime
+            .process_ids()
+            .into_iter()
+            .map(|(name, pid)| (name.to_owned(), pid))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_ne!(before["network"], after["network"]);
+        assert_eq!(before["document"], after["document"]);
+        assert_eq!(before["v9"], after["v9"]);
+        support::assert_gone(&[before["network"]]);
+    }
+    let epoch = authority
+        .lock()
+        .unwrap()
+        .permit_for(Owner::Agent, 1)
+        .unwrap()
+        .epoch;
+    call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":fast.url}),
+        epoch,
+    )
+    .unwrap();
+}
+
+/** Revocation before request admission preserves idle engines and committed script state. */
+#[test]
+fn stop_at_first_paint_preserves_idle_v9_and_committed_state() {
+    let fixture = Fixture::routes(vec![
+        (
+            "/",
+            support::html("", "<p>committed</p><script>window.marker=42</script>"),
+        ),
+        (
+            "/next",
+            support::html("", "<p>candidate</p><script>window.marker=0</script>"),
+        ),
+    ]);
+    let authority = Authority::shared(Owner::Agent);
+    let mut runtime = runtime(&fixture.url, authority.clone());
+    call(&mut runtime, "page.navigate", json!({"url":fixture.url}), 1).unwrap();
+    call(&mut runtime, "page.devtools", json!({"request":{"kind":"evaluate","expression":"window.marker=77","options":{"return_by_value":true}}}), 1).unwrap();
+    let before = runtime
+        .process_ids()
+        .into_iter()
+        .map(|(_, pid)| pid)
+        .collect::<Vec<_>>();
+    let committed = runtime.snapshot().inspection["page_id"].clone();
+    let stopping = authority.clone();
+    runtime.show_first_paint(Box::new(move |_| {
+        stopping
+            .lock()
+            .unwrap()
+            .change_tab(1, Owner::Agent)
+            .unwrap();
+    }));
+    let error = call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":format!("{}/next",fixture.url)}),
+        1,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "control_denied");
+    assert_eq!(
+        runtime
+            .process_ids()
+            .into_iter()
+            .map(|(_, pid)| pid)
+            .collect::<Vec<_>>(),
+        before
+    );
+    assert_eq!(runtime.snapshot().inspection["page_id"], committed);
+    let epoch = authority
+        .lock()
+        .unwrap()
+        .permit_for(Owner::Agent, 1)
+        .unwrap()
+        .epoch;
+    let value = call(&mut runtime, "page.devtools_peek", json!({"request":{"kind":"evaluate","expression":"window.marker","options":{"return_by_value":true}}}), epoch).unwrap();
+    assert_eq!(value["result"]["value"], 77);
+}
+
+/** Native selection refreshes current option state before trusted input/change handlers run. */
+#[test]
+fn selecting_an_optgroup_option_updates_script_reads() {
+    let body = "<select id=s><option value=a>A</option><optgroup><option id=b value=b>B</option></optgroup></select><p id=result>before</p><script>const s=document.getElementById('s');s.value='a';s.addEventListener('change',()=>{document.getElementById('result').textContent=s.value+':'+s.selectedIndex})</script>";
+    let fixture = Fixture::raw(
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes(),
+    );
+    let mut runtime = runtime(&fixture.url, Authority::shared(Owner::Agent));
+    let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url}), 1).unwrap();
+    let nodes = page["nodes"].as_array().unwrap();
+    let select = nodes.iter().find(|node| node["html_id"] == "s").unwrap();
+    let option = nodes.iter().find(|node| node["html_id"] == "b").unwrap();
+    let selected = call(&mut runtime,"page.select",json!({"page_id":page["page_id"],"expected_revision":page["revision"],"node_id":select["node_id"],"option_id":option["node_id"]}),1).unwrap();
+    assert!(
+        selected["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["html_id"] == "result" && node["text"] == "b:1"),
+        "{selected}"
+    );
+}
+
+/** Vendor animation descriptors do not disable a real document's link controls. */
+#[test]
+fn unsupported_vendor_keyframes_do_not_block_native_link_activation() {
+    let fixture = Fixture::routes(vec![
+        (
+            "/",
+            support::html(
+                "",
+                "<style>@-moz-keyframes spinner{0%,39%,100%{opacity:0}40%{opacity:1}}</style><a id=next href=/next>Next</a>",
+            ),
+        ),
+        ("/next", support::html("", "<h1>Destination</h1>")),
+    ]);
+    let mut runtime = runtime(&fixture.url, Authority::shared(Owner::Human));
+    let page = human_page(&mut runtime, 1, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let link = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "next")
+        .unwrap();
+    assert_eq!(link["enabled"], true);
+    let destination = human_page(&mut runtime, 1, "page.click", json!({"page_id":page["page_id"],"expected_revision":page["revision"],"node_id":link["node_id"]})).unwrap();
+    assert!(destination["url"].as_str().unwrap().ends_with("/next"));
+}
+
+/** V9 selectedness resets are replayed exactly into the native document after option removal. */
+#[test]
+fn removing_selected_option_updates_the_native_dropdown() {
+    let source = "<select id=s><option value=a>A</option><option value=b>B</option></select><p id=out></p><script>const s=document.getElementById('s');s.value='b';s.options[1].remove();document.getElementById('out').textContent=s.value+':'+s.selectedIndex;</script>";
+    let fixture = Fixture::raw(support::html("", source));
+    let mut runtime = runtime(&fixture.url, Authority::shared(Owner::Human));
+    let page = human_page(&mut runtime, 1, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let nodes = page["nodes"].as_array().unwrap();
+    assert_eq!(
+        nodes.iter().find(|node| node["html_id"] == "out").unwrap()["text"],
+        "a:0"
+    );
+    assert_eq!(
+        nodes.iter().find(|node| node["tag"] == "option").unwrap()["selected"],
+        true
+    );
+    assert!(
+        !page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item == "scripts")
+    );
+}
+
+/** Moving a selected option repairs both dropdowns before native change replay. */
+#[test]
+fn moving_selected_options_replays_one_selection_per_native_dropdown() {
+    let source = "<select id=s><option value=a>A</option><option value=b>B</option></select><select id=t><option value=c>C</option></select><p id=out></p><script>const s=document.getElementById('s'),t=document.getElementById('t');s.value='b';const b=s.options[1];b.remove();s.appendChild(b);t.appendChild(b);document.getElementById('out').textContent=s.value+':'+t.value;</script>";
+    let fixture = Fixture::raw(support::html("", source));
+    let mut runtime = runtime(&fixture.url, Authority::shared(Owner::Human));
+    let page = human_page(&mut runtime, 1, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(
+        !page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item == "scripts"),
+        "{}",
+        page["diagnostics"]
+    );
+    let nodes = page["nodes"].as_array().unwrap();
+    assert_eq!(
+        nodes.iter().find(|node| node["html_id"] == "out").unwrap()["text"],
+        "a:b"
+    );
+    assert_eq!(
+        nodes
+            .iter()
+            .filter(|node| node["tag"] == "option" && node["selected"] == true)
+            .count(),
+        2
+    );
+    assert!(
+        !page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item == "scripts")
+    );
 }

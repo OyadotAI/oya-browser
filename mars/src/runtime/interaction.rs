@@ -319,6 +319,7 @@ impl Runtime {
             .local_id;
         page.document = crate::document::select(&page.document, node.local_id, option)?;
         page.styled = false;
+        self.notify_input(&mut page, &node, "")?;
         self.finish_mutation(page)
     }
     /** Enter and explicit tool submission share the exact same successful-control algorithm. */

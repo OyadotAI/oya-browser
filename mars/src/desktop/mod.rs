@@ -33,6 +33,9 @@ pub struct Options {
     /// Explicit local test startup exercises OS callbacks without exposing an agent bypass.
     #[cfg(feature = "test-support")]
     pub verify_ui: bool,
+    /// Explicit loopback origin for deterministic native UI integration fixtures.
+    #[cfg(feature = "test-support")]
+    pub fixture_origin: Option<String>,
     /// In-memory profiles (`--ephemeral`): tests and private sessions never touch the Keychain.
     pub test_profile: bool,
     /// Local test startup exercises real toolbar ownership transitions for MCP verification.
@@ -51,6 +54,8 @@ impl Options {
             url: None,
             #[cfg(feature = "test-support")]
             verify_ui: false,
+            #[cfg(feature = "test-support")]
+            fixture_origin: None,
             test_profile: false,
             #[cfg(feature = "test-support")]
             verify_mcp_ui: false,
@@ -63,6 +68,24 @@ impl Options {
                 "--agent-control" => result.agent_control = true,
                 "--capture-dir" => result.capture_dir = Some(args.next().ok_or_else(usage)?.into()),
                 "--url" => result.url = Some(args.next().ok_or_else(usage)?.clone()),
+                #[cfg(feature = "test-support")]
+                "--fixture-origin" => {
+                    let origin = args.next().ok_or_else(usage)?.clone();
+                    let url = url::Url::parse(&origin).map_err(|_| usage())?;
+                    if url.scheme() != "http"
+                        || url.host_str() != Some("127.0.0.1")
+                        || url.port().is_none()
+                        || url.path() != "/"
+                        || url.query().is_some()
+                        || url.fragment().is_some()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                    {
+                        return Err(usage());
+                    }
+                    result.fixture_origin = Some(url.origin().ascii_serialization());
+                    result.test_profile = true;
+                }
                 #[cfg(feature = "test-support")]
                 "--verify-ui" => {
                     result.verify_ui = true;

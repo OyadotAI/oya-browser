@@ -360,7 +360,7 @@ impl Runtime {
         });
         let snapshot = self.snapshot_of(Some(page), inspection);
         if let Some(sink) = self.provisional.as_mut() {
-            sink(snapshot);
+            sink(snapshot, self.permit);
         }
     }
     /** Lays out a styled page for its first paint: the display alone, without the inspection

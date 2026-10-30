@@ -11,18 +11,6 @@ use crate::protocol::EngineResult;
 use crate::v9::value::JsValue;
 use crate::v9::vm::{Res, Thrown, Vm};
 
-/** JavaScript media types a `type` attribute may name and still be a classic script. */
-const CLASSIC_TYPES: [&str; 8] = [
-    "text/javascript",
-    "application/javascript",
-    "text/ecmascript",
-    "application/ecmascript",
-    "text/jscript",
-    "application/x-javascript",
-    "text/x-javascript",
-    "module",
-];
-
 /** Whether a `type` (or `language`) attribute names a classic script. */
 fn classic(attributes: &std::collections::BTreeMap<String, String>) -> bool {
     match attributes
@@ -33,7 +21,7 @@ fn classic(attributes: &std::collections::BTreeMap<String, String>) -> bool {
         Some(kind) if kind.is_empty() => true,
         // ponytail: a module script inserted by script waits for module loading through the
         // page's module map; treat it as not classic so it is skipped rather than run wrongly.
-        Some(kind) => kind != "module" && CLASSIC_TYPES.contains(&kind.as_str()),
+        Some(kind) => mars_core::http::is_javascript_mime_essence(&kind),
     }
 }
 
@@ -259,11 +247,17 @@ pub(in crate::v9) fn run_delivered(vm: &mut Vm) -> EngineResult<()> {
             }
             Err(_) => "error",
         };
-        if vm.page.exists(load.element) {
-            let fired = fire(vm, Target::Node(load.element), kind, false)
-                .and_then(|_| vm.drain_jobs().map(|()| JsValue::Undefined));
-            quiet(vm, fired).map_err(fatal)?;
-        }
+        completed(vm, load.element, kind)?;
+    }
+    Ok(())
+}
+
+/** Report resource completion with the same event and microtask behavior for every script. */
+pub(in crate::v9) fn completed(vm: &mut Vm, element: usize, kind: &str) -> EngineResult<()> {
+    if vm.page.exists(element) {
+        let fired = fire(vm, Target::Node(element), kind, false)
+            .and_then(|_| vm.drain_jobs().map(|()| JsValue::Undefined));
+        quiet(vm, fired).map_err(fatal)?;
     }
     Ok(())
 }
@@ -279,6 +273,11 @@ fn fatal(thrown: Thrown) -> crate::protocol::EngineError {
 /** Follow a script element to its new identity after the document adopted it. */
 pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) {
     super::frames::adopt(page, old, new);
+    if let Some(elements) = &mut page.state.parsed_scripts {
+        for element in elements.iter_mut().filter(|element| **element == old) {
+            *element = new;
+        }
+    }
     for load in &mut page.state.script_loads {
         if load.element == old {
             load.element = new;

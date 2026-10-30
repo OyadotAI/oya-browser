@@ -209,6 +209,9 @@ fn environment(page: &Page, policy: &Policy, name: String) -> PageEnvironment {
         timezone_daylight: parent.timezone_daylight.clone(),
         timezone_initial_daylight: parent.timezone_initial_daylight,
         disallow_code_generation_from_strings: !super::csp::allows_eval(&policy.csp),
+        handler_policy: crate::v9::HandlerPolicy {
+            restrictions: vec![crate::v9::HandlerRestriction::default()],
+        },
         ..PageEnvironment::default()
     }
 }

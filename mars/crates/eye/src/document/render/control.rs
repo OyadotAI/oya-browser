@@ -147,16 +147,9 @@ fn title(context: &LayoutContext<'_>, node: &Node) -> String {
     } else if node.tag == "button" {
         node.text.clone()
     } else if node.tag == "select" {
-        context
-            .all_children(node.local_id)
+        super::super::forms::select_options(context.document, node.local_id)
             .into_iter()
             .find(|n| n.selected)
-            .or_else(|| {
-                context
-                    .all_children(node.local_id)
-                    .into_iter()
-                    .find(|n| n.tag == "option")
-            })
             .map(|n| n.text.clone())
             .unwrap_or_default()
     } else {

@@ -33,7 +33,11 @@ impl Window {
     /** Replies cannot precede the corresponding visible native snapshot. */
     pub(super) fn event(&mut self, event: Event) {
         match event {
-            Event::Loading(op) => {
+            Event::Preview { snapshot, permit } => self.preview(*snapshot, permit),
+            Event::Loading(op, permit) => {
+                if !self.current_admission(Some(permit)) {
+                    return;
+                }
                 self.agent_busy = true;
                 self.activity = self.activity_for(&op, &json!({}));
             }
@@ -47,7 +51,10 @@ impl Window {
                 self.error = Some(error.message);
             }
             Event::Download { id, result } => self.finish_download(id, result),
-            Event::NavigationDownload(fetched) => {
+            Event::NavigationDownload { fetched, permit } => {
+                if !self.current_admission(permit) {
+                    return;
+                }
                 let id = self.downloads.start(&fetched.url);
                 self.finish_download(id, Ok(fetched));
             }
@@ -73,7 +80,7 @@ impl Window {
                     || self.snapshot.as_ref().is_some_and(|old| {
                         old.inspection["tab_id"] != snapshot.inspection["tab_id"]
                     });
-                if changed {
+                if changed && self.mars.address.currentEditor().is_none() {
                     self.mars.address.setStringValue(&NSString::from_str(
                         snapshot.inspection["url"].as_str().unwrap_or_default(),
                     ));
@@ -113,6 +120,9 @@ impl Window {
                 }
             }
             Event::Update {
+                background,
+                completion,
+                admission,
                 snapshot,
                 result,
                 agent_id,
@@ -121,6 +131,56 @@ impl Window {
                 destination,
                 rejected_edit,
             } => {
+                self.complete_command(completion);
+                // The worker is serial: even a suppressed agent result completes its loading slot.
+                if agent_id.is_some() {
+                    self.agent_busy = false;
+                }
+                if snapshot.failed {
+                    self.disconnected();
+                    if let Some(id) = agent_id {
+                        self.reply(Response::new(Some(id), result));
+                    }
+                    return;
+                }
+                if self.busy && completion.is_none() && agent_id.is_some() && !appearance_update {
+                    self.reply(Response::new(agent_id, result));
+                    return;
+                }
+                let preserve_navigation = self.busy && completion.is_none();
+                let presentation = preserve_navigation.then(|| {
+                    (
+                        self.navigation.requested.clone(),
+                        self.activity.clone(),
+                        self.navigation.stopping,
+                        self.navigation.retained.clone(),
+                    )
+                });
+                if !self.current_admission(admission) {
+                    if !self.ready && self.navigation.inflight.is_none() {
+                        self.snapshot = Some(*snapshot);
+                        self.ready = true;
+                        self.busy = false;
+                        if let Some(snapshot) = &self.snapshot {
+                            self.canvas.update(snapshot.clone(), true);
+                        }
+                    }
+                    if let Some(id) = agent_id {
+                        let mut result = result;
+                        if appearance_update {
+                            self.finish_appearance(Some(&id), &mut result);
+                        }
+                        self.reply(Response::new(Some(id), result));
+                    }
+                    self.cancellation_finished();
+                    return;
+                }
+                if self.busy && background {
+                    return;
+                }
+                self.navigation.retained = None;
+                self.navigation.requested = None;
+                self.navigation.stopping = false;
                 let update_timed = std::time::Instant::now();
                 let profile_recovery = result
                     .as_ref()
@@ -132,11 +192,8 @@ impl Window {
                     return;
                 }
                 self.activity = None;
-                if agent_id.is_some() {
-                    self.agent_busy = false;
-                }
                 self.ready = !snapshot.failed;
-                if agent_id.is_none() {
+                if agent_id.is_none() && self.navigation.inflight.is_none() {
                     self.busy = false;
                 }
                 let tab_id = snapshot.inspection["tab_id"].as_str().unwrap_or("tab-1");
@@ -147,7 +204,7 @@ impl Window {
                     .is_some_and(|old| old.inspection["tab_id"] != snapshot.inspection["tab_id"]);
                 let navigated = self.snapshot.as_ref().map(|old| &old.inspection["page_id"])
                     != Some(&snapshot.inspection["page_id"]);
-                if navigated || tab_changed {
+                if (navigated || tab_changed) && self.mars.address.currentEditor().is_none() {
                     self.mars.address.setStringValue(&NSString::from_str(
                         snapshot.inspection["url"].as_str().unwrap_or_default(),
                     ));
@@ -193,6 +250,7 @@ impl Window {
                             .snapshot
                             .as_ref()
                             .and_then(|snapshot| snapshot.inspection["url"].as_str())
+                            && self.mars.address.currentEditor().is_none()
                         {
                             self.canvas.restore(&self.mars.address, url);
                         }
@@ -229,6 +287,12 @@ impl Window {
                     value["operations"]["window.inspect"] = json!({});
                     value["operations"]["window.resize"] = json!({"tab_id":"string","width":"logical_points","height":"logical_points","control_epoch":"u64"});
                     value["operations"]["window.appearance"] = json!({"tab_id":"string","appearance":"light|dark|system","control_epoch":"u64"});
+                }
+                if let Some((requested, activity, stopping, retained)) = presentation {
+                    self.navigation.requested = requested;
+                    self.activity = activity;
+                    self.navigation.stopping = stopping;
+                    self.navigation.retained = retained;
                 }
                 if let Some(id) = agent_id {
                     let timed = std::time::Instant::now();

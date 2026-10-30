@@ -50,6 +50,7 @@ fn script_modes_order_and_serialize() {
 /** A projected node with only the fields validation needs. */
 fn node(local_id: usize, parent: Option<usize>) -> ScriptNode {
     ScriptNode {
+        selected: None,
         local_id,
         html_id: String::new(),
         parent,
