@@ -3859,7 +3859,24 @@ pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-/** Constructors scripts may not call directly but need for instanceof. */
-pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    Err(vm.type_error("Illegal constructor"))
+/** Name the refusing interface from immutable native metadata, never an author-controlled name. */
+fn constructor_interface(call: &Call) -> &'static str {
+    let realm = realm();
+    realm
+        .object(call.callee)
+        .and_then(|object| object.call)
+        .and_then(|index| realm.natives.get(index as usize))
+        .or_else(|| realm.native(call.callee))
+        .map_or("DOM interface", |native| native.name)
+}
+
+/** These interfaces remain nonconstructible; diagnostics distinguish ordinary calls from new. */
+pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let name = constructor_interface(&call);
+    let reason = if call.new_target.is_some() {
+        "Illegal constructor"
+    } else {
+        "Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+    };
+    Err(vm.type_error(&format!("Failed to construct '{name}': {reason}")))
 }

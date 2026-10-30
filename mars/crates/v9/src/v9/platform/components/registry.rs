@@ -428,6 +428,6 @@ pub(super) fn upgrade(vm: &mut Vm, node: usize) -> Res<()> {
 }
 
 /** CustomElementRegistry's own constructor is not callable by pages. */
-pub(in crate::v9) fn illegal(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    Err(vm.type_error("Illegal constructor"))
+pub(in crate::v9) fn illegal(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    dom::illegal_constructor(vm, call)
 }

@@ -497,3 +497,26 @@ fn module_syntax_errors_and_misplaced_declarations_fail_the_module() {
     assert_eq!(loaded.failed, [0, 1, 2, 3, 4], "{:?}", loaded.reasons);
     assert_eq!(loaded.console, ["true object"]);
 }
+
+/** A shared failing dependency keeps its named native-constructor error for each importer. */
+#[test]
+fn illegal_constructor_dependency_failures_name_the_actual_interface() {
+    let loaded = load(
+        vec![
+            Source::Inline("import './dependency.mjs';"),
+            Source::Inline("import './dependency.mjs';"),
+        ],
+        &[("dependency.mjs", "new CSSStyleSheet();")],
+    );
+    assert_eq!(loaded.failed, [0, 1]);
+    assert_eq!(loaded.reasons.len(), 2);
+    assert!(
+        loaded
+            .reasons
+            .iter()
+            .all(|reason| reason
+                .contains("Failed to construct 'CSSStyleSheet': Illegal constructor")),
+        "{:?}",
+        loaded.reasons
+    );
+}
