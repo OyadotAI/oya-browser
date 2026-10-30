@@ -203,7 +203,21 @@ Module entry bytes require a JavaScript MIME essence and enter the existing
 module graph; absolute HTTP(S) dependencies retain its CSP/CORS and credential
 checks. Inherited CSP host sources match against the creator origin while URL
 resolution and import.meta retain the actual Blob address. Cross-context registry
-sharing, imported Blob dependencies and Blob fetch/image consumers remain unavailable.
+sharing, imported Blob dependencies and Blob image consumers remain unavailable.
+
+Fetch captures a context-owned Blob source after options and signal conversion.
+The native local path validates the owning origin and document/worker connect-src
+policy, admits GET and one bounded Range, and never falls through to Relay.
+Revocation releases future lookup while admitted snapshots survive. Combined
+response bodies remain capped at 256 KiB; pending native snapshots include bytes
+and metadata in a shared 4 MiB bound. Exact bytes enter private heap-accounted
+Response storage, with immutable clone sharing and independent body readers.
+Native signals bind Requests through stable distinct dependent objects, retain
+exact abort reasons and cancel same-turn effects plus prior native page/worker
+queues. Late replies are ignored; response clones retain abort-before-read state.
+Already-running synchronous Relay I/O is not newly interrupted. Blob XHR,
+cross-context registry sharing, streaming, and full timeout/live-any signal
+semantics remain unfinished.
 
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally

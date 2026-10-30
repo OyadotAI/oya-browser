@@ -22,7 +22,9 @@ mod value;
 mod vm;
 mod web_worker;
 mod worker_clone;
-pub use platform::workers::{WORKER_DEPTH, WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType};
+pub use platform::workers::{
+    WORKER_DEPTH, WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType,
+};
 pub use web_worker::ImportScriptsHost;
 pub use web_worker::{load_worker, resume_worker_modules};
 pub use worker_clone::{WORKER_MESSAGE_BYTES, WorkerData};
@@ -36,7 +38,6 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 #[cfg(feature = "conformance")]
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
-pub use platform::resize_observers::{ResizeTurn, RESIZE_BROADCAST_LIMIT};
 pub use platform::blob_urls::BlobUrlSource;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
@@ -45,6 +46,7 @@ pub use platform::frame_directory::{
 };
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
+pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCors, ImageRequest, ImageResponse,
@@ -674,7 +676,7 @@ impl VmState {
         platform::intersection_observers::validate(&self.page, &self.heap)?;
         platform::resize_observers::validate(&self.page, &self.heap)?;
         platform::blob_urls::validate(&self.page.blob_urls)?;
-        platform::net::validate_state(&self.heap)?;
+        platform::net::validate_state(&self.page, &self.heap)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
         platform::frame_directory::validate_state(&self.page)?;
@@ -2138,11 +2140,18 @@ pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execut
 }
 
 /// Continue after actual host layout, or finalize at the host deadline without broadcasting again.
-pub fn continue_resize_observers(input: PageInput<'_>, state: VmState, complete: bool) -> EngineResult<Execution> {
+pub fn continue_resize_observers(
+    input: PageInput<'_>,
+    state: VmState,
+    complete: bool,
+) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        if complete { platform::resize_observers::complete(&mut vm).map_err(fatal)?; }
-        else { platform::resize_observers::advance(&mut vm, false).map_err(fatal)?; }
+        if complete {
+            platform::resize_observers::complete(&mut vm).map_err(fatal)?;
+        } else {
+            platform::resize_observers::advance(&mut vm, false).map_err(fatal)?;
+        }
         finish(vm)
     })
 }

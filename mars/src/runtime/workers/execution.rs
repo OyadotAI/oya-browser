@@ -71,7 +71,11 @@ impl Runtime {
         })?;
         worker.modules.pending = execution.module_requests;
         worker.next_timer = execution.effects.next_timer_ms;
-        worker.requests.extend(execution.effects.requests);
+        crate::runtime::scripting::queue_requests(
+            &mut worker.requests,
+            execution.effects.requests,
+            &execution.effects.cancelled_requests,
+        )?;
         crate::runtime::scripting::record_console(
             &mut page.scripting,
             execution.effects.console,

@@ -7,6 +7,20 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Context-owned Blob fetch now captures immutable bytes after options and effective
+signal conversion. The native path applies owning-origin and connect-src checks,
+supports GET plus one bounded Range, returns exact binary bytes/MIME/length,
+and never falls through to the network. Revocation after admission preserves the
+snapshot. Responses remain capped at 256 KiB and retained snapshots plus metadata
+at 4 MiB across pending requests. Missing/revoked/foreign entries fail explicitly.
+Requests and clones now retain distinct dependent native signals; pre-abort,
+same-turn and prior-turn cancellation, exact reasons, ignored late replies and
+abort-before-body-read use the existing Promise/GC machinery. Native page and
+worker queues release cancelled snapshots. Already-running synchronous Relay I/O
+is not newly interrupted; streaming, cross-context sharing, Blob XHR and full
+timeout/live-any signal semantics remain unfinished. Focused regressions are
+added but unrun; the combined production build is pending.
+
 ResizeObserver now advances through depth-gated broadcasts with real host layout
 between rounds. Cycle depth/state is retained across service continuations, with
 at most 16 broadcasts and two finalization turns. Skipped targets produce a real

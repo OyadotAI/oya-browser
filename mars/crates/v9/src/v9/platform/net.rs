@@ -16,11 +16,21 @@ use crate::v9::vm::{Call, Res, Thrown, Vm};
 use headers::Guard;
 use serde::{Deserialize, Serialize};
 
+pub(super) mod abort;
+mod blob_fetch;
 mod body;
 mod headers;
 mod response_body;
 use body::Body;
-pub(in crate::v9) use response_body::validate as validate_state;
+/** Saved fetch state validates body storage, captured sources and native cancellation identities together. */
+pub(in crate::v9) fn validate_state(
+    page: &super::PageState,
+    heap: &crate::v9::vm::heap::Heap,
+) -> crate::protocol::EngineResult<()> {
+    response_body::validate(heap)?;
+    blob_fetch::validate(page, heap)?;
+    abort::validate(page, heap)
+}
 
 /** Parse an absolute URL. */
 pub(in crate::v9) fn parse_url(text: &str) -> Option<url::Url> {
@@ -59,8 +69,17 @@ pub(in crate::v9) struct XhrState {
 }
 
 /** Record a request, failing like a network error past the pending bound. */
-fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> Res<bool> {
+fn record(
+    vm: &mut Vm,
+    mut request: HostRequest,
+    owner: ObjectId,
+    xhr: bool,
+    signal: Option<ObjectId>,
+) -> Res<bool> {
     if vm.page.state.pending.len() >= VM_HOST_REQUESTS {
+        return Ok(false);
+    }
+    if !blob_fetch::admits(&vm.page.state, &request) {
         return Ok(false);
     }
     if request.body.as_ref().map_or(0, String::len) + request.body_bytes.len()
@@ -68,13 +87,21 @@ fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> 
     {
         return Err(EngineError::limit("request body bytes", VM_REQUEST_BODY_BYTES).into());
     }
-    vm.page.state.next_request += 1;
-    request.id = vm.page.state.next_request;
+    let next = vm
+        .page
+        .state
+        .next_request
+        .checked_add(1)
+        .ok_or_else(|| EngineError::invalid("Host request identities exhausted."))?;
+    vm.page.state.next_request = next;
+    request.id = next;
     if request.kind != "beacon" {
         vm.page.state.pending.push(Pending {
             id: request.id,
             owner,
             xhr,
+            signal,
+            blob_bytes: blob_fetch::charge(&request),
         });
     }
     vm.page.effects.requests.push(request);
@@ -84,17 +111,35 @@ fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> 
 /** fetch(input, init). */
 pub(in crate::v9) fn fetch(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let promise = vm.new_promise()?;
-    let request = match request_from(vm, &call.arg(0), &call.arg(1))? {
+    vm.pin(JsValue::Object(promise));
+    match start_fetch(vm, &call, promise) {
+        Ok(()) => {}
+        Err(Thrown::Value(reason)) => vm.settle(promise, PromiseState::Rejected(reason))?,
+        Err(fatal) => return Err(fatal),
+    }
+    Ok(JsValue::Object(promise))
+}
+
+/** Conversion, signal admission and source capture finish before any host request becomes visible. */
+fn start_fetch(vm: &mut Vm, call: &Call, promise: ObjectId) -> Res<()> {
+    let mut request = match request_from(vm, &call.arg(0), &call.arg(1))? {
         Ok(request) => request,
         Err(message) => {
             reject(vm, promise, &message)?;
-            return Ok(JsValue::Object(promise));
+            return Ok(());
         }
     };
-    if !record(vm, request, promise, false)? {
+    let signal = abort::for_request(vm, &call.arg(0), &call.arg(1))?;
+    if let Some(reason) = abort::reason(vm, signal) {
+        return vm.settle(promise, PromiseState::Rejected(reason));
+    }
+    if let Err(message) = blob_fetch::capture(vm, &mut request) {
+        return reject(vm, promise, &message);
+    }
+    if !record(vm, request, promise, false, Some(signal))? {
         reject(vm, promise, "Failed to fetch")?;
     }
-    Ok(JsValue::Object(promise))
+    Ok(())
 }
 
 /** The request `fetch(input, init)` or `new Request(input, init)` describes: `input` is a URL
@@ -194,6 +239,7 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         headers,
         body: body.text,
         body_bytes: body.bytes,
+        blob_source: None,
         credentials,
         mode,
     }))
@@ -339,15 +385,17 @@ pub(in crate::v9) fn request_construct(vm: &mut Vm, call: Call) -> Res<JsValue> 
         Ok(request) => request,
         Err(message) => return Err(vm.type_error(&message)),
     };
-    request_object(vm, request)
+    let signal = abort::for_request(vm, &call.arg(0), &call.arg(1))?;
+    request_object(vm, request, signal)
 }
 
 /** A Request object over its data. */
-fn request_object(vm: &mut Vm, request: HostRequest) -> Res<JsValue> {
+fn request_object(vm: &mut Vm, request: HostRequest, signal: ObjectId) -> Res<JsValue> {
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Request(Box::new(request)))),
         Some(realm().ids.request_prototype),
     ))?;
+    abort::bind(vm, id, signal);
     Ok(JsValue::Object(id))
 }
 
@@ -372,21 +420,15 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "integrity" => JsValue::string("").map_err(Into::into),
         "keepalive" | "bodyUsed" => Ok(JsValue::Boolean(false)),
         "signal" => {
-            let signal = vm.alloc(Object::new(
-                Class::Plain,
-                Some(realm().ids.abort_signal_prototype),
-            ))?;
-            vm.put(signal, "aborted", JsValue::Boolean(false))?;
-            vm.put(signal, "reason", JsValue::Undefined)?;
-            vm.put(signal, "onabort", JsValue::Null)?;
-            Ok(JsValue::Object(signal))
+            abort::request_signal(vm, call.this.object().expect("Request receiver checked"))
         }
         "clone" => {
             let mut copy = *request;
             if let Some(pairs) = live_headers(vm, &call.this) {
                 copy.headers = pairs;
             }
-            request_object(vm, copy)
+            let signal = abort::for_request(vm, &call.this, &JsValue::Undefined)?;
+            request_object(vm, copy, signal)
         }
         name @ ("text" | "json") => {
             let promise = vm.new_promise()?;
@@ -456,6 +498,7 @@ pub(in crate::v9) fn send_beacon(vm: &mut Vm, call: Call) -> Res<JsValue> {
         headers,
         body: body.text,
         body_bytes: body.bytes,
+        blob_source: None,
         credentials: "include".into(),
         mode: "no-cors".into(),
     };
@@ -464,6 +507,7 @@ pub(in crate::v9) fn send_beacon(vm: &mut Vm, call: Call) -> Res<JsValue> {
         request,
         crate::v9::vm::GLOBAL,
         false,
+        None,
     )?))
 }
 
@@ -499,7 +543,7 @@ impl Vm<'_> {
                 }
                 self.deliver_xhr(pending.owner, response)
             } else {
-                self.deliver_fetch(pending.owner, response)
+                self.deliver_fetch(pending.owner, pending.signal, response)
             };
             match result {
                 Ok(()) => {}
@@ -511,7 +555,15 @@ impl Vm<'_> {
         Ok(())
     }
     /** Settle a fetch promise. */
-    fn deliver_fetch(&mut self, promise: ObjectId, response: HostResponse) -> Res<()> {
+    fn deliver_fetch(
+        &mut self,
+        promise: ObjectId,
+        signal: Option<ObjectId>,
+        response: HostResponse,
+    ) -> Res<()> {
+        if let Some(reason) = signal.and_then(|signal| abort::reason(self, signal)) {
+            return self.settle(promise, PromiseState::Rejected(reason));
+        }
         if let Some(error) = response.error {
             let _ = error;
             return reject(self, promise, "Failed to fetch");
@@ -529,6 +581,9 @@ impl Vm<'_> {
             Some(realm().ids.response_prototype),
         ))?;
         response_body::store(self, object, response.body_bytes)?;
+        if let Some(signal) = signal {
+            abort::bind(self, object, signal);
+        }
         self.resolve_promise(promise, JsValue::Object(object))
     }
     /** Complete an XMLHttpRequest the way XHR's "process response" steps do: HEADERS_RECEIVED,
@@ -737,11 +792,12 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 headers: state.headers,
                 body: body.text,
                 body_bytes: body.bytes,
+                blob_source: None,
                 credentials: credentials.into(),
                 mode: "cors".into(),
             };
             let generation = state.generation;
-            if !record(vm, request, id, true)? {
+            if !record(vm, request, id, true, None)? {
                 return xhr_request_error(vm, id, "error").map(|()| JsValue::Undefined);
             }
             fire_progress(vm, id, "loadstart", 0, 0)?;
@@ -1261,7 +1317,12 @@ fn clone_response(vm: &mut Vm, this: &JsValue, mut data: ResponseData) -> Res<Js
         Some(realm().ids.response_prototype),
     ))?;
     if let Some(source) = this.object() {
-        for key in ["responseType", "responseGuard", response_body::KEY] {
+        for key in [
+            "responseType",
+            "responseGuard",
+            response_body::KEY,
+            abort::SIGNAL,
+        ] {
             if let Some(value) = headers::get_private(vm, source, key) {
                 headers::put_private(vm, copy, key, value);
             }
@@ -1277,6 +1338,10 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
     if name == "clone" {
         return clone_response(vm, &call.this, data);
+    }
+    if let Some(reason) = abort::body_reason(vm, id) {
+        vm.settle(promise, PromiseState::Rejected(reason))?;
+        return Ok(JsValue::Object(promise));
     }
     if data.used {
         reject(vm, promise, "Failed to execute: body stream already read")?;

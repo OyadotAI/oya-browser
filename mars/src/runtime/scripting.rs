@@ -23,6 +23,9 @@ use url::Url;
 
 mod geometry;
 mod image_loading;
+mod blob_fetch;
+mod requests;
+pub(in crate::runtime) use requests::queue as queue_requests;
 
 /// Virtual milliseconds of timers and animation frames a page runs before it first commits, so
 /// `setTimeout(0)` and requestAnimationFrame rendering is part of the first paint.
@@ -481,7 +484,7 @@ impl Runtime {
             effects.resize_observers,
             effects.resize_observers_pending,
         );
-        scripting.requests.extend(effects.requests);
+        queue_requests(&mut scripting.requests, effects.requests, &effects.cancelled_requests)?;
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
         }
@@ -965,8 +968,18 @@ impl Runtime {
                 break;
             };
             let deadline = until.max(started + SCRIPT_REQUEST_WALL);
+            let blob_policy = if blob_fetch::is_blob(&request.url) {
+                Some(super::worker_loading::Policy {
+                    base: base.clone(),
+                    partition: Url::parse(&page.top_level_url)
+                        .map_err(|_| EngineError::invalid("Invalid fetch partition URL."))?,
+                    csp: page.document.csp.clone(),
+                })
+            } else {
+                None
+            };
             let preflights = &mut page.scripting.preflights;
-            let response = self.script_request(&base, &request, preflights, deadline, None)?;
+            let response = self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
             if request.kind != "beacon" {
                 responses.push(response);
             }
@@ -990,6 +1003,16 @@ impl Runtime {
         until: Instant,
         worker_policy: Option<&super::worker_loading::Policy>,
     ) -> EngineResult<HostResponse> {
+        if blob_fetch::is_blob(&request.url) {
+            self.publish(|_| ())?;
+            return Ok(worker_policy.map_or_else(
+                || failed(request.id, FAILED_TO_FETCH),
+                |policy| blob_fetch::response(request, policy),
+            ));
+        }
+        if request.blob_source.is_some() {
+            return Ok(failed(request.id, FAILED_TO_FETCH));
+        }
         if worker_policy.is_some_and(|policy| {
             Url::parse(&request.url)
                 .is_ok_and(|url| !super::csp::allows_connect(&policy.csp, &policy.base, &url))

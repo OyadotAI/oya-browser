@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented context-owned Blob URL fetches in Mars with fetch-time snapshots, native origin/CSP checks, exact binary responses and bounded single-range reads. Revocation after fetch preserves captured bytes; missing or foreign URLs fail without network fallback. Fetch now binds native dependent AbortSignals, cancels queued page/worker requests, preserves abort reasons and rejects aborted response reads.
 - Added bounded ResizeObserver delivery cycles to Mars with fresh layout between depth-gated broadcasts, skipped-notification ErrorEvents, five-argument window.onerror handling and one final intersection delivery. Deadline/round limits retain registrations and defer remaining work without restarting the settle loop immediately.
 - Extended Mars data-URL fetches to exact binary bytes through the new response transport, preserving text decoding, XHR text behavior, GET-only admission and existing size limits.
 - Added exact binary body transport and heap-accounted Response storage to Mars, with independent byte readers, shared immutable clone backing and UTF-8 replacement/BOM handling for text. Combined response limits and wire admission remain unchanged.

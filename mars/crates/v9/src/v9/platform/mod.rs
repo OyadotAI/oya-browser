@@ -34,9 +34,9 @@ mod implementation;
 mod install;
 mod interfaces;
 pub(in crate::v9) mod intersection_observers;
-pub(in crate::v9) mod resize_observers;
 mod keyboard;
 pub(in crate::v9) mod messaging;
+pub(in crate::v9) mod resize_observers;
 mod xml_frames;
 mod xml_serializer;
 pub(in crate::v9) use keyboard::press_key;
@@ -835,6 +835,9 @@ pub struct HostRequest {
     /// YouTube's gzipped Innertube requests). `body` is then None.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_bytes: Vec<u8>,
+    /// Actual fetch-time bytes from this context's Blob registry; absent for every network request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob_source: Option<BlobUrlSource>,
     /// "omit", "same-origin" or "include".
     pub credentials: String,
     /// "cors", "no-cors" or "same-origin" (fetch's `mode`; XMLHttpRequest is always "cors").
@@ -936,6 +939,9 @@ pub struct HostEffects {
     pub image_requests: Vec<ImageRequest>,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
+    /** Previously published requests cancelled by native signals release host queues and snapshots. */
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cancelled_requests: Vec<u32>,
     /// The last navigation request, if any.
     pub navigation: Option<NavigationRequest>,
     /// A person's or agent's form submission whose `submit` event nobody cancelled: the app
@@ -1086,6 +1092,12 @@ pub(in crate::v9) struct Pending {
     /** The fetch promise or the XMLHttpRequest object. */
     pub owner: ObjectId,
     pub xhr: bool,
+    /** Native dependent signal remains reachable until completion or cancellation. */
+    #[serde(default)]
+    pub signal: Option<ObjectId>,
+    /** Bytes and metadata retained by the native Blob snapshot until response delivery or abort. */
+    #[serde(default)]
+    pub blob_bytes: usize,
 }
 
 /** document.readyState. */
@@ -1591,6 +1603,13 @@ impl<'h> Page<'h> {
                 .iter()
                 .map(|pending| JsValue::Object(pending.owner)),
         );
+        out.extend(
+            self.state
+                .pending
+                .iter()
+                .filter_map(|pending| pending.signal)
+                .map(JsValue::Object),
+        );
         if let Some(value) = &self.state.history_state {
             out.push(value.clone());
         }
@@ -1626,7 +1645,9 @@ impl<'h> Page<'h> {
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         self.state.path2d.retain(|id, _| live.contains(id));
-        self.state.resize_observers.retain(|id, _| live.contains(id));
+        self.state
+            .resize_observers
+            .retain(|id, _| live.contains(id));
         self.state
             .intersection_observers
             .retain(|id, _| live.contains(id));
