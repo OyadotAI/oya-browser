@@ -1118,11 +1118,30 @@ fn singletons(b: &mut Builder) {
     b.global("crypto", crypto);
 }
 
+/** Window handler names must resolve before their first assignment. Defaults live on the
+prototype so an untouched handler does not mask a body's inline content handler at dispatch. */
+fn window_handler_attributes(b: &mut Builder, owner: u32) {
+    for name in events::BODY_FORWARDED.into_iter().chain([
+        "ongamepadconnected",
+        "ongamepaddisconnected",
+        "onpageswap",
+        "onunhandledrejection",
+    ]) {
+        b.value(
+            owner,
+            name,
+            JsValue::Null,
+            crate::v9::vm::heap::DEFAULT_ATTRS,
+        );
+    }
+}
+
 /** The global object's prototype: every global name. */
 fn global_object(b: &mut Builder) {
     let proto = b.object(Some(b.ids.event_target_prototype));
     b.ids.window_prototype = proto;
     event_handler_attributes(b, proto);
+    window_handler_attributes(b, proto);
     getters(
         b,
         proto,
