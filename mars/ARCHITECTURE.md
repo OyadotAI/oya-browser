@@ -57,6 +57,14 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+HTTP/1 connection leases belong to one exchange and are stopped and joined before
+the socket reenters the shared keep-alive pool, including replacement exchanges.
+Informational response heads share one bounded header budget and are consumed
+before the final response; protocol upgrades remain unsupported. Transport error
+copy uses the operation phase and typed I/O classification without including raw
+exception strings, addresses, headers or bodies. TLS verification, deadlines and
+safe retry admission remain unchanged.
+
 Resident V9 executions retain their complete heap in the service and send the
 coordinator a page summary plus state token. Coordinator checks explicitly select
 summary validation only when that token exists: page bounds, document identity,

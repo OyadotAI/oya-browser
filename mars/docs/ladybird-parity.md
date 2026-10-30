@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+HTTP/1 now consumes up to eight informational response heads before the final
+response, retaining the buffered cursor and one cumulative header-byte budget.
+Previously a 100/103 head could be treated as a close-delimited final response,
+consuming the real response as body data and waiting for a persistent connection
+to close. Status 101 is explicitly unsupported; only final response headers and
+cookies are published. Hermetic regressions are added unrun; build pending.
+This is a source-supported repair, not proof of the reported transport cause.
+
 HTTP/1 prepared exchanges now transfer deadline-lease ownership into the send
 operation. The lease is stopped and joined before socket pool checkin on both
 initial and replacement exchanges. Previously the timer could outlive pool checkin

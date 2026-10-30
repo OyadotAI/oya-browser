@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed Mars HTTP/1 handling of informational responses such as 100 Continue and 103 Early Hints: bounded interim headers are consumed before the final response, using one shared header budget. Protocol upgrades remain explicitly unsupported.
+
 - Fixed a Mars HTTP/1 connection reuse race: each completed request now stops and joins its deadline lease before returning the socket to the shared pool, preventing an old timer from closing a later request.
 
 - Made Mars transport failures identify DNS lookup, connection, TLS handshake, send or receive errors using typed causes, without exposing raw destination or payload details. Existing TLS checks, error codes, deadlines and retry rules remain intact.
