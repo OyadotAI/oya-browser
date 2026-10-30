@@ -92,7 +92,11 @@ Quadratic and cubic Bezier curves flatten adaptively in bitmap coordinates to a
 one-eighth-pixel tolerance, under the existing path-point budget and a bounded
 subdivision depth. Full point batches are admitted before altering the path;
 empty and closed subpaths retain their Canvas construction semantics.
-CSS color and font parsing remain limited; arcs, clipping paths, Path2D,
+Arcs and ellipses use parametric geometry with the same pixel tolerance and path
+budget, bounded angular segments and subdivision depth. Direction, whole-turn
+normalization and connections are admitted atomically; degenerate ellipse axes
+follow the source-guided center-line behavior.
+CSS color and font parsing remain limited; arcTo, roundRect, clipping paths, Path2D,
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.

@@ -125,8 +125,15 @@ Ten Eye, two runtime and one V9 layout-position regressions were added but not
 run. The combined production build for this batch is pending. General transform
 interpolation and other animated properties remain unfinished.
 
+Canvas arc and ellipse now append real transformed curve geometry with directed
+sweep/full-turn normalization and current-path connections. Adaptive subdivision
+retains the existing path quota and one-eighth-pixel approximation; admission is
+atomic. Seven Core and eight V9 regressions were added but not run. Degenerate
+ellipse axes follow local Ladybird's center-line behavior. The combined build
+for this batch remains pending; arcTo, roundRect and clipping are unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas arcs/clipping/compositing and broader image sources, nested workers,
+Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded
