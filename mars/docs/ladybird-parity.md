@@ -14,6 +14,12 @@ one proxy-target result, and immutable private target/incarnation keys are cache
 Detached proxy identity checks are preserved. The saved evidence establishes
 avoidable work, not its share of the timeout: no new benchmark, replay or Google
 query was run. This optimization's combined production build is pending.
+Array callback iteration now similarly reads present ordinary dense values once,
+instead of separate presence and value lookups. Holes, sparse storage, descriptor
+properties, proxies and shared containers retain the generic path. Each iteration
+rechecks after callback mutations, with captured length and work charges unchanged.
+The saved sample motivates this work but does not measure its improvement; no
+benchmark or replay was run. This slice joins the next combined build.
 
 The combined release build at `7018cee9` passes with SVG Path2D, nested workers,
 persistent ResizeObserver and URL semantics. The first attempt caught a missing
