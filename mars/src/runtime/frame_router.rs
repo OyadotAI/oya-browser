@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
-/** Root context is private to this tree and never encoded as a sibling target. */
-const ROOT: i64 = 0;
 /** A turn cannot let mutually posting documents monopolize the coordinator. */
 const ROUNDS: usize = 8;
 /** Retained delivery state is bounded across turns, not merely per VM execution. */
@@ -29,6 +27,8 @@ struct Endpoint {
 struct Address {
     endpoint: Endpoint,
     owner: Option<usize>,
+    path: Vec<usize>,
+    parent: Option<i64>,
     incarnation: u64,
     origin: String,
 }
@@ -354,47 +354,66 @@ pub(super) fn validate_ports(ports: &[u64], moved: &[u64]) -> EngineResult<()> {
 
 /** Enumerate executable endpoints from this tree; lookup-only entries confer no delivery authority. */
 fn addresses(page: &Page) -> Vec<Address> {
-    let mut result = vec![Address {
+    let mut result = Vec::new();
+    append_addresses(page, None, None, 0, &[], &mut result);
+    result
+}
+
+/** Owner paths distinguish equal local node numbers in separate descendant documents. */
+fn append_addresses(
+    page: &Page,
+    parent: Option<i64>,
+    owner: Option<usize>,
+    incarnation: u64,
+    path: &[usize],
+    out: &mut Vec<Address>,
+) {
+    out.push(Address {
         endpoint: Endpoint {
-            window: ROOT,
+            window: page.frame_tree.window,
             document: page.script_identity.clone(),
         },
-        owner: None,
-        incarnation: 0,
+        owner,
+        path: path.to_vec(),
+        parent,
+        incarnation,
         origin: page.origin.clone(),
-    }];
+    });
     for frame in page.frames.iter() {
         if let (Some(child), Some(context)) =
             (&frame.page, page.frame_tree.contexts.get(&frame.owner()))
         {
-            result.push(Address {
-                endpoint: Endpoint {
-                    window: context.window,
-                    document: child.script_identity.clone(),
-                },
-                owner: Some(frame.owner()),
-                incarnation: context.incarnation,
-                origin: child.origin.clone(),
-            });
+            let mut child_path = path.to_vec();
+            child_path.push(frame.owner());
+            append_addresses(
+                child,
+                Some(page.frame_tree.window),
+                Some(frame.owner()),
+                context.incarnation,
+                &child_path,
+                out,
+            );
         }
     }
-    result
 }
 
-/** Interpret a target only in the sender's namespace; positions never become authority. */
+/** A local target belongs only to the sender's immediate children, never a root-global node ID. */
 fn recipient<'a>(
     addresses: &'a [Address],
     from: &Address,
     message: &FrameMessage,
 ) -> Option<&'a Address> {
-    if from.endpoint.window == ROOT && message.target >= 0 {
+    if message.target >= 0 {
         return addresses.iter().find(|address| {
-            address.owner == usize::try_from(message.target).ok()
+            address.parent == Some(from.endpoint.window)
+                && address.owner == usize::try_from(message.target).ok()
                 && address.incarnation == message.target_incarnation
         });
     }
-    if from.endpoint.window != ROOT && message.target == MESSAGE_PARENT {
-        return addresses.first();
+    if message.target == MESSAGE_PARENT {
+        return addresses
+            .iter()
+            .find(|address| Some(address.endpoint.window) == from.parent);
     }
     let window = crate::v9::sibling_window(message.target)?;
     addresses
@@ -416,21 +435,27 @@ impl Runtime {
         page: &mut Page,
         until: Instant,
         advance_ms: f64,
+        observe_only: bool,
     ) -> EngineResult<bool> {
         let mut changed = false;
         for round in 0..ROUNDS {
-            self.reconcile_frame_contexts(page, until)?;
+            changed |= self.reconcile_frame_contexts(page, until)?;
             self.collect_frame_mail(page)?;
             changed |= self.deliver_frame_mail(page, until)?;
             self.collect_frame_ports(page)?;
             changed |= self.deliver_frame_mail(page, until)?;
-            let owners: Vec<_> = page.frames.iter().map(|frame| frame.owner()).collect();
-            for owner in owners {
+            let paths: Vec<_> = addresses(page)
+                .into_iter()
+                .filter(|address| !address.path.is_empty())
+                .map(|address| address.path)
+                .collect();
+            for path in paths {
                 changed |= self.tick_frame(
                     page,
-                    owner,
+                    &path,
                     until,
                     if round == 0 { advance_ms } else { 0.0 },
+                    observe_only,
                 )?;
             }
             if Instant::now() >= until || !has_outgoing(page) && !page.frame_tree.mail.pending() {
@@ -446,7 +471,7 @@ impl Runtime {
         let mut mail = std::mem::take(&mut page.frame_tree.mail);
         mail.prune(&directory)?;
         for address in &directory {
-            let messages = take_messages(page, address.owner);
+            let messages = take_messages(page, &address.path);
             for message in messages {
                 if let Some(to) = recipient(&directory, address, &message) {
                     let bytes = window_bytes(&message)?;
@@ -471,7 +496,7 @@ impl Runtime {
     fn collect_frame_closes(&self, page: &mut Page) -> EngineResult<()> {
         for address in addresses(page) {
             let mut ready = Vec::new();
-            if let Some(scripting) = scripting(page, address.owner) {
+            if let Some(scripting) = scripting(page, &address.path) {
                 let closes = std::mem::take(&mut scripting.port_closes);
                 for link in closes {
                     if scripting
@@ -490,7 +515,7 @@ impl Runtime {
                 if !page.frame_tree.mail.ports.contains_key(&link)
                     && transfer_pending(page, &page.frame_tree.mail, link)
                 {
-                    if let Some(state) = scripting(page, address.owner) {
+                    if let Some(state) = scripting(page, &address.path) {
                         state.port_closes.push(link);
                     }
                     continue;
@@ -507,12 +532,12 @@ impl Runtime {
         let directory = addresses(page);
         let mut mail = std::mem::take(&mut page.frame_tree.mail);
         for address in directory {
-            for message in take_ports(page, address.owner) {
+            for message in take_ports(page, &address.path) {
                 if mail.closing.contains_key(&message.link) {
                     continue;
                 }
                 if transfer_pending(page, &mail, message.link) {
-                    if let Some(state) = scripting(page, address.owner) {
+                    if let Some(state) = scripting(page, &address.path) {
                         state.port_outbox.push(message);
                     }
                     continue;
@@ -552,7 +577,7 @@ impl Runtime {
             if Instant::now() >= until {
                 break;
             }
-            self.reconcile_frame_contexts(page, until)?;
+            changed |= self.reconcile_frame_contexts(page, until)?;
             self.collect_frame_closes(page)?;
             let Some(mut letter) = page.frame_tree.mail.pop() else {
                 break;
@@ -639,7 +664,7 @@ impl Runtime {
                 page.frame_tree.mail.ports.remove(link);
                 page.frame_tree.mail.closing.remove(link);
             }
-            changed |= self.deliver_letter(page, to.owner, letter)?;
+            changed |= self.deliver_letter(page, &to.path, letter)?;
             for link in dead {
                 page.frame_tree
                     .mail
@@ -669,15 +694,7 @@ impl Runtime {
         from: &Address,
         links: &[u64],
     ) -> EngineResult<()> {
-        let source = match from.owner {
-            None => Some(&page.scripting),
-            Some(owner) => page
-                .frames
-                .iter()
-                .find(|frame| frame.owner() == owner)
-                .and_then(|frame| frame.page.as_ref())
-                .map(|child| &child.scripting),
-        };
+        let source = page_at(page, &from.path).map(|page| &page.scripting);
         let mut letters = Vec::new();
         for message in source.into_iter().flat_map(|state| &state.port_outbox) {
             if !links.contains(&message.link)
@@ -723,7 +740,7 @@ impl Runtime {
                 _ => None,
             })
             .collect();
-        if let Some(state) = scripting(page, from.owner) {
+        if let Some(state) = scripting(page, &from.path) {
             state
                 .port_outbox
                 .retain(|message| !captured.contains(&message.link));
@@ -750,9 +767,9 @@ impl Runtime {
             .mail
             .drain_reunited(links, returning, receiver);
         for address in addresses(page) {
-            for message in take_ports(page, address.owner) {
+            for message in take_ports(page, &address.path) {
                 if !links.contains(&message.link) {
-                    if let Some(state) = scripting(page, address.owner) {
+                    if let Some(state) = scripting(page, &address.path) {
                         state.port_outbox.push(message);
                     }
                 } else if &address.endpoint == returning || &address.endpoint == receiver {
@@ -779,38 +796,55 @@ impl Runtime {
         Ok(queued)
     }
 
-    /** A child is temporarily borrowed out, keeping its lease and rollback ownership alive. */
+    /** Recursive delivery refreshes every containing frame snapshot after a descendant mutates. */
     fn deliver_letter(
         &mut self,
         page: &mut Page,
-        owner: Option<usize>,
+        path: &[usize],
         letter: Letter,
     ) -> EngineResult<bool> {
-        let Some(owner) = owner else {
-            return self.apply_letter(page, letter, true);
-        };
-        let Some(index) = page.frames.iter().position(|frame| frame.owner() == owner) else {
-            return Ok(false);
-        };
-        let Some(mut child) = Arc::make_mut(&mut page.frames)[index].page.take() else {
-            return Ok(false);
-        };
-        let result = self.apply_letter(&mut child, letter, false);
-        let frame = &mut Arc::make_mut(&mut page.frames)[index];
-        frame.page = Some(child);
-        if result.as_ref().is_ok_and(|changed| *changed) {
-            frame.follow_page(&mut page.images);
+        let previous = self.render_context;
+        let scroll = self.scroll_y;
+        if let Some((owner, parent)) = path.split_last()
+            && let Some(parent) = page_at(page, parent)
+        {
+            let dimensions = super::frame_pages::frame_dimensions(parent, *owner);
+            self.render_context.width = dimensions.0;
+            self.render_context.height = dimensions.1;
         }
+        let available = super::frames::FRAME_BYTES_TOTAL
+            .saturating_sub(super::frames::FrameBudget::for_page(page).bytes);
+        let mut letter = Some(letter);
+        let result = update_at(page, path, &mut |target| {
+            target.frame_source_limit = target
+                .scripting
+                .modules
+                .frame_bytes
+                .saturating_add(available);
+            if !path.is_empty() {
+                self.scroll_y = target.scripting.scroll_y.unwrap_or(0.0);
+            }
+            self.apply_letter(target, letter.take().expect("single recipient"))
+        });
+        self.render_context = previous;
+        self.scroll_y = scroll;
         result
     }
 
-    /** Source normalization preserves equality with parent.frames and iframe.contentWindow. */
-    fn apply_letter(&mut self, page: &mut Page, letter: Letter, root: bool) -> EngineResult<bool> {
+    /** A source is normalized in the receiver's namespace while retaining its exact live window. */
+    fn apply_letter(&mut self, page: &mut Page, letter: Letter) -> EngineResult<bool> {
         match letter.body {
             Body::Window(message) => {
-                let source = if root {
+                let parent = page
+                    .scripting
+                    .environment
+                    .frame_contexts
+                    .iter()
+                    .find(|context| context.window == page.frame_tree.window)
+                    .and_then(|context| context.parent);
+                let source = if letter.from.parent == Some(page.frame_tree.window) {
                     letter.from.owner.map(|owner| owner as i64)
-                } else if letter.from.endpoint.window == ROOT {
+                } else if Some(letter.from.endpoint.window) == parent {
                     Some(MESSAGE_PARENT)
                 } else {
                     crate::v9::sibling_target(letter.from.endpoint.window)
@@ -828,72 +862,136 @@ impl Runtime {
         }
     }
 
-    /** Advance each child's lifecycle without confusing its own outbox with a nested frame tree. */
+    /** Each native context advances once per bounded round, including grandchildren. */
     fn tick_frame(
         &mut self,
         page: &mut Page,
-        owner: usize,
+        path: &[usize],
         until: Instant,
         advance: f64,
+        observe_only: bool,
     ) -> EngineResult<bool> {
-        let Some(index) = page.frames.iter().position(|frame| frame.owner() == owner) else {
-            return Ok(false);
-        };
-        let Some(mut child) = Arc::make_mut(&mut page.frames)[index].page.take() else {
-            return Ok(false);
-        };
-        let result = self.run_child(&mut child, until, advance);
-        let frame = &mut Arc::make_mut(&mut page.frames)[index];
-        frame.page = Some(child);
-        if result.as_ref().is_ok_and(|changed| *changed) {
-            frame.follow_page(&mut page.images);
-        }
+        let dimensions = path
+            .split_last()
+            .and_then(|(owner, parent)| {
+                page_at(page, parent).map(|page| super::frame_pages::frame_dimensions(page, *owner))
+            })
+            .unwrap_or(super::frames::DEFAULT_VIEWPORT);
+        let previous = self.render_context;
+        let scroll = self.scroll_y;
+        self.render_context.width = dimensions.0;
+        self.render_context.height = dimensions.1;
+        let available = super::frames::FRAME_BYTES_TOTAL
+            .saturating_sub(super::frames::FrameBudget::for_page(page).bytes);
+        let result = update_at(page, path, &mut |child| {
+            child.frame_source_limit = child
+                .scripting
+                .modules
+                .frame_bytes
+                .saturating_add(available);
+            self.scroll_y = child.scripting.scroll_y.unwrap_or(0.0);
+            let partition = self.frame_partition.replace(child.top_level_url.clone());
+            let result = self.run_child(child, until, advance, observe_only);
+            self.frame_partition = partition;
+            result
+        });
+        self.render_context = previous;
+        self.scroll_y = scroll;
         result
     }
 }
 
 /** A transfer emitted by a callback must adopt its endpoint before subsequent port mail routes. */
 fn transfer_pending(page: &Page, mail: &Mailbox, link: u64) -> bool {
-    let carries = |message: &FrameMessage| message.ports.contains(&link);
-    page.scripting.outbox.iter().any(carries)
+    carries_transfer(page, link)
+        || mail.pending.iter().any(
+            |letter| matches!(&letter.body,Body::Window(message) if message.ports.contains(&link)),
+        )
+}
+
+/** Port transfer ownership remains visible while any descendant still has a not-yet-collected effect. */
+fn carries_transfer(page: &Page, link: u64) -> bool {
+    page.scripting
+        .outbox
+        .iter()
+        .any(|message| message.ports.contains(&link))
         || page
             .frames
             .iter()
             .filter_map(|frame| frame.page.as_ref())
-            .any(|child| child.scripting.outbox.iter().any(carries))
-        || mail
-            .pending
-            .iter()
-            .any(|letter| matches!(&letter.body, Body::Window(message) if carries(message)))
+            .any(|child| carries_transfer(child, link))
 }
 
-/** Borrow one context's scripting state without exposing another context's host data. */
-fn scripting(page: &mut Page, owner: Option<usize>) -> Option<&mut super::scripting::Scripting> {
-    match owner {
-        None => Some(&mut page.scripting),
-        Some(owner) => Arc::make_mut(&mut page.frames)
-            .iter_mut()
-            .find(|frame| frame.owner() == owner)
-            .and_then(|frame| frame.page.as_mut())
-            .map(|page| &mut page.scripting),
+/** Read one exact document path without confusing a sibling's equal local IDs. */
+fn page_at<'a>(page: &'a Page, path: &[usize]) -> Option<&'a Page> {
+    let Some((owner, rest)) = path.split_first() else {
+        return Some(page);
+    };
+    let child = page
+        .frames
+        .iter()
+        .find(|frame| frame.owner() == *owner)?
+        .page
+        .as_ref()?;
+    page_at(child, rest)
+}
+
+/** Candidate mutations use copy-on-write at every ancestor before touching a descendant. */
+fn scripting<'a>(
+    page: &'a mut Page,
+    path: &[usize],
+) -> Option<&'a mut super::scripting::Scripting> {
+    let Some((owner, rest)) = path.split_first() else {
+        return Some(&mut page.scripting);
+    };
+    let child = Arc::make_mut(&mut page.frames)
+        .iter_mut()
+        .find(|frame| frame.owner() == *owner)?
+        .page
+        .as_mut()?;
+    scripting(child, rest)
+}
+
+/** One bounded path visitor propagates changed document and image snapshots back to the root. */
+fn update_at(
+    page: &mut Page,
+    path: &[usize],
+    operation: &mut dyn FnMut(&mut Page) -> EngineResult<bool>,
+) -> EngineResult<bool> {
+    let Some((owner, rest)) = path.split_first() else {
+        return operation(page);
+    };
+    let Some(frame) = Arc::make_mut(&mut page.frames)
+        .iter_mut()
+        .find(|frame| frame.owner() == *owner)
+    else {
+        return Ok(false);
+    };
+    let Some(child) = frame.page.as_mut() else {
+        return Ok(false);
+    };
+    let changed = update_at(child, rest, operation)?;
+    if changed {
+        frame.follow_page(&mut page.images);
     }
+    Ok(changed)
 }
 
 /** Taking pending effects gives each message exactly one enqueue attempt. */
-fn take_messages(page: &mut Page, owner: Option<usize>) -> Vec<FrameMessage> {
-    scripting(page, owner)
-        .map(|scripting| std::mem::take(&mut scripting.outbox))
+fn take_messages(page: &mut Page, path: &[usize]) -> Vec<FrameMessage> {
+    scripting(page, path)
+        .map(|state| std::mem::take(&mut state.outbox))
         .unwrap_or_default()
 }
 
 /** Worker-consumed port effects have already been removed by the worker integration. */
-fn take_ports(page: &mut Page, owner: Option<usize>) -> Vec<PortMessage> {
-    scripting(page, owner)
-        .map(|scripting| std::mem::take(&mut scripting.port_outbox))
+fn take_ports(page: &mut Page, path: &[usize]) -> Vec<PortMessage> {
+    scripting(page, path)
+        .map(|state| std::mem::take(&mut state.port_outbox))
         .unwrap_or_default()
 }
 
-/** Timers alone do not require another immediate round; new messages do. */
+/** Timers alone do not require another immediate round; descendant messages do. */
 fn has_outgoing(page: &Page) -> bool {
     !page.scripting.outbox.is_empty()
         || !page.scripting.port_outbox.is_empty()
@@ -902,9 +1000,5 @@ fn has_outgoing(page: &Page) -> bool {
             .frames
             .iter()
             .filter_map(|frame| frame.page.as_ref())
-            .any(|child| {
-                !child.scripting.outbox.is_empty()
-                    || !child.scripting.port_outbox.is_empty()
-                    || !child.scripting.port_closes.is_empty()
-            })
+            .any(|child| has_outgoing(child))
 }

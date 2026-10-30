@@ -209,9 +209,21 @@ throw NotSupportedError, and large later scaling can magnify retained polygon
 approximation error. Eight focused regressions were added but not run; the
 combined production build for this batch is pending.
 
+Scripted frames now support root-to-child-to-grandchild execution with one
+recursive root mailbox, global window/document fences, port transfer ownership,
+distinct parent/top identities and canonical source proxies. Admission shares
+existing frame/source/depth/context limits across the tree. Framing checks cover
+every ancestor and the final redirected URL; child documents, assets, fetches
+and workers retain the true root network partition. Nested painting, local
+viewports and observer-only descendant turns are wired. Focused native/V9,
+framing and quota regressions were added but not run; the combined build is pending.
+The scope is two executable descendant levels with existing sandbox admission;
+opaque/srcdoc scripting, descendant input/navigation/history expansion and
+cross-frame DOM access remain unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas compositing/SVG Path2D and broader image sources, nested workers,
-nested scripted frames and broader DOM/JavaScript compatibility. The local
+broader frame interaction and DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded
 challenge/worker failure remains unresolved below.

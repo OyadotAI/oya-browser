@@ -210,7 +210,16 @@ but replaces its document generation; detachment retires the window even when
 the same element returns in one script task. Both ends of queued messages carry
 document-generation fences. The router supplies source origin and proxy identity,
 enforces target origin, and tracks transferred-port ownership across siblings.
-Hidden frames still execute. Nested scripted frame trees and general same-origin
+Hidden frames still execute. Scripted children may now own scripted grandchildren
+under one root coordinator: recursive mailboxes and port routing retain global
+window/document fences while parent and top identify distinct contexts. Root
+reconciliation shares frame count, source-byte and depth admission across the
+tree without increasing residency. Nested painting uses nonoverlapping identity
+ranges and local viewports; observer-only descendant turns do not wake unrelated
+timers. Every framing ancestor and the final redirected origin are checked, and
+scoped child work retains the true root network partition through errors.
+The bounded scope stops at two executable descendant levels. Opaque sandbox/srcdoc
+execution, descendant input/navigation/history expansion and general same-origin
 cross-realm DOM access remain unfinished. See [the parity evidence](docs/ladybird-parity.md).
 
 The frame layout ceiling remains 16; scripted contexts share a smaller global

@@ -1000,7 +1000,8 @@ impl Runtime {
             ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
                 || super::animations::next_sample(&page.scripting).is_some()
-                || page.scripting.loaded && page.scripting.intersections.pending)
+                || page.scripting.loaded && page.scripting.intersections.pending
+                || page.frame_observations_pending())
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
@@ -1039,7 +1040,8 @@ impl Runtime {
             } else {
                 false
             };
-            animated || observed
+            let descendants = self.run_frame_observers(&mut page, now + TICK_WALL)?;
+            animated || observed || descendants
         };
         page.scripting.tick_cost = now.elapsed();
         if changed {
@@ -1057,7 +1059,7 @@ impl Runtime {
     }
 
     /** A refused observer turn follows ordinary script failure handling rather than retrying forever. */
-    fn observe_intersections(&mut self, page: &mut Page) -> EngineResult<bool> {
+    pub(super) fn observe_intersections(&mut self, page: &mut Page) -> EngineResult<bool> {
         match self.script_step(page, json!({"kind":"observe"})) {
             Ok(step) => Ok(step.changed),
             Err(error) if stops_navigation(&error) || lost_state(&error) => Err(error),

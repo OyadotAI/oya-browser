@@ -201,6 +201,7 @@ impl Runtime {
             request
                 .top_level
                 .clone()
+                .or_else(|| self.frame_partition.clone())
                 .or_else(|| initiator.map(Url::to_string))
         };
         let partition = request

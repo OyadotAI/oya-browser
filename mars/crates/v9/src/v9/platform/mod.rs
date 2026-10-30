@@ -348,8 +348,12 @@ pub struct PageEnvironment {
     /// This frame's coordinator-issued context identity, independent of its document generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own_window: Option<i64>,
-    /// The origin of the page embedding this document when it runs in a frame: `parent` and
-    /// `top` are then that page's proxy. None for a top-level page.
+    /// This document's native context, including the root; independent of its local node identities.
+    pub context_window: Option<i64>,
+    /// Native parent/child relationships for the current bounded executable frame tree.
+    pub frame_contexts: Vec<frame_directory::FrameContext>,
+    /// The immediate embedder origin when this document runs in a frame; the native directory
+    /// separately identifies its top-level ancestor. None for a top-level page.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedder_origin: Option<String>,
     /// `window.name`: a frame's `name` attribute, which frame protocols pass settings in.
@@ -654,6 +658,8 @@ impl Default for PageEnvironment {
             scripted_frame_owners: BTreeSet::new(),
             parent_frames: Vec::new(),
             own_window: None,
+            context_window: None,
+            frame_contexts: Vec::new(),
             embedder_origin: None,
             window_name: String::new(),
             html_attributes: BTreeMap::new(),

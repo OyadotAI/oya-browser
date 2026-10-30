@@ -118,6 +118,8 @@ pub struct Runtime {
     pub(super) residency: super::residency::Residency,
     /** Monotonic context IDs never roll back with candidate pages. */
     pub(super) next_frame_window: i64,
+    /** Scoped root partition while an embedded page builds or executes; never persisted across turns. */
+    pub(super) frame_partition: Option<String>,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
@@ -506,6 +508,7 @@ impl Runtime {
             v9_sources: Default::default(),
             residency: Default::default(),
             next_frame_window: 0,
+            frame_partition: None,
             provisional: None,
         };
         for (name, executable) in [

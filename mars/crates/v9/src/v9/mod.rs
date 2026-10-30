@@ -40,7 +40,7 @@ pub use platform::blob_urls::BlobUrlSource;
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
 pub use platform::frame_directory::{
-    FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
+    FrameContext, FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
 };
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};

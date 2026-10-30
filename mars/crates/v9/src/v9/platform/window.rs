@@ -58,7 +58,8 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let environment = &vm.page.environment;
     Ok(match native_name(&call) {
         "window" | "self" | "globalThis" | "frames" => JsValue::Object(vm.global_object()),
-        "top" | "parent" => return super::messaging::parent(vm),
+        "parent" => return super::messaging::parent(vm),
+        "top" => return super::messaging::top(vm),
         "document" => JsValue::Object(realm().ids.document),
         "location" => JsValue::Object(realm().ids.location),
         "innerWidth" | "outerWidth" => JsValue::Number(environment.viewport_width),

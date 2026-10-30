@@ -433,20 +433,15 @@ impl Runtime {
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
-        let frame_tree = if embedding.is_none() {
-            self.initial_frame_tree(&document)?
-        } else {
-            Default::default()
-        };
-        let (frames, scripted_frames) = match embedding {
+        let mut frame_tree = self.initial_frame_tree(&document)?;
+        if let Some(embedding) = embedding {
+            frame_tree.window = embedding.window;
+        }
+        let (frames, scripted_frames, inert_frame_count, inert_frame_bytes) = match embedding {
             Some(_) => Default::default(),
-            None => self.load_frames(
-                &mut document,
-                &acquired.response.url,
-                deadline,
-                &mut images,
-                &frame_tree.routes,
-            )?,
+            None => {
+                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
+            }
         };
         perf::record("page.frames", phase, || frames.len().to_string());
         phase = Instant::now();
@@ -491,10 +486,17 @@ impl Runtime {
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
             .collect();
-        if embedding.is_none() {
-            environment.scripted_frame_owners =
-                self.scripted_owners(&document, &acquired.response.url);
-        }
+        environment.scripted_frame_owners = self.scripted_owners(&document, &acquired.response.url);
+        environment.context_window = Some(frame_tree.window);
+        environment.frame_contexts = embedding
+            .map(|embedding| embedding.contexts.clone())
+            .unwrap_or_default();
+        environment.frame_contexts.push(crate::v9::FrameContext {
+            window: frame_tree.window,
+            parent: embedding
+                .and_then(|embedding| embedding.contexts.last().map(|context| context.window)),
+            children: frame_tree.routes.clone(),
+        });
         if let Some(embedding) = embedding {
             environment.embedder_origin = Some(embedding.origin.clone());
             environment.window_name.clone_from(&embedding.name);
@@ -515,6 +517,15 @@ impl Runtime {
             top_level_url: embedding
                 .map(|embedding| embedding.top_level_url.clone())
                 .unwrap_or_else(|| acquired.response.url.clone()),
+            frame_ancestors: embedding
+                .map(|embedding| embedding.ancestors.clone())
+                .unwrap_or_default(),
+            frame_base: embedding.map_or(0, |embedding| embedding.paint_base),
+            inert_frame_count,
+            inert_frame_bytes,
+            frame_source_limit: embedding.map_or(super::frames::FRAME_BYTES_TOTAL, |embedding| {
+                embedding.source_budget
+            }),
             url: acquired.response.url,
             sensitive,
             replayable: acquired.method == Method::Get,
@@ -537,7 +548,7 @@ impl Runtime {
             degraded: Vec::new(),
             untrusted_styles: false,
             scripting: super::scripting::Scripting {
-                attempted_frame_owners: environment.scripted_frame_owners.clone(),
+                attempted_frame_owners: Default::default(),
                 environment,
                 modules: super::modules::Modules::new(
                     resolved
