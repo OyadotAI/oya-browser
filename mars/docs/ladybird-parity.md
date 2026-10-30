@@ -7,6 +7,13 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The next user report identified a raw connection reset during TLS handshake.
+Source inspection found that a requested-group HelloRetryRequest still received
+an extra GREASE key share, although its replacement list must contain only the
+requested share. That wire defect is corrected; initial and cookie-only retries
+retain GREASE. Three in-memory wire regressions are added unrun. No handshake
+capture establishes that this defect caused the reported Google reset.
+
 Recovery build `3e2b9162` passed in 1m 04s with observer storage/work budgets,
 metadata admission, descendant click activation and asynchronous native closure.
 Build log: `/private/tmp/mars-recovery-build.log`. The earlier frozen Eye/V9

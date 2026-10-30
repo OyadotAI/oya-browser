@@ -88,7 +88,11 @@ fn hello() -> (Vec<u16>, Vec<(u16, Vec<u8>)>) {
     if let Ok(path) = std::env::var("RELAY_HELLO_DUMP") {
         std::fs::write(path, &wire).expect("dump");
     }
-    let hello = &wire[5 + 4..];
+    decode_hello(&wire[5 + 4..])
+}
+
+/** Decode one ClientHello body so retry assertions inspect the actual emitted shares. */
+fn decode_hello(hello: &[u8]) -> (Vec<u16>, Vec<(u16, Vec<u8>)>) {
     let u16_at = |at: usize| u16::from_be_bytes([hello[at], hello[at + 1]]);
     let mut at = 2 + 32;
     at += 1 + usize::from(hello[at]);
@@ -335,4 +339,103 @@ fn ml_kem_matches_openssl_for_the_same_seed_and_ciphertext() {
         mlkem::decapsulate(&pair, include_bytes!("kat/ct.bin")),
         Some(*include_bytes!("kat/ss.bin"))
     );
+}
+
+/** RFC8446's fixed HelloRetryRequest random distinguishes it from ServerHello. */
+const RETRY_RANDOM: [u8; 32] = [
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+    0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+];
+
+/** Frame a synthetic HRR; no socket or permissive test server can hide malformed client output. */
+fn retry_record(session: &[u8], group: Option<u16>) -> Vec<u8> {
+    let mut extensions = vec![0, 43, 0, 2, 3, 4]; // supported_versions: TLS1.3
+    if let Some(group) = group {
+        extensions.extend_from_slice(&[0, 51, 0, 2]);
+        extensions.extend_from_slice(&group.to_be_bytes());
+    } else {
+        extensions.extend_from_slice(&[0, 44, 0, 3, 0, 1, 42]); // nonempty cookie
+    }
+    let mut body = vec![3, 3];
+    body.extend_from_slice(&RETRY_RANDOM);
+    body.push(session.len() as u8);
+    body.extend_from_slice(session);
+    body.extend_from_slice(&[0x13, 0x01, 0]); // AES128-GCM-SHA256, null compression
+    body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+    body.extend(extensions);
+    let mut handshake = vec![2];
+    handshake.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+    handshake.extend(body);
+    let mut record = vec![22, 3, 3];
+    record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+    record.extend(handshake);
+    record
+}
+
+/** Skip compatibility CCS records and return the unencrypted ClientHello body. */
+fn client_hello_body(mut wire: &[u8]) -> &[u8] {
+    while !wire.is_empty() {
+        let length = usize::from(u16::from_be_bytes([wire[3], wire[4]]));
+        if wire[0] == 22 {
+            assert_eq!(wire[5], 1);
+            return &wire[9..5 + length];
+        }
+        wire = &wire[5 + length..];
+    }
+    panic!("missing ClientHello");
+}
+
+/** Collect first and second key-share extensions around an in-memory retry. */
+fn retry_shares(group: Option<u16>, classical_first: bool) -> (Vec<u8>, Vec<u8>) {
+    let mut config = (*super::build_with(super::super::testing::test_roots()).unwrap()).clone();
+    if classical_first {
+        let mut provider = super::provider();
+        provider.kx_groups.swap(0, 1);
+        let shaping = config.hello_shaping.clone();
+        config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(provider))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates((*super::super::testing::test_roots()).clone())
+            .with_no_client_auth();
+        config.hello_shaping = shaping;
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    }
+    let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let mut client = rustls::ClientConnection::new(std::sync::Arc::new(config), name).unwrap();
+    let mut first = Vec::new();
+    client.write_tls(&mut first).unwrap();
+    let hello = client_hello_body(&first);
+    let session = &hello[35..35 + usize::from(hello[34])];
+    let retry = retry_record(session, group);
+    client.read_tls(&mut std::io::Cursor::new(retry)).unwrap();
+    client.process_new_packets().unwrap();
+    let mut second = Vec::new();
+    client.write_tls(&mut second).unwrap();
+    (
+        extension(&decode_hello(hello).1, 51).to_vec(),
+        extension(&decode_hello(client_hello_body(&second)).1, 51).to_vec(),
+    )
+}
+
+#[test]
+fn requested_group_retry_contains_only_the_requested_share() {
+    let (_, shares) = retry_shares(Some(0x0018), false);
+    assert_eq!(&shares[..6], &[0, 101, 0, 24, 0, 97]);
+    assert_eq!(shares.len(), 103);
+}
+
+#[test]
+fn requested_hybrid_retry_omits_grease_and_the_classical_component_share() {
+    let (_, shares) = retry_shares(Some(0x11ec), true);
+    assert_eq!(&shares[..6], &[0x04, 0xc4, 0x11, 0xec, 0x04, 0xc0]);
+    assert_eq!(shares.len(), 1222);
+}
+
+#[test]
+fn cookie_only_retry_preserves_initial_grease_and_both_real_shares() {
+    let (first, second) = retry_shares(None, false);
+    assert!(rustls::client::is_grease(u16::from_be_bytes([
+        first[2], first[3]
+    ])));
+    assert_eq!(second, first);
 }
