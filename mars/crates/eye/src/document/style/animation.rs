@@ -1,5 +1,5 @@
 /**
- * `@keyframes` parsing, live opacity tracks, and legacy static fallback for other properties.
+ * `@keyframes` parsing, live opacity/rotation tracks, and legacy static fallback for other properties.
  * Unsupported interpolation still contributes the frame seen once an animation has played: the final keyframe
  * under a forwards fill (direction and iteration parity decide which end that is), the base style
  * after a finite animation without one, and for an infinite animation its starting keyframe, or
@@ -9,6 +9,7 @@
  */
 mod collect;
 mod model;
+mod rotation;
 mod sample;
 mod timeline;
 use super::{
@@ -21,6 +22,8 @@ use super::{
 };
 pub(super) use collect::{tracks, valid_value};
 pub use model::{AnimationDirection, AnimationFill, OpacityAnimation, OpacityKeyframe};
+pub(super) use rotation::tracks as rotation_tracks;
+pub use rotation::{RotationAnimation, RotationAnimations, RotationKeyframe};
 use std::collections::BTreeMap;
 pub use timeline::OpacityAnimations;
 /** Animated values override every normal declaration and lose to `!important` ones, as in CSS. */

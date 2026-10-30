@@ -76,6 +76,10 @@ pub(super) struct Scripting {
     pub css_translation_transitions: crate::document::TranslationTransitions,
     /// Keyframe playback is independent from authored opacity and transition state.
     pub css_animations: crate::document::OpacityAnimations,
+    /// Rotation retains unwrapped angles so full turns remain visible through native sampling.
+    pub css_rotation_transitions: crate::document::RotationTransitions,
+    /// Rotation keyframes share the page clock without rewriting the authored transform.
+    pub css_rotation_animations: crate::document::RotationAnimations,
     /// Geometry invalidations schedule observer-only work even after ordinary timers go idle.
     pub intersections: super::intersections::Observations,
     /// Actual image requests and retained decode admission for this page alone.
@@ -204,6 +208,8 @@ impl Default for Scripting {
             css_transitions: Default::default(),
             css_translation_transitions: Default::default(),
             css_animations: Default::default(),
+            css_rotation_transitions: Default::default(),
+            css_rotation_animations: Default::default(),
             intersections: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
@@ -740,6 +746,10 @@ impl Runtime {
         animations.update(&styled, page.scripting.clock_ms)?;
         let mut translations = page.scripting.css_translation_transitions.clone();
         translations.update(&styled, page.scripting.clock_ms)?;
+        let mut rotation_transitions = page.scripting.css_rotation_transitions.clone();
+        rotation_transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut rotation_animations = page.scripting.css_rotation_animations.clone();
+        rotation_animations.update(&styled, page.scripting.clock_ms)?;
         let effects = super::animations::PaintEffects {
             opacity: super::animations::combine_effects(
                 &execution.effects.opacity_effects,
@@ -748,6 +758,11 @@ impl Runtime {
                 page.scripting.clock_ms,
             ),
             translations: translations.effects(page.scripting.clock_ms),
+            rotations: super::animations::combine_rotation_effects(
+                &rotation_transitions,
+                &rotation_animations,
+                page.scripting.clock_ms,
+            ),
         };
         let display = self.render_effects(&styled, &scroll, &effects)?;
         Ok(boxes(&display))

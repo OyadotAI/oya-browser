@@ -398,6 +398,23 @@ pub(super) fn translation_only(value: &str) -> bool {
             })
 }
 
+/** Only one 2D rotate() is admitted for angular interpolation; matrix identities lose this provenance. */
+pub(super) fn rotation(value: &str) -> Option<f64> {
+    if value == "none" {
+        return Some(0.0);
+    }
+    let functions: Vec<_> = tokens(value).into_iter().flat_map(adjacent).collect();
+    let [function] = functions.as_slice() else {
+        return None;
+    };
+    let (name, argument) = function.strip_suffix(')')?.split_once('(')?;
+    if !name.eq_ignore_ascii_case("rotate") {
+        return None;
+    }
+    let radians = angle(argument.trim()).ok()?.to_radians();
+    (radians.is_finite() && radians.abs() <= TRANSFORM_MAX).then_some(radians)
+}
+
 /** Splits functions minifiers write without a space, as in `translateY(4px)scale(.9)`. */
 fn adjacent(token: &str) -> Vec<&str> {
     let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);

@@ -192,6 +192,14 @@ have a separate 4 MiB page allowance under existing process/work ceilings; a
 large clip plus paint may exhaust one execution's existing work budget. Twelve
 focused regressions were added but not run; this next batch's build is pending.
 
+Pure rotate transitions and keyframes now preserve authored full turns and
+sample on the native page clock. Easing/delay, interruption/reversal,
+iteration/direction, pause and fill are implemented without overwriting authored
+transforms or transform origins. Transition samples take priority over keyframes.
+The supported scope is one rotate function or none; mixed lists, matrices,
+3D/rotateZ and individual transforms are excluded. Focused regressions were
+added but not run, and the next combined production build is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas compositing/Path2D and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

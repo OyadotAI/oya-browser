@@ -66,12 +66,29 @@ impl Resolver<'_> {
             .get("opacity")
             .is_some_and(|(priority, _)| priority.0);
         let authored_opacity = chosen.get("opacity").cloned();
+        style.rotation_animations = super::animation::rotation_tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.rotation_animation_blocked = chosen
+            .get("transform")
+            .is_some_and(|(priority, _)| priority.0);
+        let authored_transform = chosen.get("transform").cloned();
         // Resting animation frames override the cascade; their own `var()`s substitute next.
         let mut hides = super::animation::animate(&mut chosen, self.keyframes, diagnostics);
-        // Only opacity has a live timeline; its authored base must survive every recascade.
+        // Live opacity keeps its authored base through every recascade.
         chosen.remove("opacity");
         if let Some(opacity) = authored_opacity {
             chosen.insert("opacity".into(), opacity);
+        }
+        // Only fully supported angular tracks replace the legacy static transform fallback.
+        if !style.rotation_animations.is_empty() {
+            chosen.remove("transform");
+            if let Some(transform) = authored_transform {
+                chosen.insert("transform".into(), transform);
+            }
         }
         self.substitute(style, parent, &mut chosen);
         bottom_layer_clip(&mut chosen);

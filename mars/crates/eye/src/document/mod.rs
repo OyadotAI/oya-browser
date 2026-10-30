@@ -62,6 +62,8 @@ pub use style::{
     install_fonts,
 };
 pub use style::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use style::{Rotation, RotationTransitions};
+pub use style::{RotationAnimation, RotationAnimations, RotationKeyframe};
 pub use style::{Translation, TranslationTransitions};
 pub use xml::xml_mime;
 

@@ -1,4 +1,4 @@
-/** Native presentation combines independent opacity and translation overlays for paint and hit geometry. */
+/** Native presentation combines opacity, translation and rotation overlays for paint and hit geometry. */
 use crate::{
     document::{Document, TransitionTarget, Translation},
     protocol::{EngineError, EngineResult},
@@ -13,21 +13,36 @@ pub(crate) struct PaintEffects {
     pub opacity: Vec<OpacityEffect>,
     /// Bounded native translation transitions use the current layout box for percentages.
     pub translations: Vec<(TransitionTarget, Translation)>,
+    /// Angular animation samples are overridden by matching rotation transitions.
+    pub rotations: Vec<(TransitionTarget, crate::document::Rotation)>,
 }
 
-/** Overlay both families on one candidate clone so paint, forced layout and hit bounds agree. */
+/** Overlay sampled effects on one candidate clone so paint, forced layout and hit bounds agree. */
 pub(crate) fn effective_presentation<'a>(
     document: &'a Document,
     effects: &PaintEffects,
 ) -> EngineResult<Cow<'a, Document>> {
-    if effects.translations.len() > super::OPACITY_TARGETS {
+    if effects.translations.len() > super::OPACITY_TARGETS
+        || effects.rotations.len() > super::OPACITY_TARGETS
+    {
         return Err(EngineError::limit(
-            "Translation paint targets",
+            "Transform paint targets",
             super::OPACITY_TARGETS,
         ));
     }
-    let mut seen = BTreeSet::new();
     let mut effective = super::effective_document(document, &effects.opacity)?;
+    let mut seen = BTreeSet::new();
+    for (target, value) in &effects.rotations {
+        if !seen.insert(*target) {
+            return Err(EngineError::invalid("Duplicate rotation paint target."));
+        }
+        value.apply(super::target_style(
+            effective.to_mut(),
+            &super::native_target(*target),
+        )?)?;
+    }
+    let mut seen = BTreeSet::new();
+    // Both families address transform; an active translation transition overrides animation rotation.
     for (target, value) in &effects.translations {
         if !seen.insert(*target) {
             return Err(EngineError::invalid("Duplicate translation paint target."));
@@ -43,6 +58,43 @@ pub(crate) fn effective_presentation<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** Native geometry consumes the sampled rotation while its layout position stays untransformed. */
+    #[test]
+    fn rotation_presentation_changes_visual_bounds_and_validates_angular_samples() {
+        let document = crate::document::compute_styles(
+            &crate::document::parse("<div>sample</div>").unwrap(),
+            &["div{width:200px;height:100px;transform-origin:0 0}".into()],
+        )
+        .unwrap();
+        let target = TransitionTarget::Node(document.nodes[0].local_id);
+        let mut effects = PaintEffects {
+            rotations: vec![(
+                target,
+                crate::document::Rotation {
+                    radians: std::f64::consts::FRAC_PI_2,
+                },
+            )],
+            ..PaintEffects::default()
+        };
+        let effective = effective_presentation(&document, &effects).unwrap();
+        assert!(document.nodes[0].style.transform.is_none());
+        let display = crate::document::render(&effective, 800.0).unwrap();
+        let item = display
+            .items
+            .iter()
+            .find(|item| item.local_id == document.nodes[0].local_id)
+            .unwrap();
+        let boxes = crate::runtime::scripting::boxes(&display);
+        let geometry = boxes
+            .iter()
+            .find(|entry| entry.node == item.local_id)
+            .unwrap();
+        assert!((geometry.width - item.height).abs() < 0.000001);
+        assert_eq!(geometry.layout_position, Some([item.x, item.y]));
+        effects.rotations[0].1.radians = f64::NAN;
+        assert!(effective_presentation(&document, &effects).is_err());
+    }
 
     /** Native frames, DOM visual geometry and untransformed layout positions share one sampled candidate. */
     #[test]
@@ -106,6 +158,7 @@ mod tests {
                 value: 0.5,
             }],
             translations: vec![(target, translation)],
+            rotations: Vec::new(),
         };
         let effective = effective_presentation(&document, &effects).unwrap();
         assert_eq!(effective.nodes[0].style.opacity, 0.5);

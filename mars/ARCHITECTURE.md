@@ -155,6 +155,13 @@ transform properties even when their flattened matrix happens to be identity.
 Runtime overlays sampled translations in ordinary and forced candidate painting;
 visual NodeBox positions follow translations while separate layout positions
 keep offsetLeft/offsetTop independent of transforms.
+Pure rotate transitions and keyframes retain authored, unwrapped radians so a
+zero-to-full-turn animation does not collapse to identical endpoint matrices.
+Native samples preserve transform origin and use the shared page clock, including
+delay/easing, interruption/reversal, pause, iteration/direction and fill behavior.
+Rotation transitions override rotation keyframes. Only one rotate function or
+none is admitted; mixed lists, matrices, 3D and individual transforms remain
+outside live rotation sampling, under the existing angle/resource bounds.
 
 V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
 64 URLs and 4 MiB including metadata. Classic and module worker construction capture an

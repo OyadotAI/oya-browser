@@ -49,6 +49,14 @@ impl ComputedStyle {
                 .any(|value| !value.is_finite() || value.abs() > CSS_MAX_SCALAR)
             || !(0.0..=1.0).contains(&self.opacity)
             || !self.transition.valid()
+            || self.rotation_radians.is_some_and(|angle| {
+                !angle.is_finite() || angle.abs() > super::constants::TRANSFORM_MAX
+            })
+            || self.rotation_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .rotation_animations
+                .iter()
+                .all(super::RotationAnimation::valid)
             || self.opacity_animations.len() > super::constants::ANIMATIONS
             || !self
                 .opacity_animations

@@ -17,6 +17,12 @@ pub(super) fn refresh_timelines(page: &mut super::page::Page) -> EngineResult<()
         .update(&page.document, page.scripting.clock_ms)?;
     page.scripting
         .css_translation_transitions
+        .update(&page.document, page.scripting.clock_ms)?;
+    page.scripting
+        .css_rotation_animations
+        .update(&page.document, page.scripting.clock_ms)?;
+    page.scripting
+        .css_rotation_transitions
         .update(&page.document, page.scripting.clock_ms)
 }
 
@@ -32,7 +38,26 @@ pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> PaintEff
         translations: scripting
             .css_translation_transitions
             .effects(scripting.clock_ms),
+        rotations: combine_rotation_effects(
+            &scripting.css_rotation_transitions,
+            &scripting.css_rotation_animations,
+            scripting.clock_ms,
+        ),
     }
+}
+
+/** Transform transitions override angular keyframes in both normal paint and forced geometry candidates. */
+pub(super) fn combine_rotation_effects(
+    transitions: &crate::document::RotationTransitions,
+    animations: &crate::document::RotationAnimations,
+    now_ms: f64,
+) -> Vec<(crate::document::TransitionTarget, crate::document::Rotation)> {
+    let mut effects = animations
+        .effects(now_ms)
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    effects.extend(transitions.effects(now_ms));
+    effects.into_iter().collect()
 }
 
 /** One effect per target retains strict native validation when animation sources overlap. */
@@ -77,6 +102,12 @@ pub(super) fn next_sample(scripting: &super::scripting::Scripting) -> Option<f64
         scripting.css_animations.next_sample_ms(scripting.clock_ms),
         scripting
             .css_translation_transitions
+            .next_sample_ms(scripting.clock_ms),
+        scripting
+            .css_rotation_transitions
+            .next_sample_ms(scripting.clock_ms),
+        scripting
+            .css_rotation_animations
             .next_sample_ms(scripting.clock_ms),
     ]
     .into_iter()
