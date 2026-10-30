@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented real Canvas polygon fill/stroke in Mars, including winding rules, line caps/joins, strokeRect and transform-aware paths and pens. Path state survives save/restore correctly and raster work is bounded; curves, arcs, clipping and Path2D remain unfinished.
 - Implemented context-owned Blob object URLs and classic Blob workers in Mars, with immutable source capture, revocation, inherited CSP and bounded storage. Captured workers survive later URL revocation; Blob module workers and cross-context URL sharing remain unfinished.
 - Implemented HTTP(S) dedicated module workers in Mars with governed static/dynamic imports, `import.meta.url`, constructor credentials and top-level-await initialization. Early messages wait for entry evaluation; Blob URLs, nested workers and redirects remain outside this slice.
 - Implemented sampled CSS opacity transitions in Mars, with duration/delay/easing lists, interruption and reversal handling, and native frame scheduling. Transition values stay separate from authored styles; other properties, transition events and discrete transitions remain unfinished.

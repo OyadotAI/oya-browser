@@ -38,6 +38,7 @@ pub(in crate::v9) fn resized(page: &mut Page, node: usize, bitmap: Bitmap) {
     state.origin_clean = true;
     state.drawing = state::DrawingState::default();
     state.saved.clear();
+    state.path = limits::Path::default();
     state.dirty = true;
 }
 /** Account for replacement rather than charging both old and new live backing indefinitely. */
@@ -95,6 +96,7 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     }
     for state in states.values() {
         state.bitmap.validate()?;
+        state.path.validate()?;
         state::validate(&state.drawing)?;
         if state.saved.len() > state::SAVED_STATES {
             return Err(EngineError::limit(

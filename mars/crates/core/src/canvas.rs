@@ -2,9 +2,13 @@
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
 mod affine;
+mod path;
 mod pixels;
 mod raster;
 pub use affine::Affine;
+pub use path::{
+    FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle, paint_path, plan_fill, plan_stroke,
+};
 pub use pixels::Pixels;
 pub use pixels::Reservation as Allocation;
 pub use raster::{RasterPlan, blend, blit, clear_rect, fill_rect, plan_blit, plan_rect};

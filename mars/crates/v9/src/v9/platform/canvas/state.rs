@@ -12,6 +12,10 @@ pub(super) const SAVED_STATES: usize = 64;
 pub(in crate::v9) struct DrawingState {
     /** Straight-alpha paint is combined with global alpha only when rasterizing. */
     pub fill: [u8; 4],
+    /** Stroke paint is separate from fill paint and shares the same global alpha. */
+    pub stroke: [u8; 4],
+    /** Pen dimensions, caps and joins are saved independently from the current path. */
+    pub pen: limits::StrokeStyle,
     /** Measurement and glyph rasterization share this resolved bounded font. */
     pub font: Font,
     /** Pixel read/write deliberately bypasses this drawing-coordinate transform. */
@@ -27,6 +31,8 @@ impl Default for DrawingState {
     fn default() -> Self {
         Self {
             fill: [0, 0, 0, 255],
+            stroke: [0, 0, 0, 255],
+            pen: limits::StrokeStyle::default(),
             font: Font::default(),
             transform: Affine::IDENTITY,
             alpha: 1.0,
@@ -59,6 +65,7 @@ pub(super) fn install(b: &mut Builder, proto: u32) {
 
 /** Invalid serialized state cannot enter raster loops or grow a restored stack. */
 pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
+    drawing.pen.validate()?;
     let font = &drawing.font;
     if !drawing.transform.finite()
         || !drawing.alpha.is_finite()

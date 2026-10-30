@@ -78,8 +78,16 @@ worker queue limit. Seven V9 and five native regression cases were added but not
 run in the code-first batch. Blob module workers, cross-context URL sharing and
 Blob fetch/image consumers remain unfinished.
 
+Canvas paths now rasterize real polygon fills and strokes with nonzero/evenodd
+winding, line width/caps/joins/miter and strokeRect. Construction-time path
+transforms and draw-time pen transforms are distinct; save/restore leaves the
+current path intact and resize clears it. Storage, geometry and raster work are
+bounded before mutation. Seven Core and nine V9 regressions were added but not
+run in this code-first batch. Curves, arcs, clipping, Path2D and dashes remain
+unfinished.
+
 Current substantial gaps remain in broader CSS transition properties/animation rendering,
-Canvas paths/clipping/compositing and broader image sources, Blob module/nested workers,
+Canvas curves/clipping/compositing and broader image sources, Blob module/nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

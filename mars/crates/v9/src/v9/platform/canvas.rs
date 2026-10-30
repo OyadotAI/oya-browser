@@ -14,6 +14,7 @@ mod colors;
 mod drawing;
 mod images;
 mod lifecycle;
+mod paths;
 mod results;
 mod state;
 use lifecycle::{admit, size};
@@ -37,6 +38,9 @@ pub(in crate::v9) struct State {
     /** A bounded save stack survives VM serialization and clears on any resize. */
     #[serde(default)]
     pub saved: Vec<state::DrawingState>,
+    /** The current path survives save/restore but clears with beginPath, reset or resize. */
+    #[serde(default)]
+    pub path: limits::Path,
     pub dirty: bool,
 }
 
@@ -62,6 +66,7 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     }
     state::install(b, proto);
     images::install(b, proto);
+    paths::install(b, proto);
     let _ = PROTO.set(proto);
 }
 
@@ -139,6 +144,7 @@ fn create_context(vm: &mut Vm, call: Call) -> Res<JsValue> {
             origin_clean: true,
             drawing: state::DrawingState::default(),
             saved: Vec::new(),
+            path: limits::Path::default(),
             dirty: true,
         },
     );
