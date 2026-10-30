@@ -23,6 +23,12 @@ pub(super) fn refresh_timelines(page: &mut super::page::Page) -> EngineResult<()
         .update(&page.document, page.scripting.clock_ms)?;
     page.scripting
         .css_rotation_transitions
+        .update(&page.document, page.scripting.clock_ms)?;
+    page.scripting
+        .css_scale_animations
+        .update(&page.document, page.scripting.clock_ms)?;
+    page.scripting
+        .css_scale_transitions
         .update(&page.document, page.scripting.clock_ms)
 }
 
@@ -38,6 +44,12 @@ pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> PaintEff
         translations: scripting
             .css_translation_transitions
             .effects(scripting.clock_ms),
+        scales: combine_scale_effects(
+            &scripting.css_scale_transitions,
+            &scripting.css_scale_animations,
+            &scripting.css_rotation_transitions,
+            scripting.clock_ms,
+        ),
         rotations: combine_rotation_effects(
             &scripting.css_rotation_transitions,
             &scripting.css_rotation_animations,
@@ -55,6 +67,27 @@ pub(super) fn combine_rotation_effects(
     let mut effects = animations
         .effects(now_ms)
         .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    effects.extend(transitions.effects(now_ms));
+    effects.into_iter().collect()
+}
+
+/** A transform transition wins over scale keyframes even when its destination is the shared none endpoint. */
+pub(super) fn combine_scale_effects(
+    transitions: &crate::document::ScaleTransitions,
+    animations: &crate::document::ScaleAnimations,
+    rotations: &crate::document::RotationTransitions,
+    now_ms: f64,
+) -> Vec<(crate::document::TransitionTarget, crate::document::Scale)> {
+    let rotating: BTreeSet<_> = rotations
+        .effects(now_ms)
+        .into_iter()
+        .map(|(target, _)| target)
+        .collect();
+    let mut effects = animations
+        .effects(now_ms)
+        .into_iter()
+        .filter(|(target, _)| !rotating.contains(target))
         .collect::<std::collections::BTreeMap<_, _>>();
     effects.extend(transitions.effects(now_ms));
     effects.into_iter().collect()
@@ -98,6 +131,12 @@ fn native_target(target: crate::document::TransitionTarget) -> AnimationTarget {
 /** Either CSS timeline can keep native paint advancing without extending script execution. */
 pub(super) fn next_sample(scripting: &super::scripting::Scripting) -> Option<f64> {
     [
+        scripting
+            .css_scale_transitions
+            .next_sample_ms(scripting.clock_ms),
+        scripting
+            .css_scale_animations
+            .next_sample_ms(scripting.clock_ms),
         scripting.css_transitions.next_sample_ms(scripting.clock_ms),
         scripting.css_animations.next_sample_ms(scripting.clock_ms),
         scripting

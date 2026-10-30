@@ -188,6 +188,14 @@ delay/easing, interruption/reversal, pause, iteration/direction and fill behavio
 Rotation transitions override rotation keyframes. Only one rotate function or
 none is admitted; mixed lists, matrices, 3D and individual transforms remain
 outside live rotation sampling, under the existing angle/resource bounds.
+Pure numeric scale/scaleX/scaleY transitions and keyframes retain independent axis
+factors, including zero and negative reflection, through the same bounded native
+timing machinery. Normal and forced geometry sample the scale effects without
+changing authored layout or ResizeObserver metrics. Rotation transitions take
+precedence over scale keyframes when they target the same transform, and live
+mixed meaningful rotation/scale animation stacks are explicitly excluded rather
+than resolved by painter order. Mixed lists, matrices, 3D, percentage/calc scale
+arguments and independent scale-property composition remain outside this slice.
 Native geometry now carries affine visual bounds and ordered border-box quads
 separately from raw layout position/size. Core supplies inert mapping and hit
 predicates shared by runtime export, V9 DOM geometry and native clicks. Rect and

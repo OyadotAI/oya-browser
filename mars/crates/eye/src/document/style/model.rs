@@ -177,6 +177,12 @@ pub struct ComputedStyle {
     /// Important transform declarations suppress rotation animation without resetting its clock.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rotation_animation_blocked: bool,
+    /// Scale keyframes remain separate from both authored transforms and sampled presentation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scale_animations: Vec<super::ScaleAnimation>,
+    /// Important transform declarations suppress scale playback without resetting its clock.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scale_animation_blocked: bool,
     /// Authored transition lists remain separate from sampled paint opacity and do not inherit.
     #[serde(skip_serializing_if = "super::TransitionStyle::is_initial")]
     pub transition: super::TransitionStyle,
@@ -222,6 +228,9 @@ pub struct ComputedStyle {
     /// A single authored 2D rotate() keeps its unwrapped angle; matrices cannot recover full turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_radians: Option<f64>,
+    /// A single authored scale/scaleX/scaleY retains independent factors; matrix lookalikes do not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_factors: Option<[f64; 2]>,
     /// Inherited: the nearest author declaration removed link underlines.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_decoration_none: bool,
@@ -875,6 +884,8 @@ impl Default for ComputedStyle {
             opacity_animation_blocked: false,
             rotation_animations: Vec::new(),
             rotation_animation_blocked: false,
+            scale_animations: Vec::new(),
+            scale_animation_blocked: false,
             transition: super::TransitionStyle::default(),
             rtl: false,
             position: Position::Static,
@@ -890,6 +901,7 @@ impl Default for ComputedStyle {
             transform: None,
             transform_animation_excluded: false,
             rotation_radians: None,
+            scale_factors: None,
             text_decoration_none: false,
             font_weight: super::constants::WEIGHT_NORMAL,
             letter_spacing: 0.0,

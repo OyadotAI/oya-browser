@@ -52,6 +52,16 @@ impl ComputedStyle {
             || self.rotation_radians.is_some_and(|angle| {
                 !angle.is_finite() || angle.abs() > super::constants::TRANSFORM_MAX
             })
+            || self.scale_factors.is_some_and(|factors| {
+                factors.iter().any(|value| {
+                    !value.is_finite() || value.abs() > super::constants::TRANSFORM_MAX
+                })
+            })
+            || self.scale_animations.len() > super::constants::ANIMATIONS
+            || !self
+                .scale_animations
+                .iter()
+                .all(super::ScaleAnimation::valid)
             || self.rotation_animations.len() > super::constants::ANIMATIONS
             || !self
                 .rotation_animations

@@ -35,6 +35,7 @@ impl Translation {
         style.transform = Some([1.0, 0.0, 0.0, 1.0, self.x_px, self.y_px]);
         style.translate_percent = [self.x_percent, self.y_percent];
         style.rotation_radians = None;
+        style.scale_factors = None;
         Ok(())
     }
 

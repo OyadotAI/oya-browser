@@ -75,6 +75,13 @@ impl Resolver<'_> {
         style.rotation_animation_blocked = chosen
             .get("transform")
             .is_some_and(|(priority, _)| priority.0);
+        style.scale_animations = super::animation::scale_tracks(
+            &chosen,
+            self.keyframes,
+            |_, value| self.scopes.substitute(self.scope, value),
+            parent,
+        );
+        style.scale_animation_blocked = style.rotation_animation_blocked;
         let authored_transform = chosen.get("transform").cloned();
         // Resting animation frames override the cascade; their own `var()`s substitute next.
         let mut hides = super::animation::animate(&mut chosen, self.keyframes, diagnostics);
@@ -83,8 +90,8 @@ impl Resolver<'_> {
         if let Some(opacity) = authored_opacity {
             chosen.insert("opacity".into(), opacity);
         }
-        // Only fully supported angular tracks replace the legacy static transform fallback.
-        if !style.rotation_animations.is_empty() {
+        // Only fully supported pure transform tracks replace the legacy static transform fallback.
+        if !style.rotation_animations.is_empty() || !style.scale_animations.is_empty() {
             chosen.remove("transform");
             if let Some(transform) = authored_transform {
                 chosen.insert("transform".into(), transform);

@@ -11,6 +11,7 @@ mod collect;
 mod model;
 mod rotation;
 mod sample;
+mod scale;
 mod timeline;
 use super::{
     cascade::{Chosen, Priority, choose},
@@ -24,6 +25,8 @@ pub(super) use collect::{tracks, valid_value};
 pub use model::{AnimationDirection, AnimationFill, OpacityAnimation, OpacityKeyframe};
 pub(super) use rotation::tracks as rotation_tracks;
 pub use rotation::{RotationAnimation, RotationAnimations, RotationKeyframe};
+pub(super) use scale::tracks as scale_tracks;
+pub use scale::{ScaleAnimation, ScaleAnimations, ScaleKeyframe};
 use std::collections::BTreeMap;
 pub use timeline::OpacityAnimations;
 /** Animated values override every normal declaration and lose to `!important` ones, as in CSS. */

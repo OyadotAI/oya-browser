@@ -1,4 +1,4 @@
-/** Native presentation combines opacity, translation and rotation overlays for paint and hit geometry. */
+/** Native presentation combines opacity, translation, rotation and scale overlays for paint and hit geometry. */
 use crate::{
     document::{Document, TransitionTarget, Translation},
     protocol::{EngineError, EngineResult},
@@ -15,6 +15,8 @@ pub(crate) struct PaintEffects {
     pub translations: Vec<(TransitionTarget, Translation)>,
     /// Angular animation samples are overridden by matching rotation transitions.
     pub rotations: Vec<(TransitionTarget, crate::document::Rotation)>,
+    /// Independent scale axes retain transform-transition priority across supported effect families.
+    pub scales: Vec<(TransitionTarget, crate::document::Scale)>,
 }
 
 /** Overlay sampled effects on one candidate clone so paint, forced layout and hit bounds agree. */
@@ -24,6 +26,7 @@ pub(crate) fn effective_presentation<'a>(
 ) -> EngineResult<Cow<'a, Document>> {
     if effects.translations.len() > super::OPACITY_TARGETS
         || effects.rotations.len() > super::OPACITY_TARGETS
+        || effects.scales.len() > super::OPACITY_TARGETS
     {
         return Err(EngineError::limit(
             "Transform paint targets",
@@ -42,7 +45,17 @@ pub(crate) fn effective_presentation<'a>(
         )?)?;
     }
     let mut seen = BTreeSet::new();
-    // Both families address transform; an active translation transition overrides animation rotation.
+    for (target, value) in &effects.scales {
+        if !seen.insert(*target) {
+            return Err(EngineError::invalid("Duplicate scale paint target."));
+        }
+        value.apply(super::target_style(
+            effective.to_mut(),
+            &super::native_target(*target),
+        )?)?;
+    }
+    let mut seen = BTreeSet::new();
+    // Transform transitions override animation effects; scale samples already exclude rotation-transition targets.
     for (target, value) in &effects.translations {
         if !seen.insert(*target) {
             return Err(EngineError::invalid("Duplicate translation paint target."));
@@ -58,6 +71,73 @@ pub(crate) fn effective_presentation<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** Scaling changes visual bounds/hits while the raw layout and observer measurements remain stable. */
+    #[test]
+    fn scale_presentation_preserves_layout_sizes_and_resize_measurements() {
+        let document = crate::document::compute_styles(
+            &crate::document::parse("<div>sample</div>").unwrap(),
+            &["div{width:200px;height:100px;transform-origin:0 0}".into()],
+        )
+        .unwrap();
+        let target = TransitionTarget::Node(document.nodes[0].local_id);
+        let plain = crate::document::render(&document, 800.0).unwrap();
+        let mut effects = PaintEffects {
+            scales: vec![(target, crate::document::Scale { x: 2.0, y: -0.5 })],
+            ..PaintEffects::default()
+        };
+        let effective = effective_presentation(&document, &effects).unwrap();
+        let display = crate::document::render(&effective, 800.0).unwrap();
+        let boxes = crate::runtime::scripting::boxes(&display);
+        let geometry = boxes
+            .iter()
+            .find(|entry| entry.node == document.nodes[0].local_id)
+            .unwrap();
+        let raw = plain
+            .items
+            .iter()
+            .find(|item| item.local_id == geometry.node)
+            .unwrap();
+        assert_eq!(geometry.layout_size, Some([200.0, 100.0]));
+        assert_eq!(geometry.resize_box, raw.resize_box);
+        assert_eq!([geometry.width, geometry.height], [400.0, 50.0]);
+        assert!(mars_core::geometry::contains_quad(
+            &geometry.quad.unwrap(),
+            [geometry.x + 200.0, geometry.y + 25.0]
+        ));
+        assert!(document.nodes[0].style.transform.is_none());
+        effects.scales[0].1.x = f64::NAN;
+        assert!(effective_presentation(&document, &effects).is_err());
+    }
+
+    /** Cross-family transitions retain transform priority even when their authored destination is none. */
+    #[test]
+    fn active_rotation_transitions_override_scale_keyframes() {
+        let source = crate::document::parse("<div>sample</div>").unwrap();
+        let styled = |transform| {
+            crate::document::compute_styles(&source, &[format!(
+            "@keyframes grow{{from{{transform:scale(1)}}to{{transform:scale(3)}}}}div{{transform:{transform};transition:transform 1s linear;animation:grow 2s linear both}}"
+        )]).unwrap()
+        };
+        let before = styled("rotate(90deg)");
+        let after = styled("none");
+        let mut scripting = crate::runtime::scripting::Scripting::default();
+        scripting
+            .css_rotation_transitions
+            .update(&before, 0.0)
+            .unwrap();
+        scripting
+            .css_rotation_transitions
+            .update(&after, 0.0)
+            .unwrap();
+        scripting.css_scale_animations.update(&after, 0.0).unwrap();
+        scripting.clock_ms = 500.0;
+        let effects = super::super::paint_effects(&scripting);
+        assert!(effects.scales.is_empty());
+        assert!(!effects.rotations.is_empty());
+        scripting.clock_ms = 1000.0;
+        assert!(!super::super::paint_effects(&scripting).scales.is_empty());
+    }
 
     /** Native geometry consumes the sampled rotation while its layout position stays untransformed. */
     #[test]
@@ -159,6 +239,7 @@ mod tests {
             }],
             translations: vec![(target, translation)],
             rotations: Vec::new(),
+            scales: Vec::new(),
         };
         let effective = effective_presentation(&document, &effects).unwrap();
         assert_eq!(effective.nodes[0].style.opacity, 0.5);

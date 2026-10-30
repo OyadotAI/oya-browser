@@ -24,6 +24,7 @@ impl Rotation {
         style.transform = Some([cos, sin, -sin, cos, 0.0, 0.0]);
         style.translate_percent = [0.0; 2];
         style.rotation_radians = Some(self.radians);
+        style.scale_factors = None;
         style.transform_animation_excluded = true;
         Ok(())
     }

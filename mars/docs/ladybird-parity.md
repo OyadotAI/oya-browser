@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Pure CSS scale/scaleX/scaleY transitions and keyframes now animate independent
+signed axes, including zero and reflected scales, using the native clock and
+existing easing/interruption/iteration/pause/fill machinery. Visual geometry and
+hits update while layout and resize measurements remain unchanged. Competing
+meaningful rotation/scale animation stacks, mixed/matrix/3D transforms,
+percentage/calc factors and independent scale-property composition stay excluded.
+Focused Eye/runtime regressions remain unrun; the combined build is pending.
+
 HTTP fetch now requests exact decoded bytes from Relay instead of forcing them
 through a text charset decoder. Bounded base64 crosses the private wire, then
 the native CORS coordinator admits bytes into Response storage. Fetch text/JSON

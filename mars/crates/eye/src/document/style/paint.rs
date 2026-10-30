@@ -415,6 +415,36 @@ pub(super) fn rotation(value: &str) -> Option<f64> {
     (radians.is_finite() && radians.abs() <= TRANSFORM_MAX).then_some(radians)
 }
 
+/** A single 2D scale function retains independent factors; mixed lists, matrices and 3D stay excluded. */
+pub(super) fn scale(value: &str) -> Option<[f64; 2]> {
+    if value == "none" {
+        return Some([1.0; 2]);
+    }
+    let functions: Vec<_> = tokens(value).into_iter().flat_map(adjacent).collect();
+    let [function] = functions.as_slice() else {
+        return None;
+    };
+    let (name, inner) = function.strip_suffix(')')?.split_once('(')?;
+    let args = split_top(inner, b',');
+    let args = if args.len() == 1 {
+        tokens(args[0])
+    } else {
+        args
+    };
+    let number = |index: usize| super::values::signed_number(args.get(index)?).ok();
+    let factors = match name.trim().to_ascii_lowercase().as_str() {
+        "scale" if args.len() == 1 => [number(0)?, number(0)?],
+        "scale" if args.len() == 2 => [number(0)?, number(1)?],
+        "scalex" if args.len() == 1 => [number(0)?, 1.0],
+        "scaley" if args.len() == 1 => [1.0, number(0)?],
+        _ => return None,
+    };
+    factors
+        .iter()
+        .all(|factor| factor.is_finite() && factor.abs() <= TRANSFORM_MAX)
+        .then_some(factors)
+}
+
 /** Splits functions minifiers write without a space, as in `translateY(4px)scale(.9)`. */
 fn adjacent(token: &str) -> Vec<&str> {
     let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);

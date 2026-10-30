@@ -84,6 +84,10 @@ pub(super) struct Scripting {
     pub css_rotation_transitions: crate::document::RotationTransitions,
     /// Rotation keyframes share the page clock without rewriting the authored transform.
     pub css_rotation_animations: crate::document::RotationAnimations,
+    /// Pure scale transitions retain independent axes while leaving native layout measurements unchanged.
+    pub css_scale_transitions: crate::document::ScaleTransitions,
+    /// Scale keyframe playback shares the same candidate clock and pause/fill contracts.
+    pub css_scale_animations: crate::document::ScaleAnimations,
     /// Geometry invalidations schedule observer-only work even after ordinary timers go idle.
     pub intersections: super::intersections::Observations,
     /// Actual image requests and retained decode admission for this page alone.
@@ -218,6 +222,8 @@ impl Default for Scripting {
             css_animations: Default::default(),
             css_rotation_transitions: Default::default(),
             css_rotation_animations: Default::default(),
+            css_scale_transitions: Default::default(),
+            css_scale_animations: Default::default(),
             intersections: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
@@ -784,6 +790,10 @@ impl Runtime {
         rotation_transitions.update(&styled, page.scripting.clock_ms)?;
         let mut rotation_animations = page.scripting.css_rotation_animations.clone();
         rotation_animations.update(&styled, page.scripting.clock_ms)?;
+        let mut scale_transitions = page.scripting.css_scale_transitions.clone();
+        scale_transitions.update(&styled, page.scripting.clock_ms)?;
+        let mut scale_animations = page.scripting.css_scale_animations.clone();
+        scale_animations.update(&styled, page.scripting.clock_ms)?;
         let effects = super::animations::PaintEffects {
             opacity: super::animations::combine_effects(
                 &execution.effects.opacity_effects,
@@ -792,6 +802,9 @@ impl Runtime {
                 page.scripting.clock_ms,
             ),
             translations: translations.effects(page.scripting.clock_ms),
+            scales: super::animations::combine_scale_effects(
+                &scale_transitions, &scale_animations, &rotation_transitions, page.scripting.clock_ms,
+            ),
             rotations: super::animations::combine_rotation_effects(
                 &rotation_transitions,
                 &rotation_animations,
