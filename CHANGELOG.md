@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Corrected Mars TLS HelloRetryRequest key shares: when a server requests a specific group, the next ClientHello contains exactly that share. Initial and cookie-only retries retain GREASE and existing TLS verification.
+
 - Removed blocking Mars close-save acknowledgements and shutdown joins from the AppKit event loop. Close attempts poll bounded save tickets, retain explicit retry/discard choices, and retire late replies; owned engine, library writer and demo-server cleanup is polled while native events continue.
 
 - Replaced Mars’s 64-IntersectionObserver cap with a shared 4 MiB native-state budget, pressure reclamation of unused observers, and consistent restore checks. Geometry sampling caches target measurements and charges work before allocation; callbacks and queued records remain real rather than silently dropped.
