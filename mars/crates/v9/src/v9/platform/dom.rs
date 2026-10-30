@@ -81,35 +81,32 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
     Ok(JsValue::Object(id))
 }
 
-/** The prototype of an element wrapper: an element in the null namespace (made by an XML document
-or createElementNS(null, ...)) is a plain Element, whatever its name; any other takes its interface
-from its tag, as HTML and SVG do. */
-fn element_prototype_for(vm: &Vm, node: usize, tag: &str) -> u32 {
+/** Namespace and local name select independent HTML/SVG prototype chains; other namespaces use Element. */
+fn element_prototype_for(vm: &mut Vm, node: usize, tag: &str) -> u32 {
     let ids = &realm().ids;
-    let null_namespace = vm
-        .page
-        .state
-        .element_ns
-        .get(&node)
-        .is_some_and(|record| record.namespace.is_none());
-    if null_namespace {
-        return ids.element_prototype;
+    match vm.page.element_namespace(node).as_deref() {
+        Some(namespaces::SVG_NAMESPACE) => {
+            let local = vm.page.element_local_name(node);
+            super::interfaces::svg_prototype_for(&local).unwrap_or(ids.element_prototype)
+        }
+        Some(HTML_NAMESPACE) => {
+            super::interfaces::prototype_for(tag).unwrap_or(ids.html_element_prototype)
+        }
+        _ => ids.element_prototype,
     }
-    super::interfaces::prototype_for(tag).unwrap_or(ids.html_element_prototype)
 }
 
-/** An element in the null namespace is a plain Element. Its wrapper was made before the namespace
-was recorded, so it is relinked here; a custom element keeps its class, which the wrapper got first. */
-fn relink_null_namespace(vm: &mut Vm, node: usize) -> Res<()> {
-    let null_namespace = vm
-        .page
-        .state
-        .element_ns
-        .get(&node)
-        .is_some_and(|record| record.namespace.is_none());
-    let wrapper = vm.page.state.wrappers.get(&node).copied();
-    if let (true, Some(id)) = (null_namespace, wrapper) {
-        vm.set_proto(id, Some(realm().ids.element_prototype))?;
+/** Creation initially wraps before recording its namespace; relink foreign wrappers without replacing HTML custom classes. */
+fn relink_namespace(vm: &mut Vm, node: usize) -> Res<()> {
+    let tag = vm.page.tag(node);
+    if vm.page.element_namespace(node).as_deref() == Some(HTML_NAMESPACE)
+        && !matches!(tag.as_str(), "svg" | "math")
+    {
+        return Ok(());
+    }
+    if let Some(id) = vm.page.state.wrappers.get(&node).copied() {
+        let prototype = element_prototype_for(vm, node, &tag);
+        vm.set_proto(id, Some(prototype))?;
     }
     Ok(())
 }
@@ -1549,7 +1546,7 @@ fn create_element_call(vm: &mut Vm, call: &Call, namespaced: bool) -> Res<JsValu
     let value = components::create_element(vm, &qualified, &options)?;
     if let Some(node) = node_of(vm, &value) {
         vm.page.set_element_namespace(node, record);
-        relink_null_namespace(vm, node)?;
+        relink_namespace(vm, node)?;
         if let Some(document) = node_of(vm, &call.this).filter(|document| *document != DOCUMENT) {
             vm.page.state.owners.insert(node, document);
         }

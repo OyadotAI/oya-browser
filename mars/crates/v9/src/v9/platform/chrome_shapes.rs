@@ -182,6 +182,7 @@ pub(super) fn install(b: &mut Builder) {
             b.global(alias, *ctor);
         }
     }
+    super::interfaces::install_svg_shapes(&known);
     super::chrome_env::navigator_objects(b, &known);
     for shape in &all {
         if let Some((ctor, proto)) = known.get(shape.name) {

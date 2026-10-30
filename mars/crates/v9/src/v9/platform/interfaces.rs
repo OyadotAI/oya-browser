@@ -6,6 +6,8 @@
  * have, which blanked every `data` and `text` binding while all elements shared one prototype.
  */
 use super::dom;
+mod svg;
+pub(super) use svg::{install_shapes as install_svg_shapes, prototype_for as svg_prototype_for};
 #[path = "popover.rs"]
 pub(super) mod popover;
 #[path = "reflect.rs"]
@@ -436,10 +438,20 @@ const INTERFACES: &[Interface] = &[
         table: reflect::TABLE_ROW,
         ..interface("HTMLTableRowElement", &["tr"])
     },
-    // SVG keeps the width and height it had on the shared prototype, so `svg.width` reads stay.
+    // SVG prototypes must never alias HTMLElement: shape completion adds readonly SVG members.
     Interface {
+        parent: Some("Element"),
+        methods: &["focus", "blur"],
+        ..interface("SVGElement", &[])
+    },
+    Interface {
+        parent: Some("SVGElement"),
+        ..interface("SVGGraphicsElement", &[])
+    },
+    Interface {
+        parent: Some("SVGGraphicsElement"),
         reflected: &["width", "height"],
-        ..interface("SVGSVGElement", &["svg"])
+        ..interface("SVGSVGElement", &[])
     },
 ];
 
@@ -464,7 +476,8 @@ pub(super) fn prototype_for(tag: &str) -> Option<u32> {
 
 /** Build each interface's prototype, inheriting HTMLElement.prototype, and its constructor. */
 pub(super) fn install(b: &mut Builder, html: u32) {
-    let mut made: BTreeMap<&'static str, u32> = BTreeMap::new();
+    let mut made: BTreeMap<&'static str, u32> =
+        BTreeMap::from([("Element", b.ids.element_prototype)]);
     let mut tags = BTreeMap::new();
     let mut registry = reflect::Registry::default();
     registry.define(b, html, reflect::HTML_ELEMENT);

@@ -1278,8 +1278,6 @@ fn global_object(b: &mut Builder) {
         "HTMLBodyElement",
         "HTMLHtmlElement",
         "HTMLTemplateElement",
-        "SVGElement",
-        "SVGGraphicsElement",
         "CharacterData",
         "Attr",
     ] {
