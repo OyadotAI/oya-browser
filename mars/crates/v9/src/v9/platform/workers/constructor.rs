@@ -10,6 +10,11 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.args.is_empty() {
         return Err(vm.type_error("Worker requires a script URL"));
     }
+    if vm.page.environment.worker_name.is_some()
+        && vm.page.environment.worker_depth.max(1) >= WORKER_DEPTH
+    {
+        return Err(vm.unsupported_error("The dedicated worker nesting limit was reached"));
+    }
     let text = vm.to_text(&call.arg(0))?;
     let base = url::Url::parse(&vm.page.environment.url)
         .map_err(|_| vm.dom_exception("SecurityError", "Invalid worker origin"))?;

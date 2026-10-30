@@ -14,9 +14,7 @@ impl Runtime {
         } else if !worker.modules.pending.is_empty() {
             self.worker_modules(worker, until)?;
             json!({"kind":"modules"})
-        } else if worker.ready
-            && let Some(event) = worker.inbox.pop_front()
-        {
+        } else if let Some(event) = worker.next_event() {
             json!({"kind":"event","event":event})
         } else if !worker.requests.is_empty() {
             let mut responses = Vec::new();
@@ -63,7 +61,7 @@ impl Runtime {
     pub(super) fn worker_effects(
         &mut self,
         page: &mut Page,
-        id: u32,
+        owner: &[u32],
         worker: &mut Context,
         execution: Execution,
     ) -> EngineResult<bool> {
@@ -82,6 +80,8 @@ impl Runtime {
         let mut closed = worker.environment.worker_module
             && !worker.ready
             && !execution.effects.worker_errors.is_empty();
+        let (id, parent) = owner.split_last().expect("worker has a native owner path");
+        let mut commands = Vec::new();
         for command in execution.effects.worker_commands {
             match command {
                 WorkerCommand::Post {
@@ -90,38 +90,25 @@ impl Runtime {
                     ports,
                     moved_ports,
                 } => {
-                    self.worker_links(page, id, &ports, &moved_ports)?;
-                    let dead: Vec<_> = ports
-                        .iter()
-                        .filter(|link| !page.scripting.workers.links.contains_key(link))
-                        .copied()
-                        .collect();
-                    enqueue(
-                        &mut page.scripting.workers,
-                        PageEvent::WorkerMessage { id, data, ports },
-                    )?;
-                    for link in dead {
-                        enqueue(&mut page.scripting.workers, PageEvent::PortClose { link })?;
-                    }
+                    page.scripting
+                        .workers
+                        .post(owner, parent, *id, data, ports, moved_ports)?;
                 }
                 WorkerCommand::Terminate { id: 0 } => closed = true,
-                _ => return Err(EngineError::invalid("Invalid nested worker effect.")),
+                command => commands.push(command),
             }
         }
+        if !closed {
+            page.scripting.workers.append_from(owner, commands)?;
+        }
         for message in execution.effects.port_messages {
-            if page.scripting.workers.links.get(&message.link) == Some(&id) {
-                enqueue(
-                    &mut page.scripting.workers,
-                    PageEvent::PortMessage {
-                        link: message.link,
-                        data: message.data,
-                    },
-                )?;
+            if !page.scripting.workers.port(owner, message.clone())? {
+                worker.port_outbox.push(message);
             }
         }
         for link in execution.effects.port_closes {
-            if page.scripting.workers.close_link(link, Some(id)) {
-                enqueue(&mut page.scripting.workers, PageEvent::PortClose { link })?;
+            if !page.scripting.workers.close_port(owner, link)? {
+                worker.port_closes.push(link);
             }
             worker.inbox.retain(|event| !matches!(event, PageEvent::PortMessage { link: value, .. } if *value == link));
         }
@@ -137,7 +124,7 @@ impl Runtime {
             } else {
                 &error
             };
-            self.worker_error(page, id, message)?;
+            self.worker_error(page, parent, *id, message)?;
         }
         Ok(closed)
     }

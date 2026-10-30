@@ -193,6 +193,16 @@ checks. Inherited CSP host sources match against the creator origin while URL
 resolution and import.meta retain the actual Blob address. Cross-context registry
 sharing, imported Blob dependencies and Blob fetch/image consumers remain unavailable.
 
+Dedicated workers can create one nested worker level. A single page scheduler
+routes bounded owner paths rather than treating realm-local handles as globally
+unique. Pending and live workers share the six-worker admission ceiling; existing
+task/byte limits and the seven-context residency ceiling are unchanged. Each
+worker loads through its creator's policy/base and the true root partition.
+Parent/child messages and port endpoints retain ownership, initialization queues
+and top-level-await continuations. Termination retires descendants and pending
+sources recursively. Deeper nesting and retransferring already linked worker
+ports remain explicit refusals.
+
 IntersectionObserver owns bounded, serialized viewport-root registrations in V9,
 using actual client boxes, root margins, thresholds and a dedicated asynchronous
 record queue. Limits are 64 observers, 256 aggregate targets, 512 queued records

@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Dedicated workers now support one nested level, with page-owned bounded owner
+paths, parent/child messages and ports, creator-policy source loading, shared
+pending/live admission and recursive termination. Existing worker task/byte and
+resident-context limits remain unchanged. Child replies can resume a parent's
+top-level await while early owner-global messages stay queued. Deeper nesting
+and retransferring linked worker ports remain explicit refusals. This code-first
+slice has not been run through tests or QA; its combined build is pending.
+
 SVG-string Path2D construction now feeds real retained Canvas geometry through
 a shared Core parser, also used by Eye through its existing facade. Canvas keeps
 the completed prefix of malformed syntax; numeric and quota errors still fail.
@@ -265,7 +273,7 @@ It was subsequently launched on 2026-10-30 at the maintainer's request.
 No QA, new test execution or Google retest was performed in this batch.
 
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas compositing/SVG Path2D and broader image sources, nested workers,
+Canvas compositing and broader image sources, deeper worker trees,
 broader frame interaction and DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded
@@ -286,7 +294,7 @@ timestamp during execution. Merely exposing interface names cannot provide these
 behaviors. The implementation work below closes specific differences without
 claiming equivalence across either browser.
 
-## Scope and evidence
+## Initial milestone scope and historical evidence
 
 PM scoped the first milestone to immediate frame identity/routing and worker
 diagnostics, followed by Canvas state/transforms and ImageData/canvas copying.
@@ -296,7 +304,11 @@ and native text rendering. Module/blob/nested workers, nested scripted frames,
 general cross-realm DOM, full Canvas paths/compositing, decoded image provenance,
 WebGL/WebGPU and broad web-platform conformance remain outside these milestones.
 
-| Area | Implemented and tested | Remaining limits |
+The table below records the initial milestone, before the subsequent code-first
+expansion above. Its tested coverage must not be read as validation of later
+implementations.
+
+| Area | Initially implemented and tested | Limits at that milestone |
 | --- | --- | --- |
 | Frame directory | Indexed/named lookup, self identity, duplicate-name precedence, static/dynamic hidden frames | Immediate children; broader WindowProxy reflection remains incomplete |
 | Frame lifecycle | Stable context on navigation, retirement on detach/reinsert, queued-document fencing | Full same-origin cross-realm DOM and nested trees |

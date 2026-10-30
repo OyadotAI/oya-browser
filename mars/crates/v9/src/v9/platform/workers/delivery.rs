@@ -111,7 +111,8 @@ pub(in crate::v9) fn error(vm: &mut Vm, id: u32, message: &str) -> Res<()> {
         .expect("event object");
     vm.put(event, "message", JsValue::string(message)?)?;
     if events::dispatch(vm, target, event)? {
-        vm.report_error(&JsValue::string(message)?);
+        let error = JsValue::string(message)?;
+        report_exception(vm, &error)?;
     }
     Ok(())
 }

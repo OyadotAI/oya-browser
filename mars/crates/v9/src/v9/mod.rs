@@ -22,7 +22,7 @@ mod value;
 mod vm;
 mod web_worker;
 mod worker_clone;
-pub use platform::workers::{WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType};
+pub use platform::workers::{WORKER_DEPTH, WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType};
 pub use web_worker::ImportScriptsHost;
 pub use web_worker::{load_worker, resume_worker_modules};
 pub use worker_clone::{WORKER_MESSAGE_BYTES, WorkerData};
@@ -628,6 +628,8 @@ impl VmState {
             return Err(EngineError::invalid("Invalid Worker handles."));
         }
         if self.page.worker_imports.len() > platform::worker_global::imports::IMPORTS
+            || self.page.worker_depth > WORKER_DEPTH
+            || self.page.worker_name.is_none() && self.page.worker_depth != 0
             || self
                 .page
                 .worker_imports
@@ -1225,8 +1227,14 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
+    if environment.worker_depth > WORKER_DEPTH
+        || environment.worker_name.is_none() && environment.worker_depth != 0
+    {
+        return Err(EngineError::invalid("Invalid worker nesting profile."));
+    }
     if state.page.initialized
         && (state.page.worker_name != environment.worker_name
+            || state.page.worker_depth != environment.worker_depth
             || state.page.worker_module != environment.worker_module)
     {
         return Err(EngineError::invalid(
@@ -1377,6 +1385,7 @@ fn initialize_page(vm: &mut Vm) {
     let environment = &vm.page.environment;
     state.identity = identity;
     state.worker_name = environment.worker_name.clone();
+    state.worker_depth = environment.worker_depth;
     state.worker_module = environment.worker_module;
     state.charset = charset;
     state.epoch = environment.time_origin_ms;

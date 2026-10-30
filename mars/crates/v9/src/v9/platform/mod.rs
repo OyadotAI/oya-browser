@@ -262,6 +262,8 @@ pub enum DomLevel {
 pub struct PageEnvironment {
     /// A dedicated worker has its own global profile, with no Window or document capabilities.
     pub worker_name: Option<String>,
+    /// Native worker nesting level; zero retains the legacy first-level worker profile.
+    pub worker_depth: u8,
     /// Module workers use module entry evaluation and cannot call classic importScripts.
     #[serde(default)]
     pub worker_module: bool,
@@ -634,6 +636,7 @@ impl Default for PageEnvironment {
     fn default() -> Self {
         Self {
             worker_name: None,
+            worker_depth: 0,
             worker_module: false,
             locale: "en-US".into(),
             regexp_buffer_boundaries: false,
@@ -1154,6 +1157,9 @@ pub(in crate::v9) struct PageState {
     pub legacy_handlers: std::collections::BTreeSet<usize>,
     /// A saved context cannot be reopened with a different global authority profile.
     pub worker_name: Option<String>,
+    /// Saved nesting authority cannot be changed when a worker resumes.
+    #[serde(default)]
+    pub worker_depth: u8,
     /// Worker kind is immutable across saved-state restoration and module graph continuations.
     pub worker_module: bool,
     /** Each context owns real bounded pixels; detached state lives only while reachable. */

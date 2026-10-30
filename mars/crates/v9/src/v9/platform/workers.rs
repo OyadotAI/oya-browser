@@ -19,6 +19,8 @@ use std::sync::OnceLock;
 pub(in crate::v9) const HANDLES: usize = 64;
 /** One turn cannot enqueue unbounded cross-isolate tasks or messages. */
 pub const WORKER_TASKS: usize = 32;
+/** A document may own workers whose own dedicated children share the same native budget. */
+pub const WORKER_DEPTH: u8 = 2;
 static PROTOTYPE: OnceLock<u32> = OnceLock::new();
 
 /** The script grammar is fixed at construction and retained by the native worker owner. */

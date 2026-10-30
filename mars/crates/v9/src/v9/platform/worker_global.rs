@@ -30,6 +30,7 @@ const GLOBALS: &[&str] = &[
     "structuredClone",
     "MessageChannel",
     "MessagePort",
+    "Worker",
 ];
 /** Window exposes these implemented global functions with worker-compatible behavior. */
 const FUNCTIONS: &[&str] = &[
