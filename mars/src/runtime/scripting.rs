@@ -1298,6 +1298,7 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         headers.push(("content-type".into(), TEXT_BODY_TYPE.into()));
     }
     Some(ScriptRequest {
+        request_id: Some(request.id),
         raw_response: request.kind == "fetch",
         url: Url::parse(&request.url).ok()?,
         method,

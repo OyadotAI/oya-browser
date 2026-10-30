@@ -262,6 +262,7 @@ impl Runtime {
             return Ok(None);
         }
         let script = ScriptRequest {
+            request_id: None,
             raw_response: false,
             worker_policy: None,
             url,

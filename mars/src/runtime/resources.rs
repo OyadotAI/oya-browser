@@ -9,6 +9,9 @@ use serde_json::json;
 use std::time::{Instant, SystemTime};
 use url::Url;
 
+mod request_diagnostics;
+use request_diagnostics::{FailureStage, RequestDiagnostic};
+
 /** What a redirect response does to an acquisition. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Redirects {
@@ -47,17 +50,36 @@ impl Runtime {
     itself). */
     pub(super) fn acquire_with(
         &mut self,
-        mut request: WebRequest,
+        request: WebRequest,
         deadline: Instant,
         initiator: Option<Url>,
         top_level: bool,
         redirects_policy: Redirects,
         credentials: bool,
     ) -> EngineResult<Acquired> {
-        let grants = self
-            .web_origins
-            .clone()
-            .ok_or_else(|| EngineError::unsupported("Forms require desktop networking."))?;
+        self.acquire_diagnosed(
+            request,
+            deadline,
+            initiator,
+            top_level,
+            redirects_policy,
+            credentials,
+            None,
+        )
+    }
+
+    /** Preserve the original native failure before unsafe-submission recovery hides its cause. */
+    fn acquire_diagnosed(
+        &mut self,
+        mut request: WebRequest,
+        deadline: Instant,
+        initiator: Option<Url>,
+        top_level: bool,
+        redirects_policy: Redirects,
+        credentials: bool,
+        diagnostic: Option<(RequestDiagnostic, FailureStage)>,
+    ) -> EngineResult<Acquired> {
+        let started = Instant::now();
         let mut admitted_unsafe = false;
         let mut diagnostics = Vec::new();
         // Who caused the request drives Sec-Fetch-Site, Origin and Referer; typed URLs have none.
@@ -65,6 +87,10 @@ impl Runtime {
             request.initiator = initiator.as_ref().map(Url::to_string);
         }
         let result = (|| {
+            let grants = self
+                .web_origins
+                .clone()
+                .ok_or_else(|| EngineError::unsupported("Forms require desktop networking."))?;
             for redirects in 0..=REDIRECTS {
                 // A DevTools client that paused this navigation decides its first hop.
                 let intercepted = (redirects == 0 && top_level)
@@ -164,7 +190,12 @@ impl Runtime {
             }
             Err(EngineError::unsupported("Redirect limit exceeded."))
         })();
-        result.map_err(|error| if admitted_unsafe { uncertain() } else { error })
+        result.map_err(|error| {
+            if let Some((diagnostic, stage)) = diagnostic {
+                diagnostic.error(started, stage, &error);
+            }
+            if admitted_unsafe { uncertain() } else { error }
+        })
     }
 }
 
@@ -452,6 +483,8 @@ impl Credentials {
 
 /// One script request, as parsed from what the page asked for.
 pub(super) struct ScriptRequest {
+    /// Native fetch/XHR identity correlates opt-in diagnostics without storing page addresses.
+    pub request_id: Option<u32>,
     /// Fetch body readers consume raw bytes; modules and legacy XHR retain their decoding rules.
     pub raw_response: bool,
     /// The current hop's URL.
@@ -499,11 +532,19 @@ impl Runtime {
         let include = request.credentials == Credentials::Include;
         let mut flow = cors::Flow::new(base.origin(), request.mode);
         for redirects in 0..=REDIRECTS {
+            let diagnostic = RequestDiagnostic::new(base, &request);
             if request.worker_policy.as_ref().is_some_and(|policy| {
                 !super::csp::allows_connect(&policy.csp, &policy.base, &request.url)
-            }) || !flow.enter(&request.url)
-                || !self.preflighted(base, &request, &flow, preflights, until)?
-            {
+            }) {
+                diagnostic.refused(FailureStage::Policy);
+                return Ok(ScriptAnswer::Failed);
+            }
+            if !flow.enter(&request.url) {
+                diagnostic.refused(FailureStage::Mode);
+                return Ok(ScriptAnswer::Failed);
+            }
+            if !self.preflighted(base, &request, &flow, preflights, until)? {
+                diagnostic.refused(FailureStage::Preflight);
                 return Ok(ScriptAnswer::Failed);
             }
             let first = redirects == 0;
@@ -514,12 +555,14 @@ impl Runtime {
             if tainting == cors::Tainting::Cors
                 && !cors::allows(&response.headers, &flow.serialized(), include)
             {
+                diagnostic.refused(FailureStage::Cors);
                 return Ok(ScriptAnswer::Failed);
             }
             if !REDIRECT_STATUSES.contains(&response.status) {
                 return Ok(answer(response, tainting, include));
             }
             let Some(next) = self.next_hop(&request.url, &response) else {
+                diagnostic.refused(FailureStage::Redirect);
                 return Ok(ScriptAnswer::Failed);
             };
             flow.redirect(&request.url, &next);
@@ -532,6 +575,7 @@ impl Runtime {
             }
             request.url = next;
         }
+        RequestDiagnostic::new(base, &request).refused(FailureStage::RedirectLimit);
         Ok(ScriptAnswer::Failed)
     }
 
@@ -571,7 +615,10 @@ impl Runtime {
             }),
             ..WebRequest::get(request.url.as_str())
         };
-        let Some(response) = self.script_send(base, web, false, until)? else {
+        let diagnostic = RequestDiagnostic::new(base, request);
+        let Some(response) =
+            self.script_send(base, web, false, until, diagnostic, FailureStage::Preflight)?
+        else {
             return Ok(false);
         };
         let Some(allowance) = cors::preflight(response.status, &response.headers, &origin, include)
@@ -619,7 +666,14 @@ impl Runtime {
         if first && let Some(answer) = super::devtools::intercept(&mut web) {
             return answer.map(Some);
         }
-        self.script_send(base, web, cookies, until)
+        self.script_send(
+            base,
+            web,
+            cookies,
+            until,
+            RequestDiagnostic::new(base, request),
+            FailureStage::Acquire,
+        )
     }
 
     /** Send one script hop; an egress refusal or network failure is None, never a detail the
@@ -630,18 +684,26 @@ impl Runtime {
         web: WebRequest,
         cookies: bool,
         until: Instant,
+        diagnostic: RequestDiagnostic,
+        stage: FailureStage,
     ) -> EngineResult<Option<WebResponse>> {
-        match self.acquire_with(
+        match self.acquire_diagnosed(
             web,
             until,
             Some(base.clone()),
             false,
             Redirects::Return,
             cookies,
+            Some((diagnostic, stage)),
         ) {
             Ok(acquired) => Ok(Some(acquired.response)),
-            Err(error) if error.service.is_some() || error.code == "control_denied" => Err(error),
-            Err(_) => Ok(None),
+            Err(error) => {
+                if error.service.is_some() || error.code == "control_denied" {
+                    Err(error)
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
