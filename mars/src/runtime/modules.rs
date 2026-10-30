@@ -262,6 +262,7 @@ impl Runtime {
             return Ok(None);
         }
         let script = ScriptRequest {
+            raw_response: false,
             worker_policy: None,
             url,
             method: Method::Get,

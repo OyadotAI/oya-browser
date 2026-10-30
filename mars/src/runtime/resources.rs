@@ -452,6 +452,8 @@ impl Credentials {
 
 /// One script request, as parsed from what the page asked for.
 pub(super) struct ScriptRequest {
+    /// Fetch body readers consume raw bytes; modules and legacy XHR retain their decoding rules.
+    pub raw_response: bool,
     /// The current hop's URL.
     pub url: Url,
     /// Any method a script may send; only GET and HEAD are safe.
@@ -600,6 +602,7 @@ impl Runtime {
             .then(|| flow.serialized());
         let mut web = WebRequest {
             method: request.method.clone(),
+            raw_response: request.raw_response,
             top_level: request
                 .worker_policy
                 .as_ref()

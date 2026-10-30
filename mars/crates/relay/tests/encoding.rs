@@ -154,3 +154,40 @@ fn malformed_and_unknown_codings_are_refused() {
         );
     }
 }
+
+/** Fetch retains transfer-decoded bytes even when the declared charset would reinterpret them. */
+#[test]
+fn raw_fetch_bodies_bypass_text_charset_decoding() {
+    let body = gzip(&[0, 255, 128]);
+    let server = Server::start(move |_, _| {
+        let mut response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=windows-1252\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+        response.extend_from_slice(&body);
+        response
+    });
+    let request = WebRequest {
+        destination: mars_relay::Destination::Empty,
+        raw_response: true,
+        ..WebRequest::get(&server.url("/"))
+    };
+    let response = Prepared::connect(request, &server.grants(), REMAINING_MS)
+        .unwrap()
+        .transmit()
+        .unwrap();
+    assert!(response.raw_data);
+    assert_eq!(response.source, "AP+A");
+    assert_eq!(response.charset, None);
+}
+
+/** A faulty coordinator cannot opt navigations or image fetches into the script body contract. */
+#[test]
+fn raw_response_admission_is_limited_to_actual_script_fetches() {
+    let mut request = WebRequest {
+        raw_response: true,
+        ..WebRequest::get("https://example.test/")
+    };
+    assert!(request.validate().is_err());
+    request.destination = mars_relay::Destination::Empty;
+    assert!(request.validate().is_ok());
+    request.image = true;
+    assert!(request.validate().is_err());
+}

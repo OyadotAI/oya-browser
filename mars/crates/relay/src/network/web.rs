@@ -422,12 +422,12 @@ fn finish(
     let declared = charset
         .as_deref()
         .and_then(mars_core::http::encoding_for_label)
-        .filter(|_| !image_data && !download)
+        .filter(|_| !image_data && !download && !request.raw_response)
         .map(str::to_owned);
     Ok(WebResponse {
         url: url.into(),
         status,
-        source: if image_data || download {
+        source: if image_data || download || request.raw_response {
             base64(&body)
         } else if matches!(
             request.destination,
@@ -438,6 +438,7 @@ fn finish(
             mime::decode(body, charset.as_deref())?
         },
         image_data,
+        raw_data: request.raw_response,
         mime,
         location: headers.get("location").cloned(),
         set_cookies,

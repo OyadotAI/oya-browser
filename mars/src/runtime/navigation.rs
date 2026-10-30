@@ -347,6 +347,7 @@ impl Runtime {
                         .ok_or_else(|| EngineError::service("network", false))?
                         .into(),
                     image_data: false,
+                    raw_data: false,
                     url: request.url,
                     status: 200,
                     mime: "text/html".into(),

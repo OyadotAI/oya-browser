@@ -15,6 +15,7 @@ fn response(url: &Url, allow: Option<&str>, credentials: bool) -> WebResponse {
         status: 200,
         source: String::new(),
         image_data: true,
+        raw_data: false,
         mime: "image/png".into(),
         location: None,
         set_cookies: Vec::new(),

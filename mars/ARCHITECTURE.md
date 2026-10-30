@@ -223,6 +223,14 @@ Already-running synchronous Relay I/O is not newly interrupted. Blob XHR,
 cross-context registry sharing, streaming, and full timeout/live-any signal
 semantics remain unfinished.
 
+HTTP fetch opts into a script-only raw response contract at Relay. Transfer- and
+content-decoded bytes cross the private wire as bounded base64, then enter the
+same byte-preserving Response path after native CORS admission. Redirects retain
+this contract, and cached raw bodies select representation at delivery. XHR and
+module requests keep their prior charset decoding. Fetch text/JSON readers apply
+UTF-8 independently of MIME charset. Image/navigation/preflight requests cannot
+select the raw script response flag, and existing network/VM response caps remain.
+
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally
 unique. Pending and live workers share the six-worker admission ceiling; existing

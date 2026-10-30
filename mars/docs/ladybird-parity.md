@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+HTTP fetch now requests exact decoded bytes from Relay instead of forcing them
+through a text charset decoder. Bounded base64 crosses the private wire, then
+the native CORS coordinator admits bytes into Response storage. Fetch text/JSON
+still decodes UTF-8; legacy XHR/module charset handling remains separate. Raw
+response admission excludes navigation, image and preflight roles, and existing
+network/VM byte caps are retained. Focused Relay/native regressions cover binary
+bytes, charset separation and CORS/opaque refusal; they remain unrun. The combined
+production build is pending.
+
 The remaining five full-surface Porter–Duff operators plus lighter are now
 implemented. Empty/offcanvas source geometry still supplies transparent pixels
 where the operator requires it, while a source-crop-empty image remains an

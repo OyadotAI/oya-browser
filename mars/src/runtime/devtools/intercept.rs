@@ -132,6 +132,7 @@ fn synthetic(url: &str, fulfill: Fulfill) -> EngineResult<WebResponse> {
         status: fulfill.status,
         source,
         image_data: false,
+        raw_data: false,
         mime,
         location: header("location"),
         set_cookies: headers

@@ -1249,6 +1249,7 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         headers.push(("content-type".into(), TEXT_BODY_TYPE.into()));
     }
     Some(ScriptRequest {
+        raw_response: request.kind == "fetch",
         url: Url::parse(&request.url).ok()?,
         method,
         body,
@@ -1291,24 +1292,34 @@ fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<St
     String::from_utf8(decoded).ok()
 }
 
-/** A readable final response, handed to the page if it is text within VM_RESPONSE_BYTES, with
-only the headers the CORS rules expose. */
+/** Admit exact fetch bytes or legacy decoded text within VM_RESPONSE_BYTES, exposing only
+the headers the CORS rules permit after the response passes native admission. */
 fn readable(
     id: u32,
     response: crate::network::WebResponse,
     headers: Vec<(String, String)>,
 ) -> HostResponse {
-    if response.image_data || response.download || response.source.len() > VM_RESPONSE_BYTES {
+    if response.image_data || response.download {
         return failed(id, FAILED_TO_FETCH);
     }
+    let (body, body_bytes) = if response.raw_data {
+        let Ok(bytes) = super::images::decode_base64_within(&response.source, VM_RESPONSE_BYTES) else {
+            return failed(id, FAILED_TO_FETCH);
+        };
+        (String::new(), bytes)
+    } else if response.source.len() <= VM_RESPONSE_BYTES {
+        (response.source, Vec::new())
+    } else {
+        return failed(id, FAILED_TO_FETCH);
+    };
     HostResponse {
         id,
         status: response.status,
         status_text: String::new(),
         url: response.url,
         headers,
-        body: response.source,
-        body_bytes: Vec::new(),
+        body,
+        body_bytes,
         error: None,
     }
 }
