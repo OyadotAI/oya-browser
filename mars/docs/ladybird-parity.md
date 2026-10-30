@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The metadata warning came from separate fixed 256-record/1 MiB limits. Metadata
+now uses 32,256 records (reserving 512 script slots) and an 8 MiB shared tag/name/
+value/text budget, with complete records and explicit refusal beyond the bound.
+Eye restored documents and V9 environments validate the same accounting. Fresh
+head insertion avoids an existing quadratic bootstrap scan. The unchanged frame
+ceiling is proved using one serialized state object per request/response frame
+plus explicit record overhead; it no longer double-counts a second nonexistent
+state object. Six focused regressions are added unrun; combined build pending.
+
 After the user reported an invalid interactive target, source tracing found that
 painted spans/icons inside native links/buttons were selected as event targets but
 rejected as default-action targets. Native activation now resolves the nearest

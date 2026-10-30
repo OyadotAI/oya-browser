@@ -3,6 +3,8 @@ use crate::{
     constants::{DOCUMENT_DEPTH, ID_BYTES, NODES, SCRIPT_BYTES, TEXT_BYTES},
     protocol::{EngineError, EngineResult},
 };
+mod metadata;
+pub use metadata::{metadata_attribute_bytes, metadata_element_bytes, validate_metadata};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -43,7 +45,7 @@ pub struct MetadataElement {
     /// Author attributes as parsed.
     #[serde(default)]
     pub attributes: BTreeMap<String, String>,
-    /// Raw text content (style sheet, title, data block); empty when it exceeded TEXT_BYTES.
+    /// Complete raw text (style sheet, title, data block), charged to the shared metadata budget.
     #[serde(default)]
     pub text: String,
     /// Whether it sits in the body rather than the head. A data block inside an element is that

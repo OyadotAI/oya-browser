@@ -1252,6 +1252,7 @@ fn session<'h>(
     }
     storage.validate()?;
     environment.handler_policy.validate()?;
+    mars_core::dom::validate_metadata(&environment.metadata, &environment.script_attributes)?;
     platform::clock::validate(0.0, 0.0, environment.time_origin_ms)?;
     platform::frames::validate_routes(environment, document.as_ref())?;
     platform::frame_directory::validate(environment)?;

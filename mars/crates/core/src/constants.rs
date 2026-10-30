@@ -438,15 +438,19 @@ const _: () = assert!(IMAGE_BYTES <= IMAGE_TOTAL_BYTES && IMAGE_TOTAL_BYTES / 3 
 const _: () = assert!(STATEMENTS * 64 < FRAME_BYTES);
 /* A script fetched over the network pipe is bounded by the body limit before SCRIPT_BYTES. */
 const _: () = assert!(SCRIPT_BYTES <= HTML_BYTES);
-/* The script projection, every escaped source, the escaped node text, the VM state, storage
-and one step's escaped responses cross in one V9 frame. */
+/* The script projection, escaped sources/text/metadata, storage and one step's responses fit.
+PageCall carries one Option<VmState>, and Execution carries one result state in a DIFFERENT
+frame. VmState is serialized as an object, not a JSON string, so its already-encoded size is
+charged once (the old factor of two counted request and reply together). Resident PageCall
+sends no state at all. Actual frame and state writers independently enforce the unchanged caps. */
 const _: () = assert!(
     NODES * NODE_WIRE_BYTES
         + 6 * SCRIPT_TOTAL_BYTES
         + 6 * MODULE_BYTES
         + 6 * STATIC_TEXT_TOTAL_BYTES
         + 6 * METADATA_BYTES
-        + 2 * VM_STATE_BYTES
+        + METADATA_ELEMENTS * METADATA_WIRE_BYTES
+        + VM_STATE_BYTES
         + 2 * STORAGE_AREA_BYTES
         + SCRIPT_CHANGE_BYTES
         + 6 * SCRIPT_REQUESTS_PER_STEP * VM_RESPONSE_BYTES
@@ -458,6 +462,8 @@ const _: () = assert!(SCRIPT_BYTES <= MODULE_BYTES && MODULES <= MODULE_BYTES);
 const _: () = assert!(VM_ENVIRONMENTS >= VM_FUNCTIONS);
 /* No single string can exceed what the live heap may hold. */
 const _: () = assert!(JS_STRING_UNITS <= JS_ENVIRONMENT_UNITS);
+/* UTF-8 metadata never needs more UTF-16 units than bytes when read as one JS string. */
+const _: () = assert!(METADATA_BYTES <= JS_STRING_UNITS);
 /* The styled Document crosses beside every escaped stylesheet in one document frame. */
 const _: () = assert!(
     NODES * NODE_WIRE_BYTES + 2 * HTML_BYTES + 6 * STATIC_TEXT_TOTAL_BYTES + 6 * STYLE_TOTAL_BYTES
@@ -536,11 +542,18 @@ pub const VM_DYNAMIC_BYTES: usize = 2 * 1024 * 1024;
 /// content detached (YouTube's app registers hundreds of templates while loading).
 pub const VM_DETACHED_NODES: usize = NODES;
 /// Metadata elements (`meta`, `link`, `style`, `title`, `base`, inert `script`) one page gives
-/// V9 as head records, leaving most of VM_DETACHED_NODES for the nodes scripts create.
-pub const METADATA_ELEMENTS: usize = 256;
-/// Bytes of attribute values and text all of one page's metadata elements carry to V9 together;
-/// past it an element keeps no text, or is left out when its attributes alone do not fit.
-pub const METADATA_BYTES: usize = 1024 * 1024;
+/// V9 as local records. Reserve room for every accepted executable script; html/head/body are
+/// virtual identities, not detached allocations. Later script-created nodes share the remaining cap.
+pub const METADATA_ELEMENTS: usize = VM_DETACHED_NODES - SCRIPT_COUNT;
+/// Aggregate UTF-8 bytes of metadata tags, attribute names/values and raw text, including parsed
+/// executable-script attributes. Half the HTML limit admits substantial inert JSON and styles;
+/// it also fits one JS string and the unchanged VM/frame budgets. Whole over-budget records are
+/// diagnosed and omitted rather than published with an invented empty textContent.
+pub const METADATA_BYTES: usize = HTML_BYTES / 2;
+/// Fixed JSON fields, punctuation, booleans and bounded parent/next identities of one metadata
+/// record fit 256 bytes. Attribute-map punctuation is covered by six times its nonempty names;
+/// all tag/name/value/text strings are charged separately with worst-case JSON escaping.
+pub const METADATA_WIRE_BYTES: usize = 256;
 /// Event listeners one page may register on nodes, the document and the window together.
 pub const VM_LISTENERS: usize = 512;
 /// Bytes of the `document.cookie` string the app supplies, and of one cookie a script writes.

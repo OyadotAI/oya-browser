@@ -57,6 +57,14 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Parser metadata shares an 8 MiB budget for tags, attribute names, values and text,
+including executable-script attributes. Up to 32,256 metadata records reserve
+512 script slots within the detached-node ceiling. Records are complete or omitted
+with an explicit diagnostic; restore and environment admission enforce the same
+rules. Metadata bootstrap appends known-fresh head entries without repeated full
+head scans. The 512 MiB wire and 64 MiB state caps remain unchanged: the V9 frame
+bound counts its single serialized state object and explicit record overhead.
+
 HTTP/1 connection leases belong to one exchange and are stopped and joined before
 the socket reenters the shared keep-alive pool, including replacement exchanges.
 Informational response heads share one bounded header budget and are consumed

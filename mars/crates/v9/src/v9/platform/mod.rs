@@ -154,7 +154,14 @@ impl Page<'_> {
         node: usize,
     ) -> EngineResult<()> {
         if !element.in_body {
-            return self.insert(HEAD, node, None).map(|_| ());
+            // These records were just allocated and cannot need adoption/removal. Avoid the
+            // generic insertion path's scan of all prior head nodes for each metadata element.
+            self.state.head.push(node);
+            if let Some(record) = self.state.detached.get_mut(&node) {
+                record.parent = Some(HEAD);
+            }
+            self.touch();
+            return Ok(());
         }
         let (parent, before) = match element.parent {
             Some(parent) if !self.is_projected(parent) => (BODY, None),
