@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Canvas setLineDash/getLineDash/lineDashOffset now retain genuine saved state and
+feed bounded dashed stroke geometry. Patterns are split in user space with
+per-subpath phase, closed-seam joining and round/square cap dots for zero-length
+dashes. Conversion is bounded to 128 input values and 256 canonical values;
+splitting admits at most 16,384 transitions and generated points before existing
+outline/raster limits. Process-accounted scratch and work admission precede
+painting. Focused regressions are being added but not run; the combined build
+is pending. Overflowing pattern sums and excessive tiny dashes fail explicitly.
+
 The existing offline Google worker timeout sample includes frame-proxy lookup
 and UTF-16 key allocation during ordinary JavaScript property reads. Worker
 contexts now skip the browsing-context lookup they cannot use, page reads reuse

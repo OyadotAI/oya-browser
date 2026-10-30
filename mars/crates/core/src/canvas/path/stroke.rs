@@ -1,5 +1,6 @@
 /** Polygon stroke outlines preserve construction-time geometry and draw-time pen transforms. */
 use super::*;
+mod dashes;
 
 /** Round outline tessellation stays below a quarter pixel chord error within admitted transforms. */
 const ROUND_ERROR: f64 = 0.25;
@@ -72,8 +73,23 @@ pub fn plan_stroke(
     style: StrokeStyle,
     transform: Affine,
 ) -> EngineResult<PathPlan> {
+    plan_stroke_dashed(size, path, style, transform, &DashStyle::default())
+}
+
+/** Dash splitting shares the ordinary cap/join rasterizer and preserves the stable solid-stroke API. */
+pub fn plan_stroke_dashed(
+    size: [u32; 2],
+    path: &Path,
+    style: StrokeStyle,
+    transform: Affine,
+    dash: &DashStyle,
+) -> EngineResult<PathPlan> {
     path.validate()?;
     style.validate()?;
+    dash.validate()?;
+    let period = dash.total()?;
+    let mut budget = dashes::Budget::default();
+    let _dash_scratch = dashes::reservation(period > 0.0)?;
     if !transform.finite() {
         return Err(EngineError::invalid("Invalid canvas stroke transform."));
     }
@@ -85,14 +101,15 @@ pub fn plan_stroke(
     };
     if let Some(inverse) = transform.inverse() {
         for subpath in &path.subpaths {
-            outline.subpath(subpath, style, inverse)?;
+            outline.subpath(subpath, style, inverse, dash, period, &mut budget)?;
         }
     }
     raster::contours(
         size,
         outline.contours.iter().map(Vec::as_slice),
         FillRule::Nonzero,
-    )
+    )?
+    .add_work(budget.work())
 }
 
 /** All polygons are wound the same way, so their nonzero fill is a union rather than repeated alpha. */
@@ -109,6 +126,9 @@ impl Outline {
         subpath: &Subpath,
         style: StrokeStyle,
         inverse: Affine,
+        dash: &DashStyle,
+        period: f64,
+        budget: &mut dashes::Budget,
     ) -> EngineResult<()> {
         if subpath.points.len() < 2 {
             return Ok(());
@@ -125,15 +145,53 @@ impl Outline {
         if subpath.closed && points.len() > 1 && points.first() == points.last() {
             points.pop();
         }
+        if period > 0.0 {
+            for run in dashes::split(&points, subpath.closed, dash, period, budget)? {
+                self.run(&run.points, run.closed, run.direction, style)?;
+            }
+            return Ok(());
+        }
+        self.run(&points, subpath.closed, [1.0, 0.0], style)
+    }
+
+    /** Each on-run uses joins internally and caps only at its actual dash endpoints. */
+    fn run(
+        &mut self,
+        points: &[Point],
+        closed: bool,
+        direction: Point,
+        style: StrokeStyle,
+    ) -> EngineResult<()> {
+        let mut points = points.to_vec();
+        points.dedup();
         if points.len() == 1 {
-            return if matches!(style.cap, LineCap::Round) && !subpath.closed {
-                self.circle(points[0], style.width / 2.0)
+            return if !closed {
+                self.dot(points[0], direction, style)
             } else {
                 Ok(())
             };
         }
-        self.segments(&points, subpath.closed, style)?;
-        self.joins(&points, subpath.closed, style)
+        self.segments(&points, closed, style)?;
+        self.joins(&points, closed, style)
+    }
+
+    /** Zero-length dashes retain their local direction so square caps rotate with the path. */
+    fn dot(&mut self, center: Point, direction: Point, style: StrokeStyle) -> EngineResult<()> {
+        let half = style.width / 2.0;
+        match style.cap {
+            LineCap::Butt => Ok(()),
+            LineCap::Round => self.circle(center, half),
+            LineCap::Square => {
+                let tangent = scaled(direction, half);
+                let normal = [-tangent[1], tangent[0]];
+                self.polygon(vec![
+                    add(add(center, tangent), normal),
+                    add(add(center, tangent), scaled(normal, -1.0)),
+                    add(add(center, scaled(tangent, -1.0)), scaled(normal, -1.0)),
+                    add(add(center, scaled(tangent, -1.0)), normal),
+                ])
+            }
+        }
     }
 
     /** Each segment supplies its rectangular ink; open endpoints supply caps once. */

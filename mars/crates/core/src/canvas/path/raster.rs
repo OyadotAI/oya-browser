@@ -20,6 +20,12 @@ pub struct PathPlan {
 }
 
 impl PathPlan {
+    /** Native dash preparation is charged together with raster work before backing pixels become mutable. */
+    pub(super) fn add_work(mut self, additional: usize) -> EngineResult<Self> {
+        self.work = self.work.checked_add(additional).ok_or_else(quota)?;
+        Ok(self)
+    }
+
     /** Charge edge sorting, scanline stepping and coverage before painting starts. */
     pub fn work(&self) -> usize {
         self.work

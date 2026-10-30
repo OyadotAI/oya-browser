@@ -2,6 +2,7 @@
 use super::*;
 mod arcs;
 mod curves;
+mod dashes;
 mod round_rect;
 pub(super) use round_rect::arguments as rounded_arguments;
 mod styles;
@@ -9,6 +10,7 @@ mod styles;
 /** Methods and properties are exposed only when their drawing behavior is implemented. */
 pub(super) fn install(b: &mut Builder, proto: u32) {
     styles::install(b, proto);
+    dashes::install(b, proto);
     arcs::install(b, proto);
     curves::install(b, proto);
     round_rect::install(b, proto);
@@ -124,7 +126,13 @@ fn paint(
     }
     let path = temporary.as_ref().unwrap_or(&state.path);
     let plan = if stroke {
-        limits::plan_stroke(size, path, state.drawing.pen, state.drawing.transform)?
+        limits::plan_stroke_dashed(
+            size,
+            path,
+            state.drawing.pen,
+            state.drawing.transform,
+            &state.drawing.dash,
+        )?
     } else {
         limits::plan_fill(size, path, rule)?
     }

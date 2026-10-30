@@ -119,8 +119,14 @@ while Canvas retains complete commands before syntax errors. Numeric/resource
 failures never become successful truncated paths. Source bytes, command groups,
 normalized segments and flattened points are independently bounded. Extreme
 use-time magnification can magnify the retained polygon and arc approximation
-error. CSS color and font parsing remain limited;
-dashes, other decoded-image formats, full compositing and text metrics, WebGL
+error. Dash styles retain bounded canonical patterns and signed offsets across
+save/restore/reset. Stroke planning splits inverse-transformed paths in user
+space, resets phase per subpath, joins closed seams and retains cap dots for
+zero-length dashes. Input/canonical patterns are capped at 128/256 values,
+split transitions and points at 16,384 each, followed by existing outline/raster
+limits. Scratch allocations share process accounting, and all work is admitted
+before bitmap mutation. CSS color and font parsing remain limited;
+other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
 

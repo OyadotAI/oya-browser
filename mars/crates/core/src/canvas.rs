@@ -9,7 +9,8 @@ mod raster;
 pub use affine::Affine;
 pub use clip::ClipMask;
 pub use path::{
-    FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle, paint_path, plan_fill, plan_stroke,
+    DASH_INPUTS, DASH_VALUES, DashStyle, FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle,
+    paint_path, plan_fill, plan_stroke, plan_stroke_dashed,
 };
 pub use pixels::Pixels;
 pub use pixels::Reservation as Allocation;

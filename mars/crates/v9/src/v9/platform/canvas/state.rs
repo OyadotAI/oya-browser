@@ -17,6 +17,8 @@ pub(in crate::v9) struct DrawingState {
     pub stroke: [u8; 4],
     /** Pen dimensions, caps and joins are saved independently from the current path. */
     pub pen: limits::StrokeStyle,
+    /** Canonical dash lists and offset follow save/restore and reset with the rest of the pen state. */
+    pub dash: limits::DashStyle,
     /** Measurement and glyph rasterization share this resolved bounded font. */
     pub font: Font,
     /** Pixel read/write deliberately bypasses this drawing-coordinate transform. */
@@ -36,6 +38,7 @@ impl Default for DrawingState {
             fill: [0, 0, 0, 255],
             stroke: [0, 0, 0, 255],
             pen: limits::StrokeStyle::default(),
+            dash: limits::DashStyle::default(),
             font: Font::default(),
             transform: Affine::IDENTITY,
             alpha: 1.0,
@@ -70,6 +73,7 @@ pub(super) fn install(b: &mut Builder, proto: u32) {
 /** Invalid serialized state cannot enter raster loops or grow a restored stack. */
 pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
     drawing.pen.validate()?;
+    drawing.dash.validate()?;
     let font = &drawing.font;
     if !drawing.transform.finite()
         || !drawing.alpha.is_finite()
