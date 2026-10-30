@@ -5,6 +5,7 @@ use super::shorthand::SIDES;
  * `unicode-bidi`, which `all` leaves alone, and custom properties. */
 pub(super) fn longhands() -> Vec<String> {
     let mut names: Vec<String> = ALL.iter().map(|name| name.to_string()).collect();
+    names.extend(super::transition::LONGHANDS.map(str::to_string));
     for side in SIDES {
         names.extend([
             format!("margin-{side}"),

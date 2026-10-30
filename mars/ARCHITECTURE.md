@@ -88,6 +88,16 @@ clipping paths, other decoded-image formats, full compositing and text metrics, 
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
 
+Eye retains bounded CSS transition metadata separately from authored opacity.
+Candidate-owned opacity timelines sample duration, delay, easing and interrupted
+or reversed transitions for HTML, body and ordinary nodes. Runtime seeds the
+initial cascade, updates timelines on recascade, and overlays transition values
+at native painting with priority over other sampled opacity effects. Background
+frames use the existing page clock and expensive-work throttle; continuing CSS
+transitions do not extend the JavaScript timer wake window. Other transition
+properties, events, discrete transitions and CSS animation API exposure remain
+unfinished.
+
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
 an independent child page. Runtime supplies bounded owner IDs to V9, which selects

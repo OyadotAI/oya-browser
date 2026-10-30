@@ -70,6 +70,8 @@ pub(super) struct Scripting {
     pub workers: super::workers::Workers,
     /// Complete sampled animation paint effects, separate from authored document styles.
     pub opacity_effects: Vec<crate::v9::OpacityEffect>,
+    /// CSS transition state belongs to the page candidate, independently of V9 animation state.
+    pub css_transitions: crate::document::OpacityTransitions,
     /// Actual image requests and retained decode admission for this page alone.
     pub image_loading: image_loading::Loading,
     /// Load stays pending across bounded slices while its image cohort still has work.
@@ -193,6 +195,7 @@ impl Default for Scripting {
             image_loading: image_loading::Loading::default(),
             load_pending: false,
             opacity_effects: Vec::new(),
+            css_transitions: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
             attempted_frame_owners: Default::default(),
@@ -232,13 +235,24 @@ impl Scripting {
     }
     /** Whether the page has script work waiting. */
     pub(super) fn pending(&self) -> bool {
-        self.loaded
-            && (self.scroll_pending
-                || self.next_timer_ms.is_some()
-                || !self.requests.is_empty()
-                || !self.image_loading.pending.is_empty()
-                || self.workers.pending()
-                || self.load_pending)
+        self.css_transitions.next_sample_ms(self.clock_ms).is_some()
+            || self.loaded
+                && (self.scroll_pending
+                    || self.next_timer_ms.is_some()
+                    || !self.requests.is_empty()
+                    || !self.image_loading.pending.is_empty()
+                    || self.workers.pending()
+                    || self.load_pending)
+    }
+
+    /** Native transition frames use their next sample time while expensive work stays throttled. */
+    fn tick_interval(&self) -> Duration {
+        self.css_transitions
+            .next_sample_ms(self.clock_ms)
+            .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
+            .unwrap_or(TICK_INTERVAL)
+            .min(TICK_INTERVAL)
+            .max(self.tick_cost)
     }
 }
 
@@ -517,6 +531,7 @@ impl Runtime {
             self.render_context,
         )?;
         page.styled = true;
+        super::animations::refresh_transitions(page)?;
         self.refresh_image_visibility(page);
         let restyled: std::collections::BTreeSet<usize> =
             crate::document::background_urls(&page.document, &page.url)
@@ -704,7 +719,14 @@ impl Runtime {
         // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
         let mut scroll = page.element_scroll.clone();
         scroll.extend(execution.effects.element_scroll.clone());
-        let display = self.render_effects(&styled, &scroll, &execution.effects.opacity_effects)?;
+        let mut transitions = page.scripting.css_transitions.clone();
+        transitions.update(&styled, page.scripting.clock_ms)?;
+        let effects = super::animations::combine_effects(
+            &execution.effects.opacity_effects,
+            &transitions,
+            page.scripting.clock_ms,
+        );
+        let display = self.render_effects(&styled, &scroll, &effects)?;
         Ok(boxes(&display))
     }
 
@@ -770,6 +792,7 @@ impl Runtime {
         virtual_end: f64,
         yield_now: &mut dyn FnMut() -> bool,
     ) -> EngineResult<bool> {
+        let previous_opacity = super::animations::paint_effects(&page.scripting);
         let mut changed = false;
         let advance_ms = (virtual_end - page.scripting.clock_ms).max(0.0);
         for step in 0..SETTLE_STEPS {
@@ -821,6 +844,7 @@ impl Runtime {
             }
         }
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
+        changed |= previous_opacity != super::animations::paint_effects(&page.scripting);
         changed |= self.run_workers(page, until)?;
         changed |= self.run_frame_pages(page, until, advance_ms)?;
         Ok(changed)
@@ -933,9 +957,14 @@ impl Runtime {
     pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
         let now = Instant::now();
         let due = self.page.as_ref().is_some_and(|page| {
-            (page.scripting.pending() || page.frames_pending())
+            ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
-                && now >= page.scripting.last_tick + TICK_INTERVAL.max(page.scripting.tick_cost)
+                || page
+                    .scripting
+                    .css_transitions
+                    .next_sample_ms(page.scripting.clock_ms)
+                    .is_some())
+                && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
             return false;
@@ -962,7 +991,13 @@ impl Runtime {
             * MS_PER_SECOND;
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
-        let changed = self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?;
+        let changed = if now < page.scripting.awake_until {
+            self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
+        } else {
+            let previous = super::animations::paint_effects(&page.scripting);
+            page.scripting.clock_ms = end;
+            previous != super::animations::paint_effects(&page.scripting)
+        };
         page.scripting.tick_cost = now.elapsed();
         if changed {
             self.commit_mutation(page)?;

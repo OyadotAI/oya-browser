@@ -48,6 +48,7 @@ impl ComputedStyle {
                 .iter()
                 .any(|value| !value.is_finite() || value.abs() > CSS_MAX_SCALAR)
             || !(0.0..=1.0).contains(&self.opacity)
+            || !self.transition.valid()
             || !self.font_size.is_finite()
             || !(self.font_size == 0.0
                 || (CSS_MIN_FONT_SIZE..=CSS_MAX_FONT_SIZE).contains(&self.font_size))

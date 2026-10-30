@@ -38,6 +38,9 @@ pub(super) fn apply(
     if super::animation::LONGHANDS.contains(&key) {
         return Ok(true);
     }
+    if super::transition::apply(&mut style.transition, key, value)? {
+        return Ok(true);
+    }
     if let Some((_, part)) = super::border::longhand(key) {
         super::border::check(part, value)?;
         return Ok(true);

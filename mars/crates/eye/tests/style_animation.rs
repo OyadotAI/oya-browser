@@ -136,7 +136,7 @@ fn a_finished_fade_out_hides_and_withdraws_nothing_it_should_not() {
 }
 
 #[test]
-fn transitions_are_ignored_without_diagnostics() {
+fn transition_declarations_are_retained_without_diagnostics() {
     let document = styled(
         "<p id=a>a</p>",
         "p{transition:opacity .2s;-webkit-transition:all 1s}",
@@ -147,6 +147,7 @@ fn transitions_are_ignored_without_diagnostics() {
             .iter()
             .all(|d| !d.contains("transition"))
     );
+    assert_eq!(by_id(&document, "a").style.transition.durations, vec![1000.0]);
 }
 
 #[test]

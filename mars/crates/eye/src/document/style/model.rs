@@ -165,6 +165,9 @@ pub struct ComputedStyle {
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
+    /// Authored transition lists remain separate from sampled paint opacity and do not inherit.
+    #[serde(skip_serializing_if = "super::TransitionStyle::is_initial")]
+    pub transition: super::TransitionStyle,
     /// Inherited base direction from the `dir` attribute; it maps start and end alignment.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub rtl: bool,
@@ -850,6 +853,7 @@ impl Default for ComputedStyle {
             min_width: None,
             min_width_percent: None,
             opacity: 1.0,
+            transition: super::TransitionStyle::default(),
             rtl: false,
             position: Position::Static,
             inset: [None; 4],

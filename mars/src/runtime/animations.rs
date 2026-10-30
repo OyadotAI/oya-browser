@@ -5,6 +5,46 @@ use crate::v9::{AnimationTarget, OpacityEffect};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
+/** Each cascade updates the candidate's transition timeline without altering authored styles. */
+pub(super) fn refresh_transitions(page: &mut super::page::Page) -> EngineResult<()> {
+    page.scripting
+        .css_transitions
+        .update(&page.document, page.scripting.clock_ms)
+}
+
+/** CSS transitions override other sampled animation opacity at the native paint boundary. */
+pub(super) fn paint_effects(scripting: &super::scripting::Scripting) -> Vec<OpacityEffect> {
+    combine_effects(
+        &scripting.opacity_effects,
+        &scripting.css_transitions,
+        scripting.clock_ms,
+    )
+}
+
+/** One effect per target retains strict native validation when animation sources overlap. */
+pub(super) fn combine_effects(
+    effects: &[OpacityEffect],
+    transitions: &crate::document::OpacityTransitions,
+    now_ms: f64,
+) -> Vec<OpacityEffect> {
+    let mut merged = effects
+        .iter()
+        .map(|effect| (effect.target.clone(), effect.value))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (target, value) in transitions.effects(now_ms) {
+        let target = match target {
+            crate::document::TransitionTarget::Html => AnimationTarget::Html,
+            crate::document::TransitionTarget::Body => AnimationTarget::Body,
+            crate::document::TransitionTarget::Node(id) => AnimationTarget::Node(id),
+        };
+        merged.insert(target, value);
+    }
+    merged
+        .into_iter()
+        .map(|(target, value)| OpacityEffect { target, value })
+        .collect()
+}
+
 /** The real tree and its two document wrappers bound all distinct paint targets. */
 const OPACITY_TARGETS: usize = crate::constants::NODES + DOCUMENT_WRAPPERS;
 /** Root and body styles are real paint ancestors without ordinary node identities. */
@@ -138,5 +178,64 @@ mod tests {
         ] {
             assert!(effective_document(&document, &effects).is_err());
         }
+    }
+
+    /** Native painting samples CSS transitions while retaining the authored destination value. */
+    #[test]
+    fn css_transition_samples_override_other_effects_without_mutating_cascade() {
+        let source = crate::document::parse("<p id=target>text</p>").unwrap();
+        let styled = |opacity| {
+            crate::document::compute_styles(
+                &source,
+                &[format!(
+                    "p{{opacity:{opacity};transition:opacity 1s linear}}"
+                )],
+            )
+            .unwrap()
+        };
+        let before = styled(0);
+        let after = styled(1);
+        let target = after
+            .nodes
+            .iter()
+            .find(|node| node.html_id == "target")
+            .unwrap()
+            .local_id;
+        let mut scripting = super::super::scripting::Scripting::default();
+        scripting.css_transitions.update(&before, 0.0).unwrap();
+        scripting.css_transitions.update(&after, 1000.0).unwrap();
+        scripting.clock_ms = 1500.0;
+        scripting.opacity_effects = vec![OpacityEffect {
+            target: AnimationTarget::Node(target),
+            value: 0.2,
+        }];
+        let effects = paint_effects(&scripting);
+        let effective = effective_document(&after, &effects).unwrap();
+        assert!(
+            (effective
+                .nodes
+                .iter()
+                .find(|node| node.local_id == target)
+                .unwrap()
+                .style
+                .opacity
+                - 0.5)
+                .abs()
+                < 0.001
+        );
+        assert_eq!(
+            after
+                .nodes
+                .iter()
+                .find(|node| node.local_id == target)
+                .unwrap()
+                .style
+                .opacity,
+            1.0
+        );
+        assert!(scripting.pending());
+        scripting.clock_ms = 2000.0;
+        assert_eq!(paint_effects(&scripting), scripting.opacity_effects);
+        assert!(!scripting.pending());
     }
 }

@@ -53,7 +53,15 @@ conservatively tainted, including redirects away and back; CORS-authorized
 clean cross-origin images remain unimplemented. Six V9 regressions and two
 native fixtures were added but have not been run in this implementation batch.
 
-Current substantial gaps remain in CSS transitions/animation rendering,
+The opacity-transition slice implements duration/delay/easing lists, negative
+delay, interruption, reversal shortening and target removal. Runtime connects
+the Eye timeline to recascade, native paint and background frame scheduling;
+sampled values never rewrite authored opacity. The combined production build
+passes. Eleven Eye regressions and a runtime paint-bridge regression were added
+but not run in the code-first batch. Other properties, transition events,
+discrete transitions and CSS animation API exposure remain unfinished.
+
+Current substantial gaps remain in broader CSS transition properties/animation rendering,
 Canvas paths/clipping/compositing and broader image sources, module/blob workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and

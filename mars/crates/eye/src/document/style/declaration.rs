@@ -64,10 +64,6 @@ pub(super) fn declaration(item: &str, block: &mut Block, diagnostics: &mut Vec<S
         return;
     }
     let name = name.to_ascii_lowercase();
-    // A static frame never shows a transition in progress, so transitions are dropped silently.
-    if name.starts_with("transition") || name.starts_with("-webkit-transition") {
-        return;
-    }
     let name = match (alias(&name), name.strip_prefix("-webkit-")) {
         (Some(standard), _) => standard.to_string(),
         (None, Some(standard))

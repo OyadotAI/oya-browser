@@ -367,8 +367,8 @@ impl Runtime {
     and wire checks `prepare_styled` adds, which the finished page gets. */
     pub(super) fn prepare_display(&mut self, page: &mut Page) -> EngineResult<()> {
         crate::document::validate_content(&page.document)?;
-        let effective =
-            super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
+        let effects = super::animations::paint_effects(&page.scripting);
+        let effective = super::animations::effective_document(&page.document, &effects)?;
         let call = RenderCall {
             document: &effective,
             context: self.render_context,
@@ -389,7 +389,7 @@ impl Runtime {
         let effects = self
             .page
             .as_ref()
-            .map(|page| page.scripting.opacity_effects.clone())
+            .map(|page| super::animations::paint_effects(&page.scripting))
             .unwrap_or_default();
         self.render_effects(document, scroll, &effects)
     }
@@ -529,6 +529,7 @@ impl Runtime {
         if page.untrusted_styles {
             untrusted(&mut page.document);
         }
+        super::animations::refresh_transitions(page)?;
         crate::document::validate_content(&page.document)?;
         page.state
             .validate_document(&crate::document::script_document(
@@ -536,10 +537,8 @@ impl Runtime {
                 &page.script_identity,
             )?)?;
         if self.web_origins.is_some() {
-            let effective = super::animations::effective_document(
-                &page.document,
-                &page.scripting.opacity_effects,
-            )?;
+            let effects = super::animations::paint_effects(&page.scripting);
+            let effective = super::animations::effective_document(&page.document, &effects)?;
             let call = RenderCall {
                 document: &effective,
                 context,

@@ -55,6 +55,8 @@ mod shorthand;
 mod subjects;
 mod syntax;
 mod text_align;
+mod transition;
+pub use transition::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
 pub(crate) mod text_box;
 mod ua;
 mod urls;

@@ -548,6 +548,7 @@ impl Runtime {
                 ..Default::default()
             },
         };
+        super::animations::refresh_transitions(&mut page)?;
         phase = Instant::now();
         // First paint: people see the parsed and styled page while its scripts run, as a
         // browser paints before load. The window is the only observer; agents get the page
