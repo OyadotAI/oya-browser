@@ -571,6 +571,15 @@ impl Vm<'_> {
     }
     /** Run a just-pushed async function frame until it first awaits or finishes. */
     fn start_async(&mut self) -> Res<JsValue> {
+        let mark = self.pins.len();
+        let result = self.start_async_rooted();
+        // The caller receives the result without another collection point. Suspended frames
+        // belong to their promise reactions; completed results must not stay live all turn.
+        self.pins.truncate(mark);
+        result
+    }
+    /** Keep setup temporaries alive until the result or its continuation owns them. */
+    fn start_async_rooted(&mut self) -> Res<JsValue> {
         let promise = self.new_promise()?;
         self.pin(JsValue::Object(promise));
         let holder = self.alloc(Object::new(
