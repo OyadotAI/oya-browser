@@ -3,6 +3,7 @@ pub mod canvas;
 pub mod charset;
 pub mod constants;
 pub mod dom;
+pub mod geometry;
 pub mod http;
 pub mod languages;
 pub mod profile;

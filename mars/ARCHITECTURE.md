@@ -168,6 +168,14 @@ delay/easing, interruption/reversal, pause, iteration/direction and fill behavio
 Rotation transitions override rotation keyframes. Only one rotate function or
 none is admitted; mixed lists, matrices, 3D and individual transforms remain
 outside live rotation sampling, under the existing angle/resource bounds.
+Native geometry now carries affine visual bounds and ordered border-box quads
+separately from raw layout position/size. Core supplies inert mapping and hit
+predicates shared by runtime export, V9 DOM geometry and native clicks. Rect and
+point queries follow rotation/scale, rectangular overflow clipping and existing
+sticky/fixed movement; layout offsets/sizes and resize measurements stay raw.
+Foreign frame IDs are filtered before choosing a realm's topmost DOM hit.
+Rounded/mask clips, fragmented inline rectangles and exact occlusion are still
+outside this geometry slice.
 
 V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
 64 URLs and 4 MiB including metadata. Classic and module worker construction capture an

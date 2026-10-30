@@ -221,6 +221,15 @@ The scope is two executable descendant levels with existing sandbox admission;
 opaque/srcdoc scripting, descendant input/navigation/history expansion and
 cross-frame DOM access remain unfinished.
 
+Transformed DOM geometry and native clicks now share inert affine bounds and
+quad hit testing. Rotated/scaled rectangles use visual bounds while layout
+offsets/sizes and resize measurements remain untransformed. Rectangular clipping
+and existing sticky/fixed movement are retained, degenerate maps cannot hit,
+and foreign frame IDs do not mask a valid current-realm hit. Focused regressions
+were added but not run. This closes the rotation slice's previously unrun
+visual-bounds expectation; the combined production build is in progress.
+Rounded/mask clips, fragmented inline boxes and exact occlusion remain unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas compositing/SVG Path2D and broader image sources, nested workers,
 broader frame interaction and DOM/JavaScript compatibility. The local

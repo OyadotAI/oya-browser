@@ -1007,7 +1007,10 @@ pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let entry = vm.new_object()?;
     vm.pin(JsValue::Object(entry));
     let measured = match super::events::target_of(vm, &target) {
-        Some(super::Target::Node(node)) => super::dom::client_box(vm, node),
+        Some(super::Target::Node(node)) => {
+            let [width, height] = super::dom::layout_size(vm, node);
+            (0.0, 0.0, width, height)
+        }
         _ => (0.0, 0.0, 0.0, 0.0),
     };
     vm.put(entry, "target", target)?;

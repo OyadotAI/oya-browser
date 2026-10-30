@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+mod geometry;
 mod image_loading;
 
 /// Virtual milliseconds of timers and animation frames a page runs before it first commits, so
@@ -1413,24 +1414,7 @@ pub(super) fn positions(document: &Document) -> std::collections::BTreeMap<usize
 }
 /** A display list's boxes as V9 reads them, in paint order. */
 pub(super) fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::NodeBox> {
-    display
-        .items
-        .iter()
-        .map(|item| {
-            // Visual translations affect DOM rectangles and hit queries without changing layout sizes.
-            let translation = item
-                .transform
-                .filter(|matrix| matrix[..4] == [1.0, 0.0, 0.0, 1.0]);
-            crate::v9::NodeBox {
-                node: item.local_id,
-                layout_position: Some([item.x, item.y]),
-                x: item.x + translation.map_or(0.0, |matrix| matrix[4]),
-                y: item.y + translation.map_or(0.0, |matrix| matrix[5]),
-                width: item.width,
-                height: item.height,
-            }
-        })
-        .collect()
+    geometry::boxes(display)
 }
 pub(super) fn inserted_sheets(
     applied: &Document,

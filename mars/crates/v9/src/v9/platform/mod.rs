@@ -24,6 +24,7 @@ mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
 mod form_submit;
+mod geometry;
 mod handler_policy;
 pub use handler_policy::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub(in crate::v9) mod frames;
@@ -614,6 +615,18 @@ pub struct NodeBox {
     /// Untransformed document position keeps layout offsets independent from visual transforms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_position: Option<[f64; 2]>,
+    /// Raw border-box dimensions keep layout measurements independent from visual transforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_size: Option<[f64; 2]>,
+    /// Ordered transformed border-box corners reject empty corners of the visual bounding rectangle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quad: Option<mars_core::geometry::Quad>,
+    /// Existing rectangular overflow clip in document coordinates, before paint-time pin translation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<[f64; 4]>,
+    /// Sticky/fixed top, start and room mirror the native pin without changing raw layout geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<[f64; 3]>,
 }
 
 impl Default for PageEnvironment {
@@ -1580,7 +1593,9 @@ impl<'h> Page<'h> {
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         self.state.path2d.retain(|id, _| live.contains(id));
-        self.state.intersection_observers.retain(|id, _| live.contains(id));
+        self.state
+            .intersection_observers
+            .retain(|id, _| live.contains(id));
         self.state
             .canvases
             .retain(|_, state| live.contains(&state.context));

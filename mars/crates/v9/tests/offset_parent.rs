@@ -11,6 +11,7 @@ fn node_box(node: usize, x: f64, y: f64) -> mars_v9::NodeBox {
         width: 50.0,
         height: 50.0,
         layout_position: None,
+        ..mars_v9::NodeBox::default()
     }
 }
 

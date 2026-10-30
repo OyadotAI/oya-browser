@@ -2074,12 +2074,12 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "scrollWidth" if node == HTML || node == BODY => {
             let width = super::scrolling::document_width(vm);
-            let fallback = client_box(vm, node).2;
+            let fallback = layout_size(vm, node)[0];
             Ok(JsValue::Number(width.unwrap_or(fallback)))
         }
         "offsetWidth" | "offsetHeight" | "clientWidth" | "clientHeight" | "scrollWidth"
         | "scrollHeight" => {
-            let (_, _, width, height) = client_box(vm, node);
+            let [width, height] = layout_size(vm, node);
             let laid_out = !vm.page.environment.geometry.is_empty();
             let size = if name.ends_with("Width") {
                 width
@@ -3021,7 +3021,7 @@ pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     wrap_option(vm, found)
 }
 
-/** A DOMRect-like object; V9 does not lay out, so every box is empty. */
+/** A DOMRect-like object reports the native visual rectangle without changing layout measurements. */
 pub(super) fn rect(vm: &mut Vm, node: usize) -> Res<JsValue> {
     let id = vm.new_object()?;
     let (x, y, width, height) = client_box(vm, node);
@@ -3057,17 +3057,38 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
         );
     }
     match environment.geometry.iter().find(|b| b.node == node) {
-        Some(b) => (
-            b.x - environment.scroll_x,
-            b.y - environment.scroll_y,
-            b.width,
-            b.height,
-        ),
+        Some(b) => super::geometry::client(b, environment),
         None => {
             note_stale_geometry(vm, node);
             (0.0, 0.0, 0.0, 0.0)
         }
     }
+}
+
+/** Layout sizes ignore transforms; legacy hosts and missing boxes retain their established fallback. */
+pub(super) fn layout_size(vm: &mut Vm, node: usize) -> [f64; 2] {
+    if node == HTML || node == BODY {
+        return [
+            vm.page.environment.viewport_width,
+            vm.page
+                .environment
+                .geometry
+                .iter()
+                .map(super::geometry::layout_bottom)
+                .fold(vm.page.environment.viewport_height, f64::max),
+        ];
+    }
+    if let Some(bounds) = vm
+        .page
+        .environment
+        .geometry
+        .iter()
+        .find(|bounds| bounds.node == node)
+    {
+        return super::geometry::layout_size(bounds);
+    }
+    let (_, _, width, height) = client_box(vm, node);
+    [width, height]
 }
 
 /** Reports a read of a connected node newer than the last layout, which had no chance to give
@@ -3085,17 +3106,25 @@ fn note_stale_geometry(vm: &mut Vm, node: usize) {
 
 /** `elementFromPoint`: the last painted (topmost) box containing a client point, if any. */
 fn element_from_point(vm: &mut Vm, call: &Call) -> Res<Option<usize>> {
-    let x = vm.to_number(&call.arg(0))? + vm.page.environment.scroll_x;
-    let y = vm.to_number(&call.arg(1))? + vm.page.environment.scroll_y;
-    let hit = vm
-        .page
-        .environment
-        .geometry
-        .iter()
-        .rev()
-        .find(|b| x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height)
-        .map(|b| b.node);
-    Ok(hit.filter(|node| vm.page.exists(*node)))
+    Ok(elements_from_point(vm, call)?.into_iter().next())
+}
+
+/** Host paint order and actual transformed containment determine every DOM hit in the current realm. */
+fn elements_from_point(vm: &mut Vm, call: &Call) -> Res<Vec<usize>> {
+    let point = [vm.to_number(&call.arg(0))?, vm.to_number(&call.arg(1))?];
+    let hits = super::geometry::hits(&vm.page.environment, point);
+    let mut hits: Vec<_> = hits
+        .into_iter()
+        .filter(|node| vm.page.exists(*node))
+        .collect();
+    if !hits.is_empty() {
+        for wrapper in [BODY, HTML] {
+            if !hits.contains(&wrapper) {
+                hits.push(wrapper);
+            }
+        }
+    }
+    Ok(hits)
 }
 
 /** The encoding accessors every document has; only the main page's value comes from its parse. */
@@ -3402,11 +3431,7 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             wrap_option(vm, hit)
         }
         "elementsFromPoint" => {
-            let hit = element_from_point(vm, &call)?;
-            let mut chain = hit.map(|node| vec![node]).unwrap_or_default();
-            if let Some(node) = hit {
-                chain.extend(vm.page.ancestors(node));
-            }
+            let chain = elements_from_point(vm, &call)?;
             let mut wrapped = Vec::with_capacity(chain.len());
             for node in chain {
                 wrapped.push(wrap(vm, node)?);

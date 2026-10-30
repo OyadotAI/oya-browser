@@ -314,6 +314,7 @@ fn geometry_comes_from_the_app_layout() {
             width: 300.0,
             height: 400.0,
             layout_position: None,
+            ..mars_v9::NodeBox::default()
         },
         mars_v9::NodeBox {
             node: 3,
@@ -322,6 +323,7 @@ fn geometry_comes_from_the_app_layout() {
             width: 80.0,
             height: 30.0,
             layout_position: None,
+            ..mars_v9::NodeBox::default()
         },
     ];
     environment.scroll_y = 15.0;
@@ -375,6 +377,7 @@ fn measuring_a_node_newer_than_the_layout_is_reported() {
         width: 100.0,
         height: 100.0,
         layout_position: None,
+        ..mars_v9::NodeBox::default()
     }];
     environment.laid_out_before = Some(4);
     let stale = |source: &str, environment: &mars_v9::PageEnvironment| {
