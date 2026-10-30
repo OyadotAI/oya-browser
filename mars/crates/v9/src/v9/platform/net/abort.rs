@@ -122,6 +122,30 @@ pub(super) fn reason(vm: &Vm, signal: ObjectId) -> Option<JsValue> {
         .then(|| headers::get_private(vm, signal, REASON).unwrap_or(JsValue::Undefined))
 }
 
+/** Event listener lifetime reads the native boolean, never a replaceable public getter. */
+pub(in crate::v9) fn is_aborted(vm: &Vm, signal: ObjectId) -> bool {
+    private(&vm.heap, signal, ABORTED) == Some(JsValue::Boolean(true))
+}
+
+/** Remove abort algorithms' registrations before firing abort callbacks, or under pressure when
+restoring older state that retained them. The scan invokes no author code and is work-charged. */
+pub(in crate::v9) fn prune_listeners(vm: &mut Vm) -> Res<()> {
+    vm.charge(vm.page.state.listeners.len())?;
+    prune_aborted_listeners(&mut vm.page.state, &vm.heap);
+    Ok(())
+}
+
+/** Disjoint native state access permits synchronous removal without getters or extra allocation. */
+fn prune_aborted_listeners(page: &mut PageState, heap: &Heap) {
+    page.listeners.retain(|listener| {
+        !listener
+            .signal
+            .as_ref()
+            .and_then(JsValue::object)
+            .is_some_and(|signal| private(heap, signal, ABORTED) == Some(JsValue::Boolean(true)))
+    });
+}
+
 /** Fetched bodies keep cancellation after the fetch promise has fulfilled. */
 pub(super) fn body_reason(vm: &Vm, response: ObjectId) -> Option<JsValue> {
     let signal = headers::get_private(vm, response, SIGNAL)?.object()?;
@@ -171,10 +195,13 @@ pub(in crate::v9) fn mark_aborted(vm: &mut Vm, signal: ObjectId, value: JsValue)
     }
     let reason = default_reason(vm, value)?;
     let signals = followers(vm, signal)?;
+    // Admit the listener-removal scan before changing any signal state.
+    vm.charge(vm.page.state.listeners.len())?;
     for id in &signals {
         set_aborted(vm, *id, reason.clone());
         vm.pin(JsValue::Object(*id));
     }
+    prune_aborted_listeners(&mut vm.page.state, &vm.heap);
     for id in signals {
         cancel_pending(vm, id, &reason)?;
         super::super::fire(vm, Target::Object(id), "abort", false)?;
@@ -239,6 +266,15 @@ pub(super) fn validate(page: &PageState, heap: &Heap) -> EngineResult<()> {
             || !heap
                 .get(pending.owner)
                 .is_some_and(|object| pending.xhr || matches!(object.class, Class::Promise(_)))
+        {
+            return Err(invalid());
+        }
+    }
+    for listener in page.listeners.iter() {
+        if listener
+            .signal
+            .as_ref()
+            .is_some_and(|signal| !signal.object().is_some_and(|id| branded(heap, id)))
         {
             return Err(invalid());
         }

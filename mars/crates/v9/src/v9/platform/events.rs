@@ -1,7 +1,5 @@
 /** EventTarget, Event and CustomEvent, and dispatch through capture, target and bubble phases. */
 mod errors;
-pub(in crate::v9::platform) use errors::error_prototype;
-pub(in crate::v9) use errors::report_window_error;
 use super::dom::{DOCUMENT, native_name, node_of, wrap};
 use super::{Listener, Target};
 use crate::protocol::EngineError;
@@ -10,6 +8,8 @@ use crate::v9::vm::data::{Class, EventData, HostData};
 use crate::v9::vm::heap::{Key, Object};
 use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, GLOBAL, Res, Thrown, Vm};
+pub(in crate::v9::platform) use errors::error_prototype;
+pub(in crate::v9) use errors::report_window_error;
 
 /// Event listeners one page may register on nodes, the document and the window together. A
 /// component framework adds several per element: YouTube's Polymer app passes 512 as soon as
@@ -73,27 +73,23 @@ fn listener_options(vm: &mut Vm, value: &JsValue, adding: bool) -> Res<ListenerO
     Ok(parsed)
 }
 
-/** The `signal` member: absent is None; anything that is not an object throws a TypeError. */
+/** The signal member is a genuine native AbortSignal; author properties cannot impersonate it. */
 fn signal_option(vm: &mut Vm, options: &JsValue) -> Res<Option<JsValue>> {
     let signal = vm.get(options, &Key::from("signal"))?;
     if signal == JsValue::Undefined {
         return Ok(None);
     }
-    if signal.object().is_some() {
-        return Ok(Some(signal));
-    }
-    Err(vm.type_error(
-        "Failed to execute 'addEventListener': member signal is not of type AbortSignal.",
-    ))
+    super::net::abort::identity(vm, &signal)?;
+    Ok(Some(signal))
 }
 
-/**
- * Whether a listener's signal has aborted. It is checked when the listener would run, so an
- * aborted listener never runs even though its registration is removed lazily.
- */
+/** Native abort state cannot be hidden or forged by replacing the public aborted property. */
 fn signal_aborted(vm: &mut Vm, signal: Option<&JsValue>) -> Res<bool> {
     match signal {
-        Some(signal) => Ok(vm.get(signal, &Key::from("aborted"))?.truthy()),
+        Some(signal) => {
+            let id = super::net::abort::identity(vm, signal)?;
+            Ok(super::net::abort::is_aborted(vm, id))
+        }
         None => Ok(false),
     }
 }
@@ -178,9 +174,7 @@ fn add_listener(
     {
         return Ok(());
     }
-    if listeners.len() >= LISTENERS {
-        return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
-    }
+    admit_listener(vm, options.signal.as_ref())?;
     let passive = options
         .passive
         .unwrap_or_else(|| passive_by_default(target, &kind));
@@ -195,6 +189,33 @@ fn add_listener(
         passive,
         signal: options.signal,
     });
+    Ok(())
+}
+
+/** Listener pressure is its own collection trigger: temporary targets can exhaust this much
+smaller cap before the ordinary heap threshold. Keep the converted signal pinned because an
+options getter may have produced it without retaining it anywhere else. */
+fn admit_listener(vm: &mut Vm, signal: Option<&JsValue>) -> Res<()> {
+    if vm.page.state.listeners.len() < LISTENERS {
+        return Ok(());
+    }
+    super::net::abort::prune_listeners(vm)?;
+    if vm.page.state.listeners.len() >= LISTENERS {
+        if let Some(signal) = signal {
+            vm.pin(signal.clone());
+        }
+        vm.charge(
+            vm.heap
+                .objects
+                .len()
+                .saturating_add(vm.heap.envs.len())
+                .saturating_add(LISTENERS),
+        )?;
+        vm.collect_now()?;
+    }
+    if vm.page.state.listeners.len() >= LISTENERS {
+        return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
+    }
     Ok(())
 }
 
@@ -694,8 +715,10 @@ fn handler_property(
     if let Some(handler) = handler
         && vm.is_callable(&handler)
     {
-        if target == Target::Window && kind == ERROR_KIND
-            && (vm.page.environment.worker_name.is_some() || errors::is_error_event(vm, event)) {
+        if target == Target::Window
+            && kind == ERROR_KIND
+            && (vm.page.environment.worker_name.is_some() || errors::is_error_event(vm, event))
+        {
             window_error_handler(vm, handler, current, event)?;
         } else {
             call_listener(vm, &handler, current, event, false)?;

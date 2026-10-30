@@ -250,6 +250,18 @@ impl Vm<'_> {
             .iter()
             .map(|(node, id)| (*node, *id))
             .collect();
+        // Listener pressure may initiate GC before heap pressure. Index node targets once;
+        // rescanning every listener for every wrapper would make that collection quadratic.
+        let listened_nodes: FastSet<usize> = self
+            .page
+            .state
+            .listeners
+            .iter()
+            .filter_map(|listener| match listener.target {
+                super::super::platform::Target::Node(node) => Some(node),
+                _ => None,
+            })
+            .collect();
         for (node, id) in wrappers {
             if self.page.state.canvases.contains_key(&node) && self.page.connected(node) {
                 marker.object(id);
@@ -259,12 +271,7 @@ impl Vm<'_> {
                     *key != super::heap::Key::private(super::super::platform::canvas::CONTEXT_SLOT)
                 })
             });
-            let listened = self
-                .page
-                .state
-                .listeners
-                .iter()
-                .any(|listener| listener.target == super::super::platform::Target::Node(node));
+            let listened = listened_nodes.contains(&node);
             let virtual_node = node >= super::super::platform::nodes_virtual_base()
                 && node < super::super::platform::nodes_detached_base();
             if ((data || listened) && self.page.connected(node)) || virtual_node {
