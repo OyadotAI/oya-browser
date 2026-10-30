@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Made Mars HTTP fetch response bodies binary-safe through Relay and the native CORS coordinator. Fetch text readers use UTF-8 while legacy XHR/module decoding stays separate; cache, redirect, body-size and header filtering rules remain in force.
 - Completed Mars's Porter–Duff Canvas operators and lighter with transparent-source processing across the clipped destination, correct fractional clip interpolation and bounded work admission. Rectangles, paths, images and text share the implementation; artistic blend modes remain unfinished.
 - Implemented context-owned Blob URL fetches in Mars with fetch-time snapshots, native origin/CSP checks, exact binary responses and bounded single-range reads. Revocation after fetch preserves captured bytes; missing or foreign URLs fail without network fallback. Fetch now binds native dependent AbortSignals, cancels queued page/worker requests, preserves abort reasons and rejects aborted response reads.
 - Added bounded ResizeObserver delivery cycles to Mars with fresh layout between depth-gated broadcasts, skipped-notification ErrorEvents, five-argument window.onerror handling and one final intersection delivery. Deadline/round limits retain registrations and defer remaining work without restarting the settle loop immediately.
