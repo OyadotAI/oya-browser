@@ -441,6 +441,7 @@ impl Runtime {
             state_token,
             storage,
             failed,
+            load_failure,
             mut effects,
             module_requests,
             script_requests,
@@ -537,6 +538,9 @@ impl Runtime {
             .pending_scripts
             .extend(script_requests);
         page.scripting.modules.frame_requests.extend(frame_requests);
+        if let Some(error) = load_failure {
+            record_load_failure(page, &error);
+        }
         let mut step = Step { changed, failed };
         if observer_turn {
             page.scripting.observer_resources |= !page.scripting.deferred_stylesheets.is_empty()
@@ -1450,6 +1454,33 @@ fn stop_scripts(page: &mut Page, error: &EngineError) {
             page.document.diagnostics.pop();
         }
         page.document.diagnostics.push(message);
+    }
+    if page.degraded.len() < DIAGNOSTICS
+        && !page.degraded.iter().any(|feature| feature == "scripts")
+    {
+        page.degraded.push("scripts".into());
+    }
+}
+
+/** Finalization rollback is one page-level failure, including on module continuation steps. */
+fn record_load_failure(page: &mut Page, error: &EngineError) {
+    const REASON_CHARS: usize = 240;
+    let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
+    let code = error.code.chars().take(REASON_CHARS).collect::<String>();
+    let message = format!("Page script state could not be retained ({code}): {reason}");
+    if !page.document.diagnostics.contains(&message) {
+        if page.document.diagnostics.len() >= DIAGNOSTICS {
+            page.document.diagnostics.pop();
+        }
+        page.document.diagnostics.push(message.clone());
+        record_console(
+            &mut page.scripting,
+            vec![ConsoleEntry {
+                level: "error".into(),
+                text: message,
+            }],
+            0,
+        );
     }
     if page.degraded.len() < DIAGNOSTICS
         && !page.degraded.iter().any(|feature| feature == "scripts")

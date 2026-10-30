@@ -628,9 +628,7 @@ impl Runtime {
             Ok(step) => step,
             Err(error) if fatal(&error) => return Err(error),
             Err(error) => {
-                for script in resolved {
-                    gaps.note("scripts", script_note(script, &error.message));
-                }
+                gaps.note("scripts", load_failure_note(resolved, &error));
                 page.scripts.clear();
                 page.scripting.modules = Default::default();
                 self.script_step(page, json!({"kind":"load"}))?
@@ -1202,6 +1200,28 @@ fn script_note(script: &Resolved, reason: &str) -> String {
         script.index + 1
     )
 }
+/** A whole-load refusal has one cause; attribute it only when the engine supplied a valid index. */
+fn load_failure_note(resolved: &[Resolved], error: &EngineError) -> String {
+    let script = error
+        .location
+        .as_ref()
+        .and_then(|location| location.script_index)
+        .and_then(|index| index.checked_sub(1))
+        .and_then(|index| resolved.get(index));
+    let context = script.map_or_else(
+        || "Page script initialization".to_owned(),
+        |script| {
+            format!(
+                "Script {} ({}) during page initialization",
+                script.index + 1,
+                script.url.as_deref().unwrap_or("inline")
+            )
+        },
+    );
+    let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
+    let code = error.code.chars().take(REASON_CHARS).collect::<String>();
+    format!("{context} failed ({code}): {reason}")
+}
 /** Normalize browser storage ownership to the standards-defined serialized origin. */
 fn canonical_origin(value: &str) -> EngineResult<String> {
     let url =
@@ -1250,5 +1270,59 @@ mod diagnostic_tests {
         );
         gaps.record(&mut document);
         assert_eq!(document.diagnostics.len(), DIAGNOSTICS);
+    }
+
+    /** Synthetic entries preserve differing document order and execution order. */
+    fn script(index: usize) -> Resolved {
+        Resolved {
+            refused: false,
+            source: String::new(),
+            index,
+            url: None,
+            module: None,
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn aggregate_load_failure_is_one_page_diagnostic_not_a_failure_for_every_script() {
+        let error = EngineError::limit("V9 event listeners", 16384);
+        let mut gaps = Gaps::default();
+        gaps.note(
+            "scripts",
+            load_failure_note(&[script(0), script(7)], &error),
+        );
+        let mut document = crate::document::parse("<p>kept</p>").unwrap();
+        gaps.record(&mut document);
+        let notes: Vec<_> = document
+            .diagnostics
+            .iter()
+            .filter(|note| note.contains("Page script initialization failed"))
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains(&error.code));
+        assert!(notes[0].contains(&error.message));
+        assert!(!notes[0].contains("Script 1"));
+    }
+
+    #[test]
+    fn aggregate_load_failure_uses_valid_execution_index_and_never_guesses_an_invalid_one() {
+        let mut error = EngineError::invalid("runtime stopped");
+        error.location = Some(Box::new(crate::protocol::SourceLocation {
+            script_index: Some(2),
+            ..Default::default()
+        }));
+        let scripts = [script(7), script(3)];
+        assert!(
+            load_failure_note(&scripts, &error)
+                .starts_with("Script 4 (inline) during page initialization")
+        );
+        for invalid in [0, 3, usize::MAX] {
+            error.location.as_mut().unwrap().script_index = Some(invalid);
+            assert!(
+                load_failure_note(&scripts, &error)
+                    .starts_with("Page script initialization failed")
+            );
+        }
     }
 }

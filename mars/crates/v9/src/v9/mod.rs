@@ -847,6 +847,9 @@ pub struct Execution {
     /// Scripts an isolated page load stopped and rolled back, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<ScriptFailure>,
+    /// Whole-load finalization failed and returned a validated empty state; no script is blamed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_failure: Option<EngineError>,
     /// Names the full state a V9 service kept for the next step, when it keeps states resident;
     /// `state` is then only its summary (see `VmState::summary`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1714,6 +1717,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         state,
         storage,
         failed: Vec::new(),
+        load_failure: None,
         state_token: None,
         effects,
         module_requests,
@@ -1775,13 +1779,11 @@ fn load_isolated(
     if resume {
         run_dynamic_imports(&mut vm);
     }
+    let mut load_failure = None;
     let execution = match finish(vm) {
         Ok(execution) => execution,
         Err(error) => {
-            failed.extend(ran.into_iter().map(|index| ScriptFailure {
-                index,
-                error: error.clone(),
-            }));
+            load_failure = Some(error);
             let empty = PageInput {
                 sources: &[],
                 source_keys: &[],
@@ -1809,6 +1811,7 @@ fn load_isolated(
     failed.sort_by_key(|failure| failure.index);
     Ok(Execution {
         failed,
+        load_failure,
         ..execution
     })
 }
