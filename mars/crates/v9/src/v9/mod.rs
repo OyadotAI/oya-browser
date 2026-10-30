@@ -784,8 +784,8 @@ impl VmState {
         {
             return Err(EngineError::invalid("Invalid V9 heap identities."));
         }
+        self.page.listeners.validate(self.page.next_listener)?;
         if self.page.timers.len() > crate::constants::VM_TIMERS
-            || self.page.listeners.len() > platform::events::LISTENERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self
                 .page

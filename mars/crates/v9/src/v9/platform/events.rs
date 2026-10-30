@@ -11,11 +11,6 @@ use crate::v9::vm::{Call, GLOBAL, Res, Thrown, Vm};
 pub(in crate::v9::platform) use errors::error_prototype;
 pub(in crate::v9) use errors::report_window_error;
 
-/// Event listeners one page may register on nodes, the document and the window together. A
-/// component framework adds several per element: YouTube's Polymer app passes 512 as soon as
-/// its guide and masthead render. Chromium has no such bound; this one only caps state size.
-pub(in crate::v9) const LISTENERS: usize = 16 * 1024;
-
 /** The listener target a value denotes. */
 pub(in crate::v9) fn target_of(vm: &Vm, value: &JsValue) -> Option<Target> {
     // A bare `addEventListener(...)` call passes no receiver; operations of the global
@@ -174,11 +169,12 @@ fn add_listener(
     {
         return Ok(());
     }
-    admit_listener(vm, options.signal.as_ref())?;
+    vm.charge(kind.len().saturating_add(1))?;
+    admit_listener(vm, &kind, options.signal.as_ref())?;
     let passive = options
         .passive
         .unwrap_or_else(|| passive_by_default(target, &kind));
-    let id = next_listener_id(vm);
+    let id = next_listener_id(vm)?;
     vm.page.state.listeners.insert(Listener {
         id,
         target,
@@ -188,19 +184,18 @@ fn add_listener(
         once: options.once,
         passive,
         signal: options.signal,
-    });
+    })?;
     Ok(())
 }
 
-/** Listener pressure is its own collection trigger: temporary targets can exhaust this much
-smaller cap before the ordinary heap threshold. Keep the converted signal pinned because an
-options getter may have produced it without retaining it anywhere else. */
-fn admit_listener(vm: &mut Vm, signal: Option<&JsValue>) -> Res<()> {
-    if vm.page.state.listeners.len() < LISTENERS {
+/** Storage pressure collects unreachable targets before refusing a new registration. The
+converted signal may exist only in this native's local, so pin it before collecting. */
+fn admit_listener(vm: &mut Vm, kind: &String, signal: Option<&JsValue>) -> Res<()> {
+    if vm.page.state.listeners.admit(kind).is_ok() {
         return Ok(());
     }
     super::net::abort::prune_listeners(vm)?;
-    if vm.page.state.listeners.len() >= LISTENERS {
+    if vm.page.state.listeners.admit(kind).is_err() {
         if let Some(signal) = signal {
             vm.pin(signal.clone());
         }
@@ -209,21 +204,20 @@ fn admit_listener(vm: &mut Vm, signal: Option<&JsValue>) -> Res<()> {
                 .objects
                 .len()
                 .saturating_add(vm.heap.envs.len())
-                .saturating_add(LISTENERS),
+                .saturating_add(vm.page.state.listeners.len()),
         )?;
         vm.collect_now()?;
     }
-    if vm.page.state.listeners.len() >= LISTENERS {
-        return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
-    }
-    Ok(())
+    vm.page.state.listeners.admit(kind).map_err(Into::into)
 }
 
-/** Takes the next registration id; ids order listeners by registration. */
-fn next_listener_id(vm: &mut Vm) -> u32 {
+/** Dispatch snapshots hold registration identities: never wrap or reuse a removed listener's ID. */
+fn next_listener_id(vm: &mut Vm) -> Res<u32> {
     let id = vm.page.state.next_listener;
-    vm.page.state.next_listener += 1;
-    id
+    vm.page.state.next_listener = id
+        .checked_add(1)
+        .ok_or_else(|| EngineError::limit("V9 event listener identities", u32::MAX as usize))?;
+    Ok(id)
 }
 
 /** Removes the matching registration, if any. */
@@ -519,6 +513,8 @@ fn invoke(
     });
     // The bucket of this target, type and capture is exactly what the phase fires: a phase reads
     // capture listeners in the capture passes and the others in the bubble passes.
+    let work = vm.page.state.listeners.firing_work(target, kind, capture);
+    vm.charge(work)?;
     let firing = vm.page.state.listeners.firing(target, kind, capture);
     // A markup `on<type>` attribute was registered when the element was parsed, before any
     // script listener, so it runs first; listeners it adds wait for the next dispatch.
