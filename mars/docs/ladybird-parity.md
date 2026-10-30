@@ -181,7 +181,7 @@ omit cross-origin credentials and credentialed requests require exact grants.
 Failed CORS loads do not retry as no-CORS. Initial, hidden, detached and adopted
 images retain selection policy. CORS images bypass legacy credentialed prefetch
 and Relay's URL-only HTTP cache; bounded per-page decoded reuse remains. Focused
-regressions were added but not run, and this next batch's build is pending.
+regressions were added but not run, and the combined release build is recorded below.
 
 Canvas clip now intersects actual immutable sample masks, including evenodd
 holes, construction transforms and fractional-edge idempotence. Saved states
@@ -190,7 +190,7 @@ masks. Every supported painter honors clipping. Pixel writes/readback/export
 bypass it, and fully clipped cross-origin sources still taint. Retained masks
 have a separate 4 MiB page allowance under existing process/work ceilings; a
 large clip plus paint may exhaust one execution's existing work budget. Twelve
-focused regressions were added but not run; this next batch's build is pending.
+focused regressions were added but not run; the combined release build is recorded below.
 
 Pure rotate transitions and keyframes now preserve authored full turns and
 sample on the native page clock. Easing/delay, interruption/reversal,
@@ -198,7 +198,7 @@ iteration/direction, pause and fill are implemented without overwriting authored
 transforms or transform origins. Transition samples take priority over keyframes.
 The supported scope is one rotate function or none; mixed lists, matrices,
 3D/rotateZ and individual transforms are excluded. Focused regressions were
-added but not run, and the next combined production build is pending.
+added but not run, and the combined release build is recorded below.
 
 Path2D now retains genuine branded geometry rather than ignoring commands.
 Empty/copy construction, geometry methods, transformed addPath and actual
@@ -207,7 +207,7 @@ and copies/current paths remain independent. Object/aggregate-point quotas,
 GC cleanup and serialization checks bound retention. SVG strings explicitly
 throw NotSupportedError, and large later scaling can magnify retained polygon
 approximation error. Eight focused regressions were added but not run; the
-combined production build for this batch is pending.
+combined release build for this batch is recorded below.
 
 Scripted frames now support root-to-child-to-grandchild execution with one
 recursive root mailbox, global window/document fences, port transfer ownership,
@@ -216,7 +216,7 @@ existing frame/source/depth/context limits across the tree. Framing checks cover
 every ancestor and the final redirected URL; child documents, assets, fetches
 and workers retain the true root network partition. Nested painting, local
 viewports and observer-only descendant turns are wired. Focused native/V9,
-framing and quota regressions were added but not run; the combined build is pending.
+framing and quota regressions were added but not run; the combined release build is recorded below.
 The scope is two executable descendant levels with existing sandbox admission;
 opaque/srcdoc scripting, descendant input/navigation/history expansion and
 cross-frame DOM access remain unfinished.
@@ -227,8 +227,22 @@ offsets/sizes and resize measurements remain untransformed. Rectangular clipping
 and existing sticky/fixed movement are retained, degenerate maps cannot hit,
 and foreign frame IDs do not mask a valid current-realm hit. Focused regressions
 were added but not run. This closes the rotation slice's previously unrun
-visual-bounds expectation; the combined production build is in progress.
+visual-bounds expectation; the combined release build is recorded below.
 Rounded/mask clips, fragmented inline boxes and exact occlusion remain unfinished.
+
+The combined release build at `1c6acbf4` passes with CORS images, clipping,
+retained Path2D, rotations, nested scripted frames and transformed geometry.
+The first build caught a frame-source accounting integration error; pages now
+retain their actual acquired HTML byte count. The retired inert Path2D
+constructor was removed after the compiler reported it unused.
+Build log: `/private/tmp/mars-parity-nested-cors-paths-rotation-build-resumed.log`.
+Frozen unsigned binary SHA-256:
+`0c52d93adf3f15cf7037db363f119d2045a009bf437d70fab39ba3b88618f69c`.
+The signed, verified `mars/dist/Mars Next.app` bundle is ready to open; its
+executable SHA-256 is
+`41a7750d9f61ae8d2af5e789465c95d78eb5919b03fc983be7360054735fa312`.
+It has not been launched, preserving the already running Mars Parity preview.
+No QA, new test execution or Google retest was performed in this batch.
 
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas compositing/SVG Path2D and broader image sources, nested workers,
