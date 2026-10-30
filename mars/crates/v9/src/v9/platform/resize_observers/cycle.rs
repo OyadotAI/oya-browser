@@ -33,11 +33,25 @@ pub(in crate::v9) struct Cycle {
 pub(in crate::v9) fn advance(vm: &mut Vm, begin: bool) -> Res<()> {
     vm.page.sampled_observer_turn = true;
     if begin {
-        if vm.page.state.resize_cycle.is_some() { return Err(invalid().into()); }
-        vm.page.state.resize_cycle = Some(Cycle { depth: 0, rounds: 0, finishing: false });
+        if vm.page.state.resize_cycle.is_some() {
+            return Err(invalid().into());
+        }
+        vm.page.state.resize_cycle = Some(Cycle {
+            depth: 0,
+            rounds: 0,
+            finishing: false,
+        });
     }
-    let current = vm.page.state.resize_cycle.as_ref().ok_or_else(invalid)?.clone();
-    if current.finishing { return finish_intersections(vm, true); }
+    let current = vm
+        .page
+        .state
+        .resize_cycle
+        .as_ref()
+        .ok_or_else(invalid)?
+        .clone();
+    if current.finishing {
+        return finish_intersections(vm, true);
+    }
     let skipped = sampling::gather(vm, current.depth)?;
     if !vm.page.effects.resize_observers_pending {
         return finalize(vm, skipped);
@@ -45,9 +59,17 @@ pub(in crate::v9) fn advance(vm: &mut Vm, begin: bool) -> Res<()> {
     if current.rounds >= RESIZE_BROADCAST_LIMIT {
         return finalize(vm, true);
     }
-    let Some(depth) = delivery::deliver_all(vm)? else { return finalize(vm, skipped); };
-    if depth <= current.depth { return Err(invalid().into()); }
-    vm.page.state.resize_cycle = Some(Cycle { depth, rounds: current.rounds + 1, finishing: false });
+    let Some(depth) = delivery::deliver_all(vm)? else {
+        return finalize(vm, skipped);
+    };
+    if depth <= current.depth {
+        return Err(invalid().into());
+    }
+    vm.page.state.resize_cycle = Some(Cycle {
+        depth,
+        rounds: current.rounds + 1,
+        finishing: false,
+    });
     sampling::effects(vm);
     vm.page.effects.resize_turn = Some(ResizeTurn::Relayout);
     Ok(())
@@ -57,7 +79,9 @@ pub(in crate::v9) fn advance(vm: &mut Vm, begin: bool) -> Res<()> {
 pub(in crate::v9) fn complete(vm: &mut Vm) -> Res<()> {
     vm.page.sampled_observer_turn = true;
     let cycle = vm.page.state.resize_cycle.as_ref().ok_or_else(invalid)?;
-    if cycle.finishing { return finish_intersections(vm, true); }
+    if cycle.finishing {
+        return finish_intersections(vm, true);
+    }
     let depth = cycle.depth;
     let skipped = sampling::gather(vm, depth)?;
     let deferred = skipped || vm.page.effects.resize_observers_pending;
@@ -66,9 +90,18 @@ pub(in crate::v9) fn complete(vm: &mut Vm) -> Res<()> {
 
 /** Report one loop error, then yield for layout if its handler or microtasks changed the document. */
 fn finalize(vm: &mut Vm, deferred: bool) -> Res<()> {
-    for state in vm.page.state.resize_observers.values_mut() { state.queued.clear(); }
-    if !deferred { return finish_intersections(vm, false); }
-    vm.page.state.resize_cycle.as_mut().ok_or_else(invalid)?.finishing = true;
+    for state in vm.page.state.resize_observers.values_mut() {
+        state.queued.clear();
+    }
+    if !deferred {
+        return finish_intersections(vm, false);
+    }
+    vm.page
+        .state
+        .resize_cycle
+        .as_mut()
+        .ok_or_else(invalid)?
+        .finishing = true;
     events::report_window_error(vm, LOOP_ERROR)?;
     vm.drain_jobs()?;
     sampling::effects(vm);
@@ -86,14 +119,19 @@ fn finish_intersections(vm: &mut Vm, deferred: bool) -> Res<()> {
     let deferred = deferred || vm.page.resize_registration_changed;
     vm.page.effects.resize_turn = Some(ResizeTurn::Complete { deferred });
     Ok(())
+}
 
 /** Flattened ancestry includes slot assignment and crosses shadow roots without counting fragment boxes. */
 pub(super) fn depth(vm: &mut Vm, node: usize) -> Res<usize> {
     let mut node = Some(node);
     let mut depth = 0;
     for _ in 0..DEPTH_LIMIT {
-        let Some(current) = node else { return Ok(depth.max(1)); };
-        if !vm.page.is_shadow_root(current) { depth += 1; }
+        let Some(current) = node else {
+            return Ok(depth.max(1));
+        };
+        if !vm.page.is_shadow_root(current) {
+            depth += 1;
+        }
         node = super::super::components::composed_parent(&mut vm.page, current, true);
     }
     Err(EngineError::limit("ResizeObserver ancestry", DEPTH_LIMIT).into())
@@ -101,8 +139,12 @@ pub(super) fn depth(vm: &mut Vm, node: usize) -> Res<usize> {
 
 /** Restored state cannot bypass count limits or lower the depth threshold between broadcasts. */
 pub(super) fn validate(cycle: Option<&Cycle>) -> EngineResult<()> {
-    if cycle.is_some_and(|cycle| cycle.rounds == 0 || cycle.rounds > RESIZE_BROADCAST_LIMIT
-        || cycle.depth == 0 || cycle.depth > DEPTH_LIMIT) {
+    if cycle.is_some_and(|cycle| {
+        cycle.rounds == 0
+            || cycle.rounds > RESIZE_BROADCAST_LIMIT
+            || cycle.depth == 0
+            || cycle.depth > DEPTH_LIMIT
+    }) {
         return Err(invalid());
     }
     Ok(())
