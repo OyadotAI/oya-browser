@@ -68,7 +68,11 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         state.drawing.transform,
     )?
     .with_clip(clipping::current(state)?)?
-    .with_composite(state.drawing.composite);
+    .with_composite(if dom::native_name(call) == "clearRect" {
+        limits::Composite::SourceOver
+    } else {
+        state.drawing.composite
+    });
     work(vm, plan.work())?;
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if dom::native_name(call) == "clearRect" {
@@ -112,7 +116,10 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     drawable(vm, node)?;
     let clip = clipping::current(&vm.page.state.canvases[&node])?.cloned();
     let pixels = vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS;
-    work(vm, pixels * (1 + usize::from(clip.is_some())))?;
+    work(
+        vm,
+        pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some())),
+    )?;
     let state = &vm.page.state.canvases[&node];
     if !state.bitmap.drawable() {
         return Ok(JsValue::Undefined);
@@ -142,14 +149,16 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         let coverage = clip.as_ref().map_or(1.0, |clip| {
             clip.coverage((index % width) as u32, (index / width) as u32)
         });
-        if coverage == 0.0 || color[3] == 0 {
+        if coverage == 0.0 {
             continue;
         }
-        limits::composite(
+        limits::composite_coverage(
             pixel,
             [color[0], color[1], color[2], color[3]],
-            state.drawing.alpha * coverage,
+            state.drawing.alpha,
             state.drawing.composite,
+            coverage,
+            coverage,
         );
     }
     state.dirty = true;

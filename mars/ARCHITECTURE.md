@@ -128,10 +128,14 @@ limits. Scratch allocations share process accounting, and all work is admitted
 before bitmap mutation. A shared premultiplied compositor supports source-over,
 destination-over, destination-out, source-atop and xor across every supported
 shape/path/image/text painter. Typed composite state survives save/restore/reset;
-clearRect, putImageData and readback keep their bypass semantics. These modes
-leave the destination unchanged at zero source alpha, retaining bounded paint
-regions and clipping. Full-surface operators and lighter remain unaccepted until
-their distinct coverage handling exists. CSS color and font parsing remain limited;
+clearRect, putImageData and readback keep their bypass semantics. Copy, source-in,
+source-out, destination-in and destination-atop additionally process transparent
+source across the bounded clipped destination. Source geometry bounds stay
+separate from composition bounds, avoiding unnecessary geometry scans. Joint
+source/clip coverage and independent clip coverage preserve pixels outside the
+clip; lighter clamps the premultiplied sum before coverage interpolation. Work
+is admitted before copy-on-write, with no new full-surface scratch bitmap.
+Artistic blend modes remain unaccepted. CSS color and font parsing remain limited;
 other decoded-image formats, remaining compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.

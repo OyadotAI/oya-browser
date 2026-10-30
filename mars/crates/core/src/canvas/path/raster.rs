@@ -21,7 +21,7 @@ pub struct PathPlan {
 }
 
 impl PathPlan {
-    /** These operators preserve transparent-source pixels, so path coverage and clip plans remain valid. */
+    /** Compositing may visit transparent source outside path bounds without changing geometry coverage. */
     pub fn with_composite(mut self, mode: Composite) -> Self {
         self.mode = mode;
         self
@@ -35,11 +35,22 @@ impl PathPlan {
 
     /** Charge edge sorting, scanline stepping and coverage before painting starts. */
     pub fn work(&self) -> usize {
-        self.work
+        let [left, top, right, bottom] = self.paint_bounds();
+        self.work + (right - left) as usize * (bottom - top) as usize * COMPOSITE_WORK
     }
-    /** Fully clipped and degenerate contours do not require a bitmap copy. */
+    /** No destination work is needed only when the selected operation has empty paint bounds. */
     pub fn is_empty(&self) -> bool {
-        self.bounds[0] == self.bounds[2] || self.bounds[1] == self.bounds[3]
+        let bounds = self.paint_bounds();
+        bounds[0] == bounds[2] || bounds[1] == bounds[3]
+    }
+
+    /** Full-surface modes must composite even an empty or entirely off-canvas path. */
+    fn paint_bounds(&self) -> [u32; 4] {
+        if self.mode.affects_uncovered() {
+            [0, 0, self.size[0], self.size[1]]
+        } else {
+            self.bounds
+        }
     }
 
     /** Attach immutable clip samples while keeping existing public paint entry points stable. */
@@ -188,19 +199,21 @@ pub fn paint_path(
     let mut crossings = Vec::with_capacity(plan.edges.len());
     let width = bitmap.width as usize;
     let pixels = bitmap.pixels.make_mut()?;
-    for y in plan.bounds[1]..plan.bounds[3] {
+    let [left, top, right, bottom] = plan.paint_bounds();
+    for y in top..bottom {
         let coverage = coverage_row(plan, y, &mut crossings);
-        for x in plan.bounds[0]..plan.bounds[2] {
+        for x in left..right {
             let at = (y as usize * width + x as usize) * CHANNELS;
-            let coverage = covered(plan, &coverage, x, y).count_ones();
-            if coverage == 0 {
-                continue;
-            }
-            composite(
+            let covered =
+                f64::from(covered(plan, &coverage, x, y).count_ones()) / SAMPLE_COUNT as f64;
+            let clip = plan.clip.as_ref().map_or(1.0, |clip| clip.coverage(x, y));
+            composite_coverage(
                 &mut pixels[at..at + CHANNELS],
                 color,
-                alpha * f64::from(coverage) / SAMPLE_COUNT as f64,
+                alpha,
                 plan.mode,
+                covered,
+                clip,
             );
         }
     }
@@ -244,6 +257,9 @@ fn scanline(
 /** Preserve individual sample bits through fill planning and clip intersections. */
 fn coverage_row(plan: &PathPlan, y: u32, crossings: &mut Vec<Crossing>) -> [u16; EDGE as usize] {
     let mut coverage = [0; EDGE as usize];
+    if y < plan.bounds[1] || y >= plan.bounds[3] {
+        return coverage;
+    }
     for sample in 0..SAMPLES {
         scanline(
             plan,

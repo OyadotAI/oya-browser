@@ -7,6 +7,16 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The remaining five full-surface Porter–Duff operators plus lighter are now
+implemented. Empty/offcanvas source geometry still supplies transparent pixels
+where the operator requires it, while a source-crop-empty image remains an
+aborted draw. Separate source/paint bounds keep geometry scans bounded; joint
+source/clip coverage and independent clip coverage preserve the area outside
+fractional clips. Lighter clamps before coverage interpolation. All supported
+painters share the operator, and work is admitted before bitmap mutation without
+a new full-surface allocation. Updated/expanded regressions remain unrun; the
+combined production build is pending. Artistic blend modes remain unfinished.
+
 The combined production build at `10e70b14` passes in 1m 04s with five-mode
 Canvas compositing, bounded resize cycles, binary responses/data URLs, and owned
 Blob fetch with cancellation. Compiler integration fixes closed a missing cycle

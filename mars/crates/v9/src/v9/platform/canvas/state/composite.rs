@@ -1,4 +1,4 @@
-/** Canvas exposes only composition modes implemented consistently by every supported painter. */
+/** Canvas exposes bounded Porter–Duff modes implemented consistently by every supported painter. */
 use super::*;
 
 /** Compositing is drawing state, so native save/restore/reset use the same accepted enum. */

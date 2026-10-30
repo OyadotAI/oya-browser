@@ -9,7 +9,7 @@ mod pixels;
 mod raster;
 pub use affine::Affine;
 pub use clip::ClipMask;
-pub use composite::{Composite, composite};
+pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage};
 pub use path::{
     DASH_INPUTS, DASH_VALUES, DashStyle, FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle,
     paint_path, plan_fill, plan_stroke, plan_stroke_dashed,

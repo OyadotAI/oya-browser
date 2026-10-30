@@ -1,6 +1,9 @@
 use super::clip::{GRID, SAMPLES, offset};
 /** Checked raster plans charge work before one fallible copy-on-write mutation. */
-use super::{Affine, Bitmap, CHANNELS, ClipMask, Composite, EDGE, composite};
+use super::{
+    Affine, Bitmap, CHANNELS, COMPOSITE_WORK, ClipMask, Composite, EDGE, composite,
+    composite_coverage,
+};
 use crate::protocol::{EngineError, EngineResult};
 mod geometry;
 mod sampling;
@@ -20,6 +23,7 @@ pub struct RasterPlan {
     image: Option<Image>,
     clip: Option<ClipMask>,
     mode: Composite,
+    active: bool,
     inverse: Affine,
     rectangle: [f64; 4],
 }
@@ -35,7 +39,7 @@ struct Image {
 }
 
 impl RasterPlan {
-    /** Supported operators preserve existing bounds, clipping and fixed per-pixel work admission. */
+    /** Composition expands paint bounds when transparent source outside geometry changes destination. */
     pub fn with_composite(mut self, mode: Composite) -> Self {
         self.mode = mode;
         self
@@ -43,11 +47,24 @@ impl RasterPlan {
 
     /** The interpreter admits this amount before any backing allocation or mutation. */
     pub fn work(&self) -> usize {
-        self.work
+        let [left, top, right, bottom] = self.paint_bounds();
+        self.work + (right - left) as usize * (bottom - top) as usize * COMPOSITE_WORK
     }
-    /** Singular, empty and fully clipped operations do not force a COW allocation. */
+    /** Only operations with no affected destination pixels can bypass backing admission. */
     pub fn is_empty(&self) -> bool {
-        self.bounds[0] == self.bounds[2] || self.bounds[1] == self.bounds[3]
+        let bounds = self.paint_bounds();
+        bounds[0] == bounds[2] || bounds[1] == bounds[3]
+    }
+
+    /** Source geometry stays bounded separately from whole-surface compositing. */
+    fn paint_bounds(&self) -> [u32; 4] {
+        if !self.active {
+            [0; 4]
+        } else if self.mode.affects_uncovered() {
+            [0, 0, self.size[0], self.size[1]]
+        } else {
+            self.bounds
+        }
     }
 
     /** Optional mask samples are validated and shared before any destination COW can begin. */
@@ -85,6 +102,7 @@ pub fn plan_rect(size: [u32; 2], rect: [f64; 4], transform: Affine) -> EngineRes
         image: None,
         clip: None,
         mode: Composite::default(),
+        active: true,
         inverse: transform.inverse().expect("nonempty rectangle inverse"),
         rectangle: rect,
     })
@@ -104,19 +122,18 @@ pub fn plan_blit(
     let crop = geometry::normalized(crop)?;
     let placement = geometry::normalized(placement)?;
     let Some((crop, placement)) = clipped_image(source, crop, placement) else {
-        return Ok(empty(destination));
+        let mut plan = empty(destination);
+        plan.active = false;
+        return Ok(plan);
     };
     let mut plan = plan_rect(destination, placement, transform)?;
-    if plan.is_empty() {
-        return Ok(plan);
-    }
     let pixels = plan.work / COVERAGE_WORK;
     plan.work += pixels * if smoothing { SMOOTHING_WORK } else { 1 };
     plan.image = Some(Image {
         size: source,
         crop,
         placement,
-        inverse: transform.inverse().expect("nonempty inverse"),
+        inverse: transform.inverse().unwrap_or(Affine::IDENTITY),
         smoothing,
     });
     Ok(plan)
@@ -132,16 +149,21 @@ pub fn fill_rect(
     validate_alpha(alpha)?;
     paint(destination, plan, |pixel, x, y| {
         let coverage = coverage(plan, x, y);
-        if coverage == 0.0 {
-            return;
-        }
-        composite(pixel, color, alpha * coverage, plan.mode);
+        composite_coverage(
+            pixel,
+            color,
+            alpha,
+            plan.mode,
+            coverage,
+            clip_coverage(plan, x, y),
+        );
     })
 }
 
 /** Clearing removes the covered fraction regardless of current paint alpha. */
 pub fn clear_rect(destination: &mut Bitmap, plan: &RasterPlan) -> EngineResult<()> {
-    paint(destination, plan, |pixel, x, y| {
+    let clearing = plan.clone().with_composite(Composite::SourceOver);
+    paint(destination, &clearing, |pixel, x, y| {
         let coverage = coverage(plan, x, y);
         if coverage == 0.0 {
             return;
@@ -171,13 +193,21 @@ pub fn blit(
     }
     paint(destination, plan, |pixel, x, y| {
         let coverage = coverage(plan, x, y);
-        if coverage == 0.0 {
-            return;
-        }
-        let local = image.inverse.map([f64::from(x) + 0.5, f64::from(y) + 0.5]);
-        let at = image_position(image, local);
-        let color = sampling::sample(source, at, image.crop, image.smoothing);
-        composite(pixel, color, alpha * coverage, plan.mode);
+        let color = if coverage > 0.0 {
+            let local = image.inverse.map([f64::from(x) + 0.5, f64::from(y) + 0.5]);
+            let at = image_position(image, local);
+            sampling::sample(source, at, image.crop, image.smoothing)
+        } else {
+            [0; CHANNELS]
+        };
+        composite_coverage(
+            pixel,
+            color,
+            alpha,
+            plan.mode,
+            coverage,
+            clip_coverage(plan, x, y),
+        );
     })
 }
 
@@ -198,7 +228,7 @@ fn paint(
     }
     let width = destination.width as usize;
     let pixels = destination.pixels.make_mut()?;
-    let [left, top, right, bottom] = plan.bounds;
+    let [left, top, right, bottom] = plan.paint_bounds();
     for y in top..bottom {
         for x in left..right {
             let start = (y as usize * width + x as usize) * CHANNELS;
@@ -282,6 +312,7 @@ fn empty(size: [u32; 2]) -> RasterPlan {
         image: None,
         clip: None,
         mode: Composite::default(),
+        active: true,
         inverse: Affine::IDENTITY,
         rectangle: [0.0; 4],
     }
@@ -294,6 +325,9 @@ fn invalid() -> EngineError {
 
 /** Intersect partial clip pixels with actual rectangle samples instead of multiplying two edge coverages. */
 fn coverage(plan: &RasterPlan, x: u32, y: u32) -> f64 {
+    if x < plan.bounds[0] || x >= plan.bounds[2] || y < plan.bounds[1] || y >= plan.bounds[3] {
+        return 0.0;
+    }
     let Some(clip) = &plan.clip else {
         return geometry::coverage(&plan.polygon, x, y);
     };
@@ -323,4 +357,9 @@ fn coverage(plan: &RasterPlan, x: u32, y: u32) -> f64 {
         }
     }
     f64::from(count) / SAMPLES as f64
+}
+
+/** Clip-only coverage protects destination samples outside the clip independently from source geometry. */
+fn clip_coverage(plan: &RasterPlan, x: u32, y: u32) -> f64 {
+    plan.clip.as_ref().map_or(1.0, |clip| clip.coverage(x, y))
 }

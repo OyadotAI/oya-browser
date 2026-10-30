@@ -60,6 +60,12 @@ fn all_supported_painters_observe_compositing_state() {
         ("destination-out", "255,0,0,64"),
         ("source-atop", "127,0,128,128"),
         ("xor", "128,0,128,127"),
+        ("copy", "0,0,255,128"),
+        ("source-in", "0,0,255,64"),
+        ("source-out", "0,0,255,64"),
+        ("destination-in", "255,0,0,64"),
+        ("destination-atop", "128,0,127,128"),
+        ("lighter", "128,0,128,255"),
     ] {
         for painter in painters {
             let execution = run(&format!(
@@ -90,7 +96,7 @@ fn clip_is_preserved_and_pixel_bypasses_ignore_compositing() {
 #[test]
 fn unsupported_names_are_unaccepted_and_conversion_can_reset_the_context() {
     let execution = run(
-        "a.globalCompositeOperation='xor';let r=[];for(const value of ['copy','lighter','multiply','SOURCE-OVER','invalid']){a.globalCompositeOperation=value;r.push(a.globalCompositeOperation)}a.globalCompositeOperation={toString(){c.width=8;return 'destination-out'}};r.push(a.globalCompositeOperation);r=r.join('|')",
+        "a.globalCompositeOperation='xor';let r=[];for(const value of ['screen','overlay','multiply','SOURCE-OVER','invalid']){a.globalCompositeOperation=value;r.push(a.globalCompositeOperation)}a.globalCompositeOperation={toString(){c.width=8;return 'destination-out'}};r.push(a.globalCompositeOperation);r=r.join('|')",
     );
     assert_eq!(
         common::global(&execution, "r"),
@@ -119,4 +125,47 @@ fn composition_survives_saved_state_and_serialization_then_resets() {
     .unwrap();
     assert_eq!(common::failure(&resumed), None);
     assert_eq!(common::global(&resumed, "r"), "source-atop|source-over");
+}
+
+/** All full-surface operators process invisible source while preserving pixels outside the clip. */
+#[test]
+fn offcanvas_empty_and_transparent_sources_affect_only_the_clip() {
+    for mode in [
+        "copy",
+        "source-in",
+        "source-out",
+        "destination-in",
+        "destination-atop",
+    ] {
+        for paint in [
+            "a.fillRect(20,20,1,1)",
+            "a.fillRect(0,0,0,0)",
+            "a.beginPath();a.fill()",
+            "const p=new Path2D();a.stroke(p)",
+            "const s=document.createElement('canvas');s.width=1;s.height=1;a.drawImage(s,0,0)",
+            "const s=document.createElement('canvas');s.width=1;s.height=1;s.getContext('2d').fillRect(0,0,1,1);a.drawImage(s,20,20)",
+            "a.fillStyle='rgba(0,0,0,0)';a.fillText('ink',0,0)",
+        ] {
+            let execution = run(&format!(
+                "a.fillStyle='red';a.fillRect(0,0,8,8);a.rect(0,0,4,8);a.clip();a.globalCompositeOperation='{mode}';{paint};const r=rgba(2,2)+'|'+rgba(6,2)"
+            ));
+            assert_eq!(
+                common::global(&execution, "r"),
+                "0,0,0,0|255,0,0,255",
+                "{mode}/{paint}"
+            );
+        }
+    }
+}
+
+/** Fractional clip coverage is applied after lighter clamps, and zero global alpha still clears under copy. */
+#[test]
+fn fractional_lighter_and_zero_alpha_copy_have_correct_coverage() {
+    let execution = run(
+        "a.fillStyle='rgba(255,0,0,0.8)';a.fillRect(0,0,8,8);a.rect(0.5,0,0.5,8);a.clip();a.globalCompositeOperation='lighter';a.fillRect(0,0,8,8);let r=rgba(0,0)+'|'+rgba(1,0);a.globalCompositeOperation='copy';a.globalAlpha=0;a.fillRect(0,0,8,8);r+='|'+rgba(0,0)+'|'+rgba(1,0)",
+    );
+    assert_eq!(
+        common::global(&execution, "r"),
+        "255,0,0,230|255,0,0,204|255,0,0,115|255,0,0,204"
+    );
 }
