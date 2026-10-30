@@ -439,6 +439,7 @@ impl Runtime {
             .ok_or_else(|| EngineError::limit("document revisions", usize::MAX))?;
         page.layout_generation = page.layout_generation.saturating_add(1);
         self.prepare_current(&mut page)?;
+        let broadcast = self.prepare_broadcast(&mut page)?;
         let rollback = if page.storage_dirty {
             self.write_storage(&page.origin, &page.storage)?
         } else {
@@ -452,6 +453,7 @@ impl Runtime {
                 runtime.commit_storage(&origin, &storage);
             }
             page.storage_dirty = false;
+            runtime.broadcast = broadcast;
             runtime.page = Some(page);
             runtime.sync_history_url();
             runtime.clamp_scroll();

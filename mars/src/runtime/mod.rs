@@ -5,6 +5,7 @@ pub mod authority;
 mod batch;
 /** Bookmarks the person saves; desktop-owned, persisted through the profile record store. */
 pub mod bookmarks;
+mod broadcast;
 mod cancellation;
 mod csp;
 mod demo;

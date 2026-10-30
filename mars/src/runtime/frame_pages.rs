@@ -520,9 +520,12 @@ pub(super) fn prune_routes(page: &mut Page) {
     if removed.is_empty() {
         return;
     }
-    Arc::make_mut(&mut page.frames).retain(|frame| {
+    Arc::make_mut(&mut page.frames).retain_mut(|frame| {
         if !removed.contains(&frame.owner()) {
             return true;
+        }
+        if let Some(child) = frame.page.as_mut() {
+            super::broadcast::retire_page(child, &mut page.scripting.broadcast);
         }
         frame.remove_images(&mut page.images);
         false

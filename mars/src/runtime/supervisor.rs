@@ -120,6 +120,10 @@ pub struct Runtime {
     pub(super) next_frame_window: i64,
     /** Scoped root partition while an embedded page builds or executes; never persisted across turns. */
     pub(super) frame_partition: Option<String>,
+    /** Committed channels share this coordinator, never process-global or persisted state. */
+    pub(super) broadcast: super::broadcast::Broker,
+    /** Candidate ordering is monotonic even when a candidate is abandoned. */
+    pub(super) next_broadcast_sequence: u64,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
@@ -149,6 +153,42 @@ impl TabState {
 }
 
 impl Runtime {
+    /** Replace only the publishing tab while enumerating authoritative committed context owners. */
+    pub(super) fn broadcast_addresses(
+        &self,
+        candidate: Option<&Page>,
+    ) -> EngineResult<Vec<super::broadcast::Address>> {
+        let mut addresses = Vec::new();
+        for tab in &self.tabs {
+            let page = if tab.id == self.active_tab_id {
+                candidate.or(self.page.as_ref())
+            } else {
+                tab.page.as_ref()
+            };
+            if let Some(page) = page {
+                super::broadcast::addresses(page, &tab.id, &mut addresses)?;
+            }
+        }
+        Ok(addresses)
+    }
+
+    /** A channel callback gives an inactive recipient a finite, fair background work window. */
+    pub(super) fn broadcast_background_tab(&self, now: Instant) -> Option<String> {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.id != self.selected_tab_id)
+            .filter_map(|tab| {
+                let page = tab.page.as_ref()?;
+                (page.scripting.broadcast_awake
+                    && now < page.scripting.awake_until
+                    && (page.scripting.pending() || page.frames_pending())
+                    && now >= page.scripting.last_tick + page.scripting.tick_interval())
+                .then_some((page.scripting.last_tick, tab.id.clone()))
+            })
+            .min_by_key(|(last, _)| *last)
+            .map(|(_, tab)| tab)
+    }
+
     /// Installs where navigations show their first paint (the page before its scripts run).
     pub fn show_first_paint(
         &mut self,
@@ -217,6 +257,7 @@ impl Runtime {
             self.store_active_tab();
         }
         self.tabs.retain(|tab| tab.id != id);
+        self.broadcast.remove_tab(id);
         let prefix = format!("{id}|");
         self.session_storage
             .retain(|key, _| !key.starts_with(&prefix));
@@ -509,6 +550,8 @@ impl Runtime {
             residency: Default::default(),
             next_frame_window: 0,
             frame_partition: None,
+            broadcast: Default::default(),
+            next_broadcast_sequence: 0,
             provisional: None,
         };
         for (name, executable) in [

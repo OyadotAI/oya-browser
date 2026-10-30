@@ -83,6 +83,10 @@ const SECONDS_PER_MINUTE: f64 = 60.0;
 /// What the coordinator keeps for a page's scripts between V9 requests.
 #[derive(Clone)]
 pub(super) struct Scripting {
+    /** Unpublished channel effects remain isolated with this document candidate. */
+    pub broadcast: super::broadcast::Staging,
+    /** Delivery may wake an inactive tab for the same finite work window as the visible tab. */
+    pub broadcast_awake: bool,
     /// Dedicated worker state and queues share this page's candidate publication lifetime.
     pub workers: super::workers::Workers,
     /// Complete sampled animation paint effects, separate from authored document styles.
@@ -228,6 +232,8 @@ impl Default for Scripting {
         let now = Instant::now();
         Self {
             image_loading: image_loading::Loading::default(),
+            broadcast: Default::default(),
+            broadcast_awake: false,
             load_pending: false,
             opacity_effects: Vec::new(),
             css_transitions: Default::default(),
@@ -292,7 +298,7 @@ impl Scripting {
     }
 
     /** Native transition frames use their next sample time while expensive work stays throttled. */
-    fn tick_interval(&self) -> Duration {
+    pub(super) fn tick_interval(&self) -> Duration {
         super::animations::next_sample(self)
             .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
             .unwrap_or(TICK_INTERVAL)
@@ -492,6 +498,24 @@ impl Runtime {
         page.state_token = state_token;
         page.storage_dirty |= storage != page.storage;
         page.storage = storage;
+        if !effects.broadcast_commands.is_empty()
+            || !effects.broadcast_channels.is_empty()
+            || self.broadcast.has_context(&page.script_identity)
+            || page.scripting.broadcast.contains(&page.script_identity)
+        {
+            let address = super::broadcast::Address::new(
+                &page.script_identity,
+                &self.active_tab_id,
+                &page.origin,
+                &page.top_level_url,
+            )?;
+            self.stage_broadcast(
+                &mut page.scripting.broadcast,
+                address,
+                effects.broadcast_commands,
+                effects.broadcast_channels,
+            )?;
+        }
         let scripting = &mut page.scripting;
         scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
@@ -1100,6 +1124,10 @@ impl Runtime {
     /// `run_page_scripts` that gives way between V9 steps once `yield_now` reports a waiting
     /// command, so a person's click on a busy page (YouTube) waits for one step, not a whole run.
     pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
+        let broadcast_changed = self.run_broadcast(yield_now);
+        if yield_now() {
+            return broadcast_changed;
+        }
         let now = Instant::now();
         let due = self.page.as_ref().is_some_and(|page| {
             ((page.scripting.pending() || page.frames_pending())
@@ -1110,10 +1138,10 @@ impl Runtime {
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
-            return false;
+            return broadcast_changed;
         }
         let Ok(permit) = self.presentation_permit(None) else {
-            return false;
+            return broadcast_changed;
         };
         let previous = std::mem::replace(&mut self.permit, permit);
         let published = match self.tick(now, yield_now) {
@@ -1122,11 +1150,15 @@ impl Runtime {
             Err(_) => false,
         };
         self.permit = previous;
-        published
+        published || broadcast_changed
     }
 
     /** One background run: settle, then commit (a new revision only when the document changed). */
-    fn tick(&mut self, now: Instant, yield_now: &mut dyn FnMut() -> bool) -> EngineResult<bool> {
+    pub(super) fn tick(
+        &mut self,
+        now: Instant,
+        yield_now: &mut dyn FnMut() -> bool,
+    ) -> EngineResult<bool> {
         let mut page = self.current()?.clone();
         let elapsed = now
             .saturating_duration_since(page.scripting.last_tick)
@@ -1199,7 +1231,8 @@ impl Runtime {
     }
 
     /** Commit engine state that changed no document: same revision, same layout. */
-    pub(super) fn commit_quietly(&mut self, page: Page) -> EngineResult<()> {
+    pub(super) fn commit_quietly(&mut self, mut page: Page) -> EngineResult<()> {
+        let broadcast = self.prepare_broadcast(&mut page)?;
         let rollback = if page.storage_dirty {
             self.write_storage(&page.origin, &page.storage)?
         } else {
@@ -1213,6 +1246,7 @@ impl Runtime {
                 runtime.commit_storage(&origin, &storage);
             }
             page.storage_dirty = false;
+            runtime.broadcast = broadcast;
             runtime.page = Some(page);
             runtime.sync_history_url();
             runtime.adopt_script_scroll();
@@ -1422,7 +1456,7 @@ impl Runtime {
     /** Rebuild a page whose script state V9 lost by loading it again, as a browser reloads a
     tab whose renderer died. A page a POST produced is never replayed: its scripts stop and it
     stays as committed. Returns whether the window has something new to show. */
-    fn reload_lost_page(&mut self, error: &EngineError) -> bool {
+    pub(super) fn reload_lost_page(&mut self, error: &EngineError) -> bool {
         let replayable = self.page.as_ref().is_some_and(|page| page.replayable);
         if replayable && let Some(index) = self.history_cursor {
             return self.revisit(index).is_ok();
@@ -1436,7 +1470,7 @@ impl Runtime {
 }
 
 /** A refused step ends this page's script work; the page itself stays as committed. */
-fn stop_scripts(page: &mut Page, error: &EngineError) {
+pub(super) fn stop_scripts(page: &mut Page, error: &EngineError) {
     const REASON_CHARS: usize = 240;
     page.scripting.next_timer_ms = None;
     page.scripting.requests.clear();

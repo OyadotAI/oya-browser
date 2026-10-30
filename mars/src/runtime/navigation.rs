@@ -219,9 +219,10 @@ impl Runtime {
         let result = self.candidate(request, sensitive).and_then(|page| {
             perf::record("page.candidate", started, String::new);
             let started = Instant::now();
-            let Some(page) = page else {
+            let Some(mut page) = page else {
                 return self.download_ready();
             };
+            let broadcast = self.prepare_broadcast(&mut page)?;
             let rollback = if page.storage_dirty {
                 self.write_storage(&page.origin, &page.storage)?
             } else {
@@ -262,6 +263,7 @@ impl Runtime {
                     }
                 }
                 runtime.scroll_y = 0.0;
+                runtime.broadcast = broadcast;
                 runtime.page = Some(page);
                 runtime.adopt_script_scroll();
                 runtime.inspection()

@@ -33,6 +33,15 @@ impl Runtime {
         } else {
             json!({"kind":"timers","now_ms":(now-worker.clock_origin).max(0.0),"budget":1})
         };
+        self.worker_action(worker, action)
+    }
+
+    /** Dedicated native events use the same resident-token and import authority as scheduled tasks. */
+    pub(super) fn worker_action(
+        &mut self,
+        worker: &mut Context,
+        action: serde_json::Value,
+    ) -> EngineResult<Execution> {
         let identity = &worker.lease.identity;
         let keep = self
             .page
@@ -65,6 +74,24 @@ impl Runtime {
         worker: &mut Context,
         execution: Execution,
     ) -> EngineResult<bool> {
+        if !execution.effects.broadcast_commands.is_empty()
+            || !execution.effects.broadcast_channels.is_empty()
+            || self.broadcast.has_context(&worker.lease.identity)
+            || page.scripting.broadcast.contains(&worker.lease.identity)
+        {
+            let address = super::super::broadcast::Address::new(
+                &worker.lease.identity,
+                &self.active_tab_id,
+                &worker.policy.base.origin().ascii_serialization(),
+                worker.policy.partition.as_str(),
+            )?;
+            self.stage_broadcast(
+                &mut page.scripting.broadcast,
+                address,
+                execution.effects.broadcast_commands,
+                execution.effects.broadcast_channels,
+            )?;
+        }
         worker.token = execution.state_token;
         worker.ready = execution.effects.worker_ready.ok_or_else(|| {
             EngineError::invalid("Worker execution omitted initialization state.")

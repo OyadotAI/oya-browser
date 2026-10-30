@@ -136,7 +136,7 @@ impl Runtime {
             }
         }
         let contexts = &page.frame_tree.contexts;
-        Arc::make_mut(&mut page.frames).retain(|frame| {
+        Arc::make_mut(&mut page.frames).retain_mut(|frame| {
             if page
                 .document
                 .nodes
@@ -149,6 +149,9 @@ impl Runtime {
                 !retired.contains(&frame.owner()) && frame.window_matches(context.window)
             });
             if !keep {
+                if let Some(child) = frame.page.as_mut() {
+                    super::broadcast::retire_page(child, &mut page.scripting.broadcast);
+                }
                 frame.remove_images(&mut page.images);
             }
             keep
