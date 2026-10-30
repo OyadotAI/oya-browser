@@ -140,6 +140,17 @@ checks. Inherited CSP host sources match against the creator origin while URL
 resolution and import.meta retain the actual Blob address. Cross-context registry
 sharing, imported Blob dependencies and Blob fetch/image consumers remain unavailable.
 
+IntersectionObserver owns bounded, serialized viewport-root registrations in V9,
+using actual client boxes, root margins, thresholds and a dedicated asynchronous
+record queue. Limits are 64 observers, 256 aggregate targets, 512 queued records
+and 128 thresholds. Callbacks and targets participate in GC and restored-state
+validation; author timer IDs cannot cancel observer tasks. Runtime compares
+native geometry at layout boundaries and invalidates on resize/scroll. A dedicated
+Observe action delivers callbacks and their microtasks without firing unrelated
+timers, extending the author wake window or polling idle observers. Element roots,
+ancestor overflow clipping, occlusion/visibility tracking and nonzero scroll
+margins/delay remain explicitly unsupported or unavailable from current geometry.
+
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
 an independent child page. Runtime supplies bounded owner IDs to V9, which selects

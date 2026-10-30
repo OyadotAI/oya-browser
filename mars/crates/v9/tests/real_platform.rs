@@ -62,7 +62,7 @@ fn css_namespace_escapes_identifiers() {
     assert_eq!(eval(source, "r"), "a\\.b \\31 x \\- ok_-1 true");
 }
 
-/** Lazy loaders see every observed target intersect once, after the current task; resize
+/** Missing layout boxes are not fabricated as intersecting; resize
 observers get their first observation; idle callbacks get a deadline. */
 #[test]
 fn observers_deliver_first_observations_and_idle_callbacks_get_deadlines() {
@@ -82,6 +82,6 @@ fn observers_deliver_first_observations_and_idle_callbacks_get_deadlines() {
     .unwrap();
     assert_eq!(
         common::console(&ran),
-        ["io true true true", "ro 0 0", "idle true false"]
+        ["io false true true", "ro 0 0", "idle true false"]
     );
 }

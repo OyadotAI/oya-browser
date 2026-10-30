@@ -76,6 +76,8 @@ pub(super) struct Scripting {
     pub css_translation_transitions: crate::document::TranslationTransitions,
     /// Keyframe playback is independent from authored opacity and transition state.
     pub css_animations: crate::document::OpacityAnimations,
+    /// Geometry invalidations schedule observer-only work even after ordinary timers go idle.
+    pub intersections: super::intersections::Observations,
     /// Actual image requests and retained decode admission for this page alone.
     pub image_loading: image_loading::Loading,
     /// Load stays pending across bounded slices while its image cohort still has work.
@@ -202,6 +204,7 @@ impl Default for Scripting {
             css_transitions: Default::default(),
             css_translation_transitions: Default::default(),
             css_animations: Default::default(),
+            intersections: Default::default(),
             loaded: false,
             environment: PageEnvironment::default(),
             attempted_frame_owners: Default::default(),
@@ -244,6 +247,7 @@ impl Scripting {
         super::animations::next_sample(self).is_some()
             || self.loaded
                 && (self.scroll_pending
+                    || self.intersections.pending
                     || self.next_timer_ms.is_some()
                     || !self.requests.is_empty()
                     || !self.image_loading.pending.is_empty()
@@ -441,6 +445,11 @@ impl Runtime {
         scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
         scripting.next_timer_ms = effects.next_timer_ms;
+        scripting.intersections.sampled(
+            &environment,
+            effects.intersection_observers,
+            effects.intersection_observers_pending,
+        );
         scripting.requests.extend(effects.requests);
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
@@ -475,6 +484,7 @@ impl Runtime {
         if kind != "modules" {
             self.follow_modules(page, &mut step)?;
         }
+        super::intersections::layout(page, self.render_context, self.scroll_y);
         Ok(step)
     }
 
@@ -827,6 +837,8 @@ impl Runtime {
                     changed = true;
                 }
                 json!({"kind":"images","responses":responses})
+            } else if page.scripting.intersections.pending {
+                json!({"kind":"observe"})
             } else if page.scripting.load_pending {
                 page.scripting.load_pending = false;
                 json!({"kind":"event","event":"load"})
@@ -972,7 +984,8 @@ impl Runtime {
         let due = self.page.as_ref().is_some_and(|page| {
             ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
-                || super::animations::next_sample(&page.scripting).is_some())
+                || super::animations::next_sample(&page.scripting).is_some()
+                || page.scripting.loaded && page.scripting.intersections.pending)
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
@@ -1005,7 +1018,13 @@ impl Runtime {
         } else {
             let previous = super::animations::paint_effects(&page.scripting);
             page.scripting.clock_ms = end;
-            previous != super::animations::paint_effects(&page.scripting)
+            let animated = previous != super::animations::paint_effects(&page.scripting);
+            let observed = if page.scripting.loaded && page.scripting.intersections.pending {
+                self.observe_intersections(&mut page)?
+            } else {
+                false
+            };
+            animated || observed
         };
         page.scripting.tick_cost = now.elapsed();
         if changed {
@@ -1020,6 +1039,18 @@ impl Runtime {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /** A refused observer turn follows ordinary script failure handling rather than retrying forever. */
+    fn observe_intersections(&mut self, page: &mut Page) -> EngineResult<bool> {
+        match self.script_step(page, json!({"kind":"observe"})) {
+            Ok(step) => Ok(step.changed),
+            Err(error) if stops_navigation(&error) || lost_state(&error) => Err(error),
+            Err(error) => {
+                stop_scripts(page, &error);
+                Ok(false)
+            }
+        }
     }
 
     /** Commit engine state that changed no document: same revision, same layout. */
@@ -1067,6 +1098,9 @@ impl Runtime {
         }
         if x.is_some() || y.is_some() {
             self.clamp_scroll();
+            if let Some(page) = self.page.as_mut() {
+                page.scripting.intersections.invalidate();
+            }
         }
     }
 

@@ -25,6 +25,7 @@ mod horizontal;
 mod images;
 mod integrity;
 mod interaction;
+mod intersections;
 mod languages;
 mod lifetime;
 /** The Oya server link's way into the runtime, under the same ownership checks as local agents. */

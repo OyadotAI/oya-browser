@@ -139,6 +139,16 @@ keeping resource failures atomic. Singular transforms requiring inverse mapping
 remain explicit refusals. Four Core and five V9 regressions were added but not
 run; the combined production build for this batch is pending.
 
+IntersectionObserver now reports measured viewport intersections instead of
+fabricated visibility. Persistent registrations retain px/% root margins,
+threshold changes and asynchronous records; unobserve/disconnect stop future
+sampling while preserving already queued records. Native layout, resize and
+scroll invalidations schedule dedicated observer-only turns, including after
+ordinary timers go idle. Seven V9, two runtime state and two native integration
+regressions were added but not run. State and queues are bounded and validated.
+Element roots, ancestor clipping, visibility tracking and nonzero scroll
+margins/delay remain unfinished. The combined production build is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

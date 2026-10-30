@@ -1290,18 +1290,13 @@ fn global_object(b: &mut Builder) {
         }
         b.global(name, ctor);
     }
-    for name in [
-        "IntersectionObserver",
-        "ResizeObserver",
-        "PerformanceObserver",
-        "ReportingObserver",
-    ] {
+    super::intersection_observers::install(b);
+    for name in ["ResizeObserver", "PerformanceObserver", "ReportingObserver"] {
         let observer = b.object(Some(b.ids.object_prototype));
         methods(b, observer, &["unobserve", "disconnect"], noop_method);
-        // Intersection and resize observers report each observed target once, asynchronously,
-        // as a browser's first observation does; the others record nothing yet.
+        // ResizeObserver retains its existing initial measurement; other observer types remain inert.
         let observe: NativeFn = match name {
-            "IntersectionObserver" | "ResizeObserver" => window::observe,
+            "ResizeObserver" => window::observe,
             _ => noop_method,
         };
         b.host_method(observer, "observe", 1, observe);

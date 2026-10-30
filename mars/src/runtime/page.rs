@@ -378,6 +378,7 @@ impl Runtime {
         self.embed_frames(&mut display, &page.frames)?;
         page.display = Some(display);
         page.laid_out_before = next_node(&page.document);
+        super::intersections::layout(page, self.render_context, self.scroll_y);
         Ok(())
     }
     /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
@@ -549,6 +550,7 @@ impl Runtime {
             page.display = Some(display);
             page.laid_out_before = next_node(&page.document);
         }
+        super::intersections::layout(page, context, self.scroll_y);
         page.refresh_inspection();
         page.publishable()
     }

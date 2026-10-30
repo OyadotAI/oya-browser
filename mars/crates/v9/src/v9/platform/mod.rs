@@ -32,6 +32,7 @@ pub(in crate::v9) mod images;
 mod implementation;
 mod install;
 mod interfaces;
+pub(in crate::v9) mod intersection_observers;
 mod keyboard;
 pub(in crate::v9) mod messaging;
 mod xml_frames;
@@ -956,6 +957,10 @@ pub struct HostEffects {
     /// it saw an empty box where a browser would have laid the page out first.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stale_geometry: bool,
+    /// Native geometry changes need an inert observation turn only while registrations or records exist.
+    pub intersection_observers: bool,
+    /// Queued observer entries need a dedicated native observation turn even outside author wake windows.
+    pub intersection_observers_pending: bool,
     /// Absolute URLs of `<link rel=stylesheet>` elements scripts connected (in the head too,
     /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1193,6 +1198,8 @@ pub(in crate::v9) struct PageState {
     pub next_timer: u32,
     /// Active and filling animations retain their actual effect and Promise graphs.
     pub active_animations: Vec<ObjectId>,
+    /// Branded viewport observers retain measured records and thresholds across native layout updates.
+    pub intersection_observers: BTreeMap<ObjectId, intersection_observers::State>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
     pub listeners: listener_store::ListenerStore,
@@ -1491,6 +1498,7 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        intersection_observers::roots(&self.state, out);
         #[cfg(feature = "conformance")]
         out.extend(
             self.state
@@ -1563,6 +1571,7 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        self.state.intersection_observers.retain(|id, _| live.contains(id));
         self.state
             .canvases
             .retain(|_, state| live.contains(&state.context));

@@ -668,6 +668,7 @@ impl VmState {
         #[cfg(feature = "conformance")]
         builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
+        platform::intersection_observers::validate(&self.page, &self.heap)?;
         platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::frame_directory::validate_state(&self.page)?;
@@ -1597,6 +1598,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     }
     platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
+    platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
@@ -2109,6 +2111,16 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
     }
 }
 
+/// Resample measured viewport geometry and deliver only observer callbacks, without firing author timers.
+pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
+        platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
+        finish(vm)
+    })
+}
+
 /// A person typed into a field the app already updated: V9 records the value (None for a
 /// secret field, whose value never enters the engine) and fires trusted `input` and `change`
 /// events at the node, so a form's script learns what was typed.
@@ -2206,6 +2218,7 @@ fn run_timers_with(
         return Err(EngineError::invalid("Invalid V9 timer clock."));
     }
     vm.remaining = vm.limits.operations;
+    platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
     vm.run_due_timers(now_ms, budget).map_err(fatal)?;
     finish(vm)
 }
