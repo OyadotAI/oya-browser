@@ -57,6 +57,16 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Native close uses per-attempt save tickets and nonblocking authority admission.
+A ten-second save/admission deadline returns to explicit Keep Open, Retry or
+Close Without Saving choices; it never implies persistence succeeded. Retired
+tickets cannot close later attempts. Explicit discard suppresses the worker’s
+final session retry, but cannot undo a secure-store write already in progress.
+An owned cleanup worker joins runtime/I/O/hub resources while AppKit continues
+pumping; library and demo-server workers are also polled and joined only when
+finished. A permanently blocked external native operation can still delay cleanup
+completion. Existing untracked attach connection-thread debt is unchanged.
+
 Parser metadata shares an 8 MiB budget for tags, attribute names, values and text,
 including executable-script attributes. Up to 32,256 metadata records reserve
 512 script slots within the detached-node ceiling. Records are complete or omitted

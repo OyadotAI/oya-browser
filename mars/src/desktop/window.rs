@@ -3,6 +3,7 @@ mod actions;
 mod appearance;
 #[cfg(feature = "test-support")]
 mod check;
+mod closing;
 mod commands;
 mod events;
 mod find;
@@ -69,6 +70,8 @@ struct Window {
     /** What the engine knows of the person's scrolling; reported only once it settles. */
     scroll: scroll::ScrollReport,
     closed: bool,
+    /** Save acknowledgement is polled without blocking native events. */
+    closing: closing::CloseState,
     last_owner: Option<Owner>,
     agent_busy: bool,
     worker_dead: bool,
@@ -147,7 +150,7 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
         .ok_or_else(|| EngineError::invalid("Desktop must start on the main thread."))?;
     let profiles = verification_profiles(&options);
     let records = record_store(&options);
-    let site = Site::start()?;
+    let mut site = Site::start()?;
     let origins = vec![site.origin.clone()];
     #[cfg(feature = "test-support")]
     let origins = {
@@ -214,15 +217,31 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
     window.window.makeFirstResponder(Some(&window.mars.address));
-    while window.window.isVisible() && !window.closed {
+    let mut failure = None;
+    loop {
+        if !window.window.isVisible() {
+            window.closed = true;
+        }
+        if window.closed {
+            window.broker.begin_shutdown();
+            let broker_done = window.broker.shutdown_finished();
+            let library_done = window.library.shutdown_finished();
+            let site_done = site.shutdown_finished();
+            if broker_done && library_done && site_done {
+                break;
+            }
+        }
         let result: EngineResult<()> = autoreleasepool(|_| {
             window.tick();
             #[cfg(feature = "test-support")]
-            if let Some(check) = &mut mcp_check {
+            if !window.closed
+                && let Some(check) = &mut mcp_check
+            {
                 check.advance(&mut window)?;
             }
             #[cfg(feature = "test-support")]
-            if let Some(check) = &mut check
+            if !window.closed
+                && let Some(check) = &mut check
                 && check.advance(&mut window)?
             {
                 window.closed = true;
@@ -244,12 +263,15 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
             app.updateWindows();
             Ok(())
         });
-        result?;
+        if let Err(error) = result {
+            failure = Some(error);
+            window.closed = true;
+        }
     }
     window.window.orderOut(None);
     drop(window);
     drop(site);
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 
 /** Ephemeral runs and UI verification keep every profile in memory, away from the Keychain. */
@@ -349,6 +371,7 @@ impl Window {
             pending_appearance: None,
             scroll: Default::default(),
             closed: false,
+            closing: closing::CloseState::Idle,
             last_owner: None,
             agent_busy: false,
             worker_dead: false,
@@ -377,12 +400,20 @@ impl Window {
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
         self.canvas.follow_viewport();
+        if self.closed {
+            while self.broker.events.try_recv().is_ok() {}
+            self.canvas.clear_actions();
+            self.mars.animate(true, false);
+            return;
+        }
         if self.broker.transport == Transport::Mcp
             && (!self.broker.connected.load(Ordering::Acquire)
                 || self.broker.cancel.load(Ordering::Acquire))
         {
             self.request_close();
-            return;
+            if self.closed {
+                return;
+            }
         }
         loop {
             match self.broker.events.try_recv() {
@@ -393,6 +424,11 @@ impl Window {
                     break;
                 }
             }
+        }
+        if self.poll_close() {
+            self.mars.animate(true, false);
+            self.canvas.clear_actions();
+            return;
         }
         while let Some(action) = self.canvas.pop() {
             if let Action::Activate(tag) = action
@@ -422,6 +458,9 @@ impl Window {
                     )
             ) {
                 self.action(action);
+                if !matches!(self.closing, closing::CloseState::Idle) {
+                    break;
+                }
             } else {
                 if let Action::Edit(id, _, page) = &action
                     && matches!(self.pending.back(),Some(Action::Edit(previous,_,observed)) if previous==id && observed==page)
@@ -439,6 +478,9 @@ impl Window {
                     self.pending.push_back(action);
                 }
             }
+        }
+        if !matches!(self.closing, closing::CloseState::Idle) {
+            return;
         }
         self.cancel_stale_appearance();
         self.ownership();

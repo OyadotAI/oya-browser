@@ -1,4 +1,7 @@
 /** One bounded worker serializes native UI and agent operations against one Runtime. */
+mod closing;
+pub(super) use closing::SaveTicket;
+
 use crate::{
     protocol::{EngineError, EngineResult, Request, Response},
     runtime::{
@@ -91,9 +94,10 @@ pub(super) enum Command {
     /** "Clear browsing data" empties the network engine's HTTP cache. */
     CacheClear,
     /** A close decision saves session state on the runtime-owning worker. */
-    SaveSession(mpsc::SyncSender<bool>),
-    /** Explicit close-without-saving prevents the worker's final retry. */
-    DiscardSession(mpsc::SyncSender<()>),
+    SaveSession {
+        reply: mpsc::SyncSender<bool>,
+        active: Arc<AtomicBool>,
+    },
     /** Save Link fetches one address as the person, through the governed network path, for saving. */
     Download {
         id: u64,
@@ -164,6 +168,10 @@ pub(super) struct Broker {
     /** MCP close semantics are distinct from the existing NDJSON compatibility path. */
     pub transport: Transport,
     worker: Option<JoinHandle<()>>,
+    /** Explicit discard applies before the worker's final persistence retry. */
+    discard: Arc<AtomicBool>,
+    /** Cleanup stays owned while the main thread continues pumping native events. */
+    shutdown: Option<JoinHandle<()>>,
     io: Vec<JoinHandle<()>>,
     /** The attach hub and the endpoint it bound; the socket is removed when the window closes. */
     attach: Option<(mars::mcp::attach::Hub, mars::mcp::attach::Endpoint)>,
@@ -285,7 +293,9 @@ impl Broker {
             }
             Transport::None => Vec::new(),
         };
+        let discard = Arc::new(AtomicBool::new(false));
         let start = WorkerStart {
+            discard: discard.clone(),
             program,
             origins,
             initial,
@@ -304,6 +314,8 @@ impl Broker {
             connected,
             transport,
             worker: Some(worker),
+            discard,
+            shutdown: None,
             io,
             attach: hub,
         })
@@ -339,50 +351,12 @@ impl Broker {
         self.connected.store(false, Ordering::Release);
         self.cancel.store(true, Ordering::Release);
     }
-    /** Invalidate queued human and agent permits before a close-save decision. */
-    pub fn begin_close(&self) {
-        if let Ok(mut authority) = self.authority.lock() {
-            authority.change(Owner::Human);
-        }
-    }
-    /** Ask the runtime owner to write the latest session and return only success state. */
-    pub fn save_session(&self) -> bool {
-        self.session_command(Command::SaveSession)
-    }
-    /** Disable the final retry after the person explicitly chose to close without saving. */
-    pub fn discard_session(&self) -> bool {
-        self.session_command_ack(Command::DiscardSession)
-    }
-    /** Bridge one bounded close decision through the runtime-owning worker. */
-    fn session_command(&self, command: fn(mpsc::SyncSender<bool>) -> Command) -> bool {
-        let (reply, result) = mpsc::sync_channel(1);
-        self.commands.try_send(command(reply)).is_ok() && result.recv().unwrap_or(false)
-    }
-    /** Confirm an explicit discard was applied before allowing the window to close. */
-    fn session_command_ack(&self, command: fn(mpsc::SyncSender<()>) -> Command) -> bool {
-        let (reply, result) = mpsc::sync_channel(1);
-        self.commands.try_send(command(reply)).is_ok() && result.recv().is_ok()
-    }
-}
-impl Drop for Broker {
-    /** Polling I/O and child waits observe cancellation before tasks are joined. */
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        for worker in self.io.drain(..) {
-            let _ = worker.join();
-        }
-        if let Some((hub, endpoint)) = self.attach.take() {
-            drop(hub);
-            endpoint.remove();
-        }
-    }
 }
 
 /// Startup-only inputs are grouped so worker lifetime has one coherent owner.
 struct WorkerStart {
+    /** Only the native explicit-discard choice suppresses final persistence. */
+    discard: Arc<AtomicBool>,
     /// The executable shared by native network/document/V9 services.
     program: PathBuf,
     /// Fixture grants never come from page or agent input.
@@ -408,6 +382,7 @@ fn worker(
     events: SyncSender<Event>,
 ) {
     let WorkerStart {
+        discard,
         program,
         origins,
         initial,
@@ -471,7 +446,7 @@ fn worker(
     });
     // A command that arrived while a background run was going; it runs next, ahead of the queue.
     let mut stashed: Option<Command> = None;
-    while !cancel.load(Ordering::Relaxed) {
+    while !cancel.load(Ordering::Acquire) {
         let next = match stashed.take() {
             Some(command) => Ok(command),
             None => input.recv_timeout(POLL),
@@ -523,6 +498,9 @@ fn worker(
             Err(_) => break,
         }
     }
+    if discard.load(Ordering::Acquire) {
+        runtime.discard_pending_session();
+    }
     if !runtime.stop() && mcp {
         eprintln!("MCP window closed; the latest tab session could not be saved.");
     }
@@ -530,13 +508,10 @@ fn worker(
 
 /** UI-only requests never gain a second document model or an agent self-grant path. */
 fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) -> Result<(), ()> {
-    if let Command::SaveSession(reply) = command {
-        let _ = reply.send(runtime.save_session_now());
-        return Ok(());
-    }
-    if let Command::DiscardSession(reply) = command {
-        runtime.discard_pending_session();
-        let _ = reply.send(());
+    if let Command::SaveSession { reply, active } = command {
+        if active.load(Ordering::Acquire) {
+            let _ = reply.try_send(runtime.save_session_now());
+        }
         return Ok(());
     }
     if let Command::Download { id, url, permit } = command {
@@ -723,8 +698,7 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
         | Command::ProfileRetry
         | Command::ProfileStorageClear
         | Command::CacheClear
-        | Command::SaveSession(_)
-        | Command::DiscardSession(_)
+        | Command::SaveSession { .. }
         | Command::Download { .. } => unreachable!(),
     };
     let rejected_edit = if result.is_err() { edited } else { None };

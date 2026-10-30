@@ -42,6 +42,23 @@ impl Library {
         }
     }
 
+    /** Close the write queue and join only after its final secure-store attempt has returned. */
+    pub fn shutdown_finished(&mut self) -> bool {
+        self.writer.sender.take();
+        if self
+            .writer
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            return false;
+        }
+        if let Some(thread) = self.writer.thread.take() {
+            let _ = thread.join();
+        }
+        true
+    }
+
     /** Queue the current state of one record for saving; an unencodable state is never written. */
     pub fn save(&self, record: Record) {
         let bytes = match record {

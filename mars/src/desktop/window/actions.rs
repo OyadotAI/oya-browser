@@ -1,50 +1,8 @@
 /** Native intentions carry local authority into the single runtime worker. */
 use super::*;
 use crate::desktop::broker::Command;
-use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn,
-};
+use objc2_app_kit::{NSAlert, NSAlertSecondButtonReturn, NSAlertThirdButtonReturn};
 impl Window {
-    /** Save or explicitly preserve the prior session before any app-close route completes. */
-    pub(super) fn request_close(&mut self) {
-        if self.broker.transport == Transport::Mcp {
-            self.pending.clear();
-            self.canvas.clear_actions();
-            self.broker.close_mcp();
-            self.closed = true;
-            return;
-        }
-        self.pending.clear();
-        self.canvas.clear_actions();
-        self.broker.begin_close();
-        loop {
-            if self.broker.save_session() {
-                self.closed = true;
-                return;
-            }
-            let alert = NSAlert::new(self.canvas.mtm());
-            alert.setMessageText(&NSString::from_str("Your open tabs couldn’t be saved"));
-            alert.setInformativeText(&NSString::from_str(
-                "If you close now, your tabs won’t be restored the next time you open Mars.",
-            ));
-            alert.addButtonWithTitle(&NSString::from_str("Keep Mars Open"));
-            alert.addButtonWithTitle(&NSString::from_str("Try Again"));
-            alert.addButtonWithTitle(&NSString::from_str("Close Without Saving"));
-            let response = alert.runModal();
-            if response == NSAlertSecondButtonReturn {
-                continue;
-            }
-            if response == NSAlertThirdButtonReturn && self.broker.discard_session() {
-                self.closed = true;
-                return;
-            }
-            if response == NSAlertFirstButtonReturn || response == NSAlertThirdButtonReturn {
-                self.window.makeFirstResponder(Some(&self.mars.address));
-            }
-            return;
-        }
-    }
-
     /** Toolbar takeover revokes immediately rather than waiting behind queued RPC work. */
     pub(super) fn action(&mut self, action: Action) {
         if let Action::Activate(tag) = &action

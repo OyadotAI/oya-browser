@@ -7,6 +7,17 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The native close repair removes unbounded save acknowledgments and ordinary
+shutdown joins from AppKit. Each close attempt owns a polled ticket; retired
+attempts cannot consume late success. Admission/save timeout after ten seconds
+returns to explicit Keep Open/Retry/Discard choices. An explicit discard precedes
+cancellation and suppresses the final session retry. Owned runtime/I/O/hub cleanup,
+library writer completion and demo-server completion are polled while AppKit
+continues pumping events. Existing in-progress secure-store writes cannot be
+undone; permanently blocked native I/O can still delay cleanup completion. Five
+regressions are added unrun. This fixes concrete blocking close paths; the broader
+reported freeze was not reproduced before the requested forced termination.
+
 The reported IntersectionObserver cap is replaced by a shared 4 MiB native/wire
 budget: 512 bytes per observer, 32 per threshold, 256 per target and 768 per queued
 record. Individual ceilings are 8,192/16,384/5,461, with the combined budget binding
@@ -38,7 +49,7 @@ the clicked element, so this is not a verified reproduction of that exact failur
 The user subsequently reported an unresponsive window that could not close.
 Mars Network Fix and its three engine processes were force-closed at their request
 and confirmed absent. The old native close flow has unbounded worker acknowledgments
-on the UI thread; that repair is in progress. Mars remains closed during repairs.
+on the UI thread; that repair is implemented above. Mars remains closed during repairs.
 
 The combined transport repair build at `159613bc` passed in 37.99s. It includes
 phase-specific transport errors, deadline-lease retirement before socket reuse,
