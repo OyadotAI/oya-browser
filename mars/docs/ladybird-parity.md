@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The subsequent URL binding repair preserves list mutations made during argument
+conversion, ignores arguments outside each method's signature, validates even an
+empty forEach callback, and keeps exhausted iterators done after later appends.
+Invalid URL errors no longer convert the input twice. Five focused regressions
+were added but remain unrun under the code-first instruction; the combined build
+for this slice is pending. The prior `Mars Next.app` build was launched for the
+maintainer on 2026-10-30 without running browser QA.
+
 The current `ladybird-parity` working tree repairs the ordinary default-search
 journey without a site-specific response replacement or a lite-page fallback.
 This is a usability milestone, not a full Ladybird-parity result or a Google fix.
