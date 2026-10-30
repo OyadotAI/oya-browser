@@ -149,6 +149,14 @@ regressions were added but not run. State and queues are bounded and validated.
 Element roots, ancestor clipping, visibility tracking and nonzero scroll
 margins/delay remain unfinished. The combined production build is pending.
 
+Canvas image sources now include full-canvas GIF first frames and static WebP
+on macOS through actual ImageIO/CoreGraphics pixels. Container, decoder and
+declared dimensions are checked before output allocation; input and scratch
+memory are bounded. Output uses straight-alpha sRGB and preserves the existing
+immutable source and taint path. Twelve regression functions were added (eleven
+applicable on macOS) but not run. Animated WebP, partial-first-frame GIF and
+non-macOS native decoding remain unsupported. The combined build is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local

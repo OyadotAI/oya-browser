@@ -78,7 +78,7 @@ and admitted native scratch share a 96 MiB process ceiling, stricter than the
 initial 128 MiB V9 design ceiling. Supported drawing includes solid fill/clear
 rectangles, generic-family text, width measurement, affine transforms, saved
 drawing state, global alpha, ImageData read/write, canvas-to-canvas copying,
-bounded decoded PNG/JPEG image drawing, polygon fill/stroke and PNG export. Decoded sources retain
+bounded decoded PNG/JPEG/GIF/static-WebP image drawing, polygon fill/stroke and PNG export. Decoded sources retain
 fetch/redirect origin provenance, share immutable pixels and have an independent
 4 MiB per-page admission bound. Cross-origin drawing taints readback/export and
 copied canvases; reset restores origin cleanliness. Core plans bounded raster work before mutation, uses premultiplied
@@ -104,6 +104,14 @@ atomic. CSS color and font parsing remain limited; roundRect, clipping paths, Pa
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
+
+On macOS, Eye's ImageIO/CoreGraphics adapter decodes isolated full-canvas GIF
+first frames and static WebP into canonical straight-alpha sRGB pixels. Container
+and actual decoder dimensions must agree before output allocation; encoded input
+is capped at 2 MiB and decoder scratch shares the process allocation budget.
+Animated WebP, partial-first-frame GIF and non-macOS native decoding are explicitly
+unsupported. PNG/JPEG retain their existing Rust decoders and validate their
+declared decoded size against the source header.
 
 Eye retains bounded CSS transition metadata separately from authored opacity.
 Candidate-owned opacity timelines sample duration, delay, easing and interrupted

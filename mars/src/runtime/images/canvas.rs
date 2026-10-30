@@ -7,6 +7,9 @@ use mars_core::canvas::{Bitmap, IMAGE_SOURCE_BYTES};
 use std::time::Instant;
 use url::Url;
 mod decoder;
+mod formats;
+#[cfg(all(test, target_os = "macos"))]
+mod image_formats;
 
 /** Native painting can retain larger or unsupported images without promising canvas pixel access. */
 pub(in crate::runtime) fn source(
@@ -21,6 +24,9 @@ pub(in crate::runtime) fn source(
     }
     let bitmap = decoder::decode(asset).ok();
     if let Some(bitmap) = &bitmap {
+        if bitmap.pixels.len() > IMAGE_SOURCE_BYTES.saturating_sub(*used) {
+            return (None, asset.origin_clean);
+        }
         *used += bitmap.pixels.len();
     }
     (bitmap, asset.origin_clean)
