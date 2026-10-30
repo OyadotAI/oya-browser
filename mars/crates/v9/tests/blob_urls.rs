@@ -66,6 +66,27 @@ fn foreign_origin_urls_cannot_start_workers() {
 }
 
 #[test]
+fn module_workers_capture_source_and_credentials_before_revocation() {
+    let execution = common::load(
+        "const url=URL.createObjectURL(new Blob(['export const answer=42'],{type:'TEXT/JAVASCRIPT; charset=UTF-8'}));new Worker(url,{type:'module',credentials:'omit'});URL.revokeObjectURL(url);",
+    );
+    assert!(execution.failed.is_empty());
+    let command = &execution.effects.worker_commands[0];
+    assert!(matches!(
+        command,
+        WorkerCommand::Create {
+            worker_type: mars_v9::WorkerType::Module,
+            credentials: mars_v9::WorkerCredentials::Omit,
+            ..
+        }
+    ));
+    assert_eq!(
+        source(command).unwrap().mime_type,
+        "text/javascript; charset=utf-8"
+    );
+}
+
+#[test]
 fn registry_and_source_validation_reject_noncanonical_or_oversized_records() {
     let execution =
         common::load("const url=URL.createObjectURL(new Blob(['42']));new Worker(url);");

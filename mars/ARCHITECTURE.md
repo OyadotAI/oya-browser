@@ -110,13 +110,16 @@ animated properties retain their earlier static fallback; full transform
 interpolation, animation events and animation API exposure remain unfinished.
 
 V9 retains genuine Blob/File bytes in a context-owned object URL registry: up to
-64 URLs and 4 MiB including metadata. Classic worker construction captures an
+64 URLs and 4 MiB including metadata. Classic and module worker construction capture an
 immutable source, so later revocation releases the mapping without canceling an
 already created worker. Runtime rechecks publication, origin and worker CSP,
 inherits the creator's CSP, and executes captured bytes without a network fetch.
 Captured source bytes count toward the existing worker command queue allowance.
-Blob module workers, cross-context registry sharing and Blob fetch/image consumers
-remain unavailable.
+Module entry bytes require a JavaScript MIME essence and enter the existing
+module graph; absolute HTTP(S) dependencies retain its CSP/CORS and credential
+checks. Inherited CSP host sources match against the creator origin while URL
+resolution and import.meta retain the actual Blob address. Cross-context registry
+sharing, imported Blob dependencies and Blob fetch/image consumers remain unavailable.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
@@ -180,8 +183,8 @@ Module workers reuse V9's module graph for static/dynamic imports and import.met
 with immutable constructor credentials and governed CSP/CORS acquisition. Entry
 evaluation readiness holds queued messages through top-level await while allowing
 initialization timers and fetches to progress. Saved worker state binds its
-classic/module kind. Classic Blob sources use the captured registry described
-above. Blob module workers, nested workers and worker redirects remain
+classic/module kind. Blob entry sources use the captured registry described
+above. Imported Blob dependencies, nested workers and worker redirects remain
 explicitly unsupported.
 
 Native page and worker environments opt into script-visible monotonic elapsed

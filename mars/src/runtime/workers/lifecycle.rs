@@ -32,12 +32,7 @@ impl Runtime {
         };
         let deadline = until.max(Instant::now() + crate::runtime::scripting::SCRIPT_REQUEST_WALL);
         let source = if url.starts_with("blob:") {
-            if worker_type != WorkerType::Classic {
-                return Err(EngineError::unsupported(
-                    "Blob module workers are unavailable.",
-                ));
-            }
-            self.worker_blob_source(&creator, url, blob_source.as_ref())
+            self.worker_blob_source(&creator, url, blob_source.as_ref(), worker_type)
         } else if blob_source.is_some() {
             return Err(EngineError::invalid(
                 "Blob source requires a Blob worker URL.",

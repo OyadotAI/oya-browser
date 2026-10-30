@@ -101,8 +101,16 @@ build evidence is `/private/tmp/mars-parity-path-blob-keyframes-build-resumed.lo
 The first build exhausted disk space; clearing only the regenerable debug
 incremental cache allowed it to complete. No QA or per-change tests were run.
 
+The next Blob slice admits module entry scripts from captured bytes. Module MIME
+must be JavaScript; the existing graph handles absolute HTTP(S) imports, dynamic
+imports, top-level await and early-message gating. Inherited CSP matching now
+uses the Blob creator's origin for scheme-less host sources while retaining the
+actual Blob URL for resolution and import.meta. Nine focused regressions were
+added but not run; the combined production build for this next batch is pending.
+Imported Blob dependencies and cross-context registry sharing remain unfinished.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
-Canvas curves/clipping/compositing and broader image sources, Blob module/nested workers,
+Canvas curves/clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded

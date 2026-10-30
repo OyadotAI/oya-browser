@@ -157,6 +157,12 @@ fn hash_matches(sources: &[String], text: &str) -> bool {
 
 /** 'self', scheme sources (`https:`), `*`, and host sources with optional scheme, port and path. */
 fn matches_source(source: &str, document: &Url, url: &Url) -> bool {
+    // Blob workers inherit the creator policy, including its scheme for scheme-less host sources.
+    // Keep the actual Blob URL elsewhere: it remains the module and relative-request base.
+    let inherited = (document.scheme() == "blob")
+        .then(|| Url::parse(&document.origin().ascii_serialization()).ok())
+        .flatten();
+    let document = inherited.as_ref().unwrap_or(document);
     let lower = source.to_ascii_lowercase();
     match lower.as_str() {
         "'self'" => url.origin() == document.origin(),
@@ -222,6 +228,43 @@ mod tests {
             nonce: None,
             source: "",
         }
+    }
+
+    #[test]
+    fn blob_policies_match_scheme_less_hosts_using_the_creator_origin() {
+        let blob =
+            Url::parse("blob:http://creator.test/12345678-1234-4123-8123-123456789abc").unwrap();
+        let policies = vec!["script-src cdn.test; connect-src api.test".into()];
+        assert!(super::allows_worker(
+            &policies,
+            &blob,
+            &Url::parse("http://cdn.test/module.js").unwrap(),
+            false
+        ));
+        assert!(super::allows_connect(
+            &policies,
+            &blob,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
+        assert!(!super::allows_worker(
+            &policies,
+            &blob,
+            &Url::parse("http://other.test/module.js").unwrap(),
+            false
+        ));
+        let secure =
+            Url::parse("blob:https://creator.test/12345678-1234-4123-8123-123456789abc").unwrap();
+        assert!(!super::allows_connect(
+            &policies,
+            &secure,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
+        let opaque = Url::parse("blob:null/12345678-1234-4123-8123-123456789abc").unwrap();
+        assert!(!super::allows_connect(
+            &policies,
+            &opaque,
+            &Url::parse("http://api.test/data").unwrap()
+        ));
     }
 
     #[test]

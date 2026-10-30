@@ -43,9 +43,6 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.get(&options, &Key::from("type"))?
     };
     let worker_type = worker_type(vm, kind)?;
-    if url.scheme() == "blob" && worker_type == WorkerType::Module {
-        return Err(vm.unsupported_error("Blob module workers are unavailable"));
-    }
     if name.len() > crate::constants::URL_BYTES
         || url.as_str().len() > crate::constants::URL_BYTES
         || vm.page.state.workers.len() >= HANDLES

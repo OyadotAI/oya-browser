@@ -1,6 +1,6 @@
 /** Captured Blob workers inherit creator policy and never enter the network acquisition path. */
 use super::*;
-use crate::v9::BlobUrlSource;
+use crate::v9::{BlobUrlSource, WorkerType};
 
 impl Runtime {
     /** Source capture conveys bytes only; publication, origin and CSP still admit execution. */
@@ -9,6 +9,7 @@ impl Runtime {
         creator: &Policy,
         address: &str,
         captured: Option<&BlobUrlSource>,
+        worker_type: WorkerType,
     ) -> EngineResult<Option<Source>> {
         let started = Instant::now();
         self.publish(|_| ())
@@ -24,6 +25,9 @@ impl Runtime {
         }
         if !csp::allows_worker(&creator.csp, &creator.base, &url, true) {
             return refused(true, started, Failure::Policy);
+        }
+        if worker_type == WorkerType::Module && !module_mime(&source.mime_type) {
+            return refused(true, started, Failure::Mime);
         }
         let text = String::from_utf8_lossy(&source.bytes)
             .trim_start_matches('\u{feff}')
@@ -41,4 +45,10 @@ impl Runtime {
             },
         }))
     }
+}
+
+/** Module fetching enforces a JavaScript MIME essence for Blob URLs too, unlike classic workers. */
+fn module_mime(mime: &str) -> bool {
+    let essence = mime.split(';').next().unwrap_or_default().trim();
+    javascript(essence)
 }
