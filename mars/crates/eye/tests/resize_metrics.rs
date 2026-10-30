@@ -39,3 +39,19 @@ fn percentage_padding_is_measured_after_resolution_against_the_container() {
     assert_eq!(metrics.content, [20.0, 20.0, 100.0, 50.0]);
     assert_eq!(metrics.border, [140.0, 90.0]);
 }
+
+#[test]
+fn wrapper_metrics_resolve_percentage_edges_without_including_positioned_scroll_overflow() {
+    let document = compute_styles(
+        &parse("<div id=out></div>").unwrap(),
+        &["html{margin:0;width:400px;padding:10%}body{margin:0;width:100px;height:50px;padding:10%}#out{position:absolute;top:2000px;width:10px;height:10px}".into()],
+    ).unwrap();
+    let display = render(&document, 800.0).unwrap();
+    let html = display.resize_wrappers.html.unwrap();
+    let body = display.resize_wrappers.body.unwrap();
+    assert_eq!(html.content, [80.0, 80.0, 400.0, 130.0]);
+    assert_eq!(html.border, [560.0, 290.0]);
+    assert_eq!(body.content, [40.0, 40.0, 100.0, 50.0]);
+    assert_eq!(body.border, [180.0, 130.0]);
+    assert!(display.height > 2000.0);
+}

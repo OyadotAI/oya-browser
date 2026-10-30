@@ -136,6 +136,21 @@ mod tests {
         assert!(observations.pending);
     }
 
+    /** Wrapper layout has no paint-node ID but still schedules genuine size changes. */
+    #[test]
+    fn wrapper_measurements_wake_resize_observers_without_paint_box_changes() {
+        let environment = PageEnvironment::default();
+        let mut observations = Observations::default();
+        observations.sampled(&environment, false, false, true, false);
+        let mut geometry = observations.sampled.clone().unwrap();
+        geometry.wrappers.html = Some(mars_core::geometry::BoxMetrics {
+            content: [0.0, 0.0, 800.0, 20.0],
+            border: [800.0, 20.0], vertical: false,
+        });
+        observations.layout(geometry);
+        assert!(observations.pending);
+    }
+
     /** An idle observer needs one turn per changed layout, and no turn for unchanged presentation. */
     #[test]
     fn geometry_changes_schedule_once_and_unchanged_layout_stays_idle() {

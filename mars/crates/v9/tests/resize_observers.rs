@@ -150,3 +150,25 @@ fn initially_measured_zero_size_is_delivered_once_instead_of_being_treated_as_al
     let second = observe(source, &env, first.state);
     assert_eq!(common::global(&second, "result"), "1");
 }
+
+#[test]
+fn wrapper_observers_use_host_measurements_and_report_known_zero_after_hiding() {
+    let source = "let result='';new ResizeObserver(entries=>{for(const e of entries){result+=(e.target===document.documentElement?'html':'body')+':'+e.contentRect.width+':'+e.borderBoxSize[0].inlineSize+'|'}}).observe(document.documentElement);new ResizeObserver(entries=>{for(const e of entries){result+='body:'+e.contentRect.width+':'+e.borderBoxSize[0].inlineSize+'|'}}).observe(document.body);";
+    let mut env = common::environment();
+    let initial = common::load_with(source, &env);
+    assert!(!initial.effects.resize_observers_pending);
+    env.resize_wrappers.html = Some(BoxMetrics {
+        content: [20.0, 20.0, 400.0, 80.0], border: [440.0, 120.0], vertical: false,
+    });
+    env.resize_wrappers.body = Some(BoxMetrics {
+        content: [10.0, 10.0, 100.0, 50.0], border: [120.0, 70.0], vertical: false,
+    });
+    let measured = observe(source, &env, initial.state);
+    assert_eq!(common::global(&measured, "result"), "html:400:440|body:100:120|");
+    env.resize_wrappers.body = Some(BoxMetrics {
+        content: [0.0; 4], border: [0.0; 2], vertical: false,
+    });
+    let hidden = observe(source, &env, measured.state);
+    assert_eq!(common::global(&hidden, "result"), "html:400:440|body:100:120|body:0:0|");
+    assert!(!hidden.effects.resize_observers_pending);
+}
