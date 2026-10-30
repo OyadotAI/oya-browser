@@ -1,4 +1,4 @@
-/** Opt-in request failures retain fixed native categories without recording page secrets. */
+/** Opt-in request outcomes retain fixed native categories without recording page secrets. */
 use super::ScriptRequest;
 use crate::protocol::EngineError;
 use crate::runtime::supervisor::perf;
@@ -71,6 +71,16 @@ impl RequestDiagnostic {
     /** Unknown error codes and all error messages are discarded rather than escaped. */
     pub fn error(self, started: Instant, stage: FailureStage, error: &EngineError) {
         self.record(started, stage, safe_code(error));
+    }
+
+    /** HTTP errors still resolve fetch; record their status without copying headers or content. */
+    pub fn response(self, started: Instant, stage: FailureStage, status: u16) {
+        perf::record("request.response", started, || self.response_detail(stage, status));
+    }
+
+    /** Response admission is separate from receipt, including preflight and opaque responses. */
+    fn response_detail(self, stage: FailureStage, status: u16) -> String {
+        format!("{}\tstatus={status}", self.detail(stage, "received"))
     }
 
     /** The existing sink is disabled unless the coordinator was launched with MARS_PERF. */
@@ -167,5 +177,18 @@ mod tests {
         );
         let network = EngineError::new("network_error", "private body", "private URL");
         assert_eq!(safe_code(&network), "network_error");
+    }
+
+    /** HTTP rejection statuses remain visible without turning them into transport failures. */
+    #[test]
+    fn response_record_retains_status_and_native_request_identity() {
+        let diagnostic = RequestDiagnostic {
+            id: Some(7),
+            method: "POST",
+            endpoint: "youtube_innertube",
+            same_origin: true,
+        };
+        assert_eq!(diagnostic.response_detail(FailureStage::Acquire, 403),
+            "id=7\tstage=acquire\tcode=received\tmethod=POST\tendpoint=youtube_innertube\tsame_origin=true\tstatus=403");
     }
 }

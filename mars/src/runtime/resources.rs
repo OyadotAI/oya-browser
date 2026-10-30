@@ -687,6 +687,7 @@ impl Runtime {
         diagnostic: RequestDiagnostic,
         stage: FailureStage,
     ) -> EngineResult<Option<WebResponse>> {
+        let started = Instant::now();
         match self.acquire_diagnosed(
             web,
             until,
@@ -696,7 +697,10 @@ impl Runtime {
             cookies,
             Some((diagnostic, stage)),
         ) {
-            Ok(acquired) => Ok(Some(acquired.response)),
+            Ok(acquired) => {
+                diagnostic.response(started, stage, acquired.response.status);
+                Ok(Some(acquired.response))
+            }
             Err(error) => {
                 if error.service.is_some() || error.code == "control_denied" {
                     Err(error)
