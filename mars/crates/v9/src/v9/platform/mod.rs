@@ -78,7 +78,7 @@ pub(in crate::v9) mod workers;
 
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
-pub use images::{ImageAdoption, ImageCors, ImageRequest, ImageResponse};
+pub use images::{ImageAdoption, ImageCancellation, ImageCors, ImageRequest, ImageResponse};
 
 pub(in crate::v9) use install::install;
 pub(in crate::v9) use net::XhrState;
@@ -939,6 +939,9 @@ pub struct HostEffects {
     /// Source-generation requests; only actual host decoding may answer them with `resume_images`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub image_requests: Vec<ImageRequest>,
+    /// Superseded generations release queued native captures before admitting replacement sources.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_cancellations: Vec<ImageCancellation>,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
     /** Previously published requests cancelled by native signals release host queues and snapshots. */
@@ -1592,6 +1595,11 @@ impl<'h> Page<'h> {
         for timer in &self.state.timers {
             out.push(timer.callback.clone());
             out.extend(timer.args.iter().cloned());
+        }
+        for (node, image) in &self.state.images {
+            if image.requested && !image.complete {
+                out.extend(self.state.wrappers.get(node).copied().map(JsValue::Object));
+            }
         }
         for listener in self.state.listeners.iter() {
             if matches!(listener.target, Target::Window | Target::Document) {

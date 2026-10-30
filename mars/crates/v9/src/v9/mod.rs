@@ -49,8 +49,9 @@ pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PAREN
 pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
-    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCors, ImageRequest, ImageResponse,
-    NavigationRequest, OpacityEffect, PageEnvironment, SimpleFragmentParser,
+    HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
+    ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
+    SimpleFragmentParser,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
@@ -1557,6 +1558,7 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.script_changes = saved.script_changes;
     vm.page.effects.requests = saved.effects.requests;
     vm.page.effects.image_requests = saved.effects.image_requests;
+    vm.page.effects.image_cancellations = saved.effects.image_cancellations;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;
     vm.page.effects.worker_commands = saved.effects.worker_commands;
     vm.page.effects.worker_errors = saved.effects.worker_errors;

@@ -21,9 +21,9 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+mod blob_fetch;
 mod geometry;
 mod image_loading;
-mod blob_fetch;
 mod requests;
 pub(in crate::runtime) use requests::queue as queue_requests;
 
@@ -469,7 +469,7 @@ impl Runtime {
             None => pending,
         });
         self.adopt_image_associations(page, effects.image_adoptions, &state)?;
-        page.scripting.image_loading.queue(effects.image_requests)?;
+        self.queue_image_requests(page, effects.image_requests, &effects.image_cancellations)?;
         self.discard_removed_image_sources(page);
         if !page.scripting.loading && !observer_turn {
             self.flush_inserted_images(page)?;
@@ -490,7 +490,11 @@ impl Runtime {
             effects.resize_observers,
             effects.resize_observers_pending,
         );
-        queue_requests(&mut scripting.requests, effects.requests, &effects.cancelled_requests)?;
+        queue_requests(
+            &mut scripting.requests,
+            effects.requests,
+            &effects.cancelled_requests,
+        )?;
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
         }
@@ -523,7 +527,8 @@ impl Runtime {
         let mut step = Step { changed, failed };
         if observer_turn {
             page.scripting.observer_resources |= !page.scripting.deferred_stylesheets.is_empty()
-                || !changes.is_empty() || !script_changes.is_empty()
+                || !changes.is_empty()
+                || !script_changes.is_empty()
                 || !page.scripting.modules.pending.is_empty()
                 || !page.scripting.modules.pending_scripts.is_empty()
                 || !page.scripting.modules.frame_requests.is_empty();
@@ -803,7 +808,10 @@ impl Runtime {
             ),
             translations: translations.effects(page.scripting.clock_ms),
             scales: super::animations::combine_scale_effects(
-                &scale_transitions, &scale_animations, &rotation_transitions, page.scripting.clock_ms,
+                &scale_transitions,
+                &scale_animations,
+                &rotation_transitions,
+                page.scripting.clock_ms,
             ),
             rotations: super::animations::combine_rotation_effects(
                 &rotation_transitions,
@@ -829,7 +837,11 @@ impl Runtime {
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
         // that measures one is laid out and run again (`forced_geometry`).
         environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
-        environment.resize_wrappers = page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default();
+        environment.resize_wrappers = page
+            .display
+            .as_ref()
+            .map(|display| display.resize_wrappers)
+            .unwrap_or_default();
         // Before the first layout no node has a box, so every node counts as new: a step that
         // reads geometry is laid out and run again, as a browser forces layout, instead of
         // measuring nominal 1px boxes (ref-rectangle.js in the sticky tests).
@@ -909,7 +921,6 @@ impl Runtime {
                     changed = true;
                 }
                 json!({"kind":"images","responses":responses})
-
             } else if page.scripting.load_pending {
                 page.scripting.load_pending = false;
                 json!({"kind":"event","event":"load"})
@@ -992,7 +1003,8 @@ impl Runtime {
                 None
             };
             let preflights = &mut page.scripting.preflights;
-            let response = self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
+            let response =
+                self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
             if request.kind != "beacon" {
                 responses.push(response);
             }
@@ -1140,7 +1152,11 @@ impl Runtime {
     }
 
     /** The ordinary failure policy also applies to the bounded observer-only render cycle. */
-    fn observe_intersections_until(&mut self, page: &mut Page, until: Instant) -> EngineResult<bool> {
+    fn observe_intersections_until(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+    ) -> EngineResult<bool> {
         match self.resize_observer_cycle(page, until) {
             Ok(changed) => Ok(changed),
             Err(error) if stops_navigation(&error) || lost_state(&error) => Err(error),
@@ -1157,7 +1173,10 @@ impl Runtime {
         let hrefs = std::mem::take(&mut page.scripting.deferred_stylesheets);
         let changed = self.load_inserted_sheets(page, &hrefs)?;
         self.flush_inserted_images(page)?;
-        let mut step = Step { changed, failed: Vec::new() };
+        let mut step = Step {
+            changed,
+            failed: Vec::new(),
+        };
         self.follow_modules(page, &mut step)?;
         Ok(step.changed)
     }
@@ -1316,7 +1335,8 @@ fn readable(
         return failed(id, FAILED_TO_FETCH);
     }
     let (body, body_bytes) = if response.raw_data {
-        let Ok(bytes) = super::images::decode_base64_within(&response.source, VM_RESPONSE_BYTES) else {
+        let Ok(bytes) = super::images::decode_base64_within(&response.source, VM_RESPONSE_BYTES)
+        else {
             return failed(id, FAILED_TO_FETCH);
         };
         (String::new(), bytes)

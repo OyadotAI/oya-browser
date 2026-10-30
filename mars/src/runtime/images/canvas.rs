@@ -17,13 +17,22 @@ pub(in crate::runtime) fn source(
     asset: Option<&ImageAsset>,
     used: &mut usize,
 ) -> (Option<Bitmap>, bool) {
+    source_decoded(asset, None, used)
+}
+
+/** A source decoded during Blob admission reuses those same actual pixels under the delivery budget. */
+pub(in crate::runtime) fn source_decoded(
+    asset: Option<&ImageAsset>,
+    decoded: Option<Bitmap>,
+    used: &mut usize,
+) -> (Option<Bitmap>, bool) {
     let Some(asset) = asset else {
         return (None, false);
     };
     if asset.decoded == 0 || asset.decoded > IMAGE_SOURCE_BYTES.saturating_sub(*used) as u64 {
         return (None, asset.origin_clean);
     }
-    let bitmap = decoder::decode(asset).ok();
+    let bitmap = decoded.or_else(|| decoder::decode(asset).ok());
     if let Some(bitmap) = &bitmap {
         if bitmap.pixels.len() > IMAGE_SOURCE_BYTES.saturating_sub(*used) {
             return (None, asset.origin_clean);
@@ -31,6 +40,11 @@ pub(in crate::runtime) fn source(
         *used += bitmap.pixels.len();
     }
     (bitmap, asset.origin_clean)
+}
+
+/** Blob image success requires a complete bounded raster decode, including GIF and WebP containers. */
+pub(in crate::runtime) fn decode(asset: &ImageAsset) -> EngineResult<Bitmap> {
+    decoder::decode(asset)
 }
 
 /** Governed redirects retain credential policy and validate CORS before granting clean image pixels. */

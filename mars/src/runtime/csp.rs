@@ -69,6 +69,18 @@ pub(super) fn allows_connect(policies: &[String], origin: &Url, url: &Url) -> bo
         })
 }
 
+/** Image sources use img-src with default-src fallback and require every policy to permit the URL. */
+pub(super) fn allows_image(policies: &[String], origin: &Url, url: &Url) -> bool {
+    policies
+        .iter()
+        .filter_map(|policy| effective_sources(policy, &["img-src", "default-src"]))
+        .all(|sources| {
+            sources
+                .iter()
+                .any(|source| matches_source(source, origin, url))
+        })
+}
+
 /** Worker creation and imported scripts have distinct fallback lists from script elements. */
 pub(super) fn allows_worker(policies: &[String], origin: &Url, url: &Url, initial: bool) -> bool {
     policies.iter().all(|policy| {

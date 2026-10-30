@@ -215,7 +215,18 @@ Module entry bytes require a JavaScript MIME essence and enter the existing
 module graph; absolute HTTP(S) dependencies retain its CSP/CORS and credential
 checks. Inherited CSP host sources match against the creator origin while URL
 resolution and import.meta retain the actual Blob address. Cross-context registry
-sharing, imported Blob dependencies and Blob image consumers remain unavailable.
+sharing and imported Blob dependencies remain unavailable.
+
+Programmatic image generations capture context-owned Blob bytes after source and
+CORS mode settle. Replaced/removed generations cancel retained native snapshots,
+including detached Images and adopted targets. Native admission checks owner
+origin and all img-src/default-src policies, then uses the actual existing
+PNG/JPEG/GIF/static-WebP decoders. The existing 2 MiB source cap and 4 MiB aggregate
+snapshot/metadata cap remain; decoded pixels are reused for Canvas delivery with
+clean provenance. Blob schemes bypass URL-only caches, legacy prefetch and Relay.
+Only fallback src matching the selected URL is supported; differing responsive
+candidates, Blob SVG, CSS backgrounds and cross-context registry sharing remain
+outside this path.
 
 Fetch captures a context-owned Blob source after options and signal conversion.
 The native local path validates the owning origin and document/worker connect-src

@@ -32,7 +32,9 @@ const FONT_TABLES: usize = 64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+mod blob;
 pub(super) mod canvas;
+pub(in crate::runtime) use blob::{is_blob, snapshot_bytes};
 mod source;
 use crate::v9::ImageCors;
 use source::FetchKey;
@@ -1026,6 +1028,13 @@ impl super::supervisor::Runtime {
         budget: &mut Budget,
         notes: &mut Vec<String>,
     ) -> EngineResult<Option<Fetched>> {
+        if base
+            .join(source.trim())
+            .is_ok_and(|url| url.scheme() == "blob")
+        {
+            // Only a generation-owned captured source may load Blob pixels; never fall through to Relay.
+            return Ok(None);
+        }
         let identity = FetchKey::new(base, source, cors);
         if let Some(seen) = budget.reused(&identity) {
             return Ok(seen);

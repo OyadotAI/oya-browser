@@ -7,6 +7,16 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+Blob-backed programmatic images now capture owned source bytes at settled
+generation admission, retain them across later revocation, and cancel replaced
+or removed generations. Origin/img-src checks precede actual bounded raster
+decoding; the decoded pixels also feed clean Canvas drawImage without a second
+decode. Native queues account for bytes and metadata and never route Blob URLs
+through Relay, legacy prefetch or URL-only image caches. Five focused regressions
+remain unrun; the combined build is pending. Responsive Blob URLs differing from
+captured fallback src, SVG, CSS backgrounds and cross-context sharing stay out
+of scope, along with the existing decoder format/surface limits.
+
 Pure CSS scale/scaleX/scaleY transitions and keyframes now animate independent
 signed axes, including zero and reflected scales, using the native clock and
 existing easing/interruption/iteration/pause/fill machinery. Visual geometry and

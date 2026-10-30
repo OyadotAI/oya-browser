@@ -813,6 +813,7 @@ impl Runtime {
                     .is_some_and(|s| s.eq_ignore_ascii_case("data:"))
             })
             .filter_map(|src| base.join(src.trim()).ok())
+            .filter(|url| url.scheme() != "blob")
             .map(|url| {
                 let request = WebRequest {
                     destination: crate::network::Destination::Image,
