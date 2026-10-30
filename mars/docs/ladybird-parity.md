@@ -7,6 +7,18 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The resident-summary repair at `8d465d28` built successfully in 54.75s;
+log: `/private/tmp/mars-resident-summary-fix-build.log`.
+Frozen executable SHA-256:
+`c6e845c484eec59f6208d4db4542ae3f9b7354359ee2ecd5bbd67262c4e9ceec`.
+`mars/dist/Mars Signal Fix.app` was signed, verified and launched at Google;
+the desktop and three engine processes were confirmed running. Signed executable
+SHA-256: `beeb8a5d4787fa4b92d6cd75bda2ed4fbc422bfe0620ccd2d42b25addf65e7f3`.
+This confirms build/startup only. The user then reported a navigation transport
+failure: “The destination could not be reached or returned an incomplete response.”
+The old transport classifier discards the underlying I/O kind and phase, so that
+report alone cannot identify a socket/DNS/TLS cause. No test or browser QA was run.
+
 The user reported every Google script failing with `Invalid native fetch signal
 state.` in the new candidate. Static tracing found the coordinator validating a
 heap-less resident summary as complete VM state: pending signal and promise IDs
@@ -14,7 +26,7 @@ correctly reside only in the V9 service. The repair introduces explicit summary
 validation selected only with a resident token, retains page/document bounds,
 and leaves full heap identity checks on execution/restore. Observer summaries
 need the same separation. Script rollback also restores queued cancellations.
-Focused regressions are being added unrun; no live Google success is claimed.
+Five focused regressions are added unrun; no live Google success is claimed.
 
 The previous combined production build at `3fc7c9c8` passed in 1m 02s, including
 all eleven Porter–Duff/additive modes, native pure scale animation, raw HTTP
