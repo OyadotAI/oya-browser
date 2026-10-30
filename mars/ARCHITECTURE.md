@@ -96,7 +96,11 @@ Arcs and ellipses use parametric geometry with the same pixel tolerance and path
 budget, bounded angular segments and subdivision depth. Direction, whole-turn
 normalization and connections are admitted atomically; degenerate ellipse axes
 follow the source-guided center-line behavior.
-CSS color and font parsing remain limited; arcTo, roundRect, clipping paths, Path2D,
+ArcTo constructs the shortest tangent circle through the existing adaptive arc
+path, with current-point inverse mapping and straight-line degeneracies. Singular
+transforms requiring an inverse are explicitly refused. The source-guided
+negative-radius empty-subpath side effect is retained; resource failures remain
+atomic. CSS color and font parsing remain limited; roundRect, clipping paths, Path2D,
 dashes, other decoded-image formats, full compositing and text metrics, WebGL
 and WebGPU are unfinished. Exposed GPU discovery resolves to null.
 Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.

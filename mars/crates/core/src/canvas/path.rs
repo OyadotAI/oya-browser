@@ -2,6 +2,7 @@
 use super::{Affine, Allocation, Bitmap, CHANNELS, EDGE, blend};
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
+mod arc_to;
 mod arcs;
 mod curves;
 mod raster;

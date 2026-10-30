@@ -132,6 +132,13 @@ atomic. Seven Core and eight V9 regressions were added but not run. Degenerate
 ellipse axes follow local Ladybird's center-line behavior. The combined build
 for this batch remains pending; arcTo, roundRect and clipping are unfinished.
 
+Canvas arcTo now constructs actual tangent-circle geometry with straight-line
+degeneracies, construction transforms and the existing bounded arc approximation.
+It preserves local Ladybird's negative-radius empty-subpath side effect while
+keeping resource failures atomic. Singular transforms requiring inverse mapping
+remain explicit refusals. Four Core and five V9 regressions were added but not
+run; the combined production build for this batch is pending.
+
 Current substantial gaps remain in broader CSS transition/animation properties,
 Canvas clipping/compositing and broader image sources, nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
