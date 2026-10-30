@@ -40,7 +40,7 @@ fn restriction(sources: &[String]) -> HandlerRestriction {
 }
 
 /** Source-expression base64 grammar permits URL-safe characters and at most two trailing pads. */
-fn expression(source: &str) -> Option<(&str, &str)> {
+pub(super) fn expression(source: &str) -> Option<(&str, &str)> {
     let (kind, encoded) = source
         .strip_prefix('\'')?
         .strip_suffix('\'')?
@@ -56,7 +56,7 @@ fn expression(source: &str) -> Option<(&str, &str)> {
 }
 
 /** A closed set of CSP hash algorithms shares ring's existing digest definitions. */
-fn hash_algorithm(name: &str) -> Option<&'static ring::digest::Algorithm> {
+pub(super) fn hash_algorithm(name: &str) -> Option<&'static ring::digest::Algorithm> {
     match name.to_ascii_lowercase().as_str() {
         "sha256" => Some(&ring::digest::SHA256),
         "sha384" => Some(&ring::digest::SHA384),

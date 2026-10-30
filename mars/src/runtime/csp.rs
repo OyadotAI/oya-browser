@@ -1,5 +1,5 @@
 /** Content-Security-Policy from metadata and responses governs script and worker acquisition. */
-use ring::digest::{SHA256, SHA384, SHA512, digest};
+use ring::digest::digest;
 use url::Url;
 
 mod handlers;
@@ -127,21 +127,30 @@ fn effective_sources(policy: &str, fallback: &[&str]) -> Option<Vec<String>> {
 
 /** One source list's verdict; nonces and hashes also disable 'unsafe-inline', per CSP3. */
 fn allowed(sources: &[String], document: &Url, script: &Candidate<'_>) -> bool {
-    let lower: Vec<String> = sources.iter().map(|s| s.to_ascii_lowercase()).collect();
-    if script
-        .nonce
-        .is_some_and(|nonce| sources.iter().any(|s| s == &format!("'nonce-{nonce}'")))
-    {
+    let keyword = |name: &str| {
+        sources
+            .iter()
+            .any(|source| source.eq_ignore_ascii_case(name))
+    };
+    if script.nonce.is_some_and(|nonce| {
+        sources
+            .iter()
+            .filter_map(|source| handlers::expression(source))
+            .any(|(kind, value)| kind.eq_ignore_ascii_case("nonce") && value == nonce)
+    }) {
         return true;
     }
     let Some(url) = script.url else {
-        let keyed = lower
+        let keyed = sources
             .iter()
-            .any(|s| s.starts_with("'nonce-") || s.starts_with("'sha"));
+            .filter_map(|source| handlers::expression(source))
+            .any(|(kind, _)| {
+                kind.eq_ignore_ascii_case("nonce") || handlers::hash_algorithm(kind).is_some()
+            });
         return hash_matches(sources, script.source)
-            || (!keyed && lower.iter().any(|s| s == "'unsafe-inline'"));
+            || (!keyed && !keyword("'strict-dynamic'") && keyword("'unsafe-inline'"));
     };
-    if lower.iter().any(|s| s == "'strict-dynamic'") {
+    if keyword("'strict-dynamic'") {
         return false;
     }
     sources
@@ -151,20 +160,15 @@ fn allowed(sources: &[String], document: &Url, script: &Candidate<'_>) -> bool {
 
 /** `'sha256-…'` style sources against the inline text. */
 fn hash_matches(sources: &[String], text: &str) -> bool {
-    let algorithms = [
-        ("'sha256-", &SHA256),
-        ("'sha384-", &SHA384),
-        ("'sha512-", &SHA512),
-    ];
-    sources.iter().any(|source| {
-        algorithms.iter().any(|(prefix, algorithm)| {
-            source
-                .strip_prefix(prefix)
-                .and_then(|rest| rest.strip_suffix('\''))
-                .and_then(super::integrity::base64)
-                .is_some_and(|hash| hash == digest(algorithm, text.as_bytes()).as_ref())
+    sources
+        .iter()
+        .filter_map(|source| handlers::expression(source))
+        .any(|(kind, encoded)| {
+            handlers::hash_algorithm(kind).is_some_and(|algorithm| {
+                super::integrity::base64(encoded)
+                    .is_some_and(|hash| hash == digest(algorithm, text.as_bytes()).as_ref())
+            })
         })
-    })
 }
 
 /** 'self', scheme sources (`https:`), `*`, and host sources with optional scheme, port and path. */
@@ -367,5 +371,129 @@ mod tests {
         assert!(!allows(&path_policy, &page, &external(&wrong_case)));
         assert!(allows(&path_policy, &page, &external(&exact_case)));
         assert!(allows(&path_policy, &page, &external(&upper_host)));
+    }
+
+    #[test]
+    fn nonce_prefix_is_case_insensitive_but_nonce_payload_is_exact() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let candidate = |nonce| Candidate {
+            url: None,
+            nonce: Some(nonce),
+            source: "x",
+        };
+        let policy = vec!["script-src 'NONCE-AbC'".into()];
+        assert!(allows(&policy, &page, &candidate("AbC")));
+        assert!(!allows(&policy, &page, &candidate("abc")));
+        assert!(!allows(
+            &["script-src 'NONCE-'".into()],
+            &page,
+            &candidate("")
+        ));
+        let url = Url::parse("https://cdn.test/script.js").unwrap();
+        assert!(allows(
+            &policy,
+            &page,
+            &Candidate {
+                url: Some(&url),
+                nonce: Some("AbC"),
+                source: ""
+            }
+        ));
+    }
+
+    #[test]
+    fn hash_algorithm_case_does_not_change_digest_matching() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let script = Candidate {
+            url: None,
+            nonce: None,
+            source: "alert(1)",
+        };
+        for (name, algorithm) in [
+            ("SHA256", &ring::digest::SHA256),
+            ("sHa384", &ring::digest::SHA384),
+            ("SHA512", &ring::digest::SHA512),
+        ] {
+            let encoded = super::super::images::base64(
+                ring::digest::digest(algorithm, script.source.as_bytes()).as_ref(),
+            );
+            assert!(allows(
+                &[format!("script-src '{name}-{encoded}'")],
+                &page,
+                &script
+            ));
+            let changed = Candidate {
+                source: "alert(2)",
+                ..script
+            };
+            assert!(!allows(
+                &[format!("script-src '{name}-{encoded}'")],
+                &page,
+                &changed
+            ));
+        }
+    }
+
+    #[test]
+    fn only_valid_nonce_and_known_hash_expressions_suppress_unsafe_inline() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let script = Candidate {
+            url: None,
+            nonce: None,
+            source: "x",
+        };
+        for malformed in [
+            "'nonce-'",
+            "'sha999-AbC'",
+            "'sha256-$$$'",
+            "'sha256-Ab=C'",
+            "'sha256-AbC==='",
+        ] {
+            assert!(
+                allows(
+                    &[format!("script-src 'unsafe-inline' {malformed}")],
+                    &page,
+                    &script
+                ),
+                "{malformed}"
+            );
+        }
+        for valid in [
+            "'NONCE-AbC'",
+            "'SHA256-AbC'",
+            "'sha384-AbC'",
+            "'sha512-AbC'",
+        ] {
+            assert!(
+                !allows(
+                    &[format!("script-src 'unsafe-inline' {valid}")],
+                    &page,
+                    &script
+                ),
+                "{valid}"
+            );
+        }
+    }
+
+    #[test]
+    fn strict_dynamic_suppresses_inline_keyword_without_overriding_explicit_nonce() {
+        let page = Url::parse("https://a.test/").unwrap();
+        let mut script = Candidate {
+            url: None,
+            nonce: None,
+            source: "x",
+        };
+        assert!(!allows(
+            &["script-src 'unsafe-inline' 'STRICT-DYNAMIC'".into()],
+            &page,
+            &script
+        ));
+        let policy = vec!["script-src 'unsafe-inline' 'strict-dynamic' 'NONCE-AbC'".into()];
+        assert!(!allows(&policy, &page, &script));
+        script.nonce = Some("AbC");
+        assert!(allows(&policy, &page, &script));
+        let mut intersection = policy;
+        intersection.push("script-src 'none'".into());
+        assert!(!allows(&intersection, &page, &script));
     }
 }
