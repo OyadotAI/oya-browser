@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Extended Mars Blob workers to module entry scripts, preserving static/dynamic HTTP imports, constructor credentials, top-level await and queued-message ordering. Module sources require JavaScript MIME, and inherited CSP host matching uses the creator origin. Blob dependency sharing remains unfinished.
 - Implemented timed CSS opacity keyframes in Mars, including easing, delays, fractional/infinite iterations, direction, fill and pause/resume. Native painting samples animations without rewriting authored opacity; other animated properties, animation events and full animation API exposure remain unfinished.
 - Implemented real Canvas polygon fill/stroke in Mars, including winding rules, line caps/joins, strokeRect and transform-aware paths and pens. Path state survives save/restore correctly and raster work is bounded; curves, arcs, clipping and Path2D remain unfinished.
 - Implemented context-owned Blob object URLs and classic Blob workers in Mars, with immutable source capture, revocation, inherited CSP and bounded storage. Captured workers survive later URL revocation; Blob module workers and cross-context URL sharing remain unfinished.
