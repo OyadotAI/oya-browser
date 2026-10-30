@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 
 mod body;
 mod headers;
+mod response_body;
 use body::Body;
+pub(in crate::v9) use response_body::validate as validate_state;
 
 /** Parse an absolute URL. */
 pub(in crate::v9) fn parse_url(text: &str) -> Option<url::Url> {
@@ -479,10 +481,22 @@ impl Vm<'_> {
                 continue;
             };
             let pending = self.page.state.pending.remove(index);
-            if response.body.len() > VM_RESPONSE_BYTES {
+            if response
+                .body
+                .len()
+                .saturating_add(response.body_bytes.len())
+                > VM_RESPONSE_BYTES
+            {
                 return Err(EngineError::limit("response body bytes", VM_RESPONSE_BYTES).into());
             }
+            if !response.body.is_empty() && !response.body_bytes.is_empty() {
+                return Err(EngineError::invalid("Ambiguous response body representation.").into());
+            }
             let result = if pending.xhr {
+                let mut response = response;
+                if !response.body_bytes.is_empty() {
+                    response.body = response_body::text(&response.body_bytes);
+                }
                 self.deliver_xhr(pending.owner, response)
             } else {
                 self.deliver_fetch(pending.owner, response)
@@ -514,6 +528,7 @@ impl Vm<'_> {
             Class::Host(Box::new(HostData::Response(Box::new(data)))),
             Some(realm().ids.response_prototype),
         ))?;
+        response_body::store(self, object, response.body_bytes)?;
         self.resolve_promise(promise, JsValue::Object(object))
     }
     /** Complete an XMLHttpRequest the way XHR's "process response" steps do: HEADERS_RECEIVED,
@@ -1147,29 +1162,33 @@ fn initialize_response(vm: &mut Vm, body: &JsValue, init: &JsValue, label: &str)
             Err(message) => return Err(vm.type_error(message)),
         }
     };
-    let text = response_text(vm, body, status, &mut pairs, label)?;
+    let read = response_body_init(vm, body, status, &mut pairs, label)?;
     let data = ResponseData {
         status,
         status_text,
         url: String::new(),
         headers: pairs,
-        body: text,
+        body: read.text.unwrap_or_default(),
         used: false,
     };
-    built_response(vm, data, "default", true)
+    if data.body.len().saturating_add(read.bytes.len()) > VM_RESPONSE_BYTES {
+        return Err(EngineError::limit("response body bytes", VM_RESPONSE_BYTES).into());
+    }
+    let response = built_response(vm, data, "default", true)?;
+    response_body::store(vm, response.object().expect("Response object"), read.bytes)?;
+    Ok(response)
 }
 
-/** A constructed Response's body as text, labelling its Content-Type the way Fetch's "extract a
-body" does when the page set none. */
-fn response_text(
+/** Extract a constructed response without losing binary bytes or the body's MIME metadata. */
+fn response_body_init(
     vm: &mut Vm,
     body: &JsValue,
     status: u16,
     pairs: &mut Vec<(String, String)>,
     label: &str,
-) -> Res<String> {
+) -> Res<Body> {
     if body.nullish() {
-        return Ok(String::new());
+        return Ok(Body::default());
     }
     if NULL_BODY_STATUSES.contains(&status) {
         return Err(vm.type_error("Response with null body status cannot have body"));
@@ -1180,9 +1199,7 @@ fn response_text(
         _ => read.kind.as_deref(),
     };
     body::label(pairs, kind);
-    Ok(read
-        .text
-        .unwrap_or_else(|| String::from_utf8_lossy(&read.bytes).into_owned()))
+    Ok(read)
 }
 
 /** `Response.json(data, init)`: the data as JSON text, labelled application/json; data JSON
@@ -1244,7 +1261,7 @@ fn clone_response(vm: &mut Vm, this: &JsValue, mut data: ResponseData) -> Res<Js
         Some(realm().ids.response_prototype),
     ))?;
     if let Some(source) = this.object() {
-        for key in ["responseType", "responseGuard"] {
+        for key in ["responseType", "responseGuard", response_body::KEY] {
             if let Some(value) = headers::get_private(vm, source, key) {
                 headers::put_private(vm, copy, key, value);
             }
@@ -1270,14 +1287,15 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     {
         response.used = true;
     }
+    let bytes = response_body::bytes(vm, id, &data)?;
     let outcome = match name {
-        "text" => JsString::from_utf8(&data.body)
+        "text" => JsString::from_utf8(&response_body::text(&bytes))
             .map(JsValue::String)
             .map_err(Thrown::from),
-        "json" => crate::v9::builtins::json_parse_text(vm, &data.body),
+        "json" => crate::v9::builtins::json_parse_text(vm, &response_body::text(&bytes)),
         _ => {
             let headers = live_headers(vm, &call.this).unwrap_or(data.headers.clone());
-            body::consume(vm, name, data.body.clone().into_bytes(), &headers)
+            body::consume(vm, name, bytes, &headers)
                 .unwrap_or_else(|| Err(vm.unsupported_error(&format!("Response.{name}"))))
         }
     };

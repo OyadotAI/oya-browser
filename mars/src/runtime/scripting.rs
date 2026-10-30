@@ -1234,6 +1234,7 @@ fn readable(
         url: response.url,
         headers,
         body: response.source,
+        body_bytes: Vec::new(),
         error: None,
     }
 }
@@ -1256,6 +1257,7 @@ fn data_response(request: &HostRequest) -> HostResponse {
         url: request.url.clone(),
         headers: vec![("content-type".into(), mime)],
         body,
+        body_bytes: Vec::new(),
         error: None,
     }
 }

@@ -859,6 +859,9 @@ pub struct HostResponse {
     pub headers: Vec<(String, String)>,
     /// Body text, at most VM_RESPONSE_BYTES.
     pub body: String,
+    /// Exact non-text body bytes; the combined text and byte representation has the same limit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_bytes: Vec<u8>,
     /// A network failure message; the script sees a TypeError (fetch) or an error event (XHR).
     pub error: Option<String>,
 }

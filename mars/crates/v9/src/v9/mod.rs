@@ -673,6 +673,7 @@ impl VmState {
         platform::intersection_observers::validate(&self.page, &self.heap)?;
         platform::resize_observers::validate(&self.page, &self.heap)?;
         platform::blob_urls::validate(&self.page.blob_urls)?;
+        platform::net::validate_state(&self.heap)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
         platform::frame_directory::validate_state(&self.page)?;

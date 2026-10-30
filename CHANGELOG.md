@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added exact binary body transport and heap-accounted Response storage to Mars, with independent byte readers, shared immutable clone backing and UTF-8 replacement/BOM handling for text. Combined response limits and wire admission remain unchanged.
 - Added Mars Canvas destination-over, destination-out, source-atop and xor compositing alongside source-over, consistently across rectangles, paths, images and text. Modes persist through save/restore; unsupported full-surface operators and lighter remain unaccepted.
 - Extended Mars ResizeObserver to measured HTML/body wrappers, with percentage-resolved edges and in-flow content extents kept separate from positioned overflow. Dedicated wrapper metrics also survive forced-layout retries; incomplete layouts remain unmeasured.
 - Implemented real Mars Canvas line dashes with saved dash state, iterable conversion, signed offsets, transformed stroke geometry, closed-path joins and zero-length cap dots. Pattern storage, splitting, outlines and raster work remain bounded; quota failures cannot partially paint.

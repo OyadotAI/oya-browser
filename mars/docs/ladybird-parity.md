@@ -7,6 +7,14 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The binary-response prerequisite now carries exact bytes into private
+heap-accounted Response storage. Clones share immutable backing, byte/blob readers
+return independent values, and text/JSON uses UTF-8 replacement with BOM handling.
+The combined response limit remains 256 KiB; mixed text/byte representations are
+rejected and existing worst-case wire admission covers byte-array serialization.
+Focused regressions are added but unrun; the combined build is pending. This
+prerequisite alone does not implement native Blob fetch or signal cancellation.
+
 Canvas now implements destination-over, destination-out, source-atop and xor
 alongside source-over through one shared premultiplied compositor. Rectangles,
 paths (including dashes/Path2D), images and text use the same operation, with
