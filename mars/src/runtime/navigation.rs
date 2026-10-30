@@ -509,6 +509,7 @@ impl Runtime {
             script_identity,
             revision: 1,
             document,
+            source_bytes: acquired.response.source.len(),
             scripts: resolved
                 .iter()
                 .map(|script| script.source.clone())

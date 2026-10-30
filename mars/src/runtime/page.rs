@@ -48,6 +48,8 @@ pub(super) struct Page {
     pub revision: u64,
     /** Fully validated owned document. */
     pub document: Document,
+    /** Immutable acquired HTML byte count keeps frame quotas independent of later DOM mutations. */
+    pub source_bytes: usize,
     /** Resolved page scripts stay coordinator-owned and never enter document rendering. */
     pub scripts: Vec<String>,
     /** Already-governed source supports resize/theme restyling without refetch or script execution. */

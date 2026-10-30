@@ -199,7 +199,7 @@ impl FrameBudget {
             self.next_base = self.next_base.max(offset.saturating_add(frame.id_end()));
             if let Some(page) = &frame.page {
                 self.count = self.count.saturating_add(1);
-                self.bytes = self.bytes.saturating_add(page.document.source.len());
+                self.bytes = self.bytes.saturating_add(page.source_bytes);
                 self.page(page);
             } else {
                 self.frames(&frame.frames, offset.saturating_add(frame.id_base));
