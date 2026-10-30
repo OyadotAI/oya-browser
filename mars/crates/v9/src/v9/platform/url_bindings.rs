@@ -18,6 +18,26 @@ use std::sync::OnceLock;
 const QUERY_SLOT: &str = "urlQueryObject";
 /** The URLSearchParams object's private slot holding its URL. */
 const URL_SLOT: &str = "paramsUrlObject";
+/** URL parsing and named parameter operations require one explicitly supplied value. */
+const NAMED_ARGUMENTS: usize = 1;
+/** Appending and replacing a query pair require both its name and value. */
+const PAIR_ARGUMENTS: usize = 2;
+
+/** WebIDL distinguishes missing required arguments from explicitly supplied undefined. */
+fn require_arguments(vm: &mut Vm, call: &Call, minimum: usize) -> Res<()> {
+    if call.args.len() < minimum {
+        return Err(vm.type_error("Not enough arguments for this URL operation"));
+    }
+    Ok(())
+}
+
+/** Interface constructors cannot be used as ordinary functions. */
+fn require_constructor(vm: &mut Vm, call: &Call) -> Res<()> {
+    if call.new_target.is_none() {
+        return Err(vm.type_error("URL interface constructors require the new operator"));
+    }
+    Ok(())
+}
 
 /** The URLSearchParams Iterator prototype. */
 static ITERATOR_PROTO: OnceLock<u32> = OnceLock::new();
@@ -50,6 +70,8 @@ fn new_url(vm: &mut Vm, record: &UrlRecord) -> Res<JsValue> {
 
 /** `new URL(url, base)`. */
 pub(in crate::v9) fn url_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_constructor(vm, &call)?;
+    require_arguments(vm, &call, NAMED_ARGUMENTS)?;
     let Some(record) = parse_with_base(vm, &call.arg(0), &call.arg(1))? else {
         return Err(vm.type_error("Failed to construct 'URL': Invalid URL"));
     };
@@ -58,6 +80,7 @@ pub(in crate::v9) fn url_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** `URL.parse(url, base)` (null on failure) and `URL.canParse(url, base)`. */
 pub(in crate::v9) fn url_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_arguments(vm, &call, NAMED_ARGUMENTS)?;
     let parsed = parse_with_base(vm, &call.arg(0), &call.arg(1))?;
     match (native_name(&call), parsed) {
         ("canParse", parsed) => Ok(JsValue::Boolean(parsed.is_some())),
@@ -279,6 +302,7 @@ fn sequence_pairs(vm: &mut Vm, init: &JsValue) -> Res<Vec<(String, String)>> {
 
 /** `new URLSearchParams(init)`. */
 pub(in crate::v9) fn params_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    require_constructor(vm, &call)?;
     let pairs = init_pairs(vm, &call.arg(0))?;
     Ok(JsValue::Object(new_params(vm, pairs)?))
 }
@@ -301,6 +325,12 @@ pub(in crate::v9) fn params_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Illegal invocation"));
     };
     let kind = native_name(&call);
+    let minimum = match kind {
+        "set" | "append" => PAIR_ARGUMENTS,
+        "delete" | "get" | "getAll" | "has" | "forEach" => NAMED_ARGUMENTS,
+        _ => 0,
+    };
+    require_arguments(vm, &call, minimum)?;
     let name = match kind {
         "toString" | "size" | "sort" | "forEach" | "keys" | "values" | "entries" => String::new(),
         _ => vm.to_text(&call.arg(0))?,

@@ -220,3 +220,27 @@ fn search_params_iterator_completion_is_permanent() {
         "a,b,true,true"
     );
 }
+
+/** Required argument admission happens before invoking any supplied conversion hooks. */
+#[test]
+fn url_required_arguments_are_checked_before_conversion() {
+    assert_eq!(
+        eval(
+            "const p=new URLSearchParams();let calls=0;let errors=[];const key={toString(){calls++;return 'x'}};for(const invoke of [()=>p.append(key),()=>p.set(key),()=>p.get(),()=>p.getAll(),()=>p.has(),()=>p.delete(),()=>URL.parse(),()=>URL.canParse(),()=>new URL()]){try{invoke()}catch(e){errors.push(e.name)}};p.append(undefined,undefined)",
+            "calls+'|'+errors.length+'|'+errors.every(e=>e==='TypeError')+'|'+p"
+        ),
+        "0|9|true|undefined=undefined"
+    );
+}
+
+/** Calling an interface constructor without new cannot parse or allocate an object. */
+#[test]
+fn url_interfaces_require_new_before_conversion() {
+    assert_eq!(
+        eval(
+            "let calls=0;const input={toString(){calls++;return 'https://example.test/'}};let errors=[];for(const invoke of [()=>URL(input),()=>URLSearchParams(input)]){try{invoke()}catch(e){errors.push(e.name)}}",
+            "calls+'|'+errors.join()"
+        ),
+        "0|TypeError,TypeError"
+    );
+}

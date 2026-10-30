@@ -23,6 +23,9 @@ Invalid URL errors no longer convert the input twice. Five focused regressions
 were added but remain unrun under the code-first instruction; the combined build
 for this slice is pending. The prior `Mars Next.app` build was launched for the
 maintainer on 2026-10-30 without running browser QA.
+URL and URLSearchParams now also enforce required argument counts and the new
+operator before conversion callbacks. Two additional focused regressions are
+unrun; these changes join the same pending combined build.
 
 The current `ladybird-parity` working tree repairs the ordinary default-search
 journey without a site-specific response replacement or a lite-page fallback.

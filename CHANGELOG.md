@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Enforced required URL/URLSearchParams arguments and constructor-only invocation before conversion hooks run, while preserving explicit `undefined` values.
 - Implemented SVG-string Path2D construction in Mars through a shared bounded path parser. Canvas preserves completed commands before malformed syntax; numeric/resource failures remain explicit. Eye reuses the parser with whole-shape rejection, and retained paths feed real fill/stroke/clipping.
 - Corrected Mars URL API argument conversion and live URLSearchParams behavior: callbacks retain their receiver, conversions cannot overwrite their own list mutations, invalid URLs convert inputs once, and exhausted iterators stay done.
 - Connected transformed Mars DOM geometry and native clicks to shared affine bounds and quadrilateral hit testing. Layout offsets/sizes remain untransformed, while visual rectangles, sticky/fixed movement and rectangular clipping follow painting. Rounded clips, masks and exact occlusion remain unfinished.
