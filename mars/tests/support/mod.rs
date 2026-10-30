@@ -95,7 +95,7 @@ impl Fixture {
         Self::start(Box::new(page_response), true)
     }
     /** No fixture touches a user profile, filesystem page or external service. */
-    fn start(respond: Responder, slow: bool) -> Self {
+    pub fn start(respond: Responder, slow: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());

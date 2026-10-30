@@ -106,6 +106,8 @@ fn page(
     }
     let decode = ms(started);
     let host = v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
         languages: &call.languages,
         fragments: &document::DomFragments,
     };

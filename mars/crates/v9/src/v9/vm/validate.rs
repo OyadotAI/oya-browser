@@ -270,6 +270,15 @@ impl Vm<'_> {
         for id in self.page.state.xhrs.keys() {
             marker.object(*id);
         }
+        for listener in self.page.state.listeners.iter() {
+            if let crate::v9::platform::Target::Object(id) = listener.target {
+                marker.object(id);
+            }
+            marker.value(&listener.callback);
+            if let Some(signal) = &listener.signal {
+                marker.value(signal);
+            }
+        }
         self.trace(&mut marker);
         marker
     }

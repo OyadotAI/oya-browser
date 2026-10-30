@@ -654,6 +654,13 @@ pub fn validate_text(text: &str) -> EngineResult<()> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScriptChange {
+    /// Final pixels from a canvas in this exact document candidate, independently validated by Eye.
+    Canvas {
+        /// Document-local canvas identity, after DOM adoption.
+        node: usize,
+        /// Complete backing, including empty backings after reset.
+        bitmap: crate::canvas::Bitmap,
+    },
     /// One of the original changes, replayed exactly as before.
     Dom {
         /// The wrapped change.

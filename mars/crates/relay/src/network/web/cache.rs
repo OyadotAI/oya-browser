@@ -329,6 +329,19 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
+    /** Vary comparisons see configured preferences and page overrides exactly as the wire does. */
+    #[test]
+    fn language_variants_use_the_emitted_header() {
+        let mut request = WebRequest::get("https://languages.test/");
+        request.languages = vec!["fr".into()];
+        assert_eq!(request_field(&request, "accept-language"), "fr");
+        request.languages = vec!["ja".into()];
+        assert_ne!(request_field(&request, "accept-language"), "fr");
+        request.destination = crate::network::Destination::Empty;
+        request.headers = vec![("accept-language".into(), "de".into())];
+        assert_eq!(request_field(&request, "accept-language"), "de");
+    }
+
     /** Filling memory past its budget evicts least recently used entries first. */
     #[test]
     fn memory_stays_within_its_byte_budget() {

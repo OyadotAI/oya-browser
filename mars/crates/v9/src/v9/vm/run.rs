@@ -2599,6 +2599,10 @@ impl Vm<'_> {
     fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
         if let JsValue::Object(id) = base {
             self.guard_realm_global(*id)?;
+            let key = self.constant_key(site);
+            if let Some(value) = crate::v9::platform::frame_directory::lookup(self, *id, &key)? {
+                return Ok(value);
+            }
             #[cfg(feature = "conformance")]
             if crate::v9::builtins::is_shared_object(self, *id) {
                 let key = self.constant_key(site);

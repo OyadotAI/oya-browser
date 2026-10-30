@@ -150,6 +150,10 @@ pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
 pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
         super::images::adopt(&mut vm.page, *old, *new)?;
+        if let Some(mut canvas) = vm.page.state.canvases.remove(old) {
+            canvas.dirty = true;
+            vm.page.state.canvases.insert(*new, canvas);
+        }
         if let Some(wrapper) = vm.page.state.wrappers.remove(old) {
             if let Some(Class::Host(data)) =
                 vm.heap.get_mut(wrapper).map(|object| &mut object.class)
@@ -161,6 +165,7 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
         components::adopt(&mut vm.page, *old, *new);
         super::scripts::adopt(&mut vm.page, *old, *new);
         super::frames::adopt(&mut vm.page, *old, *new);
+        super::frame_directory::adopt(&mut vm.page, *old, *new)?;
         if vm.page.state.focused == Some(*old) {
             vm.page.state.focused = Some(*new);
         }
@@ -528,7 +533,7 @@ fn style_property(name: &str) -> bool {
 }
 
 /** CSS properties a style declaration exposes, camelCased and sorted for binary search. */
-const CSS_PROPERTIES: [&str; 240] = [
+const CSS_PROPERTIES: [&str; 249] = [
     "accentColor",
     "alignContent",
     "alignItems",
@@ -679,6 +684,15 @@ const CSS_PROPERTIES: [&str; 240] = [
     "marginRight",
     "marginTop",
     "mask",
+    "maskClip",
+    "maskComposite",
+    "maskImage",
+    "maskMode",
+    "maskOrigin",
+    "maskPosition",
+    "maskRepeat",
+    "maskSize",
+    "maskType",
     "maxHeight",
     "maxInlineSize",
     "maxWidth",

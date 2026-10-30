@@ -81,6 +81,11 @@ impl ListenerStore {
         self.entries.values()
     }
 
+    /** Collection removes registrations whose target and callback cycle has no external owner. */
+    pub fn retain(&mut self, mut keep: impl FnMut(&Listener) -> bool) {
+        self.entries.retain(|_, listener| keep(listener));
+    }
+
     /** Whether the loaded list had records the index dropped (see the `malformed` field). */
     pub fn malformed(&self) -> bool {
         self.malformed

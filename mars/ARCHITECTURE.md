@@ -57,6 +57,102 @@ AppKit native window       native agent NDJSON or MCP stdio
 
 ## Ownership and transactions
 
+Canvas 2D uses an injected `mars_core::canvas::CanvasHost`. V9 owns its serializable
+context state; Eye supplies synchronous macOS text shaping/rasterization and PNG
+encoding. Standalone hosts default to unavailable. Immutable pixel allocations are
+shared between candidates, with admitted copy-on-write before drawing. Dirty,
+projected canvases publish one final `ScriptChange::Canvas` after DOM changes.
+Head-mounted canvases retain dirty pixels until body adoption. Detached DOM trees
+retain wrapper state through actual heap/DOM reachability; DOM, listener and
+weak-map edges are traced to a shared fixed point before collection releases
+canvas quota. Listeners on unreachable node/object targets are swept rather than
+rooting their own target through a captured callback.
+Eye validates the tag and backing before publication; display items carry the same
+pixels to desktop and agent painters. This reuses the page revision, candidate
+commit and display cache invalidation rather than adding a separate asset store or
+bitmap revision protocol. No graphics operation grants network or file authority.
+
+The first slice admits 512 pixels per edge, 16 contexts and 4 MiB of backing per
+page, with 8 million pixel-work units per execution. Canonical pixel allocations
+and admitted native scratch share a 96 MiB process ceiling, stricter than the
+initial 128 MiB V9 design ceiling. Supported drawing includes solid fill/clear
+rectangles, generic-family text, width measurement, affine transforms, saved
+drawing state, global alpha, ImageData read/write, canvas-to-canvas copying and
+PNG export. Core plans bounded raster work before mutation, uses premultiplied
+bilinear sampling and preserves immutable self-copy snapshots. Eye transforms
+native text before clipping. CSS color and font parsing remain limited; paths,
+clipping paths, decoded-image drawing, full compositing and text metrics, WebGL
+and WebGPU are unfinished. Exposed GPU discovery resolves to null.
+Neither this Canvas implementation nor AppKit layer backing is a Mars GPU compositor.
+
+Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
+frames and same-origin sandboxes allowing both scripts and their origin may use
+an independent child page. Runtime supplies bounded owner IDs to V9, which selects
+the existing messaging proxy before consulting local document caches. Completion
+answers remain URL-keyed, so an inert sibling sharing the same URL can still read
+its local document. Refused scripted owners never fall back to that sibling's
+document. Runtime tracks attempted owners separately from attached children, so a
+later sibling cannot retry a refused load. Removed owners are pruned, and successful
+scripted loads are not fetched again merely to complete an inert answer. Existing egress, framing, sandbox,
+deadline and frame-count checks remain in force.
+
+The root owns a bounded directory of immediate child contexts and queued frame
+mail. Indexed and named parent access uses document order while delivery uses
+never-reused window identities. Source navigation preserves the window identity
+but replaces its document generation; detachment retires the window even when
+the same element returns in one script task. Both ends of queued messages carry
+document-generation fences. The router supplies source origin and proxy identity,
+enforces target origin, and tracks transferred-port ownership across siblings.
+Hidden frames still execute. Nested scripted frame trees and general same-origin
+cross-realm DOM access remain unfinished. See [the parity evidence](docs/ladybird-parity.md).
+
+The frame layout ceiling remains 16; scripted contexts share a smaller global
+budget. Page-owned leases admit seven ordinary contexts across tabs and children,
+with an eighth slot reserved for replacing a committed root. Incoming parents
+reserve before loading children. Cloned candidates and temporarily moved frames
+share their leases; abandoned candidates release them naturally. Full-capacity
+navigation can replace its parent while refusing additional children. This trades
+frame/tab admission for preservation of working contexts without raising memory
+ceilings. Full same-origin frame DOM access remains unfinished.
+
+Each resident V9 call carries a bounded, unique live-lease snapshot. The service
+validates it and token ownership before synchronously dropping unleased contexts;
+it never evicts a leased context to admit another. A closed tab's heap is reclaimed
+on the next resident call or shutdown, not immediately. Obsolete state versions
+also retire synchronously instead of on unbounded detached threads. The committed
+child token remains protected alongside candidate base/result versions. Removed
+candidate frames lose their images and delivery routes together; the original
+tree retains its rollback ownership until publication.
+
+MessagePort routing supports one movable external endpoint per channel: the original
+retained peer stays in its realm until the channel reunites or closes. Moving that
+original peer, moving an already linked Worker port, forwarding an external port
+after posting on it in the same JavaScript turn, and moving a port with pending
+local message tasks raise `NotSupportedError` before any transfer entry detaches.
+These explicit limits avoid ambiguous ownership in the current document-pair router.
+A frame endpoint may forward to a third realm or return to its original peer; return
+restores local entanglement and drains bounded native queues to their correct endpoints.
+Closure releases native routes and both VM registrations without callback dispatch.
+
+Classic dedicated web workers share those leases and run cooperative, bounded
+tasks in isolated worker globals. They have no document or shell capabilities.
+Their synchronous imports borrow the existing V9 service pipe: one correlated
+source callback at a time, governed by the coordinator's current permit, absolute
+deadline, partition and worker response policy. No worker opens its own network
+connection or starts an unbounded thread. Message graphs, queues, imports and
+transferred-port routes are bounded and owned by the candidate page; inspection
+cannot execute worker effects. Termination and page disposal release ownership,
+while unpublished candidates preserve the committed worker state for rollback.
+Module, blob and nested workers remain explicitly unsupported.
+
+Native page and worker environments opt into script-visible monotonic elapsed
+time. A request-local `Instant` anchor advances `performance.now()` and
+`Date.now()` within synchronous tasks; serialized observed time prevents
+regression across restored requests. The virtual scheduler clock, timer due
+times, coordinator advances and execution budgets remain separate and unchanged.
+Standalone V9 environments remain deterministic unless explicitly opted in.
+This hybrid clock does not establish full real-time scheduler compatibility.
+
 The main thread owns NSWindow, widgets, immutable BrowserSnapshot and display. It cannot create
 another document runtime. One worker owns Runtime and all three engines. A bounded queue combines
 human and agent requests. Only the composition root chooses executables, fixture grants, initial
@@ -175,9 +271,9 @@ both the node and text limits fits)
 across intrinsic sizing, dry runs and placement. Uncached native measurements are capped at
 16,384 per layout, since each is a fixed native call the per-scalar work undercounts.
 Inspection names are cut to 2,048 bytes per node. Line placement consumes measured widths
-rather than repeatedly shaping a growing string. The 16 MiB private frame is derived from the
-node, source and text budgets (asserted at compile time), so a page at every document limit
-crosses each private pipe; the VM state bound stays pinned at 128 KiB. Classic scripts are
+rather than repeatedly shaping a growing string. The private frame is bounded at 512 MiB,
+with compile-time assertions for the node, source and text budgets; the VM state bound
+is 64 MiB. These are admission ceilings, not typical resident usage. Classic scripts are
 fetched in document order, then run blocking, then defer, then async, each in document order;
 script errors still name the document position. `<meta charset>` and http-equiv content-type
 are checked against the transport charset, X-UA-Compatible is inert, and every other

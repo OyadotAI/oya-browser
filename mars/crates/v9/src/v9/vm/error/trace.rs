@@ -54,7 +54,20 @@ impl Captured {
                     frame.code.name.clone()
                 }
             },
-            file: vm.modules.source_name(pos.offset as usize),
+            file: vm
+                .page
+                .state
+                .worker_imports
+                .range(..=pos.offset as usize)
+                .next_back()
+                .filter(|(base, _)| {
+                    vm.dynamic.iter().any(|source| {
+                        source.base == Some(**base)
+                            && (pos.offset as usize) < **base + source.source.len()
+                    })
+                })
+                .map(|(_, url)| url.clone())
+                .unwrap_or_else(|| vm.modules.source_name(pos.offset as usize)),
             line: pos.line,
             column: pos.column,
             position: pos.offset,

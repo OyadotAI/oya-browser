@@ -5,9 +5,14 @@
  * an empty list beside a Chrome User-Agent is what headless and automation checks look for.
  */
 use crate::v9::value::JsValue;
-use crate::v9::vm::heap::{ENUMERABLE, Key};
-use crate::v9::vm::realm::{Builder, string};
+use crate::v9::vm::heap::{ENUMERABLE, HIDDEN_ATTRS, Key, Prop, Slot};
+use crate::v9::vm::realm::{Builder, Static, string};
 use crate::v9::vm::{Call, Res, Vm};
+
+/** Private Navigator.prototype slot storing the shared PluginArray instance. */
+const PLUGINS_SLOT: &str = "navigator.plugins";
+/** Private Navigator.prototype slot storing the shared MimeTypeArray instance. */
+const MIME_TYPES_SLOT: &str = "navigator.mimeTypes";
 
 /** Chrome's plugin names, in Chrome's order. */
 const PLUGINS: [&str; 5] = [
@@ -56,8 +61,45 @@ pub(super) fn install(b: &mut Builder, navigator_proto: u32) {
         JsValue::Number(MIME_TYPES.len() as f64),
         0,
     );
-    b.alias(navigator_proto, "plugins", plugins);
-    b.alias(navigator_proto, "mimeTypes", mime_types);
+    b.put(
+        navigator_proto,
+        Key::private(PLUGINS_SLOT),
+        Static::Value(JsValue::Object(plugins)),
+        HIDDEN_ATTRS,
+    );
+    b.put(
+        navigator_proto,
+        Key::private(MIME_TYPES_SLOT),
+        Static::Value(JsValue::Object(mime_types)),
+        HIDDEN_ATTRS,
+    );
+    b.getter(navigator_proto, "plugins", navigator_plugins);
+    b.getter(navigator_proto, "mimeTypes", navigator_mime_types);
+}
+
+/** `Navigator.prototype.plugins` accessor getter with Navigator receiver brand check. */
+fn navigator_plugins(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    navigator_slot(vm, &call, PLUGINS_SLOT)
+}
+
+/** `Navigator.prototype.mimeTypes` accessor getter with Navigator receiver brand check. */
+fn navigator_mime_types(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    navigator_slot(vm, &call, MIME_TYPES_SLOT)
+}
+
+/** Read a private slot from the receiver's Navigator.prototype, rejecting non-Navigator `this`. */
+fn navigator_slot(vm: &mut Vm, call: &Call, slot: &str) -> Res<JsValue> {
+    let Some(proto) = call.this.object().and_then(|id| vm.proto_of(id)) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    if let Some(Prop {
+        slot: Slot::Data(value),
+        ..
+    }) = vm.own(proto, &Key::private(slot))?
+    {
+        return Ok(value);
+    }
+    Err(vm.type_error("Illegal invocation"))
 }
 
 /** One plugin with its MIME types; the first plugin's types also fill `navigator.mimeTypes`. */

@@ -482,6 +482,9 @@ pub(super) fn install(b: &mut Builder, html: u32) {
             super::events::install_body_handlers(b, proto);
         }
         registry.define(b, proto, interface.table);
+        if interface.name == "HTMLCanvasElement" {
+            super::canvas::install(b, proto);
+        }
         let ctor = b.constructor(interface.name, 0, dom::illegal_constructor, proto, None);
         b.global(interface.name, ctor);
         made.insert(interface.name, proto);

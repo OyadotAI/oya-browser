@@ -65,6 +65,11 @@ fn strict_utf8(body: &[u8]) -> EngineResult<String> {
         .map_err(|_| EngineError::unsupported("The resource is not valid UTF-8."))
 }
 
+/** Worker scripts always use UTF-8 decoding, including replacement characters and BOM removal. */
+pub(crate) fn worker_source(body: &[u8]) -> String {
+    String::from_utf8_lossy(body.strip_prefix(UTF8_BOM).unwrap_or(body)).into_owned()
+}
+
 /** The charset an HTML body is decoded with: a UTF-8 byte order mark, else the transport's declared
 charset, else the body's own meta declaration, read before decoding so a legacy page is not misread
 as UTF-8. Other types keep the declared charset alone, since only markup names a charset in its bytes. */

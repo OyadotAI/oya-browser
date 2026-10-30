@@ -1,10 +1,10 @@
 /** The coordinator reads preferred languages once, in one place, for navigator.languages. */
-use crate::constants::{LANGUAGE_TAG_BYTES, NAVIGATOR_LANGUAGES};
+use crate::constants::NAVIGATOR_LANGUAGES;
 
 /** Hermetic runs and live comparisons pick the list with a comma-separated override. */
 const OVERRIDE_ENV: &str = "MARS_LANGUAGES";
 /** Used when neither the override nor the OS yields a usable tag. */
-const DEFAULT_LANGUAGE: &str = "en-US";
+const DEFAULT_LANGUAGE: &str = mars_core::languages::DEFAULT;
 
 /// Override first, then the OS list, then the default; V9 refuses malformed tags, so drop them here.
 pub(super) fn preferred() -> Vec<String> {
@@ -30,11 +30,7 @@ pub(super) fn usable(tags: Vec<String>) -> Vec<String> {
 
 /** ASCII letters, digits and hyphens within the tag length bound, as V9 validates them. */
 fn well_formed(tag: &str) -> bool {
-    !tag.is_empty()
-        && tag.len() <= LANGUAGE_TAG_BYTES
-        && tag
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    mars_core::languages::valid(tag)
 }
 
 /** macOS reports the user's ordered list exactly as Safari and Electron see it. */

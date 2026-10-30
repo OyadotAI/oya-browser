@@ -41,6 +41,8 @@ struct DevtoolsCall<'a> {
     environment: &'a PageEnvironment,
     /** Always set: V9 keeps the step's state and replies with its token and summary. */
     resident: bool,
+    /** The same live ownership set used by lifecycle calls; peeks do not reconcile it. */
+    resident_contexts: Vec<String>,
     /** The resident state the step starts from; none for a page's first load. */
     base: Option<u64>,
     /** The committed state of the same page, which V9 keeps beside `base` for an abort. */
@@ -166,6 +168,7 @@ impl Runtime {
             languages: &languages,
             environment: &environment,
             resident: true,
+            resident_contexts: self.residency.snapshot(),
             base,
             keep,
             modules: &page.scripting.modules.input,
@@ -210,6 +213,7 @@ impl Runtime {
             page.resolved_stylesheets
                 .extend(scripting::inserted_sheets(&applied, before));
             page.document = applied;
+            super::super::frame_pages::prune_routes(page);
             page.styled = false;
         }
         if effects && changed {
@@ -226,6 +230,13 @@ impl Runtime {
         scripting.next_timer_ms = execution.effects.next_timer_ms;
         if effects {
             scripting.requests.extend(execution.effects.requests);
+            scripting
+                .workers
+                .append(execution.effects.worker_commands)?;
+            scripting
+                .port_outbox
+                .extend(execution.effects.port_messages);
+            scripting.port_closes.extend(execution.effects.port_closes);
             if execution.effects.navigation.is_some() {
                 scripting.navigation = execution.effects.navigation;
             }
@@ -259,12 +270,15 @@ impl Runtime {
     /** Per-request facts, as `scripting::step_environment` fills them for a lifecycle step. */
     fn devtools_environment(&mut self, page: &Page) -> EngineResult<PageEnvironment> {
         let mut environment = page.scripting.environment.clone();
+        environment.scripted_frame_owners = super::super::frame_pages::current_routes(page);
         let url = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
         environment.cookie = self.cookies.document_cookie(&url, SystemTime::now());
         environment.url = page.url.clone();
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
+        environment.disallow_code_generation_from_strings =
+            !super::super::csp::allows_eval(&page.document.csp);
         environment.node_text = node_text(&page.document);
         environment.geometry = page
             .display

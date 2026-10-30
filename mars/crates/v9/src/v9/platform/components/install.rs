@@ -188,8 +188,6 @@ fn elements(b: &mut Builder) {
         Some(template::content_get),
         Some(template::content_set),
     );
-    // A drawing context V9 cannot provide is null, as browsers answer for unavailable contexts.
-    b.host_method(html, "getContext", 1, |_, _| Ok(JsValue::Null));
     let ctor = b.constructor(
         "HTMLElement",
         0,

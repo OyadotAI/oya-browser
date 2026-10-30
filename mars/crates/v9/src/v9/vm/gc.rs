@@ -242,7 +242,7 @@ impl Vm<'_> {
         self.module_roots(&mut marker);
         let mut roots = Vec::new();
         self.page.roots(&mut roots);
-        // A wrapper with its own properties (expando data) or listeners must keep its identity.
+        // Connected DOM owns observable wrapper data; detached trees need actual reachability.
         let wrappers: Vec<(usize, ObjectId)> = self
             .page
             .state
@@ -251,10 +251,14 @@ impl Vm<'_> {
             .map(|(node, id)| (*node, *id))
             .collect();
         for (node, id) in wrappers {
-            let data = self
-                .heap
-                .get(id)
-                .is_some_and(|object| !object.props.is_empty());
+            if self.page.state.canvases.contains_key(&node) && self.page.connected(node) {
+                marker.object(id);
+            }
+            let data = self.heap.get(id).is_some_and(|object| {
+                object.props.iter().any(|(key, _)| {
+                    *key != super::heap::Key::private(super::super::platform::canvas::CONTEXT_SLOT)
+                })
+            });
             let listened = self
                 .page
                 .state
@@ -262,8 +266,8 @@ impl Vm<'_> {
                 .iter()
                 .any(|listener| listener.target == super::super::platform::Target::Node(node));
             let virtual_node = node >= super::super::platform::nodes_virtual_base()
-                && node < super::super::platform::BODY + 16;
-            if data || listened || virtual_node {
+                && node < super::super::platform::nodes_detached_base();
+            if ((data || listened) && self.page.connected(node)) || virtual_node {
                 marker.object(id);
             }
         }
@@ -287,11 +291,27 @@ impl Vm<'_> {
             marker.value(&JsValue::String(text.clone()));
         }
         self.trace(&mut marker);
+        let mut dom_visited = FastSet::default();
+        let mut listeners_visited = FastSet::default();
+        // Weak keys compare stable identities, and collection never mutates those keys.
+        #[allow(clippy::mutable_key_type)]
+        let mut weak_waiting = super::heap::FastMap::default();
+        loop {
+            let before = marker.objects.len();
+            if kind == Collection::Snapshot {
+                self.trace_snapshot_weak(&mut marker);
+            } else {
+                self.trace_ephemerons(&mut marker, &mut weak_waiting);
+            }
+            self.trace_dom(&mut marker, &mut dom_visited);
+            self.trace_listener_edges(&mut marker, &mut listeners_visited);
+            if marker.objects.len() == before {
+                break;
+            }
+        }
         let cleanup = if kind == Collection::Snapshot {
-            self.trace_snapshot_weak(&mut marker);
             Vec::new()
         } else {
-            self.trace_ephemerons(&mut marker);
             self.clear_dead_weak(&marker)
         };
         #[cfg(feature = "conformance")]
@@ -332,6 +352,56 @@ impl Vm<'_> {
             crate::v9::builtins::schedule_finalization(self, id)?;
         }
         Ok(())
+    }
+    /** Event targets own callbacks, but a callback/target cycle cannot root itself. */
+    fn trace_listener_edges(&self, marker: &mut Marker, visited: &mut FastSet<u32>) {
+        use super::super::platform::Target;
+        for listener in self.page.state.listeners.iter() {
+            let reachable = match listener.target {
+                Target::Node(node) => self
+                    .page
+                    .state
+                    .wrappers
+                    .get(&node)
+                    .is_some_and(|id| marker.objects.contains(id)),
+                Target::Object(id) => marker.objects.contains(&id),
+                _ => true,
+            };
+            if reachable && visited.insert(listener.id) {
+                marker.value(&listener.callback);
+                if let Some(signal) = &listener.signal {
+                    marker.value(signal);
+                }
+            }
+        }
+        self.trace(marker);
+    }
+    /** Reachable detached trees retain descendant and ancestor wrappers without rooting cycles. */
+    fn trace_dom(&mut self, marker: &mut Marker, visited: &mut FastSet<usize>) {
+        loop {
+            let mut pending: Vec<_> = self
+                .page
+                .state
+                .wrappers
+                .iter()
+                .filter(|(node, id)| marker.objects.contains(id) && !visited.contains(*node))
+                .map(|(node, _)| *node)
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            while let Some(node) = pending.pop() {
+                if !visited.insert(node) {
+                    continue;
+                }
+                if let Some(id) = self.page.state.wrappers.get(&node) {
+                    marker.object(*id);
+                }
+                pending.extend(self.page.parent(node));
+                pending.extend(self.page.all_children(node));
+            }
+            self.trace(marker);
+        }
     }
     /** A module record keeps its body, namespace and environment alive (namespaces read the
     environment by record, so nothing else may reach it), as does a dynamic import waiting. */
@@ -573,6 +643,8 @@ mod tests {
     fn string_reservation_retry_keeps_nested_callback_roots() {
         let source = "const keep={value:7};const result=[keep].map(x=>{for(let i=0;i<12000;i++){try{throw new Error('message'+i)}catch(e){}}return x})[0];const ok=result===keep&&result.value===7;".to_string();
         let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
             languages: &[],
             fragments: &SimpleFragmentParser,
         };
@@ -626,6 +698,8 @@ mod tests {
             vec!["{}"; BATCH].join(",")
         );
         let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
             languages: &[],
             fragments: &SimpleFragmentParser,
         };

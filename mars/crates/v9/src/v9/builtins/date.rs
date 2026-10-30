@@ -1,4 +1,4 @@
-/** Date over the page virtual clock and validated host timezone transitions or a fixed offset. */
+/** Date shares the page's script clock and validated host timezone transitions or fixed offset. */
 mod legacy;
 mod timezone;
 use super::*;
@@ -160,13 +160,13 @@ pub(super) fn install(b: &mut Builder) {
     );
 }
 
-/** The page's virtual time in milliseconds. */
+/** Date and performance share the same live or deterministic page timeline. */
 pub(in crate::v9) fn now_ms(vm: &Vm) -> f64 {
     #[cfg(feature = "conformance")]
     if vm.page.environment.conformance_d8 {
         return d8_now_ms();
     }
-    (vm.page.state.epoch + vm.page.state.clock).floor()
+    (vm.page.state.epoch + vm.page.script_now()).floor()
 }
 
 /** D8 reads a process-wide monotonic clock so busy loops advance without wall-clock jumps. */

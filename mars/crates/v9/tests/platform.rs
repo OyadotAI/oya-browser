@@ -17,6 +17,8 @@ fn navigator_reports_host_facts() {
     environment.user_agent = "TestAgent/1".into();
     let languages = vec!["fr-FR".to_string(), "en".to_string()];
     let host = mars_v9::DocumentHost {
+        imports: None,
+        canvas: &mars_core::canvas::Unavailable,
         languages: &languages,
         fragments: &mars_v9::SimpleFragmentParser,
     };
@@ -282,4 +284,21 @@ fn failed_scripts_keep_the_storage_they_wrote() {
     let execution = load("localStorage.setItem('k','v');throw new Error('stop');");
     assert_ne!(execution.storage, StorageState::default());
     assert_eq!(execution.failed.len(), 1);
+}
+
+/** Element style declarations expose mask* camelCase properties, and trustedTypes exposes emptyHTML/emptyScript. */
+#[test]
+fn css_mask_descriptors_and_trusted_types_empty_getters_match_blink() {
+    let source = "const style=document.createElement('div').style;        const maskOk=['mask','maskClip','maskComposite','maskImage','maskMode','maskOrigin','maskPosition','maskRepeat','maskSize','maskType']            .every(k=>k in style && typeof style[k]==='string');        const ttProto=TrustedTypePolicyFactory.prototype;        const emptyHtmlDesc=Object.getOwnPropertyDescriptor(ttProto,'emptyHTML');        const emptyScriptDesc=Object.getOwnPropertyDescriptor(ttProto,'emptyScript');        let badReceiver=0;        try{emptyHtmlDesc.get.call({})}catch(e){badReceiver+=e instanceof TypeError}        try{emptyScriptDesc.get.call({})}catch(e){badReceiver+=e instanceof TypeError}        const r=[maskOk,typeof emptyHtmlDesc?.get,typeof emptyScriptDesc?.get,            trustedTypes.isHTML(trustedTypes.emptyHTML),trustedTypes.emptyHTML.toString(),            trustedTypes.isScript(trustedTypes.emptyScript),trustedTypes.emptyScript.toString(),badReceiver].join('|');";
+    assert_eq!(eval(source, "r"), "true|function|function|true||true||2");
+}
+
+/** Navigator.prototype.plugins and mimeTypes are accessor getters with receiver brand checks, and chrome.csi().pageT is fractional. */
+#[test]
+fn navigator_plugin_accessors_and_csi_page_time_match_blink() {
+    let source = "const pd=Object.getOwnPropertyDescriptor(Navigator.prototype,'plugins');        const md=Object.getOwnPropertyDescriptor(Navigator.prototype,'mimeTypes');        let rejected=0;        for(const d of [pd,md]){for(const r of [{},Navigator.prototype]){try{d.get.call(r)}catch(e){rejected+=e instanceof TypeError}}}        const nav=performance.getEntriesByType('navigation');        const r=[typeof pd?.get,pd?.get?.name,typeof md?.get,md?.get?.name,rejected,            navigator.plugins.length,navigator.mimeTypes.length,            Number.isInteger(chrome.csi().pageT),            nav.length,nav[0] instanceof PerformanceNavigationTiming,nav[0].entryType,nav[0].type,typeof nav[0].responseStart].join('|');";
+    assert_eq!(
+        eval(source, "r"),
+        "function|get plugins|function|get mimeTypes|4|5|2|false|1|true|navigation|navigate|number"
+    );
 }

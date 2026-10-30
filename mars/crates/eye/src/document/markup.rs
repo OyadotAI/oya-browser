@@ -46,6 +46,7 @@ pub(super) fn node(
         return Err(syntax());
     }
     Ok(Node {
+        canvas: None,
         local_id,
         html_id: id,
         tag: tag.into(),

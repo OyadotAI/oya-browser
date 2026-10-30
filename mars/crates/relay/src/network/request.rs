@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRequest {
+    /// Host-owned preferences shared with navigator.languages; never supplied by a page header API.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
     /// Method is selected by the owned form algorithm, or by a page script for fetch and XHR.
     pub method: Method,
     /// The coordinator retains the actual URL separately from its public projection.
@@ -71,6 +74,10 @@ pub enum Destination {
     Style,
     /// A classic script.
     Script,
+    /// A classic dedicated worker's initial same-origin script.
+    Worker,
+    /// A synchronous classic worker import, decoded as UTF-8 independently of its MIME charset.
+    WorkerImport,
     /// An image.
     Image,
     /// A web font file for an `@font-face` rule: binary bytes of any declared type, under the
@@ -89,6 +96,7 @@ impl WebRequest {
     }
     /// Internal validation also bounds misuse by a faulty coordinator.
     pub fn validate(&self) -> EngineResult<()> {
+        mars_core::languages::validate(&self.languages)?;
         if self.body.len() > FORM_BYTES
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)

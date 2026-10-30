@@ -2,14 +2,16 @@
  * The browser platform V9 gives page scripts: window, document, navigator, location, history,
  * timers, events, storage, console, fetch and XMLHttpRequest. Nothing here has native authority:
  * the document is the app's inert projection, network calls and navigations are recorded for the
- * app to perform, and time is a virtual clock the app advances.
+ * app to perform. Timer scheduling is virtual; native hosts may enable script-visible live time.
  */
 pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
+pub(in crate::v9) mod canvas;
 pub(in crate::v9) mod channel;
 mod chrome_env;
 mod chrome_shapes;
+pub(in crate::v9) mod clock;
 pub(in crate::v9) mod collections;
 pub(in crate::v9) mod components;
 mod console;
@@ -52,6 +54,7 @@ mod range_live;
 pub(in crate::v9) mod scripts;
 mod trusted_types;
 pub(in crate::v9) use trusted_types::trusted_script_text;
+pub(in crate::v9) mod frame_directory;
 mod scrolling;
 mod selector;
 mod sheets;
@@ -61,6 +64,8 @@ mod token_set;
 mod url_bindings;
 mod url_parser;
 mod window;
+pub(in crate::v9) mod worker_global;
+pub(in crate::v9) mod workers;
 
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
@@ -236,6 +241,8 @@ pub enum DomLevel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageEnvironment {
+    /// A dedicated worker has its own global profile, with no Window or document capabilities.
+    pub worker_name: Option<String>,
     /// Host locale used when an Intl constructor receives no explicit locale.
     pub locale: String,
     /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
@@ -262,6 +269,9 @@ pub struct PageEnvironment {
     pub screen_height: f64,
     /// Wall-clock milliseconds since the Unix epoch at the page's time origin.
     pub time_origin_ms: f64,
+    /// Native hosts opt into within-task time; standalone and replay inputs stay deterministic.
+    #[serde(default)]
+    pub live_clock: bool,
     /// Local time minus UTC in minutes, for Date's local-time methods.
     pub timezone_offset_minutes: f64,
     /// Offset before the first supplied timezone transition, in seconds including historical LMT precision.
@@ -302,6 +312,15 @@ pub struct PageEnvironment {
     /// refusal, so the frame's load event still fires with no document.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub frame_documents: BTreeMap<String, FrameDocument>,
+    /// Native owners routed to independent scripted pages; URL-sharing inert siblings stay local.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub scripted_frame_owners: BTreeSet<usize>,
+    /// The coordinator's ordered immediate-parent directory, never a grant of document access.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_frames: Vec<frame_directory::FrameRoute>,
+    /// This frame's coordinator-issued context identity, independent of its document generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_window: Option<i64>,
     /// The origin of the page embedding this document when it runs in a frame: `parent` and
     /// `top` are then that page's proxy. None for a top-level page.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -567,6 +586,7 @@ impl Default for PageEnvironment {
     /** A blank desktop page. */
     fn default() -> Self {
         Self {
+            worker_name: None,
             locale: "en-US".into(),
             regexp_buffer_boundaries: false,
             url: "about:blank".into(),
@@ -580,6 +600,7 @@ impl Default for PageEnvironment {
             screen_width: DEFAULT_SCREEN_WIDTH,
             screen_height: DEFAULT_SCREEN_HEIGHT,
             time_origin_ms: 0.0,
+            live_clock: false,
             timezone_offset_minutes: 0.0,
             timezone_initial_offset_seconds: None,
             timezone_transitions: Vec::new(),
@@ -597,6 +618,9 @@ impl Default for PageEnvironment {
             script_attributes: Vec::new(),
             metadata: Vec::new(),
             frame_documents: BTreeMap::new(),
+            scripted_frame_owners: BTreeSet::new(),
+            parent_frames: Vec::new(),
+            own_window: None,
             embedder_origin: None,
             window_name: String::new(),
             html_attributes: BTreeMap::new(),
@@ -830,6 +854,10 @@ pub struct HistoryRecord {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostEffects {
+    /// Dedicated worker tasks remain inert until the owning candidate admits them.
+    pub worker_commands: Vec<workers::WorkerCommand>,
+    /// Uncancelled worker exceptions become asynchronous errors on the owning Worker handle.
+    pub worker_errors: Vec<String>,
     /// Existing image identity associations move with real DOM adoption, without changing source generation.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub image_adoptions: Vec<ImageAdoption>,
@@ -911,9 +939,15 @@ pub struct HostEffects {
     /// in order, for the app to deliver.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<messaging::FrameMessage>,
+    /// Connected detachments retire contexts even when the element is reinserted before publication.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub frame_detaches: Vec<frame_directory::FrameDetach>,
     /// Messages posted on MessagePorts whose peers live in other documents, in order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub port_messages: Vec<channel::PortMessage>,
+    /// Closed external links retire native routes before later queued deliveries.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub port_closes: Vec<u64>,
 }
 
 /** A scheduled callback. */
@@ -1048,6 +1082,19 @@ pub(in crate::v9) struct NumberConstantPool {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /// Handles root their event targets until the owning document is destroyed.
+    pub workers: BTreeMap<u32, workers::Handle>,
+    /// close() prevents future owner posts while allowing the current synchronous task to finish.
+    pub worker_closed: bool,
+    /// Imported Script offsets retain their governed source URL for later stack traces.
+    pub worker_imports: BTreeMap<usize, String>,
+    /// Legacy handlers are retained Script units whose declarations survive serialized events.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub legacy_handlers: std::collections::BTreeSet<usize>,
+    /// A saved context cannot be reopened with a different global authority profile.
+    pub worker_name: Option<String>,
+    /** Each context owns real bounded pixels; detached state lives only while reachable. */
+    pub canvases: BTreeMap<usize, canvas::State>,
     /** Permanent per-isolate read-only roots for one-byte iterator characters. */
     #[cfg(feature = "conformance")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1092,8 +1139,10 @@ pub(in crate::v9) struct PageState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<usize, images::State>,
     pub identity: String,
-    /** Virtual milliseconds since the time origin; performance.now(). */
+    /** Virtual milliseconds since the time origin, used only for timer scheduling. */
     pub clock: f64,
+    /** Last successful live execution's script-visible high-water mark survives state transport. */
+    pub observed_clock: f64,
     /** Date.now() at clock zero. */
     pub epoch: f64,
     pub random: u64,
@@ -1179,6 +1228,9 @@ pub(in crate::v9) struct PageState {
     /** Proxies for windows in other documents, by target (`messaging::PARENT` or an iframe). */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub remote_windows: BTreeMap<i64, ObjectId>,
+    /** Per-owner context incarnations prevent a retained proxy from addressing a reattached frame. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub frame_incarnations: BTreeMap<usize, u64>,
     /** MessagePorts linked to ports in other documents, by link; kept alive while linked, as
     an entangled port is, so a message across the link still finds its handler. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1226,11 +1278,27 @@ pub(in crate::v9) struct PageState {
 
 /** Runtime platform state for one request. */
 pub(in crate::v9) struct Page<'h> {
+    /// Borrowed only during this execution; callbacks cannot survive in serialized state.
+    pub imports: Option<&'h dyn crate::v9::ImportScriptsHost>,
+    /// Nested imports retain their actual VM activations and share the same turn budgets.
+    pub import_depth: usize,
+    /// Callback count bounds synchronous host work within one worker turn.
+    pub import_count: usize,
+    /// Aggregate delivered bytes share the ordinary page source budget.
+    pub import_bytes: usize,
+    /// Error-handler exceptions propagate without recursively firing the worker error handler.
+    pub reporting_worker_error: bool,
+    /** Native graphics is injected for each request and is never serialized. */
+    pub canvas_host: &'h dyn mars_core::canvas::CanvasHost,
+    /** Synchronous raster/readback work left in this execution. */
+    pub canvas_work: usize,
     pub environment: PageEnvironment,
     pub languages: Vec<String>,
     pub fragments: &'h dyn FragmentParser,
     pub document: Option<ScriptDocument>,
     pub state: PageState,
+    /** Request-local live-time anchor never enters serialized state or script rollback snapshots. */
+    pub execution_clock: clock::ExecutionClock,
     pub storage: StorageState,
     pub changes: Vec<DomChange>,
     pub script_changes: Vec<ScriptChange>,
@@ -1304,10 +1372,18 @@ impl<'h> Page<'h> {
         };
         Self {
             environment,
+            imports: None,
+            import_depth: 0,
+            import_count: 0,
+            import_bytes: 0,
+            reporting_worker_error: false,
             languages,
             fragments,
+            canvas_host: &mars_core::canvas::Unavailable,
+            canvas_work: mars_core::canvas::WORK,
             document,
             state,
+            execution_clock: clock::ExecutionClock::default(),
             storage,
             changes: Vec::new(),
             script_changes: Vec::new(),
@@ -1394,10 +1470,9 @@ impl<'h> Page<'h> {
             out.extend(timer.args.iter().cloned());
         }
         for listener in self.state.listeners.iter() {
-            out.push(listener.callback.clone());
-            out.extend(listener.signal.clone());
-            if let Target::Object(id) = listener.target {
-                out.push(JsValue::Object(id));
+            if matches!(listener.target, Target::Window | Target::Document) {
+                out.push(listener.callback.clone());
+                out.extend(listener.signal.clone());
             }
         }
         out.extend(
@@ -1424,6 +1499,12 @@ impl<'h> Page<'h> {
         out.extend(self.state.selection.map(JsValue::Object));
         out.extend(
             self.state
+                .workers
+                .values()
+                .map(|handle| JsValue::Object(handle.object)),
+        );
+        out.extend(
+            self.state
                 .linked_ports
                 .values()
                 .map(|id| JsValue::Object(*id)),
@@ -1434,9 +1515,19 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        self.state
+            .canvases
+            .retain(|_, state| live.contains(&state.context));
         self.state.active_animations.retain(|id| live.contains(id));
         self.state.live_ranges.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
+        self.state
+            .listeners
+            .retain(|listener| match listener.target {
+                Target::Node(node) => self.state.wrappers.contains_key(&node),
+                Target::Object(id) => live.contains(&id),
+                _ => true,
+            });
         self.state.xhrs.retain(|id, _| live.contains(id));
         self.state.attr_wrappers.retain(|_, id| live.contains(id));
         messaging::sweep(&mut self.state.remote_windows, live);
@@ -1607,7 +1698,11 @@ pub(in crate::v9) fn expose_window_globals(vm: &mut Vm) {
     use super::vm::heap::Slot;
     use super::vm::realm::{Static, realm};
     use crate::v9::value::JsValue;
-    let interfaces = realm().ids.window_interfaces;
+    let interfaces = if vm.page.environment.worker_name.is_some() {
+        realm().ids.worker_interfaces
+    } else {
+        realm().ids.window_interfaces
+    };
     let Some(def) = realm().object(interfaces) else {
         return;
     };

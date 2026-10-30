@@ -158,6 +158,9 @@ pub struct ScriptResource {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
+    /// Actual script-drawn content, separate from network images and author attributes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<mars_core::canvas::Bitmap>,
     /// Document-local identity; the coordinator adds the page generation.
     pub local_id: usize,
     /// Used only by the supported script DOM operation.

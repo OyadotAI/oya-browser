@@ -1191,7 +1191,9 @@ impl<'a> Tree<'a> {
     /// runtime fills with its document. Nothing is loaded or executed here.
     fn finish(&mut self, index: usize) {
         let node = &self.document.nodes[index];
-        if !EMBEDDED.contains(&node.tag.as_str()) || node.tag == "iframe" {
+        if !EMBEDDED.contains(&node.tag.as_str())
+            || ["iframe", "canvas"].contains(&node.tag.as_str())
+        {
             return;
         }
         let fallback = !node.text.is_empty()

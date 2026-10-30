@@ -111,8 +111,10 @@ pub struct Runtime {
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
-    /** Pages built for frames so far, which numbers each one's script identity. */
-    pub(super) frame_pages: u64,
+    /** Leases keep every committed and candidate script context within one service budget. */
+    pub(super) residency: super::residency::Residency,
+    /** Monotonic context IDs never roll back with candidate pages. */
+    pub(super) next_frame_window: i64,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
@@ -423,6 +425,9 @@ impl Runtime {
         self.history_cursor = candidate.2;
         self.scroll_y = candidate.3;
         self.active_tab_id = id.into();
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.page = None;
+        }
         self.clamp_scroll();
         Ok(())
     }
@@ -485,7 +490,8 @@ impl Runtime {
             revisions: Default::default(),
             prefetched: Default::default(),
             v9_sources: Default::default(),
-            frame_pages: 0,
+            residency: Default::default(),
+            next_frame_window: 0,
             provisional: None,
         };
         for (name, executable) in [
@@ -884,6 +890,46 @@ impl Runtime {
         self.call_until(name, op, params, deadline)
     }
 
+    /** A worker import may use Relay while its one V9 activation remains paused on the pipe. */
+    pub(super) fn call_worker<T: DeserializeOwned>(
+        &mut self,
+        params: &impl Serialize,
+        deadline: Option<Instant>,
+        mut load: impl FnMut(&mut Self, &str, Instant) -> EngineResult<Option<String>>,
+    ) -> EngineResult<T> {
+        self.healthy()?;
+        let index = self
+            .services
+            .iter()
+            .position(|service| service.name == "v9")
+            .ok_or_else(|| EngineError::service("v9", false))?;
+        let mut service = self.services.remove(index);
+        let result = service.call_with_imports(
+            "v9.worker",
+            params,
+            deadline,
+            Some(&mut |url, until| load(self, url, until)),
+        );
+        if self.failed {
+            drop(service);
+            return Err(EngineError::service("v9", false));
+        }
+        self.services
+            .insert(index.min(self.services.len()), service);
+        match result {
+            Err(error) if error.service.is_some() => {
+                self.v9_sources.clear();
+                Err(self.revive("v9", Some("v9.worker"), Some(error)))
+            }
+            Err(error) => Err(error),
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(Mismatch)) => {
+                self.stop();
+                Err(EngineError::service("v9", false))
+            }
+        }
+    }
+
     /** Every call keeps the service cap and optionally applies a tighter owner deadline. */
     fn call_until<T: DeserializeOwned>(
         &mut self,
@@ -1025,6 +1071,17 @@ impl Service {
         params: &impl Serialize,
         owner_deadline: Option<Instant>,
     ) -> EngineResult<Result<T, Mismatch>> {
+        self.call_with_imports(op, params, owner_deadline, None)
+    }
+
+    /** The sole callback is bounded source acquisition, tied to this service and outer request. */
+    fn call_with_imports<T: DeserializeOwned>(
+        &mut self,
+        op: &str,
+        params: &impl Serialize,
+        owner_deadline: Option<Instant>,
+        mut imports: Option<&mut ImportLoader<'_>>,
+    ) -> EngineResult<Result<T, Mismatch>> {
         let called = Instant::now();
         let rpc_deadline = called + rpc_timeout(op);
         let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
@@ -1042,6 +1099,8 @@ impl Service {
             .ok_or_else(|| EngineError::service(self.name, false))?
             .try_send(frame)
             .map_err(|_| EngineError::service(self.name, false))?;
+        let mut callback = 0_u32;
+        let mut imported_bytes = 0_usize;
         let reply = loop {
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(EngineError::service(self.name, false));
@@ -1052,7 +1111,35 @@ impl Service {
                 return Err(super::restart::deadline(self.name, op, budget));
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
-                Ok(reply) => break reply?,
+                Ok(reply) => {
+                    let reply = reply?;
+                    if let Some(load) = &mut imports
+                        && let Some(request) = super::worker_io::request(&reply, &id, callback + 1)
+                            .map_err(|_| EngineError::service(self.name, false))?
+                    {
+                        callback += 1;
+                        let mut source = load(&request.url, deadline);
+                        if let Ok(Some(text)) = &source {
+                            imported_bytes = imported_bytes.saturating_add(text.len());
+                            if text.len() > crate::constants::SCRIPT_BYTES
+                                || imported_bytes > crate::constants::SCRIPT_TOTAL_BYTES
+                            {
+                                source = Err(EngineError::limit(
+                                    "worker imported source bytes",
+                                    crate::constants::SCRIPT_TOTAL_BYTES,
+                                ));
+                            }
+                        }
+                        let answer = super::worker_io::answer(request, source)?;
+                        self.requests
+                            .as_ref()
+                            .ok_or_else(|| EngineError::service(self.name, false))?
+                            .try_send(answer)
+                            .map_err(|_| EngineError::service(self.name, false))?;
+                        continue;
+                    }
+                    break reply;
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => return Err(EngineError::service(self.name, false)),
             }
@@ -1108,6 +1195,9 @@ impl Service {
 
 /** A reply that parsed but whose result is not the type the caller asked for. */
 struct Mismatch;
+
+/** A governed import callback fetches source without dispatching another V9 operation. */
+type ImportLoader<'a> = dyn FnMut(&str, Instant) -> EngineResult<Option<String>> + 'a;
 
 impl Drop for Service {
     /** Kill first, release channels second, then join; blocked pipe writes cannot leak. */

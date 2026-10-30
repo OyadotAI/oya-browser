@@ -693,6 +693,7 @@ impl Page<'_> {
                 "Removing the html, head or body element is not supported.",
             ));
         }
+        super::frame_directory::detach(self, id)?;
         if self.is_projected(id) {
             if self.legacy_changes() && self.elide_insert(id) {
                 return Ok(());
@@ -1069,7 +1070,12 @@ impl Page<'_> {
                 ));
             }
             let removed = self.descendants(id);
-            let node = self.projected(id).cloned().ok_or_else(invalid)?;
+            let frames: Vec<_> = removed
+                .iter()
+                .copied()
+                .filter(|owner| self.tag(*owner) == "iframe")
+                .collect();
+            let records = self.capture(&removed);
             let document = self.document.as_mut().ok_or_else(invalid)?;
             if self.environment.dom_level == DomLevel::Legacy {
                 let change = document.set_text(id, text)?;
@@ -1082,7 +1088,10 @@ impl Page<'_> {
                 self.invalidate();
                 self.record(change)?;
             }
-            let _ = node;
+            self.store_detached(records);
+            for owner in frames {
+                super::frame_directory::retire(self, owner)?;
+            }
             for node in removed {
                 self.state.texts.remove(&node);
             }
@@ -1144,11 +1153,15 @@ impl Page<'_> {
         let old = self
             .view(id)
             .and_then(|view| view.attributes.get(name).cloned());
+        let canvas_reset = super::canvas::prepare_resize(self, id, name, value)?;
         self.write_attribute(id, name, value)?;
         if value.is_none() {
             self.detach_attr(id, name, old.clone());
         }
         super::images::source_changed(self, id, name)?;
+        if let Some(bitmap) = canvas_reset {
+            super::canvas::resized(self, id, bitmap);
+        }
         if self.mutations.len() < crate::constants::STATEMENTS {
             self.mutations.push(super::components::Mutation::Attribute {
                 node: id,

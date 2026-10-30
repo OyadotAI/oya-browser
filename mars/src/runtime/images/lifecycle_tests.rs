@@ -23,6 +23,8 @@ fn decoded_events(source: &str) -> Vec<String> {
         serde_json::to_string(source).unwrap()
     )];
     let host = DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
         languages: &[],
         fragments: &crate::v9::SimpleFragmentParser,
     };

@@ -489,7 +489,7 @@ impl Vm<'_> {
             };
             match result {
                 Ok(()) => {}
-                Err(Thrown::Value(error)) => self.report_error(&error),
+                Err(Thrown::Value(error)) => super::workers::report_exception(self, &error)?,
                 Err(fatal) => return Err(fatal),
             }
             self.drain_jobs()?;

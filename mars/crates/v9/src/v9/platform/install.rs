@@ -284,6 +284,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     network(b);
     singletons(b);
     global_object(b);
+    super::workers::install(b);
     super::chrome_shapes::install(b);
 }
 

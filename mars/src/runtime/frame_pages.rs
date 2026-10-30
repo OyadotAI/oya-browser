@@ -1,13 +1,14 @@
 /**
- * Frames that run their own scripts. An iframe showing another origin's http(s) document gets a
+ * Frames that run their own scripts. A cross-origin iframe, or a same-origin sandbox allowing
+ * both scripts and its origin, showing an http(s) document gets a
  * page of its own, built as a navigation builds one (`build_page` with an `Embedding`): its own
  * V9 realm, cookies through the same jar, its own storage origin, and `parent` a proxy for the
  * embedder. Google's app launcher, sign-in widgets and gapi relays are such frames, and they
  * answer their embedder only by postMessage, so a frame that cannot run its scripts reads as a
  * failure ("Can't seem to load the app launcher").
  *
- * After every settle of the embedding page, messages cross both ways for at most MESSAGE_ROUNDS
- * rounds, and each frame page's timers advance by as much virtual time as the embedder's did.
+ * After every settle, the bounded frame router exchanges messages and retains pending rounds;
+ * each frame page's timers advance by as much virtual time as the embedder's did.
  * A frame's document is spliced into the embedder's display as any frame's is; its own frames are
  * not loaded (one level), and it takes no input yet. A frame whose scripts fail stops alone.
  */
@@ -17,15 +18,12 @@ use super::page::Page;
 use super::supervisor::Runtime;
 use crate::network::{Destination, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
-use crate::v9::{FrameMessage, MESSAGE_PARENT, PortMessage};
+use crate::v9::{FrameMessage, PortMessage};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Rounds of messages one settle carries between a page and its frames: a request, its answer
-/// and the follow-ups a handshake needs, without letting two documents ping-pong forever.
-const MESSAGE_ROUNDS: usize = 8;
 /// Characters of a message's data the perf log keeps.
 const MESSAGE_TRACE_CHARS: usize = 160;
 /// The longest one frame page may take to load, so a slow widget never fails the embedder.
@@ -37,7 +35,7 @@ const FIRST_FRAME_BASE: usize = 1 << 32;
 impl Runtime {
     /**
      * The frame of iframe `owner` showing `address` as a page of its own, or None when the
-     * address is same-origin (its document is the embedder's to reach), not http(s), sandboxed
+     * address is ordinary same-origin (its document is the embedder's to reach), not http(s), sandboxed
      * without both `allow-scripts` and `allow-same-origin` (Mars gives no frame an opaque
      * origin, so such a frame runs no scripts), refuses to be framed by this embedder
      * (`frame-ancestors`, `X-Frame-Options`), or does not load as an HTML document in time.
@@ -53,19 +51,27 @@ impl Runtime {
         id_base: usize,
         deadline: Instant,
         images: &mut BTreeMap<usize, ImageAsset>,
+        routes: &[crate::v9::FrameRoute],
     ) -> EngineResult<Option<Frame>> {
         let Ok(url) = base.join(address) else {
             return Ok(None);
         };
-        let web = matches!(url.scheme(), "http" | "https");
-        let same_origin_sandbox = same_origin(base, &url) && scriptable_sandbox(attributes);
-        if !web
-            || same_origin(base, &url) && !same_origin_sandbox
-            || self.web_origins.is_none()
-            || sandboxed(attributes)
-        {
+        if !self.scripted_frame_allowed(base, &url, attributes) {
             return Ok(None);
         }
+        let window = routes
+            .iter()
+            .find(|route| route.owner == owner)
+            .map(|route| route.window);
+        let replacement = self.page.as_ref().is_some_and(|root| {
+            root.frames.iter().any(|frame| {
+                frame
+                    .page
+                    .as_ref()
+                    .is_some_and(|page| page.scripting.environment.own_window == window)
+            })
+        });
+        let context = self.residency.reserve(replacement)?;
         let deadline = deadline.min(Instant::now() + FRAME_PAGE_WALL);
         let request = WebRequest {
             destination: Destination::Document,
@@ -87,13 +93,18 @@ impl Runtime {
         {
             return Ok(None);
         }
-        self.frame_pages += 1;
         let embedding = Embedding {
+            top_level_url: base.to_string(),
             origin: base.origin().ascii_serialization(),
             name: attributes.get("name").cloned().unwrap_or_default(),
-            identity: format!("{}:frame-{}", self.active_tab_id, self.frame_pages),
+            routes: routes.to_vec(),
+            window: routes
+                .iter()
+                .find(|route| route.owner == owner)
+                .map(|route| route.window)
+                .ok_or_else(|| EngineError::invalid("Missing frame context."))?,
         };
-        match self.build_page(acquired, deadline, false, Some(&embedding)) {
+        match self.build_page(acquired, deadline, false, Some(&embedding), context) {
             Ok(page) => {
                 for entry in page.scripting.console.iter().filter(|e| e.level == "error") {
                     super::supervisor::perf::record("frame.console", Instant::now(), || {
@@ -112,8 +123,70 @@ impl Runtime {
         }
     }
 
+    /** One admission predicate serves markup and inserted frames without weakening sandbox policy. */
+    pub(super) fn scripted_frame_allowed(
+        &self,
+        base: &url::Url,
+        url: &url::Url,
+        attributes: &BTreeMap<String, String>,
+    ) -> bool {
+        self.web_origins.is_some()
+            && matches!(url.scheme(), "http" | "https")
+            && (!same_origin(base, url) || scriptable_sandbox(attributes))
+            && !sandboxed(attributes)
+    }
+
+    /** Mark each markup owner's route independently, including refused scripted loads. */
+    pub(super) fn scripted_owners(
+        &self,
+        document: &crate::document::Document,
+        base: &str,
+    ) -> BTreeSet<usize> {
+        let Ok(base) = url::Url::parse(base) else {
+            return BTreeSet::new();
+        };
+        document
+            .nodes
+            .iter()
+            .filter(|node| node.tag == "iframe" && !node.attributes.contains_key("srcdoc"))
+            .filter(|node| {
+                node.attributes
+                    .get("src")
+                    .filter(|src| !src.trim().is_empty())
+                    .and_then(|src| base.join(src.trim()).ok())
+                    .is_some_and(|url| self.scripted_frame_allowed(&base, &url, &node.attributes))
+            })
+            .map(|node| node.local_id)
+            .collect()
+    }
+
+    /** Route only current requested owners; prune removed nodes before handing hints to V9. */
+    pub(super) fn route_inserted_frames(&self, page: &mut Page, urls: &[String]) {
+        prune_routes(page);
+        if page.scripting.environment.embedder_origin.is_some() {
+            return;
+        }
+        let Ok(base) = url::Url::parse(&page.url) else {
+            return;
+        };
+        let eligible = self.scripted_owners(&page.document, &page.url);
+        page.scripting
+            .environment
+            .scripted_frame_owners
+            .clone_from(&eligible);
+        for (_, owner, _) in unattached(page, &base, urls) {
+            if eligible.contains(&owner) {
+                page.scripting
+                    .environment
+                    .scripted_frame_owners
+                    .insert(owner);
+            }
+        }
+    }
+
     /**
-     * Loads, as pages of their own, the cross-origin iframes the page's scripts inserted whose
+     * Loads admitted inserted iframes as pages of their own, selecting their route by owner.
+     * The requested
      * documents V9 asked for (`urls`). Returns whether a frame was added, so the page lays out
      * again. A frame page loads no frames itself.
      */
@@ -131,8 +204,19 @@ impl Runtime {
         };
         let mut added = false;
         for (index, owner, address) in unattached(page, &base, urls) {
+            if !page
+                .scripting
+                .environment
+                .scripted_frame_owners
+                .contains(&owner)
+            {
+                continue;
+            }
             if page.frames.len() >= FRAME_COUNT {
                 break;
+            }
+            if !page.scripting.attempted_frame_owners.insert(owner) {
+                continue;
             }
             let id_base = page
                 .frames
@@ -141,7 +225,7 @@ impl Runtime {
                 .max()
                 .unwrap_or(FIRST_FRAME_BASE);
             let attributes = page.document.nodes[index].attributes.clone();
-            let opened = self.frame_page(
+            let opened = match self.frame_page(
                 owner,
                 &address,
                 &attributes,
@@ -149,7 +233,21 @@ impl Runtime {
                 id_base,
                 deadline,
                 &mut page.images,
-            )?;
+                &page.frame_tree.routes,
+            ) {
+                Err(error) if error.code == "limit_exceeded" => {
+                    super::scripting::record_console(
+                        &mut page.scripting,
+                        vec![crate::v9::ConsoleEntry {
+                            level: "warning".into(),
+                            text: error.message,
+                        }],
+                        0,
+                    );
+                    continue;
+                }
+                result => result?,
+            };
             if let Some(frame) = opened {
                 page.document.nodes[index].embedded = true;
                 Arc::make_mut(&mut page.frames).push(frame);
@@ -170,105 +268,45 @@ impl Runtime {
         until: Instant,
         advance_ms: f64,
     ) -> EngineResult<bool> {
-        if !page.frames.iter().any(|frame| frame.page.is_some()) {
-            // A frame page keeps what it posted to its parent for the embedder to collect; a
-            // message to a frame that runs no scripts goes nowhere.
-            page.scripting
-                .outbox
-                .retain(|message| message.target == MESSAGE_PARENT);
-            if page.scripting.environment.embedder_origin.is_none() {
-                page.scripting.outbox.clear();
-                page.scripting.port_outbox.clear();
-            }
+        if page.scripting.environment.embedder_origin.is_some() {
             return Ok(false);
         }
-        let mut frames = std::mem::take(&mut page.frames);
-        let result = self.exchange(
-            page,
-            Arc::make_mut(&mut frames).as_mut_slice(),
-            until,
-            advance_ms,
-        );
-        page.frames = frames;
-        result
+        self.exchange_frames(page, until, advance_ms)
     }
 
-    /** The rounds of `run_frame_pages` over the frames taken out of `page`. */
-    fn exchange(
+    /** Refresh context lifetimes and attempt only newly changed sources through governed loading. */
+    pub(super) fn reconcile_frame_contexts(
         &mut self,
         page: &mut Page,
-        frames: &mut [Frame],
         until: Instant,
-        advance_ms: f64,
-    ) -> EngineResult<bool> {
-        let mut changed = false;
-        for round in 0..MESSAGE_ROUNDS {
-            let outgoing = std::mem::take(&mut page.scripting.outbox);
-            let port_outgoing = std::mem::take(&mut page.scripting.port_outbox);
-            let mut moved = !outgoing.is_empty() || !port_outgoing.is_empty();
-            let advance = if round == 0 { advance_ms } else { 0.0 };
-            for frame in frames.iter_mut() {
-                let owner = frame.owner();
-                let Some(mut child) = frame.page.take() else {
-                    continue;
-                };
-                let mail = Mail {
-                    messages: outgoing
-                        .iter()
-                        .filter(|m| m.target == owner as i64)
-                        .collect(),
-                    ports: (port_outgoing.iter())
-                        .filter(|m| page.scripting.port_links.get(&m.link) == Some(&owner))
-                        .collect(),
-                };
-                for link in mail.messages.iter().flat_map(|m| &m.ports) {
-                    page.scripting.port_links.insert(*link, owner);
-                }
-                let ran = self.run_child(&mut child, mail, &page.origin, until, advance);
-                let returned = std::mem::take(&mut child.scripting.outbox);
-                let returned_ports = std::mem::take(&mut child.scripting.port_outbox);
-                let origin = child.origin.clone();
-                frame.page = Some(child);
-                if ran? {
-                    frame.follow_page(&mut page.images);
-                    changed = true;
-                }
-                for message in returned.into_iter().filter(|m| m.target == MESSAGE_PARENT) {
-                    moved = true;
-                    for link in &message.ports {
-                        page.scripting.port_links.insert(*link, owner);
-                    }
-                    changed |= self.deliver(page, message, Some(&origin), Some(owner as i64))?;
-                }
-                for message in returned_ports {
-                    moved = true;
-                    changed |= self.deliver_on_port(page, message)?;
-                }
-            }
-            if !moved || Instant::now() >= until {
-                break;
-            }
+    ) -> EngineResult<()> {
+        let urls = self.sync_frame_tree(page)?;
+        let urls: Vec<_> = urls
+            .iter()
+            .filter_map(|src| {
+                url::Url::parse(&page.url)
+                    .ok()?
+                    .join(src)
+                    .ok()
+                    .map(String::from)
+            })
+            .collect();
+        if !urls.is_empty() {
+            self.route_inserted_frames(page, &urls);
+            self.attach_frame_pages(page, &urls, until)?;
+            self.refresh_child_directories(page);
         }
-        Ok(changed)
+        Ok(())
     }
 
     /** One frame page's turn: its mail, then its timers. Whether its document changed. */
-    fn run_child(
+    pub(super) fn run_child(
         &mut self,
         child: &mut Page,
-        mail: Mail<'_>,
-        embedder: &str,
         until: Instant,
         advance_ms: f64,
     ) -> EngineResult<bool> {
         let mut changed = false;
-        for message in mail.messages {
-            changed |=
-                self.deliver(child, message.clone(), Some(embedder), Some(MESSAGE_PARENT))?;
-        }
-        for message in mail.ports {
-            changed |= self.deliver_on_port(child, message.clone())?;
-        }
         if child.scripting.loaded {
             let end = child.scripting.clock_ms + advance_ms;
             match self.settle_scripts(child, until, end) {
@@ -285,12 +323,13 @@ impl Runtime {
      * Fires one message at `to` when its origin is the one the sender named, with the ports it
      * carries. Returns whether `to`'s document changed.
      */
-    fn deliver(
+    pub(super) fn deliver(
         &mut self,
         to: &mut Page,
         message: FrameMessage,
         origin: Option<&str>,
         source: Option<i64>,
+        queued: Vec<crate::v9::QueuedPortMessage>,
     ) -> EngineResult<bool> {
         let wanted = message.target_origin.as_str();
         let delivered = to.scripting.loaded && (wanted == "*" || wanted == to.origin);
@@ -303,18 +342,31 @@ impl Runtime {
             "origin": origin.unwrap_or("null"),
             "source": source,
             "ports": message.ports,
+            "queued_port_messages": queued,
         }});
         self.step_in(to, event)
     }
 
     /** Fires a message that crossed a port link at the port bound to it in `to`. */
-    fn deliver_on_port(&mut self, to: &mut Page, message: PortMessage) -> EngineResult<bool> {
+    pub(super) fn deliver_on_port(
+        &mut self,
+        to: &mut Page,
+        message: PortMessage,
+    ) -> EngineResult<bool> {
         if !to.scripting.loaded {
             return Ok(false);
         }
         trace(&to.origin, "port", true, &message.data);
         let event = json!({"port_message":{"link": message.link, "data": message.data}});
         self.step_in(to, event)
+    }
+
+    /** Native disentanglement releases the far endpoint's retained route without running a callback. */
+    pub(super) fn close_on_port(&mut self, to: &mut Page, link: u64) -> EngineResult<bool> {
+        if !to.scripting.loaded {
+            return Ok(false);
+        }
+        self.step_in(to, json!({"port_close":{"link":link}}))
     }
 
     /**
@@ -333,12 +385,82 @@ impl Runtime {
     }
 }
 
-/** What one round carries to a frame page. */
-struct Mail<'m> {
-    /// Window messages for it.
-    messages: Vec<&'m FrameMessage>,
-    /// Messages on ports linked into it.
-    ports: Vec<&'m PortMessage>,
+/** Removed owners cannot leave route hints attached to a later document projection. */
+pub(super) fn prune_routes(page: &mut Page) {
+    page.scripting.environment.scripted_frame_owners = current_routes(page);
+    page.scripting.attempted_frame_owners.retain(|owner| {
+        page.scripting
+            .environment
+            .scripted_frame_owners
+            .contains(owner)
+    });
+    let owners: BTreeSet<_> = page
+        .document
+        .nodes
+        .iter()
+        .map(|node| node.local_id)
+        .collect();
+    let removed: BTreeSet<_> = page
+        .frames
+        .iter()
+        .filter(|frame| !owners.contains(&frame.owner()))
+        .map(Frame::owner)
+        .collect();
+    if removed.is_empty() {
+        return;
+    }
+    Arc::make_mut(&mut page.frames).retain(|frame| {
+        if !removed.contains(&frame.owner()) {
+            return true;
+        }
+        frame.remove_images(&mut page.images);
+        false
+    });
+    // The router rejects stale destinations and retires transferred peers; dropping
+    // their pending effects here would bypass that ownership cleanup.
+}
+
+/** Read-only inspector calls use the same current-owner filter as ordinary lifecycle steps. */
+pub(super) fn current_routes(page: &Page) -> BTreeSet<usize> {
+    page.document
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.tag == "iframe"
+                && page
+                    .scripting
+                    .environment
+                    .scripted_frame_owners
+                    .contains(&node.local_id)
+        })
+        .map(|node| node.local_id)
+        .collect()
+}
+
+/** A shared URL still needs its inert answer if any current owner uses the local-document route. */
+pub(super) fn needs_inert_answer(page: &Page, address: &str) -> bool {
+    let Ok(base) = url::Url::parse(&page.url) else {
+        return false;
+    };
+    let owners: Vec<_> = page
+        .document
+        .nodes
+        .iter()
+        .filter(|node| node.tag == "iframe" && !node.attributes.contains_key("srcdoc"))
+        .filter(|node| {
+            node.attributes
+                .get("src")
+                .and_then(|src| base.join(src.trim()).ok())
+                .is_some_and(|url| url.as_str() == address)
+        })
+        .collect();
+    owners.iter().any(|node| {
+        !page
+            .scripting
+            .environment
+            .scripted_frame_owners
+            .contains(&node.local_id)
+    })
 }
 
 /** Records one delivery in the perf log, so a frame handshake can be followed. */
@@ -354,8 +476,10 @@ impl Page {
     /** Whether a frame page has script work waiting or messages are waiting to cross, so the
     embedder's background run keeps going. */
     pub(super) fn frames_pending(&self) -> bool {
-        !self.scripting.outbox.is_empty()
+        self.frame_tree.mail.pending()
+            || !self.scripting.outbox.is_empty()
             || !self.scripting.port_outbox.is_empty()
+            || !self.scripting.port_closes.is_empty()
             || self
                 .frames
                 .iter()
@@ -364,6 +488,7 @@ impl Page {
                     child.scripting.pending()
                         || !child.scripting.outbox.is_empty()
                         || !child.scripting.port_outbox.is_empty()
+                        || !child.scripting.port_closes.is_empty()
                 })
     }
 }

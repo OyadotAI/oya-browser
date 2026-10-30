@@ -1084,6 +1084,14 @@ pub(in crate::v9) fn new_uint8(vm: &mut Vm, bytes: Vec<u8>) -> Res<ObjectId> {
 }
 
 /** The bytes a BufferSource (ArrayBuffer, typed array or DataView) covers. */
+/** Canvas readback exposes clamped channels, not a plain JavaScript array. */
+pub(in crate::v9) fn new_uint8_clamped(vm: &mut Vm, bytes: Vec<u8>) -> Res<ObjectId> {
+    let length = bytes.len();
+    let buffer = new_buffer(vm, bytes)?;
+    new_view(vm, ElementKind::Uint8Clamped, buffer, 0, length, None)
+}
+
+/** The bytes a BufferSource (ArrayBuffer, typed array or DataView) covers. */
 pub(in crate::v9) fn source_bytes(vm: &Vm, value: &JsValue) -> Option<Vec<u8>> {
     let id = value.object()?;
     if let Some(length) = storage_len(vm, id) {

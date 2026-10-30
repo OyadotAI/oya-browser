@@ -34,9 +34,6 @@ pub(super) const SEC_CH_UA: &str = concat!(
     r#"""#
 );
 
-/// Chrome's default for an English macOS install.
-pub(super) const ACCEPT_LANGUAGE: &str = "en-US,en;q=0.9";
-
 /** Chrome's Accept for a navigation. */
 const ACCEPT_DOCUMENT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
 
@@ -113,7 +110,10 @@ pub(super) fn fields(
     };
     fields.push(("accept-encoding", encoding.into()));
     if !set_by_page(request, "accept-language") {
-        fields.push(("accept-language", ACCEPT_LANGUAGE.into()));
+        fields.push((
+            "accept-language",
+            mars_core::languages::header(&request.languages),
+        ));
     }
     fields.extend(conditional.iter().cloned());
     if !request.cookie.is_empty() {
@@ -187,7 +187,7 @@ pub(super) fn priority(request: &WebRequest) -> (&'static str, u8) {
     match destination(request) {
         Destination::Document => ("u=0, i", 255),
         Destination::Style => ("u=0", 255),
-        Destination::Script => ("u=1", 219),
+        Destination::Script | Destination::Worker | Destination::WorkerImport => ("u=1", 219),
         Destination::Image => ("u=2, i", 182),
         Destination::Font => ("u=1", 219),
         Destination::Empty => ("u=1, i", 219),
@@ -200,7 +200,11 @@ fn accept(destination: Destination) -> &'static str {
         Destination::Document => ACCEPT_DOCUMENT,
         Destination::Image => ACCEPT_IMAGE,
         Destination::Style => ACCEPT_STYLE,
-        Destination::Script | Destination::Font | Destination::Empty => "*/*",
+        Destination::Script
+        | Destination::Worker
+        | Destination::WorkerImport
+        | Destination::Font
+        | Destination::Empty => "*/*",
     }
 }
 
@@ -215,7 +219,8 @@ fn fetch_metadata(
     let (mode, dest) = match destination {
         Destination::Document => ("navigate", "document"),
         Destination::Style => ("no-cors", "style"),
-        Destination::Script => ("no-cors", "script"),
+        Destination::Script | Destination::WorkerImport => ("no-cors", "script"),
+        Destination::Worker => ("same-origin", "worker"),
         Destination::Image => ("no-cors", "image"),
         // Chrome fetches fonts in CORS mode, as CSS Fonts requires; Mars sends the metadata and
         // does not yet refuse a font whose response lacks Access-Control-Allow-Origin.
@@ -287,6 +292,21 @@ pub(super) fn http1_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** Actual transmitted and cache-vary values follow the same per-request language policy. */
+    #[test]
+    fn configured_languages_drive_headers_and_explicit_overrides() {
+        let mut request = WebRequest::get("https://languages.test/");
+        request.languages = vec!["fr-CA".into(), "fr".into()];
+        assert_eq!(sent(&request, "accept-language"), "fr-CA,fr;q=0.9");
+        request.languages = vec!["ja".into()];
+        assert_eq!(sent(&request, "accept-language"), "ja");
+        request.destination = Destination::Empty;
+        request.headers = vec![("accept-language".into(), "de".into())];
+        assert_eq!(sent(&request, "accept-language"), "de");
+        request.languages = vec!["en-US\r\nInjected: yes".into()];
+        assert!(request.validate().is_err());
+    }
 
     /** Mars and its compatibility engine report the same major version. */
     #[test]
@@ -469,6 +489,21 @@ mod tests {
             ..WebRequest::get("http://b.example/")
         };
         assert_eq!(sent(&request, "referer"), "");
+    }
+
+    #[test]
+    fn worker_sources_and_imports_have_distinct_fetch_metadata() {
+        for (destination, mode, target) in [
+            (Destination::Worker, "same-origin", "worker"),
+            (Destination::WorkerImport, "no-cors", "script"),
+        ] {
+            let request = WebRequest {
+                destination,
+                ..WebRequest::get("https://a.example/script.js")
+            };
+            assert_eq!(sent(&request, "sec-fetch-mode"), mode);
+            assert_eq!(sent(&request, "sec-fetch-dest"), target);
+        }
     }
 
     #[test]
