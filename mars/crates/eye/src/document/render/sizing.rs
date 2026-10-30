@@ -93,6 +93,8 @@ pub(super) struct LayoutContext<'a> {
     /** The block whose first formatted line is open, with its `::first-line` fonts
     (render/first_line_layout.rs). */
     pub first_line: Option<super::first_line_layout::Pending>,
+    /** Nested orthogonal layouts temporarily own the thread's free-function keyword lookup. */
+    _keyword_scope: KeywordScope,
 }
 impl<'a> LayoutContext<'a> {
     /** Validate identities before any recursive layout, including direct Rust callers. */
@@ -129,6 +131,7 @@ impl<'a> LayoutContext<'a> {
             static_center: std::collections::BTreeSet::new(),
             first_letter: None,
             first_line: None,
+            _keyword_scope: KeywordScope::new(),
         };
         context.measure_keyword_boxes();
         Ok(context)
@@ -143,13 +146,22 @@ impl<'a> LayoutContext<'a> {
                 .iter()
                 .any(|keyword| *keyword != SizeKeyword::None)
         };
-        let mut measured = BTreeMap::new();
         for node in self.document.nodes.iter().filter(keyword) {
-            if let Ok(widths) = self.intrinsic_widths(node.local_id) {
-                measured.insert(node.local_id, widths);
-            }
+            let _ = self.intrinsic_widths(node.local_id);
         }
-        KEYWORD_WIDTHS.with(|cache| *cache.borrow_mut() = measured);
+    }
+    /** Publish completed dependencies immediately, before an ancestor reads their keyword constraints. */
+    fn remember_intrinsic(&mut self, node: &Node, widths: IntrinsicWidths) -> IntrinsicWidths {
+        self.intrinsic.insert(node.local_id, widths);
+        if node
+            .style
+            .size_keywords
+            .iter()
+            .any(|keyword| *keyword != SizeKeyword::None)
+        {
+            KEYWORD_WIDTHS.with(|cache| cache.borrow_mut().insert(node.local_id, widths));
+        }
+        widths
     }
     /** Shared work charges include repeated measurement rather than resetting in a dry run. */
     pub fn charge(&mut self, amount: usize) -> EngineResult<()> {
@@ -348,8 +360,7 @@ impl<'a> LayoutContext<'a> {
         self.charge(1)?;
         let node = self.node(local)?;
         if let Some(size) = containment::contained_widths(node) {
-            self.intrinsic.insert(local, size);
-            return Ok(size);
+            return Ok(self.remember_intrinsic(node, size));
         }
         if super::vertical::is_root(self, node) {
             let width = super::vertical::intrinsic_width(self, node)?;
@@ -358,13 +369,11 @@ impl<'a> LayoutContext<'a> {
                 min_content: content,
                 max_content: content,
             };
-            self.intrinsic.insert(local, size);
-            return Ok(size);
+            return Ok(self.remember_intrinsic(node, size));
         }
         if super::table::is_table(self, node) {
             let size = super::table::intrinsic(self, node)?;
-            self.intrinsic.insert(local, size);
-            return Ok(size);
+            return Ok(self.remember_intrinsic(node, size));
         }
         let mut size = text_intrinsic(self, node)?;
         let mut children = self.children(local);
@@ -465,8 +474,7 @@ impl<'a> LayoutContext<'a> {
         let size = transfer::ratio_widths(node, size, basis);
         bounded(size.min_content)?;
         bounded(size.max_content)?;
-        self.intrinsic.insert(local, size);
-        Ok(size)
+        Ok(self.remember_intrinsic(node, size))
     }
     /** In-flow `::before` and `::after` boxes are the element's first and last children in Blink's
      * layout tree, so their content counts toward its min- and max-content widths with their
@@ -869,11 +877,29 @@ pub(super) fn content_height(style: &crate::document::ComputedStyle, value: f64)
         value
     }
 }
+/** Move, rather than clone, the enclosing layout's cache while an orthogonal layout runs. */
+struct KeywordScope {
+    previous: BTreeMap<usize, IntrinsicWidths>,
+    /** This guard must restore on its creating thread, like the lookup it owns. */
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl KeywordScope {
+    /** Begin with no identities from an earlier document, including during intrinsic premeasurement. */
+    fn new() -> Self {
+        Self {
+            previous: KEYWORD_WIDTHS.with(|cache| std::mem::take(&mut *cache.borrow_mut())),
+            _thread: std::marker::PhantomData,
+        }
+    }
+}
+impl Drop for KeywordScope {
+    /** Error returns and successful nested layouts both restore the enclosing lookup. */
+    fn drop(&mut self) {
+        KEYWORD_WIDTHS.with(|cache| *cache.borrow_mut() = std::mem::take(&mut self.previous));
+    }
+}
 thread_local! {
-    /** Intrinsic widths of the current layout's keyword-sized boxes, by identity, replaced each
-     * time a layout context is built (contexts on one thread never interleave).
-     * ponytail: a per-thread side table because the sizing helpers take no context; thread the
-     * context through `border_width` and friends if a nested layout ever needs its own. */
+    /** Free sizing helpers read only their active layout's completed keyword-sized boxes. */
     static KEYWORD_WIDTHS: std::cell::RefCell<BTreeMap<usize, IntrinsicWidths>> =
         const { std::cell::RefCell::new(BTreeMap::new()) };
 }
