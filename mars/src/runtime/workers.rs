@@ -2,6 +2,7 @@
 mod execution;
 mod lifecycle;
 mod messaging;
+mod modules;
 mod scheduler;
 
 use super::{
@@ -11,7 +12,10 @@ use super::{
     worker_loading::{Policy, fatal},
 };
 use crate::protocol::{EngineError, EngineResult};
-use crate::v9::{Execution, PageEnvironment, PageEvent, WORKER_TASKS, WorkerCommand};
+use crate::v9::{
+    Execution, PageEnvironment, PageEvent, WORKER_TASKS, WorkerCommand, WorkerCredentials,
+    WorkerType,
+};
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
@@ -33,6 +37,10 @@ struct Context {
     clock_origin: f64,
     /// Imported cross-origin code must not expose its exception text to the creator page.
     muted_errors: bool,
+    /// Module requests and loaded source stay owned by this worker's rollback candidate.
+    modules: modules::Graph,
+    /// Queued messages wait for module top-level await without preventing fetch/timer progress.
+    ready: bool,
 }
 
 /** Cloning a page preserves rollback ownership and copies queues without delivering any work. */
@@ -60,8 +68,9 @@ impl Workers {
             || !self.deliveries.is_empty()
             || self.contexts.values().any(|worker| {
                 worker.token.is_none()
-                    || !worker.inbox.is_empty()
+                    || (worker.ready && !worker.inbox.is_empty())
                     || !worker.requests.is_empty()
+                    || !worker.modules.pending.is_empty()
                     || worker.next_timer.is_some()
             })
     }

@@ -259,6 +259,9 @@ pub enum DomLevel {
 pub struct PageEnvironment {
     /// A dedicated worker has its own global profile, with no Window or document capabilities.
     pub worker_name: Option<String>,
+    /// Module workers use module entry evaluation and cannot call classic importScripts.
+    #[serde(default)]
+    pub worker_module: bool,
     /// Host locale used when an Intl constructor receives no explicit locale.
     pub locale: String,
     /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
@@ -609,6 +612,7 @@ impl Default for PageEnvironment {
     fn default() -> Self {
         Self {
             worker_name: None,
+            worker_module: false,
             locale: "en-US".into(),
             regexp_buffer_boundaries: false,
             url: "about:blank".into(),
@@ -878,6 +882,9 @@ pub struct HistoryRecord {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostEffects {
+    /// Worker messages wait until module entry evaluation, including top-level await, completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_ready: Option<bool>,
     /// Dedicated worker tasks remain inert until the owning candidate admits them.
     pub worker_commands: Vec<workers::WorkerCommand>,
     /// Uncancelled worker exceptions become asynchronous errors on the owning Worker handle.
@@ -1117,6 +1124,8 @@ pub(in crate::v9) struct PageState {
     pub legacy_handlers: std::collections::BTreeSet<usize>,
     /// A saved context cannot be reopened with a different global authority profile.
     pub worker_name: Option<String>,
+    /// Worker kind is immutable across saved-state restoration and module graph continuations.
+    pub worker_module: bool,
     /** Each context owns real bounded pixels; detached state lives only while reachable. */
     pub canvases: BTreeMap<usize, canvas::State>,
     /** Permanent per-isolate read-only roots for one-byte iterator characters. */

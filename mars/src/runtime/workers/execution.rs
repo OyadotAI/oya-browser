@@ -11,7 +11,12 @@ impl Runtime {
     ) -> EngineResult<Execution> {
         let action = if worker.token.is_none() {
             json!({"kind":"load"})
-        } else if let Some(event) = worker.inbox.pop_front() {
+        } else if !worker.modules.pending.is_empty() {
+            self.worker_modules(worker, until)?;
+            json!({"kind":"modules"})
+        } else if worker.ready
+            && let Some(event) = worker.inbox.pop_front()
+        {
             json!({"kind":"event","event":event})
         } else if !worker.requests.is_empty() {
             let mut responses = Vec::new();
@@ -35,7 +40,7 @@ impl Runtime {
             .page
             .as_ref()
             .and_then(|page| page.context_token(identity));
-        let params = json!({"sources":&*worker.sources,"document":{"identity":identity,"charset":"UTF-8","nodes":[]},
+        let params = json!({"sources":&*worker.sources,"modules":worker.modules.input,"document":{"identity":identity,"charset":"UTF-8","nodes":[]},
             "environment":worker.environment,"languages":self.languages,"resident":true,"resident_contexts":self.residency.snapshot(),
             "base":worker.token,"keep":keep,"action":action});
         let started = Instant::now();
@@ -63,6 +68,10 @@ impl Runtime {
         execution: Execution,
     ) -> EngineResult<bool> {
         worker.token = execution.state_token;
+        worker.ready = execution.effects.worker_ready.ok_or_else(|| {
+            EngineError::invalid("Worker execution omitted initialization state.")
+        })?;
+        worker.modules.pending = execution.module_requests;
         worker.next_timer = execution.effects.next_timer_ms;
         worker.requests.extend(execution.effects.requests);
         crate::runtime::scripting::record_console(
@@ -70,7 +79,9 @@ impl Runtime {
             execution.effects.console,
             execution.effects.console_dropped,
         );
-        let mut closed = false;
+        let mut closed = worker.environment.worker_module
+            && !worker.ready
+            && !execution.effects.worker_errors.is_empty();
         for command in execution.effects.worker_commands {
             match command {
                 WorkerCommand::Post {

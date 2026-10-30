@@ -608,6 +608,7 @@ fn run_page_host(
         PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
         PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
         PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
+        PageAction::Modules if imports.is_some() => v9::resume_worker_modules(input, state()?),
         PageAction::Modules => v9::load_modules(input, state()?),
     }?;
     if call.resident {

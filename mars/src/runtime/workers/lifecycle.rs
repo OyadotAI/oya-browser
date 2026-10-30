@@ -8,6 +8,8 @@ impl Runtime {
         page: &Page,
         url: &str,
         name: String,
+        worker_type: WorkerType,
+        credentials: WorkerCredentials,
         until: Instant,
     ) -> EngineResult<Context> {
         let started = Instant::now();
@@ -28,13 +30,23 @@ impl Runtime {
             csp: page.document.csp.clone(),
         };
         let deadline = until.max(Instant::now() + crate::runtime::scripting::SCRIPT_REQUEST_WALL);
-        let source = self
-            .worker_source(&creator, url, true, deadline)?
-            .ok_or_else(|| EngineError::unsupported("The worker script could not be loaded."))?;
-        let environment = environment(page, &source.policy, name);
+        let source = match worker_type {
+            WorkerType::Classic => self.worker_source(&creator, url, true, deadline),
+            WorkerType::Module => {
+                self.worker_module_source(&creator, url, true, credentials, deadline)
+            }
+        }?
+        .ok_or_else(|| EngineError::unsupported("The worker script could not be loaded."))?;
+        let mut environment = environment(page, &source.policy, name);
+        environment.worker_module = worker_type == WorkerType::Module;
+        let modules = modules::Graph::new(worker_type, credentials, url, &source.text);
         Ok(Context {
             lease,
-            sources: Arc::new(vec![source.text]),
+            sources: Arc::new(vec![if worker_type == WorkerType::Module {
+                String::new()
+            } else {
+                source.text
+            }]),
             environment,
             policy: source.policy,
             token: None,
@@ -44,6 +56,8 @@ impl Runtime {
             next_timer: None,
             clock_origin: page.scripting.clock_ms,
             muted_errors: false,
+            modules,
+            ready: worker_type == WorkerType::Classic,
         })
     }
 }

@@ -43,8 +43,9 @@ impl Runtime {
                 )
                 .find(|(_, worker)| {
                     worker.token.is_none()
-                        || !worker.inbox.is_empty()
+                        || (worker.ready && !worker.inbox.is_empty())
                         || !worker.requests.is_empty()
+                        || !worker.modules.pending.is_empty()
                         || worker
                             .next_timer
                             .is_some_and(|due| due + worker.clock_origin <= page.scripting.clock_ms)
@@ -89,15 +90,19 @@ impl Runtime {
         until: Instant,
     ) -> EngineResult<()> {
         match command {
-            WorkerCommand::Create { id, url, name } => {
-                match self.create_worker(page, &url, name, until) {
-                    Ok(worker) => {
-                        page.scripting.workers.contexts.insert(id, worker);
-                    }
-                    Err(error) if fatal(&error) => return Err(error),
-                    Err(error) => self.worker_error(page, id, &error.message)?,
+            WorkerCommand::Create {
+                id,
+                url,
+                name,
+                worker_type,
+                credentials,
+            } => match self.create_worker(page, &url, name, worker_type, credentials, until) {
+                Ok(worker) => {
+                    page.scripting.workers.contexts.insert(id, worker);
                 }
-            }
+                Err(error) if fatal(&error) => return Err(error),
+                Err(error) => self.worker_error(page, id, &error.message)?,
+            },
             WorkerCommand::Post {
                 id,
                 data,

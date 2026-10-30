@@ -27,14 +27,7 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return Err(vm.type_error("Worker options must be a dictionary"));
     }
     let credentials = option(vm, &options, "credentials")?;
-    if credentials != JsValue::Undefined
-        && !matches!(
-            vm.to_text(&credentials)?.as_str(),
-            "omit" | "same-origin" | "include"
-        )
-    {
-        return Err(vm.type_error("Invalid Worker credentials"));
-    }
+    let credentials = credentials_mode(vm, credentials)?;
     let name = option(vm, &options, "name")?;
     let name = if name == JsValue::Undefined {
         String::new()
@@ -46,13 +39,7 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         vm.get(&options, &Key::from("type"))?
     };
-    if kind != JsValue::Undefined {
-        match vm.to_text(&kind)?.as_str() {
-            "classic" => {}
-            "module" => return Err(vm.unsupported_error("Module workers are unavailable")),
-            _ => return Err(vm.type_error("Invalid Worker type")),
-        }
-    }
+    let worker_type = worker_type(vm, kind)?;
     if name.len() > crate::constants::URL_BYTES
         || url.as_str().len() > crate::constants::URL_BYTES
         || vm.page.state.workers.len() >= HANDLES
@@ -74,8 +61,35 @@ pub(super) fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         id,
         url: url.into(),
         name,
+        worker_type,
+        credentials,
     });
     Ok(JsValue::Object(object))
+}
+
+/** Constructor enum conversion does not accidentally treat arbitrary values as module mode. */
+fn worker_type(vm: &mut Vm, value: JsValue) -> Res<WorkerType> {
+    if value == JsValue::Undefined {
+        return Ok(WorkerType::Classic);
+    }
+    match vm.to_text(&value)?.as_str() {
+        "classic" => Ok(WorkerType::Classic),
+        "module" => Ok(WorkerType::Module),
+        _ => Err(vm.type_error("Invalid Worker type")),
+    }
+}
+
+/** Retain valid credentials even though classic workers deliberately ignore this option. */
+fn credentials_mode(vm: &mut Vm, value: JsValue) -> Res<WorkerCredentials> {
+    if value == JsValue::Undefined {
+        return Ok(WorkerCredentials::SameOrigin);
+    }
+    match vm.to_text(&value)?.as_str() {
+        "omit" => Ok(WorkerCredentials::Omit),
+        "same-origin" => Ok(WorkerCredentials::SameOrigin),
+        "include" => Ok(WorkerCredentials::Include),
+        _ => Err(vm.type_error("Invalid Worker credentials")),
+    }
 }
 
 /** Dictionary members are read in WebIDL order even when classic loading ignores credentials. */

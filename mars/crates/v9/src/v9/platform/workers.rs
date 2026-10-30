@@ -21,12 +21,44 @@ pub(in crate::v9) const HANDLES: usize = 64;
 pub const WORKER_TASKS: usize = 32;
 static PROTOTYPE: OnceLock<u32> = OnceLock::new();
 
+/** The script grammar is fixed at construction and retained by the native worker owner. */
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkerType {
+    /// Classic scripts retain synchronous importScripts support.
+    #[default]
+    Classic,
+    /// Module graphs use asynchronous governed acquisition and module scope.
+    Module,
+}
+
+/** Module requests retain their constructor credentials mode across the whole graph. */
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkerCredentials {
+    /// No request in the module graph receives cookies or other credentials.
+    Omit,
+    /// Only requests to the worker's own origin receive credentials.
+    #[default]
+    SameOrigin,
+    /// Cross-origin responses must explicitly permit credentialed CORS.
+    Include,
+}
+
 /** Commands contain inert data only and are discarded with an unpublished candidate. */
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerCommand {
     /// The coordinator reserves capacity and governs source acquisition before execution.
-    Create { id: u32, url: String, name: String },
+    Create {
+        id: u32,
+        url: String,
+        name: String,
+        #[serde(default)]
+        worker_type: WorkerType,
+        #[serde(default)]
+        credentials: WorkerCredentials,
+    },
     /// Zero denotes a worker's owner; positive identities denote a page's exact handle.
     Post {
         id: u32,
@@ -193,7 +225,7 @@ fn terminate(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Closing stops later tasks, while the current worker turn may finish its synchronous code. */
-pub(super) fn close(vm: &mut Vm, _: Call) -> Res<JsValue> {
+pub(in crate::v9) fn close(vm: &mut Vm, _: Call) -> Res<JsValue> {
     if vm.page.state.worker_closed {
         return Ok(JsValue::Undefined);
     }

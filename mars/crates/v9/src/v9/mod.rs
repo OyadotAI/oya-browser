@@ -22,9 +22,9 @@ mod value;
 mod vm;
 mod web_worker;
 mod worker_clone;
-pub use platform::workers::{WORKER_TASKS, WorkerCommand};
+pub use platform::workers::{WORKER_TASKS, WorkerCommand, WorkerCredentials, WorkerType};
 pub use web_worker::ImportScriptsHost;
-pub use web_worker::load_worker;
+pub use web_worker::{load_worker, resume_worker_modules};
 pub use worker_clone::{WORKER_MESSAGE_BYTES, WorkerData};
 #[cfg(feature = "conformance")]
 mod worker_runtime;
@@ -1221,7 +1221,10 @@ fn session<'h>(
     builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
-    if state.page.initialized && state.page.worker_name != environment.worker_name {
+    if state.page.initialized
+        && (state.page.worker_name != environment.worker_name
+            || state.page.worker_module != environment.worker_module)
+    {
         return Err(EngineError::invalid(
             "V9 state belongs to another global profile.",
         ));
@@ -1369,6 +1372,7 @@ fn initialize_page(vm: &mut Vm) {
     let environment = &vm.page.environment;
     state.identity = identity;
     state.worker_name = environment.worker_name.clone();
+    state.worker_module = environment.worker_module;
     state.charset = charset;
     state.epoch = environment.time_origin_ms;
     state.random = environment.random_seed;
@@ -1586,6 +1590,9 @@ fn past_fraction(
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
+    if vm.page.environment.worker_name.is_some() {
+        vm.page.effects.worker_ready = Some(modules::worker_ready(&vm));
+    }
     platform::canvas::publish(&mut vm.page)?;
     platform::images::requests(&mut vm)?;
     vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);

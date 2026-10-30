@@ -13,6 +13,9 @@ pub(super) fn run(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if vm.page.environment.worker_name.is_none() {
         return Err(vm.type_error("Illegal invocation"));
     }
+    if vm.page.environment.worker_module {
+        return Err(vm.type_error("Module workers do not support importScripts"));
+    }
     if call.args.len() > IMPORTS || vm.page.import_depth >= DEPTH {
         return Err(EngineError::limit("worker imports", IMPORTS).into());
     }

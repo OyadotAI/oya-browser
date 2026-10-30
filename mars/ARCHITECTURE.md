@@ -147,7 +147,7 @@ A frame endpoint may forward to a third realm or return to its original peer; re
 restores local entanglement and drains bounded native queues to their correct endpoints.
 Closure releases native routes and both VM registrations without callback dispatch.
 
-Classic dedicated web workers share those leases and run cooperative, bounded
+Classic and HTTP(S) module dedicated web workers share those leases and run cooperative, bounded
 tasks in isolated worker globals. They have no document or shell capabilities.
 Their synchronous imports borrow the existing V9 service pipe: one correlated
 source callback at a time, governed by the coordinator's current permit, absolute
@@ -156,7 +156,12 @@ connection or starts an unbounded thread. Message graphs, queues, imports and
 transferred-port routes are bounded and owned by the candidate page; inspection
 cannot execute worker effects. Termination and page disposal release ownership,
 while unpublished candidates preserve the committed worker state for rollback.
-Module, blob and nested workers remain explicitly unsupported.
+Module workers reuse V9's module graph for static/dynamic imports and import.meta,
+with immutable constructor credentials and governed CSP/CORS acquisition. Entry
+evaluation readiness holds queued messages through top-level await while allowing
+initialization timers and fetches to progress. Saved worker state binds its
+classic/module kind. Blob URLs, nested workers and worker redirects remain
+explicitly unsupported.
 
 Native page and worker environments opt into script-visible monotonic elapsed
 time. A request-local `Instant` anchor advances `performance.now()` and

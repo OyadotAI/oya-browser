@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Implemented HTTP(S) dedicated module workers in Mars with governed static/dynamic imports, `import.meta.url`, constructor credentials and top-level-await initialization. Early messages wait for entry evaluation; Blob URLs, nested workers and redirects remain outside this slice.
 - Implemented sampled CSS opacity transitions in Mars, with duration/delay/easing lists, interruption and reversal handling, and native frame scheduling. Transition values stay separate from authored styles; other properties, transition events and discrete transitions remain unfinished.
 - Implemented bounded PNG/JPEG image sources for Mars Canvas `drawImage`, including crop/scale overloads, decoded-pixel sharing and cross-origin taint propagation through readback, export and canvas copies. GIF/WebP/SVG/video sources and CORS-authorized clean cross-origin drawing remain outside this slice.
 - Improved Mars's everyday navigation with an address that can replace a pending load, toolbar Stop, and expandable script-failure details. Restored the tested DuckDuckGo search/result/Back journey through JavaScript MIME, script-completion, SVG, selection and vendor-keyframe fixes. Kept markup-handler CSP separate from eval policy and preserved committed script state when cancellation occurs before request admission. Full Ladybird parity and Google Search remain unresolved.

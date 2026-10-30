@@ -9,6 +9,7 @@
 mod import_map;
 mod link;
 
+pub(in crate::v9) use link::worker_ready;
 pub(in crate::v9) use link::{Outcome, discover, refuse_dynamic, run_entry};
 
 /** Delivered source is shared, while each waiting context instantiates its own real module records. */

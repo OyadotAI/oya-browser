@@ -61,8 +61,16 @@ passes. Eleven Eye regressions and a runtime paint-bridge regression were added
 but not run in the code-first batch. Other properties, transition events,
 discrete transitions and CSS animation API exposure remain unfinished.
 
+HTTP(S) dedicated module workers now use the existing module engine for static
+and dynamic imports and import.meta.url. Constructor credentials and CSP/CORS
+admission persist across the graph. Queued messages wait for entry evaluation,
+including top-level await, and failed initialization terminates the worker.
+The combined production build passes; new native/V9 module-worker regression
+targets have not been run in this code-first batch. Blob URLs, nested workers
+and redirects remain unsupported in this slice.
+
 Current substantial gaps remain in broader CSS transition properties/animation rendering,
-Canvas paths/clipping/compositing and broader image sources, module/blob workers,
+Canvas paths/clipping/compositing and broader image sources, blob/nested workers,
 nested scripted frames and broader DOM/JavaScript compatibility. The local
 Test262 and WPT harnesses can measure slices, but no matched current Mars and
 Ladybird run establishes a percentage of parity. Google Search's recorded
