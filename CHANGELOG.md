@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added context-owned Blob image loading in Mars with generation snapshots, cancellation, origin/img-src checks, bounded actual raster decoding and clean Canvas pixels. Blob images never fall through to network/cache/prefetch; SVG, CSS backgrounds and unmatched responsive Blob candidates remain unsupported.
 - Added native pure CSS scale transitions and keyframes to Mars, including independent signed axes, zero scales, easing, interruption, direction and pause/fill behavior. Visual geometry and hit testing follow scaling while layout/resize measurements remain unchanged; mixed and 3D transform animation remains unfinished.
 - Made Mars HTTP fetch response bodies binary-safe through Relay and the native CORS coordinator. Fetch text readers use UTF-8 while legacy XHR/module decoding stays separate; cache, redirect, body-size and header filtering rules remain in force.
 - Completed Mars's Porter–Duff Canvas operators and lighter with transparent-source processing across the clipped destination, correct fractional clip interpolation and bounded work admission. Rectangles, paths, images and text share the implementation; artistic blend modes remain unfinished.
