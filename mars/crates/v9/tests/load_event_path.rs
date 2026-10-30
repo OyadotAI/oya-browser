@@ -1,6 +1,16 @@
 /** Resource load events stop at Document, while the page's own Window load remains observable. */
 mod common;
 
+/** Reported event paths must honor the same Document boundary as actual propagation. */
+#[test]
+fn composed_paths_exclude_window_for_resource_loads() {
+    let execution = common::load(
+        "let paths=[];document.addEventListener('load',e=>paths.push(e.composedPath().includes(window)),true);window.addEventListener('load',e=>paths.push(e.composedPath().includes(window)));document.getElementById('go').dispatchEvent(new Event('load'));document.dispatchEvent(new Event('load'));window.dispatchEvent(new Event('load'));const result=paths.join('|');",
+    );
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert_eq!(common::global(&execution, "result"), "false|false|true");
+}
+
 /** The captured web-vitals readiness pattern must not multiply callbacks on every script load. */
 #[test]
 fn parsed_script_loads_do_not_reenter_window_readiness_listeners() {

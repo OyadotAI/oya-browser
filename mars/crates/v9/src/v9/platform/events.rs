@@ -960,7 +960,7 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             };
             let composed = data.trusted || super::components::composed(vm, id);
             let mut values = Vec::new();
-            for step in path(vm, target, composed).into_iter().rev() {
+            for step in path(vm, target, composed, &data.kind).into_iter().rev() {
                 values.push(target_value(vm, step)?);
             }
             return Ok(JsValue::Object(vm.new_array(values)?));
