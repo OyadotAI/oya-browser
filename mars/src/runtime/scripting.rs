@@ -378,7 +378,8 @@ impl Runtime {
         {
             super::supervisor::perf::record("script.retry", started, || kind.clone());
             // V9 steps are pure, so the first run is dropped whole and the second commits.
-            environment.geometry = geometry;
+            environment.geometry = geometry.0;
+            environment.resize_wrappers = geometry.1;
             environment.laid_out_before = None;
             execution = self.execute(page, &projection, &environment, &action)?;
         }
@@ -731,7 +732,7 @@ impl Runtime {
         &mut self,
         page: &Page,
         execution: &Execution,
-    ) -> EngineResult<Vec<crate::v9::NodeBox>> {
+    ) -> EngineResult<(Vec<crate::v9::NodeBox>, mars_core::geometry::WrapperMetrics)> {
         let applied = self.apply_all(
             &page.document,
             &execution.changes,
@@ -768,7 +769,7 @@ impl Runtime {
             ),
         };
         let display = self.render_effects(&styled, &scroll, &effects)?;
-        Ok(boxes(&display))
+        Ok((boxes(&display), display.resize_wrappers))
     }
 
     /** Per-request facts: current URL, viewport, title, node text and the jar's script cookies. */
@@ -785,6 +786,7 @@ impl Runtime {
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
         // that measures one is laid out and run again (`forced_geometry`).
         environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
+        environment.resize_wrappers = page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default();
         // Before the first layout no node has a box, so every node counts as new: a step that
         // reads geometry is laid out and run again, as a browser forces layout, instead of
         // measuring nominal 1px boxes (ref-rectangle.js in the sticky tests).

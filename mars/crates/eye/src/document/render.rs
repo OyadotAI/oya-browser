@@ -56,6 +56,7 @@ mod phrase;
 mod plaintext;
 mod positioned;
 mod root_box;
+mod resize_wrappers;
 mod root_fit;
 mod root_flow;
 mod root_generated;
@@ -115,6 +116,9 @@ pub struct DisplayList {
     pub height: f64,
     /// Element boxes retain current document-local identities.
     pub items: Vec<DisplayItem>,
+    /// Root/body measurements use layout extents independently of scroll overflow and paint IDs.
+    #[serde(default)]
+    pub resize_wrappers: mars_core::geometry::WrapperMetrics,
     /// Root or propagated body color covers the full document canvas, including empty viewport area.
     #[serde(default)]
     pub canvas_background: Option<String>,
@@ -467,7 +471,7 @@ fn laid_out(
     let anonymous = table::anonymous_boxes(document);
     let laid = anonymous.as_ref().map_or(document, |(fixed, _)| fixed);
     let rooted = body::container_root(laid);
-    let (mut items, height, body_decoration, mut truncated) = match &rooted {
+    let (mut items, height, body_decoration, mut truncated, resize_wrappers) = match &rooted {
         Some((rooted, root)) => {
             let mut laid = flow::layout(rooted, context)?;
             laid.0.retain(|item| item.local_id != *root);
@@ -528,6 +532,7 @@ fn laid_out(
         width: context.width,
         height,
         items,
+        resize_wrappers,
         canvas_background,
         canvas_foreground,
         canvas_scheme: root.used_scheme,

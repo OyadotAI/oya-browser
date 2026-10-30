@@ -227,9 +227,14 @@ transforms. V9 samples measured changes, queues bounded records and delivers on
 the existing observer-only turns. Disconnect/unobserve, GC and restored-state
 validation cover retained callbacks, targets and records. Native resize-only
 invalidation compares raw metrics, so scrolling/transforms alone cannot wake it.
-Ordinary CSS boxes are covered; root/body wrappers without measured box metadata
-remain unmeasured. Fragmentation and full synchronous depth-loop broadcasting
-remain unfinished; this slice broadcasts once per bounded host turn.
+Ordinary CSS boxes and HTML/body wrappers are covered. Dedicated wrapper metrics
+travel separately from hit-test geometry, including forced-layout retries.
+Wrapper percentage edges resolve before descendant measurement; auto root extents
+are captured from in-flow content before positioned overflow changes document
+scroll size. Incomplete auto layouts and auto roots combining an out-of-flow or
+hidden body with root pseudo siblings remain unmeasured. Fragmentation and full
+synchronous depth-loop broadcasting remain unfinished; this slice broadcasts
+once per bounded host turn.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use

@@ -7,6 +7,15 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+ResizeObserver now also receives genuine HTML/body wrapper metrics through a
+dedicated transport, including forced-layout retries and native invalidation.
+Percentage edges are resolved before descendant measurement, and root auto
+dimensions use in-flow extents captured before positioned overflow contributes
+to scroll size. Incomplete auto layouts remain unmeasured; so do auto roots with
+a hidden/out-of-flow body and root pseudo siblings whose independent flow extent
+is unavailable. Synchronous resize loops remain outside this slice. Focused
+regressions are being added but not run; the combined production build is pending.
+
 Canvas setLineDash/getLineDash/lineDashOffset now retain genuine saved state and
 feed bounded dashed stroke geometry. Patterns are split in user space with
 per-subpath phase, closed-seam joining and round/square cap dots for zero-length

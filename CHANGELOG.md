@@ -8,6 +8,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Extended Mars ResizeObserver to measured HTML/body wrappers, with percentage-resolved edges and in-flow content extents kept separate from positioned overflow. Dedicated wrapper metrics also survive forced-layout retries; incomplete layouts remain unmeasured.
 - Implemented real Mars Canvas line dashes with saved dash state, iterable conversion, signed offsets, transformed stroke geometry, closed-path joins and zero-length cap dots. Pattern storage, splitting, outlines and raster work remain bounded; quota failures cannot partially paint.
 - Reused one dense-array lookup per Mars array callback iteration, retaining generic behavior for holes, inherited values, descriptors, proxies and shared containers. Callback mutation ordering and execution budgets are unchanged; speedup is unmeasured.
 - Removed redundant WindowProxy probes from Mars worker property reads and reused immutable frame identity keys. This reduces avoidable interpreter work without changing execution deadlines; Google Search and the measured performance impact remain unresolved.

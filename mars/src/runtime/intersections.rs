@@ -20,6 +20,7 @@ pub(super) struct Observations {
 #[derive(Clone, PartialEq)]
 struct Geometry {
     boxes: Vec<NodeBox>,
+    wrappers: mars_core::geometry::WrapperMetrics,
     viewport: [f64; 2],
     scroll: [f64; 2],
     device_pixel_ratio: f64,
@@ -40,6 +41,7 @@ impl Observations {
         self.pending = active && queued || resize_active && resize_queued;
         self.sampled = (active || resize_active).then(|| Geometry {
             boxes: environment.geometry.clone(),
+            wrappers: environment.resize_wrappers,
             viewport: [environment.viewport_width, environment.viewport_height],
             scroll: [environment.scroll_x, environment.scroll_y],
             device_pixel_ratio: environment.device_pixel_ratio,
@@ -62,6 +64,7 @@ impl Observations {
         self.pending |= self.resize_active
             && self.sampled.as_ref().is_none_or(|previous| {
                 previous.device_pixel_ratio != geometry.device_pixel_ratio
+                    || previous.wrappers != geometry.wrappers
                     || resize_boxes(previous) != resize_boxes(&geometry)
             });
     }
@@ -78,6 +81,7 @@ pub(super) fn layout(page: &mut Page, context: RenderContext, scroll_y: f64) {
             .as_ref()
             .map(super::scripting::boxes)
             .unwrap_or_default(),
+        wrappers: page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default(),
         viewport: [context.width, context.height],
         device_pixel_ratio: page.scripting.environment.device_pixel_ratio,
         scroll: [

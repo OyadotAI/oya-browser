@@ -1372,10 +1372,18 @@ pub(super) fn has_percent_sides(style: &crate::document::ComputedStyle) -> bool 
         .chain(&style.margin_percent)
         .any(|percent| *percent != 0.0)
 }
+/** Resolve the root against the viewport and the body against the root before measuring descendants. */
+pub(super) fn resolve_wrapper_sides(document: &Document, viewport: f64) -> Document {
+    let mut resolved = document.clone();
+    sides_to_pixels(&mut resolved.formatting.html.style, viewport);
+    let containing = super::root_box::root_box(&resolved, (viewport, 0.0)).content_width;
+    sides_to_pixels(&mut resolved.formatting.body.style, containing);
+    resolved
+}
 /**
  * A copy of the document whose percentage paddings and margins are pixels: each against the
  * content-box width its containing block had in `items`, the nearest laid-out block ancestor,
- * else the body's content box; the body's own against the viewport.
+ * else the body's content box; wrapper edges resolve before descendant measurement.
  * ponytail: absolute boxes resolve against their parent's content box, not their positioned
  * ancestor's padding box; resolve against the containing block layout picks if that shows up.
  */
@@ -1384,8 +1392,7 @@ pub(super) fn resolve_percent_sides(
     items: &[DisplayItem],
     viewport: f64,
 ) -> Document {
-    let mut resolved = document.clone();
-    sides_to_pixels(&mut resolved.formatting.body.style, viewport);
+    let mut resolved = resolve_wrapper_sides(document, viewport);
     let root = root_content_width(&resolved, viewport);
     let mut first = BTreeMap::new();
     for item in items {

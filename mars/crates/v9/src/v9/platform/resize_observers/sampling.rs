@@ -35,11 +35,13 @@ pub(in crate::v9) fn sample(vm: &mut Vm) -> Res<()> {
 fn measure(vm: &mut Vm, target: &Observation) -> Res<Option<Entry>> {
     let connected = vm.page.connected(target.node);
     let environment = &vm.page.environment;
-    let measured = environment
-        .geometry
-        .iter()
-        .find(|bounds| bounds.node == target.node && bounds.resize_box.is_some())
-        .and_then(|bounds| bounds.resize_box);
+    let measured = match target.node {
+        super::super::nodes::HTML => environment.resize_wrappers.html,
+        super::super::nodes::BODY => environment.resize_wrappers.body,
+        _ => environment.geometry.iter()
+            .find(|bounds| bounds.node == target.node && bounds.resize_box.is_some())
+            .and_then(|bounds| bounds.resize_box),
+    };
     let no_box = !connected
         || !environment
             .geometry

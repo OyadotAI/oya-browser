@@ -18,6 +18,16 @@ pub struct BoxMetrics {
     pub vertical: bool,
 }
 
+/** Wrapper elements have no paint-node identity, so their measured boxes travel separately. */
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WrapperMetrics {
+    /// Actual root layout box, absent until measured by the host.
+    pub html: Option<BoxMetrics>,
+    /// Actual body layout box, absent until measured by the host.
+    pub body: Option<BoxMetrics>,
+}
+
 impl BoxMetrics {
     /** Transport cannot introduce negative extents, nonfinite values or unbounded observer arithmetic. */
     pub fn valid(&self) -> bool {

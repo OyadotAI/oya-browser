@@ -375,6 +375,8 @@ pub struct PageEnvironment {
     /// layout of the step before (a one-step lag; a browser would force layout). Empty when the
     /// page has not been laid out, where V9 falls back to nominal boxes.
     pub geometry: Vec<NodeBox>,
+    /// Root and body retain measured raw layout sizes without borrowing ordinary node identities.
+    pub resize_wrappers: mars_core::geometry::WrapperMetrics,
     /// The document's scroll offset, which client coordinates subtract.
     pub scroll_y: f64,
     /// The document's horizontal scroll offset: negative in a document overflowing to the left.
@@ -685,6 +687,7 @@ impl Default for PageEnvironment {
             html_attributes: BTreeMap::new(),
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
+            resize_wrappers: mars_core::geometry::WrapperMetrics::default(),
             scroll_y: 0.0,
             scroll_x: 0.0,
             scroll_x_range: None,

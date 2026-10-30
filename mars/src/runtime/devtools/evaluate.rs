@@ -284,6 +284,7 @@ impl Runtime {
             .as_ref()
             .map(scripting::boxes)
             .unwrap_or_default();
+        environment.resize_wrappers = page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default();
         environment.scroll_y = self.scroll_y;
         environment.scroll_x = page.scroll_x;
         environment.positions = scripting::positions(&page.document);
