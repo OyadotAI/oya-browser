@@ -48,6 +48,11 @@ impl Scopes {
         self.own.pop();
         self.parent.pop();
     }
+    /** The custom properties the last pushed scope declared: a styled node's own, once its
+    pseudo-element scopes are popped. */
+    pub(super) fn last_own(&self) -> BTreeMap<Rc<str>, Rc<str>> {
+        self.own.last().cloned().unwrap_or_default()
+    }
     /** Scopes pushed so far. */
     pub(super) fn len(&self) -> usize {
         self.own.len()

@@ -39,28 +39,39 @@ pub fn run_service(name: &str) -> EngineResult<()> {
 between frames run here, on the engine's thread, and answer through their own channel. */
 struct ChannelReader {
     receiver: Receiver<super::supervisor::Inbound>,
+    /** Set when the owning service drops: the thread exits though senders remain. */
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     current: Cursor<Vec<u8>>,
 }
 
 impl ChannelReader {
     /** Creates a new reader connected to the request receiver. */
-    fn new(receiver: Receiver<super::supervisor::Inbound>) -> Self {
+    fn new(
+        receiver: Receiver<super::supervisor::Inbound>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
         Self {
             receiver,
+            stop,
             current: Cursor::new(Vec::new()),
         }
     }
 
     /** Refills the internal buffer with the next frame from the channel. */
     fn refill(&mut self) -> io::Result<bool> {
+        use std::sync::mpsc::RecvTimeoutError;
         loop {
-            match self.receiver.recv() {
+            if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(false);
+            }
+            match self.receiver.recv_timeout(crate::constants::RPC_POLL) {
                 Ok(super::supervisor::Inbound::Frame(frame)) => {
                     self.current = Cursor::new(frame);
                     return Ok(true);
                 }
                 Ok(super::supervisor::Inbound::Job(job)) => run_job(job),
-                Err(_) => return Ok(false),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return Ok(false),
             }
         }
     }
@@ -148,8 +159,9 @@ pub(super) fn serve_in_process(
     name: &str,
     requests: Receiver<super::supervisor::Inbound>,
     replies: SyncSender<EngineResult<Vec<u8>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> EngineResult<()> {
-    let reader = ChannelReader::new(requests);
+    let reader = ChannelReader::new(requests, stop);
     let writer = ChannelWriter::new(replies);
     serve_stream(name, reader, writer)
 }

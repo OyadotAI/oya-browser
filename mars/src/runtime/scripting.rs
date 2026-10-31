@@ -30,6 +30,8 @@ mod network;
 mod requests;
 mod sync_layout;
 pub(in crate::runtime) use requests::queue as queue_requests;
+/** The layout host type the runtime keeps for the running step. */
+pub(super) use sync_layout::SyncLayout as SyncLayoutHost;
 
 /** Resident tokens identify heap-less projections; transferable states still require full heap validation. */
 pub(super) fn validate_script_state(
@@ -56,6 +58,13 @@ const IMAGE_REQUEST_WALL: Duration = crate::constants::WEB_REQUEST_CEILING;
 pub(super) const SCRIPT_REQUEST_WALL: Duration = crate::constants::WEB_REQUEST_CEILING;
 /// Real time the first commit may spend on that settling, inside the navigation deadline.
 const SETTLE_WALL: Duration = Duration::from_millis(1500);
+/// Virtual milliseconds of timers a person's input settles before its commit: one frame, so a
+/// handler's own `setTimeout(0)` and next animation frame paint with it.
+const INPUT_SETTLE_VIRTUAL_MS: f64 = 16.0;
+/// Real time an input's commit may spend settling. A page with timers always due (YouTube)
+/// spent the whole first-paint budget on every click and key; a browser paints the handler's
+/// effect at once and runs later timers after, which the page's background ticks do here.
+const INPUT_SETTLE_WALL: Duration = Duration::from_millis(150);
 /// V9 round trips one settle may make (requests and timer runs together).
 const SETTLE_STEPS: usize = 12;
 /// Task sources the settle loop takes turns between (see `next_action`).
@@ -461,13 +470,23 @@ impl Runtime {
         // A step that changed nothing keeps the document and the projection it was given: Eye
         // would return the same document, and at NODES that copy and its projections cost as
         // much as styling the page. The structure check still runs.
+        // When the step's last mid-script layout applied all its changes, its styled document is
+        // this step's result: no second apply, and no restyle if the sheets end up the same.
+        let finished = self.sync_layout.take().and_then(|host| {
+            host.finished((execution.changes.len(), execution.script_changes.len()))
+        });
+        let mut styled_with = None;
         let applied = changed
-            .then(|| {
-                self.apply_all(
+            .then(|| match finished {
+                Some((styled, sheets)) => {
+                    styled_with = Some(sheets);
+                    Ok(styled)
+                }
+                None => self.apply_all(
                     &page.document,
                     &execution.changes,
                     &execution.script_changes,
-                )
+                ),
             })
             .transpose()?;
         let after = match &applied {
@@ -521,6 +540,9 @@ impl Runtime {
             }
         } else {
             changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
+        }
+        if styled_with.as_ref() == Some(&page.resolved_stylesheets) {
+            page.styled = true;
         }
         let pending = PendingImages::of(first_new, &changes, &script_changes);
         page.scripting.pending_images = Some(match page.scripting.pending_images.take() {
@@ -890,16 +912,21 @@ impl Runtime {
     /** The step's environment with a layout host, so a read of a box or style the last layout
     cannot answer lays out at once on V9's thread instead of running the step twice.
     ponytail: copies the document and sheets per step; share them by Arc if it shows. */
-    fn with_sync_layout(&self, page: &Page, environment: &PageEnvironment) -> PageEnvironment {
+    fn with_sync_layout(&mut self, page: &Page, environment: &PageEnvironment) -> PageEnvironment {
         let mut environment = environment.clone();
-        let host = sync_layout::SyncLayout {
+        let inputs = sync_layout::Inputs {
             base: page.document.clone(),
             sheets: page.resolved_stylesheets.clone(),
             local_block: page.local_sheets,
             context: self.render_context,
             scroll: page.element_scroll.clone(),
         };
-        environment.layout = crate::v9::LayoutHook(Some(std::sync::Arc::new(host)));
+        let host = std::sync::Arc::new(sync_layout::SyncLayout::new(
+            inputs,
+            self.job_sender("document"),
+        ));
+        self.sync_layout = Some(std::sync::Arc::clone(&host));
+        environment.layout = crate::v9::LayoutHook(Some(host));
         environment
     }
 
@@ -1145,6 +1172,18 @@ impl Runtime {
     ) -> EngineResult<bool> {
         let until = deadline.min(Instant::now() + SETTLE_WALL);
         let end = page.scripting.clock_ms + SETTLE_VIRTUAL_MS;
+        self.settle(page, until, end, &mut || false, true)
+    }
+
+    /** Settle what a person's input started for one frame before its commit; the rest runs on
+    the page's background ticks, which input keeps awake. */
+    pub(super) fn settle_after_input(
+        &mut self,
+        page: &mut Page,
+        deadline: Instant,
+    ) -> EngineResult<bool> {
+        let until = deadline.min(Instant::now() + INPUT_SETTLE_WALL);
+        let end = page.scripting.clock_ms + INPUT_SETTLE_VIRTUAL_MS;
         self.settle(page, until, end, &mut || false, true)
     }
 

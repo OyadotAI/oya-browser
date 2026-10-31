@@ -79,6 +79,7 @@ fn cascade(
         ancestry: Vec::new(),
         parent_scope: None,
         ua_margin_top: false,
+        reuse: None,
     };
     cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
     for message in &cascade.parsed.diagnostics {
@@ -91,21 +92,34 @@ fn cascade(
     super::install_fonts(&candidate.formatting);
     super::values::take_measured();
     cascade.wrappers(document, &mut candidate)?;
+    // Shadow trees style a flat copy whose node identities are not the page's: in full.
+    let reusable = flat.is_none();
+    if reusable {
+        cascade.reuse = Some(super::reuse::Plan::new(document, sheets, context, 0, 0));
+    } else {
+        super::reuse::forget();
+    }
     cascade.nodes(document, &mut candidate)?;
+    let mut font_metrics = cascade.finish_pass(&candidate);
     // `@container` conditions and `cq*` units need laid-out sizes: one layout of these styles,
     // then one more cascade that reads them. Bounded to that single extra pass; nothing iterates
-    // to a fixpoint.
+    // to a fixpoint. That pass reuses only when every container measured the same.
     if cascade.parsed.container_rules
         && let Some(sizes) = super::container::sizes(&candidate, context)
     {
+        if reusable {
+            let extra = super::reuse::sizes_key(&sizes);
+            cascade.reuse = Some(super::reuse::Plan::new(document, sheets, context, 1, extra));
+        }
         cascade.sizes = Some(sizes);
         cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
         super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
         super::values::set_root_line(0.0);
         cascade.wrappers(document, &mut candidate)?;
         cascade.nodes(document, &mut candidate)?;
+        font_metrics |= cascade.finish_pass(&candidate);
     }
-    candidate.formatting.font_metrics = super::values::take_measured();
+    candidate.formatting.font_metrics = font_metrics;
     if cascade.parsed.untrusted {
         untrusted(&mut candidate);
     }
@@ -142,6 +156,8 @@ struct Cascade<'a> {
     /// The element styled last took its top margin from the UA sheet, for the quirks-mode
     /// margin quirk.
     ua_margin_top: bool,
+    /// What this cascade may reuse from the page's previous one; None when it styles in full.
+    reuse: Option<super::reuse::Plan>,
 }
 impl<'a> Cascade<'a> {
     /** Styles every element in document order; parents come before their children. */
@@ -162,16 +178,28 @@ impl<'a> Cascade<'a> {
                 let extent = super::container::extent(&self.ancestry, self.sizes.as_ref());
                 super::values::set_container_extent(extent);
             }
-            let mut style = self.node(&document.nodes[index], parent, candidate)?;
-            // Only an in-flow box's margin collapses into its container's top.
-            let in_flow = !matches!(style.position, Position::Absolute | Position::Fixed)
-                && style.float == super::Float::None;
-            if self.ua_margin_top
-                && in_flow
-                && candidate.formatting.quirks
-                && opens_quirk_container(candidate, index, parent)
-            {
-                style.quirk_top = true;
+            let node = &document.nodes[index];
+            let previous = self.reuse.as_ref().and_then(|plan| {
+                let parent_style = parent
+                    .map(|index| &candidate.nodes[index].style)
+                    .unwrap_or(&candidate.formatting.body.style);
+                plan.reusable(node, index, parent_style)
+            });
+            let reused = previous.is_some();
+            let style = match previous {
+                Some((style, custom, ua_margin_top)) => {
+                    self.scopes.push(
+                        Some(parent.map_or(BODY, |index| index + FIRST_NODE)),
+                        custom,
+                    );
+                    self.ua_margin_top = ua_margin_top;
+                    style
+                }
+                None => self.styled_node(node, index, parent, candidate)?,
+            };
+            if let Some(plan) = self.reuse.as_mut() {
+                let custom = self.scopes.last_own();
+                plan.record(node, index, &style, custom, self.ua_margin_top, reused);
             }
             candidate.nodes[index].style = style;
         }
@@ -179,6 +207,36 @@ impl<'a> Cascade<'a> {
         self.parent_scope = None;
         super::values::set_container_extent([None, None]);
         Ok(())
+    }
+    /** End a pass: keep it for the next cascade's same pass and return whether any style read
+    measured font metrics (reused styles carry the previous pass's answer). */
+    fn finish_pass(&mut self, candidate: &Document) -> bool {
+        let measured = super::values::take_measured();
+        match self.reuse.take() {
+            Some(plan) => plan.finish(&candidate.formatting.body.style, measured),
+            None => measured,
+        }
+    }
+    /** One node's style computed afresh, with the quirks-mode top margin rule applied. */
+    fn styled_node(
+        &mut self,
+        node: &Node,
+        index: usize,
+        parent: Option<usize>,
+        candidate: &Document,
+    ) -> EngineResult<ComputedStyle> {
+        let mut style = self.node(node, parent, candidate)?;
+        // Only an in-flow box's margin collapses into its container's top.
+        let in_flow = !matches!(style.position, Position::Absolute | Position::Fixed)
+            && style.float == super::Float::None;
+        if self.ua_margin_top
+            && in_flow
+            && candidate.formatting.quirks
+            && opens_quirk_container(candidate, index, parent)
+        {
+            style.quirk_top = true;
+        }
+        Ok(style)
     }
     /** Root and body are formatting subjects, never surrogate declarations on actual children. */
     fn wrappers(&mut self, document: &Document, candidate: &mut Document) -> EngineResult<()> {

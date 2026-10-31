@@ -126,7 +126,7 @@ impl Runtime {
         match self.script_step(page, action) {
             Ok(_) => {
                 let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
-                self.settle_after_load(page, deadline)?;
+                self.settle_after_input(page, deadline)?;
                 Ok(())
             }
             Err(error) if stops_operation(&error) => Err(error),
@@ -223,7 +223,7 @@ impl Runtime {
     fn run_click(&mut self, mut page: Page, node: &Node) -> EngineResult<Value> {
         let step = self.script_step(&mut page, json!({"kind":"click","target":node.local_id}))?;
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
-        let changed = self.settle_after_load(&mut page, deadline)? || step.changed;
+        let changed = self.settle_after_input(&mut page, deadline)? || step.changed;
         page.scripting.wake();
         let result = if changed {
             self.finish_mutation(page)?
@@ -410,7 +410,7 @@ impl Runtime {
             Err(_) => return Ok(None),
         };
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
-        let changed = self.settle_after_load(&mut page, deadline)? || step.changed;
+        let changed = self.settle_after_input(&mut page, deadline)? || step.changed;
         let allowed = page.scripting.submit_allowed.take() == Some(form);
         page.scripting.wake();
         let result = if changed {

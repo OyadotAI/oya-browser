@@ -1035,6 +1035,13 @@ impl<'h> Vm<'h> {
             .saturating_add(self.page.state.cpu_profile.units());
         #[cfg(not(feature = "conformance"))]
         let units = counts.units;
+        // The registered-string count is an upper estimate that grows with every string a step
+        // creates, freed ones included; YouTube's churn crossed the limit every few hundred ms
+        // and each crossing ran a full collection with 2-4 M of 16 M units actually live.
+        // Recounting the live registrations first walks the strings, not the heap.
+        if self.heap.last_registered_string_units > limits.units {
+            self.heap.last_registered_string_units = self.heap.string_budget.resident_units();
+        }
         // Global let, const and class bindings live outside the heap but are bindings too.
         if counts.properties > limits.properties
             || units > limits.units

@@ -10,7 +10,7 @@ use super::Service;
 use crate::constants::RPC_POLL;
 use crate::protocol::{EngineError, EngineResult};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, SyncSender};
 use std::time::Instant;
 
 /** Work handed to an in-process engine thread; it sends its own result back. */
@@ -121,5 +121,17 @@ impl super::Runtime {
             Err(error) if error.service.is_some() => Err(self.revive(name, Some(op), Some(error))),
             result => result,
         })
+    }
+}
+
+impl super::Runtime {
+    /** A sender for typed jobs to `name`'s engine thread when it runs in this process: what a
+    host callback uses to run work there from another thread (V9's layout calls into Eye). */
+    pub(in crate::runtime) fn job_sender(&self, name: &str) -> Option<SyncSender<Inbound>> {
+        let service = self.services.iter().find(|service| service.name == name)?;
+        service
+            .takes_jobs()
+            .then(|| service.requests.clone())
+            .flatten()
     }
 }

@@ -122,6 +122,8 @@ pub struct Runtime {
     /** Script lists shared with an in-process V9 by pointer, with their code-cache keys, most
     recent first; content-compared, so a page never runs another page's scripts. */
     pub(super) shared_sources: Vec<Arc<super::service::ResidentSources>>,
+    /** The running step's layout host, kept so the step's result can reuse its last layout. */
+    pub(super) sync_layout: Option<Arc<super::scripting::SyncLayoutHost>>,
     /** Leases keep every committed and candidate script context within one service budget. */
     pub(super) residency: super::residency::Residency,
     /** Monotonic context IDs never roll back with candidate pages. */
@@ -599,6 +601,7 @@ impl Runtime {
             prefetched: Default::default(),
             v9_sources: Default::default(),
             shared_sources: Vec::new(),
+            sync_layout: None,
             residency: Default::default(),
             next_frame_window: 0,
             frame_partition: None,
@@ -1151,6 +1154,9 @@ pub(super) struct Service {
     worker: Option<JoinHandle<()>>,
     /** Internal correlation prevents accepting a late or mismatched reply. */
     sequence: u64,
+    /** Tells an in-process engine thread to exit even while a host callback (V9's layout host)
+    still holds a sender to it, which would otherwise keep its channel open forever. */
+    stop: Arc<AtomicBool>,
 }
 
 /** Whether process isolation (separate child processes) is explicitly requested. */
@@ -1163,11 +1169,13 @@ impl Service {
     pub(super) fn in_process(name: &'static str, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
         let (req_tx, req_rx) = mpsc::sync_channel(1);
         let (rep_tx, rep_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
         let worker = thread::Builder::new()
             .name(format!("oya-{name}-inproc"))
             .stack_size(crate::constants::SERVICE_STACK_BYTES)
             .spawn(move || {
-                let _ = super::service::serve_in_process(name, req_rx, rep_tx);
+                let _ = super::service::serve_in_process(name, req_rx, rep_tx, stopped);
             })
             .map_err(|_| EngineError::service(name, false))?;
         Ok(Self {
@@ -1178,6 +1186,7 @@ impl Service {
             replies: rep_rx,
             worker: Some(worker),
             sequence: 0,
+            stop,
         })
     }
 
@@ -1222,6 +1231,7 @@ impl Service {
             replies: receiver,
             worker: Some(worker),
             sequence: 0,
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1397,6 +1407,7 @@ impl Drop for Service {
             let _ = child.wait();
         }
         self.requests.take();
+        self.stop.store(true, Ordering::Relaxed);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
