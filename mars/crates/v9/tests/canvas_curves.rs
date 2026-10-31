@@ -1,5 +1,5 @@
 /** Script-visible curve construction must preserve WebIDL conversion, current-path state and actual ink. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::DocumentHost;
 

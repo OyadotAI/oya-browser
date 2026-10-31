@@ -1,6 +1,6 @@
 /* Shared-everything Wasm syntax is independently gated from ordinary shared memories. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The proposal flag enables shared GC types while ordinary shared memory remains available. */
 #[test]

@@ -1,5 +1,5 @@
 /** Refused property definitions name V8's cause: a closed target for a new key, a redefinition otherwise. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A new key on a non-extensible object is refused with the closed-target message, through Object.defineProperty. */

@@ -1,6 +1,6 @@
 /* The explicitly gated V8 cast experiment forwards values while retaining static hierarchy checks. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** An enabled unchecked cast forwards null, while the disabled opcode and wrong hierarchy fail validation. */
 #[test]

@@ -1,5 +1,5 @@
 /** ECMA-402 bound formats: format and compare are accessors that return one cached bound function per formatter, and their receivers and lengths follow the spec. */
-mod common;
+use crate::common;
 
 /** The Collator compare getter returns a function that works unbound, so `const cmp = collator.compare` keeps the collator's options. */
 #[test]

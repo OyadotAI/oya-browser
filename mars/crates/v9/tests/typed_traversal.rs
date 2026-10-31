@@ -1,5 +1,5 @@
 /** Typed array traversal observes real view length, branding, and detachment boundaries. */
-mod common;
+use crate::common;
 
 /** Typed traversal uses its internal witness even when an own property shadows length. */
 #[test]

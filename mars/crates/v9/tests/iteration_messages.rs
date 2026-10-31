@@ -1,7 +1,7 @@
 /** A value that cannot be iterated is named in the message the way V8 names it: by its source
 text at a loop, spread or destructuring, by its callee when it came out of a call, and by its
 type when the engine has no source text for it. */
-mod common;
+use crate::common;
 
 /** A loop head or array spread prints the iterable as written, nullish or not. */
 #[test]

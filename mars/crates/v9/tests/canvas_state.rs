@@ -1,5 +1,5 @@
 /** Canvas state tests observe public matrices and pixels across real V9 requests. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, PageInput, StorageState};
 

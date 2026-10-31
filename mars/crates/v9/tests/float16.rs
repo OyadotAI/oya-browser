@@ -1,5 +1,5 @@
 /** Binary16 typed storage, DataView and Math share one exact round-to-even conversion. */
-mod common;
+use crate::common;
 
 /** Half elements share two-byte storage and preserve negative zero, infinities and subnormals. */
 #[test]

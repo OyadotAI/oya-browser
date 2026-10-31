@@ -1,5 +1,5 @@
 /** Resident summaries validate retained document references without becoming executable heap snapshots. */
-mod common;
+use crate::common;
 use mars_v9::{Execution, HostResponse, NodeBox, PageEnvironment, VmState};
 
 /** Pending network state keeps heap references which summary validation must intentionally avoid resolving. */

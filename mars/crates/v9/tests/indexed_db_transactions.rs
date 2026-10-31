@@ -1,6 +1,5 @@
 /** IndexedDB transactions: active-flag lifetime, auto-commit, abort and rollback, error propagation and scheduling. */
-mod common;
-mod indexed_db;
+use crate::indexed_db;
 use indexed_db::run;
 
 /** The setup every test shares: database `db` version 1 with an out-of-line store `s`, then `body(db)`. */

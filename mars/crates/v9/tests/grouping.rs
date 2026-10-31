@@ -1,5 +1,5 @@
 /** Grouping and fromEntries consume live iterators and preserve callback ordering and close behavior. */
-mod common;
+use crate::common;
 
 /** Mutation during the grouping callback changes subsequent iteration, including native array length. */
 #[test]

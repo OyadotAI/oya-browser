@@ -1,5 +1,5 @@
 /** Markup admission is host policy on each request, never an eval permission or saved-state grant. */
-mod common;
+use crate::common;
 use mars_v9::{HandlerHash, HandlerPolicy, HandlerRestriction, PageEnvironment};
 
 /** A current request with both compilation surfaces independently constrained. */

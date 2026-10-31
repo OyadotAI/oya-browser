@@ -168,13 +168,14 @@ impl Vm<'_> {
     has passed after the first; then set the clock to `now`. Timers left due run late, next. */
     pub fn run_due_timers(&mut self, now: f64, budget: usize) -> Res<usize> {
         let started = std::time::Instant::now();
-        // The first check finds a frame owed: steps are always more than a frame apart.
-        let mut last_frame: Option<std::time::Instant> = None;
+        // Due order alone rules a quick run; only a run that has gone a frame of real time
+        // without one forces the frames due, which is when zero-delay timeouts starve them.
+        let mut last_frame = started;
         let mut ran = 0;
         while ran < budget && (ran == 0 || started.elapsed() < TIMER_SLICE) {
-            if last_frame.is_none_or(|at| at.elapsed() >= FRAME_INTERVAL) {
+            if last_frame.elapsed() >= FRAME_INTERVAL {
                 let frames = self.run_frame_batch(now)?;
-                last_frame = Some(std::time::Instant::now());
+                last_frame = std::time::Instant::now();
                 if frames > 0 {
                     ran += frames;
                     continue;

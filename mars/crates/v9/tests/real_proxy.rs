@@ -1,5 +1,5 @@
 /** Proxy as frameworks use it (Vue-style reactivity, feature checks like BBC's Piano SDK). */
-mod common;
+use crate::common;
 use common::eval;
 
 /** get/set/has/delete/ownKeys traps observe and steer every access, with Reflect forwarding. */

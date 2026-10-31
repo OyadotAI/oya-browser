@@ -1,5 +1,5 @@
 /** String padding coerces only operands needed after receiver length and requested target are known. */
-mod common;
+use crate::common;
 
 /** Public execution fails loudly on every unexpected author or native exception. */
 fn result(source: &str) -> String {

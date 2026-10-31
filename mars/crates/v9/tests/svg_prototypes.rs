@@ -1,5 +1,5 @@
 /** SVG interface completion must never install readonly SVG members on HTML element prototypes. */
-mod common;
+use crate::common;
 
 /** Polymer installs a transform method on a prototype derived from HTMLElement before making instances. */
 #[test]

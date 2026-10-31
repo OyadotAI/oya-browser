@@ -1,5 +1,5 @@
 /** Public error behavior preserves observable descriptor reads and safely reports rejected JSON and Date inputs. */
-mod common;
+use crate::common;
 
 /** Ambiguous descriptors are rejected only after their fields have been read in the specified order. */
 #[test]

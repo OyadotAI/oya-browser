@@ -5,6 +5,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 description = "V9: Mars's bounded, Rust-owned JavaScript runtime"
+# The integration tests are one binary (tests/main.rs) rather than one per file.
+autotests = false
 
 [dependencies]
 mars-core = { path = "../core" }
@@ -50,3 +52,7 @@ required-features = ["measure"]
 [[example]]
 name = "replay"
 required-features = ["measure"]
+
+[[test]]
+name = "v9"
+path = "tests/main.rs"

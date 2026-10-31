@@ -1,6 +1,6 @@
 /** IndexedDB cursors and key ranges: directions, continue variants, advance, update and delete. */
-mod common;
-mod indexed_db;
+use crate::common;
+use crate::indexed_db;
 use indexed_db::run;
 
 /** A store `s` (keys 1..5, values {k, g}) with an index `g` on g = k % 2, then `body(db)`. */

@@ -1,5 +1,5 @@
 /** Native Escape dispatches trusted keyboard events and only an uncanceled top popover close action. */
-mod common;
+use crate::common;
 use mars_v9::{DomLevel, KeyboardKey, PageInput, VmState};
 
 /** The host projection already contains popover attributes before script state is committed. */

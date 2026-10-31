@@ -1,5 +1,5 @@
 /** Array.map CallSites follow genuine native activations, strict/realm privacy, and ordinary traced object lifetimes. */
-mod common;
+use crate::common;
 
 /** Structured frames are inspected through the public Error hook after real callback execution. */
 fn eval(source: &str) -> String {

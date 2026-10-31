@@ -1,5 +1,5 @@
 /** Direct label chains share the actual iteration target without crossing block, conditional or function boundaries. */
-mod common;
+use crate::common;
 
 /** Continuing an outer direct label returns to a do-while condition rather than leaving the labelled statement. */
 #[test]

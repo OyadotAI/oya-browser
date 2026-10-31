@@ -77,3 +77,8 @@ required-features = ["test-support"]
 [patch.crates-io]
 # Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
 rustls = { path = "vendor/rustls" }
+
+# V9's interpreter runs tests (and debug builds) optimized: unoptimized it is 10-50x slower and
+# its budget and deadline tests took most of the suite's time. Debug assertions stay on.
+[profile.dev.package.mars-v9]
+opt-level = 2

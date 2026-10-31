@@ -1,6 +1,6 @@
 /* The shell's explicit Wasm stringref feature state controls binary validation. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The same module validates only when the host enables the optional proposal. */
 #[test]

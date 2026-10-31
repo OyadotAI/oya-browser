@@ -4,7 +4,7 @@
  * rather than gone. Blanking the failed source dropped those declarations, so every later step
  * refused the page's own state as forged.
  */
-mod common;
+use crate::common;
 
 use common::{host, input, round_trip};
 use mars_v9::PageEvent;

@@ -1,5 +1,5 @@
 /** Sparse logical lengths never allocate holes or bypass resident value and wire bounds. */
-mod common;
+use crate::common;
 use mars_v9::VmState;
 
 /** A billion-hole array with a few actual values must remain an ordinary small snapshot. */

@@ -1,5 +1,5 @@
 /** Annex B copies ordinary block functions into eligible var bindings without leaking generators or async functions. */
-mod common;
+use crate::common;
 
 /** Generator and async declarations remain lexical in scripts and nested function bodies. */
 #[test]

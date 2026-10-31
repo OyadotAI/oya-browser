@@ -1,5 +1,5 @@
 /** Web Components in V9: custom elements, shadow roots and slots, templates, observers, traversal. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, SimpleFragmentParser, StorageState};
 

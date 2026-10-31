@@ -1,5 +1,5 @@
 /** Stable Math operations handle extreme magnitudes, signed zero and argument conversion without intermediate overflow. */
-mod common;
+use crate::common;
 
 /** Scaling protects both ends of binary64, and infinity has priority only after every conversion succeeds. */
 #[test]

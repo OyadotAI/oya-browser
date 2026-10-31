@@ -1,5 +1,5 @@
 /** Literal early errors keep raw lexical restrictions and object-pattern cover grammar distinct. */
-mod common;
+use crate::common;
 
 /** A second literal prototype setter rejects the whole script before any side effects. */
 #[test]

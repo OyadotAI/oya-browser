@@ -1,7 +1,7 @@
 /** Window messaging between a page and its frames: a message to the page's own window arrives
 from a task, a frame's `parent` is a proxy whose postMessage leaves as an effect, and a message
 the app hands back fires `message` with the data, origin and source proxy. */
-mod common;
+use crate::common;
 
 use common::{failure, global, host, input, load_with, round_trip};
 use mars_v9::{MESSAGE_PARENT, MessageData, PageEnvironment, PageEvent};

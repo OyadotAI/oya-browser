@@ -1,5 +1,5 @@
 /** Rendering-cycle continuations consume fresh host measurements while depth gates prevent same-frame loops. */
-mod common;
+use crate::common;
 use mars_core::geometry::BoxMetrics;
 use mars_v9::{Execution, NodeBox, PageEnvironment, ResizeTurn, VmState};
 

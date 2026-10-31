@@ -1,5 +1,5 @@
 /** BroadcastChannel bindings publish inert ordered work and receive asynchronous cloned message tasks. */
-mod common;
+use crate::common;
 use mars_v9::{BroadcastCommand, Execution, PageEvent};
 
 /** Binding regressions fail on both individual script errors and page-finalization failures. */

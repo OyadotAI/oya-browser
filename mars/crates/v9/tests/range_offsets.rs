@@ -1,5 +1,5 @@
 /** Range offsets are WebIDL unsigned longs: a negative offset wraps to a large value and so throws IndexSizeError rather than being clamped to zero. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** comparePoint with offset -1 wraps to 4294967295, which is past the node's length, so it throws. */

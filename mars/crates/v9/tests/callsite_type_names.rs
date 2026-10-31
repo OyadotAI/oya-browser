@@ -1,5 +1,5 @@
 /** CallSite.getTypeName reports the receiver's kind: primitives by wrapper name, proxies as Proxy, and objects by the constructor their prototype names. */
-mod common;
+use crate::common;
 
 /** Strict callers keep a primitive receiver unboxed, so its wrapper name is what the call site reports. */
 #[test]

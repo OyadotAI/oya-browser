@@ -1,5 +1,5 @@
 /** A failed generator resume entry closes the generator without leaving a false running state or entering its body. */
-mod common;
+use crate::common;
 
 /** Repeated near-limit retries see a completed generator after its real resume entry overflows. */
 #[test]

@@ -1,5 +1,5 @@
 /** Date local conversion uses validated transitions and POSIX recurrence while keeping test clocks hermetic. */
-mod common;
+use crate::common;
 
 /** Synthetic northern transitions choose the earlier fold and normalize a skipped wall hour forwards. */
 #[test]

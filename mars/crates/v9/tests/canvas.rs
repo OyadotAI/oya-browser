@@ -1,5 +1,5 @@
 /** Canvas public APIs use real bounded pixels and retain identity independently of native text. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, PageInput, StorageState};
 

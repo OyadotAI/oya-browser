@@ -1,6 +1,6 @@
 /* d8 literal module identities survive native host delivery while browser URL resolution retains normal canonicalization. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The shell's literal JavaScript payload cannot be changed by URL parsing or percent decoding. */
 #[test]

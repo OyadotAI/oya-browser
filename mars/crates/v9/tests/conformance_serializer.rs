@@ -1,6 +1,6 @@
 /* Native ValueSerializer compatibility exercises V8 wire bytes and actual receiving JavaScript graphs. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 /** Every check uses the public d8 host through real VM execution, including author getter behavior. */
 fn run(source: &str) -> Vec<String> {

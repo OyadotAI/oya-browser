@@ -1,6 +1,6 @@
 /* Terminal shell exceptions run the real reporter while retaining script failure, native guards and abrupt stop authority. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment, protocol::EngineError};
 
 /** Sources remain separate global Scripts so a stop can genuinely suppress later sources and queued jobs. */

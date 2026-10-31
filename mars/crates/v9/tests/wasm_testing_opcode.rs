@@ -1,6 +1,6 @@
 /* The shell's dedicated Wasm testing opcode is a gated, ordinary no-op. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Enabling the flag accepts the NOP without altering the operand stack or result. */
 #[test]

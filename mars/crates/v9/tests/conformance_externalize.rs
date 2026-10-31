@@ -1,6 +1,6 @@
 /* Externalization host API: contents, Latin-1 reporting and argument validation, observed through real scripts. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 
 /** Run one synchronous script and return its console lines; no timers or host tasks are involved. */

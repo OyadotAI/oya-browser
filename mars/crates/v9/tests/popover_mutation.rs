@@ -1,5 +1,5 @@
 /** Popover mutations preserve effective types, reentrant hiding, private visibility and selector semantics. */
-mod common;
+use crate::common;
 use mars_v9::DomLevel;
 
 /** Evaluate DOM behavior through the public page entry point with extended element bindings enabled. */

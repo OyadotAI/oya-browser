@@ -1,5 +1,5 @@
 /** Iterator.from observes flattenability, captures next once and preserves raw result identity. */
-mod common;
+use crate::common;
 
 /** Native iterators retain identity while plain iterators gain the standard prototype methods. */
 #[test]

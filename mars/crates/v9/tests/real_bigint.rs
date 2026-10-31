@@ -1,5 +1,5 @@
 /** BigInt as real pages use it (Google's Closure int64 helpers), bounded by retained-value quotas. */
-mod common;
+use crate::common;
 use common::{eval, failure, load};
 
 /** Literals, conversion and the 64-bit helpers Closure's int64 code runs at load. */

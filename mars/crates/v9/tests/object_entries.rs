@@ -1,5 +1,5 @@
 /** Object.values and Object.entries check each key's descriptor right before reading its value. */
-mod common;
+use crate::common;
 
 /** A getter that deletes a later key or hides it stops that key from appearing. */
 #[test]

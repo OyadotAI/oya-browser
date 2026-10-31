@@ -1,6 +1,6 @@
 /** IndexedDB: opening, upgrading, reading and writing through the page's engine and a test coordinator. */
-mod common;
-mod indexed_db;
+use crate::common;
+use crate::indexed_db;
 use indexed_db::run;
 
 /** Open creates the database in an upgrade, then succeeds with a connection at the requested version. */

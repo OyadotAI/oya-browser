@@ -1,5 +1,5 @@
 /** DateString pads a negative year's magnitude to four digits before adding its sign. */
-mod common;
+use crate::common;
 
 /** toUTCString and toDateString print years before 1 BCE as -0001 through -123456. */
 #[test]

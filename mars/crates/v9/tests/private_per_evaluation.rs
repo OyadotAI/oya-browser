@@ -1,6 +1,6 @@
 /** Each evaluation of a class body mints fresh private names (spec 15.7.14), so instances of
 two evaluations of one class source never see each other's `#names`. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A method of the second evaluation rejects an instance of the first, and the brand of each

@@ -1,5 +1,5 @@
 /** Real Promise jobs resume owned Wasm frames without retaining native stacks or replaying imports. */
-mod common;
+use crate::common;
 /** Encode vector byte counts using the binary grammar, including fixtures beyond a one-byte section. */
 fn unsigned(bytes: &mut Vec<u8>, mut value: usize) {
     loop {

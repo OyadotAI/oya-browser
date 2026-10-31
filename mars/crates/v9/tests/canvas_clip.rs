@@ -1,5 +1,5 @@
 /** Public clipping tests pin painter coverage, saved mask ownership, bypasses and image-origin security. */
-mod common;
+use crate::common;
 use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font};
 use mars_v9::{DocumentHost, Execution, ImageResponse, PageEnvironment};
 

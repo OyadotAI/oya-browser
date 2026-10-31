@@ -1,6 +1,6 @@
 /** A strict-mode property write or delete that fails names the property and the object the way
 V8 does: the object as `#<Ctor>`, `[object Tag]`, a function's source or a primitive's text. */
-mod common;
+use crate::common;
 
 /** A read-only property names the receiver by type and text. */
 #[test]

@@ -4,7 +4,7 @@
  * answers the way the real one does, so the JavaScript side of every API is tested against the
  * protocol rather than against its own internals.
  */
-mod common;
+use crate::common;
 
 use common::{console, input};
 use mars_v9::{Execution, HostRequest, HostResponse};

@@ -1,6 +1,6 @@
 /* Native profiling measures physical VM execution, retains real listeners and exports bounded actual call trees. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment};
 
 /** A long interval isolates explicit samples; no test relies on invented periodic ticks. */

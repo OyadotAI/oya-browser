@@ -1,6 +1,6 @@
 /* Real Realm.eval API activations follow the shell flag, actual creation contexts, and ordinary rooted CallSite lifetimes. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The host flag is explicit input; pages never enable it by source text or filename. */
 fn run(source: &str, enabled: bool) -> mars_v9::Execution {

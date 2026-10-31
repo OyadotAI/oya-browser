@@ -1,5 +1,5 @@
 /** Structured clone across contexts (worker, port and BroadcastChannel packets) and structuredClone keep Date, RegExp, Map, Set, wrappers, errors and Blobs. */
-mod common;
+use crate::common;
 use mars_v9::{BroadcastCommand, PageEvent};
 
 /** A message with every richer kind; the receiver reports what arrived. */

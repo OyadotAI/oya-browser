@@ -3,7 +3,7 @@
  * `name="value"` pairs in the node's data, keep the data in write order, and refuse names the
  * grammar cannot hold. Each rule has one test, and the failure paths are covered too.
  */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, StorageState};
 

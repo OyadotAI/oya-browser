@@ -1,5 +1,5 @@
 /** ECMAScript language and library behavior through the public page API. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Classes, inheritance, super calls, getters and statics. */

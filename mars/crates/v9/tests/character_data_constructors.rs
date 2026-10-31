@@ -1,6 +1,6 @@
 /** The `Text` and `Comment` constructors in V9: `new Text(data)` and `new Comment(data)` make the
 same nodes as createTextNode and createComment, with an omitted argument giving empty data. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

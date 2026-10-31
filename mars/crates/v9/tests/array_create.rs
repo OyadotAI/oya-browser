@@ -1,5 +1,5 @@
 /** Array static construction preserves generic targets, single iterator lookup and live mapping order. */
-mod common;
+use crate::common;
 
 /** The explicit shell flag uses intrinsic arrays without consulting authored constructors or species getters. */
 #[cfg(feature = "conformance")]

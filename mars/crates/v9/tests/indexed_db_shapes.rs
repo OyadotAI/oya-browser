@@ -1,5 +1,5 @@
 /** IndexedDB interfaces have Chrome's shape: illegal constructors, enumerable WebIDL members, branded receivers, native-looking source text. */
-mod common;
+use crate::common;
 
 /** Interface objects throw on construction (except IDBVersionChangeEvent), and members are enumerable accessors and methods. */
 #[test]

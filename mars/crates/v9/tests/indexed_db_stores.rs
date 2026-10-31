@@ -1,6 +1,5 @@
 /** IndexedDB object stores and indexes: keys, key paths, key generators, constraints, ranges and schema changes. */
-mod common;
-mod indexed_db;
+use crate::indexed_db;
 use indexed_db::run;
 
 /** Open `db` version 1, run `upgrade(db)` in upgradeneeded and `body(db)` on success. */

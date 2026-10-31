@@ -1,6 +1,6 @@
 /** navigator.userAgentData answers as Chrome 152 on a Mac does, with the same values Relay sends
 as client hints, so a page's own checks agree with its request headers. */
-mod common;
+use crate::common;
 
 /** The low-entropy view: one stable object, the three brands in Sec-CH-UA's order, macOS. */
 #[test]

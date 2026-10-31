@@ -1,5 +1,5 @@
 /** View Transitions run their update and report a skipped transition, as Chrome does without animation. */
-mod common;
+use crate::common;
 
 /** The callback runs, skipTransition works, `ready` rejects with AbortError and `finished` resolves. */
 #[test]

@@ -1,5 +1,5 @@
 /** The page's window owns every global interface, as a browser's does, so feature detection works. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Constructors and functions are own, writable, configurable, non-enumerable data properties. */

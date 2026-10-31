@@ -1,5 +1,5 @@
 /** Media elements through page scripts: the load algorithm, host updates and the events they fire, text tracks and Media Source. */
-mod common;
+use crate::common;
 use mars_v9::{
     DomLevel, Execution, MediaCommand, MediaSupport, PageEnvironment, PageEvent, VmState,
 };

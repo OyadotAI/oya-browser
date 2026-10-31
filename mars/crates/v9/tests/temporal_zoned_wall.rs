@@ -1,5 +1,5 @@
 /** Temporal.ZonedDateTime wall-clock getters, toString and toJSON over the shipped zone rules: one test per rule. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** The wall-clock year, month and day are read in the zone, not UTC: 02:00Z on July 1 is still June 30 in New York. */

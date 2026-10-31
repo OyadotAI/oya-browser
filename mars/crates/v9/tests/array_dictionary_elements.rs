@@ -1,7 +1,7 @@
 /** Array elements with their own attributes or accessors (V8's dictionary elements): defined
 through Object.defineProperty they keep their descriptor, and length, delete, keys and the
 Array methods all respect it. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** An accessor element runs its getter and setter through every read and write path. */

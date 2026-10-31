@@ -1,5 +1,5 @@
 /** Function objects, %ThrowTypeError% and private-name brand checks, through the page API. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** SetFunctionName/SetFunctionLength make ordinary configurable properties: delete sticks. */

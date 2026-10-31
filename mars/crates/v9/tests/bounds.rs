@@ -1,5 +1,5 @@
 /** V9's bounds still hold with the full platform: every one fails explicitly as a limit. */
-mod common;
+use crate::common;
 use common::{failure, load};
 use mars_v9::constants::{JS_STRING_UNITS, VM_FUNCTIONS, VM_OBJECTS, VM_PROPERTIES};
 

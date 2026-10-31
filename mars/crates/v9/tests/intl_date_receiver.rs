@@ -1,5 +1,5 @@
 /** DateTimeFormat method brands belong to native methods and cannot be replaced by receiver metadata or prototype spoofing. */
-mod common;
+use crate::common;
 
 /** Other native Intl instances cannot redirect a borrowed DateTimeFormat method into their formatter implementation. */
 #[test]

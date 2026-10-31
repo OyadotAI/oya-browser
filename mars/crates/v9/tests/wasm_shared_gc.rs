@@ -1,5 +1,5 @@
 /** Real shared GC roots preserve identity, synchronized mutation and typed snapshots across native Workers. */
-mod common;
+use crate::common;
 /** Small binary fixtures exercise the public API without any external compiler. */
 fn section(bytes: &mut Vec<u8>, kind: u8, payload: &[u8]) {
     bytes.extend([kind, payload.len() as u8]);

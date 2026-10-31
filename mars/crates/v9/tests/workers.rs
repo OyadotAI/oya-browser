@@ -1,5 +1,5 @@
 /** Dedicated workers expose isolated language and worker globals without document capabilities. */
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment, PageInput, StorageState};
 
 /** An empty projection provides identity only; the worker entry never builds DOM nodes. */

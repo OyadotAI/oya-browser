@@ -432,7 +432,7 @@ impl Parser {
             }
             Kind::String(_) | Kind::Opaque(_) => "Unexpected string".to_string(),
             Kind::Template { .. } => "Unexpected template string".to_string(),
-            Kind::Regex { .. } => "Unexpected regular expression".to_string(),
+            Kind::Regex(_) => "Unexpected regular expression".to_string(),
             Kind::Private(name) => format!("Unexpected identifier '#{name}'"),
             Kind::Name(name) => self.unexpected_name(name, token.escaped),
             kind => format!("Unexpected token '{}'", spelling(kind).unwrap_or("")),
@@ -569,7 +569,7 @@ impl Parser {
             return Err(self.unexpected());
         }
         self.next();
-        Ok(Name::from(name.as_str()))
+        Ok(name.0.clone())
     }
     /** `arguments` cannot be referenced from a class field initializer or static block. */
     fn check_arguments(&self, name: &str, pos: Pos) -> EngineResult<()> {
@@ -627,7 +627,7 @@ impl Parser {
     fn property_name(&mut self) -> EngineResult<Name> {
         match &self.peek().kind {
             Kind::Name(name) => {
-                let name = Name::from(name.as_str());
+                let name = name.0.clone();
                 self.next();
                 Ok(name)
             }

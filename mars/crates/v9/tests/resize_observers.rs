@@ -1,5 +1,5 @@
 /** Persistent ResizeObservers consume real raw measurements on observer-only turns across state transfers. */
-mod common;
+use crate::common;
 use mars_core::geometry::BoxMetrics;
 use mars_v9::{Execution, NodeBox, PageEnvironment, VmState};
 

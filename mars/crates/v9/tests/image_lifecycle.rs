@@ -1,5 +1,5 @@
 /** Native image tasks retain source identity and expose only outcomes supplied by the actual host decoder. */
-mod common;
+use crate::common;
 use common::{console, environment, host, input};
 use mars_v9::document::{DomChange, ScriptChange, ScriptDocument};
 use mars_v9::{Execution, ImageResponse, VmState};

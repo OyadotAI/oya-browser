@@ -1144,17 +1144,12 @@ fn parse_with_mode(
     grammar: u8,
     native_fixture: bool,
 ) -> EngineResult<syntax::Program> {
-    let mut tokens = lexer::tokenize(source).map_err(|mut error| {
+    let tokens = lexer::tokenize_at(source, offset).map_err(|mut error| {
         if let Some(location) = error.location.as_deref_mut() {
-            location.byte_offset += offset;
             location.script_index = index.map(|index| index + 1);
         }
         error
     })?;
-    for token in &mut tokens {
-        token.location.byte_offset += offset;
-        token.end += offset;
-    }
     let result = if !private_names.is_empty() || grammar != 0 || native_fixture {
         syntax::parse_eval(tokens, strict, private_names, grammar, native_fixture)
     } else if strict {

@@ -1,5 +1,5 @@
 /** CallSite.getMethodName reports the property that installs an accessor, as V8 does, instead of its `get `/`set ` name. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A getter frame reports the property key it was installed under, even for a numeric key. */

@@ -1,5 +1,5 @@
 /** Resource load events stop at Document, while the page's own Window load remains observable. */
-mod common;
+use crate::common;
 
 /** Reported event paths must honor the same Document boundary as actual propagation. */
 #[test]

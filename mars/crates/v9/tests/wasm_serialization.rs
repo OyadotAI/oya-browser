@@ -1,6 +1,6 @@
 /* The conformance host serializes real modules into an owned envelope with checked source identity. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Each test runs the public shell in an isolated page without native IO or foreign engines. */
 fn run(source: &str) -> String {

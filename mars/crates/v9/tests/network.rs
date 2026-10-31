@@ -1,5 +1,5 @@
 /** fetch and XMLHttpRequest: requests are recorded for the app; responses resume the page. */
-mod common;
+use crate::common;
 use common::{console, input};
 use mars_v9::HostResponse;
 

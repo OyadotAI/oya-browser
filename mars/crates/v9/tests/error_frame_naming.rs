@@ -1,5 +1,5 @@
 /** Error stack text names frames the way V8 does: receiver-qualified methods, builtin frames, constructions, aliases, and synthetic initializers, all from real frame data. */
-mod common;
+use crate::common;
 
 /** The first `count` frame lines of a thrown error's default stack, with each location dropped. */
 fn frames(body: &str, count: usize) -> String {

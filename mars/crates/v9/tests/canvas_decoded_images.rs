@@ -1,5 +1,5 @@
 /** Decoded image completions exercise Canvas pixels, source state and origin-clean lifetime. */
-mod common;
+use crate::common;
 use mars_core::canvas::{Bitmap, CanvasHost};
 use mars_v9::{DocumentHost, Execution, ImageResponse, PageEnvironment};
 

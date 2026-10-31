@@ -1,5 +1,5 @@
 /** IDL [Reflect] attributes in V9: each reflection type's getting and setting rules. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

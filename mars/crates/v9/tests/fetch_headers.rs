@@ -1,7 +1,7 @@
 /** Fetch's Headers, Request headers and Response constructor semantics (ported from Blink's
 Headers, FetchHeaderList and Response): validation, normalisation, guards, sort-and-combine and
 the Response statics. Each test fails on the old bindings. */
-mod common;
+use crate::common;
 use common::{console, input};
 
 /** Run one script and return what it logged. */

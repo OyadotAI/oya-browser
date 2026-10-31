@@ -1,6 +1,6 @@
 /** Static NodeList reads in V9: index and `length` reads answer from the snapshot a query made,
 unaffected by later DOM changes, and an out-of-range index is undefined. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

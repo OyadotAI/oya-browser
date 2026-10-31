@@ -1,5 +1,5 @@
 /** Dynamic function constructors keep display names separate from lexical body bindings. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** The observable name anonymous does not introduce a private binding of that name. */

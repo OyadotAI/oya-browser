@@ -1,5 +1,5 @@
 /** The DOM over the app's projection: queries, mutations in both change logs, and events. */
-mod common;
+use crate::common;
 use common::{console, eval, input, load, load_with};
 use mars_v9::{
     DomLevel,

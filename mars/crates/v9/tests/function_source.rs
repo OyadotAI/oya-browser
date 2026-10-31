@@ -1,5 +1,5 @@
 /** Function source retains original grammar and trivia without consulting mutable public metadata. */
-mod common;
+use crate::common;
 
 /** Declarations, arrows and methods return exactly the parsed function span. */
 #[test]

@@ -1,5 +1,5 @@
 /** Binary responses retain exact bytes across host delivery, clones and persisted VM state. */
-mod common;
+use crate::common;
 
 /** Construction keeps invalid UTF-8 intact while text readers decode independently. */
 #[test]

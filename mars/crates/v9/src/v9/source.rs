@@ -6,10 +6,13 @@ pub(super) struct Source<'a> {
     source: &'a str,
     location: SourceLocation,
     after_cr: bool,
+    /** Page byte offset of the text's start, added to every reported location. */
+    base: usize,
 }
 impl<'a> Source<'a> {
-    /** Source allocation stays with the caller throughout scanning. */
-    pub fn new(source: &'a str) -> Self {
+    /** A cursor whose locations are page offsets: the text starts at byte `base` of the page,
+    so tokens need no second pass to move them there. Source allocation stays with the caller. */
+    pub fn new_at(source: &'a str, base: usize) -> Self {
         Self {
             source,
             location: SourceLocation {
@@ -19,6 +22,7 @@ impl<'a> Source<'a> {
                 script_index: None,
             },
             after_cr: false,
+            base,
         }
     }
     /** Remaining bytes always start at a valid UTF-8 boundary. */
@@ -31,7 +35,10 @@ impl<'a> Source<'a> {
     }
     /** Every token records its starting location before consuming source. */
     pub fn location(&self) -> SourceLocation {
-        self.location
+        SourceLocation {
+            byte_offset: self.location.byte_offset + self.base,
+            ..self.location
+        }
     }
     /** CRLF is one line; astral characters are two UTF-16 column units. */
     pub fn next(&mut self) -> Option<char> {

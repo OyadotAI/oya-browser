@@ -1,5 +1,5 @@
 /** Raw JSON preserves a validated primitive spelling after toJSON and replacer callbacks. */
-mod common;
+use crate::common;
 
 /** Big decimal text does not lose digits through binary64 serialization. */
 #[test]

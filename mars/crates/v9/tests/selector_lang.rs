@@ -1,5 +1,5 @@
 /** :lang() matches an element by its nearest language, using RFC 4647 basic filtering: a range matches itself and its subtags, case-insensitively. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** An element inherits its language from the nearest ancestor that sets lang. */

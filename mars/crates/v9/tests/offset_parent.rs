@@ -1,6 +1,6 @@
 /** CSSOM View offsets: `offsetTop`/`offsetLeft` are measured from the offset parent (the
 nearest positioned ancestor, else the body), and `offsetParent` names it. */
-mod common;
+use crate::common;
 
 /** A box of `node` at (x, y) sized 50 by 50, in document coordinates. */
 fn node_box(node: usize, x: f64, y: f64) -> mars_v9::NodeBox {

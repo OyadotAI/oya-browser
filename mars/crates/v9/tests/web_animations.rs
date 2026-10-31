@@ -1,5 +1,5 @@
 /** Web Animations use actual clock-driven tasks, native opacity sampling, Promise jobs and validated state transport. */
-mod common;
+use crate::common;
 use mars_v9::{AnimationTarget, Execution};
 
 /** A small public timer roundtrip preserves the original scripts and document projection. */

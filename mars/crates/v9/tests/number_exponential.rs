@@ -1,5 +1,5 @@
 /** Exponential formatting rounds exact decimal ties up and prints zero without a sign. */
-mod common;
+use crate::common;
 
 /** An exact tie picks the larger magnitude, for both signs; Rust's formatter rounds to even. */
 #[test]

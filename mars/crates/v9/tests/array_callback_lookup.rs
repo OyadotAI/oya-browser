@@ -1,5 +1,5 @@
 /** Array callback lookups recheck live descriptors while preserving observable generic operations. */
-mod common;
+use crate::common;
 
 /** Callback mutations affect later slots, while newly appended indices beyond captured length stay unseen. */
 #[test]

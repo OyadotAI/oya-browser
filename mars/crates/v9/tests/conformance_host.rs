@@ -1,6 +1,6 @@
 /* The opt-in d8 host executes exact supplied source with Script semantics and no IO. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment};
 
 /** D8 wall time advances during script execution without changing deterministic browser time. */

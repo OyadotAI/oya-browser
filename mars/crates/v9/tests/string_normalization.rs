@@ -1,5 +1,5 @@
 /** Unicode normalization uses scalar algorithms without replacing JavaScript's lone surrogates. */
-mod common;
+use crate::common;
 
 /** Canonical and compatibility forms compose and decompose the actual Unicode sequences. */
 #[test]

@@ -1,5 +1,5 @@
 /** Canvas image APIs must copy actual pixels with WebIDL conversions and branded storage. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, PageInput, StorageState};
 

@@ -1,5 +1,5 @@
 /** Native route hints must stay bounded and name projected iframe owners, without ambient authority. */
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 
 #[test]

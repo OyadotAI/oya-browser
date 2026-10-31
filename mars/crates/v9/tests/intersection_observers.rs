@@ -1,5 +1,5 @@
 /** Viewport observers use measured visual boxes, retained thresholds and a distinct asynchronous task source. */
-mod common;
+use crate::common;
 use mars_v9::{Execution, NodeBox, PageEnvironment, VmState};
 
 /** A fixed viewport makes intersections exact and keeps every regression independent of host layout. */

@@ -1,5 +1,5 @@
 /** Unsupported native construction names the actual interface without evaluating author names. */
-mod common;
+use crate::common;
 
 /** Capture the original TypeError through public constructor calls. */
 fn run(source: &str) -> String {

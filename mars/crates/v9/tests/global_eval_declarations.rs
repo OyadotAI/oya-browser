@@ -1,5 +1,5 @@
 /** Global eval validates every declaration before mutation and defines functions without invoking accessors or changing protected attributes. */
-mod common;
+use crate::common;
 
 /** A global function made nonwritable and nonconfigurable cannot be silently replaced by sloppy eval. */
 #[test]

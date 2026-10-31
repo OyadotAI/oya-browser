@@ -1,5 +1,5 @@
 /** Function own-key enumeration exposes initial lazy prototype slots without changing eligibility or insertion order. */
-mod common;
+use crate::common;
 
 /** Normal, strict, generator and async-generator functions own their initial prototype keys before any read. */
 #[test]

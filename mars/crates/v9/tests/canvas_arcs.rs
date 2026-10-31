@@ -1,5 +1,5 @@
 /** Public arc and ellipse methods preserve coercion, connection and radius behavior while producing real pixels. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::DocumentHost;
 

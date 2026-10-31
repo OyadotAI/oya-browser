@@ -1,5 +1,5 @@
 /** JSON.stringify performs observable wrapper conversions in specification order. */
-mod common;
+use crate::common;
 
 /** Number wrappers in the replacer list use ToString rather than their numeric payload. */
 #[test]

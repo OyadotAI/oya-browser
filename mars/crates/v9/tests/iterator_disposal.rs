@@ -1,5 +1,5 @@
 /** Iterator disposal preserves optional return semantics and intrinsic async continuation behavior. */
-mod common;
+use crate::common;
 
 /** A return method is optional and its primitive result is accepted by iterator disposal. */
 #[test]

@@ -1,6 +1,6 @@
 /** User Timing 3 options: Google's inline bootstrap calls `performance.mark(name, {startTime})`,
 and when V9 refused it, the scripts after it failed on the helpers it defines. */
-mod common;
+use crate::common;
 
 /** A mark takes its startTime and detail from the options; detail defaults to null. */
 #[test]

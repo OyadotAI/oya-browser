@@ -1,5 +1,5 @@
 /** Blob URLs retain branded immutable bytes only inside their creating VM context. */
-mod common;
+use crate::common;
 use mars_v9::{BlobUrlSource, WorkerCommand};
 
 /** Inspect the captured source without acquiring anything from the network. */

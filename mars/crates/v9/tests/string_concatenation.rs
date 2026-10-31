@@ -1,5 +1,5 @@
 /** Concatenation preserves immutable UTF-16 values, conversion order and the existing admission boundary. */
-mod common;
+use crate::common;
 
 /** Long generated sources retain their contents through many incremental appends. */
 #[test]

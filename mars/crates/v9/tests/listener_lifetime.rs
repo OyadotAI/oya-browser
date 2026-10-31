@@ -1,5 +1,5 @@
 /** Listener pressure reclaims dead registrations while preserving live callbacks and native signals. */
-mod common;
+use crate::common;
 
 /** Run the actual page event bindings and require an ordinary successful execution. */
 fn run(source: &str) -> mars_v9::Execution {

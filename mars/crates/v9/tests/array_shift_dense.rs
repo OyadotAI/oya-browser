@@ -1,5 +1,5 @@
 /** shift and unshift slide a plain dense array in one move and keep the generic path where it is observable. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Plain arrays shift and unshift to the same values and lengths as the element-wise algorithm. */

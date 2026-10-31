@@ -1,5 +1,5 @@
 /** Synchronous host layout: a read the last layout cannot answer lays out once mid-step. */
-mod common;
+use crate::common;
 use mars_v9::{LayoutAnswer, LayoutHook, LayoutHost, NodeBox, PageEnvironment};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

@@ -1,5 +1,5 @@
 /** Direct eval (spec PerformEval, EvalDeclarationInstantiation): caller scopes, vars, this. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Direct eval reads and writes the caller's locals, block lexicals and parameters. */

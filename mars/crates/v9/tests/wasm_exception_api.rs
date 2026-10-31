@@ -1,5 +1,5 @@
 /** The Wasm exception surface validates payloads and exposes stacks with native brands. */
-mod common;
+use crate::common;
 
 /** Missing payload length differs from a wrong payload count, with one length getter read. */
 #[test]

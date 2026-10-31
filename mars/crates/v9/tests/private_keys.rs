@@ -1,6 +1,6 @@
 /** Engine-private keys (class `#names`, platform slots) are unforgeable: a script string that
 starts with U+FFFF is an ordinary key and never aliases one. */
-mod common;
+use crate::common;
 use common::{console, eval, input, load};
 use mars_v9::HostResponse;
 

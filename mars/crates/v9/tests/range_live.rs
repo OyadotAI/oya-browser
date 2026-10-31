@@ -1,5 +1,5 @@
 /** Live ranges move with the tree, and range contents follow the DOM standard's extract and clone rules. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A removed node's ancestor boundary collapses to where the node sat. */

@@ -1,6 +1,6 @@
 //! JavaScript modules: syntax, linking, cycles, live bindings, dynamic import, import maps,
 //! top-level await, isolated failures and bounds, through the page entry points the app uses.
-mod common;
+use crate::common;
 
 use common::{environment, host, page, round_trip};
 use mars_v9::{

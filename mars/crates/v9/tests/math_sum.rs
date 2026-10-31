@@ -1,5 +1,5 @@
 /** Exact summation exercises rounding, cancellation, special values and iterator closing. */
-mod common;
+use crate::common;
 
 /** Cancellation recovers bits discarded by a running floating point sum, regardless of order. */
 #[test]

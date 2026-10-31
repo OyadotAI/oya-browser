@@ -1,5 +1,5 @@
 /** Legacy numeric date strings support explicit GMT and validated numeric calendar fields. */
-mod common;
+use crate::common;
 
 /** A UTC designator on an extended signed date must preserve the sign and full year. */
 #[test]

@@ -1,6 +1,6 @@
 /* The d8 test-object API uses real native receiver brands and prototype inheritance without browser DOM authority. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The five native templates form instance inheritance only; only EventTarget and Div are namespace properties. */
 #[test]

@@ -4,7 +4,7 @@
  * lookups, `detail` on a plain Event, style sheets, validity, inserted script loading and the
  * input events typing fires. Each test pins one rule through the public entry points.
  */
-mod common;
+use crate::common;
 
 use common::{console, eval, failure, host, input, load_with, round_trip};
 use mars_v9::{DomLevel, ModuleInput, ModuleSource, PageEvent};

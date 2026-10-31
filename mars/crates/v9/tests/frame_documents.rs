@@ -4,7 +4,7 @@
  * the parsererror document for a source that is not well-formed, the HTML builder, the refusal
  * and unanswered cases, and the request and `load` round trip a script-created iframe takes.
  */
-mod common;
+use crate::common;
 use common::{environment, failure, global, host, input, load_with, round_trip};
 use mars_v9::{FrameDocument, ModuleInput, PageEnvironment};
 

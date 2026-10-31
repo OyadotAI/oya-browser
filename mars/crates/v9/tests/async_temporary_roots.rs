@@ -1,5 +1,5 @@
 /** Async setup releases temporary roots while promises, continuations and thrown values stay live. */
-mod common;
+use crate::common;
 
 /** Exercise page listener pressure through the public API and validate the resulting snapshot. */
 fn run(source: &str) -> mars_v9::Execution {

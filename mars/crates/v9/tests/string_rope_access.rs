@@ -1,5 +1,5 @@
 /** Indexed and iterated UTF-16 access preserves rope contents without forcing flattening. */
-mod common;
+use crate::common;
 
 /** Repeated short-rope searches retain their positions after the search materializes the rope. */
 #[test]

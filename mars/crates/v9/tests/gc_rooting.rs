@@ -5,7 +5,7 @@
  * under the Rust locals that still hold it, or the committed state carries a dangling
  * reference and the next request refuses it.
  */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::{PageEvent, constants::VM_FUNCTIONS};

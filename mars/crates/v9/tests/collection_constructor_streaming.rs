@@ -1,5 +1,5 @@
 /** Map and Set constructor families observe each yielded value and close abrupt insertions without eager materialization. */
-mod common;
+use crate::common;
 
 /** A sparse source larger than resident-vector bounds rejects its first bad weak entry without exhausting holes. */
 #[test]
