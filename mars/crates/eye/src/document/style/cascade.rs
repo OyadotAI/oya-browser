@@ -336,7 +336,11 @@ impl<'a> Cascade<'a> {
                 // label) must not paint under its label.
                 // ponytail: only full transparency is honoured; partial opacity keeps the color.
                 style.placeholder_color = placeholder.and_then(|part| {
-                    if part.opacity <= 0.0 { Some("transparent".into()) } else { part.color }
+                    if part.opacity <= 0.0 {
+                        Some("transparent".into())
+                    } else {
+                        part.color
+                    }
                 });
             }
             if style.list_item {

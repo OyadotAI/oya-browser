@@ -31,9 +31,7 @@ fn event_saturation_retires_engines_and_disconnects_the_ui_stream() {
             sessions: std::sync::Arc::new(
                 mars::profile::test_support::MemorySessionStore::default(),
             ),
-            records: std::sync::Arc::new(
-                mars::profile::test_support::MemoryRecordStore::default(),
-            ),
+            records: std::sync::Arc::new(mars::profile::test_support::MemoryRecordStore::default()),
         },
     )
     .unwrap();

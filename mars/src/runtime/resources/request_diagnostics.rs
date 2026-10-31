@@ -75,7 +75,9 @@ impl RequestDiagnostic {
 
     /** HTTP errors still resolve fetch; record their status without copying headers or content. */
     pub fn response(self, started: Instant, stage: FailureStage, status: u16) {
-        perf::record("request.response", started, || self.response_detail(stage, status));
+        perf::record("request.response", started, || {
+            self.response_detail(stage, status)
+        });
     }
 
     /** Response admission is separate from receipt, including preflight and opaque responses. */
@@ -188,7 +190,9 @@ mod tests {
             endpoint: "youtube_innertube",
             same_origin: true,
         };
-        assert_eq!(diagnostic.response_detail(FailureStage::Acquire, 403),
-            "id=7\tstage=acquire\tcode=received\tmethod=POST\tendpoint=youtube_innertube\tsame_origin=true\tstatus=403");
+        assert_eq!(
+            diagnostic.response_detail(FailureStage::Acquire, 403),
+            "id=7\tstage=acquire\tcode=received\tmethod=POST\tendpoint=youtube_innertube\tsame_origin=true\tstatus=403"
+        );
     }
 }

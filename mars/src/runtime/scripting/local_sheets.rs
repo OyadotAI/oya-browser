@@ -12,7 +12,11 @@ pub(super) fn replace(
     texts: &[String],
 ) -> (usize, usize) {
     let (start, length) = block;
-    let start = if length == 0 { sheets.len() } else { start.min(sheets.len()) };
+    let start = if length == 0 {
+        sheets.len()
+    } else {
+        start.min(sheets.len())
+    };
     let end = (start + length).min(sheets.len());
     sheets.splice(start..end, texts.iter().cloned());
     (start, texts.len())

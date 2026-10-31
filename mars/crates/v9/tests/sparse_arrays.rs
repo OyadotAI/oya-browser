@@ -49,7 +49,10 @@ fn large_fill_survives_page_state_transport() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_vec(&loaded.state).unwrap().len() < common::empty_state_bytes() + SMALL_SNAPSHOT);
+    assert!(
+        serde_json::to_vec(&loaded.state).unwrap().len()
+            < common::empty_state_bytes() + SMALL_SNAPSHOT
+    );
     let clicked = mars_v9::click_page(
         common::input(&sources, &host, &environment),
         common::round_trip(loaded.state),
@@ -204,7 +207,10 @@ fn repeated_concat_survives_state_transport() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_vec(&loaded.state).unwrap().len() < common::empty_state_bytes() + SMALL_SNAPSHOT);
+    assert!(
+        serde_json::to_vec(&loaded.state).unwrap().len()
+            < common::empty_state_bytes() + SMALL_SNAPSHOT
+    );
     let clicked = mars_v9::click_page(
         common::input(&sources, &host, &environment),
         common::round_trip(loaded.state),
@@ -283,7 +289,10 @@ fn sparse_objects_survive_gc_and_serialization() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_vec(&loaded.state).unwrap().len() < common::empty_state_bytes() + SMALL_SNAPSHOT);
+    assert!(
+        serde_json::to_vec(&loaded.state).unwrap().len()
+            < common::empty_state_bytes() + SMALL_SNAPSHOT
+    );
     let clicked = mars_v9::click_page(
         common::input(&sources, &host, &environment),
         common::round_trip(loaded.state),

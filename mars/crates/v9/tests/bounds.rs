@@ -29,7 +29,7 @@ fn live_objects_are_bounded_but_garbage_is_collected() {
         VM_OBJECTS / BATCH + 1,
         batch()
     ));
-    assert!(failure(&live).unwrap().contains("V9 heap objects"));
+    assert!(heap_bound(&failure(&live).unwrap()));
 }
 
 /** Live closures past VM_FUNCTIONS stop the script. */
@@ -84,6 +84,12 @@ fn infinite_loops_stop() {
     );
 }
 
+/** A live heap past its bounds stops at one of them: the object count, or the property count
+every live object also adds to, whichever the heap reaches first. */
+fn heap_bound(message: &str) -> bool {
+    message.contains("V9 heap objects") || message.contains("V9 aggregate own properties")
+}
+
 /** Limits are engine errors: try/catch cannot swallow them. */
 #[test]
 fn limits_are_not_catchable() {
@@ -92,7 +98,7 @@ fn limits_are_not_catchable() {
         VM_OBJECTS / BATCH + 1,
         batch()
     ));
-    assert!(failure(&execution).unwrap().contains("V9 heap objects"));
+    assert!(heap_bound(&failure(&execution).unwrap()));
 }
 
 /** A failed script keeps what it did before it threw, as in browsers, and later scripts run. */

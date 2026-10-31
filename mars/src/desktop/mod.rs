@@ -9,9 +9,9 @@ mod io;
 mod library;
 #[cfg(target_os = "macos")]
 mod mars;
+mod mcp_io;
 #[cfg(target_os = "macos")]
 mod media;
-mod mcp_io;
 #[cfg(target_os = "macos")]
 mod selection;
 mod site;

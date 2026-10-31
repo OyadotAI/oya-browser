@@ -61,10 +61,11 @@ pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
-    ImageRequest, ImageResponse, MediaCommand, MediaSettings, MediaSupport, NavigationRequest, OpacityEffect, PageEnvironment,
-    SimpleFragmentParser,
+    ImageRequest, ImageResponse, MediaCommand, MediaSettings, MediaSupport, NavigationRequest,
+    OpacityEffect, PageEnvironment, SimpleFragmentParser,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
+pub use platform::{LAYOUT_CALLS, LayoutAnswer, LayoutHook, LayoutHost};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
@@ -644,8 +645,11 @@ impl VmState {
     /// property, string and binding counts bound its memory, and measuring its size means
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
+    /// The heap-wide branding walks (abort signals, response bodies, observers) re-check what V9's
+    /// own code just established, at O(heap) per step; release builds keep the page summaries
+    /// and every count bound, and debug builds (the tests) still walk the whole heap.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
-        self.validate_projection_bounds(limits, true)
+        self.validate_projection_bounds(limits, cfg!(debug_assertions))
     }
     /// Page bounds are always checked; heap-linked identities require the complete resident state.
     fn validate_projection_bounds(&self, limits: &Limits, full_heap: bool) -> EngineResult<()> {
@@ -1546,9 +1550,19 @@ fn compile_page_script(
 fn run_one(vm: &mut Vm, code: Arc<Code>, index: usize) -> EngineResult<()> {
     vm.remaining = vm.limits.operations;
     vm.page.throw_location = None;
-    let result = vm.run_script(code).and_then(|_| vm.drain_jobs());
-    result.map(|_| ()).map_err(|thrown| {
-        let location = vm.page.throw_location.unwrap_or_default();
+    let ran = vm.run_script(code).map(|_| ());
+    let location = vm.page.throw_location.unwrap_or_default();
+    // As in browsers, the microtask checkpoint follows every script, one that threw included:
+    // skipping it left that script's promise reactions (and unhandled rejections) unreported.
+    let drained = match &ran {
+        Err(Thrown::Fatal(_)) => Ok(()),
+        _ => vm.drain_jobs(),
+    };
+    let result = match (ran, drained) {
+        (_, Err(fatal @ Thrown::Fatal(_))) | (Err(fatal), _) => Err(fatal),
+        (Ok(()), result) => result,
+    };
+    result.map_err(|thrown| {
         #[cfg(feature = "conformance")]
         let mut error = if vm.page.environment.conformance_d8 {
             builtins::report_terminal_exception(vm, thrown, location)
@@ -2121,7 +2135,8 @@ fn page_event_with(
             PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
             PageEvent::Media { updates } => {
                 vm.remaining = vm.limits.operations;
-                let result = platform::media::deliver(&mut vm, &updates).and_then(|()| vm.drain_jobs());
+                let result =
+                    platform::media::deliver(&mut vm, &updates).and_then(|()| vm.drain_jobs());
                 report_thrown(&mut vm, result)?;
             }
             PageEvent::PortMessage { link, data } => {

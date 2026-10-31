@@ -79,7 +79,13 @@ fn handlers_are_kept_and_script_urls_inert() {
     )
     .unwrap();
     assert_eq!(fragment.nodes[0].handler.as_deref(), Some("x()"));
-    assert_eq!(fragment.nodes[1].attributes.get("onerror").map(String::as_str), Some("y()"));
+    assert_eq!(
+        fragment.nodes[1]
+            .attributes
+            .get("onerror")
+            .map(String::as_str),
+        Some("y()")
+    );
     assert!(fragment.nodes[1].image_src.is_none());
     assert!(fragment.nodes[2].href.is_none());
 }

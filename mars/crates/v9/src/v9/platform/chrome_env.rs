@@ -323,18 +323,52 @@ const BATTERY: [(&str, JsValue); 4] = [
 by interface. Native entry points cost a page nothing until it uses one: patching these
 prototypes from the bootstrap would copy them into every page's serialized heap. */
 const LAZY_METHODS: [(&str, &[&str]); 8] = [
-    ("ServiceWorkerContainer", &["register", "getRegistration", "getRegistrations", "startMessages", "addEventListener"]),
+    (
+        "ServiceWorkerContainer",
+        &[
+            "register",
+            "getRegistration",
+            "getRegistrations",
+            "startMessages",
+            "addEventListener",
+        ],
+    ),
     ("Clipboard", &["read", "readText", "write", "writeText"]),
     ("LockManager", &["request", "query"]),
-    ("CredentialsContainer", &["get", "create", "store", "preventSilentAccess"]),
+    (
+        "CredentialsContainer",
+        &["get", "create", "store", "preventSilentAccess"],
+    ),
     ("WakeLock", &["request"]),
-    ("Navigator", &["getGamepads", "requestMIDIAccess", "requestMediaKeySystemAccess", "getInstalledRelatedApps"]),
-    ("Document", &["hasStorageAccess", "hasUnpartitionedCookieAccess", "requestStorageAccess", "requestStorageAccessFor", "execCommand", "queryCommandSupported", "queryCommandEnabled"]),
+    (
+        "Navigator",
+        &[
+            "getGamepads",
+            "requestMIDIAccess",
+            "requestMediaKeySystemAccess",
+            "getInstalledRelatedApps",
+        ],
+    ),
+    (
+        "Document",
+        &[
+            "hasStorageAccess",
+            "hasUnpartitionedCookieAccess",
+            "requestStorageAccess",
+            "requestStorageAccessFor",
+            "execCommand",
+            "queryCommandSupported",
+            "queryCommandEnabled",
+        ],
+    ),
     ("HTMLMediaElement", &["setMediaKeys"]),
 ];
 /** Accessors whose first read installs the APIs (`host_bridge::lazy_getter`). */
 const LAZY_GETTERS: [(&str, &[&str]); 2] = [
-    ("ServiceWorkerContainer", &["ready", "controller", "oncontrollerchange", "onmessage"]),
+    (
+        "ServiceWorkerContainer",
+        &["ready", "controller", "oncontrollerchange", "onmessage"],
+    ),
     ("HTMLMediaElement", &["mediaKeys"]),
 ];
 
@@ -403,8 +437,18 @@ pub(super) fn navigator_objects(b: &mut Builder, known: &Known) {
         b.host_method(*proto, "persist", 0, not_persisted);
     }
     if let Some((_, proto)) = known.get("UserActivation") {
-        b.accessor(*proto, "hasBeenActive", Some(super::host_bridge::user_activation), None);
-        b.accessor(*proto, "isActive", Some(super::host_bridge::user_activation), None);
+        b.accessor(
+            *proto,
+            "hasBeenActive",
+            Some(super::host_bridge::user_activation),
+            None,
+        );
+        b.accessor(
+            *proto,
+            "isActive",
+            Some(super::host_bridge::user_activation),
+            None,
+        );
     }
     lazy_entry_points(b, known);
     if let Some((_, proto)) = known.get("BatteryManager") {

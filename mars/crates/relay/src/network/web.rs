@@ -11,6 +11,7 @@ mod hints;
 mod lease;
 mod legacy;
 mod pool;
+mod roots;
 #[cfg(test)]
 mod testing;
 mod transport;
@@ -473,7 +474,9 @@ fn finish(
                 .iter()
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
-            Destination::Image => IMAGE_CORS_HEADERS
+            // Module worker imports are CORS fetches: the coordinator's admission needs the
+            // same two headers an image's does.
+            Destination::Image | Destination::WorkerImport => IMAGE_CORS_HEADERS
                 .iter()
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
@@ -508,7 +511,8 @@ const MEDIA_HEADERS: [&str; 6] = [
 const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
 /// The header that lets a service worker script allow a scope above its own directory.
 const SERVICE_WORKER_ALLOWED: &str = "service-worker-allowed";
-/** Only the host's CORS admission sees these image response headers; they never enter page script data. */
+/** Only the host's CORS admission sees these image and worker-import response headers; they
+never enter page script data. */
 const IMAGE_CORS_HEADERS: [&str; 2] = [
     "access-control-allow-origin",
     "access-control-allow-credentials",

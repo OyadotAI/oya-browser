@@ -33,12 +33,20 @@ fn observe(source: &str, environment: &PageEnvironment, state: VmState) -> Execu
     )
     .unwrap();
     for _ in 0..=mars_v9::RESIZE_BROADCAST_LIMIT + 1 {
-        if result.effects.resize_turn != Some(mars_v9::ResizeTurn::Relayout) { break; }
+        if result.effects.resize_turn != Some(mars_v9::ResizeTurn::Relayout) {
+            break;
+        }
         result = mars_v9::continue_resize_observers(
-            common::input(&sources, &host, environment), common::round_trip(result.state), false,
-        ).unwrap();
+            common::input(&sources, &host, environment),
+            common::round_trip(result.state),
+            false,
+        )
+        .unwrap();
     }
-    assert_ne!(result.effects.resize_turn, Some(mars_v9::ResizeTurn::Relayout));
+    assert_ne!(
+        result.effects.resize_turn,
+        Some(mars_v9::ResizeTurn::Relayout)
+    );
     assert!(result.failed.is_empty(), "{:?}", result.failed);
     result
 }
@@ -165,17 +173,29 @@ fn wrapper_observers_use_host_measurements_and_report_known_zero_after_hiding() 
     let initial = common::load_with(source, &env);
     assert!(!initial.effects.resize_observers_pending);
     env.resize_wrappers.html = Some(BoxMetrics {
-        content: [20.0, 20.0, 400.0, 80.0], border: [440.0, 120.0], vertical: false,
+        content: [20.0, 20.0, 400.0, 80.0],
+        border: [440.0, 120.0],
+        vertical: false,
     });
     env.resize_wrappers.body = Some(BoxMetrics {
-        content: [10.0, 10.0, 100.0, 50.0], border: [120.0, 70.0], vertical: false,
+        content: [10.0, 10.0, 100.0, 50.0],
+        border: [120.0, 70.0],
+        vertical: false,
     });
     let measured = observe(source, &env, initial.state);
-    assert_eq!(common::global(&measured, "result"), "html:400:440|body:100:120|");
+    assert_eq!(
+        common::global(&measured, "result"),
+        "html:400:440|body:100:120|"
+    );
     env.resize_wrappers.body = Some(BoxMetrics {
-        content: [0.0; 4], border: [0.0; 2], vertical: false,
+        content: [0.0; 4],
+        border: [0.0; 2],
+        vertical: false,
     });
     let hidden = observe(source, &env, measured.state);
-    assert_eq!(common::global(&hidden, "result"), "html:400:440|body:100:120|body:0:0|");
+    assert_eq!(
+        common::global(&hidden, "result"),
+        "html:400:440|body:100:120|body:0:0|"
+    );
     assert!(!hidden.effects.resize_observers_pending);
 }

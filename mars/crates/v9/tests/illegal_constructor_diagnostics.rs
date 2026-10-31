@@ -30,12 +30,13 @@ fn ordinary_calls_are_distinguished_from_forbidden_construction() {
     );
 }
 
-/** Renaming, bound forwarding and Reflect.construct newTarget cannot misidentify the native. */
+/** Renaming, bound forwarding and Reflect.construct newTarget cannot misidentify the native.
+The bound copy is made before the throwing getter, since `bind` itself reads `name` by spec. */
 #[test]
 fn author_controlled_names_are_not_used_for_native_diagnostics() {
     assert_eq!(
         run(
-            "let hits=0,result='';Object.defineProperty(Node,'name',{get(){hits++;throw Error('name getter ran')}});Object.defineProperty(CSSStyleSheet,'name',{value:'Innocent'});for(const C of [Node,CSSStyleSheet,Node.bind(null)]){try{Reflect.construct(C,[],function Pretend(){})}catch(error){result+=error.message+';'}}result+='getter='+hits;"
+            "let hits=0,result='';const bound=Node.bind(null);Object.defineProperty(Node,'name',{get(){hits++;throw Error('name getter ran')}});Object.defineProperty(CSSStyleSheet,'name',{value:'Innocent'});for(const C of [Node,CSSStyleSheet,bound]){try{Reflect.construct(C,[],function Pretend(){})}catch(error){result+=error.message+';'}}result+='getter='+hits;"
         ),
         "Failed to construct 'Node': Illegal constructor;Failed to construct 'CSSStyleSheet': Illegal constructor;Failed to construct 'Node': Illegal constructor;getter=0"
     );

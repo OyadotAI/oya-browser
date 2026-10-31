@@ -89,7 +89,7 @@ impl Runtime {
         let acquired = self.acquire_with(
             request,
             deadline,
-            Some(policy.base.clone()),
+            Some(web_initiator(&policy.base)),
             false,
             Redirects::Refuse,
             credentials,
@@ -127,6 +127,18 @@ impl Runtime {
             },
         }))
     }
+}
+
+/** The web address a worker's requests come from: a blob worker's own `blob:` URL is not one,
+so its requests carry the origin that created the blob, as a browser's do. */
+fn web_initiator(base: &url::Url) -> url::Url {
+    if base.scheme() != "blob" {
+        return base.clone();
+    }
+    url::Url::parse(base.path())
+        .ok()
+        .and_then(|inner| url::Url::parse(&inner.origin().ascii_serialization()).ok())
+        .unwrap_or_else(|| base.clone())
 }
 
 /** A refusal records only a fixed category, never URLs, script text, headers or server strings. */

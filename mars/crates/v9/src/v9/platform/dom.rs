@@ -927,8 +927,14 @@ fn resolved_style(vm: &mut Vm, node: usize, property: &str) -> Option<String> {
     if let Some(values) = vm.page.environment.computed_styles.get(&node) {
         return values.get(property).cloned();
     }
-    let full = vm.page.effects.style_requests.len() >= STYLE_REQUESTS;
-    if !full && vm.page.is_projected(node) && vm.page.connected(node) {
+    if !vm.page.is_projected(node) || !vm.page.connected(node) {
+        return None;
+    }
+    if super::layout_host::relayout(vm, Some(node)) {
+        let values = vm.page.environment.computed_styles.get(&node)?;
+        return values.get(property).cloned();
+    }
+    if vm.page.effects.style_requests.len() < STYLE_REQUESTS {
         vm.page.effects.style_requests.insert(node);
     }
     None
@@ -2061,7 +2067,13 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&html).map_err(Into::into)
         }
         "classList" => token_list_object(vm, node, "class"),
-        "dataset" => cached_host_object(vm, node, DATASET_KEY, HostData::Dataset(node), realm().ids.dataset_prototype),
+        "dataset" => cached_host_object(
+            vm,
+            node,
+            DATASET_KEY,
+            HostData::Dataset(node),
+            realm().ids.dataset_prototype,
+        ),
         "sheet" => super::sheets::element_sheet(vm, node),
         "contentDocument" | "contentWindow" => super::frames::frame_get(vm, node, name),
         "sandbox" | "relList" | "part" => {
@@ -2105,7 +2117,13 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "validity" => super::sheets::validity(vm),
         "willValidate" => Ok(JsValue::Boolean(true)),
         "validationMessage" => JsValue::string("").map_err(Into::into),
-        "style" => cached_host_object(vm, node, STYLE_KEY, HostData::Style(node), realm().ids.style_prototype),
+        "style" => cached_host_object(
+            vm,
+            node,
+            STYLE_KEY,
+            HostData::Style(node),
+            realm().ids.style_prototype,
+        ),
         "attributes" => attr_dom::named_node_map(vm, node),
         "value" if vm.page.tag(node) == "select" => {
             JsValue::string(&vm.page.selected_value(node)).map_err(Into::into)
@@ -2220,14 +2238,24 @@ fn cached_host_object(
     data: HostData,
     proto: ObjectId,
 ) -> Res<JsValue> {
-    if let Some(id) = vm.page.state.token_lists.get(&node).and_then(|cache| cache.get(key))
+    if let Some(id) = vm
+        .page
+        .state
+        .token_lists
+        .get(&node)
+        .and_then(|cache| cache.get(key))
         && vm.heap.get(*id).is_some()
     {
         return Ok(JsValue::Object(*id));
     }
     let value = host_object(vm, data, proto)?;
     if let JsValue::Object(id) = value {
-        vm.page.state.token_lists.entry(node).or_default().insert(key.to_string(), id);
+        vm.page
+            .state
+            .token_lists
+            .entry(node)
+            .or_default()
+            .insert(key.to_string(), id);
     }
     Ok(value)
 }
@@ -2362,7 +2390,15 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
 
 /** Elements whose innerHTML is parsed as text, not markup (HTML fragment parsing algorithm). */
 const RAW_TEXT_ELEMENTS: [&str; 9] = [
-    "script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext",
+    "script",
+    "style",
+    "textarea",
+    "title",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "plaintext",
 ];
 /** Of those, the RCDATA ones decode character references. */
 const RCDATA_ELEMENTS: [&str; 2] = ["textarea", "title"];
@@ -3178,12 +3214,12 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
                 .fold(environment.viewport_height, f64::max),
         );
     }
-    match environment.geometry.iter().find(|b| b.node == node) {
-        Some(b) => super::geometry::client(b, environment),
-        None => {
-            note_stale_geometry(vm, node);
-            (0.0, 0.0, 0.0, 0.0)
-        }
+    if let Some(b) = environment.geometry.iter().find(|b| b.node == node) {
+        return super::geometry::client(b, environment);
+    }
+    match stale_box(vm, node) {
+        Some(b) => super::geometry::client(&b, &vm.page.environment),
+        None => (0.0, 0.0, 0.0, 0.0),
     }
 }
 
@@ -3209,21 +3245,36 @@ pub(super) fn layout_size(vm: &mut Vm, node: usize) -> [f64; 2] {
     {
         return super::geometry::layout_size(bounds);
     }
+    if let Some(bounds) = stale_box(vm, node) {
+        return super::geometry::layout_size(&bounds);
+    }
     let (_, _, width, height) = client_box(vm, node);
     [width, height]
 }
 
-/** Reports a read of a connected node newer than the last layout, which had no chance to give
-it a box; display:none nodes the layout saw stay unreported, so they never cost a relayout. */
-fn note_stale_geometry(vm: &mut Vm, node: usize) {
+/** The box of a node inserted since the last layout: laid out now through the host when the
+app supplied one, else the read is reported so the app lays out and runs the step again. */
+fn stale_box(vm: &mut Vm, node: usize) -> Option<super::NodeBox> {
+    if !newer_than_layout(vm, node) {
+        return None;
+    }
+    if vm.page.is_projected(node) && super::layout_host::relayout(vm, None) {
+        let geometry = &vm.page.environment.geometry;
+        return geometry.iter().find(|b| b.node == node).cloned();
+    }
+    vm.page.effects.stale_geometry = true;
+    None
+}
+
+/** Whether a read targets a connected node newer than the last layout, which had no chance to
+give it a box; display:none nodes the layout saw never count, so they never cost a relayout. */
+fn newer_than_layout(vm: &mut Vm, node: usize) -> bool {
     let newer = vm
         .page
         .environment
         .laid_out_before
         .is_some_and(|first| node >= first);
-    if newer && !vm.page.effects.stale_geometry && vm.page.connected(node) {
-        vm.page.effects.stale_geometry = true;
-    }
+    newer && !vm.page.effects.stale_geometry && vm.page.connected(node)
 }
 
 /** `elementFromPoint`: the last painted (topmost) box containing a client point, if any. */

@@ -11,7 +11,13 @@ pub fn valid(tag: &str) -> bool {
 }
 /** Validate service and host inputs before preferences cross engine boundaries. */
 pub fn validate(tags: &[String]) -> EngineResult<()> {
-    if tags.len() > NAVIGATOR_LANGUAGES || tags.iter().any(|tag| !valid(tag)) {
+    if tags.len() > NAVIGATOR_LANGUAGES {
+        return Err(EngineError::limit(
+            "navigator languages",
+            NAVIGATOR_LANGUAGES,
+        ));
+    }
+    if tags.iter().any(|tag| !valid(tag)) {
         return Err(EngineError::invalid(
             "Invalid bounded language preferences.",
         ));

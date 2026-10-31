@@ -8,13 +8,48 @@ use std::sync::OnceLock;
 
 /// Containers a page may name, with one representative codec string per family to ask about.
 const PROBES: &[(&str, &[(&str, &str)])] = &[
-    ("video/mp4", &[("avc1", "avc1.42E01E"), ("hvc1", "hvc1.1.6.L93.B0"), ("hev1", "hev1.1.6.L93.B0"),
-        ("mp4a", "mp4a.40.2"), ("av01", "av01.0.04M.08"), ("vp09", "vp09.00.10.08"), ("ac-3", "ac-3"),
-        ("ec-3", "ec-3"), ("opus", "opus"), ("flac", "flac"), ("alac", "alac"), ("mp3", "mp3"), ("mp4v", "mp4v.20.8")]),
-    ("audio/mp4", &[("mp4a", "mp4a.40.2"), ("ac-3", "ac-3"), ("ec-3", "ec-3"), ("opus", "opus"),
-        ("flac", "flac"), ("alac", "alac"), ("mp3", "mp3")]),
-    ("video/quicktime", &[("avc1", "avc1.42E01E"), ("hvc1", "hvc1.1.6.L93.B0"), ("mp4a", "mp4a.40.2")]),
-    ("video/x-m4v", &[("avc1", "avc1.42E01E"), ("mp4a", "mp4a.40.2")]),
+    (
+        "video/mp4",
+        &[
+            ("avc1", "avc1.42E01E"),
+            ("hvc1", "hvc1.1.6.L93.B0"),
+            ("hev1", "hev1.1.6.L93.B0"),
+            ("mp4a", "mp4a.40.2"),
+            ("av01", "av01.0.04M.08"),
+            ("vp09", "vp09.00.10.08"),
+            ("ac-3", "ac-3"),
+            ("ec-3", "ec-3"),
+            ("opus", "opus"),
+            ("flac", "flac"),
+            ("alac", "alac"),
+            ("mp3", "mp3"),
+            ("mp4v", "mp4v.20.8"),
+        ],
+    ),
+    (
+        "audio/mp4",
+        &[
+            ("mp4a", "mp4a.40.2"),
+            ("ac-3", "ac-3"),
+            ("ec-3", "ec-3"),
+            ("opus", "opus"),
+            ("flac", "flac"),
+            ("alac", "alac"),
+            ("mp3", "mp3"),
+        ],
+    ),
+    (
+        "video/quicktime",
+        &[
+            ("avc1", "avc1.42E01E"),
+            ("hvc1", "hvc1.1.6.L93.B0"),
+            ("mp4a", "mp4a.40.2"),
+        ],
+    ),
+    (
+        "video/x-m4v",
+        &[("avc1", "avc1.42E01E"), ("mp4a", "mp4a.40.2")],
+    ),
     ("audio/x-m4a", &[("mp4a", "mp4a.40.2"), ("alac", "alac")]),
     ("audio/mpeg", &[("mp3", "mp3")]),
     ("audio/mp3", &[("mp3", "mp3")]),
@@ -23,10 +58,22 @@ const PROBES: &[(&str, &[(&str, &str)])] = &[
     ("audio/x-wav", &[("1", "1")]),
     ("audio/aiff", &[]),
     ("audio/flac", &[("flac", "flac")]),
-    ("video/webm", &[("vp8", "vp8"), ("vp9", "vp9"), ("vp09", "vp09.00.10.08"), ("av01", "av01.0.04M.08"),
-        ("opus", "opus"), ("vorbis", "vorbis")]),
+    (
+        "video/webm",
+        &[
+            ("vp8", "vp8"),
+            ("vp9", "vp9"),
+            ("vp09", "vp09.00.10.08"),
+            ("av01", "av01.0.04M.08"),
+            ("opus", "opus"),
+            ("vorbis", "vorbis"),
+        ],
+    ),
     ("audio/webm", &[("opus", "opus"), ("vorbis", "vorbis")]),
-    ("audio/ogg", &[("opus", "opus"), ("vorbis", "vorbis"), ("flac", "flac")]),
+    (
+        "audio/ogg",
+        &[("opus", "opus"), ("vorbis", "vorbis"), ("flac", "flac")],
+    ),
 ];
 
 /// Containers a Media Source can stream on this host. None yet: the native player cannot be fed

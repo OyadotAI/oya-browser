@@ -11,11 +11,11 @@ use super::supervisor::Service;
 use crate::network::{WebRequest, WebResponse};
 use crate::protocol::{EngineError, EngineResult};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 use std::hash::{Hash, Hasher};
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -116,7 +116,9 @@ impl Loader {
     fn pick(&self, url: &str) -> Option<&Worker> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         url.split('#').next().unwrap_or(url).hash(&mut hasher);
-        let count = u64::try_from(self.workers.len()).ok().filter(|count| *count > 0)?;
+        let count = u64::try_from(self.workers.len())
+            .ok()
+            .filter(|count| *count > 0)?;
         let preferred = &self.workers[usize::try_from(hasher.finish() % count).ok()?];
         let idle = |worker: &&Worker| worker.busy.load(Ordering::Relaxed) == 0;
         Some(if idle(&preferred) {
@@ -138,7 +140,9 @@ impl Loader {
         let Ok(first) = self.results.recv_timeout(remaining) else {
             return Vec::new();
         };
-        std::iter::once(first).chain(self.results.try_iter()).collect()
+        std::iter::once(first)
+            .chain(self.results.try_iter())
+            .collect()
     }
 
     /** Ask every worker to empty its HTTP cache. */
@@ -169,10 +173,19 @@ impl Drop for Loader {
 }
 
 /** Start one worker thread with its own queue; None when the system refuses a thread. */
-fn spawn(index: usize, executable: &Path, stop: &Arc<AtomicBool>, done: Sender<Done>) -> Option<Worker> {
+fn spawn(
+    index: usize,
+    executable: &Path,
+    stop: &Arc<AtomicBool>,
+    done: Sender<Done>,
+) -> Option<Worker> {
     let (jobs, queue) = mpsc::channel::<Job>();
     let busy = Arc::new(AtomicUsize::new(0));
-    let (executable, cancel, count) = (executable.to_path_buf(), Arc::clone(stop), Arc::clone(&busy));
+    let (executable, cancel, count) = (
+        executable.to_path_buf(),
+        Arc::clone(stop),
+        Arc::clone(&busy),
+    );
     thread::Builder::new()
         .name(format!("oya-loader-{index}"))
         .spawn(move || work(&executable, &cancel, &queue, &done, &count))
@@ -180,10 +193,29 @@ fn spawn(index: usize, executable: &Path, stop: &Arc<AtomicBool>, done: Sender<D
     Some(Worker { jobs, busy })
 }
 
-/** One worker: run jobs until its queue closes, starting a network service on first use. A
-service that fails is replaced for the next job, so one bad connection never strands the pool. */
+/** Starts or replaces the worker network service respecting process isolation settings. */
+fn ensure_service(service: &mut Option<Service>, exe: &Path, cancel: &Arc<AtomicBool>) {
+    if service.is_none() {
+        *service = if super::supervisor::process_isolation_enabled() {
+            Service::spawn("network", exe, Arc::clone(cancel)).ok()
+        } else {
+            Service::in_process("network", Arc::clone(cancel)).ok()
+        };
+    }
+}
+
+/** Dispatches a single worker job to the network service. */
+fn dispatch_job(service: &mut Option<Service>, job: Job) -> Option<Done> {
+    match job {
+        Job::Hop(hop) => Some(run(service, hop)),
+        Job::ClearCache => maintain(service, "network.cache_clear", json!({})),
+        Job::Forget(urls) => maintain(service, "network.cache_forget", json!({"urls": urls})),
+    }
+}
+
+/** One worker: run jobs until its queue closes, starting a network service on first use. */
 fn work(
-    executable: &PathBuf,
+    executable: &Path,
     cancel: &Arc<AtomicBool>,
     queue: &Receiver<Job>,
     done: &Sender<Done>,
@@ -191,15 +223,8 @@ fn work(
 ) {
     let mut service: Option<Service> = None;
     while let Ok(job) = queue.recv() {
-        if service.is_none() {
-            service = Service::spawn("network", executable, Arc::clone(cancel)).ok();
-        }
-        let finished = match job {
-            Job::Hop(hop) => Some(run(&mut service, hop)),
-            Job::ClearCache => maintain(&mut service, "network.cache_clear", json!({})),
-            Job::Forget(urls) => maintain(&mut service, "network.cache_forget", json!({"urls": urls})),
-        };
-        if let Some(finished) = finished {
+        ensure_service(&mut service, executable, cancel);
+        if let Some(finished) = dispatch_job(&mut service, job) {
             busy.fetch_sub(1, Ordering::Relaxed);
             if done.send(finished).is_err() {
                 return;

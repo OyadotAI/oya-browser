@@ -121,7 +121,9 @@ impl WebRequest {
                     || self.preflight.is_some())
             || self.range.is_some()
                 && (!self.destination.media() || self.method != Method::Get || self.image)
-            || self.range.is_some_and(|(start, end)| end.is_some_and(|end| end < start))
+            || self
+                .range
+                .is_some_and(|(start, end)| end.is_some_and(|end| end < start))
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)
             || (self.method.is_safe() && !self.body.is_empty())
@@ -197,7 +199,16 @@ impl WebRequest {
                 None | Some(super::cors::Mode::NoCors) => self.origin.is_none(),
                 _ => false,
             };
-        (script || image || !used) && headers_ok && origin_ok && preflight_ok
+        // Module workers and their imports are CORS requests by spec: the host sets the mode
+        // (and, cross-origin, the Origin); page headers and preflights never ride along.
+        let worker = matches!(
+            self.destination,
+            Destination::Worker | Destination::WorkerImport
+        ) && self.method == Method::Get
+            && self.headers.is_empty()
+            && self.preflight.is_none()
+            && matches!(self.mode, None | Some(super::cors::Mode::Cors));
+        (script || image || worker || !used) && headers_ok && origin_ok && preflight_ok
     }
 }
 /// Raw response metadata is private to the coordinator; never export cookies to agents.

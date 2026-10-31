@@ -382,12 +382,7 @@ impl Runtime {
         crate::document::validate_content(&page.document)?;
         let effects = super::animations::paint_effects(&page.scripting);
         let effective = super::animations::effective_presentation(&page.document, &effects)?;
-        let call = RenderCall {
-            document: &effective,
-            context: self.render_context,
-            scroll: &page.element_scroll,
-        };
-        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        let mut display = self.eye_render(&effective, self.render_context, &page.element_scroll)?;
         self.embed_frames(&mut display, &page.frames)?;
         page.display = Some(display);
         page.laid_out_before = next_node(&page.document);
@@ -417,12 +412,7 @@ impl Runtime {
     ) -> EngineResult<DisplayList> {
         crate::document::validate_content(document)?;
         let effective = super::animations::effective_presentation(document, effects)?;
-        let call = RenderCall {
-            document: &effective,
-            context: self.render_context,
-            scroll,
-        };
-        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        let mut display = self.eye_render(&effective, self.render_context, scroll)?;
         let frames = self.page.as_ref().map(|page| page.frames.clone());
         self.embed_frames(&mut display, frames.as_deref().map_or(&[], Vec::as_slice))?;
         Ok(display)
@@ -523,12 +513,43 @@ impl Runtime {
         sheets: &[String],
         context: crate::document::RenderContext,
     ) -> EngineResult<Document> {
+        let (owned, owned_sheets) = (document.clone(), sheets.to_vec());
+        let typed = self.call_job("document", "document.styles", None, move || {
+            crate::document::compute_styles_with_context(&owned, &owned_sheets, context)
+        });
+        if let Some(styled) = typed {
+            return styled;
+        }
         let call = StylesCall {
             document,
             sheets,
             context,
         };
         self.call_typed("document", "document.styles", &call, None)
+    }
+    /**
+     * Eye's layout of `document`: a typed job when Eye runs in this process, so a page-sized
+     * document is copied rather than encoded and decoded; the framed call otherwise.
+     */
+    fn eye_render(
+        &mut self,
+        document: &Document,
+        context: crate::document::RenderContext,
+        scroll: &crate::document::ScrollOffsets,
+    ) -> EngineResult<DisplayList> {
+        let (owned, owned_scroll) = (document.clone(), scroll.clone());
+        let typed = self.call_job("document", "document.render", None, move || {
+            crate::document::render_scrolled(&owned, context, &owned_scroll)
+        });
+        if let Some(display) = typed {
+            return display;
+        }
+        let call = RenderCall {
+            document,
+            context,
+            scroll,
+        };
+        self.call_typed("document", "document.render", &call, None)
     }
     /**
      * Checks and lays out a document already styled with the page's sheets under `context`.
@@ -554,12 +575,7 @@ impl Runtime {
         if self.web_origins.is_some() {
             let effects = super::animations::paint_effects(&page.scripting);
             let effective = super::animations::effective_presentation(&page.document, &effects)?;
-            let call = RenderCall {
-                document: &effective,
-                context,
-                scroll: &page.element_scroll,
-            };
-            let mut display = self.call_typed("document", "document.render", &call, None)?;
+            let mut display = self.eye_render(&effective, context, &page.element_scroll)?;
             self.embed_frames(&mut display, &page.frames)?;
             page.display = Some(display);
             page.laid_out_before = next_node(&page.document);
@@ -584,6 +600,18 @@ impl Runtime {
         changes: &[DomChange],
         script_changes: &[crate::document::ScriptChange],
     ) -> EngineResult<Document> {
+        let owned = (document.clone(), changes.to_vec(), script_changes.to_vec());
+        let typed = self.call_job("document", "document.apply", None, move || {
+            let (document, changes, script_changes) = owned;
+            let applied = crate::document::apply_changes(&document, &changes)?;
+            if script_changes.is_empty() {
+                return Ok(applied);
+            }
+            crate::document::apply_script_changes(&applied, &script_changes)
+        });
+        if let Some(applied) = typed {
+            return applied;
+        }
         let call = ApplyCall {
             document,
             changes,

@@ -1,7 +1,7 @@
 /** Supervised private pipes isolate engine processes without public listeners. */
 use super::authority::{self, Owner, Permit, SharedAuthority};
 use super::page::Page;
-use crate::constants::{RPC_POLL, RPC_TIMEOUT, WEB_RPC_TIMEOUT};
+use crate::constants::{RPC_POLL, WEB_RPC_TIMEOUT};
 use crate::protocol::{
     EngineError, EngineResult, Response, TypedResponse, decode, encode_request, read_frame,
 };
@@ -18,6 +18,9 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+mod jobs;
+pub(super) use jobs::{Inbound, Job};
 
 /** Scoped previews carry their admission so stale navigation cannot publish. */
 type FirstPaint = Box<dyn FnMut(super::page::BrowserSnapshot, Option<Permit>) + Send>;
@@ -116,6 +119,9 @@ pub struct Runtime {
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
+    /** Script lists shared with an in-process V9 by pointer, with their code-cache keys, most
+    recent first; content-compared, so a page never runs another page's scripts. */
+    pub(super) shared_sources: Vec<Arc<super::service::ResidentSources>>,
     /** Leases keep every committed and candidate script context within one service budget. */
     pub(super) residency: super::residency::Residency,
     /** Monotonic context IDs never roll back with candidate pages. */
@@ -544,6 +550,13 @@ impl Runtime {
         Self::start_cancel(programs, Arc::new(AtomicBool::new(false)))
     }
 
+    /** Enables web egress for public HTTP/HTTPS destinations. */
+    pub fn enable_web(&mut self) {
+        if self.web_origins.is_none() {
+            self.web_origins = Some(Vec::new());
+        }
+    }
+
     /** Cancellation owns startup as well as post-readiness RPC work. */
     fn start_cancel(programs: EnginePrograms, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
         let mut runtime = Self {
@@ -585,6 +598,7 @@ impl Runtime {
             revisions: Default::default(),
             prefetched: Default::default(),
             v9_sources: Default::default(),
+            shared_sources: Vec::new(),
             residency: Default::default(),
             next_frame_window: 0,
             frame_partition: None,
@@ -1129,8 +1143,8 @@ pub(super) struct Service {
     pub(super) name: &'static str,
     /** Retained for subprocesses; None when running as in-process worker threads. */
     pub(super) child: Option<Child>,
-    /** One in-flight encoded request; the coordinator has no unbounded queue. */
-    requests: Option<SyncSender<Vec<u8>>>,
+    /** One in-flight request (a frame, or a typed job in process); no unbounded queue. */
+    requests: Option<SyncSender<Inbound>>,
     /** The worker returns exactly one reply frame for each accepted request. */
     replies: Receiver<EngineResult<Vec<u8>>>,
     /** Joined only after child termination releases both pipe ends. */
@@ -1140,16 +1154,13 @@ pub(super) struct Service {
 }
 
 /** Whether process isolation (separate child processes) is explicitly requested. */
-fn process_isolation_enabled() -> bool {
+pub(super) fn process_isolation_enabled() -> bool {
     std::env::var_os("MARS_PROCESS_ISOLATION").is_some()
 }
 
 impl Service {
     /** Spawn an in-process engine service worker thread sharing memory and process space. */
-    pub(super) fn in_process(
-        name: &'static str,
-        cancel: Arc<AtomicBool>,
-    ) -> EngineResult<Self> {
+    pub(super) fn in_process(name: &'static str, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
         let (req_tx, req_rx) = mpsc::sync_channel(1);
         let (rep_tx, rep_rx) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
@@ -1259,11 +1270,7 @@ impl Service {
             .check()
             .map_err(|_| super::authority::denied())?;
         let called = Instant::now();
-        let rpc_deadline = called + rpc_timeout(op);
-        let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
-        if Instant::now() >= deadline {
-            return Err(crate::protocol::EngineError::navigation_timeout());
-        }
+        let deadline = rpc_deadline(op, called, owner_deadline)?;
         self.sequence += 1;
         let started = Instant::now();
         let id = self.sequence.to_string();
@@ -1276,7 +1283,7 @@ impl Service {
         self.requests
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
-            .try_send(frame)
+            .try_send(Inbound::Frame(frame))
             .map_err(|_| EngineError::service(self.name, false))?;
         let mut callback = 0_u32;
         let mut imported_bytes = 0_usize;
@@ -1317,7 +1324,7 @@ impl Service {
                         self.requests
                             .as_ref()
                             .ok_or_else(|| EngineError::service(self.name, false))?
-                            .try_send(answer)
+                            .try_send(Inbound::Frame(answer))
                             .map_err(|_| EngineError::service(self.name, false))?;
                         continue;
                     }
@@ -1396,6 +1403,16 @@ impl Drop for Service {
     }
 }
 
+/** The earlier of the op's own RPC bound and the owner's deadline; refused once it has passed. */
+fn rpc_deadline(op: &str, called: Instant, owner: Option<Instant>) -> EngineResult<Instant> {
+    let bound = called + rpc_timeout(op);
+    let deadline = owner.map_or(bound, |owner| owner.min(bound));
+    if Instant::now() >= deadline {
+        return Err(crate::protocol::EngineError::navigation_timeout());
+    }
+    Ok(deadline)
+}
+
 /** Network connection phases retain a wider cap while navigation supplies the hard ceiling. */
 fn rpc_timeout(op: &str) -> Duration {
     if op == "network.prepare" {
@@ -1403,7 +1420,7 @@ fn rpc_timeout(op: &str) -> Duration {
     } else if op.starts_with("network.") && op != "network.fetch" {
         WEB_RPC_TIMEOUT
     } else {
-        RPC_TIMEOUT
+        crate::constants::rpc_timeout()
     }
 }
 
@@ -1412,11 +1429,13 @@ fn transport(
     name: &str,
     mut stdin: ChildStdin,
     stdout: ChildStdout,
-    requests: Receiver<Vec<u8>>,
+    requests: Receiver<Inbound>,
     replies: SyncSender<EngineResult<Vec<u8>>>,
 ) {
     let mut stdout = BufReader::new(stdout);
-    while let Ok(request) = requests.recv() {
+    // A subprocess is never sent a job (`takes_jobs`); one that arrived would be dropped,
+    // which its caller sees as a closed service.
+    while let Ok(Inbound::Frame(request)) = requests.recv() {
         let result = exchange(&mut stdin, &mut stdout, &request)
             .map_err(|_| EngineError::service(name, false));
         if replies.send(result).is_err() {

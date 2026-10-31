@@ -732,8 +732,8 @@ fn hop_request(request: &ScriptRequest, flow: &cors::Flow) -> (WebRequest, bool)
         Credentials::SameOrigin => tainting == cors::Tainting::Basic,
         Credentials::Omit => false,
     };
-    let origin = (tainting == cors::Tainting::Cors || !request.method.is_safe())
-        .then(|| flow.serialized());
+    let origin =
+        (tainting == cors::Tainting::Cors || !request.method.is_safe()).then(|| flow.serialized());
     let web = WebRequest {
         method: request.method.clone(),
         raw_response: request.raw_response,

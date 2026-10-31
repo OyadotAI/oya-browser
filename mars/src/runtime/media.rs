@@ -102,7 +102,10 @@ impl Runtime {
      * missing range, and release players whose pages are gone.
      */
     pub(super) fn pump_media(&mut self) {
-        let idle = self.page.as_ref().is_none_or(|page| page.scripting.media.outbox.is_empty())
+        let idle = self
+            .page
+            .as_ref()
+            .is_none_or(|page| page.scripting.media.outbox.is_empty())
             && hub::lock().players.is_empty();
         if idle || self.healthy().is_err() {
             return;
@@ -128,7 +131,10 @@ impl Runtime {
         let resized = apply_video_sizes(page, &video_sizes(&page_id));
         if playing {
             // A playing element is activity a person sees: its timeupdates keep flowing.
-            page.scripting.awake_until = page.scripting.awake_until.max(Instant::now() + super::scripting::TICK_WINDOW);
+            page.scripting.awake_until = page
+                .scripting
+                .awake_until
+                .max(Instant::now() + super::scripting::TICK_WINDOW);
         }
         self.fetch_media(&page_id);
         release(&self.live_page_ids());
@@ -175,7 +181,9 @@ impl Runtime {
         let Some(player) = player else {
             return false;
         };
-        page.scripting.media.receive(vec![serde_json::json!({"player":player,"kind":"control","action":action,"time":time})]);
+        page.scripting.media.receive(vec![
+            serde_json::json!({"player":player,"kind":"control","action":action,"time":time}),
+        ]);
         true
     }
     /** The next missing range of any player of this page, fetched through Relay. */
@@ -184,7 +192,18 @@ impl Runtime {
             return;
         };
         let result = self.fetch_range(&job);
-        debug(|| format!("fetch {} {}-{}: {:?}", job.url, job.start, job.end, result.as_ref().map(|f| (f.start, f.length, f.bytes.len(), f.mime.clone())).map_err(|e| e.message.clone())));
+        debug(|| {
+            format!(
+                "fetch {} {}-{}: {:?}",
+                job.url,
+                job.start,
+                job.end,
+                result
+                    .as_ref()
+                    .map(|f| (f.start, f.length, f.bytes.len(), f.mime.clone()))
+                    .map_err(|e| e.message.clone())
+            )
+        });
         let mut hub = hub::lock();
         let Some(shared) = hub.players.get_mut(&job.key) else {
             return;
@@ -204,13 +223,18 @@ impl Runtime {
     /** One byte-range request with the element's destination, as Chrome sends it. */
     fn fetch_range(&mut self, job: &Fetch) -> EngineResult<Fetched> {
         let request = WebRequest {
-            destination: if job.audio { Destination::Audio } else { Destination::Video },
+            destination: if job.audio {
+                Destination::Audio
+            } else {
+                Destination::Video
+            },
             range: Some((job.start, Some(job.end))),
             languages: self.languages.clone(),
             ..WebRequest::get(&job.url)
         };
         let initiator = url::Url::parse(&job.initiator).ok();
-        let acquired = self.acquire(request, Instant::now() + FETCH_WALL, initiator, false, true)?;
+        let acquired =
+            self.acquire(request, Instant::now() + FETCH_WALL, initiator, false, true)?;
         fetched(acquired.response, job.start)
     }
     /** Pages whose players may keep running: the visible one and every tab's committed page. */
@@ -232,7 +256,8 @@ fn fetched(response: crate::network::WebResponse, start: u64) -> EngineResult<Fe
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.clone())
     };
-    let bytes = super::images::decode_base64_within(&response.source, crate::constants::HTML_BYTES)?;
+    let bytes =
+        super::images::decode_base64_within(&response.source, crate::constants::HTML_BYTES)?;
     let (start, length) = match response.status {
         PARTIAL => {
             let range = header("content-range").and_then(|value| bytes::content_range(&value));
@@ -245,7 +270,12 @@ fn fetched(response: crate::network::WebResponse, start: u64) -> EngineResult<Fe
             )));
         }
     };
-    Ok(Fetched { start, length, mime: response.mime, bytes })
+    Ok(Fetched {
+        start,
+        length,
+        mime: response.mime,
+        bytes,
+    })
 }
 
 /** A diagnostic line on stderr when `MARS_MEDIA_DEBUG` is set; silent otherwise. */
@@ -262,13 +292,24 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
     }
     let mut hub = hub::lock();
     for mut command in commands {
-        debug(|| format!("command {page_id} {command:?}").chars().take(300).collect());
+        debug(|| {
+            format!("command {page_id} {command:?}")
+                .chars()
+                .take(300)
+                .collect()
+        });
         if command.validate().is_err() {
             continue;
         }
         let key = (page_id.to_string(), command.player());
         match &mut command {
-            MediaCommand::Load { url, blob, settings, node, .. } => {
+            MediaCommand::Load {
+                url,
+                blob,
+                settings,
+                node,
+                ..
+            } => {
                 let mut shared = Shared {
                     url: url.clone(),
                     initiator: initiator.into(),
@@ -375,6 +416,7 @@ fn release(live: &BTreeSet<String>) {
     for key in dead {
         hub.players.remove(&key);
         let player = key.1;
-        hub.commands.push_back((key, MediaCommand::Unload { player }));
+        hub.commands
+            .push_back((key, MediaCommand::Unload { player }));
     }
 }

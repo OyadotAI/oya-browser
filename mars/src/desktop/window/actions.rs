@@ -115,7 +115,10 @@ impl Window {
             return;
         };
         let _ = snapshot;
-        let quiet = matches!(action, Action::Tap(..) | Action::Wheel(..) | Action::Media(..));
+        let quiet = matches!(
+            action,
+            Action::Tap(..) | Action::Wheel(..) | Action::Media(..)
+        );
         let (op, params, target) = match action {
             Action::Edit(id, text, observed) => {
                 ("page.type", self.target(id, Some(text)), Some(observed))
@@ -157,7 +160,7 @@ impl Window {
             Action::Activate(mars::RELOAD) => ("page.reload", json!({}), None),
             Action::Activate(tag) if [mars::ADDRESS, mars::DEMO, mars::RETRY].contains(&tag) => {
                 let url = if tag == mars::DEMO {
-                    format!("{}/", self.demo)
+                    format!("{}/start", self.demo)
                 } else if tag == mars::RETRY {
                     self.failed_url
                         .clone()

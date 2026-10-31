@@ -39,6 +39,21 @@ pub(in crate::v9) fn text_hash(text: &str) -> u64 {
 list changed since the last report. The document's own parsed head styles are skipped until a
 script changes their text. Runs at the end of every step. */
 pub(in crate::v9) fn publish_local(vm: &mut Vm) {
+    if let Some((hash, texts)) = local_texts(vm) {
+        vm.page.state.local_sheets_hash = hash;
+        vm.page.effects.local_sheets = Some(texts);
+    }
+}
+
+/** The V9-only style texts when they changed since the last report, without reporting them:
+what a synchronous layout mid-step must style with. */
+pub(in crate::v9) fn changed_local(vm: &mut Vm) -> Option<Vec<String>> {
+    local_texts(vm).map(|(_, texts)| texts)
+}
+
+/** The V9-only `<style>` texts the app does not already apply, with their combined hash, when
+that hash differs from the last reported one. */
+fn local_texts(vm: &mut Vm) -> Option<(u64, Vec<String>)> {
     let mut texts = Vec::new();
     for node in sheet_nodes(vm) {
         if vm.page.tag(node) != "style" || vm.page.is_projected(node) {
@@ -51,10 +66,7 @@ pub(in crate::v9) fn publish_local(vm: &mut Vm) {
         }
     }
     let hash = text_hash(&texts.join("\u{0}"));
-    if hash != vm.page.state.local_sheets_hash {
-        vm.page.state.local_sheets_hash = hash;
-        vm.page.effects.local_sheets = Some(texts);
-    }
+    (hash != vm.page.state.local_sheets_hash).then_some((hash, texts))
 }
 
 /** The CSSStyleSheet object of a node. */

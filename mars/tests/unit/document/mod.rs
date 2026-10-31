@@ -36,10 +36,8 @@ fn module_scripts_are_kept_without_a_diagnostic() {
 /** Unsupported markup degrades to inert content with a named diagnostic, never an incomplete page. */
 #[test]
 fn unsupported_markup_degrades_with_a_diagnostic() {
-    for (body, diagnostic) in [
-        ("<video></video>", None),
-        ("<input type=file>", None),
-    ] {
+    let cases: [(&str, Option<&str>); 2] = [("<video></video>", None), ("<input type=file>", None)];
+    for (body, diagnostic) in cases {
         let document = parse(&format!("<html><body>{body}</body></html>")).unwrap();
         assert!(document.scripts.is_empty(), "{body}");
         if let Some(diagnostic) = diagnostic {
@@ -52,9 +50,20 @@ fn unsupported_markup_degrades_with_a_diagnostic() {
 #[test]
 fn inline_event_handlers_are_kept() {
     let document = parse("<html><body><input onchange='go()'></body></html>").unwrap();
-    let input = document.nodes.iter().find(|node| node.tag == "input").unwrap();
-    assert_eq!(input.attributes.get("onchange").map(String::as_str), Some("go()"));
-    assert!(document.diagnostics.is_empty(), "{:?}", document.diagnostics);
+    let input = document
+        .nodes
+        .iter()
+        .find(|node| node.tag == "input")
+        .unwrap();
+    assert_eq!(
+        input.attributes.get("onchange").map(String::as_str),
+        Some("go()")
+    );
+    assert!(
+        document.diagnostics.is_empty(),
+        "{:?}",
+        document.diagnostics
+    );
 }
 
 /** Inline and external executable scripts preserve source order and data blocks stay inert. */

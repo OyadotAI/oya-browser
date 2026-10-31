@@ -26,7 +26,9 @@ pub const UPDATE_BYTES: usize = 1024 * 1024;
 /** Tags whose attributes and tree position the media script follows. */
 const TAGS: [&str; 4] = ["video", "audio", "source", "track"];
 /** Attributes whose change can start or change a load (src, source selection, track loading). */
-const ATTRIBUTES: [&str; 7] = ["src", "type", "media", "kind", "srclang", "label", "default"];
+const ATTRIBUTES: [&str; 7] = [
+    "src", "type", "media", "kind", "srclang", "label", "default",
+];
 
 /// The codecs and containers the host's decoders actually play, probed by the coordinator
 /// (AVFoundation on macOS). `canPlayType`, `isTypeSupported` and `mediaCapabilities` answer
@@ -79,7 +81,10 @@ pub enum MediaCommand {
         settings: MediaSettings,
     },
     /// Replace the playback settings.
-    Settings { player: u64, settings: MediaSettings },
+    Settings {
+        player: u64,
+        settings: MediaSettings,
+    },
     /// Seek to a media time in seconds; `fast` allows the nearest keyframe.
     Seek { player: u64, time: f64, fast: bool },
     /// Media Source: append a segment to one source buffer of the given kind.
@@ -135,10 +140,13 @@ impl MediaCommand {
             }
             Self::Remove { start, end, .. } => finite(*start) && !end.is_nan(),
             Self::EndOfStream { duration, .. } => !duration.is_nan(),
-            Self::Captions { lines, .. } => lines.iter().map(String::len).sum::<usize>() <= COMMAND_TEXT,
+            Self::Captions { lines, .. } => {
+                lines.iter().map(String::len).sum::<usize>() <= COMMAND_TEXT
+            }
             Self::Bind { .. } | Self::Unload { .. } => true,
         };
-        ok.then_some(()).ok_or_else(|| EngineError::invalid("Invalid media command."))
+        ok.then_some(())
+            .ok_or_else(|| EngineError::invalid("Invalid media command."))
     }
 }
 
@@ -195,7 +203,12 @@ fn post(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Fill what only the native side knows: the node, Blob bytes and appended segment bytes. */
 fn attach(vm: &mut Vm, command: &mut MediaCommand, node: Option<usize>, data: &JsValue) -> Res<()> {
     match command {
-        MediaCommand::Load { node: target, url, blob, .. } => {
+        MediaCommand::Load {
+            node: target,
+            url,
+            blob,
+            ..
+        } => {
             *target = node.ok_or_else(|| vm.type_error("Illegal invocation"))?;
             *blob = super::blob_urls::resolve(&vm.page, url);
         }
@@ -212,7 +225,9 @@ fn attach(vm: &mut Vm, command: &mut MediaCommand, node: Option<usize>, data: &J
 fn track(page: &mut Page, command: &MediaCommand, node: Option<usize>) -> EngineResult<()> {
     match command {
         MediaCommand::Load { player, node, .. } => {
-            if !page.state.media.players.contains_key(node) && page.state.media.players.len() >= PLAYERS {
+            if !page.state.media.players.contains_key(node)
+                && page.state.media.players.len() >= PLAYERS
+            {
                 return Err(EngineError::limit("media players", PLAYERS));
             }
             page.state.media.players.insert(*node, *player);
@@ -308,7 +323,9 @@ pub(super) fn adopt(page: &mut Page, old: usize, new: usize) -> EngineResult<()>
         return Ok(());
     };
     page.state.media.players.insert(new, player);
-    page.effects.media.push(MediaCommand::Bind { player, node: new });
+    page.effects
+        .media
+        .push(MediaCommand::Bind { player, node: new });
     Ok(())
 }
 
@@ -332,7 +349,11 @@ pub(in crate::v9) fn stable_state(vm: &mut Vm) -> Res<bool> {
     vm.page.state.media.built = true;
     let elements = take_touched(vm)?;
     let kind = JsValue::string("touched")?;
-    vm.call(JsValue::Object(handler), JsValue::Undefined, vec![kind, elements])?;
+    vm.call(
+        JsValue::Object(handler),
+        JsValue::Undefined,
+        vec![kind, elements],
+    )?;
     Ok(true)
 }
 
@@ -362,11 +383,21 @@ const ENTRY_MEMBERS: [&str; 3] = ["isTypeSupported", "decodingInfo", "encodingIn
 
 /** Build the script implementation once; true when this call built it. */
 fn ensure(vm: &mut Vm) -> Res<bool> {
-    let Some(handler) = vm.page.state.media.handler.filter(|_| !vm.page.state.media.built) else {
+    let Some(handler) = vm
+        .page
+        .state
+        .media
+        .handler
+        .filter(|_| !vm.page.state.media.built)
+    else {
         return Ok(false);
     };
     vm.page.state.media.built = true;
-    vm.call(JsValue::Object(handler), JsValue::Undefined, vec![JsValue::string("ensure")?])?;
+    vm.call(
+        JsValue::Object(handler),
+        JsValue::Undefined,
+        vec![JsValue::string("ensure")?],
+    )?;
     Ok(true)
 }
 
@@ -375,9 +406,14 @@ fn ensure(vm: &mut Vm) -> Res<bool> {
  * `MediaSource.isTypeSupported`) before the implementation existed: build it and answer with
  * the real member. None when the shape should answer as before.
  */
-pub(in crate::v9) fn upgrade(vm: &mut Vm, call: &Call, name: &str, setter: bool) -> Res<Option<JsValue>> {
-    let media = dom::node_of(vm, &call.this)
-        .is_some_and(|node| TAGS.contains(&vm.page.tag(node).as_str()));
+pub(in crate::v9) fn upgrade(
+    vm: &mut Vm,
+    call: &Call,
+    name: &str,
+    setter: bool,
+) -> Res<Option<JsValue>> {
+    let media =
+        dom::node_of(vm, &call.this).is_some_and(|node| TAGS.contains(&vm.page.tag(node).as_str()));
     if !(media || ENTRY_MEMBERS.contains(&name)) || !ensure(vm)? {
         return Ok(None);
     }
@@ -439,7 +475,9 @@ pub(super) fn roots(state: &State, wrappers: &BTreeMap<usize, ObjectId>, out: &m
 /** Restored state must name a live callable dispatcher and stay within the player bound. */
 pub(in crate::v9) fn validate(vm: &Vm) -> EngineResult<()> {
     let state = &vm.page.state.media;
-    let handler_ok = state.handler.is_none_or(|id| vm.is_callable(&JsValue::Object(id)));
+    let handler_ok = state
+        .handler
+        .is_none_or(|id| vm.is_callable(&JsValue::Object(id)));
     if !handler_ok || state.players.len() > PLAYERS {
         return Err(EngineError::invalid("Invalid media state."));
     }

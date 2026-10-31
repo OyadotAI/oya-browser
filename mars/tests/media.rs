@@ -21,13 +21,21 @@ fn ranged(request: &str) -> Vec<u8> {
     let lower = request.to_ascii_lowercase();
     let path = request.split_whitespace().nth(1).unwrap_or_default();
     if path == "/" {
-        return html("", r#"<video id="v" preload="auto" src="/clip.mp4"></video>"#);
+        return html(
+            "",
+            r#"<video id="v" preload="auto" src="/clip.mp4"></video>"#,
+        );
     }
     let span = lower
         .lines()
         .find_map(|line| line.strip_prefix("range: bytes="))
         .and_then(|span| span.trim().split_once('-'))
-        .map(|(start, end)| (start.parse::<usize>().unwrap(), end.parse::<usize>().unwrap_or(LENGTH - 1)));
+        .map(|(start, end)| {
+            (
+                start.parse::<usize>().unwrap(),
+                end.parse::<usize>().unwrap_or(LENGTH - 1),
+            )
+        });
     let Some((start, end)) = span else {
         return b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec();
     };
@@ -48,7 +56,10 @@ fn peek(runtime: &mut mars::runtime::Runtime, expression: &str) -> Value {
 }
 
 /** Run the coordinator's idle turns until `done` holds or a few seconds pass. */
-fn until(runtime: &mut mars::runtime::Runtime, mut done: impl FnMut(&mut mars::runtime::Runtime) -> bool) -> bool {
+fn until(
+    runtime: &mut mars::runtime::Runtime,
+    mut done: impl FnMut(&mut mars::runtime::Runtime) -> bool,
+) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         runtime.run_page_scripts();
@@ -71,11 +82,17 @@ fn a_video_fetches_ranges_through_relay_and_reports_metadata_to_the_page() {
     let mut runtime = support::desktop(&fixture.url);
     agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let key = ("page-1".to_string(), 1);
-    assert!(until(&mut runtime, |_| hub::lock().players.contains_key(&key)), "the load reaches the hub");
+    assert!(
+        until(&mut runtime, |_| hub::lock().players.contains_key(&key)),
+        "the load reaches the hub"
+    );
     let url = hub::lock().players[&key].url.clone();
     assert!(url.ends_with("/clip.mp4"), "{url}");
     hub::lock().players.get_mut(&key).unwrap().need = Some(0);
-    assert!(until(&mut runtime, |_| hub::lock().players[&key].bytes.length.is_some()));
+    assert!(until(&mut runtime, |_| hub::lock().players[&key]
+        .bytes
+        .length
+        .is_some()));
     {
         let hub = hub::lock();
         let bytes = &hub.players[&key].bytes;
@@ -84,18 +101,38 @@ fn a_video_fetches_ranges_through_relay_and_reports_metadata_to_the_page() {
         assert_eq!(bytes.mime, "video/mp4");
     }
     let request = fixture.last_request.lock().unwrap().to_ascii_lowercase();
-    assert!(request.contains(&format!("range: bytes=0-{}", CHUNK - 1)), "{request}");
-    assert!(request.contains("accept-encoding: identity;q=1, *;q=0"), "{request}");
-    let status = Status { ready: true, duration: 12.5, width: 640, height: 360, video: true, likely: true, ..Status::default() };
+    assert!(
+        request.contains(&format!("range: bytes=0-{}", CHUNK - 1)),
+        "{request}"
+    );
+    assert!(
+        request.contains("accept-encoding: identity;q=1, *;q=0"),
+        "{request}"
+    );
+    let status = Status {
+        ready: true,
+        duration: 12.5,
+        width: 640,
+        height: 360,
+        video: true,
+        likely: true,
+        ..Status::default()
+    };
     hub::lock().players.get_mut(&key).unwrap().status = status;
     let ready = until(&mut runtime, |runtime| {
         peek(runtime, "document.getElementById('v').readyState") == json!(4)
     });
     assert!(ready, "metadata reaches the page");
-    let facts = peek(&mut runtime, "(() => { const v = document.getElementById('v'); return [v.duration, v.videoWidth, v.videoHeight, v.networkState].join('|'); })()");
+    let facts = peek(
+        &mut runtime,
+        "(() => { const v = document.getElementById('v'); return [v.duration, v.videoWidth, v.videoHeight, v.networkState].join('|'); })()",
+    );
     assert_eq!(facts, json!("12.5|640|360|2"));
     agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
-    assert!(until(&mut runtime, |_| !hub::lock().players.contains_key(&key)), "a page that is gone releases its players");
+    assert!(
+        until(&mut runtime, |_| !hub::lock().players.contains_key(&key)),
+        "a page that is gone releases its players"
+    );
 }
 
 /** Planned ranges start at the reader, stop at held chunks and at the end, and skip held bytes. */
@@ -122,7 +159,10 @@ fn byte_store_trims_overlap_and_holds_whole_blobs() {
     assert_eq!(bytes.read(10, 20), &[2; 5]);
     assert_eq!(bytes.spans(), vec![(0, 15)]);
     let blob = Bytes::whole(vec![9; 32], "audio/mpeg");
-    assert_eq!((blob.length, blob.mime.as_str(), blob.read(0, 64).len()), (Some(32), "audio/mpeg", 32));
+    assert_eq!(
+        (blob.length, blob.mime.as_str(), blob.read(0, 64).len()),
+        (Some(32), "audio/mpeg", 32)
+    );
 }
 
 /** Content-Range headers give the first byte and the total, which may be unknown. */
@@ -138,19 +178,54 @@ fn content_range_parses_start_and_total() {
 fn status_changes_become_updates_in_order() {
     let mut sent = Reported::default();
     let start = Instant::now();
-    let mut status = Status { ready: true, duration: 4.0, width: 2, height: 2, video: true, buffered: vec![[0.0, 4.0]], ..Status::default() };
-    let kinds = |updates: Vec<Value>| updates.iter().map(|u| u["kind"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-    assert_eq!(kinds(diff(1, &status, &mut sent, start)), ["metadata", "progress"]);
+    let mut status = Status {
+        ready: true,
+        duration: 4.0,
+        width: 2,
+        height: 2,
+        video: true,
+        buffered: vec![[0.0, 4.0]],
+        ..Status::default()
+    };
+    let kinds = |updates: Vec<Value>| {
+        updates
+            .iter()
+            .map(|u| u["kind"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        kinds(diff(1, &status, &mut sent, start)),
+        ["metadata", "progress"]
+    );
     status.playing = true;
     status.time = 1.0;
     assert_eq!(kinds(diff(1, &status, &mut sent, start)), ["time"]);
     assert!(diff(1, &status, &mut sent, start + Duration::from_millis(100)).is_empty());
-    assert_eq!(kinds(diff(1, &status, &mut sent, start + Duration::from_millis(300))), ["time"]);
+    assert_eq!(
+        kinds(diff(
+            1,
+            &status,
+            &mut sent,
+            start + Duration::from_millis(300)
+        )),
+        ["time"]
+    );
     status.playing = false;
     status.ended = true;
     status.time = 4.0;
-    assert_eq!(kinds(diff(1, &status, &mut sent, start + Duration::from_millis(400))), ["time", "ended"]);
-    let failed = Status { error: Some((4, "MEDIA_ELEMENT_ERROR: Format error".into())), ..Status::default() };
+    assert_eq!(
+        kinds(diff(
+            1,
+            &status,
+            &mut sent,
+            start + Duration::from_millis(400)
+        )),
+        ["time", "ended"]
+    );
+    let failed = Status {
+        error: Some((4, "MEDIA_ELEMENT_ERROR: Format error".into())),
+        ..Status::default()
+    };
     let updates = diff(2, &failed, &mut Reported::default(), start);
     assert_eq!((updates.len(), updates[0]["code"].as_u64()), (1, Some(4)));
 }
@@ -160,7 +235,16 @@ fn status_changes_become_updates_in_order() {
 #[test]
 fn decoder_support_includes_h264_and_aac_in_mp4() {
     let support = mars::runtime::media::support();
-    assert!(support.containers.iter().any(|c| c == "video/mp4"), "{support:?}");
-    assert!(support.codecs.iter().any(|c| c == "video/mp4|avc1"), "{support:?}");
-    assert!(support.codecs.iter().any(|c| c == "video/mp4|mp4a"), "{support:?}");
+    assert!(
+        support.containers.iter().any(|c| c == "video/mp4"),
+        "{support:?}"
+    );
+    assert!(
+        support.codecs.iter().any(|c| c == "video/mp4|avc1"),
+        "{support:?}"
+    );
+    assert!(
+        support.codecs.iter().any(|c| c == "video/mp4|mp4a"),
+        "{support:?}"
+    );
 }

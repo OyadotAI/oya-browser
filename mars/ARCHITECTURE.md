@@ -47,42 +47,43 @@ AppKit native window       native agent NDJSON or MCP stdio
           one worker / one Rust Runtime
           bounded tab states + shared engines and cookie profile
                         |
-          unified in-process execution (shared memory)
+          in-process engine threads, typed calls (no JSON)
           [optional: MARS_PROCESS_ISOLATION=1 for subprocesses]
                /        |        \
-            Relay      Eye       V9 (with JIT Bridge)
+            Relay      Eye  <--  V9 (sync LayoutHost)
           (network)  (document)  (JavaScript VM)
              |           |              |
-      OS sockets/TLS  owned layout  tiered JIT execution
-                      + glyphs      (Interpreted/Baseline/Optimized)
+      OS sockets/TLS  owned layout  bytecode interpreter
+                      + glyphs      (JIT bridge: profiling only)
 ```
 
 ## Unified in-process engine and JIT execution bridge
 
 ### In-process engine execution and shared memory
-Mars runs the Coordinator, Relay (network), Eye (document/layout), and V9 (JavaScript) within
-the **same OS process space by default**, mirroring the unified in-process `WebContent`
-architecture of modern engines like Ladybird. Running in-process eliminates child process
-spawning overhead (`Command::new`), operating system context switching, pipe buffer latency,
-and kernel boundary crossings:
-- **Shared memory heap**: Eye and V9 share the process address space and allocator, allowing
-  in-memory representations to pass without intermediate OS pipe transport or serializing across processes.
-- **In-memory channel transport**: Requests and replies pass via zero-pipe bounded memory channels
-  (`mpsc::sync_channel`), with automatic stream framing and non-blocking deadline enforcement.
-- **Process isolation fallback**: Explicit multi-process isolation remains supported via the
-  `MARS_PROCESS_ISOLATION=1` environment variable for hermetic security testing, crash recovery
-  verification, and platform sandboxing.
+Mars runs the coordinator, Relay (network), Eye (document/layout) and V9 (JavaScript) in one OS
+process by default; each engine is a long-lived thread. `MARS_PROCESS_ISOLATION=1` runs them as
+sandboxed subprocesses instead, for hermetic tests, crash recovery and the platform sandbox.
 
-### V9 JIT execution bridge
-V9 includes an execution profiling and tiering bridge (`v9::jit::JitBridge`) to interface between
-the bytecode interpreter and JIT compilation tiers:
-- **Invocation profiling**: Function closures record call invocations to identify hot code paths.
-- **Optimization tiers**: Code units transition through three distinct execution tiers:
-  - `OptimizationTier::Interpreted`: standard bytecode execution for cold/initial paths.
-  - `OptimizationTier::Baseline`: fast baseline compilation reached after `BASELINE_TIER_INVOCATIONS` (20 calls).
-  - `OptimizationTier::Optimized`: fully optimized native execution reached after `OPTIMIZED_TIER_INVOCATIONS` (100 calls).
-- **Introspection status**: The JIT bridge reports standard status bitflags (`STATUS_FUNCTION`,
-  `STATUS_BASELINE`, `STATUS_OPTIMIZED`) for V8-compatible runtime introspection (`%GetOptimizationStatus`).
+- **Typed calls, no serialization** (`src/runtime/supervisor/jobs.rs`): in process, a hot call
+  (`v9.page`, `document.styles`, `document.apply`, `document.render`) is a closure sent to the
+  engine's thread with owned Rust values; the typed result comes back on a one-shot channel under
+  the same deadline and cancellation polling. Nothing is encoded to JSON, and a page's scripts are
+  shared by `Arc` instead of hashed per step. Subprocess engines keep the framed JSON path.
+- **Synchronous layout** (`crates/v9/src/v9/platform/layout_host.rs`,
+  `src/runtime/scripting/sync_layout.rs`): when script reads a box or computed style the last
+  layout cannot answer, V9 calls the `LayoutHost` the app put on `PageEnvironment`. The host
+  applies the step's change log to the step's base document, cascades and lays out with Eye on
+  V9's thread, and the same run continues. At most `LAYOUT_CALLS` per step; past that, or with no
+  host (subprocess mode), V9 reports `stale_geometry`/`style_requests` and the coordinator lays
+  out and runs the step again, as before.
+- **Engine call bound**: `rpc_timeout()` never sits under the effective V9 script deadline plus a
+  margin, so a slow but bounded script reports its own limit instead of having its engine killed.
+
+### V9 JIT bridge
+`v9::jit::JitBridge` only profiles today: it counts calls per function and reports V8-style tier
+bits to `%GetOptimizationStatus`. Nothing is compiled. The plan is inline caches in the
+interpreter first, then a baseline template JIT (dynasm-rs, ARM64 and x86-64), then an
+optimizing tier (Cranelift) for hot loops. A signed build needs the `allow-jit` entitlement.
 
 ## Ownership and transactions
 

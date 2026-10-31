@@ -30,10 +30,10 @@ mod interaction;
 mod intersections;
 mod languages;
 mod lifetime;
-mod loader;
-pub mod media;
 /** The Oya server link's way into the runtime, under the same ownership checks as local agents. */
 pub mod link;
+mod loader;
+pub mod media;
 mod modules;
 mod names;
 mod navigation;

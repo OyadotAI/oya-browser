@@ -931,12 +931,7 @@ fn singletons(b: &mut Builder) {
         window::location_method,
     );
     let history = b.object(Some(object_prototype));
-    getters(
-        b,
-        history,
-        &["length", "state"],
-        window::history,
-    );
+    getters(b, history, &["length", "state"], window::history);
     b.accessor(
         history,
         "scrollRestoration",

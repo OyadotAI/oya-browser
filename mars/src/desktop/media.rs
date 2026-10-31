@@ -46,9 +46,13 @@ pub(super) fn tick(mtm: MainThreadMarker) -> Vec<(String, usize)> {
         let mut hub = hub::lock();
         let mut changed = Vec::new();
         for (key, native) in players.iter_mut() {
-            let Some(shared) = hub.players.get_mut(key) else { continue };
+            let Some(shared) = hub.players.get_mut(key) else {
+                continue;
+            };
             native.tick(shared, host_time);
-            if std::mem::take(&mut native.fresh) || shared.status.playing && native.settings.controls {
+            if std::mem::take(&mut native.fresh)
+                || shared.status.playing && native.settings.controls
+            {
                 changed.push((key.0.clone(), native.node));
             }
         }
@@ -57,12 +61,25 @@ pub(super) fn tick(mtm: MainThreadMarker) -> Vec<(String, usize)> {
 }
 
 /** Apply one page command to its player. */
-fn apply(mtm: MainThreadMarker, players: &mut BTreeMap<PlayerKey, Native>, key: PlayerKey, command: MediaCommand) {
-    if let MediaCommand::Load { node, settings, stream, .. } = command {
+fn apply(
+    mtm: MainThreadMarker,
+    players: &mut BTreeMap<PlayerKey, Native>,
+    key: PlayerKey,
+    command: MediaCommand,
+) {
+    if let MediaCommand::Load {
+        node,
+        settings,
+        stream,
+        ..
+    } = command
+    {
         players.insert(key, Native::new(mtm, node, settings, stream));
         return;
     }
-    let Some(native) = players.get_mut(&key) else { return };
+    let Some(native) = players.get_mut(&key) else {
+        return;
+    };
     match command {
         MediaCommand::Settings { settings, .. } => native.set(mtm, settings),
         MediaCommand::Seek { time, fast, .. } => {
@@ -74,15 +91,24 @@ fn apply(mtm: MainThreadMarker, players: &mut BTreeMap<PlayerKey, Native>, key: 
         MediaCommand::Unload { .. } => {
             players.remove(&key);
         }
-        MediaCommand::Load { .. } | MediaCommand::Append { .. } | MediaCommand::Remove { .. } | MediaCommand::EndOfStream { .. } => {}
+        MediaCommand::Load { .. }
+        | MediaCommand::Append { .. }
+        | MediaCommand::Remove { .. }
+        | MediaCommand::EndOfStream { .. } => {}
     }
 }
 
 /** The painter's view of the element `node` of page `page`, if it has a player. */
 pub(super) fn view(page: &str, node: usize) -> Option<View> {
     PLAYERS.with_borrow(|players| {
-        let (key, native) = players.iter().find(|((id, _), native)| id == page && native.node == node)?;
-        let status = hub::lock().players.get(key).map(|shared| shared.status.clone()).unwrap_or_default();
+        let (key, native) = players
+            .iter()
+            .find(|((id, _), native)| id == page && native.node == node)?;
+        let status = hub::lock()
+            .players
+            .get(key)
+            .map(|shared| shared.status.clone())
+            .unwrap_or_default();
         Some(View {
             frame: native.frame.clone(),
             controls: native.settings.controls,

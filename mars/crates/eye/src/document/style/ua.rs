@@ -92,7 +92,8 @@ pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
     style.list_item = tag == "li";
     // A video is a replaced box: an inline-block with Chromium's 300 by 150 default size; an
     // audio element with controls is a 300 by 54 control strip, as Chromium sizes its panel.
-    style.inline_block = tag == "video" || tag == "audio" && node.attributes.contains_key("controls");
+    style.inline_block =
+        tag == "video" || tag == "audio" && node.attributes.contains_key("controls");
     match tag {
         "ol" => style.list_style = super::ListStyle::Decimal,
         "ul" | "menu" => style.list_style = super::ListStyle::Disc,

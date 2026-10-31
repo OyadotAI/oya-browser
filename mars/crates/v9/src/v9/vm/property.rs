@@ -785,12 +785,19 @@ impl Vm<'_> {
                     Slot::Accessor(_, None) => return Ok(false),
                     Slot::Data(_) if prop.attrs & WRITABLE == 0 => return Ok(false),
                     Slot::Data(_) => {
-                        let window = realm().ids.window_prototype;
-                        let intrinsic = id == window
-                            && self.proto_of(start) == Some(window)
-                            && realm()
-                                .object(window)
-                                .is_some_and(|o| o.get(&key).is_some());
+                        // The global's own platform prototype (Window's, or a dedicated
+                        // worker's, where `onmessage` lives) holds real global bindings, so a
+                        // strict assignment to one sets it, as in a browser.
+                        let ids = &realm().ids;
+                        let intrinsic = [ids.window_prototype, ids.worker_prototype]
+                            .into_iter()
+                            .any(|global| {
+                                id == global
+                                    && self.proto_of(start) == Some(global)
+                                    && realm()
+                                        .object(global)
+                                        .is_some_and(|o| o.get(&key).is_some())
+                            });
                         if contextual && id != start && !intrinsic {
                             return Err(
                                 self.reference_error(&format!("{} is not defined", key_text(&key)))

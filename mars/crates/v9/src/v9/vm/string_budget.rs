@@ -145,6 +145,10 @@ impl StringBudget {
             .then(|| self.resident_units())
     }
 
+    /** Whether nothing is registered yet: a decoded heap, or one that never held a string. */
+    pub(super) fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
     /** This conservative value charges new nodes until the next deduplicating observation. */
     pub(super) fn upper_units(&self) -> usize {
         self.upper_units

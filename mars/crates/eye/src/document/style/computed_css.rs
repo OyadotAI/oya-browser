@@ -15,15 +15,59 @@ const SIDES: [&str; 4] = ["top", "right", "bottom", "left"];
 
 /** The properties this serializer answers, so callers can tell "unsupported" from "empty". */
 pub const COMPUTED_PROPERTIES: &[&str] = &[
-    "display", "visibility", "opacity", "position", "z-index", "overflow", "overflow-x",
-    "overflow-y", "color", "background-color", "font-size", "font-weight", "font-style",
-    "font-family", "line-height", "box-sizing", "flex-direction", "flex-wrap", "flex-grow",
-    "flex-shrink", "justify-content", "align-items", "row-gap", "column-gap", "white-space",
-    "text-transform", "text-align", "float", "cursor", "transform", "top", "right", "bottom",
-    "left", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top",
-    "padding-right", "padding-bottom", "padding-left", "border-top-width", "border-right-width",
-    "border-bottom-width", "border-left-width", "border-top-color", "border-right-color",
-    "border-bottom-color", "border-left-color", "letter-spacing", "word-spacing", "order",
+    "display",
+    "visibility",
+    "opacity",
+    "position",
+    "z-index",
+    "overflow",
+    "overflow-x",
+    "overflow-y",
+    "color",
+    "background-color",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "font-family",
+    "line-height",
+    "box-sizing",
+    "flex-direction",
+    "flex-wrap",
+    "flex-grow",
+    "flex-shrink",
+    "justify-content",
+    "align-items",
+    "row-gap",
+    "column-gap",
+    "white-space",
+    "text-transform",
+    "text-align",
+    "float",
+    "cursor",
+    "transform",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+    "letter-spacing",
+    "word-spacing",
+    "order",
 ];
 
 /** A property's resolved value, or None when this serializer does not cover it. */
@@ -56,10 +100,27 @@ fn text_value(style: &ComputedStyle, property: &str) -> Option<String> {
         "line-height" => line_height(style),
         "white-space" => white_space(style.white_space).into(),
         "text-transform" => text_transform(style.text_transform).into(),
-        "text-align" => if style.align.is_empty() { "start".into() } else { style.align.clone() },
-        "letter-spacing" => if style.letter_spacing == 0.0 { "normal".into() } else { px(style.letter_spacing) },
+        "text-align" => {
+            if style.align.is_empty() {
+                "start".into()
+            } else {
+                style.align.clone()
+            }
+        }
+        "letter-spacing" => {
+            if style.letter_spacing == 0.0 {
+                "normal".into()
+            } else {
+                px(style.letter_spacing)
+            }
+        }
         "word-spacing" => px(style.word_spacing),
-        "cursor" => if style.cursor_pointer { "pointer" } else { "auto" }.into(),
+        "cursor" => if style.cursor_pointer {
+            "pointer"
+        } else {
+            "auto"
+        }
+        .into(),
         _ => return None,
     })
 }
@@ -67,16 +128,37 @@ fn text_value(style: &ComputedStyle, property: &str) -> Option<String> {
 /** Box, flex and transform properties. */
 fn box_value(style: &ComputedStyle, property: &str) -> Option<String> {
     Some(match property {
-        "box-sizing" => match style.box_sizing { BoxSizing::BorderBox => "border-box", BoxSizing::ContentBox => "content-box" }.into(),
+        "box-sizing" => match style.box_sizing {
+            BoxSizing::BorderBox => "border-box",
+            BoxSizing::ContentBox => "content-box",
+        }
+        .into(),
         "flex-direction" => flex_direction(style).into(),
         "flex-wrap" => flex_wrap(style).into(),
         "flex-grow" => number(style.flex_grow),
         "flex-shrink" => number(style.flex_shrink),
         "justify-content" => justify(style.justify_content).into(),
         "align-items" => align(style.align_items).into(),
-        "row-gap" => if style.gap_set[0] { px(style.row_gap) } else { "normal".into() },
-        "column-gap" => if style.gap_set[1] { px(style.column_gap) } else { "normal".into() },
-        "float" => match style.float { Float::None => "none", Float::Left => "left", Float::Right => "right" }.into(),
+        "row-gap" => {
+            if style.gap_set[0] {
+                px(style.row_gap)
+            } else {
+                "normal".into()
+            }
+        }
+        "column-gap" => {
+            if style.gap_set[1] {
+                px(style.column_gap)
+            } else {
+                "normal".into()
+            }
+        }
+        "float" => match style.float {
+            Float::None => "none",
+            Float::Left => "left",
+            Float::Right => "right",
+        }
+        .into(),
         "order" => style.order.to_string(),
         "transform" => style.transform.map_or("none".into(), matrix),
         _ => return None,
@@ -85,16 +167,25 @@ fn box_value(style: &ComputedStyle, property: &str) -> Option<String> {
 
 /** Per-side properties: inset, margin, padding, border width and color. */
 fn side_value(style: &ComputedStyle, property: &str) -> Option<String> {
-    let (prefix, side) = SIDES.iter().enumerate().find_map(|(index, side)| {
-        let prefix = property.strip_suffix(side)?.strip_suffix('-').unwrap_or("");
-        Some((prefix, index))
-    }).or_else(|| border_side(property))?;
+    let (prefix, side) = SIDES
+        .iter()
+        .enumerate()
+        .find_map(|(index, side)| {
+            let prefix = property.strip_suffix(side)?.strip_suffix('-').unwrap_or("");
+            Some((prefix, index))
+        })
+        .or_else(|| border_side(property))?;
     Some(match prefix {
         "" => style.inset[side].map_or("auto".into(), px),
         "margin" => px(style.margin[side]),
         "padding" => px(style.padding[side]),
         "border-width" => px(style.border_widths[side]),
-        "border-color" => css_color(style.border_colors[side].as_deref().or(style.color.as_deref()).unwrap_or("#000000")),
+        "border-color" => css_color(
+            style.border_colors[side]
+                .as_deref()
+                .or(style.color.as_deref())
+                .unwrap_or("#000000"),
+        ),
         _ => return None,
     })
 }
@@ -102,19 +193,24 @@ fn side_value(style: &ComputedStyle, property: &str) -> Option<String> {
 /** `border-<side>-width` and `border-<side>-color` as (kind, side index). */
 fn border_side(property: &str) -> Option<(&'static str, usize)> {
     let rest = property.strip_prefix("border-")?;
-    SIDES.iter().enumerate().find_map(|(index, side)| {
-        match rest.strip_prefix(side)? {
+    SIDES
+        .iter()
+        .enumerate()
+        .find_map(|(index, side)| match rest.strip_prefix(side)? {
             "-width" => Some(("border-width", index)),
             "-color" => Some(("border-color", index)),
             _ => None,
-        }
-    })
+        })
 }
 
 /** The outer and inner display type, as the display property serializes. */
 fn display(style: &ComputedStyle) -> &'static str {
-    if style.display_none || style.hidden { return "none"; }
-    if style.display_contents { return "contents"; }
+    if style.display_none || style.hidden {
+        return "none";
+    }
+    if style.display_contents {
+        return "contents";
+    }
     let inline = style.inline || style.inline_block;
     match (style.display_flex, style.display_grid, inline) {
         (true, _, true) => "inline-flex",
@@ -201,8 +297,19 @@ fn font_family(style: &ComputedStyle) -> String {
         }
         .into();
     }
-    let quote = |name: &String| if name.contains(' ') { format!("\"{name}\"") } else { name.clone() };
-    style.font_families.iter().map(quote).collect::<Vec<_>>().join(", ")
+    let quote = |name: &String| {
+        if name.contains(' ') {
+            format!("\"{name}\"")
+        } else {
+            name.clone()
+        }
+    };
+    style
+        .font_families
+        .iter()
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /** `normal`, or the used line height in px. */
@@ -294,7 +401,10 @@ mod tests {
     fn lengths_and_numbers_are_canonical() {
         assert_eq!(px(12.0), "12px");
         assert_eq!(number(0.5), "0.5");
-        assert_eq!(matrix([1.0, 0.0, 0.0, 1.0, 10.0, 0.0]), "matrix(1, 0, 0, 1, 10, 0)");
+        assert_eq!(
+            matrix([1.0, 0.0, 0.0, 1.0, 10.0, 0.0]),
+            "matrix(1, 0, 0, 1, 10, 0)"
+        );
     }
 
     /** A default style answers block, visible, static and the sides in px. */
@@ -302,9 +412,18 @@ mod tests {
     fn default_style_resolves() {
         let style = ComputedStyle::default();
         assert_eq!(computed_value(&style, "display").as_deref(), Some("block"));
-        assert_eq!(computed_value(&style, "visibility").as_deref(), Some("visible"));
-        assert_eq!(computed_value(&style, "margin-left").as_deref(), Some("0px"));
-        assert_eq!(computed_value(&style, "border-top-width").as_deref(), Some("0px"));
+        assert_eq!(
+            computed_value(&style, "visibility").as_deref(),
+            Some("visible")
+        );
+        assert_eq!(
+            computed_value(&style, "margin-left").as_deref(),
+            Some("0px")
+        );
+        assert_eq!(
+            computed_value(&style, "border-top-width").as_deref(),
+            Some("0px")
+        );
         assert_eq!(computed_value(&style, "top").as_deref(), Some("auto"));
         assert_eq!(computed_value(&style, "nonexistent"), None);
     }

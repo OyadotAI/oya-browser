@@ -16,7 +16,9 @@ fn slow_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
     let origin = format!("http://{}", listener.local_addr().expect("address"));
     std::thread::spawn(move || {
-        let Ok((mut stream, _)) = listener.accept() else { return };
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
         let mut head = [0u8; 4096];
         let _ = stream.read(&mut head);
         let header = format!(

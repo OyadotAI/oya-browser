@@ -46,7 +46,17 @@ fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
                 vm.dom_exception("InvalidStateError", "Source canvas has no admitted pixels.")
             );
         }
-        return Ok(vm.page.state.canvases.get(&from).map(|state| Source {
+        // A canvas no context ever drew on is still a transparent bitmap of its size, as in
+        // Chrome: drawing it composites (and clears under copy-like operators), not nothing.
+        let Some(state) = vm.page.state.canvases.get(&from) else {
+            let bitmap = Bitmap::new(dimensions[0], dimensions[1])?;
+            return Ok(Some(Source {
+                bitmap,
+                dimensions,
+                origin_clean: true,
+            }));
+        };
+        return Ok(Some(Source {
             bitmap: state.bitmap.clone(),
             dimensions,
             origin_clean: state.origin_clean,

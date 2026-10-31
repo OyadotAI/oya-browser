@@ -790,9 +790,13 @@ impl<'h> Vm<'h> {
         #[cfg(feature = "conformance")]
         page.state.interned_strings.clear();
         let mut heap = heap;
-        heap.string_budget = string_budget::StringBudget::default();
-        heap.last_registered_string_units = 0;
-        heap.register_existing_strings();
+        // A heap copied from a resident state shares its string backings with the state that
+        // registered them, so its registrations stay valid. Only a decoded heap (which arrives
+        // without any) walks every object to rebuild them: that walk was ~1/4 of each YouTube step.
+        if heap.string_budget.is_empty() {
+            heap.last_registered_string_units = 0;
+            heap.register_existing_strings();
+        }
         #[cfg(feature = "conformance")]
         let profile_clock =
             crate::v9::builtins::ProfileClock::new(page.state.cpu_profile.last_time());

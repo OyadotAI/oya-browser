@@ -55,8 +55,8 @@ mod path;
 mod phrase;
 mod plaintext;
 mod positioned;
-mod root_box;
 mod resize_wrappers;
+mod root_box;
 mod root_fit;
 mod root_flow;
 mod root_generated;
@@ -557,9 +557,8 @@ non-negative integers, else 300 by 150, read at every layout so a script's resiz
 bitmap itself is transparent until something draws on it. A video with no reported size yet
 gets the same 300 by 150 default object size; CSS sizes it like any replaced element. */
 fn canvases(document: &Document) -> Option<Document> {
-    let canvas = |node: &Node| {
-        matches!(node.tag.as_str(), "canvas" | "video") && node.image_size.is_none()
-    };
+    let canvas =
+        |node: &Node| matches!(node.tag.as_str(), "canvas" | "video") && node.image_size.is_none();
     if !document.nodes.iter().any(canvas) {
         return None;
     }

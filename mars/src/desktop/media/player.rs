@@ -84,7 +84,8 @@ impl Native {
     }
     /** `preload=none` defers every fetch until the page plays or seeks. */
     pub fn start_if_allowed(&mut self, mtm: MainThreadMarker) {
-        let deferred = self.settings.preload == "none" && self.settings.paused && self.pending_seek.is_none();
+        let deferred =
+            self.settings.preload == "none" && self.settings.paused && self.pending_seek.is_none();
         if self.engine.is_some() || deferred || self.stream {
             return;
         }
@@ -133,7 +134,11 @@ impl Native {
         self.seek_time = time;
         let serial = self.seeks;
         let finished = self.finished.clone();
-        let tolerance = if fast { seconds(f64::INFINITY) } else { seconds(0.0) };
+        let tolerance = if fast {
+            seconds(f64::INFINITY)
+        } else {
+            seconds(0.0)
+        };
         let done = block2::RcBlock::new(move |complete: Bool| {
             if complete.as_bool() {
                 finished.fetch_max(serial, Ordering::AcqRel);
@@ -141,12 +146,14 @@ impl Native {
         });
         // SAFETY: the completion block is retained by AVFoundation until it runs.
         unsafe {
-            engine.player.seekToTime_toleranceBefore_toleranceAfter_completionHandler(
-                seconds(time),
-                tolerance,
-                tolerance,
-                &done,
-            );
+            engine
+                .player
+                .seekToTime_toleranceBefore_toleranceAfter_completionHandler(
+                    seconds(time),
+                    tolerance,
+                    tolerance,
+                    &done,
+                );
         }
         self.apply();
     }
@@ -156,7 +163,14 @@ impl Native {
         let Some(engine) = &self.engine else {
             return;
         };
-        shared.status = observe(engine, shared, self.seeks, &self.finished, self.seek_time, self.frames);
+        shared.status = observe(
+            engine,
+            shared,
+            self.seeks,
+            &self.finished,
+            self.seek_time,
+            self.frames,
+        );
         if !self.settings.video {
             return;
         }
@@ -185,9 +199,10 @@ fn start(mtm: MainThreadMarker, loader: &Loader) -> Engine {
         let url = NSURL::URLWithString(&NSString::from_str("mars-media://resource/media"))
             .expect("constant URL parses");
         let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
-        asset
-            .resourceLoader()
-            .setDelegate_queue(Some(ProtocolObject::from_ref(loader)), Some(dispatch2::DispatchQueue::main()));
+        asset.resourceLoader().setDelegate_queue(
+            Some(ProtocolObject::from_ref(loader)),
+            Some(dispatch2::DispatchQueue::main()),
+        );
         let item = AVPlayerItem::playerItemWithAsset(&asset, mtm);
         let output = AVPlayerItemVideoOutput::initWithPixelBufferAttributes(
             AVPlayerItemVideoOutput::alloc(),
@@ -197,7 +212,12 @@ fn start(mtm: MainThreadMarker, loader: &Loader) -> Engine {
         let player = AVPlayer::playerWithPlayerItem(Some(&item), mtm);
         player.setAutomaticallyWaitsToMinimizeStalling(false);
         player.setActionAtItemEnd(AVPlayerActionAtItemEnd::Pause);
-        Engine { player, item, asset, output }
+        Engine {
+            player,
+            item,
+            asset,
+            output,
+        }
     }
 }
 
@@ -205,8 +225,8 @@ fn start(mtm: MainThreadMarker, loader: &Loader) -> Engine {
 fn pixel_attributes() -> Retained<NSDictionary<NSString, AnyObject>> {
     // SAFETY: CFString and NSString are toll-free bridged; the key is a static constant.
     let key: &NSString = unsafe {
-        &*(objc2_core_video::kCVPixelBufferPixelFormatTypeKey as *const objc2_core_foundation::CFString
-            as *const NSString)
+        &*(objc2_core_video::kCVPixelBufferPixelFormatTypeKey
+            as *const objc2_core_foundation::CFString as *const NSString)
     };
     let format = NSNumber::new_u32(objc2_core_video::kCVPixelFormatType_32BGRA);
     let value: &AnyObject = &format;
@@ -214,14 +234,29 @@ fn pixel_attributes() -> Retained<NSDictionary<NSString, AnyObject>> {
 }
 
 /** What the player shows now. */
-fn observe(engine: &Engine, shared: &Shared, seeks: u64, finished: &AtomicU64, seek_time: f64, frames: u64) -> Status {
+fn observe(
+    engine: &Engine,
+    shared: &Shared,
+    seeks: u64,
+    finished: &AtomicU64,
+    seek_time: f64,
+    frames: u64,
+) -> Status {
     // SAFETY: AVFoundation getters on the main thread.
     unsafe {
         let item = &engine.item;
-        let mut status = Status { frames, seek_time, ..Status::default() };
+        let mut status = Status {
+            frames,
+            seek_time,
+            ..Status::default()
+        };
         let state = item.status();
         if state == AVPlayerItemStatus::Failed {
-            let code = if shared.status.ready { DECODE_ERROR } else { UNSUPPORTED };
+            let code = if shared.status.ready {
+                DECODE_ERROR
+            } else {
+                UNSUPPORTED
+            };
             let message = item
                 .error()
                 .map(|error| error.localizedDescription().to_string())
@@ -247,12 +282,18 @@ fn observe(engine: &Engine, shared: &Shared, seeks: u64, finished: &AtomicU64, s
         let control = engine.player.timeControlStatus();
         status.playing = control == AVPlayerTimeControlStatus::Playing;
         status.waiting = control == AVPlayerTimeControlStatus::WaitingToPlayAtSpecifiedRate;
-        status.ended = status.duration.is_finite() && status.time >= status.duration - END_EPSILON && !status.playing;
+        status.ended = status.duration.is_finite()
+            && status.time >= status.duration - END_EPSILON
+            && !status.playing;
         status.buffered = ranges(&item.loadedTimeRanges());
         status.likely = item.isPlaybackLikelyToKeepUp();
         status.loaded = loaded(shared);
         let done = finished.load(Ordering::Acquire);
-        status.seeks = if done == seeks { seeks } else { shared.status.seeks.min(done) };
+        status.seeks = if done == seeks {
+            seeks
+        } else {
+            shared.status.seeks.min(done)
+        };
         status
     }
 }
@@ -262,13 +303,20 @@ ready, so its tracks are loaded and the call cannot block. */
 #[allow(deprecated)]
 unsafe fn has_audio(asset: &AVURLAsset) -> bool {
     // SAFETY: tracks are loaded once the item is ready to play.
-    unsafe { AVMediaTypeAudio }.is_some_and(|audio| unsafe { asset.tracksWithMediaType(audio) }.count() > 0)
+    unsafe { AVMediaTypeAudio }
+        .is_some_and(|audio| unsafe { asset.tracksWithMediaType(audio) }.count() > 0)
 }
 
 /** Whether every byte of the resource is held. */
 fn loaded(shared: &Shared) -> bool {
-    let Some(length) = shared.bytes.length else { return false };
-    shared.bytes.spans().first().is_some_and(|span| span.0 == 0 && span.1 >= length)
+    let Some(length) = shared.bytes.length else {
+        return false;
+    };
+    shared
+        .bytes
+        .spans()
+        .first()
+        .is_some_and(|span| span.0 == 0 && span.1 >= length)
 }
 
 /** Time ranges as [start, end] seconds. */
@@ -287,7 +335,9 @@ fn ranges(values: &objc2_foundation::NSArray<NSValue>) -> Vec<[f64; 2]> {
 
 /** Seconds of a CMTime; infinite when indefinite or positively infinite. */
 fn time_seconds(time: CMTime) -> f64 {
-    if time.flags.contains(CMTimeFlags::Indefinite) || time.flags.contains(CMTimeFlags::PositiveInfinity) {
+    if time.flags.contains(CMTimeFlags::Indefinite)
+        || time.flags.contains(CMTimeFlags::PositiveInfinity)
+    {
         return f64::INFINITY;
     }
     let value = unsafe { time.seconds() };

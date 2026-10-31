@@ -55,7 +55,10 @@ impl JitBridge {
 
     /** Query current optimization tier for an entity. */
     pub fn tier(&self, id: u32) -> OptimizationTier {
-        self.tiers.get(&id).copied().unwrap_or(OptimizationTier::Interpreted)
+        self.tiers
+            .get(&id)
+            .copied()
+            .unwrap_or(OptimizationTier::Interpreted)
     }
 
     /** Determine and save the tier based on invocation count. */
@@ -65,7 +68,11 @@ impl JitBridge {
             c if c >= BASELINE_TIER_INVOCATIONS => OptimizationTier::Baseline,
             _ => OptimizationTier::Interpreted,
         };
-        self.tiers.insert(id, tier);
+        // Write only on a promotion: this runs on every call, so a second map write per call
+        // was pure overhead.
+        if count == BASELINE_TIER_INVOCATIONS || count == OPTIMIZED_TIER_INVOCATIONS {
+            self.tiers.insert(id, tier);
+        }
         tier
     }
 

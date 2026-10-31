@@ -323,11 +323,15 @@ fn prepend_of_an_ancestor_fails() {
     assert!(error.message.contains("HierarchyRequestError"));
 }
 
-/** Text arguments to prepend are outside the subset. */
+/** A text argument to prepend becomes a leading text node, as ParentNode.prepend specifies. */
 #[test]
-fn prepend_with_a_string_is_unsupported() {
-    let source = "document.body.prepend('x')";
-    assert_eq!(failure(source, &[], &Empty).code, "unsupported_feature");
+fn prepend_with_a_string_inserts_a_text_node() {
+    let source = "document.body.prepend('x');const r=document.body.firstChild.nodeType+'|'+document.body.firstChild.data";
+    let result = run_with(source, page(), &[], &Empty).unwrap();
+    assert_eq!(
+        result.state.globals()["r"].value,
+        Some(JsValue::string("3|x").unwrap())
+    );
 }
 
 /** Replacing parent text detaches retained elements; their attributes remain locally writable. */

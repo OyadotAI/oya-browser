@@ -24,7 +24,12 @@ const FALLBACK: &str = "public.mpeg-4";
 
 /** The type identifier for a MIME type, MP4 when the server sent none AVFoundation knows. */
 pub(super) fn uti(mime: &str) -> &'static str {
-    let essence = mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+    let essence = mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
     TYPES
         .iter()
         .find(|(name, _)| *name == essence)

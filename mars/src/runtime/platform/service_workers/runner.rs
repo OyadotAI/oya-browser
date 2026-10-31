@@ -469,15 +469,29 @@ fn entry(module: bool, url: &str, source: String) -> (Vec<String>, crate::v9::Mo
 
 impl Runtime {
     /** Fetch the imports a module worker asked for (same-origin rules and credentials). */
-    fn service_worker_modules(&mut self, running: &mut Running, until: Instant) -> EngineResult<()> {
+    fn service_worker_modules(
+        &mut self,
+        running: &mut Running,
+        until: Instant,
+    ) -> EngineResult<()> {
         let deadline = until.max(Instant::now() + crate::runtime::scripting::SCRIPT_REQUEST_WALL);
         for request in std::mem::take(&mut running.module_requests) {
-            if running.modules.sources.iter().any(|known| known.url == request.url) {
+            if running
+                .modules
+                .sources
+                .iter()
+                .any(|known| known.url == request.url)
+            {
                 continue;
             }
             let credentials = crate::v9::WorkerCredentials::SameOrigin;
-            let source =
-                self.worker_module_source(&running.policy, &request.url, false, credentials, deadline)?;
+            let source = self.worker_module_source(
+                &running.policy,
+                &request.url,
+                false,
+                credentials,
+                deadline,
+            )?;
             running.modules.sources.push(crate::v9::ModuleSource {
                 url: request.url,
                 source: source.map(|source| source.text),

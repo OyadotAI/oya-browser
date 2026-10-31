@@ -71,8 +71,11 @@ fn metadata(player: u64, status: &Status, sent: &mut Reported, out: &mut Vec<Val
 
 /** Buffered ranges and whether the whole resource or enough of it is here. */
 fn progress(player: u64, status: &Status, sent: &mut Reported, now: Instant, out: &mut Vec<Value>) {
-    let changed = sent.buffered != status.buffered || sent.loaded != status.loaded || sent.likely != status.likely;
-    let due = sent.progress_at.is_none_or(|at| now >= at + PROGRESS_EVERY) || status.loaded != sent.loaded;
+    let changed = sent.buffered != status.buffered
+        || sent.loaded != status.loaded
+        || sent.likely != status.likely;
+    let due = sent.progress_at.is_none_or(|at| now >= at + PROGRESS_EVERY)
+        || status.loaded != sent.loaded;
     if !changed || !due {
         return;
     }
@@ -80,8 +83,10 @@ fn progress(player: u64, status: &Status, sent: &mut Reported, now: Instant, out
     sent.loaded = status.loaded;
     sent.likely = status.likely;
     sent.progress_at = Some(now);
-    out.push(json!({"player":player,"kind":"progress","buffered":status.buffered,
-        "idle":status.loaded,"enough":status.likely}));
+    out.push(
+        json!({"player":player,"kind":"progress","buffered":status.buffered,
+        "idle":status.loaded,"enough":status.likely}),
+    );
 }
 
 /** A completed seek lands at its target. */
@@ -104,10 +109,14 @@ fn playback(player: u64, status: &Status, sent: &mut Reported, now: Instant, out
     if status.playing != sent.playing || status.playing && due {
         sent.playing = status.playing;
         sent.time_at = Some(now);
-        out.push(json!({"player":player,"kind":"time","time":status.time,"playing":status.playing}));
+        out.push(
+            json!({"player":player,"kind":"time","time":status.time,"playing":status.playing}),
+        );
         if status.frames != sent.frames {
             sent.frames = status.frames;
-            out.push(json!({"player":player,"kind":"frames","frames":status.frames,"time":status.time}));
+            out.push(
+                json!({"player":player,"kind":"frames","frames":status.frames,"time":status.time}),
+            );
         }
     }
     if status.ended && !sent.ended {

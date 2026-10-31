@@ -463,10 +463,21 @@ impl Page<'_> {
     }
     /** A parsed page script's own source, while scripts have not given it children or text. */
     pub(in crate::v9) fn parsed_script_text(&mut self, id: usize) -> Option<String> {
-        let index = self.state.parsed_scripts.as_ref()?.iter().position(|node| *node == id)?;
-        let text = self.inline_scripts.get(index).filter(|text| !text.is_empty())?.clone();
+        let index = self
+            .state
+            .parsed_scripts
+            .as_ref()?
+            .iter()
+            .position(|node| *node == id)?;
+        let text = self
+            .inline_scripts
+            .get(index)
+            .filter(|text| !text.is_empty())?
+            .clone();
         let untouched = self.all_children(id).is_empty()
-            && self.view(id).is_none_or(|view| view.text.is_none_or(|own| own.is_empty()));
+            && self
+                .view(id)
+                .is_none_or(|view| view.text.is_none_or(|own| own.is_empty()));
         untouched.then_some(text)
     }
     /** All text inside a node, in document order. */

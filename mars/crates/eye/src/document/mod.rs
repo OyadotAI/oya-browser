@@ -45,7 +45,6 @@ use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
 use std::collections::BTreeMap;
 pub use style::default_transform_origin;
-pub use style::{COMPUTED_PROPERTIES, computed_value as computed_css_value, css_color};
 pub use style::{
     AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
     ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
@@ -57,6 +56,7 @@ pub use style::{
     AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
 };
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
+pub use style::{COMPUTED_PROPERTIES, computed_value as computed_css_value, css_color};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,

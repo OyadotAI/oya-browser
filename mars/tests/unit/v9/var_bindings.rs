@@ -106,7 +106,7 @@ fn var_hoisting_preserves_lexical_early_errors_and_tdz() {
     ] {
         let error = execute(source).unwrap_err();
         assert!(
-            error.message.contains("SyntaxError"),
+            error.message.contains("syntax error"),
             "{source}: {}",
             error.message
         );

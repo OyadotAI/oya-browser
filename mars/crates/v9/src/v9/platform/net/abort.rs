@@ -298,7 +298,11 @@ pub(super) fn validate_summary(page: &PageState) -> EngineResult<()> {
             || pending.id > page.next_request
             || !requests.insert(pending.id)
             || (pending.xhr || pending.indexed || pending.platform) && pending.signal.is_some()
-            || [pending.xhr, pending.indexed, pending.platform].iter().filter(|kind| **kind).count() > 1
+            || [pending.xhr, pending.indexed, pending.platform]
+                .iter()
+                .filter(|kind| **kind)
+                .count()
+                > 1
             || !pending.xhr && !pending.indexed && !pending.platform && pending.signal.is_none()
             || pending.xhr && !page.xhrs.contains_key(&pending.owner)
         {

@@ -115,6 +115,8 @@ pub(super) fn response(request: &Request) -> String {
         );
     }
     let (mime, source) = match path {
+        "/start" | "/" => ("text/html", include_str!("../../../fixtures/start.html")),
+        "/demo" => ("text/html", include_str!("../../../fixtures/desktop.html")),
         "/compat/choose-option" => (
             "text/html",
             include_str!("../../../fixtures/choose-option.html"),

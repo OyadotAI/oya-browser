@@ -40,7 +40,9 @@ impl Runtime {
     /** Whether one of this page's hops has a result waiting. */
     pub(super) fn landed(&self, page: &Page) -> bool {
         let in_flight = &page.scripting.in_flight;
-        in_flight.iter().any(|hop| self.loaded.contains_key(&hop.job))
+        in_flight
+            .iter()
+            .any(|hop| self.loaded.contains_key(&hop.job))
     }
 
     /** Wait until `until` for a hop of this page to finish; true when one did. For a settle

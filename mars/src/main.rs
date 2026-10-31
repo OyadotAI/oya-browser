@@ -103,6 +103,7 @@ fn set_default() -> EngineResult<()> {
 
 /** The public agent session owns its children for exactly its stdin lifetime. */
 fn agent(runtime: &mut Runtime) -> EngineResult<()> {
+    runtime.enable_web();
     run_agent(
         runtime,
         &mut BufReader::new(io::stdin().lock()),

@@ -33,14 +33,22 @@ const MINUTE: u64 = 60;
 const HOUR: u64 = 3600;
 
 /** Paint one media element's frame, captions and controls into its box. */
-pub(super) fn paint(page: &str, item: &DisplayItem, shape: &super::paint::Shape, painter: &super::paint::Painter, alpha: f64) {
+pub(super) fn paint(
+    page: &str,
+    item: &DisplayItem,
+    shape: &super::paint::Shape,
+    painter: &super::paint::Painter,
+    alpha: f64,
+) {
     let Some(view) = super::super::media::view(page, item.local_id) else {
         return;
     };
     if let Some(frame) = &view.frame {
         super::background::paint_replaced_image(item, shape, painter, frame, alpha);
     }
-    let [x, y, width, height] = item.content_box.unwrap_or([item.x, item.y, item.width, item.height]);
+    let [x, y, width, height] =
+        item.content_box
+            .unwrap_or([item.x, item.y, item.width, item.height]);
     let bar = match (view.controls, view.video) {
         (false, _) => 0.0,
         (true, true) => BAR.min(height),
@@ -60,8 +68,15 @@ fn captions(lines: &[String], [x, y, width, height]: [f64; 4]) {
         let size = text.size();
         let left = x + (width - size.width) / 2.0;
         let top = bottom - size.height;
-        NSColor::blackColor().colorWithAlphaComponent(CAPTION_SHADE).setFill();
-        NSBezierPath::fillRect(rect(left - CAPTION_PAD, top, size.width + 2.0 * CAPTION_PAD, size.height));
+        NSColor::blackColor()
+            .colorWithAlphaComponent(CAPTION_SHADE)
+            .setFill();
+        NSBezierPath::fillRect(rect(
+            left - CAPTION_PAD,
+            top,
+            size.width + 2.0 * CAPTION_PAD,
+            size.height,
+        ));
         text.drawAtPoint(NSPoint::new(left, top));
         bottom = top - CAPTION_PAD;
     }
@@ -69,7 +84,9 @@ fn captions(lines: &[String], [x, y, width, height]: [f64; 4]) {
 
 /** The control bar: play or pause, time, scrubber, mute. */
 fn controls(view: &super::super::media::View, [x, y, width, height]: [f64; 4]) {
-    NSColor::blackColor().colorWithAlphaComponent(SHADE).setFill();
+    NSColor::blackColor()
+        .colorWithAlphaComponent(SHADE)
+        .setFill();
     NSBezierPath::fillRect(rect(x, y, width, height));
     let white = NSColor::whiteColor();
     white.setFill();
@@ -79,7 +96,11 @@ fn controls(view: &super::super::media::View, [x, y, width, height]: [f64; 4]) {
     } else {
         bars(x + BUTTON / 2.0, middle);
     }
-    let time = format!("{} / {}", clock(view.status.time), clock(view.status.duration));
+    let time = format!(
+        "{} / {}",
+        clock(view.status.time),
+        clock(view.status.duration)
+    );
     let text = platform::colored(&time, TIME_FONT, false, &white);
     let text_height = text.size().height;
     text.drawAtPoint(NSPoint::new(x + BUTTON, middle - text_height / 2.0));
@@ -129,16 +150,26 @@ fn speaker(cx: f64, cy: f64, muted: bool) {
 /** The scrubber track with the played part filled. */
 fn scrubber([left, right]: [f64; 2], cy: f64, time: f64, duration: f64) {
     let width = right - left;
-    NSColor::whiteColor().colorWithAlphaComponent(SHADE).setFill();
+    NSColor::whiteColor()
+        .colorWithAlphaComponent(SHADE)
+        .setFill();
     NSBezierPath::fillRect(rect(left, cy - TRACK / 2.0, width, TRACK));
-    let played = if duration.is_finite() && duration > 0.0 { (time / duration).clamp(0.0, 1.0) } else { 0.0 };
+    let played = if duration.is_finite() && duration > 0.0 {
+        (time / duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     NSColor::whiteColor().setFill();
     NSBezierPath::fillRect(rect(left, cy - TRACK / 2.0, width * played, TRACK));
 }
 
 /** `m:ss` or `h:mm:ss`, as Chromium's controls print time; `0:00` while unknown. */
 fn clock(seconds: f64) -> String {
-    let total = if seconds.is_finite() && seconds > 0.0 { seconds as u64 } else { 0 };
+    let total = if seconds.is_finite() && seconds > 0.0 {
+        seconds as u64
+    } else {
+        0
+    };
     let (hours, minutes, secs) = (total / HOUR, total % HOUR / MINUTE, total % MINUTE);
     if hours > 0 {
         format!("{hours}:{minutes:02}:{secs:02}")
@@ -152,9 +183,18 @@ fn clock(seconds: f64) -> String {
  * the play button toggles, the scrubber seeks (returning the fraction), the mute button mutes,
  * and anywhere else on a video toggles playback. None when the click is not on controls.
  */
-pub(crate) fn control_action(item_box: [f64; 4], video: bool, px: f64, py: f64) -> Option<(&'static str, f64)> {
+pub(crate) fn control_action(
+    item_box: [f64; 4],
+    video: bool,
+    px: f64,
+    py: f64,
+) -> Option<(&'static str, f64)> {
     let [x, y, width, height] = item_box;
-    let bar_top = if video { y + height - BAR.min(height) } else { y };
+    let bar_top = if video {
+        y + height - BAR.min(height)
+    } else {
+        y
+    };
     if py < bar_top {
         return video.then_some(("toggle", 0.0));
     }
@@ -184,13 +224,31 @@ mod tests {
     #[test]
     fn control_clicks_map_to_actions() {
         let video = [0.0, 0.0, 400.0, 200.0];
-        assert_eq!(super::control_action(video, true, 10.0, 190.0), Some(("toggle", 0.0)));
-        assert_eq!(super::control_action(video, true, 390.0, 190.0), Some(("mute", 0.0)));
+        assert_eq!(
+            super::control_action(video, true, 10.0, 190.0),
+            Some(("toggle", 0.0))
+        );
+        assert_eq!(
+            super::control_action(video, true, 390.0, 190.0),
+            Some(("mute", 0.0))
+        );
         let left = super::BUTTON + super::TIME_TEXT;
-        let (action, fraction) = super::control_action(video, true, left + (400.0 - super::BUTTON - left) / 2.0, 190.0).unwrap();
+        let (action, fraction) = super::control_action(
+            video,
+            true,
+            left + (400.0 - super::BUTTON - left) / 2.0,
+            190.0,
+        )
+        .unwrap();
         assert_eq!(action, "seek");
         assert!((fraction - 0.5).abs() < 1e-9);
-        assert_eq!(super::control_action(video, true, 200.0, 50.0), Some(("toggle", 0.0)));
-        assert_eq!(super::control_action([0.0, 0.0, 300.0, 54.0], false, 10.0, 2.0), Some(("toggle", 0.0)));
+        assert_eq!(
+            super::control_action(video, true, 200.0, 50.0),
+            Some(("toggle", 0.0))
+        );
+        assert_eq!(
+            super::control_action([0.0, 0.0, 300.0, 54.0], false, 10.0, 2.0),
+            Some(("toggle", 0.0))
+        );
     }
 }

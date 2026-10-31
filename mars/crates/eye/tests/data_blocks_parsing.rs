@@ -106,7 +106,13 @@ fn metadata_and_data_blocks_are_kept_in_order() {
 #[test]
 fn metadata_inline_handlers_are_kept() {
     let document = parse("<link id=l rel=preload href=/a onload=\"x()\">").unwrap();
-    assert_eq!(document.metadata[0].attributes.get("onload").map(String::as_str), Some("x()"));
+    assert_eq!(
+        document.metadata[0]
+            .attributes
+            .get("onload")
+            .map(String::as_str),
+        Some("x()")
+    );
 }
 
 /** Script-inserted markup adds no metadata: V9 already holds what the script built. */

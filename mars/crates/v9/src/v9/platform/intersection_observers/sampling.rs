@@ -162,7 +162,15 @@ fn root_rect(
 ) -> Res<(bool, [f64; 4])> {
     let Some(root) = options.root else {
         let environment = &vm.page.environment;
-        return Ok((true, [0.0, 0.0, environment.viewport_width, environment.viewport_height]));
+        return Ok((
+            true,
+            [
+                0.0,
+                0.0,
+                environment.viewport_width,
+                environment.viewport_height,
+            ],
+        ));
     };
     let (has_box, bounds) = target_bounds(vm, root.node, known, cache)?;
     Ok((has_box && descends(vm, target, root.node), bounds))

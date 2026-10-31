@@ -207,8 +207,17 @@ pub const HTML_ID_BYTES: usize = 4096;
 /// Absolute deadline for a complete HTTP exchange.
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(2);
 /// Covers child writes and reads, not just response reads; two seconds past the script deadline
-/// for decoding the request and encoding the reply.
+/// for decoding the request and encoding the reply. Use `rpc_timeout()` at runtime.
 pub const RPC_TIMEOUT: Duration = Duration::from_secs(17);
+/// What an engine call allows past the script deadline for its request and reply.
+pub const RPC_DEADLINE_MARGIN: Duration = Duration::from_secs(2);
+
+/** The engine call bound: never under the effective script deadline plus its margin. With a
+fixed bound, a raised deadline (the test configuration's) let a slow but bounded script outlive
+the call, so the coordinator killed the engine instead of V9 reporting its own limit. */
+pub fn rpc_timeout() -> Duration {
+    RPC_TIMEOUT.max(script_deadline() + RPC_DEADLINE_MARGIN)
+}
 /// Successful status supported by the minimal HTTP implementation.
 pub const HTTP_OK: u16 = 200;
 /// Protocol separator for HTTP headers and body.

@@ -35,15 +35,16 @@ pub fn run_service(name: &str) -> EngineResult<()> {
     })
 }
 
-/** Reader adapter turning channel message frames into a byte stream. */
+/** Reader adapter turning channel message frames into a byte stream; typed jobs that arrive
+between frames run here, on the engine's thread, and answer through their own channel. */
 struct ChannelReader {
-    receiver: Receiver<Vec<u8>>,
+    receiver: Receiver<super::supervisor::Inbound>,
     current: Cursor<Vec<u8>>,
 }
 
 impl ChannelReader {
     /** Creates a new reader connected to the request receiver. */
-    fn new(receiver: Receiver<Vec<u8>>) -> Self {
+    fn new(receiver: Receiver<super::supervisor::Inbound>) -> Self {
         Self {
             receiver,
             current: Cursor::new(Vec::new()),
@@ -52,19 +53,32 @@ impl ChannelReader {
 
     /** Refills the internal buffer with the next frame from the channel. */
     fn refill(&mut self) -> io::Result<bool> {
-        match self.receiver.recv() {
-            Ok(frame) => {
-                self.current = Cursor::new(frame);
-                Ok(true)
+        loop {
+            match self.receiver.recv() {
+                Ok(super::supervisor::Inbound::Frame(frame)) => {
+                    self.current = Cursor::new(frame);
+                    return Ok(true);
+                }
+                Ok(super::supervisor::Inbound::Job(job)) => run_job(job),
+                Err(_) => return Ok(false),
             }
-            Err(_) => Ok(false),
         }
     }
 }
 
+/** A job that panics drops its answer channel, so its caller sees a failed service call
+instead of this engine thread dying with it. */
+fn run_job(job: super::supervisor::Job) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+}
+
 impl io::Read for ChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let available = self.current.get_ref().len().saturating_sub(self.current.position() as usize);
+        let available = self
+            .current
+            .get_ref()
+            .len()
+            .saturating_sub(self.current.position() as usize);
         if available == 0 && !self.refill()? {
             return Ok(0);
         }
@@ -74,7 +88,11 @@ impl io::Read for ChannelReader {
 
 impl io::BufRead for ChannelReader {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        let available = self.current.get_ref().len().saturating_sub(self.current.position() as usize);
+        let available = self
+            .current
+            .get_ref()
+            .len()
+            .saturating_sub(self.current.position() as usize);
         if available == 0 && !self.refill()? {
             return Ok(&[]);
         }
@@ -128,7 +146,7 @@ fn serve(name: &str) -> EngineResult<()> {
 /** Run an in-process engine worker servicing requests over memory channels. */
 pub(super) fn serve_in_process(
     name: &str,
-    requests: Receiver<Vec<u8>>,
+    requests: Receiver<super::supervisor::Inbound>,
     replies: SyncSender<EngineResult<Vec<u8>>>,
 ) -> EngineResult<()> {
     let reader = ChannelReader::new(requests);
@@ -165,9 +183,7 @@ fn transmit_network_token(
         prepared
             .take()
             .filter(|(token, _)| *token == input.token)
-            .ok_or_else(|| {
-                EngineError::invalid("Prepared request token expired or was consumed.")
-            })
+            .ok_or_else(|| EngineError::invalid("Prepared request token expired or was consumed."))
             .and_then(|(_, connection)| connection.transmit())
     })
 }
@@ -224,7 +240,13 @@ pub(super) fn serve_stream(
         head.validate()?;
         let head_id = head.id.clone();
         let reply = dispatch_service_frame(
-            name, &head, &frame, &mut prepared, &mut sequence, &mut input, &mut output,
+            name,
+            &head,
+            &frame,
+            &mut prepared,
+            &mut sequence,
+            &mut input,
+            &mut output,
         );
         write_service_reply(&mut output, Some(head_id), reply)?;
     }
@@ -586,7 +608,7 @@ struct PageCall {
 /** The V9 page entry points, one per lifecycle step. */
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum PageAction {
+pub(super) enum PageAction {
     /** Run the page's scripts, each rolled back alone on failure. */
     Load,
     /** Fire DOMContentLoaded or load. */
@@ -758,8 +780,22 @@ fn run_page_host(
             "This V9 page step needs committed state.",
         )),
     };
-    let mut execution = match call.action {
-        PageAction::Load if imports.is_some() => v9::load_worker(input),
+    let mut execution = run_action(call.action, input, state, imports.is_some())?;
+    if call.resident {
+        keep_resident(&mut execution, call.base, call.keep);
+    }
+    Ok(execution)
+}
+
+/** Run one lifecycle action against the input, taking committed state only when it needs it. */
+fn run_action(
+    action: PageAction,
+    input: v9::PageInput<'_>,
+    state: impl FnOnce() -> EngineResult<v9::VmState>,
+    worker: bool,
+) -> EngineResult<v9::Execution> {
+    match action {
+        PageAction::Load if worker => v9::load_worker(input),
         PageAction::Load => v9::load_page(input),
         PageAction::Event { event } => v9::page_event(input, state()?, event),
         PageAction::Click { target } => v9::click_page(input, state()?, target),
@@ -770,12 +806,75 @@ fn run_page_host(
         PageAction::Resize { complete } => v9::continue_resize_observers(input, state()?, complete),
         PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
         PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
-        PageAction::Modules if imports.is_some() => v9::resume_worker_modules(input, state()?),
+        PageAction::Modules if worker => v9::resume_worker_modules(input, state()?),
         PageAction::Modules => v9::load_modules(input, state()?),
-    }?;
-    if call.resident {
-        keep_resident(&mut execution, call.base, call.keep);
     }
+}
+
+/**
+ * A page step handed over in process as owned values: the scripts and modules are shared with
+ * the coordinator rather than copied, encoded or hashed, and the state lives here under its
+ * token exactly as a framed resident step's does.
+ */
+pub(super) struct TypedPage {
+    /** The page's classic scripts with their code-cache keys, computed once per script list. */
+    pub sources: std::sync::Arc<ResidentSources>,
+    /** Module scripts, import maps and fetched modules. */
+    pub modules: std::sync::Arc<v9::ModuleInput>,
+    /** The step's projection of the candidate document. */
+    pub document: document::ScriptDocument,
+    /** Origin storage candidates. */
+    pub storage: v9::StorageState,
+    /** Preferred languages for navigator.languages. */
+    pub languages: Vec<String>,
+    /** URL, viewport, clock, geometry and the facts the page sees. */
+    pub environment: v9::PageEnvironment,
+    /** Every page-owned lease this process may keep states for. */
+    pub resident_contexts: Vec<String>,
+    /** The resident state the step starts from; none for a first load. */
+    pub base: Option<u64>,
+    /** The committed state kept beside `base` for an abort. */
+    pub keep: Option<u64>,
+    /** What to run. */
+    pub action: PageAction,
+}
+
+/** One typed page step on this engine thread, on V9's own stack, kept resident. */
+pub(super) fn run_typed_page(call: TypedPage) -> EngineResult<v9::Execution> {
+    admit_resident(
+        &call.document.identity,
+        Some(&call.resident_contexts),
+        call.base,
+        call.keep,
+    )?;
+    let host = v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
+        languages: &call.languages,
+        fragments: &document::DomFragments,
+    };
+    let input = v9::PageInput {
+        sources: &call.sources.texts,
+        source_keys: &call.sources.keys,
+        document: call.document,
+        storage: call.storage,
+        host: &host,
+        environment: &call.environment,
+        modules: &call.modules,
+    };
+    let base = call.base;
+    let state = || {
+        base.map_or_else(
+            || {
+                Err(EngineError::invalid(
+                    "This V9 page step needs committed state.",
+                ))
+            },
+            resident_state,
+        )
+    };
+    let mut execution = run_action(call.action, input, state, false)?;
+    keep_resident(&mut execution, call.base, call.keep);
     Ok(execution)
 }
 
@@ -954,7 +1053,7 @@ pub(super) struct ResidentSources {
 
 impl ResidentSources {
     /** Sources with their keys. */
-    fn new(texts: Vec<String>) -> Self {
+    pub(super) fn new(texts: Vec<String>) -> Self {
         let keys = texts.iter().map(|text| v9::source_key(text)).collect();
         Self { texts, keys }
     }

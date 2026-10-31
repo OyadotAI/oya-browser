@@ -462,14 +462,33 @@ const INTERFACES: &[Interface] = &[
     },
 ];
 
-/// Every member some interface owns; HTMLElement.prototype leaves these out.
+/// Every member some HTMLElement-derived interface owns; HTMLElement.prototype leaves these
+/// out. SVG interfaces derive from Element, so their members (focus, blur) must not remove
+/// HTMLElement's own: that left every HTML element with a no-op `focus()`.
 pub(super) fn specific(name: &str) -> bool {
-    INTERFACES.iter().any(|interface| {
-        interface.reflected.contains(&name)
-            || interface.getters.contains(&name)
-            || interface.accessors.contains(&name)
-            || interface.methods.contains(&name)
-    }) || VALIDATION.contains(&name)
+    INTERFACES
+        .iter()
+        .filter(|interface| html_derived(interface))
+        .any(|interface| {
+            interface.reflected.contains(&name)
+                || interface.getters.contains(&name)
+                || interface.accessors.contains(&name)
+                || interface.methods.contains(&name)
+        })
+        || VALIDATION.contains(&name)
+}
+
+/** Whether an interface inherits from HTMLElement (no parent means it does) rather than from
+Element through an SVG interface. */
+fn html_derived(interface: &Interface) -> bool {
+    match interface.parent {
+        None => true,
+        Some("Element") => false,
+        Some(parent) => INTERFACES
+            .iter()
+            .find(|candidate| candidate.name == parent)
+            .is_none_or(html_derived),
+    }
 }
 
 /// Tag to interface prototype, set once while the realm is built.

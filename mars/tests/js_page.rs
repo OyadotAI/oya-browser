@@ -614,7 +614,10 @@ fn script_linked_stylesheet_past_the_allowance_fails_closed() {
          l.rel='stylesheet';l.href='/more.css';document.head.appendChild(l)</script>"
     );
     let past = "y".repeat(sheets * FILLER_SLACK);
-    routes.push(("/more.css", reply("text/css", "", &format!("#go{{color:red}}/*{past}*/"))));
+    routes.push((
+        "/more.css",
+        reply("text/css", "", &format!("#go{{color:red}}/*{past}*/")),
+    ));
     let (_fixture, mut runtime, page) = load(&body, routes);
     assert!(
         page["degraded"]
@@ -802,7 +805,10 @@ fn a_slow_fetch_does_not_hold_the_page() {
     let mut runtime = desktop(&fixture.url);
     let started = std::time::Instant::now();
     let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
-    assert!(started.elapsed() < SLOW_ANSWER, "navigation waited for the fetch");
+    assert!(
+        started.elapsed() < SLOW_ANSWER,
+        "navigation waited for the fetch"
+    );
     assert!(texts(&loaded).contains("waiting"), "{loaded}");
     let deadline = std::time::Instant::now() + 4 * SLOW_ANSWER;
     let mut now = loaded;

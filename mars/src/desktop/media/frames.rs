@@ -17,7 +17,10 @@ const PIXEL_BITS: isize = 32;
 
 /** Copy one BGRA frame into an image; None for an empty or unreadable buffer. */
 pub(super) fn image(buffer: &CVPixelBuffer) -> Option<Retained<NSImage>> {
-    let (width, height) = (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer));
+    let (width, height) = (
+        CVPixelBufferGetWidth(buffer),
+        CVPixelBufferGetHeight(buffer),
+    );
     if width == 0 || height == 0 {
         return None;
     }
@@ -27,11 +30,14 @@ pub(super) fn image(buffer: &CVPixelBuffer) -> Option<Retained<NSImage>> {
             return None;
         }
         let rep = bitmap(width, height);
-        let copied = rep.as_ref().and_then(|rep| copy(buffer, rep, width, height));
+        let copied = rep
+            .as_ref()
+            .and_then(|rep| copy(buffer, rep, width, height));
         CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly);
         copied?;
         let rep = rep?;
-        let image = NSImage::initWithSize(NSImage::alloc(), NSSize::new(width as f64, height as f64));
+        let image =
+            NSImage::initWithSize(NSImage::alloc(), NSSize::new(width as f64, height as f64));
         image.addRepresentation(&rep);
         Some(image)
     }
@@ -61,7 +67,12 @@ fn bitmap(width: usize, height: usize) -> Option<Retained<NSBitmapImageRep>> {
 }
 
 /** Copy every row; the source stride may be wider than the image. */
-unsafe fn copy(buffer: &CVPixelBuffer, rep: &NSBitmapImageRep, width: usize, height: usize) -> Option<()> {
+unsafe fn copy(
+    buffer: &CVPixelBuffer,
+    rep: &NSBitmapImageRep,
+    width: usize,
+    height: usize,
+) -> Option<()> {
     let source = CVPixelBufferGetBaseAddress(buffer) as *const u8;
     let stride = CVPixelBufferGetBytesPerRow(buffer);
     let target = rep.bitmapData();

@@ -208,7 +208,7 @@ impl Vm<'_> {
         }
         Ok(())
     }
-        /** Execute instructions until an exit or an exception. */
+    /** Execute instructions until an exit or an exception. */
     fn execute(&mut self) -> Res<Exit> {
         loop {
             self.remaining = match self.remaining.checked_sub(1) {

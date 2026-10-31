@@ -79,7 +79,11 @@ fn audio_shows_a_box_only_with_controls() {
     assert!(!by_id(&styled, "podcast").style.hidden);
     assert!(by_id(&styled, "silent").style.hidden);
     let display = render(&styled, 800.0).unwrap();
-    let strip = display.items.iter().find(|item| item.local_id == by_id(&styled, "podcast").local_id).expect("audio box");
+    let strip = display
+        .items
+        .iter()
+        .find(|item| item.local_id == by_id(&styled, "podcast").local_id)
+        .expect("audio box");
     assert_eq!((strip.width, strip.height), (300.0, 54.0));
 }
 
@@ -94,7 +98,11 @@ fn canvas_renders_fallback_or_default_box() {
     let styled = compute_styles(&document, &[]).unwrap();
     let display = render(&styled, 800.0).unwrap();
     let blank = by_id(&styled, "blank").local_id;
-    let item = display.items.iter().find(|item| item.local_id == blank).expect("canvas box");
+    let item = display
+        .items
+        .iter()
+        .find(|item| item.local_id == blank)
+        .expect("canvas box");
     assert_eq!((item.width, item.height), (300.0, 150.0));
 }
 

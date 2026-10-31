@@ -144,6 +144,16 @@ impl CloseDelegate {
     }
 }
 
+/** Resolves the initial navigation address, defaulting ordinary human launches to the start page. */
+fn resolve_initial_url(url: Option<String>, origin: &str) -> Option<String> {
+    match url {
+        None => Some(format!("{origin}/start")),
+        Some(target) if target == "demo" => Some(format!("{origin}/demo")),
+        Some(target) if target == "forms" => Some(format!("{origin}/forms")),
+        Some(target) => Some(target),
+    }
+}
+
 /// Launches the actual independent browser and joins every owned engine on close.
 pub(super) fn run(options: Options) -> EngineResult<()> {
     let mtm = MainThreadMarker::new()
@@ -162,17 +172,7 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     let executable = std::env::current_exe()
         .map_err(|_| EngineError::invalid("Cannot resolve owned engine executable."))?;
     let ordinary_launch = options.url.is_none();
-    let initial = options.url.map(|url| {
-        if url == "demo" || url == "forms" {
-            format!(
-                "{}/{}",
-                site.origin,
-                if url == "forms" { "forms" } else { "" }
-            )
-        } else {
-            url
-        }
-    });
+    let initial = resolve_initial_url(options.url, &site.origin);
     let owner = if ordinary_launch {
         Owner::Human
     } else if options.agent_control {
@@ -654,10 +654,17 @@ impl Window {
             return;
         };
         for (_, node) in changed.iter().filter(|(id, _)| id == page) {
-            let item = display.items.iter().find(|item| item.local_id == *node && matches!(item.tag.as_str(), "video" | "audio"));
+            let item = display.items.iter().find(|item| {
+                item.local_id == *node && matches!(item.tag.as_str(), "video" | "audio")
+            });
             match item {
                 Some(item) if item.transform.is_none() && item.pin.is_none() => {
-                    self.canvas.setNeedsDisplayInRect(rect(item.x, item.y, item.width, item.height));
+                    self.canvas.setNeedsDisplayInRect(rect(
+                        item.x,
+                        item.y,
+                        item.width,
+                        item.height,
+                    ));
                 }
                 _ => self.canvas.setNeedsDisplayInRect(self.canvas.visibleRect()),
             }

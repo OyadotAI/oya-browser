@@ -5,7 +5,9 @@
  * app to perform. Timer scheduling is virtual; native hosts may enable script-visible live time.
  */
 pub(in crate::v9) mod animations;
+pub(in crate::v9) mod layout_host;
 pub use animations::{AnimationTarget, OpacityEffect};
+pub use layout_host::{LAYOUT_CALLS, LayoutAnswer, LayoutHook, LayoutHost};
 pub(in crate::v9) mod blob;
 pub(in crate::v9) mod blob_urls;
 pub(in crate::v9) mod broadcast;
@@ -32,8 +34,8 @@ pub use handler_policy::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, Handl
 pub(in crate::v9) mod frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
-pub(in crate::v9) mod indexed_db;
 mod implementation;
+pub(in crate::v9) mod indexed_db;
 mod install;
 mod interfaces;
 pub(in crate::v9) mod intersection_observers;
@@ -72,10 +74,10 @@ mod scrolling;
 mod selector;
 mod sheets;
 pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
+pub(in crate::v9) mod media;
 mod timers;
 mod token_list;
 mod token_set;
-pub(in crate::v9) mod media;
 mod url_bindings;
 mod url_parser;
 mod window;
@@ -425,6 +427,10 @@ pub struct PageEnvironment {
     /// `HostEffects::stale_geometry` and the app may lay out and run the step again. None
     /// when the app gives no such promise, and no read is reported.
     pub laid_out_before: Option<usize>,
+    /// Synchronous layout an in-process app supplies; never serialized, so a framed step has
+    /// none and keeps reporting stale reads for the app to retry.
+    #[serde(skip)]
+    pub layout: LayoutHook,
     /// The cascaded `position` of each element the last style pass left non-static, by node:
     /// what `getComputedStyle(el).position` answers when no inline declaration overrides it.
     /// Pages branch on it (GitHub sizes its fixed header only when the wrapper computes to
@@ -740,6 +746,7 @@ impl Default for PageEnvironment {
             element_scroll: BTreeMap::new(),
             scroll_max: BTreeMap::new(),
             laid_out_before: None,
+            layout: LayoutHook::default(),
             positions: BTreeMap::new(),
             computed_styles: BTreeMap::new(),
             root_styles: BTreeMap::new(),
@@ -1505,6 +1512,8 @@ pub(in crate::v9) struct Page<'h> {
     pub reporting_worker_error: bool,
     /// Observer continuations already sampled the supplied layout; finish must not resample stale boxes.
     pub sampled_observer_turn: bool,
+    /// Synchronous host layouts this step has asked for, bounded by `LAYOUT_CALLS`.
+    pub layout_calls: u32,
     /// A final intersection callback may register resize work for the next rendering opportunity.
     pub resize_registration_changed: bool,
     /** Native graphics is injected for each request and is never serialized. */
@@ -1601,6 +1610,7 @@ impl<'h> Page<'h> {
             import_bytes: 0,
             reporting_worker_error: false,
             sampled_observer_turn: false,
+            layout_calls: 0,
             resize_registration_changed: false,
             languages,
             fragments,

@@ -17,8 +17,10 @@ pub(super) fn for_nodes(
     document: &Document,
     interest: &BTreeSet<usize>,
 ) -> BTreeMap<usize, BTreeMap<String, String>> {
-    let mut styles: BTreeMap<usize, BTreeMap<String, String>> =
-        interest.iter().map(|node| (*node, BTreeMap::new())).collect();
+    let mut styles: BTreeMap<usize, BTreeMap<String, String>> = interest
+        .iter()
+        .map(|node| (*node, BTreeMap::new()))
+        .collect();
     if interest.is_empty() {
         return styles;
     }
@@ -74,7 +76,12 @@ mod tests {
     fn rendered_nodes_resolve_and_missing_ones_are_empty() {
         let document = crate::document::parse("<p id=a>x</p>").unwrap();
         let styled = crate::document::compute_styles(&document, &[]).unwrap();
-        let paragraph = styled.nodes.iter().find(|node| node.tag == "p").unwrap().local_id;
+        let paragraph = styled
+            .nodes
+            .iter()
+            .find(|node| node.tag == "p")
+            .unwrap()
+            .local_id;
         let styles = for_nodes(&styled, &BTreeSet::from([paragraph, usize::MAX]));
         assert_eq!(styles[&paragraph]["display"], "block");
         assert!(styles[&usize::MAX].is_empty());

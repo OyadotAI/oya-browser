@@ -162,9 +162,16 @@ pub(super) fn scroll_into_view(vm: &mut Vm, node: usize, call: &Call) -> Res<()>
     while let Some(container) = current.filter(|node| !is_viewport(*node)) {
         if vm.page.environment.scroll_max.contains_key(&container) {
             let (cx, cy, cw, ch) = super::dom::client_box(vm, container);
-            let delta = [align(inline, x - cx, width, cw), align(block, y - cy, height, ch)];
+            let delta = [
+                align(inline, x - cx, width, cw),
+                align(block, y - cy, height, ch),
+            ];
             let before = offset(vm, container);
-            set(vm, container, [Some(before[X] + delta[X]), Some(before[Y] + delta[Y])]);
+            set(
+                vm,
+                container,
+                [Some(before[X] + delta[X]), Some(before[Y] + delta[Y])],
+            );
             let after = offset(vm, container);
             x -= after[X] - before[X];
             y -= after[Y] - before[Y];
@@ -173,9 +180,16 @@ pub(super) fn scroll_into_view(vm: &mut Vm, node: usize, call: &Call) -> Res<()>
     }
     let environment = &vm.page.environment;
     let view = [environment.viewport_width, environment.viewport_height];
-    let delta = [align(inline, x, width, view[X]), align(block, y, height, view[Y])];
+    let delta = [
+        align(inline, x, width, view[X]),
+        align(block, y, height, view[Y]),
+    ];
     let before = offset(vm, HTML);
-    set(vm, HTML, [Some(before[X] + delta[X]), Some(before[Y] + delta[Y])]);
+    set(
+        vm,
+        HTML,
+        [Some(before[X] + delta[X]), Some(before[Y] + delta[Y])],
+    );
     Ok(())
 }
 

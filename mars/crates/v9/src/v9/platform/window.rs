@@ -515,7 +515,6 @@ pub(in crate::v9) fn location_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-
 /** history.scrollRestoration: "auto" until the page sets "manual" (React Router does on every
 render; a read-only property threw and Medium showed its error page). A value outside the enum
 is ignored, as WebIDL enum setters do. */

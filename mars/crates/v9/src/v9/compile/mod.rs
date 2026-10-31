@@ -419,7 +419,6 @@ impl Code {
         let (_, kind, text) = &self.callees[index];
         Some((*kind, text))
     }
-    /** Preserve comments and whitespace without interpreting the function's public name. */
     /** Code from the platform bootstrap, which pages must see as native, as Chrome's own
     interfaces are: its functions print `[native code]`, never the bootstrap's text. */
     pub fn platform(&self) -> bool {
@@ -427,6 +426,7 @@ impl Code {
             .as_ref()
             .is_some_and(|(_, base)| *base == crate::constants::SCRIPT_TOTAL_BYTES)
     }
+    /** Preserve comments and whitespace without interpreting the function's public name. */
     pub fn original_source(&self) -> Option<&str> {
         let (source, base) = self.source.as_ref()?;
         let (start, end) = self.source_span?;

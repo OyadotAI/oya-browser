@@ -29,7 +29,9 @@ fn discarded_async_results_release_targets_under_listener_pressure() {
     assert_eq!(common::global(&execution, "result"), "1");
 }
 
-/** A reaction-owned suspended frame must survive collections after setup roots are released. */
+/** A reaction-owned suspended frame must survive collections after setup roots are released.
+`void` drops each result: a script's completion value legitimately keeps its last expression's
+value alive (as in V8), which is not the temporary root under test. */
 #[test]
 fn pending_async_continuation_keeps_its_target_during_collection() {
     let execution = run(
@@ -37,7 +39,7 @@ fn pending_async_continuation_keeps_its_target_during_collection() {
          const gate=new Promise(resolve=>resume=resolve);
          async function waiting(){const target=new EventTarget();target.addEventListener(kind,()=>hits++);await gate;target.dispatchEvent(new Event(kind));result=String(hits)}
          async function discard(){const target=new EventTarget();target.addEventListener(kind,noop);return target}
-         waiting();for(let i=0;i<6;i++)discard();resume();",
+         waiting();for(let i=0;i<6;i++)void discard();resume();",
     );
     assert_eq!(common::global(&execution, "result"), "1");
 }

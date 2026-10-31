@@ -250,16 +250,29 @@ impl Canvas {
     there, and the media time a scrubber click seeks to; None off any element showing controls. */
     fn media_action(&self, page: &str, point: NSPoint) -> Option<(usize, &'static str, f64)> {
         let snapshot = self.ivars().snapshot.borrow();
-        let item = snapshot.as_ref()?.display.as_ref()?.items.iter().rev().find(|item| {
-            matches!(item.tag.as_str(), "video" | "audio")
-                && item.transform.is_none()
-                && (item.x..item.x + item.width).contains(&point.x)
-                && (item.y..item.y + item.height).contains(&point.y)
-        })?;
+        let item = snapshot
+            .as_ref()?
+            .display
+            .as_ref()?
+            .items
+            .iter()
+            .rev()
+            .find(|item| {
+                matches!(item.tag.as_str(), "video" | "audio")
+                    && item.transform.is_none()
+                    && (item.x..item.x + item.width).contains(&point.x)
+                    && (item.y..item.y + item.height).contains(&point.y)
+            })?;
         let view = super::media::view(page, item.local_id).filter(|view| view.controls)?;
-        let bounds = item.content_box.unwrap_or([item.x, item.y, item.width, item.height]);
+        let bounds = item
+            .content_box
+            .unwrap_or([item.x, item.y, item.width, item.height]);
         let (action, fraction) = media::control_action(bounds, view.video, point.x, point.y)?;
-        Some((item.local_id, action, fraction * view.status.duration.max(0.0)))
+        Some((
+            item.local_id,
+            action,
+            fraction * view.status.duration.max(0.0),
+        ))
     }
     /** Native callbacks stamp the current visible generation before entering a queue. */
     fn page_id(&self) -> Option<String> {

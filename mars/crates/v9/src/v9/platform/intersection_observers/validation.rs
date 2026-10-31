@@ -9,7 +9,12 @@ pub(in crate::v9) fn roots(state: &super::super::PageState, out: &mut Vec<JsValu
         if !observer.targets.is_empty() || !observer.queued.is_empty() {
             out.push(JsValue::Object(*id));
         }
-        out.extend(observer.options.root.map(|root| JsValue::Object(root.object)));
+        out.extend(
+            observer
+                .options
+                .root
+                .map(|root| JsValue::Object(root.object)),
+        );
         out.extend(
             observer
                 .targets

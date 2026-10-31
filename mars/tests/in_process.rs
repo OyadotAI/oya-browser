@@ -10,7 +10,9 @@ use std::path::Path;
 
 /** Starts the unified in-process runtime where all engines share the coordinator process. */
 fn in_process_runtime() -> Runtime {
-    unsafe { std::env::remove_var("MARS_PROCESS_ISOLATION"); }
+    unsafe {
+        std::env::remove_var("MARS_PROCESS_ISOLATION");
+    }
     Runtime::start(EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars")))).unwrap()
 }
 

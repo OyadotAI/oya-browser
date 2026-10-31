@@ -174,7 +174,12 @@ impl Runtime {
 impl Runtime {
     /** Navigation preload: the navigation's own network response, fetched with the
     Service-Worker-Navigation-Preload header, for `event.preloadResponse`; null when it failed. */
-    fn navigation_preload(&mut self, url: &str, header: &str, until: Instant) -> EngineResult<Value> {
+    fn navigation_preload(
+        &mut self,
+        url: &str,
+        header: &str,
+        until: Instant,
+    ) -> EngineResult<Value> {
         let request = crate::network::WebRequest {
             url: url.into(),
             headers: vec![(PRELOAD_HEADER.into(), header.into())],
@@ -243,11 +248,9 @@ fn navigable(record: &Value) -> bool {
 /** The document URL for a worker's navigation answer: the response's own URL only when it is
 same-origin with the navigation, so a worker cannot commit a page under another origin's URL. */
 fn document_url(url: &str, record: &Value) -> String {
-    let same_origin = |candidate: &str| {
-        match (url::Url::parse(url), url::Url::parse(candidate)) {
-            (Ok(a), Ok(b)) => a.origin() == b.origin(),
-            _ => false,
-        }
+    let same_origin = |candidate: &str| match (url::Url::parse(url), url::Url::parse(candidate)) {
+        (Ok(a), Ok(b)) => a.origin() == b.origin(),
+        _ => false,
     };
     record["url"]
         .as_str()

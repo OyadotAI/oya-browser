@@ -129,10 +129,13 @@ pub(super) fn fields(
     fields
 }
 
-/// The Origin a request sends: a script or image request's own (the coordinator serialized it the Fetch
-/// way, `null` included), or a form POST's initiator origin.
+/// The Origin a request sends: a script, image or module worker CORS request's own (the
+/// coordinator serialized it the Fetch way, `null` included), or a form POST's initiator origin.
 fn origin(request: &WebRequest, initiator: Option<&Url>) -> Option<String> {
-    if matches!(request.destination, Destination::Empty | Destination::Image) {
+    if matches!(
+        request.destination,
+        Destination::Empty | Destination::Image | Destination::Worker | Destination::WorkerImport
+    ) {
         return request.origin.clone();
     }
     initiator
@@ -243,8 +246,20 @@ fn fetch_metadata(
         // does not yet refuse a font whose response lacks Access-Control-Allow-Origin.
         Destination::Font => ("cors", "font"),
         // Media elements without `crossorigin` fetch in no-cors mode, as Chrome's do.
-        Destination::Video => (request.mode.unwrap_or(super::super::cors::Mode::NoCors).name(), "video"),
-        Destination::Audio => (request.mode.unwrap_or(super::super::cors::Mode::NoCors).name(), "audio"),
+        Destination::Video => (
+            request
+                .mode
+                .unwrap_or(super::super::cors::Mode::NoCors)
+                .name(),
+            "video",
+        ),
+        Destination::Audio => (
+            request
+                .mode
+                .unwrap_or(super::super::cors::Mode::NoCors)
+                .name(),
+            "audio",
+        ),
         Destination::Empty => (
             request
                 .mode

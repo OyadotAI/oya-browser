@@ -8,7 +8,7 @@ fn low_entropy_values_match_sec_ch_ua() {
     let source = "const d=navigator.userAgentData;const r=[d===navigator.userAgentData,\
         d.brands.map(b=>b.brand+'/'+b.version).join(' '),d.mobile,d.platform,JSON.stringify(d.toJSON().platform)].join('|');";
     let expected = format!(
-        "true|Chromium/{major} Not?A_Brand/24 Google Chrome/{major}|false|macOS|\"macOS\"",
+        "true|Not?A_Brand/24 Chromium/{major} Mars/{major}|false|macOS|\"macOS\"",
         major = mars_v9::constants::CHROME_FULL_VERSION
             .split('.')
             .next()

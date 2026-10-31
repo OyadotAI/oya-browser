@@ -266,15 +266,17 @@ fn random_uuid_is_unpredictable_and_well_formed() {
     }
 }
 
-/** Native shared-memory APIs are present while the unsupported WebSocket surface remains absent. */
+/** Native shared-memory APIs work, while WebSocket has only Chrome's interface shape: constructing
+one refuses explicitly instead of returning a socket that never connects. */
 #[test]
 fn supported_and_absent_platform_apis_are_distinct() {
     assert_eq!(
         eval(
-            "const r=[typeof Atomics,typeof SharedArrayBuffer,typeof WebSocket,typeof fetch,typeof XMLHttpRequest].join();",
+            "let made;try{new WebSocket('wss://x.test/');made='made'}catch(e){made=e.message}
+             const r=[typeof Atomics,typeof SharedArrayBuffer,typeof fetch,typeof XMLHttpRequest,made].join();",
             "r"
         ),
-        "object,function,undefined,function,function"
+        "object,function,function,function,Failed to construct 'WebSocket': Illegal constructor"
     );
 }
 

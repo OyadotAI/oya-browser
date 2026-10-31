@@ -24,6 +24,10 @@ const SOURCE: &str = concat!(
     include_str!("performance_observer.js"),
     "\n",
     include_str!("geometry.js"),
+    "\n",
+    include_str!("view_transitions.js"),
+    "\n",
+    include_str!("presentation.js"),
     // Last: the bootstrap's completion value must be the media installer that `run` calls.
     "\n",
     include_str!("media.js"),

@@ -49,8 +49,17 @@ fn check_response(vm: &mut Vm, response: &JsValue) -> Res<()> {
     let headers = vm.get(response, &Key::from("headers"))?;
     let get = vm.get(&headers, &Key::from("get"))?;
     let kind = vm.call(get, headers, vec![JsValue::string("content-type")?])?;
-    let essence = if kind.nullish() { String::new() } else { vm.to_text(&kind)? };
-    let essence = essence.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let essence = if kind.nullish() {
+        String::new()
+    } else {
+        vm.to_text(&kind)?
+    };
+    let essence = essence
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     if essence != WASM_MIME {
         return Err(vm.type_error("Incorrect response MIME type. Expected 'application/wasm'."));
     }
@@ -58,7 +67,9 @@ fn check_response(vm: &mut Vm, response: &JsValue) -> Res<()> {
         return Err(vm.type_error("HTTP status code is not ok"));
     }
     if vm.get(response, &Key::from("bodyUsed"))? == JsValue::Boolean(true) {
-        return Err(vm.type_error("Cannot compile WebAssembly.Module from an already read Response"));
+        return Err(
+            vm.type_error("Cannot compile WebAssembly.Module from an already read Response")
+        );
     }
     Ok(())
 }

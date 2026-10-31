@@ -37,14 +37,25 @@ define_class!(
     unsafe impl AVAssetResourceLoaderDelegate for Loader {
         /** Every request waits for bytes the coordinator fetches; none is refused here. */
         #[unsafe(method(resourceLoader:shouldWaitForLoadingOfRequestedResource:))]
-        fn should_wait(&self, _loader: &AVAssetResourceLoader, request: &AVAssetResourceLoadingRequest) -> bool {
+        fn should_wait(
+            &self,
+            _loader: &AVAssetResourceLoader,
+            request: &AVAssetResourceLoadingRequest,
+        ) -> bool {
             self.ivars().requests.borrow_mut().push(request.retain());
             true
         }
         /** A superseded request (a seek elsewhere) is dropped. */
         #[unsafe(method(resourceLoader:didCancelLoadingRequest:))]
-        fn cancelled(&self, _loader: &AVAssetResourceLoader, request: &AVAssetResourceLoadingRequest) {
-            self.ivars().requests.borrow_mut().retain(|kept| !std::ptr::eq(&**kept, request));
+        fn cancelled(
+            &self,
+            _loader: &AVAssetResourceLoader,
+            request: &AVAssetResourceLoadingRequest,
+        ) {
+            self.ivars()
+                .requests
+                .borrow_mut()
+                .retain(|kept| !std::ptr::eq(&**kept, request));
         }
     }
 );

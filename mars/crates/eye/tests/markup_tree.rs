@@ -402,9 +402,18 @@ fn inline_event_handlers_are_kept() {
     )
     .unwrap();
     let div = by_id(&document, "d");
-    assert_eq!(div.attributes.get("onmouseover").map(String::as_str), Some("x()"));
+    assert_eq!(
+        div.attributes.get("onmouseover").map(String::as_str),
+        Some("x()")
+    );
     assert_eq!(div.handler.as_deref(), Some("steal()"));
-    assert_eq!(by_id(&document, "i").attributes.get("onerror").map(String::as_str), Some("pwn()"));
+    assert_eq!(
+        by_id(&document, "i")
+            .attributes
+            .get("onerror")
+            .map(String::as_str),
+        Some("pwn()")
+    );
     assert_eq!(
         document
             .formatting

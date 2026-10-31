@@ -28,6 +28,7 @@ mod image_loading;
 mod local_sheets;
 mod network;
 mod requests;
+mod sync_layout;
 pub(in crate::runtime) use requests::queue as queue_requests;
 
 /** Resident tokens identify heap-less projections; transferable states still require full heap validation. */
@@ -574,7 +575,9 @@ impl Runtime {
             &effects.cancelled_requests,
         )?;
         let cancelled = &effects.cancelled_requests;
-        scripting.in_flight.retain(|hop| !cancelled.contains(&hop.id));
+        scripting
+            .in_flight
+            .retain(|hop| !cancelled.contains(&hop.id));
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
         }
@@ -798,6 +801,9 @@ impl Runtime {
         environment: &PageEnvironment,
         action: &Value,
     ) -> EngineResult<Execution> {
+        if let Some(typed) = self.execute_typed(page, projection, environment, action) {
+            return typed;
+        }
         let load = action["kind"] == "load";
         let digest =
             (!page.scripts.is_empty()).then(|| super::service::sources_digest(&page.scripts));
@@ -844,6 +850,78 @@ impl Runtime {
             self.note_v9_sources(digest);
         }
         Ok(execution)
+    }
+
+    /**
+     * The step as a typed job when V9 runs in this process: owned values go in, the execution
+     * comes back, nothing is encoded or hashed. `None` sends the caller down the framed path.
+     */
+    fn execute_typed(
+        &mut self,
+        page: &Page,
+        projection: &crate::document::ScriptDocument,
+        environment: &PageEnvironment,
+        action: &Value,
+    ) -> Option<EngineResult<Execution>> {
+        let action: super::service::PageAction = match serde_json::from_value(action.clone()) {
+            Ok(action) => action,
+            Err(_) => return Some(Err(EngineError::invalid("Invalid V9 page action."))),
+        };
+        let load = matches!(action, super::service::PageAction::Load);
+        let call = super::service::TypedPage {
+            sources: self.shared_sources_for(&page.scripts),
+            // ponytail: modules are copied per step (2.75 MB on YouTube, a memcpy); share them
+            // like the scripts if this shows in a profile.
+            modules: std::sync::Arc::new(page.scripting.modules.input.clone()),
+            document: projection.clone(),
+            storage: page.storage.clone(),
+            languages: self.languages.clone(),
+            environment: self.with_sync_layout(page, environment),
+            resident_contexts: self.residency.snapshot(),
+            base: if load { None } else { page.state_token },
+            keep: self.committed_token(page),
+            action,
+        };
+        self.call_job("v9", "v9.page", None, move || {
+            super::service::run_typed_page(call)
+        })
+    }
+
+    /** The step's environment with a layout host, so a read of a box or style the last layout
+    cannot answer lays out at once on V9's thread instead of running the step twice.
+    ponytail: copies the document and sheets per step; share them by Arc if it shows. */
+    fn with_sync_layout(&self, page: &Page, environment: &PageEnvironment) -> PageEnvironment {
+        let mut environment = environment.clone();
+        let host = sync_layout::SyncLayout {
+            base: page.document.clone(),
+            sheets: page.resolved_stylesheets.clone(),
+            local_block: page.local_sheets,
+            context: self.render_context,
+            scroll: page.element_scroll.clone(),
+        };
+        environment.layout = crate::v9::LayoutHook(Some(std::sync::Arc::new(host)));
+        environment
+    }
+
+    /** The shared copy of this script list, built (and its code-cache keys hashed) only when the
+    list is new; equal lists compare by length first, so a miss costs nothing for most pages. */
+    fn shared_sources_for(
+        &mut self,
+        scripts: &[String],
+    ) -> std::sync::Arc<super::service::ResidentSources> {
+        let found = self
+            .shared_sources
+            .iter()
+            .position(|held| held.texts == scripts);
+        let shared = match found {
+            Some(index) => self.shared_sources.remove(index),
+            None => std::sync::Arc::new(super::service::ResidentSources::new(scripts.to_vec())),
+        };
+        self.shared_sources
+            .insert(0, std::sync::Arc::clone(&shared));
+        self.shared_sources
+            .truncate(super::service::RESIDENT_SOURCES);
+        shared
     }
 
     /**
@@ -1087,11 +1165,21 @@ impl Runtime {
         let mut deferred = Vec::new();
         let mut answered_bytes = 0usize;
         for response in std::mem::take(&mut page.scripting.ready) {
-            admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+            admit(
+                &mut page.scripting.ready,
+                &mut responses,
+                &mut answered_bytes,
+                response,
+            );
         }
         let hop_until = until.max(Instant::now() + SCRIPT_REQUEST_WALL);
         for response in self.drain_landed(page, hop_until)? {
-            admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+            admit(
+                &mut page.scripting.ready,
+                &mut responses,
+                &mut answered_bytes,
+                response,
+            );
         }
         for sent in 0..SCRIPT_REQUESTS_PER_STEP {
             let started = Instant::now();
@@ -1140,7 +1228,12 @@ impl Runtime {
             };
             if blob_policy.is_none() && on_loader(&request) {
                 if let Some(response) = self.fetch_on_loader(page, &base, &request, deadline)? {
-                    admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+                    admit(
+                        &mut page.scripting.ready,
+                        &mut responses,
+                        &mut answered_bytes,
+                        response,
+                    );
                 }
                 continue;
             }
@@ -1148,7 +1241,12 @@ impl Runtime {
             let response =
                 self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
             if request.kind != "beacon" {
-                admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+                admit(
+                    &mut page.scripting.ready,
+                    &mut responses,
+                    &mut answered_bytes,
+                    response,
+                );
             }
         }
         let later = std::mem::take(&mut page.scripting.requests);
@@ -1392,15 +1490,17 @@ impl Runtime {
             4 => self
                 .parked_responses(page)?
                 .map(|responses| json!({"kind":"resume","responses":responses})),
-            NETWORK_SOURCE if !scripting.requests.is_empty()
-                || !scripting.ready.is_empty()
-                || landed =>
+            NETWORK_SOURCE
+                if !scripting.requests.is_empty() || !scripting.ready.is_empty() || landed =>
             {
                 let requests = std::mem::take(&mut page.scripting.requests);
                 let responses = self.perform_requests(page, requests, until)?;
                 (!responses.is_empty()).then(|| json!({"kind":"resume","responses":responses}))
             }
-            6 if scripting.next_timer_ms.is_some_and(|due| due <= virtual_end) => {
+            6 if scripting
+                .next_timer_ms
+                .is_some_and(|due| due <= virtual_end) =>
+            {
                 scripting.clock_ms = scripting.clock_ms.max(virtual_end);
                 Some(json!({"kind":"timers","now_ms":scripting.clock_ms,"budget":TIMER_BUDGET}))
             }
@@ -1409,7 +1509,12 @@ impl Runtime {
     }
 
     /** Load this turn's images and the step that tells the page about them. */
-    fn image_action(&mut self, page: &mut Page, until: Instant, changed: &mut bool) -> EngineResult<Value> {
+    fn image_action(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+        changed: &mut bool,
+    ) -> EngineResult<Value> {
         let responses = self.perform_image_requests(page, until)?;
         if responses.iter().any(|response| {
             page.document
@@ -1861,7 +1966,8 @@ fn admit(
     response: HostResponse,
 ) {
     let size = response.body.len() + response.body_bytes.len();
-    if !responses.is_empty() && (*answered_bytes + size > STEP_RESPONSE_BYTES || !ready.is_empty()) {
+    if !responses.is_empty() && (*answered_bytes + size > STEP_RESPONSE_BYTES || !ready.is_empty())
+    {
         ready.push(response);
         return;
     }
@@ -1874,7 +1980,8 @@ pub(super) fn apply_local_sheets(page: &mut Page, texts: Option<Vec<String>>) ->
     let Some(texts) = texts else {
         return false;
     };
-    page.local_sheets = local_sheets::replace(&mut page.resolved_stylesheets, page.local_sheets, &texts);
+    page.local_sheets =
+        local_sheets::replace(&mut page.resolved_stylesheets, page.local_sheets, &texts);
     page.styled = false;
     true
 }

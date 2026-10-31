@@ -13,7 +13,11 @@ pub(super) fn deliver_all(vm: &mut Vm) -> Res<Option<usize>> {
         .map(|(id, _)| *id)
         .collect();
     for id in ids {
-        let depth = vm.page.state.resize_observers.get(&id)
+        let depth = vm
+            .page
+            .state
+            .resize_observers
+            .get(&id)
             .and_then(|state| state.queued.iter().map(|entry| entry.depth).min());
         if let Some(depth) = depth {
             shallowest = Some(shallowest.map_or(depth, |previous| previous.min(depth)));

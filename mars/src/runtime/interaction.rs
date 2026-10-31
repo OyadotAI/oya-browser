@@ -224,7 +224,6 @@ impl Runtime {
         let step = self.script_step(&mut page, json!({"kind":"click","target":node.local_id}))?;
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
         let changed = self.settle_after_load(&mut page, deadline)? || step.changed;
-        // A click is input even when its effect comes later (a handler that only sets a timer).
         page.scripting.wake();
         let result = if changed {
             self.finish_mutation(page)?
@@ -232,10 +231,15 @@ impl Runtime {
             self.commit_quietly(page)?;
             self.inspection()
         };
-        Ok(match self.follow_script_navigation(0) {
-            Some(Ok(followed)) => followed,
-            _ => result,
-        })
+        self.resolve_interaction_navigation(result)
+    }
+
+    /** Follows a navigation a script started during the interaction, else keeps its result. */
+    fn resolve_interaction_navigation(&mut self, default: Value) -> EngineResult<Value> {
+        Ok(self
+            .follow_script_navigation(0)
+            .transpose()?
+            .unwrap_or(default))
     }
     /**
      * V9 gets only committed state and the projection, never an agent permit. A button whose
@@ -418,10 +422,7 @@ impl Runtime {
         if allowed {
             return Ok(None);
         }
-        Ok(Some(match self.follow_script_navigation(0) {
-            Some(Ok(followed)) => followed,
-            _ => result,
-        }))
+        self.resolve_interaction_navigation(result).map(Some)
     }
     /** Commit a change a person or agent made, and keep the page's timers awake for another
     window, since they are interacting with it. */

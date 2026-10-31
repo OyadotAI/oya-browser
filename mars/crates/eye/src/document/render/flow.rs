@@ -368,7 +368,8 @@ pub(super) fn layout(
     if !html && !body && !nodes {
         return layout_once(document, presentation);
     }
-    let wrappers = (html || body).then(|| super::sizing::resolve_wrapper_sides(document, presentation.width));
+    let wrappers =
+        (html || body).then(|| super::sizing::resolve_wrapper_sides(document, presentation.width));
     let document = wrappers.as_ref().unwrap_or(document);
     let items = if nodes {
         layout_once(document, presentation)?.0
@@ -490,10 +491,16 @@ fn layout_once(
     let top = collapsed_body_edge(document, &items, authored, 0).unwrap_or(y);
     let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
     let decoration = super::body::decoration(document, x, top, width, end);
-    let in_flow_end = (body_end + margin).max(floats_end).max(after.end + after.margin);
+    let in_flow_end = (body_end + margin)
+        .max(floats_end)
+        .max(after.end + after.margin);
     let resize_wrappers = super::resize_wrappers::measure(
-        document, viewport, body, [width, top, end],
-        in_flow_end - (y - flowed_y), context.exhausted(),
+        document,
+        viewport,
+        body,
+        [width, top, end],
+        in_flow_end - (y - flowed_y),
+        context.exhausted(),
     );
     // This document has resolved percentage edges and these boxes have their final layout sizes.
     for item in &mut items {
@@ -502,7 +509,13 @@ fn layout_once(
             item.resize_box = Some(super::effects::resize_box(item, node));
         }
     }
-    Ok((items, height, decoration, context.exhausted(), resize_wrappers))
+    Ok((
+        items,
+        height,
+        decoration,
+        context.exhausted(),
+        resize_wrappers,
+    ))
 }
 /** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
 and ends at `end`; None for a static body, whose top-level absolute boxes use the viewport. */
