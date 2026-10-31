@@ -176,7 +176,7 @@ pub const GC_GROWTH_DIVISOR: usize = 4;
 /// Real time one timer run may spend before it leaves the rest of its due callbacks for the
 /// next run, as a browser does on a busy main thread: a page with many timers (YouTube) would
 /// otherwise run all of them in one uninterruptible step while the person's click waits.
-pub const TIMER_SLICE: Duration = Duration::from_millis(50);
+pub const TIMER_SLICE: Duration = Duration::from_millis(150);
 /// The interpreter reads the clock once per this many operations, keeping the guard cheap.
 pub const SCRIPT_CLOCK_STRIDE: usize = 4096;
 /// Text and attribute bytes one V9 request may propose in DOM changes, so STATEMENTS changes of

@@ -12,8 +12,10 @@ use crate::v9::vm::Vm;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/** Most synchronous layouts one step may ask for; past it reads fall back to the retry flag. */
-pub const LAYOUT_CALLS: u32 = 8;
+/** Most synchronous layouts one step may ask for; past it reads fall back to the retry flag,
+which reruns the whole step (1.8 s each on YouTube's watch page at a cap of 8). A read with no
+DOM change since the last layout reuses it, so a higher cap costs only real relayouts. */
+pub const LAYOUT_CALLS: u32 = 64;
 
 /** Resolved values by CSS property. */
 pub type Styles = BTreeMap<String, String>;

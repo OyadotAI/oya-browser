@@ -56,6 +56,15 @@ pub(in crate::v9) fn timer(vm: &mut Vm, call: Call) -> Res<JsValue> {
             } else {
                 0.0
             };
+            // HTML clamps a timeout scheduled more than NESTING_CLAMP levels deep to at least
+            // TIMER_MIN_DELAY_MS. Without it the virtual clock never moved past a stream of
+            // zero-delay timeouts and animation frames starved (YouTube's scheduler waited on one
+            // forever, so its icons and thumbnails never rendered).
+            let delay = if nesting(vm) > NESTING_CLAMP {
+                delay.max(TIMER_MIN_DELAY_MS)
+            } else {
+                delay
+            };
             let args = call
                 .args
                 .get(2..)
@@ -73,6 +82,11 @@ pub(in crate::v9) fn timer(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = vm.page.state.next_timer;
     let order = vm.page.state.next_order;
     vm.page.state.next_order = order.wrapping_add(1);
+    let nesting = if frame || name == "requestIdleCallback" {
+        0
+    } else {
+        nesting(vm)
+    };
     vm.page.state.timers.push(Timer {
         id,
         order,
@@ -81,8 +95,20 @@ pub(in crate::v9) fn timer(vm: &mut Vm, call: Call) -> Res<JsValue> {
         callback,
         args,
         frame,
+        nesting,
     });
     Ok(JsValue::Number(f64::from(id)))
+}
+
+/** Real time between rendering opportunities inside one timer run: one display frame. */
+const FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_micros(16_667);
+
+/** Levels of nested timeouts HTML allows before clamping their delay. */
+const NESTING_CLAMP: u8 = 5;
+
+/** The nesting level a timeout scheduled now gets: one deeper than the running timeout's. */
+fn nesting(vm: &Vm) -> u8 {
+    vm.page.timer_nesting.saturating_add(1)
 }
 
 /** Queue `callback(...args)` as a zero-delay task (observer deliveries). */
@@ -103,6 +129,7 @@ pub(in crate::v9) fn schedule(vm: &mut Vm, callback: JsValue, args: Vec<JsValue>
         callback,
         args,
         frame: false,
+        nesting: 0,
     });
     Ok(())
 }
@@ -141,8 +168,18 @@ impl Vm<'_> {
     has passed after the first; then set the clock to `now`. Timers left due run late, next. */
     pub fn run_due_timers(&mut self, now: f64, budget: usize) -> Res<usize> {
         let started = std::time::Instant::now();
+        // The first check finds a frame owed: steps are always more than a frame apart.
+        let mut last_frame: Option<std::time::Instant> = None;
         let mut ran = 0;
         while ran < budget && (ran == 0 || started.elapsed() < TIMER_SLICE) {
+            if last_frame.is_none_or(|at| at.elapsed() >= FRAME_INTERVAL) {
+                let frames = self.run_frame_batch(now)?;
+                last_frame = Some(std::time::Instant::now());
+                if frames > 0 {
+                    ran += frames;
+                    continue;
+                }
+            }
             let due = self
                 .page
                 .state
@@ -164,12 +201,42 @@ impl Vm<'_> {
                 self.page.state.next_order = next.order.wrapping_add(1);
                 self.page.state.timers.push(next);
             }
-            self.fire_timer(&timer)?;
-            self.drain_jobs()?;
+            self.page.timer_nesting = timer.nesting;
+            let fired = self.fire_timer(&timer).and_then(|()| self.drain_jobs());
+            self.page.timer_nesting = 0;
+            fired?;
             ran += 1;
         }
         self.page.state.clock = self.page.state.clock.max(now);
         Ok(ran)
+    }
+    /**
+     * One rendering opportunity: every animation frame callback queued and due by `now`, in the
+     * order they were requested, ahead of any timeout. A browser renders between tasks about
+     * once a frame of real time; ordering frames among timeouts by due time instead let a
+     * stream of zero-delay timeouts on a slow step starve them (YouTube's scheduler waited on
+     * a frame forever). Callbacks a frame callback requests wait for the next opportunity.
+     */
+    fn run_frame_batch(&mut self, now: f64) -> Res<usize> {
+        let mut batch: Vec<Timer> = Vec::new();
+        let timers = std::mem::take(&mut self.page.state.timers);
+        for timer in timers {
+            if timer.frame && timer.due <= now {
+                batch.push(timer);
+            } else {
+                self.page.state.timers.push(timer);
+            }
+        }
+        batch.sort_by_key(|timer| timer.order);
+        let Some(frame_time) = batch.iter().map(|timer| timer.due).reduce(f64::max) else {
+            return Ok(0);
+        };
+        self.page.state.clock = self.page.state.clock.max(frame_time);
+        for timer in &batch {
+            self.fire_timer(timer)?;
+            self.drain_jobs()?;
+        }
+        Ok(batch.len())
     }
     /** Shell callbacks report thrown values while their actual creation context is entered. */
     #[cfg(feature = "conformance")]

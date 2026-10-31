@@ -1125,6 +1125,9 @@ pub(in crate::v9) struct Timer {
     pub callback: JsValue,
     pub args: Vec<JsValue>,
     pub frame: bool,
+    /** HTML's timer nesting level: how many timeouts deep this one was scheduled. */
+    #[serde(default)]
+    pub nesting: u8,
 }
 
 /** Where a listener is registered. */
@@ -1514,6 +1517,8 @@ pub(in crate::v9) struct Page<'h> {
     pub sampled_observer_turn: bool,
     /// Synchronous host layouts this step has asked for, bounded by `LAYOUT_CALLS`.
     pub layout_calls: u32,
+    /// The nesting level of the timeout callback running now; zero outside one.
+    pub timer_nesting: u8,
     /// A final intersection callback may register resize work for the next rendering opportunity.
     pub resize_registration_changed: bool,
     /** Native graphics is injected for each request and is never serialized. */
@@ -1611,6 +1616,7 @@ impl<'h> Page<'h> {
             reporting_worker_error: false,
             sampled_observer_turn: false,
             layout_calls: 0,
+            timer_nesting: 0,
             resize_registration_changed: false,
             languages,
             fragments,

@@ -71,8 +71,9 @@ const SETTLE_STEPS: usize = 12;
 const TASK_SOURCES: usize = 7;
 /// The task source that delivers network responses to the page.
 const NETWORK_SOURCE: usize = 5;
-/// Timer callbacks one V9 timer run may make.
-const TIMER_BUDGET: usize = 64;
+/// Timer callbacks one V9 timer run may make. A step costs ~200 ms of fixed work around its
+/// callbacks on YouTube, so a run that stops after a few left the app's job queue growing.
+const TIMER_BUDGET: usize = 256;
 /** Response bytes one resume step carries in all; see the core constant. */
 use crate::constants::STEP_RESPONSE_BYTES;
 /// The only failure message a page sees, as in browsers: no status, headers or body.
