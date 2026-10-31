@@ -80,3 +80,15 @@ fn authored_targets_observe_definitions_and_final_length() {
         "4|5|2|define:0,define:1,set:length"
     );
 }
+
+/** Dense array indexing fast path reads values, observes holes and prototype chain delegation. */
+#[test]
+fn dense_array_fast_own_preserves_semantics() {
+    assert_eq!(
+        common::eval(
+            "Array.prototype[1]='inherited';const a=[10,,30];const r=[a[0],a[1],a[2],a[3]===undefined,a.length].join();delete Array.prototype[1];",
+            "r"
+        ),
+        "10,inherited,30,true,3"
+    );
+}

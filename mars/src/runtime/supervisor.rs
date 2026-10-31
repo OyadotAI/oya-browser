@@ -593,16 +593,18 @@ impl Runtime {
             next_broadcast_sequence: 0,
             provisional: None,
         };
+        let isolate = process_isolation_enabled();
         for (name, executable) in [
             ("network", programs.network),
             ("document", programs.document),
             ("v9", programs.v9),
         ] {
-            runtime.services.push(Service::spawn(
-                name,
-                &executable,
-                Arc::clone(&runtime.cancel),
-            )?);
+            let service = if isolate {
+                Service::spawn(name, &executable, Arc::clone(&runtime.cancel))?
+            } else {
+                Service::in_process(name, Arc::clone(&runtime.cancel))?
+            };
+            runtime.services.push(service);
             let ready = runtime.call(name, "service.ready", json!({}))?;
             if ready != json!({"service":name, "ready":true}) {
                 return Err(EngineError::service(name, false));
@@ -949,9 +951,18 @@ impl Runtime {
         let dead = self
             .services
             .iter_mut()
-            .find_map(|service| match service.child.try_wait() {
-                Ok(None) => None,
-                _ => Some(service.name),
+            .find_map(|service| match service.child.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(None) => None,
+                    _ => Some(service.name),
+                },
+                None => {
+                    if service.worker.as_ref().is_some_and(|w| w.is_finished()) {
+                        Some(service.name)
+                    } else {
+                        None
+                    }
+                }
             });
         if let Some(name) = dead {
             return Err(self.revive(name, None, None));
@@ -1079,9 +1090,10 @@ impl Runtime {
 
     /// Exposes owned process identities for native diagnostics, without transport handles.
     pub fn process_ids(&self) -> Vec<(&str, u32)> {
+        let pid = std::process::id();
         self.services
             .iter()
-            .map(|service| (service.name, service.child.id()))
+            .map(|service| (service.name, service.child.as_ref().map_or(pid, |c| c.id())))
             .collect()
     }
 
@@ -1092,7 +1104,9 @@ impl Runtime {
         }
         self.failed = true;
         for service in &mut self.services {
-            let _ = service.child.kill();
+            if let Some(child) = service.child.as_mut() {
+                let _ = child.kill();
+            }
         }
         self.services.clear();
         !self.session_dirty
@@ -1113,8 +1127,8 @@ pub(super) struct Service {
     cancel: Arc<AtomicBool>,
     /** Static service identity is never supplied by page input. */
     pub(super) name: &'static str,
-    /** Retained outside the worker so deadline expiry can release blocked writes. */
-    child: Child,
+    /** Retained for subprocesses; None when running as in-process worker threads. */
+    pub(super) child: Option<Child>,
     /** One in-flight encoded request; the coordinator has no unbounded queue. */
     requests: Option<SyncSender<Vec<u8>>>,
     /** The worker returns exactly one reply frame for each accepted request. */
@@ -1125,7 +1139,37 @@ pub(super) struct Service {
     sequence: u64,
 }
 
+/** Whether process isolation (separate child processes) is explicitly requested. */
+fn process_isolation_enabled() -> bool {
+    std::env::var_os("MARS_PROCESS_ISOLATION").is_some()
+}
+
 impl Service {
+    /** Spawn an in-process engine service worker thread sharing memory and process space. */
+    pub(super) fn in_process(
+        name: &'static str,
+        cancel: Arc<AtomicBool>,
+    ) -> EngineResult<Self> {
+        let (req_tx, req_rx) = mpsc::sync_channel(1);
+        let (rep_tx, rep_rx) = mpsc::sync_channel(1);
+        let worker = thread::Builder::new()
+            .name(format!("oya-{name}-inproc"))
+            .stack_size(crate::constants::SERVICE_STACK_BYTES)
+            .spawn(move || {
+                let _ = super::service::serve_in_process(name, req_rx, rep_tx);
+            })
+            .map_err(|_| EngineError::service(name, false))?;
+        Ok(Self {
+            cancel,
+            name,
+            child: None,
+            requests: Some(req_tx),
+            replies: rep_rx,
+            worker: Some(worker),
+            sequence: 0,
+        })
+    }
+
     /** Cleared environment avoids passing API keys and proxy configuration to engines. */
     pub(super) fn spawn(
         name: &'static str,
@@ -1162,7 +1206,7 @@ impl Service {
         Ok(Self {
             cancel,
             name,
-            child,
+            child: Some(child),
             requests: Some(sender),
             replies: receiver,
             worker: Some(worker),
@@ -1339,10 +1383,12 @@ struct Mismatch;
 type ImportLoader<'a> = dyn FnMut(&str, Instant) -> EngineResult<Option<String>> + 'a;
 
 impl Drop for Service {
-    /** Kill first, release channels second, then join; blocked pipe writes cannot leak. */
+    /** Kill child if subprocess, release channels, then join worker thread. */
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         self.requests.take();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();

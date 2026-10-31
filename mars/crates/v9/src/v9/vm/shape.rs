@@ -279,16 +279,27 @@ impl SiteCaches {
         std::mem::size_of_val(&*self.0)
     }
     /** The slot cached for `shape` at constant `site`. */
+    #[inline]
     pub fn lookup(&self, site: u32, shape: u64) -> Option<usize> {
         if shape == 0 {
             return None;
         }
-        self.0.get(site as usize)?.iter().find_map(|entry| {
-            let entry = entry.load(Ordering::Relaxed);
-            (entry >> SLOT_BITS == shape).then_some((entry & ((1 << SLOT_BITS) - 1)) as usize)
-        })
+        let ways = self.0.get(site as usize)?;
+        let mask = (1 << SLOT_BITS) - 1;
+        let first = ways[0].load(Ordering::Relaxed);
+        if first >> SLOT_BITS == shape {
+            return Some((first & mask) as usize);
+        }
+        for entry in &ways[1..] {
+            let val = entry.load(Ordering::Relaxed);
+            if val >> SLOT_BITS == shape {
+                return Some((val & mask) as usize);
+            }
+        }
+        None
     }
     /** Remember a slot: in an empty way, else replacing one picked by the shape. */
+    #[inline]
     pub fn record(&self, site: u32, shape: u64, slot: usize) {
         let Some(ways) = self.0.get(site as usize) else {
             return;

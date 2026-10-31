@@ -47,13 +47,42 @@ AppKit native window       native agent NDJSON or MCP stdio
           one worker / one Rust Runtime
           bounded tab states + shared engines and cookie profile
                         |
-            supervised private pipes
+          unified in-process execution (shared memory)
+          [optional: MARS_PROCESS_ISOLATION=1 for subprocesses]
                /        |        \
-          network    document     V9
-          process     process   process
-             |           |
-      OS sockets/TLS    owned layout + OS glyph metrics
+            Relay      Eye       V9 (with JIT Bridge)
+          (network)  (document)  (JavaScript VM)
+             |           |              |
+      OS sockets/TLS  owned layout  tiered JIT execution
+                      + glyphs      (Interpreted/Baseline/Optimized)
 ```
+
+## Unified in-process engine and JIT execution bridge
+
+### In-process engine execution and shared memory
+Mars runs the Coordinator, Relay (network), Eye (document/layout), and V9 (JavaScript) within
+the **same OS process space by default**, mirroring the unified in-process `WebContent`
+architecture of modern engines like Ladybird. Running in-process eliminates child process
+spawning overhead (`Command::new`), operating system context switching, pipe buffer latency,
+and kernel boundary crossings:
+- **Shared memory heap**: Eye and V9 share the process address space and allocator, allowing
+  in-memory representations to pass without intermediate OS pipe transport or serializing across processes.
+- **In-memory channel transport**: Requests and replies pass via zero-pipe bounded memory channels
+  (`mpsc::sync_channel`), with automatic stream framing and non-blocking deadline enforcement.
+- **Process isolation fallback**: Explicit multi-process isolation remains supported via the
+  `MARS_PROCESS_ISOLATION=1` environment variable for hermetic security testing, crash recovery
+  verification, and platform sandboxing.
+
+### V9 JIT execution bridge
+V9 includes an execution profiling and tiering bridge (`v9::jit::JitBridge`) to interface between
+the bytecode interpreter and JIT compilation tiers:
+- **Invocation profiling**: Function closures record call invocations to identify hot code paths.
+- **Optimization tiers**: Code units transition through three distinct execution tiers:
+  - `OptimizationTier::Interpreted`: standard bytecode execution for cold/initial paths.
+  - `OptimizationTier::Baseline`: fast baseline compilation reached after `BASELINE_TIER_INVOCATIONS` (20 calls).
+  - `OptimizationTier::Optimized`: fully optimized native execution reached after `OPTIMIZED_TIER_INVOCATIONS` (100 calls).
+- **Introspection status**: The JIT bridge reports standard status bitflags (`STATUS_FUNCTION`,
+  `STATUS_BASELINE`, `STATUS_OPTIMIZED`) for V8-compatible runtime introspection (`%GetOptimizationStatus`).
 
 ## Ownership and transactions
 

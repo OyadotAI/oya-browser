@@ -14,6 +14,7 @@ fn call(runtime: &mut Runtime, op: &str, params: Value) -> mars::protocol::Engin
 }
 /** Starts the actual three Rust engine processes, not in-process fakes. */
 fn runtime() -> Runtime {
+    unsafe { std::env::set_var("MARS_PROCESS_ISOLATION", "1"); }
     Runtime::start(EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars")))).unwrap()
 }
 

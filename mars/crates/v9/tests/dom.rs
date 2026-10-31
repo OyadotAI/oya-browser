@@ -148,11 +148,11 @@ fn extended_log_records_every_mutation() {
     );
 }
 
-/** Event handler attributes stay author-owned even in the extended log. */
+/** Sensitive attributes like srcdoc stay refused in the extended log. */
 #[test]
 fn handler_attributes_are_refused() {
     let execution = load_with(
-        "document.getElementById('first').setAttribute('onclick','alert(1)');",
+        "document.getElementById('first').setAttribute('srcdoc','alert(1)');",
         &extended(),
     );
     assert!(
@@ -242,6 +242,32 @@ fn link_clicks_record_navigation() {
     second.document = document;
     let clicked = mars_v9::click_page(second, loaded.state, 4).unwrap();
     assert_eq!(console(&clicked), ["seen"]);
+    assert_eq!(
+        clicked.effects.navigation.unwrap().url,
+        "https://example.com/docs"
+    );
+}
+
+/** A click listener that throws does not prevent navigation, reporting the error instead. */
+#[test]
+fn link_clicks_with_throwing_listener_still_navigates() {
+    let mut document = common::page();
+    document
+        .nodes
+        .push(common::element(4, Some(0), "a", &[("href", "/docs")]));
+    let sources = vec![
+        "document.querySelector('a').addEventListener('click',()=>{console.log('pre-throw');throw new Error('analytics failed')});"
+            .to_string(),
+    ];
+    let environment = common::environment();
+    let host = common::host();
+    let mut first = input(&sources, &host, &environment);
+    first.document = document.clone();
+    let loaded = mars_v9::load_page(first).unwrap();
+    let mut second = input(&sources, &host, &environment);
+    second.document = document;
+    let clicked = mars_v9::click_page(second, loaded.state, 4).unwrap();
+    assert_eq!(console(&clicked)[0], "pre-throw");
     assert_eq!(
         clicked.effects.navigation.unwrap().url,
         "https://example.com/docs"

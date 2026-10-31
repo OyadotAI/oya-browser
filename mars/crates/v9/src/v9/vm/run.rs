@@ -208,10 +208,9 @@ impl Vm<'_> {
         }
         Ok(())
     }
-    /** Execute instructions until an exit or an exception. */
+        /** Execute instructions until an exit or an exception. */
     fn execute(&mut self) -> Res<Exit> {
         loop {
-            self.select_frame_realm()?;
             self.remaining = match self.remaining.checked_sub(1) {
                 Some(remaining) => remaining,
                 None => return Err(self.charge(1).expect_err("budget exhausted")),
@@ -228,7 +227,13 @@ impl Vm<'_> {
                     host.collection_safepoint(self.page.environment.conformance_worker_id, self)?;
                 }
             }
-            self.collect_if_due()?;
+            if self.collect_due {
+                self.collect_if_due()?;
+            }
+            let realm = self.frames.last().expect("running frame").realm;
+            if realm != self.active_realm {
+                self.select_realm(realm)?;
+            }
             let frame = self.frames.last_mut().expect("running frame");
             let Some(op) = frame.code.ops.get(frame.pc).copied() else {
                 return Err(EngineError::invalid("V9 ran past the end of its code.").into());
@@ -240,10 +245,11 @@ impl Vm<'_> {
         }
     }
     /** The running frame. */
+    #[inline]
     fn frame(&mut self) -> &mut super::Frame {
         self.frames.last_mut().expect("running frame")
     }
-    /** References use the current instruction's lexical strictness; activation and stack privacy keep the function's own mode. */
+    /** References use the current instruction lexical strictness; activation and stack privacy keep the function own mode. */
     #[inline]
     fn reference_strict(&self) -> bool {
         self.frames
@@ -251,6 +257,7 @@ impl Vm<'_> {
             .is_some_and(|frame| frame.code.strict_at(frame.pc.saturating_sub(1)))
     }
     /** Push onto the operand stack. */
+    #[inline]
     pub(in crate::v9) fn push(&mut self, value: JsValue) {
         if let JsValue::String(text) = &value {
             self.track_string(text);
@@ -258,10 +265,12 @@ impl Vm<'_> {
         self.frame().stack.push(value);
     }
     /** Pop the operand stack. */
+    #[inline]
     pub(in crate::v9) fn pop(&mut self) -> JsValue {
         self.frame().stack.pop().unwrap_or(JsValue::Undefined)
     }
     /** Read the value `depth` below the top. */
+    #[inline]
     fn peek(&mut self, depth: usize) -> JsValue {
         let stack = &self.frame().stack;
         stack
@@ -1025,13 +1034,16 @@ impl Vm<'_> {
                     )));
                 }
                 68 => {
-                    // V9 never optimizes, so it reports V8's own no-turbofan answer: mjsunit's
-                    // assertUnoptimized passes and assertOptimized fails with its usual message.
                     let value = self.pop();
-                    let status = if self.is_callable(&value) {
-                        OPTIMIZATION_STATUS_FUNCTION
-                    } else {
-                        OPTIMIZATION_STATUS_NEVER
+                    let status = match value {
+                        JsValue::Object(id) => self.jit.status(id) as f64,
+                        _ => {
+                            if self.is_callable(&value) {
+                                OPTIMIZATION_STATUS_FUNCTION
+                            } else {
+                                OPTIMIZATION_STATUS_NEVER
+                            }
+                        }
                     };
                     self.push(JsValue::Smi(status));
                 }
@@ -2646,6 +2658,7 @@ impl Vm<'_> {
         self.get(base, &key)
     }
     /** A cached own data property of an ordinary object, if the site knows its shape. */
+    #[inline]
     fn load_hit(&self, site: u32, base: &JsValue) -> Option<JsValue> {
         let JsValue::Object(id) = base else {
             return None;

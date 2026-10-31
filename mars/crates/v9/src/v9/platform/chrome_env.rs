@@ -14,10 +14,12 @@ use crate::v9::vm::{Call, Res, Vm};
 
 /** Interfaces detection code checks only for existence; XRPlane is WebXR's, present on every
 Chrome desktop. */
-const PLAIN_INTERFACES: [&str; 3] = [
+const PLAIN_INTERFACES: [&str; 5] = [
     "SVGFETurbulenceElement",
     "CSSPositionTryDescriptors",
     "XRPlane",
+    "ScreenOrientation",
+    "Scheduler",
 ];
 /** Notification.maxActions on Chrome desktop. */
 const NOTIFICATION_ACTIONS: f64 = 2.0;

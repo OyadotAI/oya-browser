@@ -10,6 +10,25 @@
   const cacheIds = new WeakMap();
   const RequestCtor = global.Request;
   const ResponseCtor = global.Response;
+  /** The native url and type getters, captured before any page script can replace them. */
+  const responseUrl = Object.getOwnPropertyDescriptor(ResponseCtor.prototype, 'url').get;
+  const responseType = Object.getOwnPropertyDescriptor(ResponseCtor.prototype, 'type').get;
+  /** URL and type of the Responses this bootstrap rebuilt from coordinator records. Their visible
+  properties are configurable, so a script could restate them; this copy it cannot reach. */
+  const rebuilt = new WeakMap();
+
+  /** Give a rebuilt Response its URL and type, visibly and in `rebuilt`. */
+  function restoreIdentity(response, url, type) {
+    defineProperty(response, 'url', { value: url, enumerable: true, configurable: true });
+    defineProperty(response, 'type', { value: type, enumerable: true, configurable: true });
+    rebuilt.set(response, { url, type });
+  }
+
+  /** A Response's real URL and type: what the network or the coordinator gave it, never a
+  property a script defined (a worker answering a page with `url` set to another origin's). */
+  function responseIdentity(response) {
+    return rebuilt.get(response) || { url: responseUrl.call(response), type: responseType.call(response) };
+  }
   /** Statuses `new Response` accepts; others (an opaque 0) are restored on the instance. */
   const MIN_STATUS = 200;
   const MAX_STATUS = 599;
@@ -51,8 +70,9 @@
   /** Read one response into the record and bytes `cache.put` sends. */
   async function responseRecord(response) {
     const bytes = new Uint8Array(await response.arrayBuffer());
+    const { url, type } = responseIdentity(response);
     return {
-      record: { url: response.url, status: response.status, statusText: response.statusText, type: response.type, headers: [...response.headers], length: bytes.length },
+      record: { url, status: response.status, statusText: response.statusText, type, headers: [...response.headers], length: bytes.length },
       bytes,
     };
   }
@@ -71,8 +91,7 @@
         statusText: record.statusText,
         headers: record.type === 'opaque' ? [] : record.headers,
       });
-      defineProperty(response, 'url', { value: record.url, enumerable: true, configurable: true });
-      defineProperty(response, 'type', { value: record.type || 'default', enumerable: true, configurable: true });
+      restoreIdentity(response, record.url, record.type || 'default');
       if (!ordinary) {
         defineProperty(response, 'status', { value: record.status, enumerable: true, configurable: true });
         defineProperty(response, 'ok', { value: false, enumerable: true, configurable: true });

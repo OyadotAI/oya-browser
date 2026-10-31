@@ -839,6 +839,19 @@ impl Vm<'_> {
         let Some(object) = self.heap.get(id) else {
             return Fast::Slow;
         };
+        if let Class::Array(elements) = &object.class
+            && let Some(index) = key.index()
+        {
+            if let Some(val) = elements.get(index as usize)
+                && *val != JsValue::Hole
+            {
+                return Fast::Value(val.clone());
+            }
+            if object.props.get(key).is_none() {
+                return Fast::Missing(object.proto);
+            }
+            return Fast::Slow;
+        }
         if !ordinary_slot(&object.class, key) {
             return Fast::Slow;
         }

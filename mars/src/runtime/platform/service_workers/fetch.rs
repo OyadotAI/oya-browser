@@ -163,7 +163,9 @@ impl Runtime {
             event["preload"] = self.navigation_preload(url, &header, until)?;
         }
         Ok(match self.dispatch_fetch(version, event, until)? {
-            Some(Outcome::Response(record, bytes)) => Some(web_response(url, &record, bytes)),
+            Some(Outcome::Response(record, bytes)) if navigable(&record) => {
+                Some(web_response(url, &record, bytes))
+            }
             _ => None,
         })
     }
@@ -228,6 +230,33 @@ fn host_response(request: &HostRequest, record: &Value, bytes: Vec<u8>) -> HostR
 }
 
 /** A worker's response to a navigation as the document response Eye parses. */
+/** Whether a worker's answer may become a document. Fetch's "handle fetch" treats an opaque,
+opaque-redirect or error response to a navigation as a network error: an opaque body is another
+origin's data the page must never read, and committing it as the document would hand it over. */
+fn navigable(record: &Value) -> bool {
+    !matches!(
+        record["type"].as_str(),
+        Some("opaque" | "opaqueredirect" | "error")
+    )
+}
+
+/** The document URL for a worker's navigation answer: the response's own URL only when it is
+same-origin with the navigation, so a worker cannot commit a page under another origin's URL. */
+fn document_url(url: &str, record: &Value) -> String {
+    let same_origin = |candidate: &str| {
+        match (url::Url::parse(url), url::Url::parse(candidate)) {
+            (Ok(a), Ok(b)) => a.origin() == b.origin(),
+            _ => false,
+        }
+    };
+    record["url"]
+        .as_str()
+        .filter(|candidate| !candidate.is_empty() && same_origin(candidate))
+        .unwrap_or(url)
+        .into()
+}
+
+/** A worker's navigation answer as the response the document loads from. */
 fn web_response(url: &str, record: &Value, bytes: Vec<u8>) -> WebResponse {
     let headers: Vec<(String, String)> =
         serde_json::from_value(record["headers"].clone()).unwrap_or_default();
@@ -249,11 +278,7 @@ fn web_response(url: &str, record: &Value, bytes: Vec<u8>) -> WebResponse {
         .map(|label| label.trim_matches('"').to_string());
     let framing = ["x-frame-options", "content-security-policy"];
     WebResponse {
-        url: record["url"]
-            .as_str()
-            .filter(|u| !u.is_empty())
-            .unwrap_or(url)
-            .into(),
+        url: document_url(url, record),
         status: u16::try_from(record["status"].as_u64().unwrap_or(200)).unwrap_or(200),
         source: String::from_utf8_lossy(&bytes).into_owned(),
         image_data: false,
@@ -268,5 +293,32 @@ fn web_response(url: &str, record: &Value, bytes: Vec<u8>) -> WebResponse {
             .into_iter()
             .filter(|(name, _)| framing.contains(&name.to_ascii_lowercase().as_str()))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::{document_url, navigable};
+    use serde_json::json;
+
+    /** Opaque, opaque-redirect and error answers never become a document. */
+    #[test]
+    fn opaque_answers_are_not_navigable() {
+        for kind in ["opaque", "opaqueredirect", "error"] {
+            assert!(!navigable(&json!({"type": kind})), "{kind}");
+        }
+        assert!(navigable(&json!({"type": "basic"})));
+        assert!(navigable(&json!({"type": "cors"})));
+    }
+
+    /** A response URL from another origin cannot name the committed document. */
+    #[test]
+    fn document_url_stays_on_the_navigation_origin() {
+        let url = "https://a.example/page";
+        let same = json!({"url": "https://a.example/other"});
+        let cross = json!({"url": "https://b.example/secret"});
+        assert_eq!(document_url(url, &same), "https://a.example/other");
+        assert_eq!(document_url(url, &cross), url);
+        assert_eq!(document_url(url, &json!({"url": ""})), url);
     }
 }

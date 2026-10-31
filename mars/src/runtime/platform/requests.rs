@@ -67,6 +67,9 @@ impl Runtime {
         args: &serde_json::Value,
     ) -> EngineResult<Option<HostResponse>> {
         let reply = match handler(&request.method) {
+            _ if opaque_storage(ctx, &request.method) => {
+                super::fail("SecurityError", "Access is denied for this document.")?
+            }
             Some(handler) => handler(self, ctx, args, &request.body_bytes)?,
             None => super::fail("TypeError", UNKNOWN_OPERATION)?,
         };
@@ -190,5 +193,45 @@ fn response(id: u32, body: serde_json::Value, bytes: Vec<u8>) -> HostResponse {
         body: text,
         body_bytes: bytes,
         ..HostResponse::default()
+    }
+}
+
+/// Operations keyed by the caller's storage key (origin and top-level site).
+const STORAGE_KEYED: [&str; 3] = ["caches.", "locks.", "sw."];
+
+/** Whether this is a storage-keyed operation from an opaque origin. Every sandboxed or data:
+document serializes its origin as "null", so they would all share one key and read each other's
+caches, locks and workers; browsers throw SecurityError there, as IndexedDB already does here. */
+fn opaque_storage(ctx: &Ctx, op: &str) -> bool {
+    ctx.origin == "null" && STORAGE_KEYED.iter().any(|prefix| op.starts_with(prefix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Ctx, Kind, opaque_storage};
+    use url::Url;
+
+    /** A context at `origin` in a frame of a.example. */
+    fn ctx(origin: &str) -> Ctx {
+        Ctx {
+            identity: "frame-1".into(),
+            kind: Kind::Frame,
+            url: Url::parse("https://a.example/").unwrap(),
+            origin: origin.into(),
+            top_level: Url::parse("https://a.example/").unwrap(),
+            active: false,
+            selected: true,
+            tab: "tab-1".into(),
+        }
+    }
+
+    /** Opaque origins may not reach caches, locks or service workers; real origins may. */
+    #[test]
+    fn opaque_origins_are_refused_storage_keyed_operations() {
+        for op in ["caches.open", "locks.request", "sw.register"] {
+            assert!(opaque_storage(&ctx("null"), op), "{op}");
+            assert!(!opaque_storage(&ctx("https://a.example"), op), "{op}");
+        }
+        assert!(!opaque_storage(&ctx("null"), "clipboard.read"));
     }
 }

@@ -337,7 +337,9 @@ impl Vm<'_> {
             }
             // Collect while the next job is still in the queue, where the collector sees it.
             self.collect_if_needed()?;
-            self.collect_if_due()?;
+            if self.collect_due {
+                self.collect_if_due()?;
+            }
             let Some(job) = self.jobs.pop_front() else {
                 // A stable state: media elements whose attributes or position changed run
                 // their load steps now, and whatever microtasks those queue drain next.

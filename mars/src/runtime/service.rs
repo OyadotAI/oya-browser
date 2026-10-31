@@ -7,7 +7,8 @@ use crate::protocol::{
 use crate::{network, v9};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Write};
+use std::sync::mpsc::{Receiver, SyncSender};
 
 /** Private dispatch never shares the public agent operation table. */
 type Handler = fn(Value) -> EngineResult<Value>;
@@ -34,51 +35,198 @@ pub fn run_service(name: &str) -> EngineResult<()> {
     })
 }
 
+/** Reader adapter turning channel message frames into a byte stream. */
+struct ChannelReader {
+    receiver: Receiver<Vec<u8>>,
+    current: Cursor<Vec<u8>>,
+}
+
+impl ChannelReader {
+    /** Creates a new reader connected to the request receiver. */
+    fn new(receiver: Receiver<Vec<u8>>) -> Self {
+        Self {
+            receiver,
+            current: Cursor::new(Vec::new()),
+        }
+    }
+
+    /** Refills the internal buffer with the next frame from the channel. */
+    fn refill(&mut self) -> io::Result<bool> {
+        match self.receiver.recv() {
+            Ok(frame) => {
+                self.current = Cursor::new(frame);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+}
+
+impl io::Read for ChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self.current.get_ref().len().saturating_sub(self.current.position() as usize);
+        if available == 0 && !self.refill()? {
+            return Ok(0);
+        }
+        self.current.read(buf)
+    }
+}
+
+impl io::BufRead for ChannelReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let available = self.current.get_ref().len().saturating_sub(self.current.position() as usize);
+        if available == 0 && !self.refill()? {
+            return Ok(&[]);
+        }
+        self.current.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.current.consume(amt);
+    }
+}
+
+/** Writer adapter forwarding buffered reply frames into a sync channel. */
+struct ChannelWriter {
+    sender: SyncSender<EngineResult<Vec<u8>>>,
+    buffer: Vec<u8>,
+}
+
+impl ChannelWriter {
+    /** Creates a new writer connected to the reply channel. */
+    fn new(sender: SyncSender<EngineResult<Vec<u8>>>) -> Self {
+        Self {
+            sender,
+            buffer: Vec::new(),
+        }
+    }
+}
+
+impl io::Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let frame = std::mem::take(&mut self.buffer);
+        self.sender
+            .send(Ok(frame))
+            .map_err(|err| io::Error::new(io::ErrorKind::BrokenPipe, err))
+    }
+}
+
 /** Reads framed requests until the owner's pipe closes, answering each in order. */
 fn serve(name: &str) -> EngineResult<()> {
     let _owner = super::lifetime::OwnerWatch::start()?;
+    serve_stream(name, BufReader::new(io::stdin()), io::stdout())
+}
+
+/** Run an in-process engine worker servicing requests over memory channels. */
+pub(super) fn serve_in_process(
+    name: &str,
+    requests: Receiver<Vec<u8>>,
+    replies: SyncSender<EngineResult<Vec<u8>>>,
+) -> EngineResult<()> {
+    let reader = ChannelReader::new(requests);
+    let writer = ChannelWriter::new(replies);
+    serve_stream(name, reader, writer)
+}
+
+/** Dispatches a single network request token preparation. */
+fn prepare_network_token(
+    frame: &[u8],
+    id: &str,
+    prepared: &mut Option<(u64, network::Prepared)>,
+    sequence: &mut u64,
+) -> EngineResult<Vec<u8>> {
+    prepared.take();
+    *sequence = sequence.saturating_add(1);
+    let current_seq = *sequence;
+    value_request(frame)
+        .and_then(prepare)
+        .map(|connection| {
+            *prepared = Some((current_seq, connection));
+            json!({"token": current_seq})
+        })
+        .and_then(|result| encode_reply(id, &result))
+}
+
+/** Dispatches a network transmit operation against an active prepared connection. */
+fn transmit_network_token(
+    frame: &[u8],
+    id: &str,
+    prepared: &mut Option<(u64, network::Prepared)>,
+) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Transmit| {
+        prepared
+            .take()
+            .filter(|(token, _)| *token == input.token)
+            .ok_or_else(|| {
+                EngineError::invalid("Prepared request token expired or was consumed.")
+            })
+            .and_then(|(_, connection)| connection.transmit())
+    })
+}
+
+/** Dispatches one request frame to the appropriate engine service handler. */
+fn dispatch_service_frame(
+    name: &str,
+    head: &RequestHead,
+    frame: &[u8],
+    prepared: &mut Option<(u64, network::Prepared)>,
+    sequence: &mut u64,
+    input: &mut (dyn BufRead + Send),
+    output: &mut (dyn Write + Send),
+) -> EngineResult<Vec<u8>> {
+    if name == "network" && head.op == "network.prepare" {
+        prepare_network_token(frame, &head.id, prepared, sequence)
+    } else if name == "network" && head.op == "network.transmit" {
+        transmit_network_token(frame, &head.id, prepared)
+    } else if name == "v9" && head.op == "v9.worker" {
+        let imports = super::worker_io::Pipe::new(&head.id, input, output);
+        typed(frame, &head.id, |call| run_page_host(call, Some(&imports)))
+    } else {
+        dispatch(name, &head.op, &head.id, frame)
+    }
+}
+
+/** Writes a framed reply (or encoded error response) to the output stream. */
+fn write_service_reply(
+    output: &mut (dyn Write + Send),
+    head_id: Option<String>,
+    reply: EngineResult<Vec<u8>>,
+) -> EngineResult<()> {
+    let bytes = match reply {
+        Ok(bytes) => bytes,
+        Err(error) => encode(&Response::new(head_id, Err(error)))?,
+    };
+    output.write_all(&bytes).map_err(closed)?;
+    output.flush().map_err(closed)
+}
+
+/** Reads framed requests until stream closes, answering each in order. */
+pub(super) fn serve_stream(
+    name: &str,
+    mut input: impl BufRead + Send,
+    mut output: impl Write + Send,
+) -> EngineResult<()> {
     if !["network", "document", "v9"].contains(&name) {
         return Err(EngineError::invalid("Unknown engine service."));
     }
-    let mut input = BufReader::new(io::stdin());
-    let mut output = io::stdout();
     let mut prepared: Option<(u64, network::Prepared)> = None;
     let mut sequence = 0_u64;
     while let Some(frame) = read_frame(&mut input)? {
         let head: RequestHead = decode(&frame)?;
         head.validate()?;
-        let reply = if name == "network" && head.op == "network.prepare" {
-            prepared.take();
-            sequence = sequence.saturating_add(1);
-            value_request(&frame)
-                .and_then(prepare)
-                .map(|connection| {
-                    prepared = Some((sequence, connection));
-                    json!({"token":sequence})
-                })
-                .and_then(|result| encode_reply(&head.id, &result))
-        } else if name == "network" && head.op == "network.transmit" {
-            typed(&frame, &head.id, |input: Transmit| {
-                prepared
-                    .take()
-                    .filter(|(token, _)| *token == input.token)
-                    .ok_or_else(|| {
-                        EngineError::invalid("Prepared request token expired or was consumed.")
-                    })
-                    .and_then(|(_, connection)| connection.transmit())
-            })
-        } else if name == "v9" && head.op == "v9.worker" {
-            let imports = super::worker_io::Pipe::new(&head.id, &mut input, &mut output);
-            typed(&frame, &head.id, |call| run_page_host(call, Some(&imports)))
-        } else {
-            dispatch(name, &head.op, &head.id, &frame)
-        };
-        let bytes = match reply {
-            Ok(bytes) => bytes,
-            Err(error) => encode(&Response::new(Some(head.id), Err(error)))?,
-        };
-        output.write_all(&bytes).map_err(closed)?;
-        output.flush().map_err(closed)?;
+        let head_id = head.id.clone();
+        let reply = dispatch_service_frame(
+            name, &head, &frame, &mut prepared, &mut sequence, &mut input, &mut output,
+        );
+        write_service_reply(&mut output, Some(head_id), reply)?;
     }
     Ok(())
 }
@@ -114,8 +262,15 @@ fn dispatch(name: &str, op: &str, id: &str, frame: &[u8]) -> EngineResult<Vec<u8
         ("document", "document.styles", styles),
         ("document", "document.frame_styles", frame_styles),
         ("document", "document.frame_render", frame_render),
+        ("document", "document.layout", layout),
+        ("document", "document.value", value),
         ("v9", "v9.page", page),
         ("v9", "v9.devtools", devtools),
+        ("v9", "v9.execute", execute),
+        ("v9", "v9.load", load),
+        ("v9", "v9.event", event),
+        ("v9", "v9.document_load", document_load),
+        ("v9", "v9.document_click", document_click),
     ];
     if let Some((_, _, handler)) = typed_handlers
         .iter()
@@ -138,13 +293,6 @@ fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
         ("network", "network.web_fetch", web_fetch),
         ("network", "network.cache_clear", cache_clear),
         ("network", "network.cache_forget", cache_forget),
-        ("document", "document.layout", layout),
-        ("document", "document.value", value),
-        ("v9", "v9.execute", execute),
-        ("v9", "v9.load", load),
-        ("v9", "v9.event", event),
-        ("v9", "v9.document_load", document_load),
-        ("v9", "v9.document_click", document_click),
     ];
     let handler = handlers
         .iter()
@@ -1011,11 +1159,12 @@ fn apply(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
         document::apply_script_changes(&applied, &input.script_changes)
     })
 }
-/** Legacy abstract geometry remains available to headless clients. */
-fn layout(params: Value) -> EngineResult<Value> {
-    let input: Snapshot = parameters(params)?;
-    document::validate_content(&input.document)?;
-    serialize(document::layout(&input.document))
+/** Legacy abstract geometry remains available to headless clients without intermediate JSON trees. */
+fn layout(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Snapshot| {
+        document::validate_content(&input.document)?;
+        Ok(document::layout(&input.document))
+    })
 }
 /** Native point layout is computed once, independently of the window. */
 fn render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
@@ -1034,60 +1183,57 @@ fn run_render(input: Render) -> EngineResult<document::DisplayList> {
     }
     document::render_scrolled(&input.document, context, &input.scroll)
 }
-/** Type actions and human input use the same literal-value validator. */
-fn value(params: Value) -> EngineResult<Value> {
-    let input: SetValue = parameters(params)?;
-    serialize(document::set_value(
-        &input.document,
-        input.local_id,
-        &input.value,
-    )?)
+/** Type actions and human input apply literal values directly from decoded parameters. */
+fn value(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: SetValue| {
+        document::set_value(&input.document, input.local_id, &input.value)
+    })
 }
-/** Legacy execution delegates to the same owned interpreter. */
-fn execute(params: Value) -> EngineResult<Value> {
-    serialize(v9::execute(&parameters::<Execute>(params)?.source)?)
+/** Legacy execution evaluates source directly without intermediate JSON allocation. */
+fn execute(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Execute| v9::execute(&input.source))
 }
-/** Load-time globals become explicit serializable VM state. */
-fn load(params: Value) -> EngineResult<Value> {
-    let input: Load = parameters(params)?;
-    serialize(v9::load_scripts_with_storage(
-        &input.sources,
-        &input.inputs,
-        input.storage,
-    )?)
+/** Load-time scripts initialize VM state straight from typed frame parameters. */
+fn load(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Load| {
+        v9::load_scripts_with_storage(&input.sources, &input.inputs, input.storage)
+    })
 }
-/** No event can obtain an agent transport or native OS callback. */
-fn event(params: Value) -> EngineResult<Value> {
-    let input: Event = parameters(params)?;
-    serialize(v9::event_scripts_with_storage(
-        &input.sources,
-        &input.handler,
-        input.state,
-        &input.inputs,
-        input.storage,
-    )?)
+/** Event handlers execute under committed state straight from typed request frames. */
+fn event(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Event| {
+        v9::event_scripts_with_storage(
+            &input.sources,
+            &input.handler,
+            input.state,
+            &input.inputs,
+            input.storage,
+        )
+    })
 }
-/** Projected state is initialized even when a page has no classic scripts. */
-fn document_load(params: Value) -> EngineResult<Value> {
-    let input: DocumentLoad = parameters(params)?;
-    serialize(v9::load_document_scripts_with(
-        &input.sources,
-        input.document,
-        input.storage,
-        &host(&input.languages),
-    )?)
+/** Document scripts load into transactional VM state directly from typed frames. */
+fn document_load(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: DocumentLoad| {
+        v9::load_document_scripts_with(
+            &input.sources,
+            input.document,
+            input.storage,
+            &host(&input.languages),
+        )
+    })
 }
-/** Inline source and registered listeners execute together under the V9 transaction. */
-fn document_click(params: Value) -> EngineResult<Value> {
-    let input: DocumentClick = parameters(params)?;
-    serialize(v9::click_document_scripts_with(
-        &input.sources,
-        input.target,
-        input.state,
-        input.document,
-        input.storage,
-        &host(&input.languages),
-    )?)
+/** Document click handlers execute under transactional state directly from typed frames. */
+fn document_click(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: DocumentClick| {
+        v9::click_document_scripts_with(
+            &input.sources,
+            input.target,
+            input.state,
+            input.document,
+            input.storage,
+            &host(&input.languages),
+        )
+    })
 }
 
 /** Eye's pure fragment parser runs inside the V9 process; parsing grants no authority. */

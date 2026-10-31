@@ -76,7 +76,7 @@
     /** The Response navigation preload fetched, rebuilt from the coordinator's record. */
     function preloadResponse(record) {
       const response = new ResponseCtor(record.body, { status: record.status, headers: record.headers });
-      defineProperty(response, 'url', { value: record.url, enumerable: true, configurable: true });
+      restoreIdentity(response, record.url, 'basic');
       return response;
     }
 

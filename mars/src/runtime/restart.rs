@@ -83,11 +83,17 @@ impl Runtime {
         if self.cancel.load(Ordering::Relaxed) || !self.revival.admit(Instant::now()) {
             return self.retire(name);
         }
+        let is_in_process = self.services[index].child.is_none();
         drop(self.services.remove(index));
-        let Some(program) = self.revival.program(name) else {
-            return self.retire(name);
+        let fresh = if is_in_process {
+            Service::in_process(name, Arc::clone(&self.cancel))
+        } else {
+            let Some(program) = self.revival.program(name) else {
+                return self.retire(name);
+            };
+            Service::spawn(name, &program, Arc::clone(&self.cancel))
         };
-        match Service::spawn(name, &program, Arc::clone(&self.cancel)) {
+        match fresh {
             Ok(fresh) => self.services.insert(index, fresh),
             Err(_) => return self.retire(name),
         }
@@ -111,14 +117,20 @@ impl Runtime {
         if self.cancel.load(Ordering::Relaxed) {
             return self.retire(name);
         }
+        let is_in_process = self.services[index].child.is_none();
         drop(self.services.remove(index));
         if name == "v9" {
             self.v9_sources.clear();
         }
-        let Some(program) = self.revival.program(name) else {
-            return self.retire(name);
+        let fresh = if is_in_process {
+            Service::in_process(name, Arc::clone(&self.cancel))
+        } else {
+            let Some(program) = self.revival.program(name) else {
+                return self.retire(name);
+            };
+            Service::spawn(name, &program, Arc::clone(&self.cancel))
         };
-        match Service::spawn(name, &program, Arc::clone(&self.cancel)) {
+        match fresh {
             Ok(fresh) => self.services.insert(index, fresh),
             Err(_) => return self.retire(name),
         }

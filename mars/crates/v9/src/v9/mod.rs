@@ -7,6 +7,7 @@ mod binding;
 mod builtins;
 mod compile;
 mod errors;
+pub mod jit;
 mod keyboard;
 pub use keyboard::{KeyboardKey, keyboard_page};
 mod legacy_handlers;
@@ -2304,17 +2305,10 @@ fn click_page_with(
     if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
         return Err(error);
     }
-    let proceed = match platform::fire(&mut vm, platform::Target::Node(target), "click", true)
-        .and_then(|proceed| vm.drain_jobs().map(|()| proceed))
-    {
-        Ok(proceed) => proceed,
-        Err(thrown) => {
-            let location = vm.page.throw_location.unwrap_or_default();
-            let mut error = vm.uncaught(thrown, location);
-            error.input_kind = Some("handler".into());
-            return Err(error);
-        }
-    };
+    let fired = platform::fire(&mut vm, platform::Target::Node(target), "click", true);
+    let proceed = !matches!(fired, Ok(false));
+    let drained = fired.map(|_| ()).and_then(|_| vm.drain_jobs());
+    report_thrown(&mut vm, drained)?;
     if proceed {
         platform::follow_link(&mut vm, target);
     }

@@ -1,8 +1,9 @@
 # Mars
 
 Mars is Oya's Rust browser, being built for people and agents. Relay networking, Eye
-documents/layout/rendering, the V9 JavaScript runtime, native window and agent tools are
-implemented in Rust, with the engines running as supervised services. It uses no Chromium,
+documents/layout/rendering, the V9 JavaScript runtime (with JIT execution bridge), native window
+and agent tools are implemented in Rust, with the engines running as unified in-process services
+sharing memory and thread pool (with optional subprocess isolation via `MARS_PROCESS_ISOLATION=1`). It uses no Chromium,
 Blink, V8, CDP, WebView, injected agent scripts or existing browser engine.
 
 The replacement target is a complete everyday browser with native human controls and native

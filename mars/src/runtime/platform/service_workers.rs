@@ -192,11 +192,15 @@ fn preload(runtime: &mut Runtime, ctx: &Ctx, args: &Value, _: &[u8]) -> EngineRe
 /** ServiceWorker.postMessage from a page: a message event at that worker. */
 fn post_message(runtime: &mut Runtime, ctx: &Ctx, args: &Value, _: &[u8]) -> EngineResult<Reply> {
     let version = args["worker"].as_u64().unwrap_or_default();
+    // Worker versions are numbered in sequence, so a page could name another origin's worker;
+    // only one registered under the caller's own storage key may receive its messages.
+    let key = ctx.storage_key();
     let Some(registration) = runtime
         .platform
         .workers
         .registry
         .holding(version)
+        .filter(|r| r.key == key)
         .map(|r| r.id)
     else {
         return ok(Value::Null);
