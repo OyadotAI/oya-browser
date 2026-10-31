@@ -295,13 +295,14 @@ fn record_store(_options: &Options) -> std::sync::Arc<dyn crate::profile::Record
 fn verification_profiles(_options: &Options) -> Option<super::broker::ProfileStores> {
     if ephemeral(_options) {
         use crate::profile::test_support::{
-            MemorySessionStore, MemoryStore, MemoryWebStorageStore,
+            MemoryRecordStore, MemorySessionStore, MemoryStore, MemoryWebStorageStore,
         };
         use std::sync::Arc;
         return Some(super::broker::ProfileStores {
             cookies: Arc::new(MemoryStore::default()),
             storage: Arc::new(MemoryWebStorageStore::default()),
             sessions: Arc::new(MemorySessionStore::default()),
+            records: Arc::new(MemoryRecordStore::default()),
         });
     }
     None
@@ -400,6 +401,7 @@ impl Window {
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
         self.canvas.follow_viewport();
+        self.media_frames();
         if self.closed {
             while self.broker.events.try_recv().is_ok() {}
             self.canvas.clear_actions();
@@ -633,6 +635,32 @@ impl Window {
         {
             self.scroll.sent = y;
             self.busy = true;
+        }
+    }
+}
+
+impl Window {
+    /** Advance the native media players and repaint the element boxes whose frames changed. */
+    fn media_frames(&self) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let changed = super::media::tick(mtm);
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let page = snapshot.inspection["page_id"].as_str().unwrap_or_default();
+        let Some(display) = &snapshot.display else {
+            return;
+        };
+        for (_, node) in changed.iter().filter(|(id, _)| id == page) {
+            let item = display.items.iter().find(|item| item.local_id == *node && matches!(item.tag.as_str(), "video" | "audio"));
+            match item {
+                Some(item) if item.transform.is_none() && item.pin.is_none() => {
+                    self.canvas.setNeedsDisplayInRect(rect(item.x, item.y, item.width, item.height));
+                }
+                _ => self.canvas.setNeedsDisplayInRect(self.canvas.visibleRect()),
+            }
         }
     }
 }

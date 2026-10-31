@@ -113,7 +113,7 @@ fn matches(source: &str, embedder: &url::Url, framed: &url::Url) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::may_frame;
+    use super::{may_frame, may_frame_chain};
 
     fn page() -> url::Url {
         url::Url::parse("https://www.google.com/").unwrap()

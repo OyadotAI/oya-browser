@@ -21,7 +21,7 @@ fn collections_during_await_keep_the_state_consistent() {
          let settled = 0;
          async function step(n) {{ await null; settled += 1; return n }}
          for (var j = 0; j < 150; j++) {{ step(j); keep[j % 8].pop(); keep[j % 8].pop(); }}",
-        fill = VM_FUNCTIONS - 200
+        fill = VM_FUNCTIONS - 200 - common::empty_page_functions()
     )];
     let execution = load_with(&sources[0], &environment);
     assert_eq!(failure(&execution), None);

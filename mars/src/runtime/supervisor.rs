@@ -91,6 +91,8 @@ pub struct Runtime {
     pub(super) session_dirty: bool,
     /** Origin-scoped candidate values stay coordinator-owned and never enter snapshots. */
     pub(super) local_storage: BTreeMap<String, BTreeMap<String, String>>,
+    /** IndexedDB images by storage partition, loaded on first use and saved per commit. */
+    pub(super) indexed_db: super::indexed_db::IndexedDbStores,
     /** Session values are keyed by exact tab identity and canonical origin. */
     pub(super) session_storage: std::collections::HashMap<String, BTreeMap<String, String>>,
     /** Inactive tabs retain only committed page and presentation state. */
@@ -122,6 +124,13 @@ pub struct Runtime {
     pub(super) frame_partition: Option<String>,
     /** Committed channels share this coordinator, never process-global or persisted state. */
     pub(super) broadcast: super::broadcast::Broker,
+    /** Worker threads that carry page fetch hops, so a slow response never blocks this thread. */
+    pub(super) loader: super::loader::Loader,
+    /** Hops the loader finished that their page has not taken yet, by job; bounded by
+    LOADED_RESULTS so results for pages that navigated away cannot pile up. */
+    pub(super) loaded: BTreeMap<u64, EngineResult<crate::network::WebResponse>>,
+    /** Locks, Cache Storage, service workers, credentials and devices behind V9's platform bridge. */
+    pub(super) platform: super::platform::Platform,
     /** Candidate ordering is monotonic even when a candidate is abandoned. */
     pub(super) next_broadcast_sequence: u64,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
@@ -137,6 +146,13 @@ struct TabState {
     history: Vec<super::navigation::HistoryEntry>,
     history_cursor: Option<usize>,
     scroll_y: f64,
+}
+
+impl Runtime {
+    /** Every inactive tab's committed page, for work that must not outlive them (media players). */
+    pub(super) fn inactive_tab_pages(&self) -> impl Iterator<Item = &Page> {
+        self.tabs.iter().filter_map(|tab| tab.page.as_ref())
+    }
 }
 
 impl TabState {
@@ -170,6 +186,21 @@ impl Runtime {
             }
         }
         Ok(addresses)
+    }
+
+    /** Every tab's committed top-level page as (tab id, page), the active tab's current one first. */
+    pub(super) fn tab_pages(&self) -> Vec<(&str, &Page)> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                let page = if tab.id == self.active_tab_id {
+                    self.page.as_ref()
+                } else {
+                    tab.page.as_ref()
+                };
+                page.map(|page| (tab.id.as_str(), page))
+            })
+            .collect()
     }
 
     /** A channel callback gives an inactive recipient a finite, fair background work window. */
@@ -393,6 +424,10 @@ impl Runtime {
 
     /// Explicitly discard storage in safe order before lifting a restart recovery lock.
     pub fn clear_web_storage(&mut self) -> EngineResult<()> {
+        // IndexedDB is saved site storage too; a failure here keeps the IndexedDB records and reports.
+        if self.storage_store.is_some() && self.clear_indexed_db().is_err() {
+            eprintln!("Mars IndexedDB: saved databases could not be cleared.");
+        }
         let store = self
             .storage_store
             .as_ref()
@@ -513,6 +548,8 @@ impl Runtime {
     fn start_cancel(programs: EnginePrograms, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
         let mut runtime = Self {
             services: Vec::new(),
+            loader: super::loader::Loader::start(&programs.network),
+            loaded: BTreeMap::new(),
             revival: super::restart::Revival::new(&programs),
             failed: false,
             page: None,
@@ -537,6 +574,7 @@ impl Runtime {
             session_record: None,
             session_dirty: false,
             local_storage: Default::default(),
+            indexed_db: Default::default(),
             session_storage: Default::default(),
             tabs: vec![TabState::empty("tab-1".into())],
             selected_tab_id: "tab-1".into(),
@@ -551,6 +589,7 @@ impl Runtime {
             next_frame_window: 0,
             frame_partition: None,
             broadcast: Default::default(),
+            platform: Default::default(),
             next_broadcast_sequence: 0,
             provisional: None,
         };
@@ -807,6 +846,7 @@ impl Runtime {
 
     /// Empty Relay's HTTP cache for "Clear browsing data"; pages, cookies and storage are untouched.
     pub fn clear_cache(&mut self) -> EngineResult<()> {
+        self.loader.clear_cache();
         self.call("network", "network.cache_clear", json!({}))
             .map(|_| ())
     }
@@ -1136,6 +1176,19 @@ impl Service {
         matches!(self.call::<Value>("service.ready", &json!({}), None, &guard), Ok(Ok(value)) if value == json!({"service":self.name,"ready":true}))
     }
 
+    /** A loader worker's own RPC: no caller permit to revoke, and a reply that does not match
+    its request counts as a dead service so the worker replaces it. */
+    pub(super) fn request<T: DeserializeOwned>(
+        &mut self,
+        op: &str,
+        params: &impl Serialize,
+        deadline: Option<Instant>,
+    ) -> EngineResult<T> {
+        let guard = super::cancellation::Cancellation::new(None, None);
+        self.call(op, params, deadline, &guard)?
+            .map_err(|Mismatch| EngineError::service(self.name, false))
+    }
+
     /** Both worker writes and reads are covered by this external deadline. The request is
     serialized once, here, so its size check and its bytes are the same work. */
     fn call<T: DeserializeOwned>(
@@ -1299,7 +1352,9 @@ impl Drop for Service {
 
 /** Network connection phases retain a wider cap while navigation supplies the hard ceiling. */
 fn rpc_timeout(op: &str) -> Duration {
-    if op.starts_with("network.") && op != "network.fetch" {
+    if op == "network.prepare" {
+        crate::constants::WEB_PREPARE_RPC_TIMEOUT
+    } else if op.starts_with("network.") && op != "network.fetch" {
         WEB_RPC_TIMEOUT
     } else {
         RPC_TIMEOUT

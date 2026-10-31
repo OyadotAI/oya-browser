@@ -751,9 +751,10 @@ fn dispatch(
     block(context, node, flow, items, forced)
 }
 /** Replaced boxes sized from a natural size: images, canvases from their bitmap's `width` and
-`height` (render.rs `canvases`), and embedded frames. */
+`height` (render.rs `canvases`), videos from their media's frame size (or the default object
+size before it is known), and embedded frames. */
 pub(super) fn replaced_image(node: &Node) -> bool {
-    node.tag == "img" || node.tag == "canvas" || frame(node)
+    matches!(node.tag.as_str(), "img" | "canvas" | "video") || frame(node)
 }
 /** A box showing another document (HTML's iframe, or an object or embed the runtime loaded a
 document or drawing into): a replaced box whose content the runtime paints into its content box.
@@ -766,7 +767,7 @@ fn atomic_inline(node: &Node) -> bool {
     node.style.inline_block
         || frame(node)
         || [
-            "img", "canvas", "svg", "input", "button", "select", "textarea",
+            "img", "canvas", "video", "svg", "input", "button", "select", "textarea",
         ]
         .contains(&node.tag.as_str())
 }

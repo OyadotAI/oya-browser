@@ -89,22 +89,22 @@ fn measure(
     known: &BTreeSet<usize>,
     cache: &mut Bounds,
 ) -> Res<Entry> {
-    let width = vm.page.environment.viewport_width;
-    let height = vm.page.environment.viewport_height;
+    let (in_scope, base) = root_rect(vm, target.node, options, known, cache)?;
     let margin = options.margins.map(|margin| {
         if margin.percent {
-            margin.value * width / 100.0
+            margin.value * base[2] / 100.0
         } else {
             margin.value
         }
     });
     let root = [
-        -margin[3],
-        -margin[0],
-        width + margin[1] + margin[3],
-        height + margin[0] + margin[2],
+        base[0] - margin[3],
+        base[1] - margin[0],
+        base[2] + margin[1] + margin[3],
+        base[3] + margin[0] + margin[2],
     ];
     let (has_box, bounds) = target_bounds(vm, target.node, known, cache)?;
+    let has_box = has_box && in_scope;
     if root
         .iter()
         .chain(&bounds)
@@ -146,6 +146,38 @@ fn measure(
         intersects,
         time: vm.page.script_now(),
     })
+}
+
+/** The root's rectangle before margins, and whether the target can intersect it at all: the
+viewport for an implicit root; for an element root its border box, reachable only by targets
+inside it, as the spec's containing-block chain check requires.
+ponytail: border box, not the content box of a clipping root; refine if a scroller's padding
+ever decides whether a row loads. */
+fn root_rect(
+    vm: &mut Vm,
+    target: usize,
+    options: &options::Options,
+    known: &BTreeSet<usize>,
+    cache: &mut Bounds,
+) -> Res<(bool, [f64; 4])> {
+    let Some(root) = options.root else {
+        let environment = &vm.page.environment;
+        return Ok((true, [0.0, 0.0, environment.viewport_width, environment.viewport_height]));
+    };
+    let (has_box, bounds) = target_bounds(vm, root.node, known, cache)?;
+    Ok((has_box && descends(vm, target, root.node), bounds))
+}
+
+/** Whether `node` is a proper descendant of `ancestor`. */
+fn descends(vm: &mut Vm, node: usize, ancestor: usize) -> bool {
+    let mut current = vm.page.parent(node);
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        current = vm.page.parent(parent);
+    }
+    false
 }
 
 /** Repeated observers of the same element reuse geometry without changing per-observer margins or thresholds. */

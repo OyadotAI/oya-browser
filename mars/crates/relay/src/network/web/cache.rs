@@ -26,6 +26,10 @@ pub(super) struct Key {
     fixture: bool,
     /// Image requests have a smaller body budget than documents.
     image: bool,
+    /// The Origin the request sent, if any. A server that adds CORS headers only when asked and
+    /// sends no `Vary: Origin` (BBC, nytimes) must not have its no-Origin copy answer a CORS fetch.
+    #[serde(default)]
+    origin: Option<String>,
 }
 
 impl Key {
@@ -44,6 +48,7 @@ impl Key {
             url: url.into(),
             fixture,
             image: request.image,
+            origin: request.origin.clone(),
         })
     }
 }
@@ -234,19 +239,32 @@ pub fn clear_cache() {
     disk::clear();
 }
 
-/** RFC 9111 section 4.4: a POST to a URL invalidates what is stored for it in this partition. */
+/** RFC 9111 section 4.4: an unsafe request to a URL invalidates every copy stored for it in this
+partition, whatever Origin, grant or body budget each copy was stored under: a same-origin PUT
+sends an Origin header, and matching the whole key left the plain GET's copy served stale. */
 pub(super) fn invalidate(key: &Key) {
+    remove_where(|stored| stored.partition == key.partition && stored.url == key.url);
+    disk::remove(key);
+}
+
+/** Drops every copy of these URLs in every partition. Each network process keeps its own memory
+cache, so the coordinator relays one process's unsafe request to the others with this. */
+pub fn forget(urls: &[String]) {
+    remove_where(|stored| urls.contains(&stored.url));
+}
+
+/** Remove the memory entries whose key matches, keeping the byte count exact. */
+fn remove_where(matches: impl Fn(&Key) -> bool) {
     if let Ok(mut memory) = MEMORY.lock() {
         let removed: usize = memory
             .entries
             .iter()
-            .filter(|entry| entry.key == *key)
+            .filter(|entry| matches(&entry.key))
             .map(Stored::bytes)
             .sum();
-        memory.entries.retain(|entry| entry.key != *key);
+        memory.entries.retain(|entry| !matches(&entry.key));
         memory.bytes -= removed;
     }
-    disk::remove(key);
 }
 
 /** Memory hit, moved to the most recently used end. */
@@ -352,6 +370,7 @@ mod tests {
             url: format!("https://memory.test/{index}"),
             fixture: false,
             image: false,
+            origin: None,
         };
         for index in 0..entries {
             remember(Stored {

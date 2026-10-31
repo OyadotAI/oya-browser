@@ -317,6 +317,48 @@ const BATTERY: [(&str, JsValue); 4] = [
     ("level", JsValue::Number(1.0)),
 ];
 
+/** Methods whose first call installs the coordinator-backed APIs (`host_bridge::lazy_method`),
+by interface. Native entry points cost a page nothing until it uses one: patching these
+prototypes from the bootstrap would copy them into every page's serialized heap. */
+const LAZY_METHODS: [(&str, &[&str]); 8] = [
+    ("ServiceWorkerContainer", &["register", "getRegistration", "getRegistrations", "startMessages", "addEventListener"]),
+    ("Clipboard", &["read", "readText", "write", "writeText"]),
+    ("LockManager", &["request", "query"]),
+    ("CredentialsContainer", &["get", "create", "store", "preventSilentAccess"]),
+    ("WakeLock", &["request"]),
+    ("Navigator", &["getGamepads", "requestMIDIAccess", "requestMediaKeySystemAccess", "getInstalledRelatedApps"]),
+    ("Document", &["hasStorageAccess", "hasUnpartitionedCookieAccess", "requestStorageAccess", "requestStorageAccessFor", "execCommand", "queryCommandSupported", "queryCommandEnabled"]),
+    ("HTMLMediaElement", &["setMediaKeys"]),
+];
+/** Accessors whose first read installs the APIs (`host_bridge::lazy_getter`). */
+const LAZY_GETTERS: [(&str, &[&str]); 2] = [
+    ("ServiceWorkerContainer", &["ready", "controller", "oncontrollerchange", "onmessage"]),
+    ("HTMLMediaElement", &["mediaKeys"]),
+];
+
+/** Install the lazy entry points on their interfaces' prototypes. */
+fn lazy_entry_points(b: &mut Builder, known: &Known) {
+    for (interface, names) in LAZY_METHODS {
+        if let Some((_, proto)) = known.get(interface) {
+            for name in names {
+                b.host_method(*proto, name, 0, super::host_bridge::lazy_method);
+            }
+        }
+    }
+    for (interface, names) in LAZY_GETTERS {
+        if let Some((_, proto)) = known.get(interface) {
+            for name in names {
+                b.accessor(
+                    *proto,
+                    name,
+                    Some(super::host_bridge::lazy_getter),
+                    Some(super::host_bridge::lazy_setter),
+                );
+            }
+        }
+    }
+}
+
 /** Navigator's member objects, after the shape table has given their interfaces prototypes. */
 pub(super) fn navigator_objects(b: &mut Builder, known: &Known) {
     let Some(navigator_proto) = b
@@ -359,9 +401,10 @@ pub(super) fn navigator_objects(b: &mut Builder, known: &Known) {
         b.host_method(*proto, "persist", 0, not_persisted);
     }
     if let Some((_, proto)) = known.get("UserActivation") {
-        b.accessor(*proto, "hasBeenActive", Some(inactive), None);
-        b.accessor(*proto, "isActive", Some(inactive), None);
+        b.accessor(*proto, "hasBeenActive", Some(super::host_bridge::user_activation), None);
+        b.accessor(*proto, "isActive", Some(super::host_bridge::user_activation), None);
     }
+    lazy_entry_points(b, known);
     if let Some((_, proto)) = known.get("BatteryManager") {
         for (name, _) in BATTERY {
             b.accessor(*proto, name, Some(battery_get), None);
@@ -413,11 +456,6 @@ fn not_persisted(vm: &mut Vm, _: Call) -> Res<JsValue> {
     Ok(JsValue::Object(
         vm.promise_resolve(JsValue::Boolean(false))?,
     ))
-}
-
-/** userActivation: no gesture yet. */
-fn inactive(_: &mut Vm, _: Call) -> Res<JsValue> {
-    Ok(JsValue::Boolean(false))
 }
 
 /** A BatteryManager getter, by name. */

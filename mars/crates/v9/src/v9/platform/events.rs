@@ -403,10 +403,58 @@ fn path(vm: &mut Vm, target: Target, composed: bool, kind: &str) -> Vec<Target> 
             }
         }
         Target::Document if kind != "load" => path.push(Target::Window),
+        Target::Object(object) => object_parents(vm, object, &mut path),
         _ => {}
     }
     path.reverse();
     path
+}
+
+/** The private slot naming a non-node target's event parent, as IndexedDB's request -> transaction -> database path sets it. */
+pub(in crate::v9) const EVENT_PARENT: &str = "eventParent";
+/** How many event parents a non-node path may follow (IndexedDB needs two). */
+const OBJECT_PARENTS: usize = 8;
+/** Set on an event whose listeners each end with a microtask checkpoint, as task-dispatched events do. */
+const CHECKPOINT: &str = "listenerCheckpoint";
+/** Set when a listener for the event threw. */
+const THREW: &str = "listenerThrew";
+
+/** Append the event parents a non-node target names through its private slot. */
+fn object_parents(vm: &Vm, object: ObjectId, path: &mut Vec<Target>) {
+    let mut current = object;
+    for _ in 0..OBJECT_PARENTS {
+        let parent = vm
+            .heap
+            .get(current)
+            .and_then(|found| found.props.get(&Key::private(EVENT_PARENT)))
+            .and_then(|prop| match &prop.slot {
+                crate::v9::vm::heap::Slot::Data(JsValue::Object(id)) => Some(*id),
+                _ => None,
+            });
+        let Some(parent) = parent else {
+            return;
+        };
+        path.push(Target::Object(parent));
+        current = parent;
+    }
+}
+
+/** Dispatch a trusted event from a task at an object target: each listener ends with a microtask checkpoint. Returns 1 when canceled, plus 2 when a listener threw. */
+pub(in crate::v9) fn dispatch_task_event(
+    vm: &mut Vm,
+    target: ObjectId,
+    event: ObjectId,
+) -> Res<u8> {
+    if !is_event(vm, event) || flag(vm, event, DISPATCHING) {
+        return Err(vm.type_error("IndexedDB expected an event that is not being dispatched."));
+    }
+    with_event(vm, event, |data| data.trusted = true);
+    set_flag(vm, event, CHECKPOINT, true);
+    set_flag(vm, event, THREW, false);
+    let proceed = dispatch(vm, Target::Object(target), event);
+    set_flag(vm, event, CHECKPOINT, false);
+    let threw = flag(vm, event, THREW);
+    Ok(u8::from(!proceed?) | (u8::from(threw) << 1))
 }
 
 /** Dispatch an event object; returns false when a listener canceled it. */
@@ -656,11 +704,17 @@ fn call_listener(
             if result == JsValue::Boolean(false) {
                 cancel(vm, event);
             }
-            Ok(())
         }
-        Err(Thrown::Value(error)) => report_exception(vm, event, &error),
-        Err(fatal) => Err(fatal),
+        Err(Thrown::Value(error)) => {
+            set_flag(vm, event, THREW, true);
+            report_exception(vm, event, &error)?;
+        }
+        Err(fatal) => return Err(fatal),
     }
+    if flag(vm, event, CHECKPOINT) {
+        vm.drain_jobs()?;
+    }
+    Ok(())
 }
 
 /** Reports an uncaught listener exception, then fires `error` at the window unless that event is itself `error`. */

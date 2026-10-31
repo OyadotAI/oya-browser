@@ -21,7 +21,7 @@ use crate::constants::{HTML_BYTES, HTTP_OK, IMAGE_BYTES, REDIRECTS, WEB_TIMEOUT}
 use crate::protocol::{EngineError, EngineResult};
 use ::url::Url;
 pub use batch::fetch_batch;
-pub use cache::{clear_cache, set_cache_directory};
+pub use cache::{clear_cache, forget, set_cache_directory};
 pub use fields::CHROME_ENGINE;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -121,7 +121,7 @@ impl Prepared {
         let url = web_url(&request.url)?;
         let budget = std::time::Duration::from_millis(remaining_ms)
             .saturating_sub(super::constants::REPLY_MARGIN)
-            .min(WEB_TIMEOUT);
+            .min(crate::constants::WEB_REQUEST_CEILING);
         let deadline = Instant::now() + budget;
         let fixture = fixture_granted(&url, grants);
         // CORS images bypass the older URL-only HTTP cache; the coordinator reuses only mode-bound admitted images.
@@ -415,6 +415,7 @@ fn finish(
 ) -> EngineResult<WebResponse> {
     // Fonts arrive as bytes like images, under the same bound, but are not typed as images.
     let image_data = request.image || request.destination == Destination::Font;
+    let media = request.destination.media();
     let limit = if image_data { IMAGE_BYTES } else { HTML_BYTES };
     if body.len() > limit {
         return Err(EngineError::limit("HTTP body bytes", limit));
@@ -439,12 +440,12 @@ fn finish(
     let declared = charset
         .as_deref()
         .and_then(mars_core::http::encoding_for_label)
-        .filter(|_| !image_data && !download && !request.raw_response)
+        .filter(|_| !image_data && !download && !request.raw_response && !media)
         .map(str::to_owned);
     Ok(WebResponse {
         url: url.into(),
         status,
-        source: if image_data || download || request.raw_response {
+        source: if image_data || download || request.raw_response || media {
             base64(&body)
         } else if matches!(
             request.destination,
@@ -467,14 +468,26 @@ fn finish(
             .cloned(),
         headers: match request.destination {
             Destination::Empty => super::cors::response_headers(&headers),
+            // A player needs the range it got and the resource's full length and type.
+            Destination::Video | Destination::Audio => MEDIA_HEADERS
+                .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
             Destination::Image => IMAGE_CORS_HEADERS
                 .iter()
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
             // A document keeps the headers that say who may frame it, for the coordinator's
             // check before it embeds the document in another origin's page.
-            Destination::Document | Destination::Worker => FRAMING_HEADERS
+            Destination::Document => FRAMING_HEADERS
                 .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
+            // A worker script also keeps Service-Worker-Allowed, which may widen a service
+            // worker's maximum scope.
+            Destination::Worker => FRAMING_HEADERS
+                .iter()
+                .chain(&[SERVICE_WORKER_ALLOWED])
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
             _ => Vec::new(),
@@ -482,8 +495,19 @@ fn finish(
     })
 }
 
+/// Response headers a media fetch carries to the coordinator's player.
+const MEDIA_HEADERS: [&str; 6] = [
+    "content-range",
+    "content-length",
+    "content-type",
+    "accept-ranges",
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+];
 /// Response headers a document carries to the coordinator: who may frame it.
 const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
+/// The header that lets a service worker script allow a scope above its own directory.
+const SERVICE_WORKER_ALLOWED: &str = "service-worker-allowed";
 /** Only the host's CORS admission sees these image response headers; they never enter page script data. */
 const IMAGE_CORS_HEADERS: [&str; 2] = [
     "access-control-allow-origin",

@@ -64,7 +64,8 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
     }
     let ids = &realm().ids;
     let proto = match tag.as_str() {
-        "#text" | "#comment" => ids.text_prototype,
+        "#text" => ids.text_node_prototype,
+        "#comment" => ids.comment_prototype,
         PROCESSING_INSTRUCTION => {
             implementation::processing_instruction_prototype().unwrap_or(ids.text_prototype)
         }
@@ -148,7 +149,9 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
     for (old, new) in mapping {
         vm.page.adopt_namespaces(*old, *new);
         super::images::adopt(&mut vm.page, *old, *new)?;
+        super::media::adopt(&mut vm.page, *old, *new)?;
         super::resize_observers::adopt(&mut vm.page, *old, *new);
+        super::intersection_observers::adopt(&mut vm.page, *old, *new);
         if let Some(mut canvas) = vm.page.state.canvases.remove(old) {
             canvas.dirty = true;
             vm.page.state.canvases.insert(*new, canvas);
@@ -161,6 +164,7 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
             }
             vm.page.state.wrappers.insert(*new, wrapper);
         }
+        adopt_token_lists(vm, *old, *new);
         components::adopt(&mut vm.page, *old, *new);
         super::scripts::adopt(&mut vm.page, *old, *new);
         super::frames::adopt(&mut vm.page, *old, *new);
@@ -172,6 +176,26 @@ pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) -> Res<()> {
         range_live::renumber(vm, *old, *new);
     }
     Ok(())
+}
+
+/** A classList, DOMTokenList, style or dataset object taken before insertion keeps editing its element afterwards:
+the cached objects move to the adopted id and their host data follows. */
+fn adopt_token_lists(vm: &mut Vm, old: usize, new: usize) {
+    let Some(lists) = vm.page.state.token_lists.remove(&old) else {
+        return;
+    };
+    for id in lists.values() {
+        if let Some(Class::Host(data)) = vm.heap.get_mut(*id).map(|object| &mut object.class) {
+            match data.as_mut() {
+                HostData::ClassList(node)
+                | HostData::TokenList(node, _)
+                | HostData::Style(node)
+                | HostData::Dataset(node) => *node = new,
+                _ => {}
+            }
+        }
+    }
+    vm.page.state.token_lists.insert(new, lists);
 }
 
 /** A static node list object. */
@@ -410,7 +434,9 @@ pub(super) fn host_write(
             if !style_property(&property) {
                 return Ok(None);
             }
-            let text = vm.to_text(value)?;
+            // CSSOM properties are [LegacyNullToEmptyString]: `style.opacity = null` removes the
+            // declaration (GSAP clears its tweens that way), it never writes "null".
+            let text = null_to_empty(vm, value)?;
             set_style(vm, node, &css_name(&property), &text)?;
             Ok(Some(true))
         }
@@ -883,6 +909,30 @@ const BLOCK_TAGS: [&str; 31] = [
     "ul",
 ];
 
+/** Most nodes a step may ask the app to style for getComputedStyle. */
+const STYLE_REQUESTS: usize = 256;
+
+/** Eye's resolved value for a rendered node, when the app supplied it. A rendered node the app
+has not styled for scripts is reported, so the app can supply its cascade and rerun the step. */
+fn resolved_style(vm: &mut Vm, node: usize, property: &str) -> Option<String> {
+    let root = match node {
+        HTML => Some("html"),
+        BODY => Some("body"),
+        _ => None,
+    };
+    if let Some(root) = root {
+        let values = vm.page.environment.root_styles.get(root)?;
+        return values.get(property).cloned();
+    }
+    if let Some(values) = vm.page.environment.computed_styles.get(&node) {
+        return values.get(property).cloned();
+    }
+    let full = vm.page.effects.style_requests.len() >= STYLE_REQUESTS;
+    if !full && vm.page.is_projected(node) && vm.page.connected(node) {
+        vm.page.effects.style_requests.insert(node);
+    }
+    None
+}
 /** A computed value: the inline declaration, else the last style pass's `position`, else the CSS
 initial or UA default. */
 pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) -> String {
@@ -890,6 +940,9 @@ pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) ->
         && let Some(value) = super::animations::opacity(vm, node)
     {
         return value.to_string();
+    }
+    if let Some(value) = resolved_style(vm, node, property) {
+        return value;
     }
     if let Some((_, value)) = style_map(vm, node)
         .into_iter()
@@ -1996,7 +2049,11 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             wrap_option(vm, previous)
         }
         "innerHTML" => {
-            let html = serialize(&mut vm.page, node, false);
+            // A script's children serialize as raw text, which for a parsed page script is its source.
+            let html = vm
+                .page
+                .parsed_script_text(node)
+                .unwrap_or_else(|| serialize(&mut vm.page, node, false));
             JsValue::string(&html).map_err(Into::into)
         }
         "outerHTML" => {
@@ -2004,7 +2061,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&html).map_err(Into::into)
         }
         "classList" => token_list_object(vm, node, "class"),
-        "dataset" => host_object(vm, HostData::Dataset(node), realm().ids.dataset_prototype),
+        "dataset" => cached_host_object(vm, node, DATASET_KEY, HostData::Dataset(node), realm().ids.dataset_prototype),
         "sheet" => super::sheets::element_sheet(vm, node),
         "contentDocument" | "contentWindow" => super::frames::frame_get(vm, node, name),
         "sandbox" | "relList" | "part" => {
@@ -2048,7 +2105,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "validity" => super::sheets::validity(vm),
         "willValidate" => Ok(JsValue::Boolean(true)),
         "validationMessage" => JsValue::string("").map_err(Into::into),
-        "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
+        "style" => cached_host_object(vm, node, STYLE_KEY, HostData::Style(node), realm().ids.style_prototype),
         "attributes" => attr_dom::named_node_map(vm, node),
         "value" if vm.page.tag(node) == "select" => {
             JsValue::string(&vm.page.selected_value(node)).map_err(Into::into)
@@ -2146,6 +2203,33 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn host_object(vm: &mut Vm, data: HostData, proto: ObjectId) -> Res<JsValue> {
     let id = vm.alloc(Object::new(Class::Host(Box::new(data)), Some(proto)))?;
     Ok(JsValue::Object(id))
+}
+
+/** Cache keys for an element's style and dataset objects, beside its token lists. The leading
+control character keeps them apart from any attribute name. */
+const STYLE_KEY: &str = "\u{1}style";
+const DATASET_KEY: &str = "\u{1}dataset";
+
+/** `el.style` and `el.dataset` are the same object on every read, as the IDL's [SameObject]
+says. Caching them also lets adoption renumber them: GSAP keeps `el.style` from before an
+element is inserted, and a fresh object per read left it writing to the pre-insertion id. */
+fn cached_host_object(
+    vm: &mut Vm,
+    node: usize,
+    key: &str,
+    data: HostData,
+    proto: ObjectId,
+) -> Res<JsValue> {
+    if let Some(id) = vm.page.state.token_lists.get(&node).and_then(|cache| cache.get(key))
+        && vm.heap.get(*id).is_some()
+    {
+        return Ok(JsValue::Object(*id));
+    }
+    let value = host_object(vm, data, proto)?;
+    if let JsValue::Object(id) = value {
+        vm.page.state.token_lists.entry(node).or_default().insert(key.to_string(), id);
+    }
+    Ok(value)
 }
 
 /** Element setters. */
@@ -2250,6 +2334,21 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
     };
     let removed = vm.page.children(node);
     clear_children_hooks(vm, node)?;
+    if RAW_TEXT_ELEMENTS.contains(&vm.page.tag(node).as_str()) {
+        // The fragment parser runs these in RAWTEXT/RCDATA state: the markup is the element's
+        // text. Modernizr writes `style.innerHTML = css`; refusing it stopped aa.com's scripts.
+        let text = if RCDATA_ELEMENTS.contains(&vm.page.tag(node).as_str()) {
+            decode_basic_entities(html)
+        } else {
+            html.to_string()
+        };
+        vm.page
+            .set_text(node, &text)
+            .map_err(|error| dom_error(vm, error))?;
+        let added = vm.page.children(node);
+        children_changed(vm, node, added, removed);
+        return Ok(());
+    }
     replace_html(vm, node, html)?;
     let added = vm.page.children(node);
     for child in &added {
@@ -2259,6 +2358,23 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
     }
     children_changed(vm, node, added, removed);
     Ok(())
+}
+
+/** Elements whose innerHTML is parsed as text, not markup (HTML fragment parsing algorithm). */
+const RAW_TEXT_ELEMENTS: [&str; 9] = [
+    "script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext",
+];
+/** Of those, the RCDATA ones decode character references. */
+const RCDATA_ELEMENTS: [&str; 2] = ["textarea", "title"];
+
+/** The character references RCDATA text commonly carries; others stay literal.
+ponytail: five named references, a full entity table when a page needs one. */
+fn decode_basic_entities(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
 }
 
 /** Replace a node's children with parsed HTML in whichever store holds it. */
@@ -2552,6 +2668,12 @@ pub(in crate::v9) fn element_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** The element_method steps themselves. */
 fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let name = native_name(&call);
+    if matches!(name, "load" | "play" | "pause" | "canPlayType")
+        && let Some(value) = super::media::upgrade(vm, &call, name, false)?
+    {
+        return Ok(value);
+    }
     let node = this_node(vm, &call)?;
     match native_name(&call) {
         "setAttributeNS" => set_namespaced_attribute(vm, node, &call),
@@ -2750,9 +2872,11 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             super::scrolling::scroll_method(vm, node, &call, name == "scrollBy")?;
             Ok(JsValue::Undefined)
         }
-        "scrollIntoView" | "setPointerCapture" | "releasePointerCapture" | "select" => {
+        "scrollIntoView" => {
+            super::scrolling::scroll_into_view(vm, node, &call)?;
             Ok(JsValue::Undefined)
         }
+        "setPointerCapture" | "releasePointerCapture" | "select" => Ok(JsValue::Undefined),
         "click" => {
             if super::events::fire(vm, super::Target::Node(node), "click", true, true)? {
                 super::interfaces::popover::activate(vm, node)?;
@@ -3806,7 +3930,7 @@ fn style_text_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(HostData::Style(node)) = super::host_data(vm, &call.this) else {
         return Err(vm.type_error("Illegal invocation"));
     };
-    let text = vm.to_text(&call.arg(0))?;
+    let text = null_to_empty(vm, &call.arg(0))?;
     let value = if text.trim().is_empty() {
         None
     } else {
@@ -3870,6 +3994,9 @@ fn constructor_interface(call: &Call) -> &'static str {
 /** These interfaces remain nonconstructible; diagnostics distinguish ordinary calls from new. */
 pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = constructor_interface(&call);
+    if let Some(built) = super::media::construct(vm, &call, name)? {
+        return Ok(built);
+    }
     let reason = if call.new_target.is_some() {
         "Illegal constructor"
     } else {

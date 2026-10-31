@@ -22,11 +22,12 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 use url::Url;
 
-/// Fetch rounds one step may make; github.com's graph is three deep, and each round fetches
-/// every module the last one found.
-const MODULE_ROUNDS: usize = 8;
+/// Fetch rounds one step may make; each round fetches every module the last one found.
+/// github.com's graph is three deep, but bundler chunk graphs (nytimes.com) run past eight, and
+/// what is still pending when rounds run out fails its whole graph.
+const MODULE_ROUNDS: usize = 64;
 /// Real time one step may spend loading module graphs, inside the navigation's own deadline.
-const MODULE_WALL: Duration = Duration::from_millis(4000);
+const MODULE_WALL: Duration = Duration::from_millis(15_000);
 
 /// A page's module scripts and the modules fetched for them, kept between V9 requests.
 #[derive(Clone, Default)]
@@ -232,7 +233,7 @@ impl Runtime {
             nonce: request.nonce.as_deref(),
             source: "",
         };
-        if !["http", "https"].contains(&url.scheme())
+        if !["http", "https", "data"].contains(&url.scheme())
             || !super::csp::allows(&page.document.csp, base, &candidate)
         {
             return Ok(None);
@@ -257,8 +258,14 @@ impl Runtime {
         let Ok(url) = Url::parse(&request.url) else {
             return Ok(None);
         };
-        if !["http", "https"].contains(&url.scheme()) || !csp_allows(&page.document.csp, base, &url)
-        {
+        if !csp_allows(&page.document.csp, base, &url) {
+            return Ok(None);
+        }
+        if url.scheme() == "data" {
+            // A data: module is same-origin-clean and needs no network (old.reddit's bootstraps).
+            return Ok(super::navigation::data_script(url.as_str()));
+        }
+        if !["http", "https"].contains(&url.scheme()) {
             return Ok(None);
         }
         let script = ScriptRequest {

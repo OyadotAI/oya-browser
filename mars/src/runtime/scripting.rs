@@ -6,7 +6,7 @@
  * the coordinator's own policy and the current owner's authority.
  */
 use super::page::Page;
-use super::resources::{Credentials, ScriptAnswer, ScriptRequest};
+use super::resources::{Credentials, ScriptRequest};
 use super::supervisor::Runtime;
 use crate::constants::{DIAGNOSTICS, SCRIPT_REQUESTS_PER_STEP, VM_RESPONSE_BYTES};
 use crate::document::{Document, ScriptDocument, StyleSource};
@@ -22,8 +22,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 mod blob_fetch;
+mod computed_styles;
 mod geometry;
 mod image_loading;
+mod local_sheets;
+mod network;
 mod requests;
 pub(in crate::runtime) use requests::queue as queue_requests;
 
@@ -47,15 +50,21 @@ const SETTLE_VIRTUAL_MS: f64 = 200.0;
 const INSERTED_IMAGE_WALL: Duration = Duration::from_millis(1500);
 /// Network time a started image fetch always gets, however much of the slice is left: a shared
 /// slice made every image after the first few in a batch fail at once (YouTube's thumbnails).
-const IMAGE_REQUEST_WALL: Duration = Duration::from_secs(5);
+const IMAGE_REQUEST_WALL: Duration = crate::constants::WEB_REQUEST_CEILING;
 /// Network time a started script request always gets, however much of the slice is left.
-pub(super) const SCRIPT_REQUEST_WALL: Duration = Duration::from_secs(3);
+pub(super) const SCRIPT_REQUEST_WALL: Duration = crate::constants::WEB_REQUEST_CEILING;
 /// Real time the first commit may spend on that settling, inside the navigation deadline.
 const SETTLE_WALL: Duration = Duration::from_millis(1500);
 /// V9 round trips one settle may make (requests and timer runs together).
 const SETTLE_STEPS: usize = 12;
+/// Task sources the settle loop takes turns between (see `next_action`).
+const TASK_SOURCES: usize = 7;
+/// The task source that delivers network responses to the page.
+const NETWORK_SOURCE: usize = 5;
 /// Timer callbacks one V9 timer run may make.
 const TIMER_BUDGET: usize = 64;
+/** Response bytes one resume step carries in all; see the core constant. */
+use crate::constants::STEP_RESPONSE_BYTES;
 /// The only failure message a page sees, as in browsers: no status, headers or body.
 const FAILED_TO_FETCH: &str = "Failed to fetch";
 /// Fetch labels a string body with this when the page set no Content-Type.
@@ -68,7 +77,7 @@ const TICK_WALL: Duration = Duration::from_millis(400);
 /// wait for the next one, so an animation loop cannot churn revisions under an agent forever.
 /// An app such as YouTube boots over many background runs, each a bounded slice of virtual
 /// time, so the window spans what a slow boot needs.
-const TICK_WINDOW: Duration = Duration::from_secs(20);
+pub(super) const TICK_WINDOW: Duration = Duration::from_secs(20);
 /// Virtual milliseconds one background run may advance, however long the page sat idle.
 const TICK_MAX_VIRTUAL_MS: f64 = 1000.0;
 /// Console entries the page keeps for page.console; older ones are dropped first.
@@ -83,6 +92,8 @@ const SECONDS_PER_MINUTE: f64 = 60.0;
 /// What the coordinator keeps for a page's scripts between V9 requests.
 #[derive(Clone)]
 pub(super) struct Scripting {
+    /** Media element commands and updates; queued with the candidate, sent once it commits. */
+    pub media: super::media::PageMedia,
     /** Unpublished channel effects remain isolated with this document candidate. */
     pub broadcast: super::broadcast::Staging,
     /** Delivery may wake an inactive tab for the same finite work window as the visible tab. */
@@ -123,6 +134,13 @@ pub(super) struct Scripting {
     pub next_timer_ms: Option<f64>,
     /// Requests the page made that have not been answered yet.
     pub requests: Vec<HostRequest>,
+    /// Platform requests a handler parked (a lock not yet granted, an event not yet queued).
+    pub parked: super::platform::Parked,
+    /** Answers already fetched that did not fit the last step's response budget; they go first
+    in the next resume step. */
+    pub ready: Vec<HostResponse>,
+    /// Fetches and XMLHttpRequests whose current hop is on the loader.
+    pub in_flight: Vec<super::resources::InFlight>,
     /// Observer callbacks queue resource work until their rendering cycle has completed.
     pub observer_resources: bool,
     /// Newly connected linked sheets wait outside observer-only delivery and remain bounded.
@@ -133,6 +151,10 @@ pub(super) struct Scripting {
     pub console: Vec<ConsoleEntry>,
     /// Console entries dropped past the bound.
     pub console_dropped: usize,
+    /// Nodes page scripts read through getComputedStyle; their resolved styles go with every step.
+    pub style_interest: std::collections::BTreeSet<usize>,
+    /** The task source the last settle step came from, so the next one starts after it. */
+    pub last_source: usize,
     /// Background timers run until this instant; interactions move it forward.
     pub awake_until: Instant,
     /// The last background run, which sets how far the virtual clock moves next.
@@ -251,11 +273,16 @@ impl Default for Scripting {
             workers: Default::default(),
             next_timer_ms: None,
             requests: Vec::new(),
+            parked: Default::default(),
+            ready: Vec::new(),
+            in_flight: Vec::new(),
             observer_resources: false,
             deferred_stylesheets: Vec::new(),
             navigation: None,
             console: Vec::new(),
             console_dropped: 0,
+            style_interest: Default::default(),
+            last_source: 0,
             awake_until: now + TICK_WINDOW,
             last_tick: now,
             preflights: crate::network::cors::PreflightCache::default(),
@@ -272,6 +299,7 @@ impl Default for Scripting {
             outbox: Vec::new(),
             port_outbox: Vec::new(),
             port_closes: Vec::new(),
+            media: Default::default(),
         }
     }
 }
@@ -288,10 +316,12 @@ impl Scripting {
         super::animations::next_sample(self).is_some()
             || self.loaded
                 && (self.scroll_pending
+                    || !self.media.inbox.is_empty()
                     || self.intersections.ready()
                     || self.observer_resources
                     || self.next_timer_ms.is_some()
                     || !self.requests.is_empty()
+                    || !self.ready.is_empty()
                     || !self.image_loading.pending.is_empty()
                     || self.workers.pending()
                     || self.load_pending)
@@ -409,7 +439,8 @@ impl Runtime {
             environment.metadata.clone_from(&page.document.metadata);
         }
         let mut execution = self.execute(page, &projection, &environment, &action)?;
-        if execution.effects.stale_geometry
+        let wants_styles = !execution.effects.style_requests.is_empty();
+        if (execution.effects.stale_geometry || wants_styles)
             && let Ok(geometry) = self.forced_geometry(page, &execution)
         {
             super::supervisor::perf::record("script.retry", started, || kind.clone());
@@ -417,6 +448,12 @@ impl Runtime {
             environment.geometry = geometry.0;
             environment.resize_wrappers = geometry.1;
             environment.laid_out_before = None;
+            Self::supply_styles(
+                page,
+                &mut environment,
+                &geometry.2,
+                &execution.effects.style_requests,
+            );
             execution = self.execute(page, &projection, &environment, &action)?;
         }
         let mut changed = !execution.changes.is_empty() || !execution.script_changes.is_empty();
@@ -461,6 +498,7 @@ impl Runtime {
             .detached(std::mem::take(&mut effects.frame_detaches))?;
         changed |= page.scripting.opacity_effects != effects.opacity_effects;
         page.scripting.opacity_effects = effects.opacity_effects;
+        changed |= apply_local_sheets(page, effects.local_sheets.take());
         if let Some(applied) = applied {
             let before = page.document.styles.len();
             page.resolved_stylesheets
@@ -496,6 +534,7 @@ impl Runtime {
         }
         page.state = state;
         page.state_token = state_token;
+        self.commit_indexed_db(&page.origin, &page.top_level_url, &effects.indexed_db);
         page.storage_dirty |= storage != page.storage;
         page.storage = storage;
         if !effects.broadcast_commands.is_empty()
@@ -517,6 +556,7 @@ impl Runtime {
             )?;
         }
         let scripting = &mut page.scripting;
+        scripting.media.queue(std::mem::take(&mut effects.media));
         scripting.workers.append(effects.worker_commands)?;
         scripting.loaded = true;
         scripting.next_timer_ms = effects.next_timer_ms;
@@ -533,6 +573,8 @@ impl Runtime {
             effects.requests,
             &effects.cancelled_requests,
         )?;
+        let cancelled = &effects.cancelled_requests;
+        scripting.in_flight.retain(|hop| !cancelled.contains(&hop.id));
         if effects.navigation.is_some() {
             scripting.navigation = effects.navigation;
         }
@@ -810,17 +852,24 @@ impl Runtime {
      * geometry; this is the bounded equivalent: one cascade and layout of the candidate, only
      * for such a step, never for every step, and only once per step.
      */
-    fn forced_geometry(
+    pub(super) fn forced_geometry(
         &mut self,
         page: &Page,
         execution: &Execution,
-    ) -> EngineResult<(Vec<crate::v9::NodeBox>, mars_core::geometry::WrapperMetrics)> {
+    ) -> EngineResult<(
+        Vec<crate::v9::NodeBox>,
+        mars_core::geometry::WrapperMetrics,
+        Document,
+    )> {
         let applied = self.apply_all(
             &page.document,
             &execution.changes,
             &execution.script_changes,
         )?;
         let mut sheets = page.resolved_stylesheets.clone();
+        if let Some(texts) = &execution.effects.local_sheets {
+            local_sheets::replace(&mut sheets, page.local_sheets, texts);
+        }
         sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
         let styled = self.styled(&applied, &sheets, self.render_context)?;
         // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
@@ -861,7 +910,21 @@ impl Runtime {
             ),
         };
         let display = self.render_effects(&styled, &scroll, &effects)?;
-        Ok((boxes(&display), display.resize_wrappers))
+        Ok((boxes(&display), display.resize_wrappers, styled))
+    }
+
+    /** Supply the resolved styles a step asked for: remember the nodes, then fill the step's
+    environment from `styled`, the document as the step left it. */
+    pub(super) fn supply_styles(
+        page: &mut Page,
+        environment: &mut PageEnvironment,
+        styled: &Document,
+        requested: &std::collections::BTreeSet<usize>,
+    ) {
+        computed_styles::remember(&mut page.scripting.style_interest, requested);
+        environment.computed_styles =
+            computed_styles::for_nodes(styled, &page.scripting.style_interest);
+        environment.root_styles = computed_styles::for_roots(styled);
     }
 
     /** Per-request facts: current URL, viewport, title, node text and the jar's script cookies. */
@@ -873,6 +936,7 @@ impl Runtime {
         environment.viewport_width = self.render_context.width;
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
+        environment.media = super::media::support();
         super::csp::apply_environment(&page.document.csp, &mut environment);
         environment.node_text = node_text(&page.document);
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
@@ -891,6 +955,9 @@ impl Runtime {
             None => 0,
         });
         environment.positions = positions(&page.document);
+        environment.computed_styles =
+            computed_styles::for_nodes(&page.document, &page.scripting.style_interest);
+        environment.root_styles = computed_styles::for_roots(&page.document);
         environment.scroll_y = page.scripting.scroll_y.unwrap_or(self.scroll_y);
         environment.scroll_x = page.scripting.scroll_x.unwrap_or(page.scroll_x);
         let width = self.render_context.width;
@@ -931,6 +998,20 @@ impl Runtime {
         virtual_end: f64,
         yield_now: &mut dyn FnMut() -> bool,
     ) -> EngineResult<bool> {
+        self.settle(page, until, virtual_end, yield_now, false)
+    }
+
+    /// The settle loop. With `wait_network`, a page with nothing else to do waits for its
+    /// fetches until `until`, so a page just loaded or acted on settles with data that comes
+    /// back quickly; background ticks never wait, so a slow link holds up nothing.
+    fn settle(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+        virtual_end: f64,
+        yield_now: &mut dyn FnMut() -> bool,
+        wait_network: bool,
+    ) -> EngineResult<bool> {
         let previous_opacity = super::animations::paint_effects(&page.scripting);
         let mut changed = false;
         let advance_ms = (virtual_end - page.scripting.clock_ms).max(0.0);
@@ -947,39 +1028,10 @@ impl Runtime {
                 changed |= self.observe_intersections_until(page, until)?;
                 continue;
             }
-            let action = if page.scripting.scroll_pending {
-                page.scripting.scroll_pending = false;
-                json!({"kind":"event","event":"scroll"})
-            } else if !page.scripting.image_loading.pending.is_empty() {
-                let responses = self.perform_image_requests(page, until)?;
-                if responses.iter().any(|response| {
-                    page.document
-                        .nodes
-                        .iter()
-                        .any(|node| node.local_id == response.request.node)
-                }) {
-                    self.prepare_display(page)?;
-                    changed = true;
-                }
-                json!({"kind":"images","responses":responses})
-            } else if page.scripting.load_pending {
-                page.scripting.load_pending = false;
-                json!({"kind":"event","event":"load"})
-            } else if !page.scripting.requests.is_empty() {
-                let requests = std::mem::take(&mut page.scripting.requests);
-                let responses = self.perform_requests(page, requests, until)?;
-                if responses.is_empty() {
+            let Some(action) = self.next_action(page, until, virtual_end, &mut changed)? else {
+                if wait_network && self.wait_for_network(page, until) {
                     continue;
                 }
-                json!({"kind":"resume","responses":responses})
-            } else if page
-                .scripting
-                .next_timer_ms
-                .is_some_and(|due| due <= virtual_end)
-            {
-                page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
-                json!({"kind":"timers","now_ms":page.scripting.clock_ms,"budget":TIMER_BUDGET})
-            } else {
                 break;
             };
             match self.script_step(page, action) {
@@ -994,6 +1046,15 @@ impl Runtime {
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
         changed |= previous_opacity != super::animations::paint_effects(&page.scripting);
         changed |= self.run_workers(page, until)?;
+        self.run_service_workers(until)?;
+        let worker_console = std::mem::take(&mut self.platform.workers.live.console);
+        let lines = worker_console
+            .into_iter()
+            .map(|text| crate::v9::ConsoleEntry {
+                level: "log".into(),
+                text,
+            });
+        record_console(&mut page.scripting, lines.collect(), 0);
         changed |= self.run_frame_pages(page, until, advance_ms)?;
         Ok(changed)
     }
@@ -1006,7 +1067,7 @@ impl Runtime {
     ) -> EngineResult<bool> {
         let until = deadline.min(Instant::now() + SETTLE_WALL);
         let end = page.scripting.clock_ms + SETTLE_VIRTUAL_MS;
-        self.settle_scripts(page, until, end)
+        self.settle(page, until, end, &mut || false, true)
     }
 
     /// Perform a batch of script requests; beacons are sent and expect no answer. Requests start
@@ -1023,6 +1084,15 @@ impl Runtime {
         let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
         let mut responses = Vec::new();
         let mut requests = requests.into_iter();
+        let mut deferred = Vec::new();
+        let mut answered_bytes = 0usize;
+        for response in std::mem::take(&mut page.scripting.ready) {
+            admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+        }
+        let hop_until = until.max(Instant::now() + SCRIPT_REQUEST_WALL);
+        for response in self.drain_landed(page, hop_until)? {
+            admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+        }
         for sent in 0..SCRIPT_REQUESTS_PER_STEP {
             let started = Instant::now();
             // At least one request per slice, so a page always makes progress.
@@ -1032,7 +1102,32 @@ impl Runtime {
             let Some(request) = requests.next() else {
                 break;
             };
+            if request.kind == crate::v9::INDEXED_DB_KIND {
+                let response = self.answer_indexed_db(&page.origin, &page.top_level_url, &request);
+                if sent > 0 && answered_bytes + response.body.len() > STEP_RESPONSE_BYTES {
+                    deferred.push(request);
+                    break;
+                }
+                answered_bytes += response.body.len();
+                responses.push(response);
+                continue;
+            }
+            if !page.scripting.ready.is_empty() {
+                // The budget is spent: send nothing more until the waiting answers are delivered.
+                deferred.push(request);
+                break;
+            }
             let deadline = until.max(started + SCRIPT_REQUEST_WALL);
+            if request.kind == "platform" {
+                responses.extend(self.platform_request(page, request)?);
+                continue;
+            }
+            if request.kind != "beacon"
+                && let Some(answer) = self.service_worker_fetch(page, &request, deadline)?
+            {
+                responses.push(answer);
+                continue;
+            }
             let blob_policy = if blob_fetch::is_blob(&request.url) {
                 Some(super::worker_loading::Policy {
                     base: base.clone(),
@@ -1043,15 +1138,21 @@ impl Runtime {
             } else {
                 None
             };
+            if blob_policy.is_none() && on_loader(&request) {
+                if let Some(response) = self.fetch_on_loader(page, &base, &request, deadline)? {
+                    admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
+                }
+                continue;
+            }
             let preflights = &mut page.scripting.preflights;
             let response =
                 self.script_request(&base, &request, preflights, deadline, blob_policy.as_ref())?;
             if request.kind != "beacon" {
-                responses.push(response);
+                admit(&mut page.scripting.ready, &mut responses, &mut answered_bytes, response);
             }
         }
         let later = std::mem::take(&mut page.scripting.requests);
-        page.scripting.requests = requests.chain(later).collect();
+        page.scripting.requests = deferred.into_iter().chain(requests).chain(later).collect();
         Ok(responses)
     }
 
@@ -1098,14 +1199,7 @@ impl Runtime {
         parsed.worker_policy = worker_policy.cloned();
         let id = request.id;
         let answer = self.fetch_for_script(base, parsed, preflights, until)?;
-        Ok(match answer {
-            ScriptAnswer::Readable(response, headers) => readable(id, *response, headers),
-            ScriptAnswer::Opaque => HostResponse {
-                id,
-                ..HostResponse::default()
-            },
-            ScriptAnswer::Failed => failed(id, FAILED_TO_FETCH),
-        })
+        Ok(network::host_answer(id, answer))
     }
 
     /// Run the visible page's due timers and answer its requests on the coordinator's idle
@@ -1121,20 +1215,47 @@ impl Runtime {
         self.page.as_ref().map(|page| page.scripting.awake_until)
     }
 
+    /// A tab a person controls runs its timers and animation frames for as long as it is
+    /// shown, as in every browser: freezing it 20 s after the last input left GSAP intros
+    /// (GitHub's hero) at opacity 0. The window still bounds agent-controlled tabs, where
+    /// an endless animation would keep invalidating the revision an agent acts on.
+    fn keep_human_page_awake(&mut self, now: Instant) {
+        let human = self
+            .presentation_permit(None)
+            .ok()
+            .flatten()
+            .is_none_or(|permit| permit.owner == crate::runtime::authority::Owner::Human);
+        if let (true, Some(page)) = (human, self.page.as_mut()) {
+            page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
+        }
+    }
+
     /// `run_page_scripts` that gives way between V9 steps once `yield_now` reports a waiting
     /// command, so a person's click on a busy page (YouTube) waits for one step, not a whole run.
     pub fn run_page_scripts_yielding(&mut self, yield_now: &mut dyn FnMut() -> bool) -> bool {
+        self.pump_media();
         let broadcast_changed = self.run_broadcast(yield_now);
-        if yield_now() {
-            return broadcast_changed;
-        }
         let now = Instant::now();
+        self.keep_human_page_awake(now);
+        self.collect_loaded();
+        let landed = self.page.as_ref().is_some_and(|page| self.landed(page));
+        if let (true, Some(page)) = (landed, self.page.as_mut()) {
+            page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
+        }
+        if self.platform_wants_turn() {
+            if let Some(page) = self.page.as_mut() {
+                page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
+            }
+        }
         let due = self.page.as_ref().is_some_and(|page| {
             ((page.scripting.pending() || page.frames_pending())
                 && now < page.scripting.awake_until
                 || super::animations::next_sample(&page.scripting).is_some()
                 || page.scripting.loaded && page.scripting.intersections.ready()
-                || page.frame_observations_pending())
+                || page.frame_observations_pending()
+                || page.scripting.loaded && page.scripting.parked.wakes(self.platform.version)
+                || self.service_workers_busy()
+                || landed)
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
         });
         if !due || self.healthy().is_err() {
@@ -1214,6 +1335,92 @@ impl Runtime {
                 Ok(false)
             }
         }
+    }
+
+    /**
+     * The next task for a settling page, taken round-robin over its task sources (scroll,
+     * images, load, media, parked platform work, network responses, timers), starting after the
+     * source that ran last, as a browser's event loop interleaves task queues. A fixed priority
+     * let a page whose ads keep fetching starve its timers and media events (w3schools.com's
+     * video never advanced). None when no source has work.
+     */
+    fn next_action(
+        &mut self,
+        page: &mut Page,
+        until: Instant,
+        virtual_end: f64,
+        changed: &mut bool,
+    ) -> EngineResult<Option<Value>> {
+        self.collect_loaded();
+        for offset in 1..=TASK_SOURCES {
+            let source = (page.scripting.last_source + offset) % TASK_SOURCES;
+            if let Some(action) = self.source_action(page, source, until, virtual_end, changed)? {
+                page.scripting.last_source = source;
+                return Ok(Some(action));
+            }
+        }
+        Ok(None)
+    }
+
+    /** One source's next task, or None when that source has nothing ready. */
+    fn source_action(
+        &mut self,
+        page: &mut Page,
+        source: usize,
+        until: Instant,
+        virtual_end: f64,
+        changed: &mut bool,
+    ) -> EngineResult<Option<Value>> {
+        let landed = source == NETWORK_SOURCE && self.landed(page);
+        let scripting = &mut page.scripting;
+        Ok(match source {
+            0 if scripting.scroll_pending => {
+                scripting.scroll_pending = false;
+                Some(json!({"kind":"event","event":"scroll"}))
+            }
+            1 if !scripting.image_loading.pending.is_empty() => {
+                Some(self.image_action(page, until, changed)?)
+            }
+            2 if scripting.load_pending => {
+                scripting.load_pending = false;
+                Some(json!({"kind":"event","event":"load"}))
+            }
+            3 if !scripting.media.inbox.is_empty() => {
+                let updates = scripting.media.take_updates();
+                Some(json!({"kind":"event","event":{"media":{"updates":updates}}}))
+            }
+            4 => self
+                .parked_responses(page)?
+                .map(|responses| json!({"kind":"resume","responses":responses})),
+            NETWORK_SOURCE if !scripting.requests.is_empty()
+                || !scripting.ready.is_empty()
+                || landed =>
+            {
+                let requests = std::mem::take(&mut page.scripting.requests);
+                let responses = self.perform_requests(page, requests, until)?;
+                (!responses.is_empty()).then(|| json!({"kind":"resume","responses":responses}))
+            }
+            6 if scripting.next_timer_ms.is_some_and(|due| due <= virtual_end) => {
+                scripting.clock_ms = scripting.clock_ms.max(virtual_end);
+                Some(json!({"kind":"timers","now_ms":scripting.clock_ms,"budget":TIMER_BUDGET}))
+            }
+            _ => None,
+        })
+    }
+
+    /** Load this turn's images and the step that tells the page about them. */
+    fn image_action(&mut self, page: &mut Page, until: Instant, changed: &mut bool) -> EngineResult<Value> {
+        let responses = self.perform_image_requests(page, until)?;
+        if responses.iter().any(|response| {
+            page.document
+                .nodes
+                .iter()
+                .any(|node| node.local_id == response.request.node)
+        }) {
+            self.prepare_display(page)?;
+            *changed = true;
+        }
+        Ok(json!({"kind":"images","responses":responses}))
     }
 
     /** Callback-created resources are admitted on the ordinary task path, never between resize broadcasts. */
@@ -1300,6 +1507,18 @@ impl Runtime {
         };
         Some(result)
     }
+}
+
+/** Whether a page request's hops go to the loader: every network fetch does. Blob and data
+URLs are answered here without the network, and a body that is a Blob still in V9 waits for
+its bytes on the blocking path. */
+fn on_loader(request: &HostRequest) -> bool {
+    !blob_fetch::is_blob(&request.url)
+        && request.blob_source.is_none()
+        && !request
+            .url
+            .get(..5)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
 }
 
 /** What the page asked for, parsed: None for a URL, method, mode or credentials it cannot use. */
@@ -1631,6 +1850,33 @@ pub(super) fn inserted_sheets(
             StyleSource::Inline(css) => Some(css.clone()),
             StyleSource::Linked(_) | StyleSource::LinkedMedia { .. } => None,
         })
+}
+
+/** Add an answer to this step's responses, or to `ready` for the next step when it would pass
+STEP_RESPONSE_BYTES; the first answer of a step always goes, so a large one is never stuck. */
+fn admit(
+    ready: &mut Vec<HostResponse>,
+    responses: &mut Vec<HostResponse>,
+    answered_bytes: &mut usize,
+    response: HostResponse,
+) {
+    let size = response.body.len() + response.body_bytes.len();
+    if !responses.is_empty() && (*answered_bytes + size > STEP_RESPONSE_BYTES || !ready.is_empty()) {
+        ready.push(response);
+        return;
+    }
+    *answered_bytes += size;
+    responses.push(response);
+}
+
+/** Take a step's report of V9-only `<style>` texts into the page's sheets; true when restyled. */
+pub(super) fn apply_local_sheets(page: &mut Page, texts: Option<Vec<String>>) -> bool {
+    let Some(texts) = texts else {
+        return false;
+    };
+    page.local_sheets = local_sheets::replace(&mut page.resolved_stylesheets, page.local_sheets, &texts);
+    page.styled = false;
+    true
 }
 
 /** A script-inserted sheet that never applied is reported as navigation reports a linked one. A

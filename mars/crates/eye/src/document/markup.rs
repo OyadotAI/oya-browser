@@ -15,21 +15,13 @@ const TEXT_INPUT_TYPES: [&str; 6] = ["number", "date", "datetime-local", "month"
 /** Controls without an implementation stay visible but static rather than refusing the page. */
 const STATIC_INPUT_TYPES: [&str; 3] = ["file", "color", "range"];
 
-/** Inert attributes survive; unsupported executable attributes refuse loading. */
+/** Attributes survive as authored; inline handlers are V9's to run when their event fires. */
 pub(super) fn node(
     tag: &str,
     local_id: usize,
     parent: Option<usize>,
     mut attributes: Attributes,
 ) -> EngineResult<Node> {
-    if attributes
-        .keys()
-        .any(|key| key.starts_with("on") && !(tag == "button" && key == "onclick"))
-    {
-        return Err(EngineError::unsupported(
-            "This page uses an unsupported event handler.",
-        ));
-    }
     if let Some(kind) = attributes.get_mut("type") {
         *kind = kind.to_ascii_lowercase();
     }
@@ -82,21 +74,17 @@ pub(super) fn node(
     })
 }
 
-/// Page-mode recovery applied before `node`: other inline handlers are stripped rather than run or
-/// refused, oversized attribute values and identifiers are dropped, and input types without an
+/// Page-mode recovery applied before `node`: oversized inline handlers are stripped, oversized attribute values and identifiers are dropped, and input types without an
 /// implementation fall back the way HTML's do. Returns the value-free diagnostics to record.
 pub(super) fn recover(tag: &str, attributes: &mut Attributes) -> Vec<String> {
     let mut diagnostics = Vec::new();
     let before = attributes.len();
-    // A button's onclick and the body's handlers, which HTML forwards to the window (V9 runs
-    // only the window-event ones, so `<body onload>` starts a page as it does in Chromium).
-    attributes.retain(|key, value| {
-        !(key.starts_with("on")
-            && !((tag == "button" && key == "onclick" || tag == "body")
-                && value.len() <= SCRIPT_BYTES))
-    });
+    // Inline handlers stay on their element, as in every browser: V9 compiles `on<event>` markup
+    // when that event reaches the element, under the page's script-src-attr policy. Only a
+    // handler past the script size bound is dropped. Stripping them broke aa.com's controls.
+    attributes.retain(|key, value| !(key.starts_with("on") && value.len() > SCRIPT_BYTES));
     if attributes.len() < before {
-        diagnostics.push("Inline event handler attributes were removed and never run.".into());
+        diagnostics.push("Oversized inline event handler attributes were removed.".into());
     }
     let before = attributes.len();
     attributes.retain(|key, value| {

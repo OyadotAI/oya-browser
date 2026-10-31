@@ -65,6 +65,8 @@ impl Library {
             Record::History => self.history.encode(),
             Record::Bookmarks => self.bookmarks.encode(),
             Record::Settings => self.settings.encode(),
+            // The runtime saves the platform APIs' records itself; the library never holds them.
+            Record::ServiceWorkers | Record::CacheStorage | Record::Credentials => return,
         };
         if let Ok(bytes) = bytes {
             self.writer.send(record, bytes);

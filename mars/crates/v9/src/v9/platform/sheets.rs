@@ -27,6 +27,36 @@ fn sheet_nodes(vm: &mut Vm) -> Vec<usize> {
     })
 }
 
+/** A stable hash of a style text; the same text gives the same value in every process. */
+pub(in crate::v9) fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/** Report the texts of the V9-only `<style>` elements the app does not already apply, when that
+list changed since the last report. The document's own parsed head styles are skipped until a
+script changes their text. Runs at the end of every step. */
+pub(in crate::v9) fn publish_local(vm: &mut Vm) {
+    let mut texts = Vec::new();
+    for node in sheet_nodes(vm) {
+        if vm.page.tag(node) != "style" || vm.page.is_projected(node) {
+            continue;
+        }
+        let text = vm.page.text_content(node);
+        let parsed = vm.page.state.parsed_style_hashes.get(&node).copied();
+        if parsed != Some(text_hash(&text)) {
+            texts.push(text);
+        }
+    }
+    let hash = text_hash(&texts.join("\u{0}"));
+    if hash != vm.page.state.local_sheets_hash {
+        vm.page.state.local_sheets_hash = hash;
+        vm.page.effects.local_sheets = Some(texts);
+    }
+}
+
 /** The CSSStyleSheet object of a node. */
 fn sheet_object(vm: &mut Vm, node: usize) -> Res<JsValue> {
     let id = vm.alloc(Object::new(

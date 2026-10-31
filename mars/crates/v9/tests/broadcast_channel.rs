@@ -15,11 +15,12 @@ fn run(source: &str) -> Execution {
 }
 
 /** A native coordinator chooses the recipient; this helper exercises only the V9 delivery seam. */
-fn receive(execution: Execution, id: u64, data: mars_v9::WorkerData) -> Execution {
+fn receive(source: &str, execution: Execution, id: u64, data: mars_v9::WorkerData) -> Execution {
     let host = common::host();
     let environment = common::environment();
+    let sources = [source.to_string()];
     mars_v9::page_event(
-        common::input(&[], &host, &environment),
+        common::input(&sources, &host, &environment),
         common::round_trip(execution.state),
         PageEvent::BroadcastMessage {
             id,
@@ -33,9 +34,8 @@ fn receive(execution: Execution, id: u64, data: mars_v9::WorkerData) -> Executio
 /** Posted packets are immutable graph copies; no listener executes until a native delivery task. */
 #[test]
 fn native_delivery_preserves_cycles_snapshot_data_and_message_event_identity() {
-    let execution = run(
-        "const a=new BroadcastChannel('room'),b=new BroadcastChannel('room'),NativeMessageEvent=MessageEvent;let result='pending';b.onmessage=e=>{result=[e instanceof NativeMessageEvent,e.target===b,e.currentTarget===b,e.data.self===e.data,e.data.answer,e.origin,e.source===null,e.ports.length,e.isTrusted].join('|')};const data={answer:42};data.self=data;a.postMessage(data);data.answer=7;globalThis.MessageEvent=function(){throw Error('author constructor')};",
-    );
+    let source = "const a=new BroadcastChannel('room'),b=new BroadcastChannel('room'),NativeMessageEvent=MessageEvent;let result='pending';b.onmessage=e=>{result=[e instanceof NativeMessageEvent,e.target===b,e.currentTarget===b,e.data.self===e.data,e.data.answer,e.origin,e.source===null,e.ports.length,e.isTrusted].join('|')};const data={answer:42};data.self=data;a.postMessage(data);data.answer=7;globalThis.MessageEvent=function(){throw Error('author constructor')};";
+    let execution = run(source);
     assert_eq!(common::global(&execution, "result"), "pending");
     let id = execution.effects.broadcast_channels[1].id;
     let data = execution
@@ -47,7 +47,7 @@ fn native_delivery_preserves_cycles_snapshot_data_and_message_event_identity() {
             _ => None,
         })
         .unwrap();
-    let delivered = receive(execution, id, data);
+    let delivered = receive(source, execution, id, data);
     assert_eq!(
         common::global(&delivered, "result"),
         "true|true|true|true|42|https://example.com|true|0|true"
@@ -95,9 +95,8 @@ fn clone_getter_close_precedes_the_valid_already_started_post() {
 /** Native recipient selection never overrides a close that happened before its task could execute. */
 #[test]
 fn a_closed_recipient_drops_an_already_queued_delivery() {
-    let execution = run(
-        "const a=new BroadcastChannel('room'),b=new BroadcastChannel('room');let result='pending';b.onmessage=()=>result='called';a.postMessage(1);b.close();",
-    );
+    let source = "const a=new BroadcastChannel('room'),b=new BroadcastChannel('room');let result='pending';b.onmessage=()=>result='called';a.postMessage(1);b.close();";
+    let execution = run(source);
     let id = execution
         .effects
         .broadcast_commands
@@ -118,7 +117,7 @@ fn a_closed_recipient_drops_an_already_queued_delivery() {
         })
         .unwrap();
     assert_eq!(
-        common::global(&receive(execution, id, data), "result"),
+        common::global(&receive(source, execution, id, data), "result"),
         "pending"
     );
 }

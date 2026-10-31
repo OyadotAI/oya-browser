@@ -45,6 +45,7 @@ use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
 use std::collections::BTreeMap;
 pub use style::default_transform_origin;
+pub use style::{COMPUTED_PROPERTIES, computed_value as computed_css_value, css_color};
 pub use style::{
     AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
     ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,

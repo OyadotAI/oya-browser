@@ -48,13 +48,19 @@ pub use platform::devtools;
 pub use platform::frame_directory::{
     FrameContext, FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
 };
+pub use platform::indexed_db::{
+    INDEXED_DB_DATABASE_BYTES, INDEXED_DB_EFFECT_BYTES, INDEXED_DB_KIND, INDEXED_DB_LIST,
+    INDEXED_DB_OPEN, INDEXED_DB_ORIGIN_BYTES, INDEXED_DB_ORIGIN_RECORD_BYTES,
+    INDEXED_DB_RESPONSE_BYTES, IndexedDbCommit, IndexedDbDatabase, IndexedDbOperation,
+    IndexedDbOrigin, IndexedDbStore,
+};
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
-    ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
+    ImageRequest, ImageResponse, MediaCommand, MediaSettings, MediaSupport, NavigationRequest, OpacityEffect, PageEnvironment,
     SimpleFragmentParser,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
@@ -791,6 +797,7 @@ impl VmState {
         self.page.listeners.validate(self.page.next_listener)?;
         platform::broadcast::validate(&self.page.broadcast, full_heap.then_some(&self.heap))?;
         if self.page.timers.len() > crate::constants::VM_TIMERS
+            || !platform::host_bridge::validate(&self.page)
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self
                 .page
@@ -1070,6 +1077,9 @@ pub enum PageEvent {
         /// Sender origin is assigned by the native broker, never by page script.
         origin: String,
     },
+    /// Media players changed: JSON updates (metadata, time, buffering, seeks, ends, errors and
+    /// control clicks) for the platform's media script, which fires the element events.
+    Media { updates: String },
     /// A native router retired the far end of one linked port.
     PortClose {
         /// A native router retired this link; clear the local endpoint without firing script.
@@ -1232,6 +1242,19 @@ enum Compiled {
     Each(Vec<EngineResult<Arc<Code>>>),
 }
 
+/** The text of each inline page script by source index; external scripts read as empty, since a
+`<script src>` element's text is its children, not the fetched source. */
+fn inline_sources(sources: &[String], urls: &[String]) -> Vec<String> {
+    sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| match urls.get(index) {
+            Some(url) if url.is_empty() => source.clone(),
+            _ => String::new(),
+        })
+        .collect()
+}
+
 /** Open a VM for a request: restore state, compile sources, set the clock and deadline. The
 deadline is armed once compilation is done: scanning and parsing are already bounded by
 SCRIPT_BYTES, TOKENS and STATEMENTS, and a max-token script takes several times the script deadline
@@ -1321,6 +1344,7 @@ fn session<'h>(
     );
     page.canvas_host = host.canvas;
     page.imports = host.imports;
+    page.inline_scripts = inline_sources(sources, &environment.scripts);
     let mut vm = Vm::new(state.heap, page, limits);
     builtins::initialize_shared(&mut vm)?;
     builtins::initialize_shared_gc(&mut vm)?;
@@ -1390,10 +1414,12 @@ fn session<'h>(
     vm.templates = state.templates;
     // The platform bootstrap is not a dynamic source: every step compiles it at its fixed offset, so the heap's closures always find their code.
     let bootstrap = platform::observable::compile(&mut vm)?;
+    let indexed_db = platform::indexed_db::compile(&mut vm)?;
     if !verified {
         vm.validate_graph()?;
     }
     platform::images::validate_targets(&vm.page)?;
+    platform::media::validate(&vm)?;
     platform::canvas::validate_targets(&mut vm)?;
     platform::canvas::path2d::validate_targets(&mut vm)?;
     let loaded = vm.modules.loaded_codes();
@@ -1410,6 +1436,7 @@ fn session<'h>(
     vm.deadline = Some(std::time::Instant::now() + script_deadline());
     if fresh {
         platform::observable::run(&mut vm, bootstrap)?;
+        platform::indexed_db::run(&mut vm, indexed_db)?;
     }
     Ok((vm, compiled))
 }
@@ -1605,6 +1632,7 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.effects.image_requests = saved.effects.image_requests;
     vm.page.effects.image_cancellations = saved.effects.image_cancellations;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;
+    vm.page.effects.media = saved.effects.media;
     vm.page.effects.worker_commands = saved.effects.worker_commands;
     vm.page.effects.worker_errors = saved.effects.worker_errors;
     vm.page.effects.messages = saved.effects.messages;
@@ -1682,6 +1710,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     #[cfg(feature = "conformance")]
     vm.save_interned_strings();
     platform::broadcast::publish(&mut vm.page);
+    platform::publish_local_sheets(&mut vm);
     let effects_timer = vm.next_timer();
     let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
@@ -2089,6 +2118,11 @@ fn page_event_with(
                 report_thrown(&mut vm, result)?;
             }
             PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
+            PageEvent::Media { updates } => {
+                vm.remaining = vm.limits.operations;
+                let result = platform::media::deliver(&mut vm, &updates).and_then(|()| vm.drain_jobs());
+                report_thrown(&mut vm, result)?;
+            }
             PageEvent::PortMessage { link, data } => {
                 vm.remaining = vm.limits.operations;
                 let received = platform::messaging::receive_on_port(&mut vm, link, &data)
@@ -2234,6 +2268,8 @@ pub fn input_page(
             vm.page.state.values.insert(target, value);
         }
         vm.remaining = vm.limits.operations;
+        platform::host_bridge::activate(&mut vm);
+        platform::media::activate(&mut vm.page);
         if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
             return Err(error);
         }
@@ -2262,6 +2298,8 @@ fn click_page_with(
         return Err(EngineError::invalid("Invalid projected click target."));
     }
     vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(&mut vm);
+    platform::media::activate(&mut vm.page);
     // A press focuses what it lands on before the click, as a pointer's mousedown does.
     if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
         return Err(error);

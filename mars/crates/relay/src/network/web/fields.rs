@@ -1,5 +1,5 @@
 /** Chrome-shaped request header fields, in Chrome 152's order, shared by HTTP/1.1 and HTTP/2. */
-use super::encoding::{ACCEPT_ENCODING, ACCEPT_ENCODING_PLAIN};
+use super::encoding::{ACCEPT_ENCODING, ACCEPT_ENCODING_PLAIN, MEDIA_ACCEPT_ENCODING};
 use crate::network::cookies::site;
 use crate::network::{Destination, Method, WebRequest};
 use ::url::Url;
@@ -103,7 +103,10 @@ pub(super) fn fields(
     if let Some(referer) = initiator.as_ref().and_then(|from| referer(from, url)) {
         fields.push(("referer", referer));
     }
-    let encoding = if secure {
+    // Chrome asks for media unencoded, so byte ranges address the file itself.
+    let encoding = if destination.media() {
+        MEDIA_ACCEPT_ENCODING
+    } else if secure {
         ACCEPT_ENCODING
     } else {
         ACCEPT_ENCODING_PLAIN
@@ -116,6 +119,10 @@ pub(super) fn fields(
         ));
     }
     fields.extend(conditional.iter().cloned());
+    if let Some((start, end)) = request.range {
+        let end = end.map(|end| end.to_string()).unwrap_or_default();
+        fields.push(("range", format!("bytes={start}-{end}")));
+    }
     if !request.cookie.is_empty() {
         fields.push(("cookie", request.cookie.clone()));
     }
@@ -191,6 +198,8 @@ pub(super) fn priority(request: &WebRequest) -> (&'static str, u8) {
         Destination::Image => ("u=2, i", 182),
         Destination::Font => ("u=1", 219),
         Destination::Empty => ("u=1, i", 219),
+        // Chrome loads media at low priority, incrementally.
+        Destination::Video | Destination::Audio => ("u=4, i", 147),
     }
 }
 
@@ -204,7 +213,9 @@ fn accept(destination: Destination) -> &'static str {
         | Destination::Worker
         | Destination::WorkerImport
         | Destination::Font
-        | Destination::Empty => "*/*",
+        | Destination::Empty
+        | Destination::Video
+        | Destination::Audio => "*/*",
     }
 }
 
@@ -231,6 +242,9 @@ fn fetch_metadata(
         // Chrome fetches fonts in CORS mode, as CSS Fonts requires; Mars sends the metadata and
         // does not yet refuse a font whose response lacks Access-Control-Allow-Origin.
         Destination::Font => ("cors", "font"),
+        // Media elements without `crossorigin` fetch in no-cors mode, as Chrome's do.
+        Destination::Video => (request.mode.unwrap_or(super::super::cors::Mode::NoCors).name(), "video"),
+        Destination::Audio => (request.mode.unwrap_or(super::super::cors::Mode::NoCors).name(), "audio"),
         Destination::Empty => (
             request
                 .mode

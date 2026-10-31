@@ -24,6 +24,8 @@ pub fn keyboard_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, super::vm::Limits::default())?;
+        platform::host_bridge::activate(&mut vm);
+        super::platform::media::activate(&mut vm.page);
         platform::press_key(&mut vm, key, target).map_err(super::fatal)?;
         vm.drain_jobs().map_err(super::fatal)?;
         finish(vm)

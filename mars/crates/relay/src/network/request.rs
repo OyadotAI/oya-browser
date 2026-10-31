@@ -56,6 +56,10 @@ pub struct WebRequest {
     /// method and headers may follow, with no cookies, headers or body of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preflight: Option<Preflight>,
+    /// For media (`Video`/`Audio`) only: the inclusive byte range to ask for, end open when
+    /// None, sent as `Range: bytes=start-end` so a player fetches only what it is about to play.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<(u64, Option<u64>)>,
 }
 /// What a CORS preflight asks the server about the request waiting behind it.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -88,6 +92,16 @@ pub enum Destination {
     Font,
     /// Script-issued fetch or XHR.
     Empty,
+    /// A `<video>` element's media resource: raw bytes, fetched in byte ranges.
+    Video,
+    /// An `<audio>` element's media resource: raw bytes, fetched in byte ranges.
+    Audio,
+}
+impl Destination {
+    /** Media element fetches, which carry raw bytes and may ask for a byte range. */
+    pub fn media(self) -> bool {
+        matches!(self, Self::Video | Self::Audio)
+    }
 }
 impl WebRequest {
     /// Navigation cannot accidentally inherit a previous submission body.
@@ -105,6 +119,9 @@ impl WebRequest {
                 && (self.destination != Destination::Empty
                     || self.image
                     || self.preflight.is_some())
+            || self.range.is_some()
+                && (!self.destination.media() || self.method != Method::Get || self.image)
+            || self.range.is_some_and(|(start, end)| end.is_some_and(|end| end < start))
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)
             || (self.method.is_safe() && !self.body.is_empty())

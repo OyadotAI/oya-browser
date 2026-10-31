@@ -13,5 +13,5 @@ fn a_page_with_dozens_of_linked_sheets_loads_them_all() {
 /** Raising the count never raises the bytes all sheets may carry together. */
 #[test]
 fn all_sheets_still_share_one_byte_allowance() {
-    assert_eq!(STYLE_TOTAL_BYTES, STYLE_BYTES + STYLE_BYTES / 2);
+    assert_eq!(STYLE_TOTAL_BYTES, 8 * STYLE_BYTES);
 }

@@ -46,12 +46,12 @@ fn a_script_writing_a_body_attribute_reaches_body_selectors() {
 }
 
 #[test]
-fn root_attribute_writes_refuse_event_handlers() {
+fn root_attribute_writes_refuse_http_equiv() {
     let document = parse("<p>a</p>").unwrap();
     let change = ScriptChange::RootAttribute {
         body: false,
-        name: "onload".into(),
-        value: Some("x()".into()),
+        name: "http-equiv".into(),
+        value: Some("refresh".into()),
     };
     assert!(apply_script_changes(&document, &[change]).is_err());
 }

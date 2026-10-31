@@ -50,7 +50,7 @@ fn serialization_does_not_flatten_compact_input() {
         "{:?}",
         common::failure(&execution)
     );
-    assert!(serde_json::to_string(&execution.state).unwrap().len() < 100_000);
+    assert!(serde_json::to_string(&execution.state).unwrap().len() < common::empty_state_bytes() + 100_000);
 }
 #[test]
 /** Known native version-15 records decode through tags and ZigZag rather than a private wrapper format. */

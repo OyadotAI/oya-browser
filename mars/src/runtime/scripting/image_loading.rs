@@ -325,12 +325,15 @@ impl Runtime {
         page: &mut Page,
         until: Instant,
     ) -> EngineResult<Vec<ImageResponse>> {
-        page.document = self.styled(
-            &page.document,
-            &page.resolved_stylesheets,
-            self.render_context,
-        )?;
-        page.styled = true;
+        // Restyle only after a change: an unconditional restyle cost GitHub 600 ms per image turn.
+        if !page.styled {
+            page.document = self.styled(
+                &page.document,
+                &page.resolved_stylesheets,
+                self.render_context,
+            )?;
+            page.styled = true;
+        }
         let mut budget = page
             .scripting
             .image_loading

@@ -311,6 +311,8 @@ pub(in crate::v9) struct Vm<'h> {
     pub formatting_stack: bool,
     /** Nested microtask checkpoints leave the active drain in charge of its queue. */
     pub draining_jobs: bool,
+    /** A transaction was created this task: the end of its microtask checkpoint runs IndexedDB's cleanup. Never serialized; a task never spans steps. */
+    pub indexed_db_cleanup: bool,
     /** Values native code holds across calls back into scripts. */
     pub pins: Vec<JsValue>,
     /** WeakRef targets observed in this task survive through its complete microtask checkpoint. */
@@ -818,6 +820,7 @@ impl<'h> Vm<'h> {
             async_drivers: Vec::new(),
             formatting_stack: false,
             draining_jobs: false,
+            indexed_db_cleanup: false,
             pins: Vec::new(),
             kept_weak: FastMap::default(),
             pinning: false,

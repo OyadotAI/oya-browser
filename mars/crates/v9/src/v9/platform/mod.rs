@@ -6,7 +6,7 @@
  */
 pub(in crate::v9) mod animations;
 pub use animations::{AnimationTarget, OpacityEffect};
-mod blob;
+pub(in crate::v9) mod blob;
 pub(in crate::v9) mod blob_urls;
 pub(in crate::v9) mod broadcast;
 pub(in crate::v9) mod canvas;
@@ -27,10 +27,12 @@ mod form_data;
 mod form_submit;
 mod geometry;
 mod handler_policy;
+pub(in crate::v9) mod host_bridge;
 pub use handler_policy::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub(in crate::v9) mod frames;
 pub(in crate::v9) mod html;
 pub(in crate::v9) mod images;
+pub(in crate::v9) mod indexed_db;
 mod implementation;
 mod install;
 mod interfaces;
@@ -69,9 +71,11 @@ pub(in crate::v9) mod frame_directory;
 mod scrolling;
 mod selector;
 mod sheets;
+pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
 mod timers;
 mod token_list;
 mod token_set;
+pub(in crate::v9) mod media;
 mod url_bindings;
 mod url_parser;
 mod window;
@@ -81,6 +85,7 @@ pub(in crate::v9) mod workers;
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
 pub use images::{ImageAdoption, ImageCancellation, ImageCors, ImageRequest, ImageResponse};
+pub use media::{MediaCommand, MediaSettings, MediaSupport};
 
 pub(in crate::v9) use install::install;
 pub(in crate::v9) use net::XhrState;
@@ -139,6 +144,11 @@ impl Page<'_> {
         for element in &metadata {
             let text = (!element.text.is_empty()).then(|| element.text.clone());
             let node = self.create(&element.tag, text)?;
+            if element.tag == "style" {
+                self.state
+                    .parsed_style_hashes
+                    .insert(node, sheets::text_hash(&element.text));
+            }
             if let Some(record) = self.state.detached.get_mut(&node) {
                 record.attributes.clone_from(&element.attributes);
             }
@@ -279,6 +289,13 @@ pub struct PageEnvironment {
     /// Module workers use module entry evaluation and cannot call classic importScripts.
     #[serde(default)]
     pub worker_module: bool,
+    /// This worker is a service worker: the bootstrap gives it ServiceWorkerGlobalScope.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub service_worker: bool,
+    /// Service worker facts as JSON for the bootstrap: a page's `{controller}`, or a service
+    /// worker's own `{registration, worker}`. None when no service worker is involved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_worker_state: Option<String>,
     /// Host locale used when an Intl constructor receives no explicit locale.
     pub locale: String,
     /// Opt into the real RegExp buffer-boundary syntax proposal; ordinary pages preserve legacy grammar.
@@ -413,6 +430,13 @@ pub struct PageEnvironment {
     /// Pages branch on it (GitHub sizes its fixed header only when the wrapper computes to
     /// `fixed`), so the inline-only fallback of `static` hides layout from them.
     pub positions: BTreeMap<usize, String>,
+    /// Eye's resolved values (`getComputedStyle`) for each node scripts have asked about, by
+    /// node then CSS property. A node present with no entry for a property falls back to V9's
+    /// own approximation; an absent rendered node is reported in `HostEffects::style_requests`.
+    pub computed_styles: BTreeMap<usize, BTreeMap<String, String>>,
+    /// Eye's resolved values for the root wrappers, under "html" and "body": V9 holds those two
+    /// elements itself, so they have no node identity in `computed_styles`.
+    pub root_styles: BTreeMap<String, BTreeMap<String, String>>,
     /// Upstream test fixtures, supplied as inert text only in the opt-in conformance build.
     /// The engine cannot read files; d8.file only sees exactly this host-owned registry.
     #[cfg(feature = "conformance")]
@@ -616,6 +640,14 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_log: bool,
+    /// The host's playable media types, for canPlayType and Media Source; empty plays nothing.
+    #[serde(default, skip_serializing_if = "media_support_empty")]
+    pub media: MediaSupport,
+}
+
+/** An empty media support list is omitted from serialized environments. */
+fn media_support_empty(support: &MediaSupport) -> bool {
+    *support == MediaSupport::default()
 }
 
 /// One painted box the app's layout gave a node, in document coordinates.
@@ -655,6 +687,9 @@ impl Default for PageEnvironment {
             worker_name: None,
             worker_depth: 0,
             worker_module: false,
+            media: MediaSupport::default(),
+            service_worker: false,
+            service_worker_state: None,
             locale: "en-US".into(),
             regexp_buffer_boundaries: false,
             url: "about:blank".into(),
@@ -706,6 +741,8 @@ impl Default for PageEnvironment {
             scroll_max: BTreeMap::new(),
             laid_out_before: None,
             positions: BTreeMap::new(),
+            computed_styles: BTreeMap::new(),
+            root_styles: BTreeMap::new(),
             #[cfg(feature = "conformance")]
             conformance_sources: BTreeMap::new(),
             #[cfg(feature = "conformance")]
@@ -948,11 +985,17 @@ pub struct HostEffects {
     /// Source-generation requests; only actual host decoding may answer them with `resume_images`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub image_requests: Vec<ImageRequest>,
+    /// Media element commands for the coordinator's players, in the order the page made them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<MediaCommand>,
     /// Superseded generations release queued native captures before admitting replacement sources.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_cancellations: Vec<ImageCancellation>,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
+    /// IndexedDB transactions committed during this execution, in commit order; the coordinator persists them for the context's storage partition.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub indexed_db: Vec<indexed_db::IndexedDbCommit>,
     /** Previously published requests cancelled by native signals release host queues and snapshots. */
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cancelled_requests: Vec<u32>,
@@ -1009,6 +1052,10 @@ pub struct HostEffects {
     /// it saw an empty box where a browser would have laid the page out first.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub stale_geometry: bool,
+    /// Rendered nodes whose computed style a script read without the app having supplied it;
+    /// the app may style them and run the step again, as it does for stale geometry.
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub style_requests: std::collections::BTreeSet<usize>,
     /// Native geometry changes need an inert observation turn only while registrations or records exist.
     pub intersection_observers: bool,
     /// Queued observer entries need a dedicated native observation turn even outside author wake windows.
@@ -1023,6 +1070,11 @@ pub struct HostEffects {
     /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stylesheets: Vec<String>,
+    /// The text of every `<style>` that lives only in V9 (the head, script-local children) and
+    /// that the app does not already apply, in document order, sent when the list changed. CSS-in-JS
+    /// libraries (Emotion, styled-components) insert their rules into head styles this way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_sheets: Option<Vec<String>>,
     /// Offsets `[x, y]` scripts scrolled scroll containers to, by node: the app paints them
     /// there (Eye clamps each to its container's range), as a browser scrolls on assignment.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -1112,12 +1164,18 @@ pub(in crate::v9) struct Pending {
     /** The fetch promise or the XMLHttpRequest object. */
     pub owner: ObjectId,
     pub xhr: bool,
+    /** A platform bridge request (`host_bridge`): its owner is a promise and it has no signal. */
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub platform: bool,
     /** Native dependent signal remains reachable until completion or cancellation. */
     #[serde(default)]
     pub signal: Option<ObjectId>,
     /** Bytes and metadata retained by the native Blob snapshot until response delivery or abort. */
     #[serde(default)]
     pub blob_bytes: usize,
+    /** An IndexedDB coordinator request: `owner` is the callback that receives the answer text. */
+    #[serde(default)]
+    pub indexed: bool,
 }
 
 /** document.readyState. */
@@ -1257,6 +1315,8 @@ pub(in crate::v9) struct PageState {
     /** Inert source generations and actual image decode results; no additional heap roots. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<usize, images::State>,
+    /** Media element bookkeeping: the bootstrap's dispatcher, changed elements and players. */
+    pub media: media::State,
     pub identity: String,
     /** Virtual milliseconds since the time origin, used only for timer scheduling. */
     pub clock: f64,
@@ -1301,6 +1361,17 @@ pub(in crate::v9) struct PageState {
     pub attr_index: BTreeMap<usize, BTreeMap<String, BTreeMap<String, String>>>,
     pub pending: Vec<Pending>,
     pub next_request: u32,
+    /** When the last trusted input happened (`script_now`), for transient user activation;
+    consumed by APIs that use it up. */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<f64>,
+    /** Whether any trusted input ever reached this document (sticky user activation). */
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sticky_activation: bool,
+    /** The bootstrap's installer for the coordinator-backed APIs, until something first uses
+    one of them (`host_bridge::ensure_installed`). */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_installer: Option<ObjectId>,
     pub ready: ReadyState,
     /** The current URL (pushState changes it). */
     pub href: String,
@@ -1344,6 +1415,13 @@ pub(in crate::v9) struct PageState {
     /** Stable parser-created script identities survive module loading pauses. */
     #[serde(default)]
     pub parsed_scripts: Option<Vec<usize>>,
+    /** A hash of each parsed head `<style>`'s text when the page loaded, by node: the app
+    already applies that text, so only a changed one is reported in `local_sheets`. */
+    #[serde(default)]
+    pub parsed_style_hashes: BTreeMap<usize, u64>,
+    /** A hash of the last `local_sheets` list reported, so an unchanged list is not resent. */
+    #[serde(default)]
+    pub local_sheets_hash: u64,
     /** Iframes scripts connected whose documents the app has not answered yet, by element: the
     URL each asked for. The answer fires the element's `load` event and leaves the list. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1433,6 +1511,10 @@ pub(in crate::v9) struct Page<'h> {
     pub canvas_host: &'h dyn mars_core::canvas::CanvasHost,
     /** Synchronous raster/readback work left in this execution. */
     pub canvas_work: usize,
+    /** Each page script's inline source text by source index (empty for external scripts),
+    supplied with every step and never serialized, so `script.textContent` reads the source the
+    way pages read inline scripts without the text weighing on retained state. */
+    pub inline_scripts: Vec<String>,
     pub environment: PageEnvironment,
     pub languages: Vec<String>,
     pub fragments: &'h dyn FragmentParser,
@@ -1524,6 +1606,7 @@ impl<'h> Page<'h> {
             fragments,
             canvas_host: &mars_core::canvas::Unavailable,
             canvas_work: mars_core::canvas::WORK,
+            inline_scripts: Vec::new(),
             document,
             state,
             execution_clock: clock::ExecutionClock::default(),
@@ -1586,6 +1669,7 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        media::roots(&self.state.media, &self.state.wrappers, out);
         intersection_observers::roots(&self.state, out);
         resize_observers::roots(&self.state, out);
         #[cfg(feature = "conformance")]
@@ -1641,6 +1725,7 @@ impl<'h> Page<'h> {
         if let Some(value) = &self.state.history_state {
             out.push(value.clone());
         }
+        out.extend(self.state.platform_installer.map(JsValue::Object));
         #[cfg(feature = "conformance")]
         if let Some(value) = &self.state.continuation_data {
             out.push(value.clone());

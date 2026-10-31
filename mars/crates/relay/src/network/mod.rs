@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 pub use url::Endpoint;
 pub use web::Prepared;
 pub use web::redirect_url;
-pub use web::{CHROME_ENGINE, clear_cache, fetch_batch, set_cache_directory};
+pub use web::{CHROME_ENGINE, clear_cache, fetch_batch, forget, set_cache_directory};
 pub use web::{WebPage, fetch as fetch_web};
 
 /// Every call revalidates the literal destination inside the network service.

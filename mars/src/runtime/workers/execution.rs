@@ -18,7 +18,33 @@ impl Runtime {
             json!({"kind":"event","event":event})
         } else if !worker.requests.is_empty() {
             let mut responses = Vec::new();
-            for request in std::mem::take(&mut worker.requests) {
+            let origin = worker.policy.base.origin().ascii_serialization();
+            let mut pending = std::mem::take(&mut worker.requests).into_iter();
+            let mut images = 0usize;
+            while let Some(request) = pending.next() {
+                if request.kind == crate::v9::INDEXED_DB_KIND {
+                    let response =
+                        self.answer_indexed_db(&origin, worker.policy.partition.as_str(), &request);
+                    // One step carries at most one response allowance of database images; the rest wait.
+                    if images > 0
+                        && images + response.body.len() > crate::v9::INDEXED_DB_RESPONSE_BYTES
+                    {
+                        worker.requests = std::iter::once(request).chain(pending).collect();
+                        break;
+                    }
+                    images += response.body.len();
+                    responses.push(response);
+                    continue;
+                }
+                if request.kind == "platform" {
+                    let identity = worker.lease.identity.clone();
+                    responses.push(self.worker_platform_request(
+                        &identity,
+                        &worker.policy,
+                        &request,
+                    )?);
+                    continue;
+                }
                 let deadline =
                     until.max(Instant::now() + crate::runtime::scripting::SCRIPT_REQUEST_WALL);
                 responses.push(self.script_request(
@@ -92,6 +118,11 @@ impl Runtime {
                 execution.effects.broadcast_channels,
             )?;
         }
+        self.commit_indexed_db(
+            &worker.policy.base.origin().ascii_serialization(),
+            worker.policy.partition.as_str(),
+            &execution.effects.indexed_db,
+        );
         worker.token = execution.state_token;
         worker.ready = execution.effects.worker_ready.ok_or_else(|| {
             EngineError::invalid("Worker execution omitted initialization state.")

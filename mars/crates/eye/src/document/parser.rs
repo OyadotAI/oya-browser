@@ -246,8 +246,6 @@ const HEAD_CONTENT: [&str; 9] = [
 const INERT_RAW: [&str; 4] = ["noscript", "noembed", "noframes", "iframe"];
 /** Placeholder width and height for frames, video, canvas and objects without dimensions, in CSS px. */
 const EMBED_SIZE: (u32, u32) = (300, 150);
-/** Height of an audio element showing its controls, in CSS px. */
-const AUDIO_CONTROLS_HEIGHT: u32 = 54;
 /** One line of placeholder label at the default font size, subtracted from the padded height. */
 const PLACEHOLDER_LINE: u32 = 24;
 /** The largest author dimension a placeholder honors, so a hostile size cannot exceed layout bounds. */
@@ -1132,10 +1130,6 @@ impl<'a> Tree<'a> {
         for message in markup::recover(&tag, &mut attrs) {
             self.diagnose(message);
         }
-        if self.fragment {
-            // Script-inserted markup never gains an inline handler, not even a button's onclick.
-            attrs.retain(|key, _| !key.starts_with("on"));
-        }
         self.resolve_addresses(&tag, &mut attrs);
         // A self-closing start tag is acknowledged only for a foreign element, which then
         // closes at once: `<math><mrow/><mi/></math>` holds two siblings.
@@ -1182,8 +1176,10 @@ impl<'a> Tree<'a> {
     /// runtime fills with its document. Nothing is loaded or executed here.
     fn finish(&mut self, index: usize) {
         let node = &self.document.nodes[index];
+        // Frames, canvases and media elements paint themselves: the app draws a video's frames,
+        // its poster and native controls into the element's own box.
         if !EMBEDDED.contains(&node.tag.as_str())
-            || ["iframe", "canvas"].contains(&node.tag.as_str())
+            || ["iframe", "canvas", "video", "audio"].contains(&node.tag.as_str())
         {
             return;
         }
@@ -1372,13 +1368,7 @@ fn conditional_media(attrs: &markup::Attributes) -> Option<&str> {
 
 /** Author width and height attributes, or the element's default size; None for a zero-size box. */
 fn placeholder_size(node: &super::Node) -> Option<(String, u32)> {
-    let default = match node.tag.as_str() {
-        "audio" if node.attributes.contains_key("controls") => {
-            (EMBED_SIZE.0, AUDIO_CONTROLS_HEIGHT)
-        }
-        "audio" => return None,
-        _ => EMBED_SIZE,
-    };
+    let default = EMBED_SIZE;
     let height = dimension(node.attributes.get("height")).map_or(default.1, |(value, _)| value);
     let width = match dimension(node.attributes.get("width")) {
         Some((value, true)) => format!("{}%", value.min(100)),

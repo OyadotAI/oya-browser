@@ -7,9 +7,9 @@ pub const VERSION: u32 = 2;
 /// Includes JSON escaping and the terminating newline. The largest frames are the styled
 /// Document beside its stylesheets and the script projection beside its sources: NODES *
 /// NODE_WIRE_BYTES (8 MiB) plus worst-case six-byte escaping of SCRIPT_TOTAL_BYTES or
-/// STYLE_TOTAL_BYTES plus the other source-derived strings stays under this 128 MiB frame
+/// STYLE_TOTAL_BYTES plus the other source-derived strings stays under this frame
 /// (asserted below). It is a ceiling checked as bytes arrive, never a preallocated buffer.
-pub const FRAME_BYTES: usize = 512 * 1024 * 1024;
+pub const FRAME_BYTES: usize = 2 * 1024 * 1024 * 1024;
 /// The measured upper bound on one styled node's JSON, used only by the frame assert.
 pub const NODE_WIRE_BYTES: usize = 1024;
 /** The first native MCP adapter explicitly supports this initialization-based protocol revision. */
@@ -98,16 +98,17 @@ pub const DEFAULT_VIEWPORT_HEIGHT: f64 = 680.0;
 pub const MIN_VIEWPORT_HEIGHT: f64 = 120.0;
 /// The existing native normal line advance remains stable for unstyled documents.
 pub const CSS_NORMAL_LINE_HEIGHT: f64 = 1.5;
-/// Limits one script's source before tokenization; 12 MiB fits the largest real bundles seen
-/// (CNN inlines 2.3 MB, YouTube's app bundle is several MB). A larger script is skipped, never page-fatal.
-pub const SCRIPT_BYTES: usize = 12 * 1024 * 1024;
+/// Limits one script's source before tokenization; 16 MiB fits the largest real bundles seen
+/// (CNN inlines 2.3 MB, YouTube's app bundle is several MB, Discord's is 12.75 MB). A larger script is skipped, never page-fatal.
+pub const SCRIPT_BYTES: usize = 16 * 1024 * 1024;
 /// Bounds the number of executable scripts accepted in one candidate document; later ones are
 /// skipped with a diagnostic. Chromium has no count cap, and real apps ship many chunks (Twitch
 /// loads 78), so this sits well past them; SCRIPT_TOTAL_BYTES still bounds the work.
 pub const SCRIPT_COUNT: usize = 512;
 /// All of a page's sources cross the V9 pipe in one frame, so they share this allowance; a
-/// script that would cross it is skipped and the page keeps the ones before it.
-pub const SCRIPT_TOTAL_BYTES: usize = 2 * SCRIPT_BYTES;
+/// script that would cross it is skipped and the page keeps the ones before it. Discord's app
+/// loads over 300 scripts past 24 MiB in all, so this admits four of the largest bundles.
+pub const SCRIPT_TOTAL_BYTES: usize = 4 * SCRIPT_BYTES;
 /// JavaScript modules one page may load, statically imported and dynamically imported together;
 /// github.com's home page loads 77. A module past it fails its graph, never the page.
 pub const MODULES: usize = 256;
@@ -140,7 +141,9 @@ pub const OPERATIONS: usize = 400_000_000;
 /// gives up on the service. Loading YouTube's 10.8 MB app bundle and the scripts around it takes
 /// over 1.5 s in an optimized build, so the guard allows what a real page load needs on this
 /// hardware. Use `script_deadline()` at runtime; this constant is only the default and the bound.
-pub const SCRIPT_DEADLINE_DEFAULT: Duration = Duration::from_millis(4000);
+/// eBay's and aa.com's startup bundles passed 4 s on V9 (about 10x V8's interpreter) and every
+/// script of the page stopped; browsers have no such limit, only a slow-script prompt.
+pub const SCRIPT_DEADLINE_DEFAULT: Duration = Duration::from_millis(15_000);
 /// Environment variable that overrides the script deadline in milliseconds. The test
 /// configuration sets it generously so parallel load cannot stop scripts before the heap bounds
 /// under test are reached; a product deployment normally leaves it unset.
@@ -203,9 +206,9 @@ pub const ID_BYTES: usize = 128;
 pub const HTML_ID_BYTES: usize = 4096;
 /// Absolute deadline for a complete HTTP exchange.
 pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(2);
-/// Covers child writes and reads, not just response reads; a second past the script deadline for
-/// decoding the request and encoding the reply.
-pub const RPC_TIMEOUT: Duration = Duration::from_secs(5);
+/// Covers child writes and reads, not just response reads; two seconds past the script deadline
+/// for decoding the request and encoding the reply.
+pub const RPC_TIMEOUT: Duration = Duration::from_secs(17);
 /// Successful status supported by the minimal HTTP implementation.
 pub const HTTP_OK: u16 = 200;
 /// Protocol separator for HTTP headers and body.
@@ -216,8 +219,22 @@ pub const NETWORK_CHUNK_BYTES: usize = 1024;
 pub const LAYOUT_UNIT: &str = "unicode_scalar_cells";
 /// Desktop web requests include TLS and redirects within one absolute budget.
 pub const WEB_TIMEOUT: Duration = Duration::from_secs(8);
+/// A network request fails only when it stops making progress, never for being slow: browsers
+/// set no total time on a load, so a slow link (a phone in a weak signal) still loads the page.
+/// Connecting (DNS, TCP and TLS) may take this long.
+pub const WEB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A connection that delivers no byte for this long has stalled and the request fails.
+pub const WEB_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// The outer bound on one request that keeps trickling bytes; any real download that moves at
+/// all finishes long before it. Page loads, script fetches and navigations use it in place of a
+/// fixed load time.
+pub const WEB_REQUEST_CEILING: Duration = Duration::from_secs(600);
 /// The external supervisor also bounds uncancellable operating-system DNS calls.
-pub const WEB_RPC_TIMEOUT: Duration = Duration::from_secs(10);
+pub const WEB_RPC_TIMEOUT: Duration = Duration::from_secs(630);
+/// Connecting is Relay's `network.prepare`, which Relay itself stops at WEB_CONNECT_TIMEOUT; a
+/// network process that has not answered five seconds later is hung (a DNS call the system will
+/// not cancel) and is replaced, rather than holding the page until WEB_RPC_TIMEOUT.
+pub const WEB_PREPARE_RPC_TIMEOUT: Duration = Duration::from_secs(35);
 /// Redirects must revalidate destinations and cannot create an unbounded chain.
 pub const REDIRECTS: usize = 5;
 /// Excessive or mixed DNS answer sets are rejected rather than partially trusted.
@@ -249,12 +266,14 @@ pub const OWNER_PID_ENV: &str = "OYA_NATIVE_OWNER_PID";
 pub const STYLE_BYTES: usize = 4 * 1024 * 1024;
 /// Linked sheets fetched for one candidate; later ones are skipped with a diagnostic. Chromium
 /// has no count limit, and The Verge links 66 sheets, so this is a sanity bound well above real
-/// pages; STYLE_TOTAL_BYTES still caps what they carry together.
-pub const STYLE_SHEETS: usize = 256;
+/// pages; STYLE_TOTAL_BYTES still caps what they carry together. Discord's app links more than
+/// 256 sheets (one per lazy chunk), so the bound sits well past that.
+pub const STYLE_SHEETS: usize = 1024;
 /// All of a page's sheets cross the document pipe together, so they share this allowance (the
 /// largest the frame assert below admits beside a maximum document). Sheets past it cannot
 /// reach Eye, so the runtime fails that page closed for agents instead of dropping hiding rules.
-pub const STYLE_TOTAL_BYTES: usize = STYLE_BYTES + STYLE_BYTES / 2;
+/// GitHub's home page links more than 6 MiB of CSS; dropping the rest left its hero blank.
+pub const STYLE_TOTAL_BYTES: usize = 8 * STYLE_BYTES;
 /// Submission data is bounded independently of document source: what a form or a script may
 /// send in one request body (Google's sign-in posts 20 KiB error reports), the same bound V9
 /// applies before a request leaves the page.
@@ -274,8 +293,9 @@ pub const PROFILE_STORE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Resource and compatibility reports never grow with arbitrary source features.
 pub const DIAGNOSTICS: usize = 32;
 /// Recursive parsing and AST evaluation share an independently checked depth bound; minified
-/// string concatenations and call chains need a few hundred levels.
-pub const EXPRESSION_DEPTH: usize = 256;
+/// string concatenations and call chains need a few hundred levels, and Discord's bundle nests
+/// past 256. It shares SYNTAX_DEPTH's bound, which the V9 thread stack is sized for.
+pub const EXPRESSION_DEPTH: usize = SYNTAX_DEPTH;
 /// Blocks and single-statement control bodies cannot exhaust the parser or evaluator stack.
 pub const STATEMENT_DEPTH: usize = 128;
 /// UTF-16 code units of one JavaScript string or literal. Google's inline scripts carry
@@ -453,7 +473,7 @@ const _: () = assert!(
         + VM_STATE_BYTES
         + 2 * STORAGE_AREA_BYTES
         + SCRIPT_CHANGE_BYTES
-        + 6 * SCRIPT_REQUESTS_PER_STEP * VM_RESPONSE_BYTES
+        + 6 * (STEP_RESPONSE_BYTES + VM_RESPONSE_BYTES)
         <= FRAME_BYTES
 );
 /* One module fits the per-script source bound, and the graph's sources fit their own total. */
@@ -497,10 +517,16 @@ pub const VM_TIMERS: usize = 4096;
 /// YouTube fetches its icon set in a burst of over thirty while its telemetry and data requests
 /// are in flight; at 32 the overflow failed the requests that carry its content and icons.
 pub const VM_HOST_REQUESTS: usize = 256;
-/// Bytes of one request body a script may send through the app.
-pub const VM_REQUEST_BODY_BYTES: usize = 64 * 1024;
-/// Bytes of one response body the app may hand back to a script.
-pub const VM_RESPONSE_BYTES: usize = 256 * 1024;
+/// Bytes of one request body a script may send through the app. Amazon's product page posts
+/// telemetry past 64 KiB; browsers set no limit, so this is only a memory bound.
+pub const VM_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// Bytes of one response body the app may hand back to a script. WebAssembly modules (Discord's
+/// libdiscore) and large JSON APIs run to megabytes; at 256 KiB their fetches failed.
+pub const VM_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+/// Response bytes one resume step carries in all. A response that would pass it waits for the
+/// next step (the first one in a step always goes), so a step holds at most this plus one
+/// VM_RESPONSE_BYTES response, which the frame assert below admits.
+pub const STEP_RESPONSE_BYTES: usize = 48 * 1024 * 1024;
 /// Script requests the app performs per V9 round trip; later ones fail like a network error.
 /// YouTube fetches its icon set in one burst of over thirty requests.
 pub const SCRIPT_REQUESTS_PER_STEP: usize = 48;

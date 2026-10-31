@@ -5,7 +5,7 @@ use super::{
     supervisor::{Runtime, perf},
 };
 use crate::{
-    constants::{DIAGNOSTICS, HISTORY_ENTRIES, STYLE_SHEETS, STYLE_TOTAL_BYTES, WEB_TIMEOUT},
+    constants::{DIAGNOSTICS, HISTORY_ENTRIES, STYLE_SHEETS, STYLE_TOTAL_BYTES},
     document::{Document, StyleSource},
     network::{Method, WebRequest, WebResponse},
     protocol::{EngineError, EngineResult, parameters},
@@ -317,7 +317,8 @@ impl Runtime {
     network service marked as a download is held in `ready_download` and yields no page. */
     fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Option<Page>> {
         let context = self.residency.reserve(self.page.is_some())?;
-        let deadline = Instant::now() + WEB_TIMEOUT;
+        // No fixed load time: each request fails only when it stalls (see WEB_STALL_TIMEOUT).
+        let deadline = Instant::now() + crate::constants::WEB_REQUEST_CEILING;
         let initiator = self
             .page
             .as_ref()
@@ -329,7 +330,18 @@ impl Runtime {
             ));
         }
         let fetch = Instant::now();
-        let acquired = if self.web_origins.is_some() {
+        let worker_response = if self.web_origins.is_some() && request.method == Method::Get {
+            self.service_worker_navigation(&request.url, deadline)?
+        } else {
+            None
+        };
+        let acquired = if let Some(response) = worker_response {
+            Acquired {
+                response,
+                method: Method::Get,
+                diagnostics: Vec::new(),
+            }
+        } else if self.web_origins.is_some() {
             let acquired = self.acquire(request, deadline, initiator, true, true)?;
             perf::record("page.fetch", fetch, || {
                 acquired.response.source.len().to_string()
@@ -485,6 +497,12 @@ impl Runtime {
             .filter_map(|(index, script)| script.refused.then_some(index))
             .collect();
         super::csp::apply_environment(&document.csp, &mut environment);
+        let top_level = embedding.map_or_else(
+            || acquired.response.url.clone(),
+            |embedding| embedding.top_level_url.clone(),
+        );
+        environment.service_worker_state =
+            self.assign_controller(&script_identity, &acquired.response.url, &top_level);
         environment.frame_documents = scripted_frames
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
@@ -518,6 +536,7 @@ impl Runtime {
                 .map(|script| script.source.clone())
                 .collect(),
             resolved_stylesheets: sheets,
+            local_sheets: (0, 0),
             top_level_url: embedding
                 .map(|embedding| embedding.top_level_url.clone())
                 .unwrap_or_else(|| acquired.response.url.clone()),
@@ -724,9 +743,12 @@ impl Runtime {
             .take(STYLE_SHEETS)
             .filter_map(|href| base.join(href).ok())
             .map(|url| request(url, crate::network::Destination::Style));
+        // Only classic scripts: a module is a CORS fetch with an Origin, and a no-Origin copy
+        // stored in the HTTP cache answered BBC's module without its CORS headers.
         let code = scripts
             .iter()
             .take(crate::constants::SCRIPT_COUNT)
+            .filter(|script| script.kind == crate::document::ScriptKind::Classic)
             .filter_map(|script| {
                 let url = base.join(script.src.as_deref()?).ok()?;
                 let candidate = super::csp::Candidate {
@@ -1035,6 +1057,12 @@ impl Runtime {
                 );
                 continue;
             }
+            if script.src.is_none() && script.source.is_empty() {
+                // HTML's "prepare the script element" returns before any CSP check when an inline
+                // script has no source text, so an empty `<script></script>` is never blocked
+                // (facebook.com ships one without a nonce).
+                continue;
+            }
             let raw = script.src.as_deref().and_then(|src| base.join(src).ok());
             let candidate = super::csp::Candidate {
                 url: raw.as_ref(),
@@ -1171,6 +1199,12 @@ impl Runtime {
             Ok(acquired.response.source)
         })
     }
+}
+
+/** A `data:` script's source when its type is JavaScript; malformed bytes decode as U+FFFD. */
+pub(super) fn data_script(url: &str) -> Option<String> {
+    let (mime, bytes) = super::images::data_body(url, crate::constants::SCRIPT_BYTES).ok()?;
+    javascript_mime(&mime).then(|| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /**

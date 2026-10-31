@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn signal_reference_rejects_inline_payloads() {
         let mut bad = listener(Target::Window, "x", false, 1, 1);
-        bad.signal = Some(JsValue::String("not an arena identity".into()));
+        bad.signal = Some(JsValue::String(crate::v9::value::JsString::from_utf8("not an arena identity").unwrap()));
         let mut store = ListenerStore::default();
         assert!(store.insert(bad.clone()).is_err());
         let encoded = serde_json::to_vec(&vec![bad]).unwrap();

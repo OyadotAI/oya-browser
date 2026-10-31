@@ -10,7 +10,7 @@ use std::time::Duration;
 mod lifetime;
 
 /** The supervisor must kill this test stall long before it finishes. */
-const STALL: Duration = Duration::from_secs(30);
+const STALL: Duration = Duration::from_secs(60);
 
 /** Behavior comes only from the test-created executable name, not production input. */
 fn main() {

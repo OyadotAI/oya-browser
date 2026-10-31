@@ -9,9 +9,6 @@ impl Runtime {
         &mut self,
         yield_now: &mut dyn FnMut() -> bool,
     ) -> bool {
-        if yield_now() {
-            return false;
-        }
         let letter = self.broadcast.next();
         let tab = letter
             .as_ref()
@@ -20,6 +17,10 @@ impl Runtime {
         let Some(tab) = tab else {
             return false;
         };
+        // Asked only once there is work, so an idle broadcast never costs the page its step.
+        if yield_now() {
+            return false;
+        }
         if self.healthy().is_err() {
             return false;
         }

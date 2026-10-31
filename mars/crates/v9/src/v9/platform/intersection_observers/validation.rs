@@ -9,6 +9,7 @@ pub(in crate::v9) fn roots(state: &super::super::PageState, out: &mut Vec<JsValu
         if !observer.targets.is_empty() || !observer.queued.is_empty() {
             out.push(JsValue::Object(*id));
         }
+        out.extend(observer.options.root.map(|root| JsValue::Object(root.object)));
         out.extend(
             observer
                 .targets
@@ -66,6 +67,12 @@ fn validate_with_heap(state: &super::super::PageState, heap: Option<&Heap>) -> E
             }
         }
         options(&observer.options)?;
+        if observer.options.root.is_some_and(|root| {
+            state.wrappers.get(&root.node) != Some(&root.object)
+                || heap.is_some_and(|heap| !target_object(heap, root.node, root.object))
+        }) {
+            return Err(invalid());
+        }
         let mut seen = std::collections::BTreeSet::new();
         for target in &observer.targets {
             if !seen.insert(target.node)

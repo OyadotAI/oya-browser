@@ -45,6 +45,24 @@ const TEMP_SUFFIX: &str = ".tmp";
 /// The recovery marker carries this fixed payload and never any site data.
 const RECOVERY_MARKER: &[u8] = b"oya-web-storage-recovery-v1";
 
+/// IndexedDB records are named this prefix plus a lowercase hex digest of their partition key.
+const INDEXED_DB_PREFIX: &str = "indexeddb-";
+
+/// The record name for an IndexedDB record; only digest names reach the filesystem.
+fn indexed_db_name(record: &str) -> Result<String, ProfileError> {
+    let digest = record
+        .strip_prefix(INDEXED_DB_PREFIX)
+        .ok_or(ProfileError::Corrupt)?;
+    if digest.is_empty()
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ProfileError::Corrupt);
+    }
+    Ok(record.to_string())
+}
+
 /// Record names double as file names and as associated data, so a file moved to another name fails.
 const COOKIES: &str = "cookies";
 const WEB_STORAGE: &str = "web-storage";
@@ -53,6 +71,9 @@ const SESSION: &str = "session";
 const HISTORY: &str = "history";
 const BOOKMARKS: &str = "bookmarks";
 const SETTINGS: &str = "settings";
+const SERVICE_WORKERS: &str = "service-workers";
+const CACHE_STORAGE: &str = "cache-storage";
+const CREDENTIALS: &str = "credentials";
 
 /** Each pre-vault Keychain account, the record it becomes, and that record's bound. */
 const LEGACY: [(&str, &str, usize); 7] = [
@@ -447,6 +468,21 @@ impl Open {
         Ok(())
     }
 
+    /// Delete every committed record whose name starts with `prefix`.
+    fn remove_prefixed(&self, prefix: &str) -> Result<(), ProfileError> {
+        let entries = fs::read_dir(&self.dir).map_err(|_| ProfileError::Unavailable)?;
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if let Some(name) = file
+                .strip_suffix(RECORD_SUFFIX)
+                .filter(|name| name.starts_with(prefix))
+            {
+                self.remove(name)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Best effort: the rename or unlink already happened; this only hurries it to disk.
     fn sync_dir(&self) {
         if let Ok(dir) = fs::File::open(&self.dir) {
@@ -544,6 +580,30 @@ impl WebStorageStore for Storage {
     fn mark_recovery(&self) -> Result<(), ProfileError> {
         self.0.open()?.write(RECOVERY, RECOVERY_MARKER)
     }
+    fn load_indexed_db(&self, record: &str) -> Result<Option<Vec<u8>>, ProfileError> {
+        let name = indexed_db_name(record)?;
+        let open = self.0.open()?;
+        match open.read(&name, crate::v9::INDEXED_DB_ORIGIN_RECORD_BYTES)? {
+            Found::Valid(bytes) => Ok(Some(bytes)),
+            Found::Absent => Ok(None),
+            Found::Invalid => {
+                eprintln!(
+                    "Mars profile: a saved IndexedDB record failed verification and was reset to empty."
+                );
+                let _ = open.remove(&name);
+                Ok(None)
+            }
+        }
+    }
+    fn replace_indexed_db(&self, record: &str, bytes: &[u8]) -> Result<(), ProfileError> {
+        if bytes.len() > crate::v9::INDEXED_DB_ORIGIN_RECORD_BYTES {
+            return Err(ProfileError::Corrupt);
+        }
+        self.0.open()?.write(&indexed_db_name(record)?, bytes)
+    }
+    fn clear_indexed_db(&self) -> Result<(), ProfileError> {
+        self.0.open()?.remove_prefixed(INDEXED_DB_PREFIX)
+    }
     fn clear_recovery(&self) -> Result<(), ProfileError> {
         self.0.open()?.remove(RECOVERY)
     }
@@ -564,6 +624,9 @@ fn record_name(record: Record) -> &'static str {
         Record::History => HISTORY,
         Record::Bookmarks => BOOKMARKS,
         Record::Settings => SETTINGS,
+        Record::ServiceWorkers => SERVICE_WORKERS,
+        Record::CacheStorage => CACHE_STORAGE,
+        Record::Credentials => CREDENTIALS,
     }
 }
 

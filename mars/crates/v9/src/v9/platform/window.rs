@@ -70,7 +70,7 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "screenX" | "screenY" | "screenLeft" | "screenTop" => JsValue::Number(0.0),
         "length" => JsValue::Number(super::frame_directory::child_count(&mut vm.page) as f64),
         "closed" => JsValue::Boolean(false),
-        "isSecureContext" => JsValue::Boolean(vm.page.state.href.starts_with("https:")),
+        "isSecureContext" => JsValue::Boolean(potentially_trustworthy(&vm.page.state.href)),
         "origin" => {
             let origin = super::net::parse_url(&vm.page.state.href)
                 .map(|url| url.origin().ascii_serialization())
@@ -372,6 +372,24 @@ const NAVIGATOR_CORES: f64 = 8.0;
 /** What navigator.deviceMemory reports. */
 const NAVIGATOR_MEMORY: f64 = 8.0;
 
+/** Secure Contexts' "potentially trustworthy URL": https, wss and file, and http on a loopback
+address or a localhost name, which never leave the machine. */
+pub(in crate::v9) fn potentially_trustworthy(href: &str) -> bool {
+    let Ok(url) = url::Url::parse(href) else {
+        return false;
+    };
+    match url.scheme() {
+        "https" | "wss" | "file" => true,
+        "http" | "ws" => match url.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(name)) => name == "localhost" || name.ends_with(".localhost"),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 /** navigator methods. */
 pub(in crate::v9) fn navigator_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match native_name(&call) {
@@ -497,6 +515,39 @@ pub(in crate::v9) fn location_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
+
+/** history.scrollRestoration: "auto" until the page sets "manual" (React Router does on every
+render; a read-only property threw and Medium showed its error page). A value outside the enum
+is ignored, as WebIDL enum setters do. */
+pub(in crate::v9) fn scroll_restoration(vm: &mut Vm, call: &Call) -> Res<JsValue> {
+    let key = crate::v9::vm::heap::Key::private("history.scrollRestoration");
+    let Some(history) = call.this.object() else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    if call.args.is_empty() {
+        let stored = vm.own(history, &key)?.and_then(|prop| match prop.slot {
+            crate::v9::vm::heap::Slot::Data(value) => Some(value),
+            _ => None,
+        });
+        return Ok(stored.unwrap_or(JsValue::string("auto")?));
+    }
+    let value = vm.to_text(&call.arg(0))?;
+    if value == "auto" || value == "manual" {
+        let text = JsValue::string(&value)?;
+        vm.define(
+            history,
+            key,
+            crate::v9::vm::property::Descriptor {
+                value: Some(text),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Default::default()
+            },
+        )?;
+    }
+    Ok(JsValue::Undefined)
+}
 /** history members. */
 pub(in crate::v9) fn history(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = native_name(&call);
@@ -505,7 +556,7 @@ pub(in crate::v9) fn history(vm: &mut Vm, call: Call) -> Res<JsValue> {
             vm.page.state.history_length.max(1),
         ))),
         "state" => Ok(vm.page.state.history_state.clone().unwrap_or(JsValue::Null)),
-        "scrollRestoration" => JsValue::string("auto").map_err(Into::into),
+        "scrollRestoration" => scroll_restoration(vm, &call),
         "pushState" | "replaceState" => {
             let state = call.arg(0);
             let title = if call.arg(1).nullish() {

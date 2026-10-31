@@ -1,7 +1,7 @@
 /** Governed one-hop resources keep effect admission, cookies and deadlines in the coordinator. */
 use super::supervisor::Runtime;
 use crate::{
-    constants::{REDIRECTS, WEB_TIMEOUT},
+    constants::REDIRECTS,
     network::{Destination, Method, Preflight, WebRequest, WebResponse, cors},
     protocol::{EngineError, EngineResult},
 };
@@ -9,7 +9,9 @@ use serde_json::json;
 use std::time::{Instant, SystemTime};
 use url::Url;
 
+mod in_flight;
 mod request_diagnostics;
+pub(super) use in_flight::{InFlight, Progress};
 use request_diagnostics::{FailureStage, RequestDiagnostic};
 
 /** What a redirect response does to an acquisition. */
@@ -106,7 +108,7 @@ impl Runtime {
                 );
                 let remaining = deadline
                     .saturating_duration_since(Instant::now())
-                    .min(WEB_TIMEOUT);
+                    .min(crate::constants::WEB_REQUEST_CEILING);
                 if remaining.is_zero() {
                     return Err(EngineError::navigation_timeout());
                 }
@@ -128,7 +130,12 @@ impl Runtime {
                     })?;
                     admitted_unsafe |= !request.method.is_safe();
                     let transmit = json!({"token":token["token"]});
-                    self.call_typed("network", "network.transmit", &transmit, Some(deadline))?
+                    let response: WebResponse =
+                        self.call_typed("network", "network.transmit", &transmit, Some(deadline))?;
+                    if !request.method.is_safe() {
+                        self.loader.forget(&[cache_url(&url)]);
+                    }
+                    response
                 };
                 // Fetch stores a response's cookies only when the request included credentials.
                 let stored: &[String] = if credentials {
@@ -214,6 +221,15 @@ enum BatchOutcome {
 }
 
 impl Runtime {
+    /** An unsafe request a loader worker sent changed this URL's resource: every other network
+    process drops its cached copies, or a later GET there would read the stale one. */
+    fn forget_cached(&mut self, url: &Url) -> EngineResult<()> {
+        let urls = [cache_url(url)];
+        self.loader.forget(&urls);
+        self.call("network", "network.cache_forget", json!({"urls": urls}))?;
+        Ok(())
+    }
+
     /** Names the cache partition, initiator-derived cookies and the like for one hop, so a
     prefetched request and the later acquire of the same resource are byte-identical. */
     fn shape_hop(
@@ -303,7 +319,7 @@ impl Runtime {
         for chunk in shaped.chunks(FETCH_BATCH) {
             let remaining = deadline
                 .saturating_duration_since(Instant::now())
-                .min(WEB_TIMEOUT);
+                .min(crate::constants::WEB_REQUEST_CEILING);
             if remaining.is_zero() {
                 return Ok(());
             }
@@ -482,6 +498,7 @@ impl Credentials {
 }
 
 /// One script request, as parsed from what the page asked for.
+#[derive(Clone)]
 pub(super) struct ScriptRequest {
     /// Native fetch/XHR identity correlates opt-in diagnostics without storing page addresses.
     pub request_id: Option<u32>,
@@ -639,28 +656,7 @@ impl Runtime {
         first: bool,
         until: Instant,
     ) -> EngineResult<Option<WebResponse>> {
-        let tainting = flow.tainting();
-        let cookies = match request.credentials {
-            Credentials::Include => true,
-            Credentials::SameOrigin => tainting == cors::Tainting::Basic,
-            Credentials::Omit => false,
-        };
-        let origin = (tainting == cors::Tainting::Cors || !request.method.is_safe())
-            .then(|| flow.serialized());
-        let mut web = WebRequest {
-            method: request.method.clone(),
-            raw_response: request.raw_response,
-            top_level: request
-                .worker_policy
-                .as_ref()
-                .map(|policy| policy.partition.to_string()),
-            body: request.body.clone(),
-            destination: Destination::Empty,
-            headers: request.headers.clone(),
-            origin,
-            mode: Some(request.mode),
-            ..WebRequest::get(request.url.as_str())
-        };
+        let (mut web, cookies) = hop_request(request, flow);
         // A DevTools client that paused this page request decides its first hop, as it does
         // for navigations; a hop after a redirect is never paused.
         if first && let Some(answer) = super::devtools::intercept(&mut web) {
@@ -717,6 +713,42 @@ impl Runtime {
         let location = response.location.as_deref()?;
         crate::network::redirect_url(url, location, &grants).ok()
     }
+}
+
+/** A URL as Relay's cache keys it: absolute, without its fragment. */
+fn cache_url(url: &Url) -> String {
+    let mut url = url.clone();
+    url.set_fragment(None);
+    url.into()
+}
+
+/** One hop's request as its CORS state calls for, and whether it carries cookies: credentials
+by mode and tainting, Origin on CORS and unsafe requests. Shared by the blocking and the
+loader paths so both send byte-identical hops. */
+fn hop_request(request: &ScriptRequest, flow: &cors::Flow) -> (WebRequest, bool) {
+    let tainting = flow.tainting();
+    let cookies = match request.credentials {
+        Credentials::Include => true,
+        Credentials::SameOrigin => tainting == cors::Tainting::Basic,
+        Credentials::Omit => false,
+    };
+    let origin = (tainting == cors::Tainting::Cors || !request.method.is_safe())
+        .then(|| flow.serialized());
+    let web = WebRequest {
+        method: request.method.clone(),
+        raw_response: request.raw_response,
+        top_level: request
+            .worker_policy
+            .as_ref()
+            .map(|policy| policy.partition.to_string()),
+        body: request.body.clone(),
+        destination: Destination::Empty,
+        headers: request.headers.clone(),
+        origin,
+        mode: Some(request.mode),
+        ..WebRequest::get(request.url.as_str())
+    };
+    (web, cookies)
 }
 
 /** The final response as the page may see it, by tainting. */

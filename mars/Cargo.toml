@@ -28,6 +28,8 @@ rustls = { version = "=0.23.45", default-features = false, features = ["std", "r
 url = "=2.5.8"
 # Already in the tree through rustls; verifies Subresource Integrity hashes.
 ring = "=0.17.14"
+# AES block cipher for the Clear Key CDM's 'cenc' (AES-128-CTR) decryption; ring exposes no raw AES.
+aes = "=0.8.4"
 libc = "=0.2.191"
 png = "=0.17.16"
 jpeg-decoder = "=0.3.2"
@@ -42,6 +44,13 @@ objc2-foundation = "=0.3.2"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSWindow", "NSView", "NSButton", "NSButtonCell", "NSTextField", "NSSecureTextField", "NSPopUpButton", "NSPopUpButtonCell", "NSTextView", "NSControl", "NSResponder", "NSScrollView", "NSClipView", "NSColor", "NSColorSpace", "NSFont", "NSStringDrawing", "NSGraphics", "NSGraphicsContext", "NSEvent", "NSMenu", "NSMenuItem", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSText", "NSCell", "NSAttributedString", "NSAppearance", "NSBezierPath", "NSRunningApplication", "NSAlert", "objc2-core-graphics"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGContext", "CGGradient", "CGColor", "CGColorSpace", "CGAffineTransform", "CGPath"] }
+# Media playback: AVFoundation demuxes and decodes (VideoToolbox/AudioToolbox underneath) and
+# outputs audio; Mars feeds it bytes fetched through Relay via a resource loader.
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime" ] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn", "CVBase", "CVPixelBufferIOSurface", "CVHostTime"] }
+dispatch2 = "=0.3.1"
+block2 = "=0.6.2"
 security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
 

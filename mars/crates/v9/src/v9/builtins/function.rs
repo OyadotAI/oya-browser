@@ -383,7 +383,16 @@ pub(in crate::v9) fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .and_then(|id| vm.heap.get(id))
         .and_then(|object| object.function())
         .and_then(|function| match function.kind {
-            FunctionKind::Closure { site, .. } => vm.registry.get(site)?.original_source(),
+            // The bootstraps implement platform interfaces, which print as native code.
+            FunctionKind::Closure { site, .. }
+                if !crate::v9::platform::indexed_db::is_bootstrap_site(site)
+                    && !crate::v9::platform::observable::is_bootstrap_site(site) =>
+            {
+                vm.registry
+                    .get(site)
+                    .filter(|code| !code.platform())?
+                    .original_source()
+            }
             _ => None,
         })
         .map(str::to_owned)

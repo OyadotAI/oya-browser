@@ -138,7 +138,7 @@ fn take_records_drains_queued_entries_while_disconnect_preserves_already_queued_
 
 #[test]
 fn unsupported_options_and_forged_receivers_never_grant_fake_observations() {
-    let source = "let result='';for(const options of [{rootMargin:'2em'},{threshold:1.1},{threshold:NaN},{root:document.body},{trackVisibility:true},{scrollMargin:'2px'},{delay:1}]){try{new IntersectionObserver(()=>{},options)}catch(e){result+='x'}}try{IntersectionObserver.prototype.observe.call({},document.body)}catch(e){result+='x'}try{new IntersectionObserver(()=>{}).observe(window)}catch(e){result+='x'}";
+    let source = "let result='';for(const options of [{rootMargin:'2em'},{threshold:1.1},{threshold:NaN},{root:{}},{trackVisibility:true},{scrollMargin:'2px'},{delay:1}]){try{new IntersectionObserver(()=>{},options)}catch(e){result+='x'}}try{IntersectionObserver.prototype.observe.call({},document.body)}catch(e){result+='x'}try{new IntersectionObserver(()=>{}).observe(window)}catch(e){result+='x'}";
     assert_eq!(common::eval(source, "result"), "xxxxxxxxx");
 }
 
@@ -217,4 +217,36 @@ fn full_state_and_summary_reject_combined_options_above_the_native_budget() {
             .validate_summary_document(&common::page())
             .is_err()
     );
+}
+
+#[test]
+fn element_roots_measure_descendants_against_the_root_box() {
+    let source = "let result='';const main=document.getElementById('main');const o=new IntersectionObserver(e=>result=e[0].isIntersecting+'|'+e[0].intersectionRatio+'|'+e[0].rootBounds.width+'|'+(o.root===main),{root:main,rootMargin:'10%'});o.observe(document.getElementById('first'));";
+    let mut env = environment(45.0, 45.0, 20.0, 20.0);
+    env.geometry.push(NodeBox {
+        node: 0,
+        x: 0.0,
+        y: 0.0,
+        width: 50.0,
+        height: 50.0,
+        ..NodeBox::default()
+    });
+    let initial = common::load_with(source, &env);
+    let observed = observe(source, &env, initial.state);
+    assert_eq!(common::global(&observed, "result"), "true|0.25|60|true");
+}
+
+#[test]
+fn element_roots_never_intersect_targets_outside_them() {
+    let source = "let result='';const o=new IntersectionObserver(e=>result=String(e[0].isIntersecting),{root:document.getElementById('first')});o.observe(document.getElementById('main'));";
+    let mut env = environment(0.0, 0.0, 50.0, 50.0);
+    env.geometry.push(NodeBox {
+        node: 0,
+        width: 50.0,
+        height: 50.0,
+        ..NodeBox::default()
+    });
+    let initial = common::load_with(source, &env);
+    let observed = observe(source, &env, initial.state);
+    assert_eq!(common::global(&observed, "result"), "false");
 }

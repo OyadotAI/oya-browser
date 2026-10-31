@@ -61,11 +61,18 @@ const fn interface(name: &'static str, tags: &'static [&'static str]) -> Interfa
     }
 }
 
-/// Every interface with members of its own. Tags not listed use HTMLElement.prototype.
+/// Every interface with its own prototype. Tags not listed use HTMLElement.prototype.
 const INTERFACES: &[Interface] = &[
     // Its window-forwarded handler accessors are added in `install`, beside the other members.
     interface("HTMLBodyElement", &["body"]),
     interface("HTMLHeadElement", &["head"]),
+    // Interfaces with no members of their own still need their own prototype: pages patch them
+    // (React Aria replaces HTMLTemplateElement.prototype.appendChild), and a shared
+    // HTMLElement.prototype carried the patch onto every element.
+    interface("HTMLDivElement", &["div"]),
+    interface("HTMLSpanElement", &["span"]),
+    interface("HTMLHtmlElement", &["html"]),
+    interface("HTMLTemplateElement", &["template"]),
     Interface {
         reflected: &["href", "name", "type", "rel", "target"],
         getters: &[

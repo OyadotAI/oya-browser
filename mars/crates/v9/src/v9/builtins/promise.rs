@@ -321,7 +321,12 @@ impl Vm<'_> {
         self.draining_jobs = true;
         let result = self.drain_jobs_inner();
         self.draining_jobs = false;
-        result
+        result?;
+        // HTML's "cleanup Indexed Database transactions" closes the checkpoint at the end of a task.
+        if self.indexed_db_cleanup && self.frames.is_empty() {
+            crate::v9::platform::indexed_db::end_of_task(self)?;
+        }
+        Ok(())
     }
     /** One checkpoint owns the queue and always releases its reentrancy guard on failure. */
     fn drain_jobs_inner(&mut self) -> Res<()> {
@@ -334,7 +339,17 @@ impl Vm<'_> {
             self.collect_if_needed()?;
             self.collect_if_due()?;
             let Some(job) = self.jobs.pop_front() else {
-                break;
+                // A stable state: media elements whose attributes or position changed run
+                // their load steps now, and whatever microtasks those queue drain next.
+                match crate::v9::platform::media::stable_state(self) {
+                    Ok(true) => continue,
+                    Ok(false) => break,
+                    Err(Thrown::Value(error)) => {
+                        crate::v9::platform::workers::report_exception(self, &error)?;
+                        continue;
+                    }
+                    Err(fatal) => return Err(fatal),
+                }
             };
             match self.run_rooted_job(job) {
                 Ok(()) => {}

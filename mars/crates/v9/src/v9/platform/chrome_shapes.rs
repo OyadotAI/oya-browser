@@ -66,6 +66,9 @@ fn instance(vm: &mut Vm, this: &JsValue) -> Res<bool> {
 /** A method or getter with no implementation: `Illegal invocation` on a prototype, the value a
 script stored (or the member's initial value) on an instance. */
 fn stub_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if let Some(value) = super::media::upgrade(vm, &call, native_name(&call), false)? {
+        return Ok(value);
+    }
     if super::canvas::context_node(vm, &call.this).is_some() {
         return Err(vm.dom_exception(
             "NotSupportedError",
@@ -94,6 +97,9 @@ fn stub_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** A setter with no implementation: the value becomes an own property of the instance, where
 the event dispatcher finds handler attributes and where the getter reads it back. */
 fn stub_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if let Some(value) = super::media::upgrade(vm, &call, native_name(&call), true)? {
+        return Ok(value);
+    }
     if super::canvas::context_node(vm, &call.this).is_some() {
         return Err(vm.dom_exception(
             "NotSupportedError",

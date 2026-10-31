@@ -554,9 +554,12 @@ fn viewport_locked(root: &super::ComputedStyle, body: &super::ComputedStyle) -> 
 }
 /** HTML's canvas natural size: its `width` and `height` attributes when they are valid
 non-negative integers, else 300 by 150, read at every layout so a script's resize applies. The
-bitmap itself is transparent until something draws on it. */
+bitmap itself is transparent until something draws on it. A video with no reported size yet
+gets the same 300 by 150 default object size; CSS sizes it like any replaced element. */
 fn canvases(document: &Document) -> Option<Document> {
-    let canvas = |node: &Node| node.tag == "canvas" && node.image_size.is_none();
+    let canvas = |node: &Node| {
+        matches!(node.tag.as_str(), "canvas" | "video") && node.image_size.is_none()
+    };
     if !document.nodes.iter().any(canvas) {
         return None;
     }
@@ -568,6 +571,9 @@ fn canvases(document: &Document) -> Option<Document> {
                 .and_then(|value| mars_core::canvas::dimension(value))
                 .unwrap_or(default)
         };
+        // A video's own size arrives with its metadata (the app sets it). Until then its
+        // width and height attributes give its shape, as their mapped aspect-ratio does in
+        // browsers, else HTML's default object size; a canvas always reads its attributes.
         node.image_size = Some((side("width", CANVAS_SIZE.0), side("height", CANVAS_SIZE.1)));
     }
     Some(copy)

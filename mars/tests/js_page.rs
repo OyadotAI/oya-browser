@@ -596,25 +596,26 @@ fn script_linked_stylesheet_that_fails_is_degraded() {
  * on the page may be acted on: the same fail-closed rule navigation applies to linked sheets. */
 #[test]
 fn script_linked_stylesheet_past_the_allowance_fails_closed() {
-    let filler = format!(
-        "<style>/*{}*/</style>",
-        "x".repeat(mars::constants::STYLE_TOTAL_BYTES - 64)
-    );
+    // The allowance is larger than one HTML body may be, so linked sheets fill it.
+    let sheets = mars::constants::STYLE_TOTAL_BYTES / mars::constants::STYLE_BYTES;
+    let filler = mars::constants::STYLE_BYTES - FILLER_SLACK;
+    let mut routes: Vec<(&'static str, Vec<u8>)> = (0..sheets)
+        .map(|index| {
+            let path: &'static str = Box::leak(format!("/fill{index}.css").into_boxed_str());
+            let css = format!("/*{}*/", "x".repeat(filler));
+            (path, reply("text/css", "", &css))
+        })
+        .collect();
+    let links: String = (0..sheets)
+        .map(|index| format!("<link rel=stylesheet href=/fill{index}.css>"))
+        .collect();
     let body = format!(
-        "{filler}<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
+        "{links}<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
          l.rel='stylesheet';l.href='/more.css';document.head.appendChild(l)</script>"
     );
-    let (_fixture, mut runtime, page) = load(
-        &body,
-        vec![(
-            "/more.css",
-            reply(
-                "text/css",
-                "",
-                &format!("#go{{color:red}}/*{}*/", "y".repeat(256)),
-            ),
-        )],
-    );
+    let past = "y".repeat(sheets * FILLER_SLACK);
+    routes.push(("/more.css", reply("text/css", "", &format!("#go{{color:red}}/*{past}*/"))));
+    let (_fixture, mut runtime, page) = load(&body, routes);
     assert!(
         page["degraded"]
             .as_array()
@@ -627,6 +628,10 @@ fn script_linked_stylesheet_past_the_allowance_fails_closed() {
     let link = &found["matches"][0];
     assert_eq!(link["disabled"], true, "{found}");
 }
+
+/** Bytes each filler sheet leaves under STYLE_BYTES; the script-linked sheet is larger than
+all of them together, so it lands past the allowance. */
+const FILLER_SLACK: usize = 64;
 
 /** The node id of the element whose HTML id is `html_id`. */
 fn node_by_html_id(page: &Value, html_id: &str) -> Value {
@@ -773,4 +778,38 @@ fn clicking_a_button_descendant_preserves_the_original_event_target() {
     )
     .unwrap();
     assert!(texts(&clicked).contains("child"), "{clicked}");
+}
+
+/** How long the slow route below holds its answer: longer than a navigation's settle. */
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(3);
+
+/** A fetch on a slow link does not hold the page: navigation returns before the answer comes,
+and the answer still reaches the page on a later background run. */
+#[test]
+fn a_slow_fetch_does_not_hold_the_page() {
+    let page: &'static str = "<p id=out>waiting</p><script>fetch('/slow').then(r=>r.text())\
+        .then(t=>document.getElementById('out').textContent=t)</script>";
+    let fixture = support::Fixture::start(
+        Box::new(move |request| {
+            if request.split_whitespace().nth(1) == Some("/slow") {
+                std::thread::sleep(SLOW_ANSWER);
+                return reply("text/plain", "", "arrived");
+            }
+            html("", page)
+        }),
+        false,
+    );
+    let mut runtime = desktop(&fixture.url);
+    let started = std::time::Instant::now();
+    let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(started.elapsed() < SLOW_ANSWER, "navigation waited for the fetch");
+    assert!(texts(&loaded).contains("waiting"), "{loaded}");
+    let deadline = std::time::Instant::now() + 4 * SLOW_ANSWER;
+    let mut now = loaded;
+    while !texts(&now).contains("arrived") && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+        now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    }
+    assert!(texts(&now).contains("arrived"), "{now}");
 }

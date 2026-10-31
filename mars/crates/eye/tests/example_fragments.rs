@@ -85,7 +85,7 @@ fn use_href_is_not_a_link() {
     assert_ne!(role(reference), "link");
 }
 
-/** Page markup inserts and renders; scripts, handlers and unknown drawing input are inert, not refused. */
+/** Page markup inserts and renders; scripts and unknown drawing input are inert, not refused. */
 #[test]
 fn inserted_page_markup_renders_inertly() {
     for html in [
@@ -100,10 +100,6 @@ fn inserted_page_markup_renders_inertly() {
         "<svg>text</svg>",
     ] {
         let fragment = parse_fragment("body", html, 1).unwrap();
-        assert!(
-            fragment.nodes.iter().all(|node| node.handler.is_none()),
-            "{html}"
-        );
         let mut document = parse("<p>host</p>").unwrap();
         document.nodes.extend(fragment.nodes);
         mars_eye::render(&mars_eye::compute_styles(&document, &[]).unwrap(), 640.0)

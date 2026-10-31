@@ -54,6 +54,8 @@ pub(super) struct Page {
     pub scripts: Vec<String>,
     /** Already-governed source supports resize/theme restyling without refetch or script execution. */
     pub resolved_stylesheets: Vec<String>,
+    /** Where V9's script-only `<style>` texts sit in `resolved_stylesheets`: start and length. */
+    pub local_sheets: (usize, usize),
     /** Final URL after policy-checked redirects. */
     pub url: String,
     /// The root document's site partitions worker loads independently of their own origin.

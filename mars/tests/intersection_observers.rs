@@ -14,6 +14,8 @@ use support::{Fixture, agent_call, html};
 /** Bound native scheduling waits without accessing any public network endpoint. */
 const DELIVERY_WALL: Duration = Duration::from_secs(3);
 const DELIVERY_POLL: Duration = Duration::from_millis(25);
+/** The narrowest window Eye lays out (its MIN_VIEWPORT is 280px), so a box past it starts hidden. */
+const START_WIDTH: f64 = 300.0;
 
 /** Observe a real positioned box and retain callback results in the committed document. */
 fn page(position: &str) -> Vec<u8> {
@@ -40,7 +42,7 @@ fn load(fixture: &Fixture) -> Runtime {
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
-    runtime.set_viewport(200.0, 200.0).unwrap();
+    runtime.set_viewport(START_WIDTH, 200.0).unwrap();
     agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     runtime
 }
@@ -73,7 +75,7 @@ fn settle(runtime: &mut Runtime, expected: &str) {
 /** Native resizing supplies fresh boxes even when the author scheduled no timers. */
 #[test]
 fn viewport_resize_delivers_a_new_intersection_without_author_timers() {
-    let fixture = Fixture::raw(page("left:250px;top:20px"));
+    let fixture = Fixture::raw(page("left:350px;top:20px"));
     let mut runtime = load(&fixture);
     settle(&mut runtime, "false");
     runtime.set_viewport(400.0, 200.0).unwrap();

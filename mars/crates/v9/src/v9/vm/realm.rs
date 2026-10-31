@@ -155,7 +155,12 @@ pub(in crate::v9) struct Ids {
     pub node_prototype: ObjectId,
     pub element_prototype: ObjectId,
     pub html_element_prototype: ObjectId,
+    /** CharacterData.prototype: the members Text and Comment share. */
     pub text_prototype: ObjectId,
+    /** Text.prototype, its own object so `instanceof Comment` is false for text. */
+    pub text_node_prototype: ObjectId,
+    /** Comment.prototype, its own object so `instanceof Text` is false for comments. */
+    pub comment_prototype: ObjectId,
     pub document_prototype: ObjectId,
     /** XMLDocument.prototype: the prototype of documents createDocument makes, an XML document. */
     pub xml_document_prototype: ObjectId,
@@ -189,6 +194,8 @@ pub(in crate::v9) struct Ids {
     pub shared_array_buffer: ObjectId,
     pub abort_signal_prototype: ObjectId,
     pub idle_deadline_prototype: ObjectId,
+    /** The private host object handed only to the media bootstrap; never reachable from a global. */
+    pub media_host: ObjectId,
     pub range_prototype: ObjectId,
     pub static_range_prototype: ObjectId,
     pub named_node_map_prototype: ObjectId,

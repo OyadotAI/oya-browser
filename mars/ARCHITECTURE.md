@@ -69,9 +69,23 @@ and a complete live endpoint snapshot cross to the coordinator. UTF-16 names are
 exact, IDs never recycle, closed calls fail before cloning, and relevant message
 listeners retain otherwise unreachable open channels. Native MessageEvents carry
 structured cloned data and the sender's origin; delivery rechecks receiver state.
-The shared worker clone supports cycles, aliases, plain objects/arrays, buffers
-and typed views; Map, Set, Date and shared-buffer payloads remain explicit clone
-refusals. No transfer-list API is exposed.
+The shared worker clone supports cycles, aliases, plain objects/arrays, buffers,
+typed views, Date, RegExp, Map, Set, primitive wrappers, errors and Blobs/Files;
+shared-buffer payloads remain explicit clone refusals. No transfer-list API is exposed.
+
+IndexedDB's engine is a V9 JavaScript bootstrap (`platform/indexed_db/js`) run once per
+fresh page or dedicated worker, beside the Observable bootstrap. Keys are encoded so string
+order is key order; stores and indexes are sorted arrays searched by bisection; every
+mutation journals an undo step, so abort restores exact state. Requests, events and
+auto-commit run as timer tasks with a microtask checkpoint per listener; a native drain
+hook makes a transaction inactive at the end of the task that created it. The engine asks
+the coordinator for a database image when it first opens a database (an `indexeddb`
+HostRequest) and sends each committed transaction's changed records as an effect. The
+coordinator (`runtime/indexed_db.rs`) keeps one image per storage partition (top-level
+site plus origin), applies commits atomically and seals each partition's record in the
+profile vault under a digest name; ephemeral profiles keep them in memory. Clearing saved
+site storage removes them. A database is bounded at 4 MiB of keys and values, an origin at
+32 MiB; contexts see other pages' commits on their next open of a database.
 
 The Runtime broker captures recipients at Post, excludes only the sender endpoint,
 and isolates authoritative exact origins plus schemeful registrable-domain sites.
@@ -560,6 +574,35 @@ Activating a saved page rerenders its layout at the current
 viewport and clamps its scroll. The native strip bounds the session to the configured tab limit;
 multiple windows, tab history restoration and closed-tab recovery remain future work.
 
+## Media elements
+
+`<video>` and `<audio>` are split across the three engines and the shell. V9's platform
+bootstrap (`platform/media.js`, installed with the other script-defined interfaces) owns the
+HTML media element state machine: resource selection over `src` and `<source>` (type and
+media checks), ready and network states, play/pause with Chrome's muted-autoplay policy,
+seeking, every media event in specification order, TimeRanges, MediaError, audio/video/text
+track lists, TextTrack/VTTCue/VTTRegion with a WebVTT parser, `<track>` loading, and the Media
+Source object model. It talks to the host only through a private object (`platform/media.rs`)
+that is never on a global: commands (`MediaCommand`) leave in `HostEffects::media`, updates
+arrive as `PageEvent::Media`, and attribute or tree changes on media elements are handed to
+the script at the next stable state (the microtask queue running dry). Elements with a player
+keep their wrappers rooted. `canPlayType`, `isTypeSupported` and `mediaCapabilities` answer
+from `PageEnvironment::media`, which the coordinator probes once from AVFoundation.
+
+The coordinator (`src/runtime/media*`) queues commands with the page candidate, hands them to
+the players through a plain-data hub, fetches the byte ranges the players ask for through
+Relay (`Destination::Video`/`Audio`, `Range` requests, Chrome's media headers; Blob URLs are
+served from captured bytes) and diffs player status into updates (timeupdate at 4 Hz while
+playing). Players of a page that is gone are released. On macOS the players live on the main
+thread (`src/desktop/media*`): AVFoundation decodes and plays audio with the page's volume,
+mute, rate and pitch setting, its resource loader reads only from the hub (it never opens a
+socket), and frames are pulled from a BGRA output and painted into the element's box with
+`object-fit`/`object-position`, under captions and Chromium-like native controls. Eye lays
+media out as replaced boxes (300 by 150 video, 300 by 54 audio with controls, audio without
+controls hidden) and never renders their children. Media Source appends are parsed for
+buffered ranges, but the native player cannot yet play appended segments, so
+`MediaSource.isTypeSupported` answers false.
+
 ## Performance and footprint targets
 
 The long-term target is at least a 10× improvement in memory use, elapsed time for comparable
@@ -665,6 +708,46 @@ the exact agent-visible display list. Production builds omit this observation.
 | src/desktop/window/ | Native intentions, ordered updates, OS-only tools, menus |
 | src/desktop/canvas.rs, src/desktop/mars.rs | Native controls, painting and shell |
 | crates/eye/src/platform/ | OS font measurement/drawing primitives reused by the Mars shell |
+| crates/v9/src/v9/platform/host_bridge.rs, platform_apis/ | V9's private platform bridge and the JavaScript side of coordinator-backed APIs |
+| src/runtime/platform.rs, src/runtime/platform/ | Coordinator side: locks, events, Cache Storage, service workers, clipboard, cookies, credentials and devices |
+
+## Coordinator-backed platform APIs
+
+Service workers, Cache Storage, the Async Clipboard, Web Locks, the Cookie Store, Storage
+Access, Credential Management, Screen Wake Lock, gamepads, Web MIDI, EME Clear Key and
+`getInstalledRelatedApps` are JavaScript in `platform_apis/` (concatenated into the platform
+bootstrap) over one native bridge. The bootstrap takes `__marsPlatformHost` from the global's
+prototype chain and deletes it before page scripts run. `call(op, json, bytes)` records a
+`HostRequest` of kind "platform" whose body carries the arguments and V9's own transient user
+activation (a click, key or typed input within five seconds), so a page cannot claim an
+activation it never had. Answers are `{ok}` or `{error:{name,message}}`; bytes ride in
+`body_bytes` and resolve as `[json, ArrayBuffer]`.
+
+The coordinator dispatches each operation through a command map (`platform::handler`). A
+handler answers or parks: parked requests stay on the page (`Scripting::parked`) and are
+retried whenever `Platform::version` changes, which is how lock grants, cookie changes,
+`serviceWorker.ready` and the per-context event queue (`events.next`) reach a page without
+polling. The idle loop polls devices, cookie watchers and context liveness (`poll_platform`) and
+wakes the visible page when a parked request can now be answered. Dedicated workers answer
+immediately and refuse operations that would wait.
+
+Service workers keep a registry (scope, waiting and active versions with their scripts)
+persisted in the profile's sealed ServiceWorkers record; Cache Storage and stored credentials
+have their own records. `--ephemeral` desktops pass an in-memory record store. A version runs
+in V9's worker runtime with `PageEnvironment::service_worker` (ServiceWorkerGlobalScope) and a
+residency lease, only while it has work, and stops after 30 s idle. Functional events queue in
+the coordinator and reach the worker when its parked `sw.next` is retried; `sw.done` returns
+each outcome. Install and Activate follow the spec's jobs; `clients.claim` and new documents
+(controller chosen in `build_page`) set controllers. Script `fetch`/XHR of a controlled page
+and top-level GET navigations whose URL a registration matches become FetchEvents, run
+synchronously until answered or ten seconds pass, with navigation preload when enabled.
+Requests the parser and native loaders make (stylesheets, classic scripts, images, fonts) do
+not pass through service workers yet.
+
+The Clear Key key store (`platform/clearkey.rs`) is the only interface the media pipeline uses
+for decryption: `Runtime::decrypt_clear_key(identity, key_id, iv, subsamples, sample)` decrypts
+'cenc' (AES-128-CTR) samples in place with the keys that context's sessions loaded, or reports
+that the key is missing. Widevine and every other key system reject with NotSupportedError.
 
 ## Failure, egress and lifetime
 

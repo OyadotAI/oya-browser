@@ -5,6 +5,7 @@ mod choice_button;
 mod controls;
 mod editing;
 mod hit;
+pub(crate) mod media;
 mod paint;
 mod painted;
 mod push_button;
@@ -59,6 +60,8 @@ pub(super) enum Action {
     span with role=button, a link whose widget is still deferred); the runtime decides whether
     anything listens, and a click nothing listens to stays silent, as in a browser. */
     Tap(usize, String),
+    /** A click on a media element's native controls: node, page, action and seek time. */
+    Media(usize, String, &'static str, f64),
     /** Local text bounds reject input before allocating a queued engine request. */
     Rejected,
     Select(usize, usize, String),
@@ -125,7 +128,13 @@ define_class!(
         fn mouse_up(&self,event:&objc2_app_kit::NSEvent) {
             unsafe {let _:()=msg_send![super(self),mouseUp:event];}
             let point=self.convertPoint_fromView(event.locationInWindow(),None);
-            if let Some((node,down))=self.ivars().pressed.take()
+            let pressed=self.ivars().pressed.take();
+            if let Some(page)=self.page_id()
+                && let Some((media,action,time))=self.media_action(&page,point) {
+                self.push(Action::Media(media,page,action,time));
+                return;
+            }
+            if let Some((node,down))=pressed
                 && hit::is_click(down,point) && self.node_at(point)==Some(node)
                 && let Some(page)=self.page_id() {self.push(Action::Tap(node,page));}
         }
@@ -236,6 +245,21 @@ impl Canvas {
             .as_ref()
             .and_then(|snapshot| snapshot.display.as_ref())
             .is_some_and(|display| display.viewport_locked)
+    }
+    /** The media element whose native controls a click at `point` lands on, what the click does
+    there, and the media time a scrubber click seeks to; None off any element showing controls. */
+    fn media_action(&self, page: &str, point: NSPoint) -> Option<(usize, &'static str, f64)> {
+        let snapshot = self.ivars().snapshot.borrow();
+        let item = snapshot.as_ref()?.display.as_ref()?.items.iter().rev().find(|item| {
+            matches!(item.tag.as_str(), "video" | "audio")
+                && item.transform.is_none()
+                && (item.x..item.x + item.width).contains(&point.x)
+                && (item.y..item.y + item.height).contains(&point.y)
+        })?;
+        let view = super::media::view(page, item.local_id).filter(|view| view.controls)?;
+        let bounds = item.content_box.unwrap_or([item.x, item.y, item.width, item.height]);
+        let (action, fraction) = media::control_action(bounds, view.video, point.x, point.y)?;
+        Some((item.local_id, action, fraction * view.status.duration.max(0.0)))
     }
     /** Native callbacks stamp the current visible generation before entering a queue. */
     fn page_id(&self) -> Option<String> {
@@ -582,6 +606,12 @@ impl Canvas {
                 ))
             });
             painter.sides(&shape, item.border_widths, colors);
+        }
+        if item.tag == "video" || item.tag == "audio" {
+            if let Some(page) = snapshot.inspection["page_id"].as_str() {
+                media::paint(page, item, &shape, painter, alpha);
+            }
+            return;
         }
         if let Some(bitmap) = &item.canvas {
             if let Some(image) = painted.canvas(item.local_id, bitmap) {

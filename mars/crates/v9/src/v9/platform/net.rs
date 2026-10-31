@@ -93,7 +93,8 @@ fn record(
     if request.body.as_ref().map_or(0, String::len) + request.body_bytes.len()
         > VM_REQUEST_BODY_BYTES
     {
-        return Err(EngineError::limit("request body bytes", VM_REQUEST_BODY_BYTES).into());
+        // An oversized body fails this request like a network error; it must not stop the page.
+        return Ok(false);
     }
     let next = vm
         .page
@@ -108,12 +109,43 @@ fn record(
             id: request.id,
             owner,
             xhr,
+            platform: request.kind == super::host_bridge::KIND,
             signal,
             blob_bytes: blob_fetch::charge(&request),
+            indexed: false,
         });
     }
     vm.page.effects.requests.push(request);
     Ok(true)
+}
+
+/** Record an IndexedDB coordinator request whose answer goes to `callback`; false when the host queue is full. */
+pub(in crate::v9) fn record_indexed(
+    vm: &mut Vm,
+    request: HostRequest,
+    callback: ObjectId,
+) -> Res<bool> {
+    if !record(vm, request, callback, false, None)? {
+        return Ok(false);
+    }
+    if let Some(pending) = vm.page.state.pending.last_mut() {
+        pending.indexed = true;
+    }
+    Ok(true)
+}
+
+/** The bytes of a BufferSource, Blob or string argument (empty for undefined), for bridge payloads. */
+pub(super) fn body_bytes(vm: &mut Vm, value: &JsValue) -> Res<Vec<u8>> {
+    let body = body::extract(vm, value)?;
+    Ok(match body.text {
+        Some(text) if body.bytes.is_empty() => text.into_bytes(),
+        _ => body.bytes,
+    })
+}
+
+/** Record a platform bridge request whose answer settles `promise`; false past the bound. */
+pub(super) fn record_platform(vm: &mut Vm, request: HostRequest, promise: ObjectId) -> Res<bool> {
+    record(vm, request, promise, false, None)
 }
 
 /** fetch(input, init). */
@@ -533,18 +565,27 @@ impl Vm<'_> {
                 continue;
             };
             let pending = self.page.state.pending.remove(index);
+            let limit = if pending.indexed {
+                super::indexed_db::INDEXED_DB_RESPONSE_BYTES
+            } else {
+                VM_RESPONSE_BYTES
+            };
             if response
                 .body
                 .len()
                 .saturating_add(response.body_bytes.len())
-                > VM_RESPONSE_BYTES
+                > limit
             {
-                return Err(EngineError::limit("response body bytes", VM_RESPONSE_BYTES).into());
+                return Err(EngineError::limit("response body bytes", limit).into());
             }
-            if !response.body.is_empty() && !response.body_bytes.is_empty() {
+            if !pending.platform && !response.body.is_empty() && !response.body_bytes.is_empty() {
                 return Err(EngineError::invalid("Ambiguous response body representation.").into());
             }
-            let result = if pending.xhr {
+            let result = if pending.platform {
+                super::host_bridge::deliver(self, pending.owner, response)
+            } else if pending.indexed {
+                self.deliver_indexed(pending.owner, response)
+            } else if pending.xhr {
                 let mut response = response;
                 if !response.body_bytes.is_empty() {
                     response.body = response_body::text(&response.body_bytes);
@@ -561,6 +602,15 @@ impl Vm<'_> {
             self.drain_jobs()?;
         }
         Ok(())
+    }
+    /** Hand an IndexedDB answer to its callback: the text, or undefined when the coordinator failed. */
+    fn deliver_indexed(&mut self, callback: ObjectId, response: HostResponse) -> Res<()> {
+        let answer = match response.error {
+            Some(_) => JsValue::Undefined,
+            None => JsValue::string(&response.body)?,
+        };
+        self.call(JsValue::Object(callback), JsValue::Undefined, vec![answer])
+            .map(|_| ())
     }
     /** Settle a fetch promise. */
     fn deliver_fetch(

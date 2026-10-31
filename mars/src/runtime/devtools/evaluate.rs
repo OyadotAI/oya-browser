@@ -174,18 +174,43 @@ impl Runtime {
             modules: &page.scripting.modules.input,
             request,
         };
-        let outcome: Outcome = match self.call_typed("v9", "v9.devtools", &call, None) {
+        let mut outcome: Outcome = match self.call_typed("v9", "v9.devtools", &call, None) {
             Err(error) if resident && error.code == super::super::service::SOURCES_MISSING => {
                 call.sources = &page.scripts;
                 self.call_typed("v9", "v9.devtools", &call, None)
             }
             result => result,
         }?;
-        if let Some(digest) = digest {
+        if let Some(digest) = digest.clone() {
             self.note_v9_sources(digest);
         }
+        let requested = outcome.execution.effects.style_requests.clone();
+        if !requested.is_empty()
+            && let Ok(geometry) = self.forced_geometry(page, &outcome.execution)
+        {
+            // The request is pure against its base state, so this run is dropped and the
+            // second, with the styles it read, is the one that counts (as page steps do).
+            environment.geometry = geometry.0;
+            environment.resize_wrappers = geometry.1;
+            Self::supply_styles(page, &mut environment, &geometry.2, &requested);
+            let again = DevtoolsCall {
+                sources: &page.scripts,
+                sources_digest: digest.as_deref(),
+                document: &projection,
+                storage: &page.storage,
+                languages: &languages,
+                environment: &environment,
+                resident: true,
+                resident_contexts: self.residency.snapshot(),
+                base,
+                keep,
+                modules: &page.scripting.modules.input,
+                request,
+            };
+            outcome = self.call_typed("v9", "v9.devtools", &again, None)?;
+        }
         let execution = outcome.execution;
-        let changed = !execution.changes.is_empty() || !execution.script_changes.is_empty();
+        let mut changed = !execution.changes.is_empty() || !execution.script_changes.is_empty();
         let applied = changed
             .then(|| {
                 self.apply_all(
@@ -216,6 +241,7 @@ impl Runtime {
             super::super::frame_pages::prune_routes(page);
             page.styled = false;
         }
+        changed |= scripting::apply_local_sheets(page, execution.effects.local_sheets.clone());
         if effects && changed {
             // Images the request's changes brought in load like a script step's.
             page.scripting.pending_images = Some(Default::default());
@@ -229,6 +255,7 @@ impl Runtime {
         scripting.loaded = true;
         scripting.next_timer_ms = execution.effects.next_timer_ms;
         if effects {
+            scripting.media.queue(execution.effects.media);
             scripting.requests.extend(execution.effects.requests);
             scripting
                 .workers
@@ -257,6 +284,17 @@ impl Runtime {
         );
         if let Some(title) = execution.effects.title {
             page.document.title = title;
+        }
+        // Scrolls an evaluation makes (scrollIntoView, scrollTo) move the view as a step's do.
+        changed |= !execution.effects.element_scroll.is_empty()
+            || execution.effects.scroll_x.is_some()
+            || execution.effects.scroll_y.is_some();
+        page.element_scroll.extend(execution.effects.element_scroll);
+        if execution.effects.scroll_y.is_some() {
+            page.scripting.scroll_y = execution.effects.scroll_y;
+        }
+        if execution.effects.scroll_x.is_some() {
+            page.scripting.scroll_x = execution.effects.scroll_x;
         }
         apply_history(page, &execution.effects.history);
         Ok(Step {

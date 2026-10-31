@@ -115,13 +115,19 @@ impl Window {
             return;
         };
         let _ = snapshot;
-        let quiet = matches!(action, Action::Tap(..) | Action::Wheel(..));
+        let quiet = matches!(action, Action::Tap(..) | Action::Wheel(..) | Action::Media(..));
         let (op, params, target) = match action {
             Action::Edit(id, text, observed) => {
                 ("page.type", self.target(id, Some(text)), Some(observed))
             }
             Action::Click(id, observed) | Action::Tap(id, observed) => {
                 ("page.click", self.target(id, None), Some(observed))
+            }
+            Action::Media(id, observed, control, time) => {
+                let mut params = self.target(id, None);
+                params["action"] = json!(control);
+                params["time"] = json!(if time.is_finite() { time } else { 0.0 });
+                ("page.media_control", params, Some(observed))
             }
             Action::Select(id, option, observed) => {
                 let mut params = self.target(id, None);

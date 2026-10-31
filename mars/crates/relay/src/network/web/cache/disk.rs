@@ -184,6 +184,7 @@ mod tests {
                 url: format!("https://a.example/{index}"),
                 fixture: false,
                 image: false,
+                origin: None,
             },
             headers: BTreeMap::from([("etag".into(), "\"x\"".into())]),
             body: b"body".to_vec(),

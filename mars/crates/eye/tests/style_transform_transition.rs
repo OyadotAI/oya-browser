@@ -18,6 +18,21 @@ fn started(from: &str, to: &str, transition: &str) -> (TranslationTransitions, D
     (timeline, after)
 }
 
+/** Where the first node's box sits with its transform removed: the reference a translation
+moves the painted box from. */
+fn untransformed_origin(document: &Document) -> (f64, f64) {
+    let mut plain = document.clone();
+    plain.nodes[0].style.transform = None;
+    plain.nodes[0].style.translate_percent = [0.0; 2];
+    let display = render(&plain, 800.0).unwrap();
+    let item = display
+        .items
+        .iter()
+        .find(|item| item.local_id == plain.nodes[0].local_id)
+        .unwrap();
+    (item.x, item.y)
+}
+
 /** Keep assertions independent of wrapper ordering in the public effect snapshot. */
 fn sample(timeline: &TranslationTransitions, time: f64) -> Translation {
     timeline
@@ -49,9 +64,12 @@ fn pixel_translation_changes_painted_bounds_without_rewriting_authored_transform
         .iter()
         .find(|item| item.local_id == painted.nodes[0].local_id)
         .unwrap();
+    // Pure translations are baked into painted geometry (render.rs); measure the shift against
+    // the same box with no transform.
     let bounds = painted_bounds(item);
-    assert!((bounds.x - item.x - 50.0).abs() < 0.000001);
-    assert!((bounds.y - item.y - 20.0).abs() < 0.000001);
+    let (x, y) = untransformed_origin(&authored);
+    assert!((bounds.x - x - 50.0).abs() < 0.000001);
+    assert!((bounds.y - y - 20.0).abs() < 0.000001);
     assert!(timeline.effects(1000.0).is_empty());
     assert_eq!(timeline.next_sample_ms(1000.0), None);
 }
@@ -72,8 +90,9 @@ fn percentages_resolve_against_the_current_box_after_sampling() {
             .find(|item| item.local_id == after.nodes[0].local_id)
             .unwrap();
         let bounds = painted_bounds(item);
-        assert!((bounds.x - item.x - item.width * 0.5).abs() < 0.000001);
-        assert!((bounds.y - item.y - item.height * 0.25).abs() < 0.000001);
+        let (x, y) = untransformed_origin(&after);
+        assert!((bounds.x - x - item.width * 0.5).abs() < 0.000001);
+        assert!((bounds.y - y - item.height * 0.25).abs() < 0.000001);
     }
 }
 

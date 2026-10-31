@@ -332,7 +332,12 @@ impl<'a> Cascade<'a> {
             style.first_line = self.first_part(node, &style, scope, PseudoBox::FirstLine)?;
             if ["input", "textarea"].contains(&node.tag.as_str()) {
                 let placeholder = self.first_part(node, &style, scope, PseudoBox::Placeholder)?;
-                style.placeholder_color = placeholder.and_then(|part| part.color);
+                // A transparent placeholder (`::placeholder { opacity: 0 }`, GitHub's floating
+                // label) must not paint under its label.
+                // ponytail: only full transparency is honoured; partial opacity keeps the color.
+                style.placeholder_color = placeholder.and_then(|part| {
+                    if part.opacity <= 0.0 { Some("transparent".into()) } else { part.color }
+                });
             }
             if style.list_item {
                 let marker = self.first_part(node, &style, scope, PseudoBox::Marker)?;

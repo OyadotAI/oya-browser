@@ -137,6 +137,7 @@ fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
         ("network", "network.fetch", fetch),
         ("network", "network.web_fetch", web_fetch),
         ("network", "network.cache_clear", cache_clear),
+        ("network", "network.cache_forget", cache_forget),
         ("document", "document.layout", layout),
         ("document", "document.value", value),
         ("v9", "v9.execute", execute),
@@ -157,6 +158,13 @@ fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+/** URLs whose cached copies another network process made stale. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Forget {
+    /** Absolute URLs without fragments, as Relay keys them. */
+    urls: Vec<String>,
+}
 /** Only the network owner receives an outbound URL. */
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -949,6 +957,18 @@ fn cache_clear(params: Value) -> EngineResult<Value> {
     network::clear_cache();
     Ok(json!({"cleared":true}))
 }
+/** Drops this process's cached copies of URLs an unsafe request in another network process
+changed (page fetches run on the loader's own processes, each with its own memory cache). */
+fn cache_forget(params: Value) -> EngineResult<Value> {
+    let input: Forget = parameters(params)?;
+    if input.urls.len() > FORGET_URLS {
+        return Err(EngineError::limit("forgotten URLs", FORGET_URLS));
+    }
+    network::forget(&input.urls);
+    Ok(json!({"forgotten":true}))
+}
+/** URLs one `network.cache_forget` may name: an unsafe request changes one resource. */
+const FORGET_URLS: usize = 16;
 /** Fetches a bounded batch concurrently through Relay's ordinary prepare and transmit path. GETs
 only (Relay refuses others per request); redirects come back unfollowed. */
 fn fetch_batch(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {

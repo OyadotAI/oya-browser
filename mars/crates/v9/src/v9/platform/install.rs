@@ -275,6 +275,8 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     interfaces::install(b, html);
     let text = b.object(Some(node));
     b.ids.text_prototype = text;
+    b.ids.text_node_prototype = b.object(Some(text));
+    b.ids.comment_prototype = b.object(Some(text));
     b.accessor(text, "data", Some(dom::node_get), Some(dom::node_set));
     getters(b, text, &["length"], dom::node_get);
     b.getter(text, "wholeText", dom::node_get);
@@ -932,8 +934,14 @@ fn singletons(b: &mut Builder) {
     getters(
         b,
         history,
-        &["length", "state", "scrollRestoration"],
+        &["length", "state"],
         window::history,
+    );
+    b.accessor(
+        history,
+        "scrollRestoration",
+        Some(window::history),
+        Some(window::history),
     );
     methods(
         b,
@@ -999,6 +1007,15 @@ fn singletons(b: &mut Builder) {
     let navigator = b.object(Some(navigator_proto));
     super::chrome_env::navigator(b, navigator_proto);
     b.global("navigator", navigator);
+    // The platform bootstrap takes this object and deletes the global before page scripts run.
+    let bridge = b.object(Some(object_prototype));
+    methods(
+        b,
+        bridge,
+        &["call", "activation", "consume", "context", "state", "lazy"],
+        super::host_bridge::method,
+    );
+    b.global(super::host_bridge::GLOBAL, bridge);
     let screen = b.object(Some(object_prototype));
     getters(
         b,
@@ -1273,18 +1290,15 @@ fn global_object(b: &mut Builder) {
         "CSSStyleDeclaration",
         "DOMTokenList",
         "Storage",
-        "HTMLDivElement",
-        "HTMLSpanElement",
-        "HTMLBodyElement",
-        "HTMLHtmlElement",
-        "HTMLTemplateElement",
         "CharacterData",
         "Attr",
     ] {
         let prototype = match name {
             "Node" => b.ids.node_prototype,
             "Element" => b.ids.element_prototype,
-            "Text" | "Comment" | "CharacterData" => b.ids.text_prototype,
+            "Text" => b.ids.text_node_prototype,
+            "Comment" => b.ids.comment_prototype,
+            "CharacterData" => b.ids.text_prototype,
             "Document" | "HTMLDocument" => b.ids.document_prototype,
             "XMLDocument" => b.ids.xml_document_prototype,
             "Window" => proto,
@@ -1357,6 +1371,7 @@ fn global_object(b: &mut Builder) {
     super::animations::install(b);
     super::channel::install(b);
     super::broadcast::install(b);
+    super::indexed_db::install(b);
     super::messaging::install(b);
     super::dom_parser::install(b);
     super::xml_serializer::install(b);
@@ -1364,6 +1379,7 @@ fn global_object(b: &mut Builder) {
     super::implementation::install(b);
     super::scripts::install(b);
     super::components::install(b);
+    super::media::install(b);
     // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
     // stay undefined, so libraries that feature-detect them take their fallback paths.
     // The list is kept, not taken: install_window_interfaces reads it after every install.
