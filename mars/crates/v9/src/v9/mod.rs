@@ -728,6 +728,7 @@ impl VmState {
         platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
+        platform::canvas::paints::validate(&self.page.canvas_paints)?;
         platform::frame_directory::validate_state(&self.page)?;
         platform::channel::validate_bounds(&self.page)?;
         builtins::validate_shared(&self.heap)?;
@@ -1433,6 +1434,7 @@ fn session<'h>(
     platform::media::validate(&vm)?;
     platform::canvas::validate_targets(&mut vm)?;
     platform::canvas::path2d::validate_targets(&mut vm)?;
+    platform::canvas::paints::validate_targets(&mut vm)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),

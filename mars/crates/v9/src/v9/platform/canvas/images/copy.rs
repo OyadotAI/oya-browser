@@ -31,14 +31,17 @@ pub(super) fn draw(vm: &mut Vm, call: &Call) -> Res<JsValue> {
 }
 
 /** Natural dimensions determine overload defaults; bitmap dimensions determine sample coordinates. */
-struct Source {
-    bitmap: Bitmap,
-    dimensions: [u32; 2],
-    origin_clean: bool,
+pub(in crate::v9::platform::canvas) struct Source {
+    /** Snapshot pixels, independent of later writes to the source. */
+    pub(in crate::v9::platform::canvas) bitmap: Bitmap,
+    /** Natural dimensions of the source element. */
+    pub(in crate::v9::platform::canvas) dimensions: [u32; 2],
+    /** False when the source is cross-origin tainted. */
+    pub(in crate::v9::platform::canvas) origin_clean: bool,
 }
 
 /** Pending images are no-ops, broken images throw, and unavailable decoded formats stay explicit. */
-fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
+pub(in crate::v9::platform::canvas) fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
     if vm.page.tag(from) == "canvas" {
         let dimensions = size(&mut vm.page, from);
         if dimensions.contains(&0) || Bitmap::length(dimensions[0], dimensions[1]).is_none() {

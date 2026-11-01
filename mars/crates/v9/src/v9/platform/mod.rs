@@ -1294,6 +1294,9 @@ pub(in crate::v9) struct PageState {
     pub canvases: BTreeMap<usize, canvas::State>,
     /** Retained paths follow wrapper reachability rather than becoming permanent page roots. */
     pub path2d: BTreeMap<ObjectId, canvas::path2d::Retained>,
+    /** Gradient and pattern objects follow wrapper reachability, and drawing state keeps the ones it names alive. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub canvas_paints: BTreeMap<ObjectId, canvas::paints::Entry>,
     /** Permanent per-isolate read-only roots for one-byte iterator characters. */
     #[cfg(feature = "conformance")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1705,6 +1708,11 @@ impl<'h> Page<'h> {
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
         media::roots(&self.state.media, &self.state.wrappers, out);
+        out.extend(
+            canvas::paints::referenced(&self.state.canvases)
+                .into_iter()
+                .map(JsValue::Object),
+        );
         intersection_observers::roots(&self.state, out);
         resize_observers::roots(&self.state, out);
         #[cfg(feature = "conformance")]
@@ -1794,6 +1802,7 @@ impl<'h> Page<'h> {
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
         broadcast::sweep(&mut self.state.broadcast, live);
         self.state.path2d.retain(|id, _| live.contains(id));
+        self.state.canvas_paints.retain(|id, _| live.contains(id));
         self.state
             .resize_observers
             .retain(|id, _| live.contains(id));

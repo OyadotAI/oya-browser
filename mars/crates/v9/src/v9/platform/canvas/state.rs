@@ -3,19 +3,40 @@ use super::*;
 use mars_core::canvas::Affine;
 mod composite;
 mod matrix;
+pub(super) use matrix::dictionary as matrix_dictionary;
 pub(super) use matrix::dictionary_members as path_matrix;
 
 /** A bounded stack prevents save-only scripts from retaining unbounded native drawing state. */
 pub(super) const SAVED_STATES: usize = 64;
+
+/** A fill or stroke is a plain color, or a gradient or pattern object referenced by identity so later edits apply. */
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::v9) enum Style {
+    /** Straight-alpha color from a string assignment. */
+    Color([u8; 4]),
+    /** A CanvasGradient or CanvasPattern wrapper whose paint lives in the page's paint table. */
+    Object(ObjectId),
+}
+
+impl Style {
+    /** The paint object this style names, if any; garbage collection keeps those objects alive. */
+    pub(in crate::v9) fn object(&self) -> Option<ObjectId> {
+        match self {
+            Self::Object(id) => Some(*id),
+            Self::Color(_) => None,
+        }
+    }
+}
 
 /** Only implemented drawing properties participate in save, restore and reset. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct DrawingState {
     /** Straight-alpha paint is combined with global alpha only when rasterizing. */
-    pub fill: [u8; 4],
+    pub fill: Style,
     /** Stroke paint is separate from fill paint and shares the same global alpha. */
-    pub stroke: [u8; 4],
+    pub stroke: Style,
     /** Pen dimensions, caps and joins are saved independently from the current path. */
     pub pen: limits::StrokeStyle,
     /** Canonical dash lists and offset follow save/restore and reset with the rest of the pen state. */
@@ -44,8 +65,8 @@ impl Default for DrawingState {
     /** Defaults match a newly created CanvasRenderingContext2D. */
     fn default() -> Self {
         Self {
-            fill: [0, 0, 0, 255],
-            stroke: [0, 0, 0, 255],
+            fill: Style::Color([0, 0, 0, 255]),
+            stroke: Style::Color([0, 0, 0, 255]),
             pen: limits::StrokeStyle::default(),
             dash: limits::DashStyle::default(),
             font: Font::default(),

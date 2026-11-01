@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 mod affine;
 mod clip;
 mod composite;
+mod paint;
 mod path;
 mod pixels;
 mod raster;
@@ -11,13 +12,18 @@ mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
 pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage};
+pub use paint::{
+    GRADIENT_STOPS, Geometry, Gradient, Paint, Pattern, Repeat, Shader, Stop, TRANSPARENT,
+};
 pub use path::{
     DASH_INPUTS, DASH_VALUES, DashStyle, FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle,
-    paint_path, plan_fill, plan_stroke, plan_stroke_dashed,
+    paint_path, paint_path_with, plan_fill, plan_stroke, plan_stroke_dashed,
 };
 pub use pixels::Pixels;
 pub use pixels::Reservation as Allocation;
-pub use raster::{RasterPlan, blend, blit, clear_rect, fill_rect, plan_blit, plan_rect};
+pub use raster::{
+    RasterPlan, blend, blit, clear_rect, fill_rect, fill_rect_with, plan_blit, plan_rect,
+};
 pub use text::{
     ALIGNS, Align, BASELINES, Baseline, DIRECTIONS, Direction, FontMetrics, TextMeasure,
     align_shift, baseline_offset, keyword, lookup, measure as text_measure,

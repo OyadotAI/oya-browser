@@ -1,5 +1,6 @@
 /** Scanline supersampling fills arbitrary polygon contours with bounded edge and pixel work. */
 use super::*;
+use crate::canvas::Shader;
 use crate::canvas::clip::{GRID as SAMPLES, SAMPLES as SAMPLE_COUNT, offset};
 
 /** A scanline crossing carries direction so coincident contours obey either fill rule. */
@@ -198,11 +199,21 @@ fn bounds(size: [u32; 2], edges: &[Edge]) -> [u32; 4] {
     ]
 }
 
-/** One composite per pixel prevents self-overlap from multiplying global alpha. */
+/** Solid paint is the common case; it delegates to the same per-pixel path as every other source. */
 pub fn paint_path(
     bitmap: &mut Bitmap,
     plan: &PathPlan,
     color: [u8; 4],
+    alpha: f64,
+) -> EngineResult<()> {
+    paint_path_with(bitmap, plan, &Shader::solid(color), alpha)
+}
+
+/** One composite per pixel prevents self-overlap from multiplying global alpha. */
+pub fn paint_path_with(
+    bitmap: &mut Bitmap,
+    plan: &PathPlan,
+    shader: &Shader,
     alpha: f64,
 ) -> EngineResult<()> {
     bitmap.validate()?;
@@ -226,6 +237,7 @@ pub fn paint_path(
             let covered =
                 f64::from(covered(plan, &coverage, x, y).count_ones()) / SAMPLE_COUNT as f64;
             let clip = plan.clip.as_ref().map_or(1.0, |clip| clip.coverage(x, y));
+            let color = shader.color_at(f64::from(x) + 0.5, f64::from(y) + 0.5);
             composite_coverage(
                 &mut pixels[at..at + CHANNELS],
                 color,

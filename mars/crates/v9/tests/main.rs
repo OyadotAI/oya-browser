@@ -33,6 +33,7 @@ mod canvas_curves;
 mod canvas_dashes;
 mod canvas_decoded_images;
 mod canvas_font;
+mod canvas_gradients;
 mod canvas_hit_test;
 mod canvas_images;
 mod canvas_path2d;

@@ -139,13 +139,14 @@ fn paint(
     .with_clip(clipping::current(state)?)?
     .with_composite(state.drawing.composite);
     work(vm, plan.work())?;
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    let color = if stroke {
-        state.drawing.stroke
-    } else {
-        state.drawing.fill
+    let Some((shader, clean)) = paints::source(vm, node, stroke) else {
+        return Ok(JsValue::Undefined);
     };
-    limits::paint_path(&mut state.bitmap, &plan, color, state.drawing.alpha)?;
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    limits::paint_path_with(&mut state.bitmap, &plan, &shader, state.drawing.alpha)?;
+    if !plan.is_empty() {
+        state.origin_clean &= clean;
+    }
     state.dirty |= !plan.is_empty();
     Ok(JsValue::Undefined)
 }

@@ -18,6 +18,7 @@ mod font;
 mod hit;
 mod images;
 mod lifecycle;
+pub(in crate::v9) mod paints;
 pub(in crate::v9) mod path2d;
 mod paths;
 mod placement;
@@ -82,6 +83,7 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     images::install(b, proto);
     paths::install(b, proto);
     clipping::install(b, proto);
+    paints::install(b, proto);
     let _ = PROTO.set(proto);
 }
 
@@ -188,30 +190,26 @@ fn owner(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
     let state = &vm.page.state.canvases[&node];
-    let value = if dom::native_name(&call) == "font" {
-        state.drawing.font.text.clone()
-    } else {
-        colors::serialize(state.drawing.fill)
-    };
-    Ok(JsValue::string(&value)?)
+    if dom::native_name(&call) == "font" {
+        let value = state.drawing.font.text.clone();
+        return Ok(JsValue::string(&value)?);
+    }
+    let style = state.drawing.fill.clone();
+    paints::style_value(&style)
 }
 /** Invalid assignments preserve the previous drawing state. */
 fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
+    if dom::native_name(&call) != "font" {
+        return paints::assign(vm, &call, false);
+    }
     let value = vm.to_text(&call.arg(0))?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    if dom::native_name(&call) == "font" {
-        let parent = font_size(vm, node);
-        let font = font::parse(&value, parent);
-        let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-        if let Some(font) = font {
-            state.drawing.font = font;
-        }
-        return Ok(JsValue::Undefined);
-    }
+    let parent = font_size(vm, node);
+    let font = font::parse(&value, parent);
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    if let Some(color) = colors::parse(&value) {
-        state.drawing.fill = color;
+    if let Some(font) = font {
+        state.drawing.font = font;
     }
     Ok(JsValue::Undefined)
 }

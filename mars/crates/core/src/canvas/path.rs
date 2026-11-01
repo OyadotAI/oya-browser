@@ -15,7 +15,7 @@ mod round_rect;
 mod stroke;
 mod svg;
 pub use dash::{DASH_INPUTS, DASH_VALUES, DashStyle};
-pub use raster::{PathPlan, paint_path, plan_fill};
+pub use raster::{PathPlan, paint_path, paint_path_with, plan_fill};
 pub use stroke::{LineCap, LineJoin, StrokeStyle, plan_stroke, plan_stroke_dashed};
 
 /** Each context admits finite path bookkeeping even when nothing is ever painted. */
