@@ -3,9 +3,11 @@
  * picture is copied into a frame the painter draws, the same path AVPlayer frames take, so the agent's raster and
  * screenshots see the video. The format description comes from the avcC parameter sets, and each sample's bytes
  * are already length-prefixed NAL units, which is the layout VideoToolbox takes. VideoToolbox is linked here
- * directly: the bindings have no crate for it.
+ * directly: the bindings have no crate for it. The sample buffers it decodes are built in samples.rs.
  */
+use super::constants::NO_ERROR;
 use super::frames;
+use super::samples::{Sample, release};
 use crate::runtime::media::avc::AvcConfig;
 use crate::runtime::media::stream::Frame;
 use objc2::rc::Retained;
@@ -18,10 +20,6 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::c_void;
 
-/// Ticks per second of the timestamps handed to VideoToolbox: fine enough for 90 kHz MPEG clocks.
-const TIME_SCALE: i32 = 90_000;
-/// VideoToolbox's OSStatus for success.
-const NO_ERROR: i32 = 0;
 /// VTDecodeFrameFlags: none set, so each decode completes before the call returns.
 const SYNCHRONOUS: u32 = 0;
 /// The pixel format frames.rs expects: 32-bit BGRA.
@@ -38,14 +36,6 @@ struct Decoded {
 struct OutputRecord {
     callback: extern "C" fn(*mut c_void, *mut c_void, i32, u32, *mut c_void, CMTime, CMTime),
     refcon: *mut c_void,
-}
-
-/** One sample's timing for CoreMedia: duration, presentation and decode times. */
-#[repr(C)]
-struct SampleTiming {
-    duration: CMTime,
-    presentation: CMTime,
-    decode: CMTime,
 }
 
 #[link(name = "VideoToolbox", kind = "framework")]
@@ -78,39 +68,6 @@ unsafe extern "C" {
         length_size: i32,
         format: *mut *mut c_void,
     ) -> i32;
-    fn CMBlockBufferCreateWithMemoryBlock(
-        allocator: *const c_void,
-        memory: *mut c_void,
-        capacity: usize,
-        block_allocator: *const c_void,
-        custom: *const c_void,
-        offset: usize,
-        length: usize,
-        flags: u32,
-        block: *mut *mut c_void,
-    ) -> i32;
-    fn CMBlockBufferReplaceDataBytes(
-        source: *const u8,
-        block: *mut c_void,
-        offset: usize,
-        length: usize,
-    ) -> i32;
-    fn CMSampleBufferCreateReady(
-        allocator: *const c_void,
-        block: *mut c_void,
-        format: *mut c_void,
-        samples: isize,
-        timings: isize,
-        timing: *const SampleTiming,
-        sizes: isize,
-        size: *const usize,
-        sample: *mut *mut c_void,
-    ) -> i32;
-}
-
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-    fn CFRelease(object: *const c_void);
 }
 
 /** A decoding session for one H.264 track: its format description, its VideoToolbox session, and the pictures it has produced. */
@@ -145,7 +102,7 @@ impl Decoder {
         };
         if status != NO_ERROR {
             // SAFETY: the format was created above and is not used again.
-            unsafe { CFRelease(format) };
+            unsafe { release(format) };
             return Err(status);
         }
         Ok(Self {
@@ -157,24 +114,18 @@ impl Decoder {
 
     /** Decode one sample. Its bytes are copied into a block the sample buffer owns for the call. */
     pub fn decode(&mut self, frame: &Frame) -> Result<(), i32> {
-        let block = block_with(&frame.data)?;
-        let sample = sample_for(block, self.format, frame)?;
+        let sample = Sample::new(self.format, frame)?;
         let mut info = 0;
         // SAFETY: the session and sample are live; no source pointer is needed for a synchronous decode.
         let status = unsafe {
             VTDecompressionSessionDecodeFrame(
                 self.session,
-                sample,
+                sample.buffer(),
                 SYNCHRONOUS,
                 std::ptr::null_mut(),
                 &mut info,
             )
         };
-        // SAFETY: the sample and block were created above and are released exactly once here.
-        unsafe {
-            CFRelease(sample);
-            CFRelease(block);
-        }
         if status == NO_ERROR {
             Ok(())
         } else {
@@ -196,8 +147,7 @@ impl Decoder {
         newest.map(|picture| picture.image)
     }
 
-    /** Drop every picture waiting to be shown. The player drops the whole decoder on a seek or a
-    replaced track (`StreamVideo::reset`); tests drain the queue in place to go on feeding. */
+    /** Drop every picture waiting to be shown. The player drops the whole decoder on a seek or a replaced track (`StreamVideo::reset`); tests drain the queue in place to go on feeding. */
     #[cfg(test)]
     pub fn clear(&self) {
         self.output.borrow_mut().clear();
@@ -222,8 +172,8 @@ impl Drop for Decoder {
         // SAFETY: the session and format are the ones this decoder created and nothing else holds.
         unsafe {
             VTDecompressionSessionInvalidate(self.session);
-            CFRelease(self.session);
-            CFRelease(self.format);
+            release(self.session);
+            release(self.format);
         }
     }
 }
@@ -278,68 +228,6 @@ fn format_description(config: &AvcConfig) -> Result<*mut c_void, i32> {
     };
     if status == NO_ERROR {
         Ok(format)
-    } else {
-        Err(status)
-    }
-}
-
-/** A block buffer holding a copy of the sample's bytes. */
-fn block_with(data: &[u8]) -> Result<*mut c_void, i32> {
-    let mut block = std::ptr::null_mut();
-    // SAFETY: a null memory argument asks CoreMedia to allocate `len` bytes it owns.
-    let status = unsafe {
-        CMBlockBufferCreateWithMemoryBlock(
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            data.len(),
-            std::ptr::null(),
-            std::ptr::null(),
-            0,
-            data.len(),
-            0,
-            &mut block,
-        )
-    };
-    if status != NO_ERROR {
-        return Err(status);
-    }
-    // SAFETY: the block holds `data.len()` bytes and the source slice is that long.
-    let copied = unsafe { CMBlockBufferReplaceDataBytes(data.as_ptr(), block, 0, data.len()) };
-    if copied == NO_ERROR {
-        Ok(block)
-    } else {
-        // SAFETY: the block was created above and is not used after this release.
-        unsafe { CFRelease(block) };
-        Err(copied)
-    }
-}
-
-/** A sample buffer over the block, with the frame's timing and a single size. */
-fn sample_for(block: *mut c_void, format: *mut c_void, frame: &Frame) -> Result<*mut c_void, i32> {
-    let timing = SampleTiming {
-        // SAFETY: CMTime construction from plain numbers has no preconditions.
-        duration: unsafe { CMTime::with_seconds(frame.duration, TIME_SCALE) },
-        presentation: unsafe { CMTime::with_seconds(frame.pts, TIME_SCALE) },
-        decode: unsafe { CMTime::with_seconds(frame.decode, TIME_SCALE) },
-    };
-    let size = frame.data.len();
-    let mut sample = std::ptr::null_mut();
-    // SAFETY: the block, format and timing and size arrays are live for the call; CoreMedia retains what it keeps.
-    let status = unsafe {
-        CMSampleBufferCreateReady(
-            std::ptr::null(),
-            block,
-            format,
-            1,
-            1,
-            &timing,
-            1,
-            &size,
-            &mut sample,
-        )
-    };
-    if status == NO_ERROR {
-        Ok(sample)
     } else {
         Err(status)
     }

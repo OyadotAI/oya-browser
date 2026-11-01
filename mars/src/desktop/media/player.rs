@@ -5,6 +5,7 @@
  * into the element's box. It lives on the main thread, reads bytes only through its loader, and
  * reports what it observes as plain status in the hub.
  */
+use super::audio::StreamAudio;
 use super::clock::Clock;
 use super::loader::Loader;
 use super::stream_video::{StreamVideo, video_lane};
@@ -65,10 +66,12 @@ pub(super) struct Native {
     stream: bool,
     /// The segments a Media Source stream has been given, per source buffer.
     pub media: Stream,
-    /// The playhead of a Media Source stream.
+    /// The playhead of a Media Source stream, which its audio renderer plays on.
     clock: Clock,
     /// The video decoder of a Media Source stream.
     video: StreamVideo,
+    /// The audio renderer of a Media Source stream.
+    audio: StreamAudio,
 }
 
 impl Native {
@@ -91,6 +94,7 @@ impl Native {
             media: Stream::default(),
             clock: Clock::default(),
             video: StreamVideo::default(),
+            audio: StreamAudio::default(),
         };
         native.start_if_allowed(mtm);
         native
@@ -120,8 +124,9 @@ impl Native {
         self.start_if_allowed(mtm);
         self.apply();
     }
-    /** Play or pause at the page's rate, volume and pitch handling. */
-    fn apply(&self) {
+    /** Play or pause at the page's rate, volume and pitch handling; a stream's clock takes the rate at its tick. */
+    fn apply(&mut self) {
+        self.audio.apply(&self.settings);
         let Some(engine) = &self.engine else { return };
         let settings = &self.settings;
         // SAFETY: AVPlayer and AVPlayerItem setters, on the main thread that owns them.
@@ -148,8 +153,9 @@ impl Native {
         if self.stream {
             self.seeks += 1;
             self.seek_time = time;
-            self.clock.seek(time, super::host_seconds());
+            self.clock.seek(time);
             self.video.reset();
+            self.audio.flush();
             return;
         }
         let Some(engine) = &self.engine else {
@@ -187,7 +193,7 @@ impl Native {
     pub fn tick(&mut self, shared: &mut Shared, host_time: f64) {
         self.loader.serve(shared);
         if self.stream {
-            self.tick_stream(shared, host_time);
+            self.tick_stream(shared);
             return;
         }
         let Some(engine) = &self.engine else {
@@ -221,11 +227,16 @@ impl Native {
     }
 }
 
-/** One tick of a Media Source player: move its playhead, evict what is behind it, and publish its state. */
+/** One tick of a Media Source player: run its clock, evict behind the playhead, present, and publish its state. */
 impl Native {
-    fn tick_stream(&mut self, shared: &mut Shared, host_time: f64) {
-        self.clock.set_running(!self.settings.paused, host_time);
-        let playhead = self.clock.time(host_time);
+    fn tick_stream(&mut self, shared: &mut Shared) {
+        let rate = if self.settings.paused {
+            0.0
+        } else {
+            self.settings.rate
+        };
+        self.clock.set_rate(rate);
+        let playhead = self.clock.time();
         self.media.evict_behind(playhead);
         self.video.forget_before(playhead - KEEP_BEHIND);
         if let Some(picture) = self.video.step(&self.media, playhead) {
@@ -233,24 +244,33 @@ impl Native {
             self.fresh = true;
             self.frames += 1;
         }
+        self.audio.step(&self.media, playhead, &self.clock);
+        shared.status = self.stream_status(shared, playhead);
+    }
+
+    /** What a stream shows now: ready once a decoder or renderer is open, an audio failure as a decode error. */
+    fn stream_status(&self, shared: &Shared, playhead: f64) -> Status {
         let size = video_lane(&self.media).map(|lane| (lane.track.width, lane.track.height));
         let (width, height) = size.unwrap_or((0, 0));
-        shared.status = Status {
+        let ready = self.video.ready() || self.audio.ready();
+        let failed = self.audio.error().map(|message| (DECODE_ERROR, message));
+        Status {
             time: playhead,
-            error: shared.status.error.clone(),
+            error: shared.status.error.clone().or(failed),
             playing: self.clock.running(),
             seeks: self.seeks,
             seek_time: self.seek_time,
             frames: self.frames,
             stored: self.media.buffers(),
             video: width > 0 && height > 0,
-            ready: self.video.ready(),
-            likely: self.video.ready(),
+            audio: self.audio.ready(),
+            ready,
+            likely: ready,
             media_source: true,
             width,
             height,
             ..Status::default()
-        };
+        }
     }
 }
 

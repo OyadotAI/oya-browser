@@ -4,6 +4,7 @@
  * restarts after a seek or when the track's configuration changes, so the decoder never sees a frame whose references
  * it does not hold. Feeding stops while the decoder holds its cap of pictures, so a stream cannot fill memory.
  */
+use super::constants::LOOKAHEAD;
 use super::decoder::Decoder;
 use crate::runtime::media::avc::parse_avcc;
 use crate::runtime::media::constants::MAX_PENDING_PICTURES;
@@ -12,9 +13,6 @@ use mars_mp4::TrackKind;
 use objc2::rc::Retained;
 use objc2_app_kit::NSImage;
 use std::collections::VecDeque;
-
-/// How far ahead of the playhead samples are sent to the decoder, in seconds.
-const LOOKAHEAD: f64 = 1.0;
 
 /** A stream's decoder, the configuration it was opened from, and how far it has been fed. */
 #[derive(Default)]

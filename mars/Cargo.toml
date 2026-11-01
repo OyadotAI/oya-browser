@@ -48,8 +48,8 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, features
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGContext", "CGGradient", "CGColor", "CGColorSpace", "CGAffineTransform", "CGPath"] }
 # Media playback: AVFoundation demuxes and decodes (VideoToolbox/AudioToolbox underneath) and
 # outputs audio; Mars feeds it bytes fetched through Relay via a resource loader.
-objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime" ] }
-objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase"] }
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime", "AVQueuedSampleBufferRendering", "AVSampleBufferAudioRenderer", "AVSampleBufferRenderSynchronizer" ] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase", "CMSampleBuffer", "CMSync"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn", "CVBase", "CVPixelBufferIOSurface", "CVHostTime"] }
 dispatch2 = "=0.3.1"
 block2 = "=0.6.2"

@@ -12,6 +12,8 @@ mod mars;
 mod mcp_io;
 #[cfg(target_os = "macos")]
 mod media;
+#[cfg(all(target_os = "macos", feature = "test-support"))]
+pub use media::testing as media_testing;
 #[cfg(target_os = "macos")]
 mod selection;
 mod site;
