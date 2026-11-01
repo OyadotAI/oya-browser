@@ -7,6 +7,7 @@ mod composite;
 mod path;
 mod pixels;
 mod raster;
+mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
 pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage};
@@ -17,6 +18,10 @@ pub use path::{
 pub use pixels::Pixels;
 pub use pixels::Reservation as Allocation;
 pub use raster::{RasterPlan, blend, blit, clear_rect, fill_rect, plan_blit, plan_rect};
+pub use text::{
+    ALIGNS, Align, BASELINES, Baseline, DIRECTIONS, Direction, FontMetrics, TextMeasure,
+    align_shift, baseline_offset, keyword, lookup, measure as text_measure,
+};
 
 /// Conservative initial edge limit; this is a Mars resource limit, not a web standard limit.
 pub const EDGE: u32 = 512;
@@ -36,6 +41,10 @@ pub const WORK: usize = 8_000_000;
 pub const TEXT_UNITS: usize = 2048;
 /// PNG exports cannot consume an unbounded script string.
 pub const PNG_BYTES: usize = 2 * 1024 * 1024;
+/// The canonical font text a script reads back is bounded like any other script-supplied string.
+pub const FONT_TEXT_BYTES: usize = 1024;
+/// CSS numeric font weights run from 1 to 1000; 400 is normal.
+pub const WEIGHT_RANGE: std::ops::RangeInclusive<u16> = 1..=1000;
 /// HTML's default bitmap dimensions.
 pub const DEFAULT_SIZE: [u32; 2] = [300, 150];
 
@@ -97,14 +106,21 @@ impl Bitmap {
     }
 }
 
-/// A bounded resolved font description shared by native measurement and rasterization.
+/// A resolved font: the shorthand's size, weight and posture, the generic family hosts draw with,
+/// and the canonical text the font getter reports.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct Font {
     /// CSS pixel size.
     pub size: f64,
-    /// Initial implementation admits the three generic families.
+    /// Generic family: serif, sans-serif or monospace. Unknown families map to the closest one.
     pub family: String,
+    /// CSS numeric weight; 400 is normal and 700 is bold.
+    pub weight: u16,
+    /// Italic or oblique posture.
+    pub italic: bool,
+    /// Canonical CSS serialization, such as "bold 11px Arial", that the getter returns verbatim.
+    pub text: String,
 }
 impl Default for Font {
     /// Canvas starts with the web platform's default font.
@@ -112,6 +128,9 @@ impl Default for Font {
         Self {
             size: 10.0,
             family: "sans-serif".into(),
+            weight: 400,
+            italic: false,
+            text: "10px sans-serif".into(),
         }
     }
 }
@@ -121,6 +140,10 @@ pub trait CanvasHost: Sync {
     /// False means 2D context creation must return null rather than promise drawing support.
     fn available(&self) -> bool {
         false
+    }
+    /// Ascent and descent of the font box for the same resolution drawing uses.
+    fn font_metrics(&self, _font: &Font) -> EngineResult<FontMetrics> {
+        Err(unavailable())
     }
     /// Measure through the same font resolution as drawing.
     fn measure(&self, _font: &Font, _text: &str) -> EngineResult<f64> {

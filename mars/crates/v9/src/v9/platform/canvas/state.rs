@@ -32,6 +32,12 @@ pub(in crate::v9) struct DrawingState {
     pub smoothing: bool,
     /** None is the initial unbounded clip; saved references retain one immutable mask-pool entry. */
     pub clip: Option<u8>,
+    /** Vertical anchor of text: the alphabetic baseline unless a script names another line. */
+    pub baseline: limits::Baseline,
+    /** Horizontal anchor of text, resolved against the direction at draw time. */
+    pub align: limits::Align,
+    /** Direction used to resolve start and end; inherit reads the canvas element. */
+    pub direction: limits::Direction,
 }
 
 impl Default for DrawingState {
@@ -48,6 +54,9 @@ impl Default for DrawingState {
             composite: limits::Composite::default(),
             smoothing: true,
             clip: None,
+            baseline: limits::Baseline::default(),
+            align: limits::Align::default(),
+            direction: limits::Direction::default(),
         }
     }
 }
@@ -87,6 +96,8 @@ pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
         || font.size <= 0.0
         || font.size > f64::from(limits::EDGE)
         || !["serif", "sans-serif", "monospace"].contains(&font.family.as_str())
+        || !limits::WEIGHT_RANGE.contains(&font.weight)
+        || font.text.len() > limits::FONT_TEXT_BYTES
     {
         return Err(EngineError::invalid("Invalid canvas drawing state."));
     }

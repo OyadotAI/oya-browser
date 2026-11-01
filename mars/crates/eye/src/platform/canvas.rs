@@ -1,5 +1,5 @@
 /** Native canvas text and PNG encoding use short-lived OS resources over bounded inert pixels. */
-use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font, PNG_BYTES, TEXT_UNITS};
+use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font, FontMetrics, PNG_BYTES, TEXT_UNITS};
 use mars_core::protocol::{EngineError, EngineResult};
 
 /// Application-injected drawing service; it owns no page state or native handles between calls.
@@ -9,6 +9,12 @@ impl CanvasHost for NativeCanvas {
     /// macOS has an actual font rasterizer; other builds must not claim text support.
     fn available(&self) -> bool {
         cfg!(target_os = "macos")
+    }
+    /// Ascent and descent of the same face that measurement and painting resolve.
+    fn font_metrics(&self, font: &Font) -> EngineResult<FontMetrics> {
+        validate(font, "")?;
+        let (ascent, descent) = super::font_box(face(font));
+        Ok(FontMetrics { ascent, descent })
     }
     /// Both calls resolve through Eye's shared generic font selection.
     fn measure(&self, font: &Font, text: &str) -> EngineResult<f64> {
@@ -94,6 +100,8 @@ fn face(font: &Font) -> super::Face {
     .unwrap_or(super::Family::SansSerif);
     super::Face {
         family,
+        weight: font.weight,
+        italic: font.italic,
         ..super::Face::system(font.size, false)
     }
 }
@@ -236,6 +244,7 @@ mod tests {
         let font = Font {
             size: 18.0,
             family: "sans-serif".into(),
+            ..Font::default()
         };
         let expected = NativeCanvas
             .text(&bitmap, &font, "MMMM", [10.0, 24.0], [255; 4])
@@ -261,6 +270,7 @@ mod tests {
         let font = Font {
             size: 18.0,
             family: "sans-serif".into(),
+            ..Font::default()
         };
         let expected = NativeCanvas
             .text(&bitmap, &font, "Ink", [12.0, 30.0], [255, 0, 0, 128])

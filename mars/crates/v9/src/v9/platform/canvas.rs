@@ -10,18 +10,24 @@ use mars_core::canvas::{self as limits, Bitmap, Font};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
+mod attributes;
 mod clipping;
 mod colors;
 mod drawing;
+mod font;
+mod hit;
 mod images;
 mod lifecycle;
 pub(in crate::v9) mod path2d;
 mod paths;
+mod placement;
 mod results;
 mod state;
 use lifecycle::{admit, size};
 pub(in crate::v9) use lifecycle::{prepare_resize, publish, resized, validate, validate_targets};
 static PROTO: OnceLock<u32> = OnceLock::new();
+/** The initial font size of an element when no computed size is available. */
+const DEFAULT_FONT_PX: f64 = 16.0;
 /// Private edge lets GC retain a context only when its canvas is reachable.
 pub(in crate::v9) const CONTEXT_SLOT: &str = "canvas.context";
 
@@ -70,6 +76,9 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
         b.host_method(proto, name, length, drawing::method);
     }
     state::install(b, proto);
+    placement::install(b, proto);
+    attributes::install(b, proto);
+    hit::install(b, proto);
     images::install(b, proto);
     paths::install(b, proto);
     clipping::install(b, proto);
@@ -180,10 +189,7 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
     let state = &vm.page.state.canvases[&node];
     let value = if dom::native_name(&call) == "font" {
-        format!(
-            "{}px {}",
-            state.drawing.font.size, state.drawing.font.family
-        )
+        state.drawing.font.text.clone()
     } else {
         colors::serialize(state.drawing.fill)
     };
@@ -194,15 +200,29 @@ fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
     let value = vm.to_text(&call.arg(0))?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     if dom::native_name(&call) == "font" {
-        if let Some(font) = drawing::font(&value) {
+        let parent = font_size(vm, node);
+        let font = font::parse(&value, parent);
+        let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+        if let Some(font) = font {
             state.drawing.font = font;
         }
-    } else if let Some(color) = colors::parse(&value) {
+        return Ok(JsValue::Undefined);
+    }
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    if let Some(color) = colors::parse(&value) {
         state.drawing.fill = color;
     }
     Ok(JsValue::Undefined)
+}
+/** The canvas element's computed font size: em and percentage font lengths resolve against it. */
+fn font_size(vm: &mut Vm, node: usize) -> f64 {
+    let computed = dom::computed_value(vm, node, "font-size");
+    computed
+        .strip_suffix("px")
+        .and_then(|number| number.parse::<f64>().ok())
+        .filter(|px| px.is_finite() && *px > 0.0)
+        .unwrap_or(DEFAULT_FONT_PX)
 }
 /** Export exactly the same bitmap scripts read and painters consume. */
 fn export(vm: &mut Vm, call: Call) -> Res<JsValue> {

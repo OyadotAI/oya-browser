@@ -369,6 +369,14 @@ thread_local! {
     /** Resolving a named face is far slower than shaping a short run, so faces are reused. */
     static FONTS: std::cell::RefCell<Vec<(Face, Retained<NSFont>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+/** Ascent and descent of the font box, both positive, for Canvas text placement. */
+pub fn font_box(face: Face) -> (f64, f64) {
+    autoreleasepool(|_| {
+        let font = cached_font(face);
+        (font.ascender(), -font.descender())
+    })
+}
+
 /** The resolved font for a face, from this thread's cache. */
 fn cached_font(face: Face) -> Retained<NSFont> {
     FONTS.with(|cache| {

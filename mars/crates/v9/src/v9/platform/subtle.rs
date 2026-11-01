@@ -1,12 +1,14 @@
 /**
- * crypto.subtle, with the one operation pages hash with: `digest`, for SHA-1, SHA-256, SHA-384 and
- * SHA-512, as the Web Crypto specification defines it. The digest runs on the operating system's
- * crypto library (ring, already linked for TLS) and the promise settles with a fresh ArrayBuffer.
- * Every other SubtleCrypto member is absent rather than stubbed, so a feature test that reads
- * `crypto.subtle.encrypt` sees `undefined` and takes its fallback, instead of a method that
- * pretends to work. Anti-bot challenges hash their proof of work through this path, so a missing
- * `subtle` stops them before they can answer.
+ * crypto.subtle is a SubtleCrypto instance, as Chrome's is: the interface object and its prototype
+ * carry every member Chrome exposes, with the spec's length and name. `digest` is implemented for
+ * SHA-1, SHA-256, SHA-384 and SHA-512, on the operating system's crypto library (ring, already
+ * linked for TLS), and its promise settles with a fresh ArrayBuffer. Every other member is present
+ * but rejects its promise with NotSupportedError, the spec's report for an unsupported operation,
+ * so feature tests see a function and fail where Chrome would fail on an unknown algorithm.
+ * Anti-bot challenges hash their proof of work through this path, so a missing `subtle` stops them
+ * before they can answer.
  */
+use super::dom;
 use crate::v9::builtins::typed;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::PromiseState;
@@ -22,10 +24,35 @@ const SHA256: &str = "SHA-256";
 const SHA384: &str = "SHA-384";
 const SHA512: &str = "SHA-512";
 
-/** Install `crypto.subtle`: an object holding `digest`, reachable through a getter that returns the same instance each time. */
+/** Every SubtleCrypto member with its WebIDL length; only digest computes, the rest reject. */
+const MEMBERS: [(&str, u32); 12] = [
+    ("decrypt", 3),
+    ("deriveBits", 2),
+    ("deriveKey", 5),
+    ("digest", 2),
+    ("encrypt", 3),
+    ("exportKey", 2),
+    ("generateKey", 3),
+    ("importKey", 5),
+    ("sign", 3),
+    ("unwrapKey", 7),
+    ("verify", 4),
+    ("wrapKey", 4),
+];
+
+/** Install the SubtleCrypto interface, then the single `crypto.subtle` instance that the getter returns. */
 pub(super) fn install(b: &mut Builder, crypto: u32) {
-    let subtle = b.object(Some(b.ids.object_prototype));
-    b.host_method(subtle, "digest", 2, digest);
+    let proto = b.object(Some(b.ids.object_prototype));
+    super::chrome_env::interface(b, "SubtleCrypto", proto);
+    for (name, length) in MEMBERS {
+        let implementation = if name == "digest" {
+            digest
+        } else {
+            unsupported
+        };
+        b.host_method(proto, name, length, implementation);
+    }
+    let subtle = b.object(Some(proto));
     b.put(
         crypto,
         Key::private(SLOT),
@@ -33,6 +60,27 @@ pub(super) fn install(b: &mut Builder, crypto: u32) {
         HIDDEN_ATTRS,
     );
     b.getter(crypto, "subtle", subtle_get);
+}
+
+/** A member Mars does not implement: a promise rejected with NotSupportedError naming the member. */
+fn unsupported(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let message = format!(
+        "Failed to execute '{}' on 'SubtleCrypto': this operation is not supported.",
+        dom::native_name(&call)
+    );
+    let error = vm.dom_exception("NotSupportedError", &message);
+    rejected(vm, error)
+}
+
+/** A promise already rejected with the given error; a non-catchable failure propagates instead. */
+fn rejected(vm: &mut Vm, error: Thrown) -> Res<JsValue> {
+    let promise = vm.new_promise()?;
+    let state = match error {
+        Thrown::Value(error) => PromiseState::Rejected(error),
+        other => return Err(other),
+    };
+    vm.settle(promise, state)?;
+    Ok(JsValue::Object(promise))
 }
 
 /** `crypto.subtle`: the instance install stored on the receiver, or a TypeError for another receiver. */
@@ -77,15 +125,14 @@ fn algorithm_name(vm: &mut Vm, value: &JsValue) -> Res<Option<String>> {
 
 /** `crypto.subtle.digest(algorithm, data)`: a promise of the digest as an ArrayBuffer, or a rejected promise for a bad argument. */
 fn digest(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let promise = vm.new_promise()?;
-    let outcome = digest_outcome(vm, &call);
-    let state = match outcome {
-        Ok(buffer) => PromiseState::Fulfilled(buffer),
-        Err(Thrown::Value(error)) => PromiseState::Rejected(error),
-        Err(other) => return Err(other),
-    };
-    vm.settle(promise, state)?;
-    Ok(JsValue::Object(promise))
+    match digest_outcome(vm, &call) {
+        Ok(buffer) => {
+            let promise = vm.new_promise()?;
+            vm.settle(promise, PromiseState::Fulfilled(buffer))?;
+            Ok(JsValue::Object(promise))
+        }
+        Err(error) => rejected(vm, error),
+    }
 }
 
 /** The digest as an ArrayBuffer, or the error the rejection carries. */

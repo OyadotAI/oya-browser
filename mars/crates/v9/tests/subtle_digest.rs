@@ -60,13 +60,3 @@ fn non_buffer_data_rejects_with_a_type_error() {
     let source = "let result='';crypto.subtle.digest('SHA-256','text').then(()=>{result='resolved'},e=>{result=e.name});";
     assert_eq!(common::eval(source, "result"), "TypeError");
 }
-
-/** SubtleCrypto has only digest: the other members are absent, so feature tests take their fallbacks. */
-#[test]
-fn only_digest_is_offered_among_subtle_members() {
-    let source = "const s=crypto.subtle;const result=[typeof s.digest,typeof s.encrypt,typeof s.importKey,crypto.subtle===s].join(',');";
-    assert_eq!(
-        common::eval(source, "result"),
-        "function,undefined,undefined,true"
-    );
-}

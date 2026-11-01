@@ -44,6 +44,25 @@ impl PathPlan {
         bounds[0] == bounds[2] || bounds[1] == bounds[3]
     }
 
+    /** Exact point containment: winding of edges crossing the ray left of the point, with the plan's fill rule. */
+    pub fn contains(&self, point: Point) -> bool {
+        let [px, py] = point;
+        let mut winding = 0i32;
+        for &[from, to] in &self.edges {
+            if py < from[1].min(to[1]) || py >= from[1].max(to[1]) {
+                continue;
+            }
+            let x = from[0] + (py - from[1]) / (to[1] - from[1]) * (to[0] - from[0]);
+            if x <= px {
+                winding += if to[1] > from[1] { 1 } else { -1 };
+            }
+        }
+        match self.rule {
+            FillRule::Nonzero => winding != 0,
+            FillRule::Evenodd => winding % 2 != 0,
+        }
+    }
+
     /** Full-surface modes must composite even an empty or entirely off-canvas path. */
     fn paint_bounds(&self) -> [u32; 4] {
         if self.mode.affects_uncovered() {

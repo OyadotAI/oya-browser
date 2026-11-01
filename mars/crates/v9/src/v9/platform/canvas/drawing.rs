@@ -1,21 +1,8 @@
+use super::placement;
 /** Synchronous drawing, text and pixel readback operate on the canvas's actual bounded backing. */
 use super::*;
 use crate::v9::builtins::typed;
 
-/** Only font selections the host resolves consistently are admitted. */
-pub(super) fn font(text: &str) -> Option<Font> {
-    let (size, family) = text.trim().split_once("px ")?;
-    let size: f64 = size.parse().ok()?;
-    let family = family.trim();
-    (size.is_finite()
-        && size > 0.0
-        && size <= f64::from(limits::EDGE)
-        && ["serif", "sans-serif", "monospace"].contains(&family))
-    .then(|| Font {
-        size,
-        family: family.into(),
-    })
-}
 /** Brand first, then run one supported operation through a fixed dispatch table. */
 pub(super) fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
@@ -96,11 +83,8 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         return Err(quota(vm));
     }
     if dom::native_name(call) == "measureText" {
-        let width = vm
-            .page
-            .canvas_host
-            .measure(&vm.page.state.canvases[&node].drawing.font, &value)?;
-        return results::metrics(vm, width);
+        let fields = placement::measurement(vm, node, &value)?;
+        return results::metrics(vm, &fields);
     }
     let at = [vm.to_number(&call.arg(1))?, vm.to_number(&call.arg(2))?];
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
@@ -120,6 +104,7 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         vm,
         pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some())),
     )?;
+    let origin = placement::origin(vm, node, &value, at)?;
     let state = &vm.page.state.canvases[&node];
     if !state.bitmap.drawable() {
         return Ok(JsValue::Undefined);
@@ -128,7 +113,7 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         &state.bitmap,
         &state.drawing.font,
         &value,
-        at,
+        origin,
         state.drawing.fill,
         state.drawing.transform,
     )?;
