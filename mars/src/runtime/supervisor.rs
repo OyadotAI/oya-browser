@@ -88,6 +88,8 @@ pub struct Runtime {
     pub(super) history: Vec<super::navigation::HistoryEntry>,
     /** Current history position is absent before successful navigation. */
     pub(super) history_cursor: Option<usize>,
+    /** Meta refresh navigations made in a row since a person or agent last navigated. */
+    pub(super) refresh_chain: u8,
     /** Canonical point viewport is shared by display and inspection. */
     pub(super) render_context: crate::document::RenderContext,
     /// `render_context` is a frame's content box, not the window: frame pages are validated,
@@ -603,6 +605,7 @@ impl Runtime {
             cancel,
             history: Vec::new(),
             history_cursor: None,
+            refresh_chain: 0,
             render_context: crate::document::RenderContext::default(),
             framed: false,
             scroll_y: 0.0,

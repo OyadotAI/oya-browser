@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 use support::{Fixture, agent_call, desktop, html};
 
+/** Page loads a refresh chain may make: the first page plus the runtime's bound on refresh navigations. */
+const LOADS_PER_CHAIN: usize = 6;
+
 /** A 200 response of `mime` with any extra header lines. */
 fn reply(mime: &str, headers: &str, body: &str) -> Vec<u8> {
     format!(
@@ -824,4 +827,77 @@ fn a_slow_fetch_does_not_hold_the_page() {
         now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
     }
     assert!(texts(&now).contains("arrived"), "{now}");
+}
+
+/** Keeps the runtime's background work running for up to `attempts` short slices, stopping once `done` holds. */
+fn run_until(
+    runtime: &mut mars::runtime::Runtime,
+    attempts: usize,
+    done: impl Fn(&Value) -> bool,
+) -> Value {
+    let mut page = agent_call(runtime, "page.inspect", json!({})).unwrap();
+    for _ in 0..attempts {
+        if done(&page) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+        page = agent_call(runtime, "page.inspect", json!({})).unwrap();
+    }
+    page
+}
+
+/** A declarative refresh follows its delay to the address it names, as Chrome does, and replaces the entry it was loaded into. */
+#[test]
+fn meta_refresh_follows_after_its_delay() {
+    let (fixture, mut runtime, page) = load(
+        "<meta http-equiv='refresh' content='0; url=/second'><p>first</p>",
+        vec![("/second", html("", "<p>second page</p>"))],
+    );
+    assert_eq!(page["url"], format!("{}/", fixture.url), "{page}");
+    let after = run_until(&mut runtime, 40, |page| {
+        page["url"] == format!("{}/second", fixture.url)
+    });
+    assert_eq!(after["url"], format!("{}/second", fixture.url), "{after}");
+    assert!(texts(&after).contains("second page"), "{after}");
+    let history = agent_call(&mut runtime, "page.history", json!({})).unwrap();
+    assert_eq!(history["length"], 1, "{history}");
+}
+
+/** A refresh with a delay waits for it: the page stays on its first document until the delay has passed. */
+#[test]
+fn meta_refresh_waits_for_its_delay() {
+    let (fixture, mut runtime, page) = load(
+        "<meta http-equiv='refresh' content='30; url=/second'><p>first</p>",
+        vec![("/second", html("", "<p>second page</p>"))],
+    );
+    let after = run_until(&mut runtime, 10, |_| false);
+    assert_eq!(after["url"], format!("{}/", fixture.url), "{page}");
+    assert!(texts(&after).contains("first"), "{after}");
+}
+
+/** A refresh to a non-web address is not followed, so a script URL cannot run through the refresh path. */
+#[test]
+fn meta_refresh_to_a_script_address_is_not_followed() {
+    let (fixture, mut runtime, _page) = load(
+        "<meta http-equiv='refresh' content='0; url=javascript:void(0)'><p>first</p>",
+        vec![],
+    );
+    let after = run_until(&mut runtime, 10, |_| false);
+    assert_eq!(after["url"], format!("{}/", fixture.url), "{after}");
+}
+
+/** A page that refreshes to itself forever is stopped by the chain bound: the refresh navigations stop, and the page stays put. */
+#[test]
+fn meta_refresh_chain_is_bounded() {
+    let body = "<meta http-equiv='refresh' content='0'><p>loop</p>";
+    let (fixture, counts) = Fixture::routes_counted(vec![("/", html("", body))]);
+    let mut runtime = desktop(&fixture.url);
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    run_until(&mut runtime, 80, |_| false);
+    let settled = counts.lock().unwrap()["/"];
+    run_until(&mut runtime, 10, |_| false);
+    let later = counts.lock().unwrap()["/"];
+    assert_eq!(settled, later, "the refresh loop kept going");
+    assert!(settled <= LOADS_PER_CHAIN, "{settled} page loads");
 }

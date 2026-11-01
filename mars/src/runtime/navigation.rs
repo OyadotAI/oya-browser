@@ -195,6 +195,19 @@ impl Runtime {
         let sensitive = self.current()?.sensitive;
         self.load_request_from(WebRequest::get(url), sensitive, History::New, hops)
     }
+    /** A meta refresh's navigation: it replaces the current history entry, through the same loader and authority as a click. None when the chain bound refuses it, and the page stays where it is. */
+    pub(super) fn meta_refresh(&mut self, url: &str, hops: u8) -> Option<EngineResult<Value>> {
+        if self.refresh_chain >= super::meta_refresh::META_REFRESHES {
+            return None;
+        }
+        self.refresh_chain += 1;
+        let sensitive = match self.current() {
+            Ok(page) => page.sensitive,
+            Err(error) => return Some(Err(error)),
+        };
+        let history = self.history_cursor.map_or(History::New, History::At);
+        Some(self.load_request_from(WebRequest::get(url), sensitive, history, hops + 1))
+    }
     /** Ordinary navigations start a script navigation chain. */
     fn load_request(
         &mut self,
@@ -202,6 +215,7 @@ impl Runtime {
         sensitive: bool,
         history: History,
     ) -> EngineResult<Value> {
+        self.refresh_chain = 0;
         self.load_request_from(request, sensitive, history, 0)
     }
     /** Expensive parsing, VM and layout happen outside the brief final authority lock. A
@@ -546,6 +560,7 @@ impl Runtime {
             environment.parent_frames.clone_from(&embedding.routes);
             environment.own_window = Some(embedding.window);
         }
+        let refresh = super::meta_refresh::pending(&document, &acquired.response.url);
         let mut page = Page {
             _context: context,
             generation,
@@ -593,6 +608,7 @@ impl Runtime {
             degraded: Vec::new(),
             untrusted_styles: false,
             scripting: super::scripting::Scripting {
+                refresh,
                 attempted_frame_owners: Default::default(),
                 environment,
                 modules: super::modules::Modules::new(

@@ -121,7 +121,7 @@ pub(super) const CONSOLE_ENTRIES: usize = 4 * DIAGNOSTICS;
 /// Navigations a script may chain (page A's script sends to B, whose script sends to C).
 pub(super) const SCRIPT_NAVIGATIONS: u8 = 3;
 /// Milliseconds per second, for the time origin and the virtual clock.
-const MS_PER_SECOND: f64 = 1000.0;
+pub(super) const MS_PER_SECOND: f64 = 1000.0;
 /// Seconds per minute, for the timezone offset.
 const SECONDS_PER_MINUTE: f64 = 60.0;
 
@@ -166,6 +166,8 @@ pub(super) struct Scripting {
     pub attempted_frame_owners: std::collections::BTreeSet<usize>,
     /// Virtual milliseconds since the page's time origin.
     pub clock_ms: f64,
+    /// The document's declarative refresh, waiting for its delay on the virtual clock.
+    pub refresh: Option<super::meta_refresh::PendingRefresh>,
     /// When V9 next has a timer or animation frame due, in virtual milliseconds.
     pub next_timer_ms: Option<f64>,
     /// Steps in a row that ran out of time (a dropped task each). Reaching
@@ -312,6 +314,7 @@ impl Default for Scripting {
             environment: PageEnvironment::default(),
             attempted_frame_owners: Default::default(),
             clock_ms: 0.0,
+            refresh: None,
             workers: Default::default(),
             next_timer_ms: None,
             time_limit_strikes: 0,
@@ -387,7 +390,8 @@ impl Scripting {
                     || !self.ready.is_empty()
                     || !self.image_loading.pending.is_empty()
                     || self.workers.pending()
-                    || self.load_pending)
+                    || self.load_pending
+                    || self.refresh.is_some())
     }
 
     /** Native transition frames use their next sample time while expensive work stays throttled. */
@@ -1474,6 +1478,7 @@ impl Runtime {
                 || page.scripting.loaded && page.scripting.intersections.ready()
                 || page.frame_observations_pending()
                 || page.scripting.loaded && page.scripting.parked.wakes(self.platform.version)
+                || page.scripting.refresh.is_some()
                 || self.service_workers_busy()
                 || landed)
                 && now >= page.scripting.last_tick + page.scripting.tick_interval()
@@ -1507,6 +1512,7 @@ impl Runtime {
             * MS_PER_SECOND;
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
+        super::meta_refresh::fire_due(&mut page.scripting, end);
         let changed = if page.scripting.awake_at(now) {
             self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
         } else {
@@ -1725,6 +1731,9 @@ impl Runtime {
         let navigation = self.page.as_mut()?.scripting.navigation.take()?;
         if hops >= SCRIPT_NAVIGATIONS {
             return None;
+        }
+        if navigation.kind == super::meta_refresh::REFRESH_KIND {
+            return self.meta_refresh(&navigation.url, hops);
         }
         let result = match navigation.kind.as_str() {
             "reload" => self.reload(json!({})),

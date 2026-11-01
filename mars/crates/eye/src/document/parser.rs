@@ -2,7 +2,7 @@
 tags, misnested and stray tags, table repair and embedded-content fallbacks keep the page instead
 of refusing it. Only hard bounds, script policy and charset conflicts still refuse. */
 use super::{
-    Document, ScriptKind, ScriptMode, ScriptResource, StyleSource, markup,
+    Document, MetaRefresh, ScriptKind, ScriptMode, ScriptResource, StyleSource, markup,
     recovery::{
         CLOSES_P, DEFAULT_SCOPE, EMBEDDED, HEADINGS, MEDIA_RESOURCES, SCOPED_END, TABLE_CONTENT,
         TABLE_CONTEXT, TABLE_SCOPE, VOID, in_scope, list_item, ordinary_end,
@@ -226,6 +226,8 @@ const FOREIGN_BREAKOUT: [&str; 45] = [
     "font",
 ];
 /** MathML text integration points: their children are HTML, except mglyph and malignmark. */
+/** The key that introduces a refresh address in its content, as in `5; url=/next`. */
+const URL_KEY: &str = "url";
 const MATH_TEXT_POINTS: [&str; 5] = ["mi", "mo", "mn", "ms", "mtext"];
 /** SVG HTML integration points: their children are HTML. */
 const SVG_HTML_POINTS: [&str; 3] = ["foreignobject", "desc", "title"];
@@ -295,6 +297,7 @@ impl<'a> Tree<'a> {
                 csp: Vec::new(),
                 metadata: Vec::new(),
                 charset: String::new(),
+                refresh: None,
             },
             stack: Vec::new(),
             head: false,
@@ -968,7 +971,7 @@ impl<'a> Tree<'a> {
         }
     }
     /// Charset and content-type metadata must agree with decoding. Other http-equiv pragmas never
-    /// refuse the page: refresh is noted and not followed, set-cookie is ignored as Chromium
+    /// refuse the page: refresh is recorded for the coordinator to follow, set-cookie is ignored as Chromium
     /// ignores it, a Content-Security-Policy is recorded for the coordinator, the rest are noted.
     fn meta(&mut self, attrs: &markup::Attributes) -> EngineResult<()> {
         if let Some(label) = attrs.get("charset") {
@@ -998,7 +1001,7 @@ impl<'a> Tree<'a> {
             },
             "x-ua-compatible" | "set-cookie" => Ok(()),
             "refresh" => {
-                self.diagnose("A meta refresh was not followed.");
+                self.refresh(content);
                 Ok(())
             }
             "content-security-policy" => {
@@ -1009,6 +1012,16 @@ impl<'a> Tree<'a> {
                 self.diagnose("An unsupported http-equiv pragma was ignored.");
                 Ok(())
             }
+        }
+    }
+    /** Keeps the document's first declarative refresh. A fragment never refreshes, and a later one is ignored, as the spec's declarative refresh steps run once per document. */
+    fn refresh(&mut self, content: &str) {
+        if self.fragment || self.document.refresh.is_some() {
+            return;
+        }
+        match parse_refresh(content) {
+            Some(refresh) => self.document.refresh = Some(refresh),
+            None => self.diagnose("A meta refresh without a delay was ignored."),
         }
     }
     /** Records one meta policy within its count and size bounds. */
@@ -1459,4 +1472,46 @@ fn html_annotation(node: &super::Node) -> bool {
         encoding.eq_ignore_ascii_case("text/html")
             || encoding.eq_ignore_ascii_case("application/xhtml+xml")
     })
+}
+
+/** The shared declarative refresh steps' parse of a refresh's content: leading whitespace, a delay of ASCII digits with an optional fraction, an optional `;` or `,`, then an optional `url=` whose address may be quoted. None when no delay is present; an empty address means the document's own. */
+fn parse_refresh(content: &str) -> Option<MetaRefresh> {
+    let text = content.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let (whole, rest) = split_digits(text);
+    if whole.is_empty() {
+        return None;
+    }
+    let (fraction, rest) = match rest.strip_prefix('.') {
+        Some(after) => split_digits(after),
+        None => ("", rest),
+    };
+    let fraction = if fraction.is_empty() { "0" } else { fraction };
+    let seconds = format!("{whole}.{fraction}").parse::<f64>().ok()?;
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let rest = rest.strip_prefix([';', ',']).unwrap_or(rest);
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let address = match rest.get(..URL_KEY.len()) {
+        Some(key) if key.eq_ignore_ascii_case(URL_KEY) => {
+            let after = rest[URL_KEY.len()..].trim_start_matches(|c: char| c.is_ascii_whitespace());
+            after
+                .strip_prefix('=')
+                .unwrap_or(after)
+                .trim_start_matches(|c: char| c.is_ascii_whitespace())
+        }
+        _ => rest,
+    };
+    let address = address
+        .strip_prefix(['\'', '"'])
+        .map_or(address, |quoted| quoted.trim_end_matches(['\'', '"']));
+    let address = address.trim();
+    Some(MetaRefresh {
+        seconds,
+        url: (!address.is_empty()).then(|| address.to_owned()),
+    })
+}
+
+/** Splits the leading run of ASCII digits from the rest of the text. */
+fn split_digits(text: &str) -> (&str, &str) {
+    let end = text.bytes().take_while(u8::is_ascii_digit).count();
+    text.split_at(end)
 }

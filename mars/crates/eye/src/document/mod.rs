@@ -113,6 +113,10 @@ pub struct Document {
     /// never nodes, so layout, paint and agents never see them; scripts find them through V9.
     #[serde(default)]
     pub metadata: Vec<MetadataElement>,
+    /// The first `<meta http-equiv=refresh>` whose content names a delay, as the shared declarative
+    /// refresh steps read it. The coordinator follows it the way Chrome does; eye only parses it.
+    #[serde(default)]
+    pub refresh: Option<MetaRefresh>,
     /// The encoding name the parser settled: a meta charset when one agreed with the decoding,
     /// else the transport's. Empty only for fragments; it is what `document.characterSet` reports.
     #[serde(default)]
@@ -137,6 +141,17 @@ impl ScriptKind {
     pub fn is_classic(&self) -> bool {
         *self == Self::Classic
     }
+}
+
+/// A declarative refresh: after `seconds`, navigate to `url`. Absent `url` means the document's own
+/// address; a relative one stays as written and resolves against the document's base.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaRefresh {
+    /// The delay before the navigation, in seconds; a fraction is allowed.
+    pub seconds: f64,
+    /// The address to navigate to, or None for the document's own address.
+    pub url: Option<String>,
 }
 
 /// Meta-delivered policies one document keeps; later ones are dropped with a diagnostic.

@@ -34,6 +34,7 @@ mod lifetime;
 pub mod link;
 mod loader;
 pub mod media;
+mod meta_refresh;
 mod modules;
 mod names;
 mod navigation;
