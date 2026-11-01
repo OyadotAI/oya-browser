@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed stale synchronous layout reuse after coalesced DOM attribute writes in Mars. Forced layouts now use the latest edits, and final writes no longer trigger a false script/document structure disagreement.
+
 - Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
 
 - Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
