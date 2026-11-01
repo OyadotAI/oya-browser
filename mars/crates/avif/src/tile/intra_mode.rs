@@ -40,7 +40,12 @@ impl<'a> TileDecoder<'a> {
         } else {
             0
         };
-        self.blk.lossless = self.hdr.lossless_array[self.blk.segment_id];
+        // The id is clipped to the active segments when it is read, so this lookup only fails if that clip is missing.
+        self.blk.lossless = *self
+            .hdr
+            .lossless_array
+            .get(self.blk.segment_id)
+            .ok_or(Error::Malformed("segment id"))?;
         Ok(())
     }
 
@@ -53,8 +58,7 @@ impl<'a> TileDecoder<'a> {
         }
         let ctx = segment_ctx(prev_ul, prev_u, prev_l);
         let coded = self.sym.read_symbol(&mut self.cdf.segment_id[ctx])? as i32;
-        let max = self.hdr.seg.last_active_seg_id as i32 + 1;
-        Ok(neg_deinterleave(coded, pred, max) as usize)
+        Ok(coded_segment(coded, pred, self.hdr.seg.last_active_seg_id))
     }
 
     /** The segment ids of the above-left, above and left neighbours, or NO_SEGMENT for one outside the tile. */
@@ -81,7 +85,13 @@ impl<'a> TileDecoder<'a> {
 
     /** seg_feature_active(feature) for the block's segment. */
     pub(super) fn seg_feature_active(&self, feature: usize) -> bool {
-        self.hdr.seg.enabled && self.hdr.seg.feature_enabled[self.blk.segment_id][feature]
+        self.hdr.seg.enabled
+            && self
+                .hdr
+                .seg
+                .feature_enabled
+                .get(self.blk.segment_id)
+                .is_some_and(|features| features[feature])
     }
 
     /** read_skip(): the skip flag, forced on when the segment's skip feature is active before the segment id is read. */
@@ -231,6 +241,12 @@ fn segment_ctx(prev_ul: i32, prev_u: i32, prev_l: i32) -> usize {
     } else {
         0
     }
+}
+
+/** The segment a coded difference names: neg_deinterleave around the prediction, then clipped to the last active segment (the spec's Clip3). Untrusted bits can name any id, so the clip is what keeps every later table lookup inside the eight segments. */
+pub(super) fn coded_segment(coded: i32, pred: i32, last_active: u8) -> usize {
+    let max = i32::from(last_active) + 1;
+    neg_deinterleave(coded, pred, max).clamp(0, i32::from(last_active)) as usize
 }
 
 /** neg_deinterleave(diff, ref, max): maps the coded difference back to a segment id around the prediction. */

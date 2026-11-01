@@ -6,7 +6,7 @@ use super::constants::{
 };
 use super::decode_frame;
 use super::group::split_tiles;
-use super::intra_mode::neg_deinterleave;
+use super::intra_mode::{coded_segment, neg_deinterleave};
 use super::lr::inverse_recenter;
 use super::palette::{ceil_log2, merge_cache};
 use super::scan::get_scan;
@@ -232,6 +232,20 @@ fn neg_deinterleave_maps_differences_around_the_prediction() {
     assert_eq!(neg_deinterleave(1, 4, 8), 5);
     assert_eq!(neg_deinterleave(2, 4, 8), 3);
     assert_eq!(neg_deinterleave(0, 7, 8), 7);
+}
+
+/** A coded segment difference from hostile bits can name an id past the active segments; it is clipped to the last one, never past the eight segment slots. */
+#[test]
+fn a_coded_segment_is_clipped_to_the_last_active_segment() {
+    assert_eq!(coded_segment(7, 0, 2), 2);
+    assert_eq!(coded_segment(0, 7, 7), 7);
+    for coded in 0..8 {
+        for pred in 0..8 {
+            for last in 0..8u8 {
+                assert!(coded_segment(coded, pred, last) <= usize::from(last));
+            }
+        }
+    }
 }
 
 /** A tile group whose explicit range runs past the frame's tiles is refused. */
