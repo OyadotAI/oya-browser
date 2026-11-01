@@ -1,5 +1,5 @@
 /** Every native write path observes the same immutable backing capability, including empty operations. */
-mod common;
+use crate::common;
 
 /** Read-only indexed descriptors accept SameValue only and never convert a proposed replacement. */
 #[test]

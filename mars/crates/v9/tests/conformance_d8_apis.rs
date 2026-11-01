@@ -1,6 +1,6 @@
 /* The opt-in d8 host APIs (log, constants, trace, statistics, failure triggers, source-position checks) act on real VM state. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment};
 
 /** Every case runs as d8 with only the flags it names; everything else stays at the production defaults. */

@@ -1,5 +1,5 @@
 /** DOM visual geometry uses native transforms while offset and client measurements keep raw layout sizes. */
-mod common;
+use crate::common;
 use mars_v9::{NodeBox, PageEnvironment};
 
 /** One visible native paragraph with explicit raw layout data. */

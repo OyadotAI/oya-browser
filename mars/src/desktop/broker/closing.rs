@@ -2,7 +2,7 @@
 use super::*;
 
 /** A single close attempt owns its acknowledgement and can retire queued work. */
-pub(in crate::desktop) struct SaveTicket {
+pub(in super::super) struct SaveTicket {
     /** Dropping an attempt cannot let its late result close a subsequent attempt. */
     result: Receiver<bool>,
     /** A retired queued save is skipped; an already running store operation may finish. */

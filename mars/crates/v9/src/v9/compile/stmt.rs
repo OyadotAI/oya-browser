@@ -65,7 +65,7 @@ impl Compiler {
     pub(super) fn check_global_declarations(
         &mut self,
         vars: &[Name],
-        functions: &[Rc<Func>],
+        functions: &[Arc<Func>],
         eval: bool,
     ) -> EngineResult<()> {
         let mut seen = std::collections::HashSet::new();
@@ -948,7 +948,7 @@ pub(super) fn early_conflict(
 }
 
 /** A loop's lexical head names may not be redeclared by a `var` in its body. */
-fn head_conflict(stmt: &Stmt, names: &[Name], body: &Stmt) -> EngineResult<()> {
+pub(super) fn head_conflict(stmt: &Stmt, names: &[Name], body: &Stmt) -> EngineResult<()> {
     let vars = scan::stmt_var_names(body);
     if let Some(name) = vars.iter().find(|name| names.contains(name)) {
         return Err(errors::syntax(

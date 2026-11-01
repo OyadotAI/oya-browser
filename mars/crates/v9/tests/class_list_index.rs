@@ -1,5 +1,5 @@
 /** DOMTokenList indexed reads: classList[i] is the i-th token in the attribute's order, following adds and removes, and past the end it is undefined. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Indexed reads follow the attribute's order. */

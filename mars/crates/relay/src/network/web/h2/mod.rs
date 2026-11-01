@@ -154,7 +154,8 @@ impl Session {
             return Err(timeout());
         }
         let mut bytes = vec![0; READ_CHUNK];
-        let _ = self.reader.set_read_timeout(Some(remaining));
+        let stall = remaining.min(crate::constants::WEB_STALL_TIMEOUT);
+        let _ = self.reader.set_read_timeout(Some(stall));
         match (&self.reader).read(&mut bytes) {
             Ok(count) => {
                 bytes.truncate(count);

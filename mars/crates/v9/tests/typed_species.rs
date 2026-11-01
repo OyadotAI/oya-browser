@@ -1,5 +1,5 @@
 /** Buffer and typed-array species use actual constructors with live native storage validation and observable callback order. */
-mod common;
+use crate::common;
 
 /** Map chooses its target store by element and buffer kind after species construction. */
 #[test]

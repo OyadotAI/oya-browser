@@ -1,6 +1,6 @@
 /* Native Wasm object intrinsics expose genuine, typed GC values. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Struct and array helpers create distinct canonical types with the pinned i64 payload. */
 #[test]

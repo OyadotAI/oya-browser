@@ -1,5 +1,5 @@
 /** String.prototype.localeCompare orders text like the browser's collator, not by code unit. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Root collation: letters compare without case first, then lowercase sorts before uppercase. */

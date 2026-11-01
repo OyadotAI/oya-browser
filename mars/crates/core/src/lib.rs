@@ -3,6 +3,7 @@ pub mod canvas;
 pub mod charset;
 pub mod constants;
 pub mod dom;
+pub mod entities;
 pub mod geometry;
 pub mod http;
 pub mod image_source;

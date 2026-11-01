@@ -11,11 +11,6 @@ use crate::v9::vm::{Call, GLOBAL, Res, Thrown, Vm};
 pub(in crate::v9::platform) use errors::error_prototype;
 pub(in crate::v9) use errors::report_window_error;
 
-/// Event listeners one page may register on nodes, the document and the window together. A
-/// component framework adds several per element: YouTube's Polymer app passes 512 as soon as
-/// its guide and masthead render. Chromium has no such bound; this one only caps state size.
-pub(in crate::v9) const LISTENERS: usize = 16 * 1024;
-
 /** The listener target a value denotes. */
 pub(in crate::v9) fn target_of(vm: &Vm, value: &JsValue) -> Option<Target> {
     // A bare `addEventListener(...)` call passes no receiver; operations of the global
@@ -174,11 +169,13 @@ fn add_listener(
     {
         return Ok(());
     }
-    admit_listener(vm, options.signal.as_ref())?;
+    vm.charge(kind.len().saturating_add(1))?;
+    admit_listener(vm, &kind, options.signal.as_ref())?;
+    super::match_media::watch(vm, target, &kind)?;
     let passive = options
         .passive
         .unwrap_or_else(|| passive_by_default(target, &kind));
-    let id = next_listener_id(vm);
+    let id = next_listener_id(vm)?;
     vm.page.state.listeners.insert(Listener {
         id,
         target,
@@ -188,19 +185,44 @@ fn add_listener(
         once: options.once,
         passive,
         signal: options.signal,
-    });
+    })?;
     Ok(())
 }
 
-/** Listener pressure is its own collection trigger: temporary targets can exhaust this much
-smaller cap before the ordinary heap threshold. Keep the converted signal pinned because an
-options getter may have produced it without retaining it anywhere else. */
-fn admit_listener(vm: &mut Vm, signal: Option<&JsValue>) -> Res<()> {
-    if vm.page.state.listeners.len() < LISTENERS {
+/** The legacy `addListener` and `removeListener` of a MediaQueryList: the `change` registration under its older name. */
+pub(in crate::v9) fn media_listener(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(target) = target_of(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    let callback = call.arg(0);
+    if callback.nullish() {
+        return Ok(JsValue::Undefined);
+    }
+    let Some(callback) = callback.object() else {
+        return Err(vm.type_error("parameter 1 is not of type 'Object'."));
+    };
+    if native_name(&call) == "addListener" {
+        let options = ListenerOptions {
+            capture: false,
+            once: false,
+            passive: None,
+            signal: None,
+        };
+        add_listener(vm, target, "change".to_string(), callback, options)?;
+    } else {
+        remove_listener(vm, target, "change", callback, false);
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** Storage pressure collects unreachable targets before refusing a new registration. The
+converted signal may exist only in this native's local, so pin it before collecting. */
+fn admit_listener(vm: &mut Vm, kind: &String, signal: Option<&JsValue>) -> Res<()> {
+    if vm.page.state.listeners.admit(kind).is_ok() {
         return Ok(());
     }
     super::net::abort::prune_listeners(vm)?;
-    if vm.page.state.listeners.len() >= LISTENERS {
+    if vm.page.state.listeners.admit(kind).is_err() {
         if let Some(signal) = signal {
             vm.pin(signal.clone());
         }
@@ -209,21 +231,20 @@ fn admit_listener(vm: &mut Vm, signal: Option<&JsValue>) -> Res<()> {
                 .objects
                 .len()
                 .saturating_add(vm.heap.envs.len())
-                .saturating_add(LISTENERS),
+                .saturating_add(vm.page.state.listeners.len()),
         )?;
         vm.collect_now()?;
     }
-    if vm.page.state.listeners.len() >= LISTENERS {
-        return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
-    }
-    Ok(())
+    vm.page.state.listeners.admit(kind).map_err(Into::into)
 }
 
-/** Takes the next registration id; ids order listeners by registration. */
-fn next_listener_id(vm: &mut Vm) -> u32 {
+/** Dispatch snapshots hold registration identities: never wrap or reuse a removed listener's ID. */
+fn next_listener_id(vm: &mut Vm) -> Res<u32> {
     let id = vm.page.state.next_listener;
-    vm.page.state.next_listener += 1;
-    id
+    vm.page.state.next_listener = id
+        .checked_add(1)
+        .ok_or_else(|| EngineError::limit("V9 event listener identities", u32::MAX as usize))?;
+    Ok(id)
 }
 
 /** Removes the matching registration, if any. */
@@ -381,7 +402,7 @@ fn event_data(vm: &Vm, value: &JsValue) -> Option<EventData> {
 
 /** The propagation path from the window down to the target. Through shadow trees it runs from
 a slotted node to its slot, and from a shadow root to its host only for composed events. */
-fn path(vm: &mut Vm, target: Target, composed: bool) -> Vec<Target> {
+fn path(vm: &mut Vm, target: Target, composed: bool, kind: &str) -> Vec<Target> {
     let mut path = vec![target];
     match target {
         Target::Node(node) => {
@@ -401,14 +422,66 @@ fn path(vm: &mut Vm, target: Target, composed: bool) -> Vec<Target> {
             }
             if reached_document {
                 path.push(Target::Document);
-                path.push(Target::Window);
+                // Document's event parent is null for load, including capture. Resource loads
+                // must not repeatedly invoke Window's page-load listeners while parsing.
+                if kind != "load" {
+                    path.push(Target::Window);
+                }
             }
         }
-        Target::Document => path.push(Target::Window),
+        Target::Document if kind != "load" => path.push(Target::Window),
+        Target::Object(object) => object_parents(vm, object, &mut path),
         _ => {}
     }
     path.reverse();
     path
+}
+
+/** The private slot naming a non-node target's event parent, as IndexedDB's request -> transaction -> database path sets it. */
+pub(in crate::v9) const EVENT_PARENT: &str = "eventParent";
+/** How many event parents a non-node path may follow (IndexedDB needs two). */
+const OBJECT_PARENTS: usize = 8;
+/** Set on an event whose listeners each end with a microtask checkpoint, as task-dispatched events do. */
+const CHECKPOINT: &str = "listenerCheckpoint";
+/** Set when a listener for the event threw. */
+const THREW: &str = "listenerThrew";
+
+/** Append the event parents a non-node target names through its private slot. */
+fn object_parents(vm: &Vm, object: ObjectId, path: &mut Vec<Target>) {
+    let mut current = object;
+    for _ in 0..OBJECT_PARENTS {
+        let parent = vm
+            .heap
+            .get(current)
+            .and_then(|found| found.props.get(&Key::private(EVENT_PARENT)))
+            .and_then(|prop| match &prop.slot {
+                crate::v9::vm::heap::Slot::Data(JsValue::Object(id)) => Some(*id),
+                _ => None,
+            });
+        let Some(parent) = parent else {
+            return;
+        };
+        path.push(Target::Object(parent));
+        current = parent;
+    }
+}
+
+/** Dispatch a trusted event from a task at an object target: each listener ends with a microtask checkpoint. Returns 1 when canceled, plus 2 when a listener threw. */
+pub(in crate::v9) fn dispatch_task_event(
+    vm: &mut Vm,
+    target: ObjectId,
+    event: ObjectId,
+) -> Res<u8> {
+    if !is_event(vm, event) || flag(vm, event, DISPATCHING) {
+        return Err(vm.type_error("IndexedDB expected an event that is not being dispatched."));
+    }
+    with_event(vm, event, |data| data.trusted = true);
+    set_flag(vm, event, CHECKPOINT, true);
+    set_flag(vm, event, THREW, false);
+    let proceed = dispatch(vm, Target::Object(target), event);
+    set_flag(vm, event, CHECKPOINT, false);
+    let threw = flag(vm, event, THREW);
+    Ok(u8::from(!proceed?) | (u8::from(threw) << 1))
 }
 
 /** Dispatch an event object; returns false when a listener canceled it. */
@@ -444,7 +517,7 @@ fn propagate(vm: &mut Vm, target: Target, event: ObjectId, data: &EventData) -> 
     }
     let composed =
         data.trusted && data.kind != "slotchange" || super::components::composed(vm, event);
-    let route = path(vm, target, composed);
+    let route = path(vm, target, composed, &data.kind);
     let last = route.len().saturating_sub(1);
     // Each "inner invoke" returns at once when propagation already stopped, so a flag set
     // before dispatch, or by an earlier target, keeps every later listener from running.
@@ -519,6 +592,8 @@ fn invoke(
     });
     // The bucket of this target, type and capture is exactly what the phase fires: a phase reads
     // capture listeners in the capture passes and the others in the bubble passes.
+    let work = vm.page.state.listeners.firing_work(target, kind, capture);
+    vm.charge(work)?;
     let firing = vm.page.state.listeners.firing(target, kind, capture);
     // A markup `on<type>` attribute was registered when the element was parsed, before any
     // script listener, so it runs first; listeners it adds wait for the next dispatch.
@@ -656,11 +731,17 @@ fn call_listener(
             if result == JsValue::Boolean(false) {
                 cancel(vm, event);
             }
-            Ok(())
         }
-        Err(Thrown::Value(error)) => report_exception(vm, event, &error),
-        Err(fatal) => Err(fatal),
+        Err(Thrown::Value(error)) => {
+            set_flag(vm, event, THREW, true);
+            report_exception(vm, event, &error)?;
+        }
+        Err(fatal) => return Err(fatal),
     }
+    if flag(vm, event, CHECKPOINT) {
+        vm.drain_jobs()?;
+    }
+    Ok(())
 }
 
 /** Reports an uncaught listener exception, then fires `error` at the window unless that event is itself `error`. */
@@ -699,7 +780,9 @@ fn handler_property(
 ) -> Res<()> {
     let name = format!("on{kind}");
     let key = Key::Str(crate::v9::value::JsString::from_utf8(&name)?);
-    let mut handler = if let JsValue::Object(id) = current {
+    let mut handler = if let Some(handler) = super::broadcast::handler(vm, current, &name) {
+        Some(handler)
+    } else if let JsValue::Object(id) = current {
         vm.own(*id, &key)?.and_then(|prop| match prop.slot {
             crate::v9::vm::heap::Slot::Data(value) => Some(value),
             _ => None,
@@ -769,17 +852,29 @@ pub(in crate::v9) fn fire_with_state(
     kind: &str,
     state: JsValue,
 ) -> Res<bool> {
+    fire_with_fields(vm, target, kind, &[("state", state)])
+}
+
+/** Dispatch a trusted, non-bubbling event carrying extra enumerable members, as a MediaQueryListEvent carries `matches`. */
+pub(in crate::v9) fn fire_with_fields(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    fields: &[(&str, JsValue)],
+) -> Res<bool> {
     let event = create_event(vm, kind, false, false)?;
     let id = event.object().expect("event object");
     vm.pin(event);
-    vm.heap.put(
-        id,
-        Key::from("state"),
-        crate::v9::vm::heap::Prop {
-            slot: crate::v9::vm::heap::Slot::Data(state),
-            attrs: crate::v9::vm::heap::ENUMERABLE,
-        },
-    );
+    for (name, value) in fields {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(value.clone()),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
     with_event(vm, id, |data| data.trusted = true);
     dispatch(vm, target, id)
 }
@@ -838,15 +933,59 @@ pub(in crate::v9::platform) fn fire_keyboard(
 /** The Windows virtual key code browsers report as `keyCode` for the keys Mars delivers. */
 fn legacy_key_code(key: &str) -> f64 {
     match key {
+        "Backspace" => BACKSPACE_KEY_CODE,
         "Enter" => ENTER_KEY_CODE,
         "Escape" => ESCAPE_KEY_CODE,
         _ => 0.0,
     }
 }
+/** `keyCode` of Backspace. */
+const BACKSPACE_KEY_CODE: f64 = 8.0;
 /** `keyCode` of Enter. */
 const ENTER_KEY_CODE: f64 = 13.0;
 /** `keyCode` of Escape. */
 const ESCAPE_KEY_CODE: f64 = 27.0;
+
+/** The InputEvent intrinsic, which `beforeinput` and `input` events take. */
+static INPUT_PROTOTYPE: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
+
+/** Register the InputEvent intrinsic while the platform builds its deterministic native realm. */
+pub(in crate::v9::platform) fn input_prototype(id: ObjectId) {
+    let _ = INPUT_PROTOTYPE.set(id);
+}
+
+/** Dispatch a trusted `beforeinput` or `input` event, carrying the edit's `inputType` and the
+inserted `data` (null when the edit inserts none). Only `beforeinput` is cancelable. */
+pub(in crate::v9::platform) fn fire_input(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    input_type: &str,
+    data: Option<&str>,
+    cancelable: bool,
+) -> Res<bool> {
+    let event = create_event(vm, kind, true, cancelable)?;
+    let id = event.object().expect("native input event");
+    vm.pin(event);
+    let proto = vm.intrinsic_id(*INPUT_PROTOTYPE.get().expect("input prototype installed"));
+    vm.set_proto(id, Some(proto))?;
+    let data = match data {
+        Some(text) => JsValue::string(text)?,
+        None => JsValue::Null,
+    };
+    for (name, value) in [("inputType", JsValue::string(input_type)?), ("data", data)] {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(value),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
+    with_event(vm, id, |data| data.trusted = true);
+    dispatch(vm, target, id)
+}
 
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -960,7 +1099,7 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             };
             let composed = data.trusted || super::components::composed(vm, id);
             let mut values = Vec::new();
-            for step in path(vm, target, composed).into_iter().rev() {
+            for step in path(vm, target, composed, &data.kind).into_iter().rev() {
                 values.push(target_value(vm, step)?);
             }
             return Ok(JsValue::Object(vm.new_array(values)?));

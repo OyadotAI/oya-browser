@@ -1,5 +1,5 @@
 /** Compressed immutable function names preserve ordinary data descriptors, author observations and identity. */
-mod common;
+use crate::common;
 
 /** Pure bound chains resolve iteratively, independent of the wrapped-name recursion limit. */
 #[test]

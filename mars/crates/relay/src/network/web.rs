@@ -11,6 +11,7 @@ mod hints;
 mod lease;
 mod legacy;
 mod pool;
+mod roots;
 #[cfg(test)]
 mod testing;
 mod transport;
@@ -21,7 +22,7 @@ use crate::constants::{HTML_BYTES, HTTP_OK, IMAGE_BYTES, REDIRECTS, WEB_TIMEOUT}
 use crate::protocol::{EngineError, EngineResult};
 use ::url::Url;
 pub use batch::fetch_batch;
-pub use cache::{clear_cache, set_cache_directory};
+pub use cache::{clear_cache, forget, set_cache_directory};
 pub use fields::CHROME_ENGINE;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -121,7 +122,7 @@ impl Prepared {
         let url = web_url(&request.url)?;
         let budget = std::time::Duration::from_millis(remaining_ms)
             .saturating_sub(super::constants::REPLY_MARGIN)
-            .min(WEB_TIMEOUT);
+            .min(crate::constants::WEB_REQUEST_CEILING);
         let deadline = Instant::now() + budget;
         let fixture = fixture_granted(&url, grants);
         // CORS images bypass the older URL-only HTTP cache; the coordinator reuses only mode-bound admitted images.
@@ -288,7 +289,14 @@ impl Prepared {
  * DELETE, OPTIONS) always connects afresh and never shares, so it is never retried as reused.
  */
 /** Raster formats the native painter decodes; CDNs negotiate WebP from our Accept header. */
-const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+/** Bitmap types Relay admits for an image request; AVIF is decoded by mars-avif in the runtime. */
+const IMAGE_TYPES: [&str; 5] = [
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/avif",
+];
 
 fn acquire(
     url: &Url,
@@ -401,6 +409,9 @@ fn send_http1(
     Ok((response, connection))
 }
 
+/** HTTP statuses that send the request on to their `Location`. */
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
 /**
  * Fresh and cached responses alike pass the same media type, image and charset checks, and a
  * cached body is held to the current body budget. A top-level download keeps its raw bytes.
@@ -415,6 +426,7 @@ fn finish(
 ) -> EngineResult<WebResponse> {
     // Fonts arrive as bytes like images, under the same bound, but are not typed as images.
     let image_data = request.image || request.destination == Destination::Font;
+    let media = request.destination.media();
     let limit = if image_data { IMAGE_BYTES } else { HTML_BYTES };
     if body.len() > limit {
         return Err(EngineError::limit("HTTP body bytes", limit));
@@ -424,9 +436,11 @@ fn finish(
         .and_then(|value| mime::parse(value))
         .map(|parsed| (parsed.essence, parsed.charset))
         .unwrap_or_default();
-    if request.image && !IMAGE_TYPES.contains(&mime.as_str()) {
+    // A redirect carries no image: its caller follows it and checks the image it leads to.
+    let redirect = REDIRECT_STATUSES.contains(&status);
+    if request.image && !redirect && !IMAGE_TYPES.contains(&mime.as_str()) {
         return Err(EngineError::unsupported(
-            "Only PNG, JPEG, WebP and GIF images are supported.",
+            "Only PNG, JPEG, WebP, GIF and AVIF images are supported.",
         ));
     }
     if request.destination == Destination::Document
@@ -439,12 +453,12 @@ fn finish(
     let declared = charset
         .as_deref()
         .and_then(mars_core::http::encoding_for_label)
-        .filter(|_| !image_data && !download && !request.raw_response)
+        .filter(|_| !image_data && !download && !request.raw_response && !media)
         .map(str::to_owned);
     Ok(WebResponse {
         url: url.into(),
         status,
-        source: if image_data || download || request.raw_response {
+        source: if image_data || download || request.raw_response || media {
             base64(&body)
         } else if matches!(
             request.destination,
@@ -467,14 +481,28 @@ fn finish(
             .cloned(),
         headers: match request.destination {
             Destination::Empty => super::cors::response_headers(&headers),
-            Destination::Image => IMAGE_CORS_HEADERS
+            // A player needs the range it got and the resource's full length and type.
+            Destination::Video | Destination::Audio => MEDIA_HEADERS
+                .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
+            // Module worker imports are CORS fetches: the coordinator's admission needs the
+            // same two headers an image's does.
+            Destination::Image | Destination::WorkerImport => IMAGE_CORS_HEADERS
                 .iter()
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
             // A document keeps the headers that say who may frame it, for the coordinator's
             // check before it embeds the document in another origin's page.
-            Destination::Document | Destination::Worker => FRAMING_HEADERS
+            Destination::Document => FRAMING_HEADERS
                 .iter()
+                .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
+                .collect(),
+            // A worker script also keeps Service-Worker-Allowed, which may widen a service
+            // worker's maximum scope.
+            Destination::Worker => FRAMING_HEADERS
+                .iter()
+                .chain(&[SERVICE_WORKER_ALLOWED])
                 .filter_map(|name| Some((name.to_string(), headers.get(*name)?.clone())))
                 .collect(),
             _ => Vec::new(),
@@ -482,9 +510,21 @@ fn finish(
     })
 }
 
+/// Response headers a media fetch carries to the coordinator's player.
+const MEDIA_HEADERS: [&str; 6] = [
+    "content-range",
+    "content-length",
+    "content-type",
+    "accept-ranges",
+    "access-control-allow-origin",
+    "access-control-allow-credentials",
+];
 /// Response headers a document carries to the coordinator: who may frame it.
 const FRAMING_HEADERS: [&str; 2] = ["x-frame-options", "content-security-policy"];
-/** Only the host's CORS admission sees these image response headers; they never enter page script data. */
+/// The header that lets a service worker script allow a scope above its own directory.
+const SERVICE_WORKER_ALLOWED: &str = "service-worker-allowed";
+/** Only the host's CORS admission sees these image and worker-import response headers; they
+never enter page script data. */
 const IMAGE_CORS_HEADERS: [&str; 2] = [
     "access-control-allow-origin",
     "access-control-allow-credentials",
@@ -529,7 +569,7 @@ pub fn fetch(value: &str, fixture_origins: &[String]) -> EngineResult<WebPage> {
         if response.status == HTTP_OK {
             return complete(response, url);
         }
-        if redirects == REDIRECTS || ![301, 302, 303, 307, 308].contains(&response.status) {
+        if redirects == REDIRECTS || !REDIRECT_STATUSES.contains(&response.status) {
             return Err(EngineError::unsupported(
                 "Unsupported HTTP status or redirect limit exceeded.",
             ));
@@ -631,4 +671,46 @@ pub fn redirect_url(url: &Url, location: &str, grants: &[String]) -> EngineResul
         return Err(super::policy::denied());
     }
     Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** An AVIF image is admitted like the other bitmap types: Relay passes the bytes on and the
+    runtime's decoder decides whether it can show them. */
+    #[test]
+    fn avif_image_responses_are_admitted() {
+        let url = Url::parse("https://a.example/p.avif").expect("url");
+        let request = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get(url.as_str())
+        };
+        let headers = BTreeMap::from([("content-type".to_string(), "image/avif".to_string())]);
+        let response = finish(
+            url,
+            HTTP_OK,
+            headers,
+            b"ftyp".to_vec(),
+            Vec::new(),
+            &request,
+        )
+        .expect("avif admitted");
+        assert_eq!(response.mime, "image/avif");
+        assert!(response.image_data);
+    }
+
+    /** A type outside the image list stays refused, so admitting AVIF widens nothing else. */
+    #[test]
+    fn other_image_types_remain_refused() {
+        let url = Url::parse("https://a.example/p.tiff").expect("url");
+        let request = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get(url.as_str())
+        };
+        let headers = BTreeMap::from([("content-type".to_string(), "image/tiff".to_string())]);
+        assert!(finish(url, HTTP_OK, headers, b"II*".to_vec(), Vec::new(), &request).is_err());
+    }
 }

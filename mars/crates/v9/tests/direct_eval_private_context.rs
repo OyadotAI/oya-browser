@@ -1,5 +1,5 @@
 /** Direct eval inherits real lexical private environments while indirect eval remains globally scoped. */
-mod common;
+use crate::common;
 
 /** Static and instance private declarations are visible to direct eval in their lexical methods. */
 #[test]

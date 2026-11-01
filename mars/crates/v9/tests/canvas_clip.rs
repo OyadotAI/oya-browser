@@ -1,5 +1,5 @@
 /** Public clipping tests pin painter coverage, saved mask ownership, bypasses and image-origin security. */
-mod common;
+use crate::common;
 use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font};
 use mars_v9::{DocumentHost, Execution, ImageResponse, PageEnvironment};
 
@@ -178,6 +178,7 @@ fn fully_clipped_cross_origin_image_still_taints_the_canvas() {
         dimensions: Some((1, 1)),
         bitmap: Some(bitmap),
         origin_clean: false,
+        current_src: String::new(),
     };
     let resumed = mars_v9::resume_images(
         common::input(&sources, &host, &environment),

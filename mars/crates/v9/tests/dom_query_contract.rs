@@ -5,7 +5,7 @@
  * constants and TreeWalker's tag exist, createCDATASection refuses HTML documents, and an empty
  * name never matches in namedItem.
  */
-mod common;
+use crate::common;
 use common::{environment, failure, global, load_with};
 use mars_v9::{DomLevel, Execution};
 

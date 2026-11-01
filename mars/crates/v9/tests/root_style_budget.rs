@@ -1,5 +1,5 @@
 /** Growing root styles count their final wire state rather than every intermediate string. */
-mod common;
+use crate::common;
 
 #[test]
 fn repeated_root_css_variables_coalesce_within_the_existing_budget() {

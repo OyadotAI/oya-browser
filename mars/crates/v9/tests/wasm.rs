@@ -1,5 +1,5 @@
 /** WebAssembly's public JS boundary runs owned binaries, typed calls and real shared heap bytes. */
-mod common;
+use crate::common;
 
 /** A function module generated from the binary grammar, without any external compiler or runtime. */
 fn function(params: &[u8], results: &[u8], instructions: &[u8], imports: bool) -> Vec<u8> {

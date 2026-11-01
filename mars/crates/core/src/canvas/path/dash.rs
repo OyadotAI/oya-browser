@@ -20,7 +20,7 @@ impl DashStyle {
     /** Restored state cannot introduce odd, unbounded, negative or nonfinite native dash sequences. */
     pub fn validate(&self) -> EngineResult<()> {
         if self.segments.len() > DASH_VALUES
-            || self.segments.len() % 2 != 0
+            || !self.segments.len().is_multiple_of(2)
             || self
                 .segments
                 .iter()

@@ -1,5 +1,5 @@
 /** RegExp literal flag validation happens during parsing without changing constructor coercions or slash boundaries. */
-mod common;
+use crate::common;
 
 /** Unicode escapes are prohibited in literal flags even when they decode to a supported flag. */
 #[test]

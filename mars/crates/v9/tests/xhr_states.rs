@@ -3,7 +3,7 @@ Blink's XMLHttpRequest run them (WPT xhr/event-*.any.js, xhr/abort-*, xhr/open-*
 xhr/responsetype.html, xhr/overridemimetype-*): loadstart on send, HEADERS_RECEIVED, LOADING
 and DONE each with readystatechange, ProgressEvents, abort's request error steps, and the
 canonical statusText when the host passes none. */
-mod common;
+use crate::common;
 use common::{console, input};
 use mars_v9::HostResponse;
 

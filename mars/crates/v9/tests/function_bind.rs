@@ -1,5 +1,5 @@
 /** Bound-function metadata is captured eagerly and respects the target's exotic operations. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A bound function's name and length stay independent of subsequent target mutations. */

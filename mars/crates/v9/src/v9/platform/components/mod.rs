@@ -9,6 +9,7 @@
  * DOM natives queue what changed during one call, and `flush` runs custom element reactions and
  * records mutations before the call returns, as the [CEReactions] binding steps do.
  */
+mod candidates;
 mod install;
 mod observer;
 mod reactions;
@@ -83,6 +84,10 @@ pub(in crate::v9) struct State {
     pub waiting: BTreeMap<String, ObjectId>,
     /** Upgraded custom elements and the definition each runs. */
     pub custom: BTreeMap<usize, usize>,
+    /** Connected elements not yet upgraded, by the name a definition would match; see candidates.rs. */
+    pub candidates: BTreeMap<String, BTreeSet<usize>>,
+    /** Whether `candidates` has been built from the document (by the first definition). */
+    pub candidates_built: bool,
     /** Custom elements whose connectedCallback ran and whose disconnectedCallback has not. */
     pub connected: BTreeSet<usize>,
     /** Elements whose constructor threw; they stay failed, as in browsers. */

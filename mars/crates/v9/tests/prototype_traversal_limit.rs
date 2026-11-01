@@ -1,5 +1,5 @@
 /** Prototype membership reports real budget exhaustion without treating repeated stateful proxy results as a cycle. */
-mod common;
+use crate::common;
 
 /** Revisiting the same proxy remains valid when a later trap result reaches the requested prototype or null. */
 #[test]

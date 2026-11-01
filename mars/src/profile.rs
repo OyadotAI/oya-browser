@@ -35,6 +35,19 @@ pub trait WebStorageStore: Send + Sync {
     fn mark_recovery(&self) -> Result<(), ProfileError>;
     /// Remove the marker only after the origin map has been deleted successfully.
     fn clear_recovery(&self) -> Result<(), ProfileError>;
+    /// Read one origin's IndexedDB record by its opaque record name; absence means no databases.
+    /// Stores without IndexedDB support refuse, and the coordinator keeps that origin in memory only.
+    fn load_indexed_db(&self, _record: &str) -> Result<Option<Vec<u8>>, ProfileError> {
+        Err(ProfileError::Unavailable)
+    }
+    /// Replace one origin's IndexedDB record atomically.
+    fn replace_indexed_db(&self, _record: &str, _bytes: &[u8]) -> Result<(), ProfileError> {
+        Err(ProfileError::Unavailable)
+    }
+    /// Remove every IndexedDB record, as clearing saved site storage must.
+    fn clear_indexed_db(&self) -> Result<(), ProfileError> {
+        Err(ProfileError::Unavailable)
+    }
 }
 
 /** History, bookmarks and settings each own one independent secure record, so clearing one never touches another or the cookie jar. */
@@ -46,6 +59,12 @@ pub enum Record {
     Bookmarks,
     /// Appearance, home page, downloads folder and bookmarks bar.
     Settings,
+    /// Service worker registrations and their scripts, by storage partition.
+    ServiceWorkers,
+    /// Cache Storage entries, by storage partition.
+    CacheStorage,
+    /// Credentials sites stored through `navigator.credentials.store`.
+    Credentials,
 }
 
 impl Record {
@@ -55,6 +74,9 @@ impl Record {
             Self::History => crate::runtime::history::HISTORY_BYTES,
             Self::Bookmarks => crate::runtime::bookmarks::BOOKMARKS_BYTES,
             Self::Settings => crate::runtime::settings::SETTINGS_BYTES,
+            Self::ServiceWorkers => crate::runtime::platform_records::SERVICE_WORKERS_BYTES,
+            Self::CacheStorage => crate::runtime::platform_records::CACHE_STORAGE_BYTES,
+            Self::Credentials => crate::runtime::platform_records::CREDENTIALS_BYTES,
         }
     }
 }
@@ -252,6 +274,7 @@ pub mod test_support {
     #[derive(Default)]
     pub struct MemoryWebStorageStore {
         value: Mutex<Option<Vec<u8>>>,
+        indexed_db: Mutex<std::collections::BTreeMap<String, Vec<u8>>>,
         recovery: Mutex<bool>,
         fail_replace: AtomicBool,
         fail_load: AtomicBool,
@@ -454,6 +477,26 @@ pub mod test_support {
             self.recovery
                 .lock()
                 .map(|mut value| *value = false)
+                .map_err(|_| ProfileError::Unavailable)
+        }
+        fn load_indexed_db(&self, record: &str) -> Result<Option<Vec<u8>>, ProfileError> {
+            self.indexed_db
+                .lock()
+                .map(|records| records.get(record).cloned())
+                .map_err(|_| ProfileError::Unavailable)
+        }
+        fn replace_indexed_db(&self, record: &str, bytes: &[u8]) -> Result<(), ProfileError> {
+            self.indexed_db
+                .lock()
+                .map(|mut records| {
+                    records.insert(record.into(), bytes.to_vec());
+                })
+                .map_err(|_| ProfileError::Unavailable)
+        }
+        fn clear_indexed_db(&self) -> Result<(), ProfileError> {
+            self.indexed_db
+                .lock()
+                .map(|mut records| records.clear())
                 .map_err(|_| ProfileError::Unavailable)
         }
     }

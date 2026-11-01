@@ -18,29 +18,110 @@ use identifier::{identifier_continue, identifier_start};
 use number::number;
 pub(in crate::v9) use source_url::source_url;
 
-/** Tokens retain locations independently of the value or identifier they carry. */
+/** Identifier text, shared: the parser's token clones and the AST take it without copying.
+It reads as a `str`, so grammar code compares and borrows it as it did a String. */
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct Text(pub std::sync::Arc<str>);
+
+impl Text {
+    /** The text itself. */
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+    /** The text itself. */
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for Text {
+    /** Lets the interner look a name up by `&str`. */
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for Text {
+    /** Compares with a spelling, as grammar checks do. */
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Text {
+    /** Compares with a spelling, as grammar checks do. */
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl std::fmt::Display for Text {
+    /** The text itself. */
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/** The names one scan has met, so a name repeated across a bundle is allocated once. */
+type Names = std::collections::HashSet<Text>;
+
+/** The shared copy of `name`, added on first sight. */
+fn intern(names: &mut Names, name: &str) -> Text {
+    if let Some(shared) = names.get(name) {
+        return shared.clone();
+    }
+    let shared = Text(std::sync::Arc::from(name));
+    names.insert(shared.clone());
+    shared
+}
+
+/** One template chunk's text: its cooked text (None when overlong or invalid), its source text
+for String.raw and tag functions, and the V8 reason for its first invalid escape, an early
+error only when no tag receives the chunk. */
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TemplateText {
+    pub cooked: Option<JsString>,
+    pub raw: JsString,
+    pub invalid: Option<&'static str>,
+}
+
+/** A regular expression literal: its pattern source and flags, compiled when evaluated. */
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RegexText {
+    pub pattern: String,
+    pub flags: String,
+}
+
+/** Tokens retain locations independently of the value or identifier they carry. Kept small
+(48 bytes): a 10 MB bundle scans to millions of them. */
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Token {
     pub kind: Kind,
-    pub location: SourceLocation,
+    pub location: super::syntax::Pos,
     /** Exclusive byte end keeps comments and exact function source observable. */
-    pub end: usize,
+    pub end: u32,
     /// Decoded equality cannot make an escaped string a strict-mode directive.
     pub exact_strict: bool,
     /** Trivia before this token, rather than lines inside its predecessor, controls restricted grammar. */
     pub line_terminator_before: bool,
     /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
     pub escaped: bool,
-    /// Annex B numeric spellings and string escapes are legal only outside strict code; the
+    /// Annex B numeric spellings and string escapes are legal only outside strict code; its
     /// message is the one V8 gives for that spelling when strict code meets it.
-    pub legacy: Option<&'static str>,
+    pub legacy: Option<legacy::Legacy>,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Kind {
-    String(JsString),
+    /** Boxed, with the other rare wide variants, so a token stays small. */
+    String(Box<JsString>),
     Number(f64),
-    Name(String),
+    /** Interned per scan: every occurrence of a name shares one allocation. */
+    Name(Text),
     Operator(Operator),
     Assignment(AssignmentOperator),
     Update(UpdateOperator),
@@ -53,57 +134,62 @@ pub(super) enum Kind {
     string); evaluating it raises an unsupported error naming this feature. */
     Opaque(&'static str),
     /** A BigInt literal within V9's 128-bit bound. */
-    BigInt(i128),
+    BigInt(Box<i128>),
     /** Wide literal digits stay exact for property names; runtime values retain their bound. */
-    BigIntWide(String),
+    BigIntWide(Box<str>),
     /** Operators that V9 parses for syntax but does not evaluate, such as `**` or `>>>`. */
     Punct(&'static str),
     /** `#name` class member names. */
-    Private(String),
+    Private(Text),
     /** One template chunk: its cooked text (None when overlong or invalid), whether it starts
     at a backtick, and whether it ends at one rather than at `${`. */
     Template {
-        cooked: Option<JsString>,
-        /** The chunk's source text, for String.raw and tag functions. */
-        raw: JsString,
-        /** The V8 reason for the chunk's first invalid escape: an early error only when no tag
-        receives the chunk. */
-        invalid: Option<&'static str>,
+        /** The chunk's text, boxed: templates are rare and the token stays small. */
+        text: Box<TemplateText>,
         head: bool,
         tail: bool,
     },
     /** A regular expression literal: its pattern source and flags, compiled when evaluated. */
-    Regex {
-        pattern: String,
-        flags: String,
-    },
+    /** Boxed so the common tokens stay small. */
+    Regex(Box<RegexText>),
     /** Text the scanner could not read, carrying its reason. V8 scans one token ahead of the
     parser, so a parse error earlier in the source beats a scan error later in it; V9 scans the
     whole script first, so the scan error waits here until the parser reaches it. */
-    Illegal(String),
+    Illegal(Box<str>),
     End,
 }
 /** Scanning consumes the complete bounded script before any evaluation can begin. */
 pub(super) fn tokenize(source: &str) -> EngineResult<Vec<Token>> {
-    tokenize_with_limit(source, SCRIPT_BYTES, true)
+    tokenize_with_limit(source, SCRIPT_BYTES, true, 0)
 }
-/** Module code: the same scanner without Annex B's HTML-like comments (spec B.1.1). */
-pub(super) fn tokenize_module(source: &str) -> EngineResult<Vec<Token>> {
-    tokenize_with_limit(source, SCRIPT_BYTES, false)
+/** Script code at page byte `base`: token and error locations come out as page offsets. */
+pub(super) fn tokenize_at(source: &str, base: usize) -> EngineResult<Vec<Token>> {
+    tokenize_with_limit(source, SCRIPT_BYTES, true, base)
+}
+/** Module code at page byte `base`: the same scanner without Annex B's HTML-like comments
+(spec B.1.1). */
+pub(super) fn tokenize_module_at(source: &str, base: usize) -> EngineResult<Vec<Token>> {
+    tokenize_with_limit(source, SCRIPT_BYTES, false, base)
 }
 /** One scanner applies identical lexical rules under an operation-specific source bound;
 `html` admits script code's HTML-like comments. */
-fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<Vec<Token>> {
+fn tokenize_with_limit(
+    source: &str,
+    limit: usize,
+    html: bool,
+    base: usize,
+) -> EngineResult<Vec<Token>> {
     if source.len() > limit {
         return Err(EngineError::limit("script bytes", limit));
     }
-    let mut source = Source::new(source);
+    let mut source = Source::new_at(source, base);
     if source.rest().starts_with("#!") {
         while source.peek().is_some_and(|c| !line_terminator(c)) {
             source.next();
         }
     }
     let mut tokens: Vec<Token> = Vec::new();
+    let mut names = Names::default();
     let mut parentheses = Vec::new();
     let mut closed_header = false;
     // True entries are open template substitutions; false entries are ordinary braces.
@@ -115,8 +201,8 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         if !has_token {
             tokens.push(Token {
                 kind: Kind::End,
-                location: source.location(),
-                end: source.location().byte_offset,
+                location: super::syntax::Pos::from_location(source.location()),
+                end: source.location().byte_offset as u32,
                 exact_strict: false,
                 line_terminator_before,
                 escaped: false,
@@ -137,7 +223,7 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         let regex = closed_header || regex_allowed(tokens.last().map(|token| &token.kind));
         let text = source.rest();
         let template_close = source.peek() == Some('}') && braces.last() == Some(&true);
-        let kind = match next_kind(&mut source, &mut braces, regex) {
+        let kind = match next_kind(&mut source, &mut braces, regex, &mut names) {
             Ok(kind) => kind,
             Err(error) if error.code == "script_syntax_error" => {
                 defer(&mut tokens, &error, location, template_close);
@@ -161,8 +247,8 @@ fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<V
         let legacy = legacy::literal(&text[..consumed], &kind);
         tokens.push(Token {
             kind,
-            location,
-            end: source.location().byte_offset,
+            location: super::syntax::Pos::from_location(location),
+            end: source.location().byte_offset as u32,
             exact_strict,
             line_terminator_before,
             escaped,
@@ -178,8 +264,8 @@ substitution is "Unexpected token '}'" before the unterminated template is anyth
 fn defer(tokens: &mut Vec<Token>, error: &EngineError, location: SourceLocation, brace: bool) {
     let blank = |kind, location: SourceLocation| Token {
         kind,
-        location,
-        end: location.byte_offset,
+        location: super::syntax::Pos::from_location(location),
+        end: location.byte_offset as u32,
         exact_strict: false,
         line_terminator_before: false,
         escaped: false,
@@ -188,14 +274,16 @@ fn defer(tokens: &mut Vec<Token>, error: &EngineError, location: SourceLocation,
     if brace {
         tokens.push(blank(Kind::Symbol('}'), location));
     }
-    tokens.push(blank(
-        Kind::Illegal(errors::reason(error).to_string()),
-        location,
-    ));
+    tokens.push(blank(Kind::Illegal(errors::reason(error).into()), location));
     tokens.push(blank(Kind::End, location));
 }
 /** Braces decide whether `}` closes a block or resumes the template it interrupted. */
-fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> EngineResult<Kind> {
+fn next_kind(
+    source: &mut Source<'_>,
+    braces: &mut Vec<bool>,
+    regex: bool,
+    names: &mut Names,
+) -> EngineResult<Kind> {
     let start = source.location();
     let resume = match source.peek() {
         Some('`') => Some(true),
@@ -219,14 +307,16 @@ fn next_kind(source: &mut Source<'_>, braces: &mut Vec<bool>, regex: bool) -> En
             push_brace(braces, true, start)?;
         }
         return Ok(Kind::Template {
-            cooked,
-            raw,
-            invalid,
+            text: Box::new(TemplateText {
+                cooked,
+                raw,
+                invalid,
+            }),
             head,
             tail,
         });
     }
-    let kind = token(source, regex)?;
+    let kind = token(source, regex, names)?;
     match kind {
         Kind::Symbol('{') => push_brace(braces, false, start)?,
         Kind::Symbol('}') => {
@@ -252,24 +342,24 @@ fn push_brace(braces: &mut Vec<bool>, template: bool, start: SourceLocation) -> 
 fn regex_allowed(previous: Option<&Kind>) -> bool {
     match previous {
         None => true,
-        Some(Kind::Name(name)) => [
-            "return",
-            "typeof",
-            "instanceof",
-            "in",
-            "of",
-            "new",
-            "delete",
-            "void",
-            "throw",
-            "case",
-            "do",
-            "else",
-            "yield",
-            "await",
-            "extends",
-        ]
-        .contains(&name.as_str()),
+        Some(Kind::Name(name)) => matches!(
+            name.as_str(),
+            "return"
+                | "typeof"
+                | "instanceof"
+                | "in"
+                | "of"
+                | "new"
+                | "delete"
+                | "void"
+                | "throw"
+                | "case"
+                | "do"
+                | "else"
+                | "yield"
+                | "await"
+                | "extends"
+        ),
         Some(
             Kind::Number(_)
             | Kind::BigInt(_)
@@ -277,7 +367,7 @@ fn regex_allowed(previous: Option<&Kind>) -> bool {
             | Kind::String(_)
             | Kind::Opaque(_)
             | Kind::Private(_)
-            | Kind::Regex { .. }
+            | Kind::Regex(_)
             | Kind::Update(_)
             | Kind::Symbol(')' | ']'),
         ) => false,
@@ -331,14 +421,17 @@ fn skip(source: &mut Source<'_>, html: bool, first: bool) -> EngineResult<bool> 
     }
 }
 /** Longest-token checks keep every JavaScript punctuator whole, including ones V9 only parses. */
-fn token(source: &mut Source<'_>, regex: bool) -> EngineResult<Kind> {
+fn token(source: &mut Source<'_>, regex: bool, names: &mut Names) -> EngineResult<Kind> {
     let start = source.location();
     let character = source.peek().expect("scanner cursor is nonempty");
+    if let Some(kind) = plain_symbol(source, character) {
+        return Ok(kind);
+    }
     if character == '\'' || character == '"' {
         source.next();
         return Ok(literals::string(source, character, start)?.map_or(
             Kind::Opaque("string literals over the string length limit"),
-            Kind::String,
+            |text| Kind::String(Box::new(text)),
         ));
     }
     if source.rest().starts_with("...") {
@@ -355,12 +448,15 @@ fn token(source: &mut Source<'_>, regex: bool) -> EngineResult<Kind> {
     {
         return number(source);
     }
+    if let Some(name) = source.ascii_name() {
+        return Ok(Kind::Name(intern(names, name)));
+    }
     if identifier_start(character) || character == '\\' {
-        return identifier(source, start).map(Kind::Name);
+        return identifier(source, start).map(|name| Kind::Name(intern(names, &name)));
     }
     if character == '#' {
         source.next();
-        return identifier(source, start).map(Kind::Private);
+        return identifier(source, start).map(|name| Kind::Private(intern(names, &name)));
     }
     if character == '/' && regex {
         return regex_literal(source, start);
@@ -406,6 +502,19 @@ fn token(source: &mut Source<'_>, regex: bool) -> EngineResult<Kind> {
         return Ok(Kind::Punct(spelling));
     }
     Err(errors::syntax(start, "unexpected character"))
+}
+/** Punctuation no longer token begins with, read without trying every longer spelling first.
+A `.` qualifies unless a digit (a number) or another `.` (a spread) follows. */
+fn plain_symbol(source: &mut Source<'_>, character: char) -> Option<Kind> {
+    let plain = match character {
+        '(' | ')' | ';' | '{' | '}' | '[' | ']' | ',' | ':' => true,
+        '.' => !matches!(source.rest().as_bytes().get(1), Some(b'.' | b'0'..=b'9')),
+        _ => false,
+    };
+    plain.then(|| {
+        source.next();
+        Kind::Symbol(character)
+    })
 }
 /** Operators V9 recognizes for syntax only, longest spelling first so none splits another. */
 const PUNCTUATORS: [&str; 15] = [
@@ -481,7 +590,7 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
             Some('/') if !class => {
                 let pattern = body[..body.len() - before.len()].to_string();
                 let flags = regexp::flags(source, start)?;
-                return Ok(Kind::Regex { pattern, flags });
+                return Ok(Kind::Regex(Box::new(RegexText { pattern, flags })));
             }
             Some(_) => {}
         }
@@ -489,17 +598,17 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
 }
 /** Count and compound tokens are recognized only after rejecting every longer unsupported prefix. */
 fn mutation_token(source: &str) -> Option<(&'static str, Kind)> {
-    [
-        ("++", Kind::Update(UpdateOperator::Increment)),
-        ("--", Kind::Update(UpdateOperator::Decrement)),
-        ("+=", Kind::Assignment(AssignmentOperator::Add)),
-        ("-=", Kind::Assignment(AssignmentOperator::Subtract)),
-        ("*=", Kind::Assignment(AssignmentOperator::Multiply)),
-        ("/=", Kind::Assignment(AssignmentOperator::Divide)),
-        ("%=", Kind::Assignment(AssignmentOperator::Remainder)),
-    ]
-    .into_iter()
-    .find(|(spelling, _)| source.starts_with(spelling))
+    let bytes = source.as_bytes();
+    Some(match (*bytes.first()?, *bytes.get(1)?) {
+        (b'+', b'+') => ("++", Kind::Update(UpdateOperator::Increment)),
+        (b'-', b'-') => ("--", Kind::Update(UpdateOperator::Decrement)),
+        (b'+', b'=') => ("+=", Kind::Assignment(AssignmentOperator::Add)),
+        (b'-', b'=') => ("-=", Kind::Assignment(AssignmentOperator::Subtract)),
+        (b'*', b'=') => ("*=", Kind::Assignment(AssignmentOperator::Multiply)),
+        (b'/', b'=') => ("/=", Kind::Assignment(AssignmentOperator::Divide)),
+        (b'%', b'=') => ("%=", Kind::Assignment(AssignmentOperator::Remainder)),
+        _ => return None,
+    })
 }
 
 /** A statement header allows a following regex; calls and grouped expressions allow division.
@@ -523,4 +632,15 @@ fn control_header(tokens: &[Token]) -> bool {
     !end.checked_sub(2)
         .and_then(|i| tokens.get(i))
         .is_some_and(|t| matches!(t.kind, Kind::Symbol('.') | Kind::Punct("?.")))
+}
+
+#[cfg(test)]
+mod size_tests {
+    /** A token stays within 48 bytes: a 10 MB bundle scans to millions of them, and at the
+    112 bytes tokens once took the scan's own writes were a fifth of its time. */
+    #[test]
+    fn tokens_stay_small() {
+        let size = std::mem::size_of::<super::Token>();
+        assert!(size <= 48, "Token grew to {size} bytes");
+    }
 }

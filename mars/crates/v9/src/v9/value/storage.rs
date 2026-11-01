@@ -5,16 +5,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 /** Completed cache publications invalidate weak VM allocation observations. */
-static MATERIALIZATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+static MATERIALIZED_UNITS: AtomicU64 = AtomicU64::new(0);
 
-/** Read the epoch after observing allocations to detect concurrent publication. */
-pub(in crate::v9) fn materialization_epoch() -> u64 {
-    MATERIALIZATION_EPOCH.load(Ordering::Acquire)
+/** UTF-16 units of backing every flattening and external publication in this process has
+allocated so far. String budgets add what grew since they last looked to their upper bound:
+recounting every registration on each publication (as an epoch change used to force) made
+string concatenation O(registered strings) per operation. */
+pub(in crate::v9) fn materialized_units() -> u64 {
+    MATERIALIZED_UNITS.load(Ordering::Acquire)
 }
 
-/** Publish a new epoch only after the backing resource is visible. */
-fn materialized() {
-    MATERIALIZATION_EPOCH.fetch_add(1, Ordering::Release);
+/** Publish `units` of new backing, only after the resource is visible. Releases and shared
+copies publish zero: the bound may only overestimate. */
+fn materialized(units: usize) {
+    MATERIALIZED_UNITS.fetch_add(units as u64, Ordering::Release);
 }
 
 /** Short strings keep their original single flat allocation and efficient bulk-copy concatenation. */
@@ -238,10 +242,34 @@ pub(super) struct Concat {
     #[cfg(feature = "conformance")]
     forward: OnceLock<Storage>,
     children: Mutex<Option<(Storage, Storage)>>,
+    /** The content digest, computed once: a rope used as a property key would otherwise walk
+    its tree on every lookup. Content never changes, so the digest never goes stale. */
+    digest: OnceLock<u64>,
+}
+
+/** Feed UTF-16 units to a hasher in order; chunk boundaries do not change the result. */
+fn fold_units(hasher: &mut crate::v9::vm::heap::FastHasher, units: &[u16]) {
+    for unit in units {
+        std::hash::Hasher::write_u16(hasher, *unit);
+    }
 }
 
 impl Storage {
-    /** Register this node by allocation identity without retaining its backing. */
+    /** The registration identity alone, without taking a weak reference: a kind tag and the
+    backing allocation's address. */
+    pub(super) fn registration_identity(&self) -> (u8, usize) {
+        match self {
+            Self::Flat(value) => (0, Arc::as_ptr(value) as *const () as usize),
+            #[cfg(feature = "conformance")]
+            Self::Shared(value) => (1, Arc::as_ptr(value) as usize),
+            Self::Cons(value) => (2, Arc::as_ptr(value) as usize),
+            Self::Repeat(value) => (3, Arc::as_ptr(value) as usize),
+            #[cfg(feature = "conformance")]
+            Self::Slice(value) => (4, Arc::as_ptr(value) as usize),
+            #[allow(unreachable_patterns)]
+            _ => self.downgrade().0,
+        }
+    }
     pub(super) fn downgrade(&self) -> ((u8, usize), WeakStorage) {
         match self {
             Self::Flat(value) => (
@@ -415,7 +443,7 @@ impl Storage {
                 Self::Shared(_) => return false,
             };
             if external.take().is_some() {
-                materialized();
+                materialized(0);
             }
         }
         published
@@ -489,6 +517,28 @@ impl Storage {
             ),
         }
     }
+    /** A digest of the UTF-16 content alone; ropes cache it, flat storage recomputes it. */
+    pub(super) fn content_digest(&self) -> u64 {
+        match self {
+            Self::Cons(node) => *node.digest.get_or_init(|| self.compute_digest()),
+            _ => self.compute_digest(),
+        }
+    }
+
+    /** Fold the units of whichever representation holds them, one hasher step per unit: a
+    multiply per unit is fewer instructions than packing units into words first. */
+    fn compute_digest(&self) -> u64 {
+        let mut hasher = crate::v9::vm::heap::FastHasher::default();
+        match self.flat_units() {
+            Some(units) => fold_units(&mut hasher, units),
+            None => self.for_each_chunk(|chunk| {
+                fold_units(&mut hasher, chunk);
+                true
+            }),
+        }
+        std::hash::Hasher::finish(&hasher)
+    }
+
     /** Expose contiguous data without flattening a compact rope. */
     pub(super) fn flat_units(&self) -> Option<&[u16]> {
         match self {
@@ -592,10 +642,12 @@ impl Storage {
         if slot.is_some() {
             return Ok(());
         }
-        let resource = External::new(self.units(), one_byte)?;
+        let units = self.units();
+        let length = units.len();
+        let resource = External::new(units, one_byte)?;
         *slot = Some(Arc::new(resource));
         drop(slot);
-        materialized();
+        materialized(length);
         if let Some(target) = self.forwarding_target() {
             target.externalize(target.one_byte_representation())?;
         }
@@ -776,7 +828,7 @@ impl Storage {
                         .into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 flat
             }
@@ -792,7 +844,7 @@ impl Storage {
                     units.into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 flat
             }
@@ -804,7 +856,7 @@ impl Storage {
                     units.into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 // OnceLock publishes first. Any competing traversal that finds no children
                 // can therefore read flat; no guard or child borrow escapes this statement.
@@ -870,6 +922,7 @@ impl Storage {
             #[cfg(feature = "conformance")]
             forward: OnceLock::new(),
             children: Mutex::new(Some((left, right))),
+            digest: OnceLock::new(),
         }))
     }
 
@@ -1029,7 +1082,7 @@ impl Storage {
             return false;
         }
         node.children().take();
-        materialized();
+        materialized(0);
         true
     }
     #[cfg(feature = "conformance")]
@@ -1054,7 +1107,7 @@ impl Storage {
         {
             return false;
         }
-        materialized();
+        materialized(0);
         true
     }
     /** Flatten indirect strings to their stable first child without changing direct or sliced identity. */
@@ -1092,7 +1145,7 @@ impl Storage {
             })
         });
         if missing {
-            materialized();
+            materialized(0);
         }
         Self::Flat(flat.clone())
     }
@@ -1132,6 +1185,50 @@ impl Storage {
         left.append_to(&mut units);
         right.append_to(&mut units);
         Self::flat(units.into())
+    }
+
+    /** Each leaf's units in order, as slices of the leaves themselves: reading a rope through
+    `unit_at` clones and locks a path of nodes per character. `visit` returns false to stop. */
+    pub(super) fn for_each_chunk(&self, mut visit: impl FnMut(&[u16]) -> bool) {
+        let mut pending = vec![(self.clone(), 1usize)];
+        while let Some((storage, times)) = pending.pop() {
+            if times > 1 {
+                pending.push((storage.clone(), times - 1));
+            }
+            let keep = match storage {
+                Self::Flat(flat) => visit(&flat),
+                #[cfg(feature = "conformance")]
+                Self::Shared(flat) => visit(&flat),
+                #[cfg(feature = "conformance")]
+                Self::Slice(node) => {
+                    let units: Vec<u16> = (0..node.length)
+                        .filter_map(|index| node.parent.unit_at(node.start + index))
+                        .collect();
+                    visit(&units)
+                }
+                Self::Repeat(node) => match node.flat.get() {
+                    Some(flat) => visit(flat),
+                    None => {
+                        pending.push((node.child.clone(), node.count));
+                        true
+                    }
+                },
+                Self::Cons(node) => {
+                    if let Some(flat) = node.flat.get() {
+                        visit(flat)
+                    } else if let Some((left, right)) = node.children().clone() {
+                        pending.push((right, 1));
+                        pending.push((left, 1));
+                        true
+                    } else {
+                        visit(node.flat.get().expect("compacted UTF-16"))
+                    }
+                }
+            };
+            if !keep {
+                return;
+            }
+        }
     }
 
     /** Flatten leaves iteratively; initializing every child cache would retain copies of every prefix. */
@@ -1181,12 +1278,28 @@ impl Storage {
     }
 
     /** Report real allocations without flattening; the caller retains content sharing and context attribution. */
-    pub(super) fn allocations(&self, mut visit: impl FnMut(bool, usize, usize, usize)) {
+    pub(super) fn allocations(&self, visit: impl FnMut(bool, usize, usize, usize)) {
+        self.allocations_except(|_| false, visit);
+    }
+    /** `allocations`, without descending into a child subtree `known` accepts (by registration
+    identity): a string budget charging a new rope node skips the parts it already charged, so
+    building a string by repeated `+=` charges each piece once, in time for the new node alone,
+    instead of the whole rope again on every step. */
+    pub(super) fn allocations_except(
+        &self,
+        known: impl Fn((u8, usize)) -> bool,
+        mut visit: impl FnMut(bool, usize, usize, usize),
+    ) {
         let mut pending = vec![self.clone()];
+        let push = |pending: &mut Vec<Storage>, child: Storage| {
+            if !known(child.registration_identity()) {
+                pending.push(child);
+            }
+        };
         while let Some(storage) = pending.pop() {
             #[cfg(feature = "conformance")]
             if let Some(target) = storage.forwarding_target() {
-                pending.push(target);
+                push(&mut pending, target);
             }
             match storage {
                 #[cfg(not(feature = "conformance"))]
@@ -1220,7 +1333,7 @@ impl Storage {
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
-                    pending.push(node.parent.clone());
+                    push(&mut pending, node.parent.clone());
                 }
                 Self::Repeat(node) => {
                     let bytes = std::mem::size_of::<Repeat>() + ARC_HEADER_BYTES;
@@ -1235,13 +1348,13 @@ impl Storage {
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(flat) = node.flat_identity.get() {
-                        pending.push(Self::Flat(flat.clone()));
+                        push(&mut pending, Self::Flat(flat.clone()));
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
-                    pending.push(node.child.clone());
+                    push(&mut pending, node.child.clone());
                 }
                 Self::Cons(node) => {
                     let bytes = std::mem::size_of::<Concat>() + ARC_HEADER_BYTES;
@@ -1260,14 +1373,15 @@ impl Storage {
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(flat) = node.flat_identity.get() {
-                        pending.push(Self::Flat(flat.clone()));
+                        push(&mut pending, Self::Flat(flat.clone()));
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
                     if let Some((left, right)) = children {
-                        pending.extend([right, left]);
+                        push(&mut pending, right);
+                        push(&mut pending, left);
                     }
                 }
             }

@@ -615,7 +615,7 @@ fn subtree_end<T>(nodes: &[T], key: &impl Fn(&T) -> (usize, Option<usize>), star
 fn check_any_attribute(name: &str, value: Option<&str>) -> EngineResult<()> {
     if !script_attribute_allowed(name) {
         return Err(EngineError::unsupported(
-            "Scripts may not write event handler, srcdoc or http-equiv attributes.",
+            "Scripts may not write srcdoc or http-equiv attributes.",
         ));
     }
     if let Some(value) = value {
@@ -744,7 +744,6 @@ pub const POPOVER_OPEN_ATTRIBUTE: &str = "\u{1}popover-open";
 pub fn script_attribute_allowed(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     !(name.is_empty()
-        || name.starts_with("on")
         || name == "srcdoc"
         || name == "http-equiv"
         || name.len() > ID_BYTES

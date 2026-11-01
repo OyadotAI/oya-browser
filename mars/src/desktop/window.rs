@@ -107,6 +107,8 @@ struct Window {
     zoom: std::collections::HashMap<String, f64>,
     /** Address text last completed, so suggestions update only when it changes. */
     typed: Option<String>,
+    /** The address text when editing began: suggestions open only once the person changes it. */
+    edit_start: Option<String>,
     /** A feature's status message and when it clears. */
     notice: Option<(String, std::time::Instant)>,
 }
@@ -144,6 +146,16 @@ impl CloseDelegate {
     }
 }
 
+/** Resolves the initial navigation address, defaulting ordinary human launches to the start page. */
+fn resolve_initial_url(url: Option<String>, origin: &str) -> Option<String> {
+    match url {
+        None => Some(format!("{origin}/start")),
+        Some(target) if target == "demo" => Some(format!("{origin}/demo")),
+        Some(target) if target == "forms" => Some(format!("{origin}/forms")),
+        Some(target) => Some(target),
+    }
+}
+
 /// Launches the actual independent browser and joins every owned engine on close.
 pub(super) fn run(options: Options) -> EngineResult<()> {
     let mtm = MainThreadMarker::new()
@@ -162,17 +174,7 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     let executable = std::env::current_exe()
         .map_err(|_| EngineError::invalid("Cannot resolve owned engine executable."))?;
     let ordinary_launch = options.url.is_none();
-    let initial = options.url.map(|url| {
-        if url == "demo" || url == "forms" {
-            format!(
-                "{}/{}",
-                site.origin,
-                if url == "forms" { "forms" } else { "" }
-            )
-        } else {
-            url
-        }
-    });
+    let initial = resolve_initial_url(options.url, &site.origin);
     let owner = if ordinary_launch {
         Owner::Human
     } else if options.agent_control {
@@ -216,7 +218,12 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     window.window.makeKeyAndOrderFront(None);
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
-    window.window.makeFirstResponder(Some(&window.mars.address));
+    // A window opened on a page puts the person in the page, as Chrome does; an empty one puts
+    // them in the address field to type where to go.
+    match window.navigation.requested.is_some() {
+        true => window.window.makeFirstResponder(Some(&window.canvas)),
+        false => window.window.makeFirstResponder(Some(&window.mars.address)),
+    };
     let mut failure = None;
     loop {
         if !window.window.isVisible() {
@@ -295,13 +302,14 @@ fn record_store(_options: &Options) -> std::sync::Arc<dyn crate::profile::Record
 fn verification_profiles(_options: &Options) -> Option<super::broker::ProfileStores> {
     if ephemeral(_options) {
         use crate::profile::test_support::{
-            MemorySessionStore, MemoryStore, MemoryWebStorageStore,
+            MemoryRecordStore, MemorySessionStore, MemoryStore, MemoryWebStorageStore,
         };
         use std::sync::Arc;
         return Some(super::broker::ProfileStores {
             cookies: Arc::new(MemoryStore::default()),
             storage: Arc::new(MemoryWebStorageStore::default()),
             sessions: Arc::new(MemorySessionStore::default()),
+            records: Arc::new(MemoryRecordStore::default()),
         });
     }
     None
@@ -394,12 +402,14 @@ impl Window {
             recorded: VecDeque::new(),
             zoom: Default::default(),
             typed: None,
+            edit_start: None,
             notice: None,
         }
     }
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
         self.canvas.follow_viewport();
+        self.media_frames();
         if self.closed {
             while self.broker.events.try_recv().is_ok() {}
             self.canvas.clear_actions();
@@ -503,7 +513,10 @@ impl Window {
         let owner = if human { Owner::Human } else { Owner::Agent };
         if self.last_owner != Some(owner) {
             if let Some(snapshot) = self.snapshot.clone() {
-                self.window.makeFirstResponder(Some(&self.mars.address));
+                // Only a change of hands moves focus; the first owner is where launch left it.
+                if self.last_owner.is_some() {
+                    self.window.makeFirstResponder(Some(&self.mars.address));
+                }
                 self.canvas.update(snapshot, human);
             }
             self.last_owner = Some(owner);
@@ -633,6 +646,39 @@ impl Window {
         {
             self.scroll.sent = y;
             self.busy = true;
+        }
+    }
+}
+
+impl Window {
+    /** Advance the native media players and repaint the element boxes whose frames changed. */
+    fn media_frames(&self) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let changed = super::media::tick(mtm);
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let page = snapshot.inspection["page_id"].as_str().unwrap_or_default();
+        let Some(display) = &snapshot.display else {
+            return;
+        };
+        for (_, node) in changed.iter().filter(|(id, _)| id == page) {
+            let item = display.items.iter().find(|item| {
+                item.local_id == *node && matches!(item.tag.as_str(), "video" | "audio")
+            });
+            match item {
+                Some(item) if item.transform.is_none() && item.pin.is_none() => {
+                    self.canvas.setNeedsDisplayInRect(rect(
+                        item.x,
+                        item.y,
+                        item.width,
+                        item.height,
+                    ));
+                }
+                _ => self.canvas.setNeedsDisplayInRect(self.canvas.visibleRect()),
+            }
         }
     }
 }

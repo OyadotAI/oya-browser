@@ -559,6 +559,10 @@ impl Mars {
         }
     }
 
+    /** A refused navigation leaves the committed address in full in the field; the at-rest shortening waits for the next committed change. */
+    pub fn hold_presented(&self, committed: &str) {
+        *self.presented_url.borrow_mut() = committed.into();
+    }
     /** The committed address, which Retry uses instead of the shortened text in the field. */
     pub fn committed_url(&self) -> String {
         self.url.borrow().clone()

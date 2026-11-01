@@ -1,5 +1,5 @@
 /** Frame lookups exercise ordinary JavaScript access and immutable context incarnations. */
-mod common;
+use crate::common;
 use mars_v9::{FrameRoute, MAX_FRAME_WINDOW_ID, PageEnvironment, sibling_target, sibling_window};
 
 /** Three immediate siblings, including the caller, reproduce a parent.frames handshake. */

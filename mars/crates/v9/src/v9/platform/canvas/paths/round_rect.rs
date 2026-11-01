@@ -26,11 +26,11 @@ fn construct(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/** A rounded rectangle's x, y, width and height, and each corner's two radii. */
+type Rounded = ([f64; 4], Vec<[f64; 2]>);
+
 /** Retained and current paths share iterable/dictionary conversion and its observable ordering. */
-pub(in crate::v9::platform::canvas) fn arguments(
-    vm: &mut Vm,
-    call: &Call,
-) -> Res<Option<([f64; 4], Vec<[f64; 2]>)>> {
+pub(in crate::v9::platform::canvas) fn arguments(vm: &mut Vm, call: &Call) -> Res<Option<Rounded>> {
     if call.args.len() < 4 {
         return Err(vm.type_error("Not enough arguments for canvas rounded rectangle."));
     }

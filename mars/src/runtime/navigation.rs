@@ -1,11 +1,13 @@
 /** Navigation publishes one candidate while history explicitly prevents POST replay. */
 use super::{
+    authority::Owner,
     page::{Empty, Page},
     resources::{Acquired, uncertain},
+    scripting::Settle,
     supervisor::{Runtime, perf},
 };
 use crate::{
-    constants::{DIAGNOSTICS, HISTORY_ENTRIES, STYLE_SHEETS, STYLE_TOTAL_BYTES, WEB_TIMEOUT},
+    constants::{DIAGNOSTICS, HISTORY_ENTRIES, STYLE_SHEETS, STYLE_TOTAL_BYTES},
     document::{Document, StyleSource},
     network::{Method, WebRequest, WebResponse},
     protocol::{EngineError, EngineResult, parameters},
@@ -193,6 +195,19 @@ impl Runtime {
         let sensitive = self.current()?.sensitive;
         self.load_request_from(WebRequest::get(url), sensitive, History::New, hops)
     }
+    /** A meta refresh's navigation: it replaces the current history entry, through the same loader and authority as a click. None when the chain bound refuses it, and the page stays where it is. */
+    pub(super) fn meta_refresh(&mut self, url: &str, hops: u8) -> Option<EngineResult<Value>> {
+        if self.refresh_chain >= super::meta_refresh::META_REFRESHES {
+            return None;
+        }
+        self.refresh_chain += 1;
+        let sensitive = match self.current() {
+            Ok(page) => page.sensitive,
+            Err(error) => return Some(Err(error)),
+        };
+        let history = self.history_cursor.map_or(History::New, History::At);
+        Some(self.load_request_from(WebRequest::get(url), sensitive, history, hops + 1))
+    }
     /** Ordinary navigations start a script navigation chain. */
     fn load_request(
         &mut self,
@@ -200,6 +215,7 @@ impl Runtime {
         sensitive: bool,
         history: History,
     ) -> EngineResult<Value> {
+        self.refresh_chain = 0;
         self.load_request_from(request, sensitive, history, 0)
     }
     /** Expensive parsing, VM and layout happen outside the brief final authority lock. A
@@ -216,12 +232,14 @@ impl Runtime {
         let is_post = request.method == Method::Post;
         let started = Instant::now();
         perf::begin("navigation");
-        let result = self.candidate(request, sensitive).and_then(|page| {
+        let settle = self.settle_for_navigation();
+        let result = self.candidate(request, sensitive, settle).and_then(|page| {
             perf::record("page.candidate", started, String::new);
             let started = Instant::now();
-            let Some(page) = page else {
+            let Some(mut page) = page else {
                 return self.download_ready();
             };
+            let broadcast = self.prepare_broadcast(&mut page)?;
             let rollback = if page.storage_dirty {
                 self.write_storage(&page.origin, &page.storage)?
             } else {
@@ -262,6 +280,7 @@ impl Runtime {
                     }
                 }
                 runtime.scroll_y = 0.0;
+                runtime.broadcast = broadcast;
                 runtime.page = Some(page);
                 runtime.adopt_script_scroll();
                 runtime.inspection()
@@ -311,11 +330,30 @@ impl Runtime {
             "url":ready.url,"mime":ready.mime,"disposition":ready.disposition,"bytes":ready.bytes.len()
         }}))
     }
+    /** The person's navigation in the visible tab publishes at its load event, so the window is
+    not held for network answers. An agent's navigation settles first: its reply must show the
+    finished page. Decided by the permit the command runs under, never by a global switch. */
+    fn settle_for_navigation(&self) -> Settle {
+        let human = self
+            .permit
+            .is_some_and(|permit| permit.owner == Owner::Human);
+        if human && self.active_tab_id == self.selected_tab_id() {
+            Settle::Visible
+        } else {
+            Settle::Settled
+        }
+    }
     /** Required CSS is acquired before hidden content can gain native geometry. A response the
     network service marked as a download is held in `ready_download` and yields no page. */
-    fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Option<Page>> {
+    fn candidate(
+        &mut self,
+        request: WebRequest,
+        sensitive: bool,
+        settle: Settle,
+    ) -> EngineResult<Option<Page>> {
         let context = self.residency.reserve(self.page.is_some())?;
-        let deadline = Instant::now() + WEB_TIMEOUT;
+        // No fixed load time: each request fails only when it stalls (see WEB_STALL_TIMEOUT).
+        let deadline = Instant::now() + crate::constants::WEB_REQUEST_CEILING;
         let initiator = self
             .page
             .as_ref()
@@ -327,7 +365,18 @@ impl Runtime {
             ));
         }
         let fetch = Instant::now();
-        let acquired = if self.web_origins.is_some() {
+        let worker_response = if self.web_origins.is_some() && request.method == Method::Get {
+            self.service_worker_navigation(&request.url, deadline)?
+        } else {
+            None
+        };
+        let acquired = if let Some(response) = worker_response {
+            Acquired {
+                response,
+                method: Method::Get,
+                diagnostics: Vec::new(),
+            }
+        } else if self.web_origins.is_some() {
             let acquired = self.acquire(request, deadline, initiator, true, true)?;
             perf::record("page.fetch", fetch, || {
                 acquired.response.source.len().to_string()
@@ -369,7 +418,7 @@ impl Runtime {
         }
         let post = acquired.method == Method::Post;
         self.prefetched.clear();
-        let built = self.build_page(acquired, deadline, sensitive, None, context);
+        let built = self.build_page(acquired, deadline, sensitive, None, context, settle);
         self.prefetched.clear();
         built
             .map(Some)
@@ -384,6 +433,7 @@ impl Runtime {
         sensitive: bool,
         embedding: Option<&super::frames::Embedding>,
         context: std::sync::Arc<super::residency::Lease>,
+        settle: Settle,
     ) -> EngineResult<Page> {
         // XHTML and SVG documents take Eye's XML parser, as Blink picks XMLDocumentParser.
         let xml = crate::document::xml_mime(&acquired.response.mime);
@@ -483,6 +533,12 @@ impl Runtime {
             .filter_map(|(index, script)| script.refused.then_some(index))
             .collect();
         super::csp::apply_environment(&document.csp, &mut environment);
+        let top_level = embedding.map_or_else(
+            || acquired.response.url.clone(),
+            |embedding| embedding.top_level_url.clone(),
+        );
+        environment.service_worker_state =
+            self.assign_controller(&script_identity, &acquired.response.url, &top_level);
         environment.frame_documents = scripted_frames
             .into_iter()
             .map(|frame| (frame.address.clone(), frame))
@@ -504,6 +560,7 @@ impl Runtime {
             environment.parent_frames.clone_from(&embedding.routes);
             environment.own_window = Some(embedding.window);
         }
+        let refresh = super::meta_refresh::pending(&document, &acquired.response.url);
         let mut page = Page {
             _context: context,
             generation,
@@ -516,6 +573,7 @@ impl Runtime {
                 .map(|script| script.source.clone())
                 .collect(),
             resolved_stylesheets: sheets,
+            local_sheets: (0, 0),
             top_level_url: embedding
                 .map(|embedding| embedding.top_level_url.clone())
                 .unwrap_or_else(|| acquired.response.url.clone()),
@@ -550,6 +608,7 @@ impl Runtime {
             degraded: Vec::new(),
             untrusted_styles: false,
             scripting: super::scripting::Scripting {
+                refresh,
                 attempted_frame_owners: Default::default(),
                 environment,
                 modules: super::modules::Modules::new(
@@ -576,7 +635,7 @@ impl Runtime {
             perf::record("page.first_paint", phase, String::new);
         }
         page.scripting.loading = true;
-        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps);
+        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps, settle);
         page.scripting.loading = false;
         let restyle = restyle?;
         self.flush_inserted_images(&mut page)?;
@@ -623,11 +682,13 @@ impl Runtime {
         resolved: &[Resolved],
         deadline: Instant,
         gaps: &mut Gaps,
+        settle: Settle,
     ) -> EngineResult<bool> {
         let loaded = match self.script_step(page, json!({"kind":"load"})) {
             Ok(step) => step,
             Err(error) if fatal(&error) => return Err(error),
             Err(error) => {
+                record_listener_refusal(&error);
                 gaps.note("scripts", load_failure_note(resolved, &error));
                 page.scripts.clear();
                 page.scripting.modules = Default::default();
@@ -635,6 +696,7 @@ impl Runtime {
             }
         };
         for failure in &loaded.failed {
+            record_listener_refusal(&failure.error);
             if let Some(script) = resolved.get(failure.index) {
                 let note = script_note(script, &failure.error.message);
                 let entry = crate::v9::ConsoleEntry {
@@ -670,7 +732,7 @@ impl Runtime {
         }
         // Where a browser fires `load`: scripts ran, DOMContentLoaded and load handlers ran.
         perf::since("navigation", "page.load_event");
-        Ok(self.settle_after_load(page, deadline)? || changed)
+        Ok(self.settle_after_load(page, deadline, settle)? || changed)
     }
     /** What a new page's `document.referrer` says: the page it came from, origin only when the
     origins differ or that page's address was sensitive, as Chrome's default policy does. */
@@ -720,9 +782,12 @@ impl Runtime {
             .take(STYLE_SHEETS)
             .filter_map(|href| base.join(href).ok())
             .map(|url| request(url, crate::network::Destination::Style));
+        // Only classic scripts: a module is a CORS fetch with an Origin, and a no-Origin copy
+        // stored in the HTTP cache answered BBC's module without its CORS headers.
         let code = scripts
             .iter()
             .take(crate::constants::SCRIPT_COUNT)
+            .filter(|script| script.kind == crate::document::ScriptKind::Classic)
             .filter_map(|script| {
                 let url = base.join(script.src.as_deref()?).ok()?;
                 let candidate = super::csp::Candidate {
@@ -1031,6 +1096,12 @@ impl Runtime {
                 );
                 continue;
             }
+            if script.src.is_none() && script.source.is_empty() {
+                // HTML's "prepare the script element" returns before any CSP check when an inline
+                // script has no source text, so an empty `<script></script>` is never blocked
+                // (facebook.com ships one without a nonce).
+                continue;
+            }
             let raw = script.src.as_deref().and_then(|src| base.join(src).ok());
             let candidate = super::csp::Candidate {
                 url: raw.as_ref(),
@@ -1169,6 +1240,12 @@ impl Runtime {
     }
 }
 
+/** A `data:` script's source when its type is JavaScript; malformed bytes decode as U+FFFD. */
+pub(super) fn data_script(url: &str) -> Option<String> {
+    let (mime, bytes) = super::images::data_body(url, crate::constants::SCRIPT_BYTES).ok()?;
+    javascript_mime(&mime).then(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /**
  * A stylesheet or script carried in a `data:` URL, decoded here as images are: Relay fetches
  * only network URLs, and facebook.com ships its sheets and scripts this way. The media type
@@ -1180,6 +1257,26 @@ fn data_text(url: &str, limit: usize) -> Option<(String, String)> {
 }
 /** Characters of an engine reason a diagnostic quotes. */
 const REASON_CHARS: usize = 240;
+/** Opt-in numeric quota evidence reuses the existing perf sink without capturing page sources. */
+pub(super) fn record_listener_refusal(error: &EngineError) {
+    if let Some(detail) = listener_refusal_detail(error) {
+        perf::record("listeners.refused", Instant::now(), || detail);
+    }
+}
+/** Restrict diagnostics to the owned listener error and numeric source coordinates. */
+fn listener_refusal_detail(error: &EngineError) -> Option<String> {
+    if error.code != "limit_exceeded"
+        || !error.message.starts_with("V9 event listener storage bytes")
+    {
+        return None;
+    }
+    let message: String = error.message.chars().take(REASON_CHARS).collect();
+    let location = error.location.as_deref().copied().unwrap_or_default();
+    Some(format!(
+        "{message} script={:?} line={} column={} offset={}",
+        location.script_index, location.line, location.column, location.byte_offset
+    ))
+}
 /** A navigation-stopping script error names the script's document position, never its URL. */
 fn at_script(mut error: EngineError, index: usize) -> EngineError {
     let location = error.location.get_or_insert_with(Default::default);
@@ -1325,4 +1422,24 @@ mod diagnostic_tests {
             );
         }
     }
+}
+/** Other engine and page-thrown messages must never enter the listener-specific log. */
+#[test]
+fn listener_diagnostics_filter_other_failures_and_bound_owned_messages() {
+    assert!(listener_refusal_detail(&EngineError::invalid("private data")).is_none());
+    assert!(listener_refusal_detail(&EngineError::limit("different resource", 1)).is_none());
+    let mut error = EngineError::limit("V9 event listener storage bytes", 16_777_216);
+    error.message.push_str(&"x".repeat(REASON_CHARS));
+    error.location = Some(Box::new(crate::protocol::SourceLocation {
+        line: 3,
+        column: 17,
+        byte_offset: 42,
+        script_index: Some(8),
+    }));
+    let detail = listener_refusal_detail(&error).unwrap();
+    assert!(detail.ends_with("script=Some(8) line=3 column=17 offset=42"));
+    assert_eq!(
+        detail.split(" script=").next().unwrap().chars().count(),
+        REASON_CHARS
+    );
 }

@@ -56,6 +56,26 @@ fn break_word_moves_the_word_down_first() {
     assert_eq!(found, ["XX", "XXXXX", "X"]);
 }
 
+/** `word-break: break-word` is `normal` plus `overflow-wrap: anywhere`: the word moves to the next
+line whole and breaks only when it cannot fit on a line by itself. */
+#[test]
+fn word_break_break_word_moves_the_word_down_first() {
+    let found = lines(
+        "<div id=t style='font:20px/1 monospace;width:5ch;word-break:break-word'>XX XXXXXX</div>",
+    );
+    assert_eq!(found, ["XX", "XXXXX", "X"]);
+}
+
+/** `word-break: break-word` does not fill the line the way `break-all` does: a word that fits on
+the next line is not split at the end of the current one. */
+#[test]
+fn word_break_break_word_does_not_fill_the_line() {
+    let found = lines(
+        "<div id=t style='font:20px/1 monospace;width:5ch;word-break:break-word'>XX XXX</div>",
+    );
+    assert_eq!(found, ["XX", "XXX"]);
+}
+
 /** `line-break: anywhere` fills the line like `break-all`. */
 #[test]
 fn line_break_anywhere_fills_the_remaining_width() {

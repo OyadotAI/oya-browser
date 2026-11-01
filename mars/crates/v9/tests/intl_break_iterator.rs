@@ -4,7 +4,7 @@
  * pin its contract: the cursor walk, UTF-16 positions, break types, the getter-closure shape, and
  * the failure paths. A normal build must not expose it at all.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

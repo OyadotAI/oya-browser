@@ -1,7 +1,7 @@
 /** Body-forwarded window handlers in V9: `document.body.onload` and its siblings are the window's
 own handler properties, so a handler set from script is the one dispatch runs, while other body
 handlers stay on the body. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

@@ -1,5 +1,6 @@
 /** Named, cubic-bezier and steps easing evaluate deterministically without unbounded iteration. */
-use crate::document::style::constants::{BEZIER_ITERATIONS, TRANSITION_STEPS};
+use super::linear;
+use crate::document::style::constants::{BEZIER_ITERATIONS, LINEAR_POINTS, TRANSITION_STEPS};
 use serde::{Deserialize, Serialize};
 
 /** Serializable timing functions retain the computed declaration independently of a running transition. */
@@ -11,6 +12,8 @@ pub enum TransitionEasing {
     CubicBezier([f64; 4]),
     /// Count and endpoint jump behavior of a staircase timing function.
     Steps { count: u32, position: StepPosition },
+    /// Resolved `(input, output)` points of a `linear()` timing function.
+    Piecewise(Vec<(f64, f64)>),
 }
 
 /** CSS step endpoints determine whether the first or last interval includes an extra jump. */
@@ -65,6 +68,7 @@ impl TransitionEasing {
                 }) && (0.0..=1.0).contains(&points[0])
                     && (0.0..=1.0).contains(&points[2])
             }
+            Self::Piecewise(points) => !points.is_empty() && points.len() <= LINEAR_POINTS,
             Self::Steps { count, position } => {
                 (1..=TRANSITION_STEPS).contains(count)
                     && (*position != StepPosition::None || *count > 1)
@@ -83,6 +87,7 @@ impl TransitionEasing {
             Self::Linear => progress,
             Self::CubicBezier(points) => bezier(*points, progress),
             Self::Steps { count, position } => steps(*count, *position, progress, before),
+            Self::Piecewise(points) => linear::sample(points, progress),
         }
     }
 }
@@ -98,6 +103,12 @@ fn function(value: &str) -> Option<TransitionEasing> {
             .map(|part| part.parse::<f64>().ok())
             .collect::<Option<Vec<_>>>()?;
         return Some(TransitionEasing::CubicBezier(values.try_into().ok()?));
+    }
+    if let Some(arguments) = value
+        .strip_prefix("linear(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        return linear::parse(arguments).map(TransitionEasing::Piecewise);
     }
     let arguments = value.strip_prefix("steps(")?.strip_suffix(')')?;
     let values = super::parse::parts(arguments)?;

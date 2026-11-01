@@ -5,7 +5,10 @@ use crate::{
     protocol::{EngineError, EngineResult},
 };
 use mars_core::{dom::local_position, http::Method};
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 /// A request proposal contains data, never permission to send it.
 #[derive(Clone)]
@@ -19,19 +22,18 @@ pub struct Submission {
     /// GET URLs containing passwords require a protected public projection.
     pub protected: bool,
 }
-/** Parsed control state is normalized once before scripts or native display. */
+/** Parsed control state is normalized once before scripts or native display. Controls are nodes,
+so the node budget already bounds them; a page with many controls parses like any other. Every
+write goes through a vector position, never an identity, since identities can differ from
+positions once script has removed nodes. */
 pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
-    if document.nodes.iter().filter(|n| n.tag == "form").count() > 32
-        || document.nodes.iter().filter(|n| control(n)).count() > 256
-    {
-        return Err(EngineError::limit("form controls", 256));
-    }
-    for (present, message) in [
+    let index = ControlIndex::new(document);
+    let notes = [
         (
             document
                 .nodes
                 .iter()
-                .any(|n| n.tag == "form" && ancestor(document, n, "form").is_some()),
+                .any(|n| n.tag == "form" && index.nearest(document, n, "form").is_some()),
             "Nested forms submit with their nearest form.",
         ),
         (
@@ -41,74 +43,88 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
                 .any(|n| n.tag == "input" && n.attributes.contains_key("pattern")),
             "Input pattern constraints are not checked yet.",
         ),
-    ] {
+    ];
+    for (present, message) in notes {
         if present {
             diagnose(document, message);
         }
     }
-    let disabled = document
-        .nodes
-        .iter()
-        .filter(|n| ancestor(document, n, "fieldset").is_some_and(|id| document.nodes[id].disabled))
-        .map(|n| n.local_id)
-        .collect::<Vec<_>>();
-    for id in disabled {
-        document.nodes[id].disabled = true;
+    for position in fieldset_disabled(document, &index) {
+        document.nodes[position].disabled = true;
     }
-    normalize_radios(document);
-    let selects = document
-        .nodes
-        .iter()
-        .filter(|n| n.tag == "select")
-        .map(|n| n.local_id)
-        .collect::<Vec<_>>();
-    for id in selects {
-        if document.nodes[id].attributes.contains_key("multiple") {
-            continue;
-        }
-        let options = select_options(document, id);
-        let selected = options
-            .iter()
-            .rev()
-            .find(|n| n.selected)
-            .or_else(|| options.iter().find(|n| !option_disabled(document, n)))
-            .map(|n| n.local_id);
-        let ids: Vec<_> = options.iter().map(|node| node.local_id).collect();
-        for node in &mut document.nodes {
-            if ids.contains(&node.local_id) {
-                node.selected = Some(node.local_id) == selected;
-            }
+    normalize_radios(document, &index);
+    for (positions, selected) in single_selections(document, &index) {
+        for position in positions {
+            document.nodes[position].selected = Some(position) == selected;
         }
     }
     Ok(())
+}
+/** Positions of the controls inside a disabled fieldset, read before any write. */
+fn fieldset_disabled(document: &Document, index: &ControlIndex) -> Vec<usize> {
+    document
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| {
+            index
+                .nearest(document, n, "fieldset")
+                .and_then(|id| index.position(id))
+                .is_some_and(|position| document.nodes[position].disabled)
+        })
+        .map(|(position, _)| position)
+        .collect()
+}
+/** Each single-select's option positions and the one option position that stays selected. Planned
+before any write, so the document is only mutated after every choice is known. */
+fn single_selections(
+    document: &Document,
+    index: &ControlIndex,
+) -> Vec<(Vec<usize>, Option<usize>)> {
+    document
+        .nodes
+        .iter()
+        .filter(|n| n.tag == "select" && !n.attributes.contains_key("multiple"))
+        .map(|select| {
+            let positions = index.options_of(select.local_id).to_vec();
+            let selected = positions
+                .iter()
+                .rev()
+                .find(|p| document.nodes[**p].selected)
+                .or_else(|| positions.iter().find(|p| !index.option_off(document, **p)))
+                .copied();
+            (positions, selected)
+        })
+        .collect()
 }
 /** Initial radio state from markup: in each group (same form owner and name) only the last
 checked radio stays checked, as the HTML parser leaves it. This is parse-time state, not an
 agent's click, so a disabled or hidden checked radio is kept rather than refused; GitHub's
 pages carry one and the whole document failed to parse. One pass with a map, not a document
 walk per radio. */
-fn normalize_radios(document: &mut Document) {
+fn normalize_radios(document: &mut Document, index: &ControlIndex) {
     let radios: Vec<(usize, Option<usize>, Option<String>)> = document
         .nodes
         .iter()
-        .filter(|n| n.tag == "input" && n.input_type() == "radio" && n.checked)
-        .map(|n| {
+        .enumerate()
+        .filter(|(_, n)| n.tag == "input" && n.input_type() == "radio" && n.checked)
+        .map(|(position, n)| {
             (
-                n.local_id,
-                form_owner(document, n),
+                position,
+                index.owner(document, n),
                 n.attributes.get("name").cloned(),
             )
         })
         .collect();
     let mut last = std::collections::HashMap::new();
-    for (id, owner, name) in &radios {
+    for (position, owner, name) in &radios {
         if name.is_some() {
-            last.insert((*owner, name.clone()), *id);
+            last.insert((*owner, name.clone()), *position);
         }
     }
-    for (id, owner, name) in radios {
-        if name.is_some() && last.get(&(owner, name)) != Some(&id) {
-            document.nodes[id].checked = false;
+    for (position, owner, name) in radios {
+        if name.is_some() && last.get(&(owner, name)) != Some(&position) {
+            document.nodes[position].checked = false;
         }
     }
 }
@@ -123,6 +139,127 @@ pub fn form_owner(document: &Document, node: &Node) -> Option<usize> {
     }
     ancestor(document, node, "form")
 }
+/** Lookups the form algorithms repeat for every control, built in one pass each so no per-control
+step rescans the document. Identities resolve to positions through one map, so an identity that
+differs from its position (after script removed nodes) still addresses the right node. It is a
+snapshot: rebuild it after the tree or any checked state changes. */
+pub struct ControlIndex {
+    /** Vector position of each node identity, the first node wins as `local_position` does. */
+    positions: BTreeMap<usize, usize>,
+    /** Option positions of each select, keyed by the select's identity, in source order. */
+    options: BTreeMap<usize, Vec<usize>>,
+    /** Normalized text of each option without a value attribute, by the option's position. */
+    texts: BTreeMap<usize, String>,
+    /** Form identity by its `id` attribute; the first form with that id wins, as `form=` does. */
+    forms: BTreeMap<String, usize>,
+    /** Owner and name of every checked radio, so a required radio group is one lookup. */
+    checked_radios: BTreeSet<(Option<usize>, Option<String>)>,
+}
+impl ControlIndex {
+    /** Identities and forms first, since owners resolve through them; then options and radios. */
+    pub fn new(document: &Document) -> Self {
+        let mut index = Self {
+            positions: BTreeMap::new(),
+            options: BTreeMap::new(),
+            texts: BTreeMap::new(),
+            forms: BTreeMap::new(),
+            checked_radios: BTreeSet::new(),
+        };
+        for (position, node) in document.nodes.iter().enumerate() {
+            index.positions.entry(node.local_id).or_insert(position);
+        }
+        for node in document.nodes.iter().filter(|n| n.tag == "form") {
+            index
+                .forms
+                .entry(node.html_id.clone())
+                .or_insert(node.local_id);
+        }
+        let mut labels = Labels::new(document);
+        for (position, node) in document.nodes.iter().enumerate() {
+            index.index_option(document, &mut labels, position, node);
+            index.index_radio(document, node);
+        }
+        index
+    }
+    /** Files an option under its nearest select and records its text when it has no value. */
+    fn index_option(
+        &mut self,
+        document: &Document,
+        labels: &mut Labels,
+        position: usize,
+        node: &Node,
+    ) {
+        if node.tag != "option" {
+            return;
+        }
+        if let Some(select) = self.nearest(document, node, "select") {
+            self.options.entry(select).or_default().push(position);
+        }
+        if !node.attributes.contains_key("value") {
+            let text = labels.text(position).to_string();
+            self.texts.insert(position, text);
+        }
+    }
+    /** Records a checked radio by its owner and name. */
+    fn index_radio(&mut self, document: &Document, node: &Node) {
+        if node.tag == "input" && node.input_type() == "radio" && node.checked {
+            let key = (
+                self.owner(document, node),
+                node.attributes.get("name").cloned(),
+            );
+            self.checked_radios.insert(key);
+        }
+    }
+    /** Vector position of a node identity, or none when no node carries it. */
+    pub fn position(&self, identity: usize) -> Option<usize> {
+        self.positions.get(&identity).copied()
+    }
+    /** The nearest ancestor with this tag, found by identity through the map, so each step is a
+    logarithmic lookup rather than a scan of the document. */
+    pub fn nearest(&self, document: &Document, node: &Node, tag: &str) -> Option<usize> {
+        let mut parent = node.parent;
+        while let Some(id) = parent {
+            let item = &document.nodes[self.position(id)?];
+            if item.tag == tag {
+                return Some(id);
+            }
+            parent = item.parent;
+        }
+        None
+    }
+    /** The form a control belongs to: its `form` attribute when present, else its nearest form. */
+    pub fn owner(&self, document: &Document, node: &Node) -> Option<usize> {
+        match node.attributes.get("form") {
+            Some(id) => self.forms.get(id).copied(),
+            None => self.nearest(document, node, "form"),
+        }
+    }
+    /** Vector positions of one select's options in source order; empty for a select with none. */
+    pub fn options_of(&self, select: usize) -> &[usize] {
+        self.options.get(&select).map_or(&[], Vec::as_slice)
+    }
+    /** Whether an option is unavailable: disabled itself or inside a disabled optgroup. */
+    pub fn option_off(&self, document: &Document, position: usize) -> bool {
+        let node = &document.nodes[position];
+        node.disabled
+            || self
+                .nearest(document, node, "optgroup")
+                .and_then(|id| self.position(id))
+                .is_some_and(|group| document.nodes[group].disabled)
+    }
+    /** The value an option submits: its value attribute, else its normalized text. */
+    pub fn value_of(&self, document: &Document, position: usize) -> String {
+        match document.nodes[position].attributes.get("value") {
+            Some(value) => value.clone(),
+            None => self.texts.get(&position).cloned().unwrap_or_default(),
+        }
+    }
+    /** Whether some checked radio shares this owner and name, the group a required radio needs. */
+    fn group_checked(&self, owner: Option<usize>, name: Option<&String>) -> bool {
+        self.checked_radios.contains(&(owner, name.cloned()))
+    }
+}
+
 /** Ancestor walks use stable IDs and the already-validated bounded tree. */
 fn ancestor(document: &Document, node: &Node, tag: &str) -> Option<usize> {
     let mut parent = node.parent;
@@ -369,7 +506,8 @@ fn check(document: &mut Document, id: usize, checked: bool) -> EngineResult<()> 
     if node.disabled || node.hidden() {
         return Err(invalid());
     }
-    let owner = form_owner(document, node);
+    let index = ControlIndex::new(document);
+    let owner = index.owner(document, node);
     let name = node.attributes.get("name");
     let states = document
         .nodes
@@ -383,7 +521,7 @@ fn check(document: &mut Document, id: usize, checked: bool) -> EngineResult<()> 
                 && item.tag == "input"
                 && item.input_type() == "radio"
                 && item.attributes.get("name") == name
-                && form_owner(document, item) == owner
+                && index.owner(document, item) == owner
             {
                 Some(false)
             } else {
@@ -429,6 +567,7 @@ pub fn submission(
     form: usize,
     submitter: Option<usize>,
 ) -> EngineResult<Submission> {
+    let index = ControlIndex::new(document);
     let form_node = document
         .nodes
         .iter()
@@ -443,7 +582,7 @@ pub fn submission(
                     n.local_id == id
                         && !n.disabled
                         && !n.hidden()
-                        && form_owner(document, n) == Some(form)
+                        && index.owner(document, n) == Some(form)
                         && n.input_type() == "submit"
                 })
                 .ok_or_else(invalid)
@@ -497,11 +636,11 @@ pub fn submission(
     for node in document
         .nodes
         .iter()
-        .filter(|n| control(n) && !n.disabled && form_owner(document, n) == Some(form))
+        .filter(|n| control(n) && !n.disabled && index.owner(document, n) == Some(form))
     {
         if !form_node.attributes.contains_key("novalidate")
             && node.attributes.contains_key("required")
-            && !valid_required(document, node)
+            && !valid_required(document, &index, node)
         {
             let mut error = EngineError::new(
                 "validation_error",
@@ -514,7 +653,7 @@ pub fn submission(
         let Some(name) = node.attributes.get("name").filter(|s| !s.is_empty()) else {
             continue;
         };
-        let values = successful(document, node, submitter);
+        let values = successful(document, &index, node, submitter);
         if node.input_type() == "password" && !values.is_empty() {
             protected = true;
         }
@@ -538,12 +677,18 @@ pub fn submission(
     })
 }
 /** Hidden/read-only fields submit; only the activated submitter is successful. */
-fn successful(document: &Document, node: &Node, submitter: Option<usize>) -> Vec<String> {
+fn successful(
+    document: &Document,
+    index: &ControlIndex,
+    node: &Node,
+    submitter: Option<usize>,
+) -> Vec<String> {
     if node.tag == "select" {
-        return select_options(document, node.local_id)
+        return index
+            .options_of(node.local_id)
             .iter()
-            .filter(|n| n.selected && !option_disabled(document, n))
-            .map(|n| option_value(document, n))
+            .filter(|p| document.nodes[**p].selected && !index.option_off(document, **p))
+            .map(|p| index.value_of(document, *p))
             .collect();
     }
     if ["button", "submit"].contains(&node.input_type()) || node.tag == "button" {
@@ -568,7 +713,7 @@ fn successful(document: &Document, node: &Node, submitter: Option<usize>) -> Vec
     vec![node.value.clone()]
 }
 /** Only implemented required constraints can block dispatch. */
-fn valid_required(document: &Document, node: &Node) -> bool {
+fn valid_required(document: &Document, index: &ControlIndex, node: &Node) -> bool {
     if node.readonly()
         || (node.tag == "input" && ["hidden", "submit", "button"].contains(&node.input_type()))
     {
@@ -578,21 +723,19 @@ fn valid_required(document: &Document, node: &Node) -> bool {
         return node.checked;
     }
     if node.input_type() == "radio" {
-        return document.nodes.iter().any(|n| {
-            n.tag == "input"
-                && n.input_type() == "radio"
-                && n.checked
-                && n.attributes.get("name") == node.attributes.get("name")
-                && form_owner(document, n) == form_owner(document, node)
-        });
+        let owner = index.owner(document, node);
+        return index.group_checked(owner, node.attributes.get("name"));
     }
     if node.tag == "select" {
-        return select_options(document, node.local_id).iter().any(|n| {
-            n.selected && !option_disabled(document, n) && !option_value(document, n).is_empty()
+        return index.options_of(node.local_id).iter().any(|p| {
+            document.nodes[*p].selected
+                && !index.option_off(document, *p)
+                && !index.value_of(document, *p).is_empty()
         });
     }
     !node.value.is_empty()
 }
+
 /** Form encoding normalizes every submitted line ending to CRLF. */
 fn normalize_lines(value: &str) -> String {
     value
@@ -641,19 +784,16 @@ pub(super) fn script_selection(
 
 /** Legacy value writes use the same exact selection algorithm as native script changes. */
 pub(super) fn script_value(document: &mut Document, id: usize, value: &str) -> EngineResult<()> {
-    let selected = select_options(document, id)
-        .into_iter()
-        .find(|n| option_value(document, n) == value)
-        .map(|n| n.local_id);
+    let selected = {
+        let view: &Document = document;
+        let index = ControlIndex::new(view);
+        index
+            .options_of(id)
+            .iter()
+            .find(|p| index.value_of(view, **p) == value)
+            .map(|p| view.nodes[*p].local_id)
+    };
     script_selection(document, id, &selected.into_iter().collect::<Vec<_>>())
-}
-
-/** An absent value attribute falls back to normalized descendant option text. */
-fn option_value(document: &Document, node: &Node) -> String {
-    node.attributes
-        .get("value")
-        .cloned()
-        .unwrap_or_else(|| text(document, node))
 }
 
 /// Disabled OPTGROUP state excludes native interaction and successful form entries.
@@ -665,4 +805,27 @@ pub fn option_disabled(document: &Document, node: &Node) -> bool {
                 .iter()
                 .any(|n| n.local_id == id && n.disabled)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    /** normalize writes each option by vector position. A removed node leaves identities offset
+    from positions, and the option the markup marked must stay the one selected. */
+    #[test]
+    fn normalize_keeps_the_marked_option_when_identities_are_offset() {
+        let mut document = crate::document::parse(
+            "<i></i><select><option>a</option><option selected>b</option></select>",
+        )
+        .unwrap();
+        let leaf = document.nodes.iter().position(|n| n.tag == "i").unwrap();
+        document.nodes.remove(leaf);
+        super::normalize(&mut document).unwrap();
+        let selected: Vec<bool> = document
+            .nodes
+            .iter()
+            .filter(|n| n.tag == "option")
+            .map(|n| n.selected)
+            .collect();
+        assert_eq!(selected, [false, true]);
+    }
 }

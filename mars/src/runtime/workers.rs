@@ -1,3 +1,4 @@
+mod broadcast;
 /** Candidate-owned dedicated workers share residency, authority and bounded cooperative turns. */
 mod execution;
 mod lifecycle;

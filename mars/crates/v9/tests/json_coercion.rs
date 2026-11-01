@@ -1,5 +1,5 @@
 /** JSON.stringify performs observable wrapper conversions in specification order. */
-mod common;
+use crate::common;
 
 /** Number wrappers in the replacer list use ToString rather than their numeric payload. */
 #[test]
@@ -77,4 +77,18 @@ fn huge_array_lengths_preserve_index_getter_failure_order() {
         if(key==='length')return 1e40;if(key==='0')throw sentinel}});\
         let r=false;try{JSON.stringify(a)}catch(e){r=e===sentinel}";
     assert_eq!(common::eval(source, "r"), "true");
+}
+
+/** Strings built from pieces quote and compare like flat ones: a surrogate pair split across two
+pieces stays one pair, lone surrogates at either end are escaped, and a built string equals the
+same text written whole. */
+#[test]
+fn built_strings_quote_and_compare_like_flat_ones() {
+    let source = "let a='x'.repeat(5000)+'\\uD83D';let b='\\uDE00'+'y'.repeat(5000);\
+        const pair=JSON.stringify(a+b)===JSON.stringify('x'.repeat(5000)+'\\uD83D\\uDE00'+'y'.repeat(5000));\
+        const lone=JSON.stringify('q'.repeat(5000)+'\\uDE00'+'\\uD83D');\
+        const same=(a+b)===('x'.repeat(5000)+'\\uD83D\\uDE00'+'y'.repeat(5000));\
+        const differ=(a+b)===('x'.repeat(5000)+'\\uD83D\\uDE01'+'y'.repeat(5000));\
+        const r=[pair,lone.endsWith('\\\\ude00\\\\ud83d\"'),same,differ].join();";
+    assert_eq!(common::eval(source, "r"), "true,true,true,false");
 }

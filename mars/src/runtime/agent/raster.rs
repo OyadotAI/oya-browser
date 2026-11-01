@@ -14,8 +14,16 @@ mod border_image_tests;
 mod chain_tests;
 #[path = "glyphs.rs"]
 mod glyphs;
+#[path = "raster_lines.rs"]
+mod lines;
+#[cfg(test)]
+#[path = "raster_lines_tests.rs"]
+mod lines_tests;
 #[path = "object_fit.rs"]
 mod object_fit;
+#[cfg(test)]
+#[path = "raster_outline_tests.rs"]
+mod outline_tests;
 #[path = "raster_stroke.rs"]
 mod stroke;
 #[cfg(test)]
@@ -121,6 +129,9 @@ struct Canvas {
     /** Images of background layers stored under keys of their own (an element's later layers,
      * the canvas's), by key. */
     layer_pictures: std::collections::HashMap<usize, Rc<Picture>>,
+    /** Outlined items and their ink, painted after every item so a ring sits over the content it
+     * surrounds, including a child's background. */
+    outlines: Vec<(DisplayItem, [u8; 4])>,
 }
 
 impl Canvas {
@@ -149,6 +160,13 @@ impl Canvas {
             chains: crate::document::TextChains::default(),
             chain_cover: std::collections::HashMap::new(),
             layer_pictures: std::collections::HashMap::new(),
+            outlines: Vec::new(),
+        }
+    }
+    /** Paints the outlines deferred by `item`, after the content of the whole pass. */
+    fn paint_outlines(&mut self) {
+        for (item, ink) in std::mem::take(&mut self.outlines) {
+            self.outline(&item, ink);
         }
     }
     /** Blend one color over a document rectangle, clipped to the canvas and an optional clip. */
@@ -372,6 +390,10 @@ impl Canvas {
             self.text_shadows(item, &fade);
             self.text(item, ink);
         }
+        // Outlines paint after the content of the whole pass, as CSS2 Appendix E step 10 orders them.
+        if item.outline.is_some() {
+            self.outlines.push((item.clone(), ink));
+        }
     }
     /** `text-shadow` layers, last listed first: the runs again in the shadow's color, moved by
     its offset, under the text. ponytail: no blur here (the desktop canvas blurs); a soft glow
@@ -572,6 +594,7 @@ impl Canvas {
             if let Some(member) = member
                 && self.chained(item, line, (member, baseline), ink)
             {
+                self.decorate(item, line, ink);
                 continue;
             }
             let canvas = [self.left, self.top, self.width as f64, self.height as f64];
@@ -593,6 +616,7 @@ impl Canvas {
                     ink,
                 ),
             }
+            self.decorate(item, line, ink);
         }
     }
     /** A chained run's glyphs: its chain's joined coverage (rasterized once, from the chain's
@@ -933,6 +957,7 @@ impl Runtime {
             });
             canvas.item(item, foreground, bitmap.as_ref());
         }
+        canvas.paint_outlines();
         let png = canvas.png()?;
         Ok(
             json!({"page_id":page.id(),"revision":page.revision,"layout_generation":page.layout_generation,"x":area[0],"y":area[1],"width":canvas.width,"height":canvas.height,"unit":"logical_points","render":"wireframe","mime":"image/png","png_base64":base64(&png)}),
@@ -961,12 +986,20 @@ struct Bitmap {
     rgba: Vec<u8>,
 }
 impl Bitmap {
-    /** Decode PNG or JPEG bytes by their signature; other formats keep the placeholder. */
+    /** Decode PNG, JPEG or AVIF bytes by their signature; other formats keep the placeholder. */
     fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.starts_with(b"\x89PNG") {
             Self::png(bytes)
         } else if bytes.starts_with(&[0xff, 0xd8]) {
             Self::jpeg(bytes)
+        } else if crate::runtime::images::avif::is_avif(bytes) {
+            crate::runtime::images::avif::decode(bytes)
+                .ok()
+                .map(|image| Self {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.rgba,
+                })
         } else {
             None
         }

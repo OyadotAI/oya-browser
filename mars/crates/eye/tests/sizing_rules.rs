@@ -198,6 +198,28 @@ fn svg_image_natural_width_comes_from_its_markup() {
     assert_eq!((item.width, item.height), (100.0, 100.0));
 }
 
+/** A drawing an img shows with only a viewBox has a ratio and no size: it lays out as the default
+ * object size, 300 by 150, contained by that ratio, whether it is wider or taller than the box. */
+#[test]
+fn svg_image_with_only_a_view_box_takes_the_default_object_size() {
+    for (view_box, expected) in [
+        ("0 0 100 50", (300.0, 150.0)),
+        ("0 0 50 100", (75.0, 150.0)),
+    ] {
+        let mut document = parse("<img id=t>").unwrap();
+        for node in document.nodes.iter_mut().filter(|n| n.tag == "img") {
+            node.image_src = Some(format!(
+                "data:image/svg+xml,<svg viewBox=\"{view_box}\"></svg>"
+            ));
+            node.image_size = Some((100, 50));
+        }
+        let document = compute_styles(&document, &[]).unwrap();
+        let display = render(&document, 800.0).unwrap();
+        let item = display.items.iter().find(|i| i.tag == "img").unwrap();
+        assert_eq!((item.width, item.height), expected, "viewBox {view_box}");
+    }
+}
+
 /** `width: stretch` fills the layout opportunity beside a float, not the whole container. */
 #[test]
 fn stretch_width_fills_the_room_beside_floats() {
@@ -206,4 +228,26 @@ fn stretch_width_fills_the_room_beside_floats() {
         "t",
     );
     assert_eq!(r.0, 100.0);
+}
+
+/** css-sizing max-width: a `calc()` of a percentage and a length caps an auto block at the
+ * containing width less the length (BBC News' `max-width: calc(100% - 32px)` gutter). */
+#[test]
+fn max_width_calc_percent_minus_length_caps_the_block() {
+    let r = size(
+        "<div style='width:400px'><div id=t style='max-width:calc(100% - 32px)'>x</div></div>",
+        "t",
+    );
+    assert_eq!(r.0, 368.0);
+}
+
+/** css-sizing min-width: a `calc()` of a percentage and a length floors the block at the
+ * containing width plus the length; before, the whole declaration was dropped. */
+#[test]
+fn min_width_calc_percent_plus_length_floors_the_block() {
+    let r = size(
+        "<div style='width:200px'><div id=t style='min-width:calc(100% + 50px)'>x</div></div>",
+        "t",
+    );
+    assert_eq!(r.0, 250.0);
 }

@@ -1,5 +1,5 @@
 /** Decoded image completions exercise Canvas pixels, source state and origin-clean lifetime. */
-mod common;
+use crate::common;
 use mars_core::canvas::{Bitmap, CanvasHost};
 use mars_v9::{DocumentHost, Execution, ImageResponse, PageEnvironment};
 
@@ -47,6 +47,7 @@ fn run(
         dimensions,
         bitmap: pixels,
         origin_clean: clean,
+        current_src: String::new(),
     };
     let execution = mars_v9::resume_images(
         common::input(&sources, &host, &environment),

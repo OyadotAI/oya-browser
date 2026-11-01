@@ -1,5 +1,5 @@
 /** RoundRect radii conversion obeys sequence, dictionary, coercion and range rules before constructing real pixels. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::DocumentHost;
 

@@ -19,7 +19,7 @@ pub(super) fn install(b: &mut Builder, proto: u32) {
 fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
     let drawing = &vm.page.state.canvases[&node].drawing;
-    let text = match dom::native_name(&call) {
+    let text: String = match dom::native_name(&call) {
         "lineWidth" => return Ok(JsValue::Number(drawing.pen.width)),
         "miterLimit" => return Ok(JsValue::Number(drawing.pen.miter_limit)),
         "lineCap" => match drawing.pen.cap {
@@ -34,7 +34,10 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             LineJoin::Bevel => "bevel",
         }
         .into(),
-        _ => colors::serialize(drawing.stroke),
+        _ => {
+            let style = drawing.stroke.clone();
+            return paints::style_value(&style);
+        }
     };
     Ok(JsValue::string(&text)?)
 }
@@ -45,6 +48,9 @@ fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = dom::native_name(&call);
     if ["lineWidth", "miterLimit"].contains(&name) {
         return number(vm, &call, name);
+    }
+    if name == "strokeStyle" {
+        return paints::assign(vm, &call, true);
     }
     let text = vm.to_text(&call.arg(0))?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
@@ -62,11 +68,6 @@ fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         ("lineJoin", "miter") => drawing.pen.join = LineJoin::Miter,
         ("lineJoin", "round") => drawing.pen.join = LineJoin::Round,
         ("lineJoin", "bevel") => drawing.pen.join = LineJoin::Bevel,
-        ("strokeStyle", _) => {
-            if let Some(color) = colors::parse(&text) {
-                drawing.stroke = color;
-            }
-        }
         _ => {}
     }
     Ok(JsValue::Undefined)

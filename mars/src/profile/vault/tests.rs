@@ -398,6 +398,34 @@ fn a_record_that_failed_to_load_is_never_overwritten_until_it_loads() {
     records.replace(Record::History, b"more").unwrap();
 }
 
+/** IndexedDB origin records survive a restart, reset to empty when tampered, accept only digest names, and clear together. */
+#[test]
+fn indexed_db_records_round_trip_reset_and_clear() {
+    let scratch = Scratch::new();
+    let key = MemoryKey::default();
+    let first = "indexeddb-00ff";
+    let second = "indexeddb-abcd";
+    Storage(scratch.vault(&key, None))
+        .replace_indexed_db(first, b"one")
+        .unwrap();
+    Storage(scratch.vault(&key, None))
+        .replace_indexed_db(second, b"two")
+        .unwrap();
+    let restarted = Storage(scratch.vault(&key, None));
+    assert_eq!(restarted.load_indexed_db(first).unwrap().unwrap(), b"one");
+    assert_eq!(restarted.load_indexed_db("indexeddb-0000").unwrap(), None);
+    assert_eq!(
+        restarted.replace_indexed_db("../escape", b"x"),
+        Err(ProfileError::Corrupt)
+    );
+    fs::write(scratch.file(first), b"tampered").unwrap();
+    assert_eq!(restarted.load_indexed_db(first).unwrap(), None);
+    restarted.replace(b"{}").unwrap();
+    restarted.clear_indexed_db().unwrap();
+    assert_eq!(restarted.load_indexed_db(second).unwrap(), None);
+    assert!(restarted.load().unwrap().is_some());
+}
+
 #[test]
 fn a_missing_home_directory_is_unavailable_not_relative() {
     let vault = Vault::new(None, Box::new(MemoryKey::default()), None);

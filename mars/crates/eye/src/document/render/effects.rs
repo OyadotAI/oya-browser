@@ -1,4 +1,5 @@
 /** After layout: relative offsets, transforms, overflow clips, decorations and stacking paint order. */
+mod space3d;
 use super::{
     ClipRect, DisplayBackground, DisplayItem, DisplayShadow, GradientStop, OpacityGroup, Pin,
     ScrollArea, sizing,
@@ -45,6 +46,11 @@ struct Tree<'a> {
     boxes: Vec<Option<usize>>,
     /// Memoized absolute matrices per identity.
     matrices: Vec<Option<Matrix>>,
+    /// Memoized 3D contexts per identity (`space3d`), so a deep tree is composed once.
+    spaces: Vec<Option<space3d::Space>>,
+    /// Memoized absolute relative and sticky offsets per identity, without transforms: where
+    /// layout APIs (`offsetLeft`) see a box, which a transform never moves.
+    shifts: Vec<Option<[f64; 2]>>,
     /// Clamped scroll offsets per scroll container identity; empty paints everything unscrolled.
     offsets: ScrollOffsets,
     /// How far each scroll container's contents reach right and down (its scrollable overflow).
@@ -114,6 +120,8 @@ pub(super) fn stack(
         document,
         painting,
         matrices: vec![None; positions.len()],
+        spaces: vec![None; positions.len()],
+        shifts: vec![None; positions.len()],
         positions,
         boxes,
         offsets: ScrollOffsets::new(),
@@ -131,11 +139,21 @@ pub(super) fn stack(
         .map(|(local, range)| (*local, range.reach))
         .collect();
     tree.matrices.iter_mut().for_each(|slot| *slot = None);
+    tree.spaces.iter_mut().for_each(|slot| *slot = None);
+    tree.shifts.iter_mut().for_each(|slot| *slot = None);
     let areas = scroll_areas(&mut tree, &items, &ranges)?;
     let mut resolved = Vec::with_capacity(items.len());
+    let mut layouts = Vec::with_capacity(items.len());
+    let mut placements = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let node = tree.node(item.local_id)?;
-        let matrix = painted(&mut tree, &items, node)?;
+        let place = space3d::placed(&mut tree, &items, node, item)?;
+        let matrix = match &place {
+            Some(placed) => placed.affine,
+            None => painted(&mut tree, &items, node)?,
+        };
+        placements.push(place);
+        layouts.push(layout_shift(&mut tree, &items, node)?);
         let clip = clip(&mut tree, &items, node)?;
         let clip = generated_clip(&mut tree, &items, node, item, clip)?;
         // A column slice carries its own clip, which the overflow clips intersect.
@@ -200,8 +218,23 @@ pub(super) fn stack(
             (own, outer) => own.or(outer),
         };
         item.clip = content_clip(node, &item, matrix, clip);
-        let matrix = generated_matrix(node, &item, matrix);
+        let placed = placements[index].take();
+        // The 3D pass already folded a `::before` or `::after` box's own transform in.
+        let matrix = match placed {
+            Some(_) => matrix,
+            None => generated_matrix(node, &item, matrix),
+        };
+        let [dx, dy] = layouts[index];
+        if matrix != [1.0, 0.0, 0.0, 1.0, dx, dy] {
+            item.layout_origin = Some([item.x + dx, item.y + dy]);
+        }
         place(&mut item, matrix);
+        if let Some(placed) = placed {
+            item.quad = Some(placed.quad);
+            if placed.hidden {
+                item.clip = Some(hidden_clip(&item));
+            }
+        }
         item.pin = pin;
         if super::text_echo::deferred(node, &item, &key) {
             echoes.insert(index, super::text_echo::defer(&mut item));
@@ -495,6 +528,22 @@ fn multiply(outer: Matrix, inner: Matrix) -> Matrix {
 }
 /** Relative offsets and the transform about the box center, in the parent's coordinates. */
 fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
+    let [x, y] = offset(tree, items, node);
+    let matrix = [1.0, 0.0, 0.0, 1.0, x, y];
+    if transformed(&node.style) {
+        let own = tree
+            .boxes
+            .get(node.local_id)
+            .copied()
+            .flatten()
+            .map(|index| &items[index]);
+        return multiply(matrix, own_transform(&node.style, own));
+    }
+    matrix
+}
+/** A box's relative or sticky offset in its parent's coordinates: the part of `local` that
+layout APIs see, as no transform is. */
+fn offset(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> [f64; 2] {
     let style = &node.style;
     let mut matrix = IDENTITY;
     let own = tree
@@ -514,10 +563,7 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
         matrix[4] = x;
         matrix[5] = y;
     }
-    if transformed(style) {
-        matrix = multiply(matrix, own_transform(style, own));
-    }
-    matrix
+    [matrix[4], matrix[5]]
 }
 /** The containing block a relatively positioned box resolves percentages against: its nearest
 ancestor that is no inline box, since a block inside an inline (position-relative-002) or an
@@ -865,7 +911,9 @@ fn pin(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Opti
 }
 /** Whether a style moves its box with `transform` or a percentage `translate`. */
 fn transformed(style: &crate::document::ComputedStyle) -> bool {
-    style.transform.is_some() || style.translate_percent != [0.0; 2]
+    style.transform.is_some()
+        || style.translate_percent != [0.0; 2]
+        || style.translate_percent_cross != [0.0; 2]
 }
 /** A box's `transform` and percentage `translate` about its `transform-origin` (the center
 unless authored), in its layout coordinates. */
@@ -884,19 +932,11 @@ fn own_transform(style: &crate::document::ComputedStyle, own: Option<&DisplayIte
             )
         })
         .unwrap_or_default();
-    if style.translate_percent != [0.0; 2] {
-        transform = multiply(
-            transform,
-            [
-                1.0,
-                0.0,
-                0.0,
-                1.0,
-                w * style.translate_percent[0] / 100.0,
-                h * style.translate_percent[1] / 100.0,
-            ],
-        );
-    }
+    // The percentage is already carried through the list's linear parts, so it adds to the
+    // translation rather than post-multiplying it (a rotate before a percent translate).
+    let [cross_y, cross_x] = style.translate_percent_cross;
+    transform[4] += (w * style.translate_percent[0] + h * cross_x) / 100.0;
+    transform[5] += (w * cross_y + h * style.translate_percent[1]) / 100.0;
     multiply(
         [1.0, 0.0, 0.0, 1.0, x, y],
         multiply(transform, [1.0, 0.0, 0.0, 1.0, -x, -y]),
@@ -940,15 +980,48 @@ fn absolute(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineRe
  * box sits between a scroller and its content; per-node property trees are the upgrade. */
 fn painted(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Matrix> {
     let mut matrix = absolute(tree, items, node)?;
+    let [x, y] = scrolled(tree, node)?;
+    matrix[4] -= x;
+    matrix[5] -= y;
+    Ok(matrix)
+}
+/** How far the scroll containers a box scrolls with have scrolled it. */
+fn scrolled(tree: &Tree<'_>, node: &Node) -> EngineResult<[f64; 2]> {
+    let mut total = [0.0, 0.0];
     if !tree.offsets.is_empty() {
         for ancestor in clipping_ancestors(tree, node)? {
             if let Some([x, y]) = tree.offsets.get(&ancestor.local_id) {
-                matrix[4] -= x;
-                matrix[5] -= y;
+                total[0] += x;
+                total[1] += y;
             }
         }
     }
-    Ok(matrix)
+    Ok(total)
+}
+/** `painted` without any transform: every ancestor's relative and sticky offsets, then the
+scroll, memoized per identity like `absolute`. Where a box's layout position is. */
+fn layout_shift(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<[f64; 2]> {
+    let mut pending = vec![node];
+    let mut base = [0.0, 0.0];
+    let mut current = node.parent;
+    while let Some(local) = current {
+        if let Some(shift) = tree.shifts.get(local).copied().flatten() {
+            base = shift;
+            break;
+        }
+        let ancestor = tree.node(local)?;
+        pending.push(ancestor);
+        current = ancestor.parent;
+    }
+    for node in pending.into_iter().rev() {
+        let [x, y] = offset(tree, items, node);
+        base = [base[0] + x, base[1] + y];
+        if let Some(slot) = tree.shifts.get_mut(node.local_id) {
+            *slot = Some(base);
+        }
+    }
+    let [x, y] = scrolled(tree, node)?;
+    Ok([base[0] - x, base[1] - y])
 }
 /** Whether overflow makes a box a scroll container (`hidden` scrolls programmatically; `clip`
  * never does), as Blink's `IsScrollContainer`. */
@@ -1454,6 +1527,7 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
     item.radius = horizontal;
     item.radius_y = (vertical != horizontal).then_some(vertical);
     super::fragments::square_cut_corners(item);
+    item.outline = super::display::outline(style);
     if item.tag == "img" || super::flow::frame(node) {
         item.overflow_visible =
             style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible;
@@ -1786,6 +1860,17 @@ fn clip_ramp(ramp: &[(f64, [f64; 4])]) -> Vec<(f64, [f64; 4])> {
         }
     }
     kept
+}
+/** A zero-area clip: a box whose back faces the viewer paints and hit-tests nothing, while its
+layout box and agent geometry stay where they are. */
+fn hidden_clip(item: &DisplayItem) -> ClipRect {
+    ClipRect {
+        x: item.x,
+        y: item.y,
+        width: 0.0,
+        height: 0.0,
+        radius: [0.0; 4],
+    }
 }
 /** Pure translations move the item's geometry so agent bounds equal paint; anything else is carried. */
 fn place(item: &mut DisplayItem, matrix: Matrix) {

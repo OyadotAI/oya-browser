@@ -1,6 +1,6 @@
 //! The d8 debug delegate tracks actual VM exception and promise lifecycle events per isolate.
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 fn run(source: &str) -> mars_v9::Execution {
     let mut environment = common::environment();

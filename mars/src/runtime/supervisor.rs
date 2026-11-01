@@ -1,7 +1,7 @@
 /** Supervised private pipes isolate engine processes without public listeners. */
 use super::authority::{self, Owner, Permit, SharedAuthority};
 use super::page::Page;
-use crate::constants::{RPC_POLL, RPC_TIMEOUT, WEB_RPC_TIMEOUT};
+use crate::constants::{RPC_POLL, WEB_RPC_TIMEOUT};
 use crate::protocol::{
     EngineError, EngineResult, Response, TypedResponse, decode, encode_request, read_frame,
 };
@@ -19,6 +19,9 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+mod jobs;
+pub(super) use jobs::{Inbound, Job};
+
 /** Scoped previews carry their admission so stale navigation cannot publish. */
 type FirstPaint = Box<dyn FnMut(super::page::BrowserSnapshot, Option<Permit>) + Send>;
 
@@ -31,6 +34,9 @@ pub struct EnginePrograms {
     pub document: PathBuf,
     /// V9 service executable.
     pub v9: PathBuf,
+    /// Run every engine as its own child process, as `MARS_PROCESS_ISOLATION` does for the
+    /// whole process: where an engine crash must stay an engine crash (crash-recovery tests).
+    pub isolated: bool,
 }
 
 impl EnginePrograms {
@@ -40,7 +46,19 @@ impl EnginePrograms {
             network: executable.into(),
             document: executable.into(),
             v9: executable.into(),
+            isolated: false,
         }
+    }
+    /** The same programs, each engine in its own child process. */
+    pub fn isolated(mut self) -> Self {
+        self.isolated = true;
+        self
+    }
+    /** Whether one engine runs a different program than the others: a test's fault-injecting
+    service. In-process engines run this binary's own code and cannot honor it, so every
+    engine then runs as a child process. */
+    pub(super) fn substituted(&self) -> bool {
+        self.network != self.document || self.document != self.v9
     }
 }
 
@@ -70,8 +88,14 @@ pub struct Runtime {
     pub(super) history: Vec<super::navigation::HistoryEntry>,
     /** Current history position is absent before successful navigation. */
     pub(super) history_cursor: Option<usize>,
+    /** Meta refresh navigations made in a row since a person or agent last navigated. */
+    pub(super) refresh_chain: u8,
     /** Canonical point viewport is shared by display and inspection. */
     pub(super) render_context: crate::document::RenderContext,
+    /// `render_context` is a frame's content box, not the window: frame pages are validated,
+    /// styled and laid out under frame bounds, which admit viewports smaller than any window.
+    /// Set wherever a frame's page swaps its viewport in, and restored with it.
+    pub(super) framed: bool,
     /** Scrolling is presentation state, not a separate page. */
     pub(super) scroll_y: f64,
     /** Session secrets are never part of public page or desktop snapshots. */
@@ -91,6 +115,8 @@ pub struct Runtime {
     pub(super) session_dirty: bool,
     /** Origin-scoped candidate values stay coordinator-owned and never enter snapshots. */
     pub(super) local_storage: BTreeMap<String, BTreeMap<String, String>>,
+    /** IndexedDB images by storage partition, loaded on first use and saved per commit. */
+    pub(super) indexed_db: super::indexed_db::IndexedDbStores,
     /** Session values are keyed by exact tab identity and canonical origin. */
     pub(super) session_storage: std::collections::HashMap<String, BTreeMap<String, String>>,
     /** Inactive tabs retain only committed page and presentation state. */
@@ -114,12 +140,28 @@ pub struct Runtime {
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
+    /** Script lists shared with an in-process V9 by pointer, with their code-cache keys, most
+    recent first; content-compared, so a page never runs another page's scripts. */
+    pub(super) shared_sources: Vec<Arc<super::service::ResidentSources>>,
+    /** The running step's layout host, kept so the step's result can reuse its last layout. */
+    pub(super) sync_layout: Option<Arc<super::scripting::SyncLayoutHost>>,
     /** Leases keep every committed and candidate script context within one service budget. */
     pub(super) residency: super::residency::Residency,
     /** Monotonic context IDs never roll back with candidate pages. */
     pub(super) next_frame_window: i64,
     /** Scoped root partition while an embedded page builds or executes; never persisted across turns. */
     pub(super) frame_partition: Option<String>,
+    /** Committed channels share this coordinator, never process-global or persisted state. */
+    pub(super) broadcast: super::broadcast::Broker,
+    /** Worker threads that carry page fetch hops, so a slow response never blocks this thread. */
+    pub(super) loader: super::loader::Loader,
+    /** Hops the loader finished that their page has not taken yet, by job; bounded by
+    LOADED_RESULTS so results for pages that navigated away cannot pile up. */
+    pub(super) loaded: BTreeMap<u64, EngineResult<crate::network::WebResponse>>,
+    /** Locks, Cache Storage, service workers, credentials and devices behind V9's platform bridge. */
+    pub(super) platform: super::platform::Platform,
+    /** Candidate ordering is monotonic even when a candidate is abandoned. */
+    pub(super) next_broadcast_sequence: u64,
     /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
     paints before load; the desktop window installs it. The committed page, history and the
     navigation's reply are unaffected: a provisional page is never a candidate. */
@@ -133,6 +175,13 @@ struct TabState {
     history: Vec<super::navigation::HistoryEntry>,
     history_cursor: Option<usize>,
     scroll_y: f64,
+}
+
+impl Runtime {
+    /** Every inactive tab's committed page, for work that must not outlive them (media players). */
+    pub(super) fn inactive_tab_pages(&self) -> impl Iterator<Item = &Page> {
+        self.tabs.iter().filter_map(|tab| tab.page.as_ref())
+    }
 }
 
 impl TabState {
@@ -149,6 +198,57 @@ impl TabState {
 }
 
 impl Runtime {
+    /** Replace only the publishing tab while enumerating authoritative committed context owners. */
+    pub(super) fn broadcast_addresses(
+        &self,
+        candidate: Option<&Page>,
+    ) -> EngineResult<Vec<super::broadcast::Address>> {
+        let mut addresses = Vec::new();
+        for tab in &self.tabs {
+            let page = if tab.id == self.active_tab_id {
+                candidate.or(self.page.as_ref())
+            } else {
+                tab.page.as_ref()
+            };
+            if let Some(page) = page {
+                super::broadcast::addresses(page, &tab.id, &mut addresses)?;
+            }
+        }
+        Ok(addresses)
+    }
+
+    /** Every tab's committed top-level page as (tab id, page), the active tab's current one first. */
+    pub(super) fn tab_pages(&self) -> Vec<(&str, &Page)> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                let page = if tab.id == self.active_tab_id {
+                    self.page.as_ref()
+                } else {
+                    tab.page.as_ref()
+                };
+                page.map(|page| (tab.id.as_str(), page))
+            })
+            .collect()
+    }
+
+    /** A channel callback gives an inactive recipient a finite, fair background work window. */
+    pub(super) fn broadcast_background_tab(&self, now: Instant) -> Option<String> {
+        self.tabs
+            .iter()
+            .filter(|tab| tab.id != self.selected_tab_id)
+            .filter_map(|tab| {
+                let page = tab.page.as_ref()?;
+                (page.scripting.broadcast_awake
+                    && page.scripting.awake_at(now)
+                    && (page.scripting.pending() || page.frames_pending())
+                    && now >= page.scripting.last_tick + page.scripting.tick_interval())
+                .then_some((page.scripting.last_tick, tab.id.clone()))
+            })
+            .min_by_key(|(last, _)| *last)
+            .map(|(_, tab)| tab)
+    }
+
     /// Installs where navigations show their first paint (the page before its scripts run).
     pub fn show_first_paint(
         &mut self,
@@ -217,6 +317,7 @@ impl Runtime {
             self.store_active_tab();
         }
         self.tabs.retain(|tab| tab.id != id);
+        self.broadcast.remove_tab(id);
         let prefix = format!("{id}|");
         self.session_storage
             .retain(|key, _| !key.starts_with(&prefix));
@@ -352,6 +453,10 @@ impl Runtime {
 
     /// Explicitly discard storage in safe order before lifting a restart recovery lock.
     pub fn clear_web_storage(&mut self) -> EngineResult<()> {
+        // IndexedDB is saved site storage too; a failure here keeps the IndexedDB records and reports.
+        if self.storage_store.is_some() && self.clear_indexed_db().is_err() {
+            eprintln!("Mars IndexedDB: saved databases could not be cleared.");
+        }
         let store = self
             .storage_store
             .as_ref()
@@ -468,10 +573,27 @@ impl Runtime {
         Self::start_cancel(programs, Arc::new(AtomicBool::new(false)))
     }
 
+    /** Grants one loopback test fixture origin (see `desktop::fixture_origin`) on top of the
+    public web. Test builds only. */
+    #[cfg(feature = "test-support")]
+    pub fn grant_fixture_origin(&mut self, origin: String) {
+        self.web_origins.get_or_insert_with(Vec::new).push(origin);
+    }
+
+    /** Enables web egress for public HTTP/HTTPS destinations. */
+    pub fn enable_web(&mut self) {
+        if self.web_origins.is_none() {
+            self.web_origins = Some(Vec::new());
+        }
+    }
+
     /** Cancellation owns startup as well as post-readiness RPC work. */
     fn start_cancel(programs: EnginePrograms, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
+        crate::v9::set_media_evaluator(eye_media);
         let mut runtime = Self {
             services: Vec::new(),
+            loader: super::loader::Loader::start(&programs.network),
+            loaded: BTreeMap::new(),
             revival: super::restart::Revival::new(&programs),
             failed: false,
             page: None,
@@ -483,7 +605,9 @@ impl Runtime {
             cancel,
             history: Vec::new(),
             history_cursor: None,
+            refresh_chain: 0,
             render_context: crate::document::RenderContext::default(),
+            framed: false,
             scroll_y: 0.0,
             cookies: Default::default(),
             profile_store: None,
@@ -496,6 +620,7 @@ impl Runtime {
             session_record: None,
             session_dirty: false,
             local_storage: Default::default(),
+            indexed_db: Default::default(),
             session_storage: Default::default(),
             tabs: vec![TabState::empty("tab-1".into())],
             selected_tab_id: "tab-1".into(),
@@ -506,21 +631,28 @@ impl Runtime {
             revisions: Default::default(),
             prefetched: Default::default(),
             v9_sources: Default::default(),
+            shared_sources: Vec::new(),
+            sync_layout: None,
             residency: Default::default(),
             next_frame_window: 0,
             frame_partition: None,
+            broadcast: Default::default(),
+            platform: Default::default(),
+            next_broadcast_sequence: 0,
             provisional: None,
         };
+        let isolate = process_isolation_enabled() || programs.isolated || programs.substituted();
         for (name, executable) in [
             ("network", programs.network),
             ("document", programs.document),
             ("v9", programs.v9),
         ] {
-            runtime.services.push(Service::spawn(
-                name,
-                &executable,
-                Arc::clone(&runtime.cancel),
-            )?);
+            let service = if isolate {
+                Service::spawn(name, &executable, Arc::clone(&runtime.cancel))?
+            } else {
+                Service::in_process(name, Arc::clone(&runtime.cancel))?
+            };
+            runtime.services.push(service);
             let ready = runtime.call(name, "service.ready", json!({}))?;
             if ready != json!({"service":name, "ready":true}) {
                 return Err(EngineError::service(name, false));
@@ -764,6 +896,7 @@ impl Runtime {
 
     /// Empty Relay's HTTP cache for "Clear browsing data"; pages, cookies and storage are untouched.
     pub fn clear_cache(&mut self) -> EngineResult<()> {
+        self.loader.clear_cache();
         self.call("network", "network.cache_clear", json!({}))
             .map(|_| ())
     }
@@ -866,9 +999,18 @@ impl Runtime {
         let dead = self
             .services
             .iter_mut()
-            .find_map(|service| match service.child.try_wait() {
-                Ok(None) => None,
-                _ => Some(service.name),
+            .find_map(|service| match service.child.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(None) => None,
+                    _ => Some(service.name),
+                },
+                None => {
+                    if service.worker.as_ref().is_some_and(|w| w.is_finished()) {
+                        Some(service.name)
+                    } else {
+                        None
+                    }
+                }
             });
         if let Some(name) = dead {
             return Err(self.revive(name, None, None));
@@ -996,9 +1138,19 @@ impl Runtime {
 
     /// Exposes owned process identities for native diagnostics, without transport handles.
     pub fn process_ids(&self) -> Vec<(&str, u32)> {
+        let pid = std::process::id();
         self.services
             .iter()
-            .map(|service| (service.name, service.child.id()))
+            .map(|service| (service.name, service.child.as_ref().map_or(pid, |c| c.id())))
+            .collect()
+    }
+
+    /** Each service's start number: changes when the service is replaced, in or out of process,
+    where a pid stays the host's for an in-process service. */
+    pub fn service_instances(&self) -> Vec<(&str, u64)> {
+        self.services
+            .iter()
+            .map(|service| (service.name, service.instance))
             .collect()
     }
 
@@ -1009,7 +1161,9 @@ impl Runtime {
         }
         self.failed = true;
         for service in &mut self.services {
-            let _ = service.child.kill();
+            if let Some(child) = service.child.as_mut() {
+                let _ = child.kill();
+            }
         }
         self.services.clear();
         !self.session_dirty
@@ -1030,19 +1184,64 @@ pub(super) struct Service {
     cancel: Arc<AtomicBool>,
     /** Static service identity is never supplied by page input. */
     pub(super) name: &'static str,
-    /** Retained outside the worker so deadline expiry can release blocked writes. */
-    child: Child,
-    /** One in-flight encoded request; the coordinator has no unbounded queue. */
-    requests: Option<SyncSender<Vec<u8>>>,
+    /** Retained for subprocesses; None when running as in-process worker threads. */
+    pub(super) child: Option<Child>,
+    /** One in-flight request (a frame, or a typed job in process); no unbounded queue. */
+    requests: Option<SyncSender<Inbound>>,
     /** The worker returns exactly one reply frame for each accepted request. */
     replies: Receiver<EngineResult<Vec<u8>>>,
     /** Joined only after child termination releases both pipe ends. */
     worker: Option<JoinHandle<()>>,
     /** Internal correlation prevents accepting a late or mismatched reply. */
     sequence: u64,
+    /** Tells an in-process engine thread to exit even while a host callback (V9's layout host)
+    still holds a sender to it, which would otherwise keep its channel open forever. */
+    stop: Arc<AtomicBool>,
+    /** This start of the service, unique in the process (see `Runtime::service_instances`). */
+    instance: u64,
+}
+
+/** Numbers each service start, so a replaced in-process service, which keeps the host's pid,
+still reads as replaced. */
+static SERVICE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/** The next service start's number. */
+fn next_instance() -> u64 {
+    SERVICE_INSTANCES.fetch_add(1, Ordering::Relaxed)
+}
+
+/** Whether process isolation (separate child processes) is explicitly requested. */
+pub(super) fn process_isolation_enabled() -> bool {
+    std::env::var_os("MARS_PROCESS_ISOLATION").is_some()
 }
 
 impl Service {
+    /** Spawn an in-process engine service worker thread sharing memory and process space. */
+    pub(super) fn in_process(name: &'static str, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
+        let (req_tx, req_rx) = mpsc::sync_channel(1);
+        let (rep_tx, rep_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::clone(&stop);
+        let worker = thread::Builder::new()
+            .name(format!("oya-{name}-inproc"))
+            .stack_size(crate::constants::SERVICE_STACK_BYTES)
+            .spawn(move || {
+                let _ = super::service::serve_in_process(name, req_rx, rep_tx, stopped);
+            })
+            .map_err(|_| EngineError::service(name, false))?;
+        Ok(Self {
+            cancel,
+            name,
+            child: None,
+            requests: Some(req_tx),
+            replies: rep_rx,
+            worker: Some(worker),
+            sequence: 0,
+            instance: next_instance(),
+            stop,
+        })
+    }
+
     /** Cleared environment avoids passing API keys and proxy configuration to engines. */
     pub(super) fn spawn(
         name: &'static str,
@@ -1079,11 +1278,13 @@ impl Service {
         Ok(Self {
             cancel,
             name,
-            child,
+            child: Some(child),
             requests: Some(sender),
             replies: receiver,
             worker: Some(worker),
             sequence: 0,
+            instance: next_instance(),
+            stop: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -1091,6 +1292,19 @@ impl Service {
     pub(super) fn ready(&mut self) -> bool {
         let guard = super::cancellation::Cancellation::new(None, None);
         matches!(self.call::<Value>("service.ready", &json!({}), None, &guard), Ok(Ok(value)) if value == json!({"service":self.name,"ready":true}))
+    }
+
+    /** A loader worker's own RPC: no caller permit to revoke, and a reply that does not match
+    its request counts as a dead service so the worker replaces it. */
+    pub(super) fn request<T: DeserializeOwned>(
+        &mut self,
+        op: &str,
+        params: &impl Serialize,
+        deadline: Option<Instant>,
+    ) -> EngineResult<T> {
+        let guard = super::cancellation::Cancellation::new(None, None);
+        self.call(op, params, deadline, &guard)?
+            .map_err(|Mismatch| EngineError::service(self.name, false))
     }
 
     /** Both worker writes and reads are covered by this external deadline. The request is
@@ -1119,11 +1333,7 @@ impl Service {
             .check()
             .map_err(|_| super::authority::denied())?;
         let called = Instant::now();
-        let rpc_deadline = called + rpc_timeout(op);
-        let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
-        if Instant::now() >= deadline {
-            return Err(crate::protocol::EngineError::navigation_timeout());
-        }
+        let deadline = rpc_deadline(op, called, owner_deadline)?;
         self.sequence += 1;
         let started = Instant::now();
         let id = self.sequence.to_string();
@@ -1136,12 +1346,17 @@ impl Service {
         self.requests
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
-            .try_send(frame)
+            .try_send(Inbound::Frame(frame))
             .map_err(|_| EngineError::service(self.name, false))?;
         let mut callback = 0_u32;
         let mut imported_bytes = 0_usize;
+        // Revoked while V9 waited on an import: every later import is refused and the call runs
+        // out on its own, so the engine, and the committed page's script state it holds, stays.
+        let mut abandoned = false;
         let reply = loop {
-            cancellation.check()?;
+            if !abandoned {
+                cancellation.check()?;
+            }
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(EngineError::service(self.name, false));
             }
@@ -1152,16 +1367,25 @@ impl Service {
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
                 Ok(reply) => {
-                    cancellation.check()?;
+                    if !abandoned {
+                        cancellation.check()?;
+                    }
                     let reply = reply?;
                     if let Some(load) = &mut imports
                         && let Some(request) = super::worker_io::request(&reply, &id, callback + 1)
                             .map_err(|_| EngineError::service(self.name, false))?
                     {
                         callback += 1;
-                        cancellation.check()?;
-                        let mut source = load(&request.url, deadline);
-                        cancellation.check()?;
+                        abandoned |= cancellation.check().is_err();
+                        let mut source = if abandoned {
+                            Err(super::authority::denied())
+                        } else {
+                            load(&request.url, deadline)
+                        };
+                        if !abandoned && cancellation.check().is_err() {
+                            abandoned = true;
+                            source = Err(super::authority::denied());
+                        }
                         if let Ok(Some(text)) = &source {
                             imported_bytes = imported_bytes.saturating_add(text.len());
                             if text.len() > crate::constants::SCRIPT_BYTES
@@ -1177,9 +1401,12 @@ impl Service {
                         self.requests
                             .as_ref()
                             .ok_or_else(|| EngineError::service(self.name, false))?
-                            .try_send(answer)
+                            .try_send(Inbound::Frame(answer))
                             .map_err(|_| EngineError::service(self.name, false))?;
                         continue;
+                    }
+                    if abandoned {
+                        return Err(super::authority::denied());
                     }
                     break reply;
                 }
@@ -1243,23 +1470,48 @@ struct Mismatch;
 type ImportLoader<'a> = dyn FnMut(&str, Instant) -> EngineResult<Option<String>> + 'a;
 
 impl Drop for Service {
-    /** Kill first, release channels second, then join; blocked pipe writes cannot leak. */
+    /** Kill child if subprocess, release channels, then join the worker thread if it is done.
+    An in-process worker still inside an operation (a read from a stalled server) cannot be
+    killed the way a child process is; joining it held a cancelled navigation for the read's
+    whole timeout. It has been told to stop and its request channel is closed, so it exits
+    when that operation ends, on its own. */
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let subprocess = self.child.is_some();
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         self.requests.take();
-        if let Some(worker) = self.worker.take() {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take()
+            && (subprocess || worker.is_finished())
+        {
             let _ = worker.join();
         }
     }
 }
 
+/** The earlier of the op's own RPC bound and the owner's deadline; refused once it has passed. */
+fn rpc_deadline(op: &str, called: Instant, owner: Option<Instant>) -> EngineResult<Instant> {
+    let bound = called + rpc_timeout(op);
+    let deadline = owner.map_or(bound, |owner| owner.min(bound));
+    if Instant::now() >= deadline {
+        return Err(crate::protocol::EngineError::navigation_timeout());
+    }
+    Ok(deadline)
+}
+
 /** Network connection phases retain a wider cap while navigation supplies the hard ceiling. */
 fn rpc_timeout(op: &str) -> Duration {
-    if op.starts_with("network.") && op != "network.fetch" {
+    if op == "network.prepare" {
+        crate::constants::WEB_PREPARE_RPC_TIMEOUT
+    } else if op.starts_with("network.") && op != "network.fetch" {
         WEB_RPC_TIMEOUT
+    } else if op.starts_with("v9.") {
+        // Script work may run to the script deadline; the call must outlast it.
+        crate::constants::rpc_timeout()
     } else {
-        RPC_TIMEOUT
+        crate::constants::RPC_TIMEOUT
     }
 }
 
@@ -1268,11 +1520,13 @@ fn transport(
     name: &str,
     mut stdin: ChildStdin,
     stdout: ChildStdout,
-    requests: Receiver<Vec<u8>>,
+    requests: Receiver<Inbound>,
     replies: SyncSender<EngineResult<Vec<u8>>>,
 ) {
     let mut stdout = BufReader::new(stdout);
-    while let Ok(request) = requests.recv() {
+    // A subprocess is never sent a job (`takes_jobs`); one that arrived would be dropped,
+    // which its caller sees as a closed service.
+    while let Ok(Inbound::Frame(request)) = requests.recv() {
         let result = exchange(&mut stdin, &mut stdout, &request)
             .map_err(|_| EngineError::service(name, false));
         if replies.send(result).is_err() {
@@ -1396,5 +1650,18 @@ fn storage_unavailable() -> EngineError {
         "web_storage_unavailable",
         "Mars cannot access secure site storage.",
         "Allow secure storage access and restart the browser before relying on saved site state.",
+    )
+}
+
+/** Script `matchMedia` answers through Eye's evaluator, the one the page's stylesheets use, so
+layout code and CSS agree on every query (heights, ranges, units, `not`, `or`). */
+fn eye_media(query: &str, viewport: crate::v9::MediaViewport) -> bool {
+    crate::document::evaluate_media(
+        query,
+        crate::document::RenderContext {
+            width: viewport.width,
+            height: viewport.height,
+            ..crate::document::RenderContext::default()
+        },
     )
 }

@@ -1,6 +1,6 @@
 /** navigator.userAgentData answers as Chrome 152 on a Mac does, with the same values Relay sends
 as client hints, so a page's own checks agree with its request headers. */
-mod common;
+use crate::common;
 
 /** The low-entropy view: one stable object, the three brands in Sec-CH-UA's order, macOS. */
 #[test]
@@ -8,7 +8,7 @@ fn low_entropy_values_match_sec_ch_ua() {
     let source = "const d=navigator.userAgentData;const r=[d===navigator.userAgentData,\
         d.brands.map(b=>b.brand+'/'+b.version).join(' '),d.mobile,d.platform,JSON.stringify(d.toJSON().platform)].join('|');";
     let expected = format!(
-        "true|Chromium/{major} Not?A_Brand/24 Google Chrome/{major}|false|macOS|\"macOS\"",
+        "true|Not?A_Brand/24 Chromium/{major} Mars/{major}|false|macOS|\"macOS\"",
         major = mars_v9::constants::CHROME_FULL_VERSION
             .split('.')
             .next()

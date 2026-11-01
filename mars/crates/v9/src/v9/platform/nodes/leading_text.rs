@@ -5,7 +5,6 @@ use crate::v9::platform::Page;
 /** Raw and embedded content keep their specialized parser contracts. */
 const RETAIN_TEXT: &[&str] = &[
     "script", "style", "textarea", "title", "img", "input", "iframe", "object", "embed", "canvas",
-    "video", "audio",
 ];
 
 impl Page<'_> {

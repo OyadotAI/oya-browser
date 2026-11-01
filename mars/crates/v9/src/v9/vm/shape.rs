@@ -279,16 +279,27 @@ impl SiteCaches {
         std::mem::size_of_val(&*self.0)
     }
     /** The slot cached for `shape` at constant `site`. */
+    #[inline]
     pub fn lookup(&self, site: u32, shape: u64) -> Option<usize> {
         if shape == 0 {
             return None;
         }
-        self.0.get(site as usize)?.iter().find_map(|entry| {
-            let entry = entry.load(Ordering::Relaxed);
-            (entry >> SLOT_BITS == shape).then_some((entry & ((1 << SLOT_BITS) - 1)) as usize)
-        })
+        let ways = self.0.get(site as usize)?;
+        let mask = (1 << SLOT_BITS) - 1;
+        let first = ways[0].load(Ordering::Relaxed);
+        if first >> SLOT_BITS == shape {
+            return Some((first & mask) as usize);
+        }
+        for entry in &ways[1..] {
+            let val = entry.load(Ordering::Relaxed);
+            if val >> SLOT_BITS == shape {
+                return Some((val & mask) as usize);
+            }
+        }
+        None
     }
     /** Remember a slot: in an empty way, else replacing one picked by the shape. */
+    #[inline]
     pub fn record(&self, site: u32, shape: u64, slot: usize) {
         let Some(ways) = self.0.get(site as usize) else {
             return;
@@ -308,7 +319,7 @@ impl SiteCaches {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v9::value::JsValue;
+    use crate::v9::value::{JsString, JsValue};
     use crate::v9::vm::heap::Prop;
 
     /** A numbered data property. */
@@ -384,5 +395,31 @@ mod tests {
         caches.record(1, 0, 3);
         assert_eq!(caches.lookup(1, 0), None);
         caches.record(5, 1, 1);
+    }
+
+    /** A rope key finds the slot of a flat key with the same text in an indexed shape, and a
+    rope with other text finds nothing: the index hashes content, not the representation. */
+    #[test]
+    fn rope_key_finds_flat_key_in_indexed_shape() {
+        let text: Vec<u16> = (0..1100).map(|n| 0x61 + (n % 26) as u16).collect();
+        let rope_of = |units: &[u16]| {
+            let (head, tail) = units.split_at(550);
+            let head = JsString::from_units(head.to_vec()).unwrap();
+            let tail = JsString::from_units(tail.to_vec()).unwrap();
+            Key::Str(head.concat(&tail).unwrap())
+        };
+        let mut props = Props::default();
+        for n in 0..INDEX_THRESHOLD + 1 {
+            props.insert(Key::from(&format!("k{n}")), prop(n as f64));
+        }
+        let slot = INDEX_THRESHOLD + 1;
+        props.insert(
+            Key::Str(JsString::from_units(text.clone()).unwrap()),
+            prop(9.0),
+        );
+        assert_eq!(props.position(&rope_of(&text)), Some(slot));
+        let mut other = text.clone();
+        other[1099] ^= 1;
+        assert_eq!(props.position(&rope_of(&other)), None);
     }
 }

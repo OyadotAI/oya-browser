@@ -1,6 +1,6 @@
 /* SharedArray and SharedStructType under --harmony-struct: shared storage accepts only shareable values. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Loads a page with the harmony shared containers enabled. */
 fn shared_environment() -> mars_v9::PageEnvironment {

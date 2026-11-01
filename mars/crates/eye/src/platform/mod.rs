@@ -12,7 +12,7 @@ pub mod upright;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 pub use text::{
-    attributed, colored, directed, edges, font, has_font, local_font_exists, metrics,
+    attributed, colored, directed, edges, font, font_box, has_font, local_font_exists, metrics,
     register_family, register_font, register_local, spaced, styled,
 };
 
@@ -124,6 +124,12 @@ fn plain(text: &str, face: Face) -> f64 {
 #[cfg(not(target_os = "macos"))]
 pub fn edges(face: Face) -> (f64, f64) {
     (face.size * 0.7, face.size * 0.5)
+}
+
+/// Headless builds use a fixed font box, so Canvas placement is deterministic off macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn font_box(face: Face) -> (f64, f64) {
+    (face.size * 0.9, face.size * 0.25)
 }
 
 /// Headless builds use a fixed ascender and normal line height.

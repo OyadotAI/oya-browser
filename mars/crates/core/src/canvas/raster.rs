@@ -1,7 +1,7 @@
 use super::clip::{GRID, SAMPLES, offset};
 /** Checked raster plans charge work before one fallible copy-on-write mutation. */
 use super::{
-    Affine, Bitmap, CHANNELS, COMPOSITE_WORK, ClipMask, Composite, EDGE, composite,
+    Affine, Bitmap, CHANNELS, COMPOSITE_WORK, ClipMask, Composite, EDGE, Shader, composite,
     composite_coverage,
 };
 use crate::protocol::{EngineError, EngineResult};
@@ -146,12 +146,22 @@ pub fn fill_rect(
     color: [u8; 4],
     alpha: f64,
 ) -> EngineResult<()> {
+    fill_rect_with(destination, plan, &Shader::solid(color), alpha)
+}
+
+/** Any paint source covers the same geometry; gradients and patterns are sampled at each pixel center. */
+pub fn fill_rect_with(
+    destination: &mut Bitmap,
+    plan: &RasterPlan,
+    shader: &Shader,
+    alpha: f64,
+) -> EngineResult<()> {
     validate_alpha(alpha)?;
     paint(destination, plan, |pixel, x, y| {
         let coverage = coverage(plan, x, y);
         composite_coverage(
             pixel,
-            color,
+            shader.color_at(f64::from(x) + 0.5, f64::from(y) + 0.5),
             alpha,
             plan.mode,
             coverage,

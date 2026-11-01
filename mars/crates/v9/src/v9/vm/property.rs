@@ -785,12 +785,19 @@ impl Vm<'_> {
                     Slot::Accessor(_, None) => return Ok(false),
                     Slot::Data(_) if prop.attrs & WRITABLE == 0 => return Ok(false),
                     Slot::Data(_) => {
-                        let window = realm().ids.window_prototype;
-                        let intrinsic = id == window
-                            && self.proto_of(start) == Some(window)
-                            && realm()
-                                .object(window)
-                                .is_some_and(|o| o.get(&key).is_some());
+                        // The global's own platform prototype (Window's, or a dedicated
+                        // worker's, where `onmessage` lives) holds real global bindings, so a
+                        // strict assignment to one sets it, as in a browser.
+                        let ids = &realm().ids;
+                        let intrinsic = [ids.window_prototype, ids.worker_prototype]
+                            .into_iter()
+                            .any(|global| {
+                                id == global
+                                    && self.proto_of(start) == Some(global)
+                                    && realm()
+                                        .object(global)
+                                        .is_some_and(|o| o.get(&key).is_some())
+                            });
                         if contextual && id != start && !intrinsic {
                             return Err(
                                 self.reference_error(&format!("{} is not defined", key_text(&key)))
@@ -839,6 +846,19 @@ impl Vm<'_> {
         let Some(object) = self.heap.get(id) else {
             return Fast::Slow;
         };
+        if let Class::Array(elements) = &object.class
+            && let Some(index) = key.index()
+        {
+            if let Some(val) = elements.get(index as usize)
+                && *val != JsValue::Hole
+            {
+                return Fast::Value(val.clone());
+            }
+            if object.props.get(key).is_none() {
+                return Fast::Missing(object.proto);
+            }
+            return Fast::Slow;
+        }
         if !ordinary_slot(&object.class, key) {
             return Fast::Slow;
         }

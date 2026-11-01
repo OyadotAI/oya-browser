@@ -1,5 +1,5 @@
 /** Iterator protocol failures preserve value diagnostics, exhaustion and genuine optional shell features. */
-mod common;
+use crate::common;
 
 /** Rejected primitive results keep their actual values rather than a generic type label. */
 #[test]

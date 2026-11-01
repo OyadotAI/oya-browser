@@ -1,7 +1,7 @@
 /** Read-only syntax-tree walks the compiler uses to place bindings before emitting code. */
 use super::super::syntax::*;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /** What a function body (including nested arrows) refers to. */
 #[derive(Default, Clone, Copy)]
@@ -135,7 +135,7 @@ impl Walker {
         }
     }
     /** A nested function: always a closure; arrows share `this` and `arguments`. */
-    fn func(&mut self, func: &Rc<Func>) {
+    fn func(&mut self, func: &Arc<Func>) {
         self.uses.closure = true;
         if func.flags.arrow && self.into_arrows {
             for param in &func.params {
@@ -589,7 +589,7 @@ pub(super) fn lexical_names(body: &[Stmt], functions_too: bool) -> Vec<(Name, Va
 }
 
 /** Function declarations directly in a statement list (through labels). */
-pub(super) fn function_declarations(body: &[Stmt]) -> Vec<Rc<Func>> {
+pub(super) fn function_declarations(body: &[Stmt]) -> Vec<Arc<Func>> {
     let mut out = Vec::new();
     for stmt in body {
         let mut stmt = stmt;

@@ -804,6 +804,7 @@ impl Runtime {
         letter: Letter,
     ) -> EngineResult<bool> {
         let previous = self.render_context;
+        let framed = self.framed;
         let scroll = self.scroll_y;
         if let Some((owner, parent)) = path.split_last()
             && let Some(parent) = page_at(page, parent)
@@ -811,6 +812,7 @@ impl Runtime {
             let dimensions = super::frame_pages::frame_dimensions(parent, *owner);
             self.render_context.width = dimensions.0;
             self.render_context.height = dimensions.1;
+            self.framed = true;
         }
         let available = super::frames::FRAME_BYTES_TOTAL
             .saturating_sub(super::frames::FrameBudget::for_page(page).bytes);
@@ -827,6 +829,7 @@ impl Runtime {
             self.apply_letter(target, letter.take().expect("single recipient"))
         });
         self.render_context = previous;
+        self.framed = framed;
         self.scroll_y = scroll;
         result
     }
@@ -878,9 +881,11 @@ impl Runtime {
             })
             .unwrap_or(super::frames::DEFAULT_VIEWPORT);
         let previous = self.render_context;
+        let framed = self.framed;
         let scroll = self.scroll_y;
         self.render_context.width = dimensions.0;
         self.render_context.height = dimensions.1;
+        self.framed = true;
         let available = super::frames::FRAME_BYTES_TOTAL
             .saturating_sub(super::frames::FrameBudget::for_page(page).bytes);
         let result = update_at(page, path, &mut |child| {
@@ -896,6 +901,7 @@ impl Runtime {
             result
         });
         self.render_context = previous;
+        self.framed = framed;
         self.scroll_y = scroll;
         result
     }

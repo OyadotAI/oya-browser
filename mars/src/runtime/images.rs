@@ -32,6 +32,7 @@ const FONT_TABLES: usize = 64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+pub(crate) mod avif;
 mod blob;
 pub(super) mod canvas;
 pub(in crate::runtime) use blob::{is_blob, snapshot_bytes};
@@ -70,6 +71,7 @@ pub(super) fn dimensions(mime: &str, bytes: &[u8]) -> EngineResult<DecodedImage>
         "image/jpeg" => jpeg(bytes)?,
         "image/webp" => webp(bytes)?,
         "image/gif" => gif(bytes)?,
+        "image/avif" => avif_size(bytes)?,
         _ => return Err(invalid()),
     };
     if image.width == 0
@@ -93,6 +95,8 @@ pub(super) fn sniffed(bytes: &[u8]) -> Option<&'static str> {
         Some("image/jpeg")
     } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some("image/webp")
+    } else if avif::is_avif(bytes) {
+        Some("image/avif")
     } else {
         None
     }
@@ -170,6 +174,12 @@ fn gif(bytes: &[u8]) -> EngineResult<DecodedImage> {
         u32::from(u16::from_le_bytes([bytes[6], bytes[7]])),
         u32::from(u16::from_le_bytes([bytes[8], bytes[9]])),
     )
+}
+
+/** AVIF's size comes from its container; the whole picture is decoded at admission (see `raster`). */
+fn avif_size(bytes: &[u8]) -> EngineResult<DecodedImage> {
+    let (width, height) = avif::dimensions(bytes)?;
+    checked(width, height)
 }
 
 /** One shared check prevents multiplication overflow and oversized decoded surfaces. */
@@ -882,10 +892,15 @@ impl super::supervisor::Runtime {
                     node.image_size = Some(css_size(size, density));
                     images.insert(node.local_id, asset);
                 }
-                Some((Fetched::Vector(markup, size), _, _)) => {
+                Some((Fetched::Vector(markup, size), _, selected)) => {
                     node.image_ratio_free = !vector_ratio(&markup);
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
+                    // Stored like a raster so the script lifecycle reuses this drawing; without
+                    // it the lifecycle asks again, against a budget the stored images have filled.
+                    let mut asset = Fetched::Vector(markup, size).into_asset();
+                    asset.image_source = selected;
+                    images.insert(node.local_id, asset);
                 }
                 None => node.text = node.image_alt.clone(),
             }
@@ -1104,7 +1119,26 @@ impl super::supervisor::Runtime {
         cors: ImageCors,
         deadline: std::time::Instant,
     ) -> EngineResult<Fetched> {
-        let (response, origin_clean) = canvas::fetch(self, base, url, bitmap, cors, deadline)?;
+        match self.fetch_image_offering(base, url, bitmap, cors, deadline, true) {
+            Err(error) if error.code == avif::UNSUPPORTED => {
+                self.fetch_image_offering(base, url, bitmap, cors, deadline, false)
+            }
+            fetched => fetched,
+        }
+    }
+    /** One image request, with AVIF offered or left out of its Accept. Only an AVIF that Mars's
+    decoder cannot build leads to the retry without it: that is the one answer a second request can change. */
+    fn fetch_image_offering(
+        &mut self,
+        base: &url::Url,
+        url: &url::Url,
+        bitmap: bool,
+        cors: ImageCors,
+        deadline: std::time::Instant,
+        avif: bool,
+    ) -> EngineResult<Fetched> {
+        let (response, origin_clean) =
+            canvas::fetch(self, base, url, bitmap, cors, deadline, avif)?;
         if response.status != HTTP_OK {
             return Err(EngineError::unsupported("The image could not be loaded."));
         }
@@ -1257,6 +1291,11 @@ pub(super) fn raster(mime: String, bytes: Vec<u8>) -> EngineResult<Fetched> {
     // placeholder is PNG data labeled image/gif, and every one of them failed to decode.
     let mime = sniffed(&bytes).map_or(mime, str::to_owned);
     let size = dimensions(&mime, &bytes)?;
+    // An AVIF the decoder cannot finish is refused here, before the page commits it, so the fetch
+    // can ask again for a format it can show. Painters decode the same bytes again when they paint.
+    if mime == "image/avif" {
+        avif::decode(&bytes)?;
+    }
     Ok(Fetched::Raster(
         ImageAsset {
             mime,
@@ -1320,11 +1359,20 @@ fn serialize(document: &Document, node: &Node, out: &mut String) {
 /** Paint properties Eye's drawing reads from attributes; illustrators often set them in `style`. */
 const PRESENTATION: [&str; 4] = ["fill", "stroke", "stroke-width", "stroke-linejoin"];
 
+/// Whether an attribute must be dropped from a drawing because it would reach outside it: event
+/// handlers run script, and an `href` that is not a fragment names another document. Dropping
+/// them keeps an svg image linkless and script-free, as the spec's static image mode requires.
+fn leaves_drawing(name: &str, value: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("on") || (name.ends_with("href") && !value.trim_start().starts_with('#'))
+}
+
 /// A drawing element's attributes with its `style` paint declarations lifted into presentation
 /// attributes, which they override as in CSS. Without this an illustration that writes
 /// `style="fill: #fbf1e2"` (LinkedIn's hero) paints every shape in the default black.
 fn presentation(node: &Node) -> BTreeMap<String, String> {
     let mut attributes = node.attributes.clone();
+    attributes.retain(|name, value| !leaves_drawing(name, value));
     let style = attributes.get("style").cloned().unwrap_or_default();
     for declaration in style.split(';') {
         let Some((name, value)) = declaration.split_once(':') else {
@@ -1618,6 +1666,19 @@ mod tests {
     }
 
     /** One header's decoded size. */
+    /** AVIF is recognised by its brand and sized from its container; other HEIF brands are not images here. */
+    #[test]
+    fn avif_is_sniffed_and_sized_from_its_container() {
+        let airbnb = include_bytes!("../../tests/fixtures/airbnb-240.avif");
+        assert_eq!(sniffed(airbnb), Some("image/avif"));
+        assert_eq!(size("image/avif", airbnb), Some((240, 180)));
+        assert_eq!(
+            sniffed(b"\0\0\0\x14ftypavis\0\0\0\0avif"),
+            Some("image/avif")
+        );
+        assert_eq!(sniffed(b"\0\0\0\x14ftypheic\0\0\0\0mif1"), None);
+    }
+
     fn size(mime: &str, bytes: &[u8]) -> Option<(u32, u32)> {
         dimensions(mime, bytes).ok().map(|d| (d.width, d.height))
     }
@@ -1652,6 +1713,29 @@ mod tests {
         assert!(markup.contains("<path d=\"M0 0h20v10z\" fill=\"#f00\"></path>"));
         assert!(!markup.contains("linearGradient"));
         assert!(svg_url(&markup).starts_with(SVG_DATA));
+    }
+
+    /** An svg image runs no script, loads nothing and follows no link: script, foreign content, links
+     * and external references do not survive the reduction to a drawing. */
+    #[test]
+    fn svg_image_drops_script_links_and_external_references() {
+        let text = "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='4' height='4'><script>alert(1)</script><foreignObject><iframe src='http://x'/></foreignObject><a href='http://evil/'><path d='M0 0h4v4z'/></a><image href='http://x/i.png' width='4' height='4'/><use xlink:href='http://x/s.svg#a'/><path d='M0 0h4v4z' onload='alert(2)'/></svg>";
+        let Ok(Fetched::Vector(markup, _)) = vector("image/svg+xml", text) else {
+            panic!("expected a drawing");
+        };
+        for banned in [
+            "script",
+            "foreignObject",
+            "iframe",
+            "<a",
+            "<image",
+            "x/",
+            "evil",
+            "onload",
+            "alert",
+        ] {
+            assert!(!markup.contains(banned), "{banned} survived in {markup}");
+        }
     }
 
     /** data: images decode base64 bitmaps and percent-encoded drawings locally. */

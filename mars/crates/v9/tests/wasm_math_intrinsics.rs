@@ -1,6 +1,6 @@
 /* Wasm Math imports use genuine builtin identity and preserve ordinary JS fallback. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Builtin and authored imports agree with Math semantics with optimization enabled or disabled. */
 #[test]

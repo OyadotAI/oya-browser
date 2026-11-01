@@ -31,14 +31,17 @@ pub(super) fn draw(vm: &mut Vm, call: &Call) -> Res<JsValue> {
 }
 
 /** Natural dimensions determine overload defaults; bitmap dimensions determine sample coordinates. */
-struct Source {
-    bitmap: Bitmap,
-    dimensions: [u32; 2],
-    origin_clean: bool,
+pub(in crate::v9::platform::canvas) struct Source {
+    /** Snapshot pixels, independent of later writes to the source. */
+    pub(in crate::v9::platform::canvas) bitmap: Bitmap,
+    /** Natural dimensions of the source element. */
+    pub(in crate::v9::platform::canvas) dimensions: [u32; 2],
+    /** False when the source is cross-origin tainted. */
+    pub(in crate::v9::platform::canvas) origin_clean: bool,
 }
 
 /** Pending images are no-ops, broken images throw, and unavailable decoded formats stay explicit. */
-fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
+pub(in crate::v9::platform::canvas) fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
     if vm.page.tag(from) == "canvas" {
         let dimensions = size(&mut vm.page, from);
         if dimensions.contains(&0) || Bitmap::length(dimensions[0], dimensions[1]).is_none() {
@@ -46,7 +49,17 @@ fn snapshot(vm: &mut Vm, from: usize) -> Res<Option<Source>> {
                 vm.dom_exception("InvalidStateError", "Source canvas has no admitted pixels.")
             );
         }
-        return Ok(vm.page.state.canvases.get(&from).map(|state| Source {
+        // A canvas no context ever drew on is still a transparent bitmap of its size, as in
+        // Chrome: drawing it composites (and clears under copy-like operators), not nothing.
+        let Some(state) = vm.page.state.canvases.get(&from) else {
+            let bitmap = Bitmap::new(dimensions[0], dimensions[1])?;
+            return Ok(Some(Source {
+                bitmap,
+                dimensions,
+                origin_clean: true,
+            }));
+        };
+        return Ok(Some(Source {
             bitmap: state.bitmap.clone(),
             dimensions,
             origin_clean: state.origin_clean,
@@ -109,11 +122,12 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         return Ok(JsValue::Undefined);
     }
     let dimensions = [source.bitmap.width, source.bitmap.height];
-    for index in 0..crop.len() {
+    for (index, value) in crop.iter_mut().enumerate() {
         let axis = index % 2;
-        crop[index] *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
+        *value *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
     }
     let state = &vm.page.state.canvases[&node];
+    let layered = shadows::layered(&state.drawing);
     let plan = limits::plan_blit(
         dimensions,
         [state.bitmap.width, state.bitmap.height],
@@ -121,15 +135,26 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         placement,
         state.drawing.transform,
         state.drawing.smoothing,
-    )?
-    .with_clip(clipping::current(state)?)?
-    .with_composite(state.drawing.composite);
-    work(vm, plan.work())?;
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    )?;
+    let plan = if layered {
+        plan
+    } else {
+        plan.with_clip(clipping::current(state)?)?
+            .with_composite(state.drawing.composite)
+    };
+    shadows::charge(vm, node, plan.work())?;
     if plan.is_empty() {
+        let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
         state.origin_clean &= source.origin_clean;
         return Ok(JsValue::Undefined);
     }
+    if layered {
+        let painted = shadows::paint_layered(vm, node, source.origin_clean, |layer| {
+            limits::blit(layer, &source.bitmap, &plan, 1.0)
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     limits::blit(
         &mut state.bitmap,
         &source.bitmap,

@@ -6,7 +6,7 @@
  * code behind a click, so without it a button does nothing.
  */
 use super::{Page, ScriptLoad, Target, fire};
-use crate::constants::MODULES;
+use crate::constants::{MODULES, SCRIPT_LOADS};
 use crate::protocol::EngineResult;
 use crate::v9::value::JsValue;
 use crate::v9::vm::{Res, Thrown, Vm};
@@ -25,23 +25,29 @@ fn classic(attributes: &std::collections::BTreeMap<String, String>) -> bool {
     }
 }
 
-/** Record that a script element started, so it never runs twice; false when it had started. */
+/** How a connected script element was admitted: started now, already started or refused. */
+#[derive(PartialEq, Eq)]
+enum Start {
+    Admitted,
+    Known,
+    Refused,
+}
+
+/**
+ * Record that a script element started, so it never runs twice. An element past SCRIPT_LOADS is
+ * refused and remembered too, so its `error` event fires once.
+ */
 fn start(
     page: &mut Page,
     node: usize,
     url: String,
     attributes: &std::collections::BTreeMap<String, String>,
-) -> bool {
-    if page
-        .state
-        .script_loads
-        .iter()
-        .any(|load| load.element == node)
-    {
-        return false;
+) -> Start {
+    if !page.state.script_elements.insert(node) {
+        return Start::Known;
     }
-    if page.state.script_loads.len() >= MODULES {
-        return false;
+    if page.state.script_loads.len() >= SCRIPT_LOADS {
+        return Start::Refused;
     }
     page.state.script_loads.push(ScriptLoad {
         url,
@@ -51,7 +57,7 @@ fn start(
         cross_origin: attributes.get("crossorigin").cloned(),
         done: false,
     });
-    true
+    Start::Admitted
 }
 
 /** A node (and its descendants) just connected, or a connected script's `src` just set: start
@@ -75,10 +81,13 @@ pub(in crate::v9) fn connected(vm: &mut Vm, node: usize) -> Res<()> {
 
 /// The native that fires a stylesheet link's `load` event, made once with the realm.
 static SHEET_LOADED: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+/// The native that fires a refused script element's `error` event, made once with the realm.
+static SCRIPT_REFUSED: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
-/** Make the stylesheet `load` native; runs once, inside the realm build. */
+/** Make the stylesheet `load` and refused-script `error` natives; runs once, inside the realm build. */
 pub(super) fn install(b: &mut crate::v9::vm::realm::Builder) {
     let _ = SHEET_LOADED.set(b.function("", 1, sheet_loaded));
+    let _ = SCRIPT_REFUSED.set(b.function("", 1, script_refused));
 }
 
 /**
@@ -166,12 +175,34 @@ pub(in crate::v9) fn media_changed(vm: &mut Vm, node: usize) {
 
 /** Fire `load` on the link a sheet task names, if it is still in the page. */
 fn sheet_loaded(vm: &mut Vm, call: crate::v9::vm::Call) -> Res<JsValue> {
+    fire_on_element(vm, &call, "load")
+}
+
+/** Fire `error` on the script element a refusal task names, if it is still in the page. */
+fn script_refused(vm: &mut Vm, call: crate::v9::vm::Call) -> Res<JsValue> {
+    fire_on_element(vm, &call, "error")
+}
+
+/** Fire one event on the element a scheduled task names, when the element is still connected. */
+fn fire_on_element(vm: &mut Vm, call: &crate::v9::vm::Call, kind: &str) -> Res<JsValue> {
     if let Some(node) = super::dom::node_of(vm, &call.arg(0))
         && vm.page.exists(node)
     {
-        fire(vm, Target::Node(node), "load", false)?;
+        fire(vm, Target::Node(node), kind, false)?;
     }
     Ok(JsValue::Undefined)
+}
+
+/**
+ * A script element past SCRIPT_LOADS never starts, and a browser reports that as a failed
+ * fetch: its `error` event comes in a later task, so the loader waiting on it carries on.
+ */
+fn refuse(vm: &mut Vm, node: usize) -> Res<()> {
+    let Some(native) = SCRIPT_REFUSED.get().copied() else {
+        return Ok(());
+    };
+    let element = super::dom::wrap(vm, node)?;
+    super::timers::schedule(vm, JsValue::Object(native), vec![element])
 }
 
 /** Start one connected script element: request its source, or run its inline text. */
@@ -190,11 +221,15 @@ fn connected_script(vm: &mut Vm, node: usize) -> Res<()> {
         let Some(url) = super::net::resolve(vm, src) else {
             return Ok(());
         };
-        start(&mut vm.page, node, url, &view.attributes);
-        return Ok(());
+        return match start(&mut vm.page, node, url, &view.attributes) {
+            Start::Refused => refuse(vm, node),
+            Start::Admitted | Start::Known => Ok(()),
+        };
     }
     let source = vm.page.text_content(node);
-    if source.trim().is_empty() || !start(&mut vm.page, node, String::new(), &view.attributes) {
+    if source.trim().is_empty()
+        || start(&mut vm.page, node, String::new(), &view.attributes) != Start::Admitted
+    {
         return Ok(());
     }
     vm.page
@@ -278,8 +313,16 @@ pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) {
             *element = new;
         }
     }
-    for load in &mut page.state.script_loads {
-        if load.element == old {
+    // Only a script element is in the set, and only one of those has loads to re-point, so an
+    // ordinary node's adoption costs a set lookup, not a walk over every load.
+    if page.state.script_elements.remove(&old) {
+        page.state.script_elements.insert(new);
+        for load in page
+            .state
+            .script_loads
+            .iter_mut()
+            .filter(|load| load.element == old)
+        {
             load.element = new;
         }
     }

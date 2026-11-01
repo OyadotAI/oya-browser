@@ -1,6 +1,6 @@
 /** Event dispatch in V9: constants, constructors, passive listeners, options, signals, window.event
 and exception reporting. Each test runs a script against the test page and reads one global back. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

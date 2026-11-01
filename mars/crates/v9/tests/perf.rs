@@ -1,6 +1,6 @@
 /** Interpreter speed: hermetic checks that the fast paths keep behaviour, plus an ignored
 micro-benchmark (`cargo test --release -p mars-v9 --test perf -- --ignored --nocapture bench`). */
-mod common;
+use crate::common;
 use common::eval;
 use std::time::Instant;
 

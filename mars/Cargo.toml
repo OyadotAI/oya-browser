@@ -2,7 +2,7 @@
 [workspace]
 # vendor/rustls is its own package: a patched copy of the registry crate, see vendor/rustls/MARS.md.
 exclude = ["vendor/rustls"]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
@@ -22,12 +22,15 @@ mars-eye = { path = "crates/eye" }
 mars-v9 = { path = "crates/v9" }
 mars-relay = { path = "crates/relay" }
 mars-link = { path = "crates/link" }
+mars-avif = { path = "crates/avif" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 url = "=2.5.8"
 # Already in the tree through rustls; verifies Subresource Integrity hashes.
 ring = "=0.17.14"
+# AES block cipher for the Clear Key CDM's 'cenc' (AES-128-CTR) decryption; ring exposes no raw AES.
+aes = "=0.8.4"
 libc = "=0.2.191"
 png = "=0.17.16"
 jpeg-decoder = "=0.3.2"
@@ -42,6 +45,13 @@ objc2-foundation = "=0.3.2"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSWindow", "NSView", "NSButton", "NSButtonCell", "NSTextField", "NSSecureTextField", "NSPopUpButton", "NSPopUpButtonCell", "NSTextView", "NSControl", "NSResponder", "NSScrollView", "NSClipView", "NSColor", "NSColorSpace", "NSFont", "NSStringDrawing", "NSGraphics", "NSGraphicsContext", "NSEvent", "NSMenu", "NSMenuItem", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSText", "NSCell", "NSAttributedString", "NSAppearance", "NSBezierPath", "NSRunningApplication", "NSAlert", "objc2-core-graphics"] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGContext", "CGGradient", "CGColor", "CGColorSpace", "CGAffineTransform", "CGPath"] }
+# Media playback: AVFoundation demuxes and decodes (VideoToolbox/AudioToolbox underneath) and
+# outputs audio; Mars feeds it bytes fetched through Relay via a resource loader.
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime" ] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn", "CVBase", "CVPixelBufferIOSurface", "CVHostTime"] }
+dispatch2 = "=0.3.1"
+block2 = "=0.6.2"
 security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
 
@@ -65,6 +75,26 @@ name = "failures"
 path = "tests/failures.rs"
 required-features = ["test-support"]
 
+# These drive `mars agent --fixture-origin`, which only test builds accept.
+[[test]]
+name = "limits"
+path = "tests/limits.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "runtime"
+path = "tests/runtime.rs"
+required-features = ["test-support"]
+
 [patch.crates-io]
 # Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
 rustls = { path = "vendor/rustls" }
+
+# V9's interpreter runs tests (and debug builds) optimized: unoptimized it is 10-50x slower and
+# its budget and deadline tests took most of the suite's time. Debug assertions stay on.
+[profile.dev.package.mars-v9]
+opt-level = 2
+
+# mars-avif's corruption sweeps run thousands of full decodes: over five minutes in debug, about three optimised.
+[profile.dev.package.mars-avif]
+opt-level = 2

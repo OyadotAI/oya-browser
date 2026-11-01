@@ -1,5 +1,5 @@
 /** Object subclass construction obeys newTarget while ordinary calls preserve ToObject semantics. */
-mod common;
+use crate::common;
 
 /** Derived Object construction allocates its subclass prototype and supports normal class field initialization. */
 #[test]

@@ -12,7 +12,10 @@ pub(in crate::v9) fn decode(vm: &mut Vm, graph: &WorkerData) -> Res<JsValue> {
                 Class::ArrayBuffer(Bytes(bytes.clone())),
                 Some(realm().ids.array_buffer_prototype),
             ))?,
-            _ => vm.new_object()?,
+            other => match super::kinds::allocate(vm, other)? {
+                Some(id) => id,
+                None => vm.new_object()?,
+            },
         };
         vm.pin(JsValue::Object(id));
         objects.push(id);
@@ -40,7 +43,7 @@ pub(in crate::v9) fn decode(vm: &mut Vm, graph: &WorkerData) -> Res<JsValue> {
                     }));
                 vm.set_proto(id, Some(realm().ids.view_prototypes[kind as usize]))?;
             }
-            _ => {}
+            _ => super::kinds::wire(vm, id, &node.kind, &objects),
         }
         for (key, value) in &node.fields {
             // Define data properties directly: '__proto__' is data, not a prototype setter.
@@ -55,7 +58,7 @@ pub(in crate::v9) fn decode(vm: &mut Vm, graph: &WorkerData) -> Res<JsValue> {
 }
 
 /** The checked packet table is the only namespace a reference can address. */
-fn resolve(value: &Atom, objects: &[ObjectId]) -> JsValue {
+pub(super) fn resolve(value: &Atom, objects: &[ObjectId]) -> JsValue {
     match value {
         Atom::Value(value) => match value {
             Primitive::Undefined => JsValue::Undefined,

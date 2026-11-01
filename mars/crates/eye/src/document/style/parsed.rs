@@ -90,6 +90,9 @@ struct State {
     layers: Layers,
     /// `@property` registrations, shared by every sheet.
     properties: Registrations,
+    /// The `@media` conditions this parse evaluated: it holds under any context answering
+    /// them alike (see `MediaSeen`).
+    media: super::media::MediaSeen,
 }
 
 impl Default for State {
@@ -105,6 +108,7 @@ impl Default for State {
             diagnostics: Vec::new(),
             layers: Layers::default(),
             properties: Registrations::default(),
+            media: Default::default(),
         }
     }
 }
@@ -123,6 +127,8 @@ struct Recent {
 /** One scoped sheet list parsed on top of a recent main parse, kept whole: the parser after it,
 each rule's group and what the cascade reads. */
 struct ScopedParse {
+    /// The context it was parsed under; another one reuses it only when its media answer alike.
+    context: RenderContext,
     scoped: Vec<(String, usize)>,
     group: usize,
     state: Rc<State>,
@@ -175,6 +181,7 @@ pub(super) fn parsed(
             .find(|entry| Rc::ptr_eq(&entry.state, &main))
             .and_then(|entry| entry.scoped.borrow().clone())
             .filter(|prior| prior.group == document_group)
+            .filter(|prior| prior.context == context || prior.state.media.holds(context))
     });
     // ponytail: the list compares are O(scoped bytes) per cascade; a digest from the
     // coordinator would make them O(1).
@@ -196,6 +203,7 @@ pub(super) fn parsed(
     RECENT.with_borrow(|recent| {
         if let Some(entry) = recent.iter().find(|entry| Rc::ptr_eq(&entry.state, &main)) {
             entry.scoped.replace(Some(Rc::new(ScopedParse {
+                context,
                 scoped: scoped.to_vec(),
                 group: document_group,
                 state: Rc::new(state),
@@ -225,6 +233,7 @@ fn parse_scoped(
             &mut state.font_faces,
             &mut state.layers,
             &mut state.properties,
+            &mut state.media,
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, false)?;
         groups.resize(state.rules.len(), *group);
@@ -239,10 +248,13 @@ fn recent(sheets: &[String], context: RenderContext) -> Option<(Rc<State>, bool)
         let best = recent
             .iter()
             .enumerate()
-            .filter(|(_, entry)| entry.context == context && sheets.starts_with(&entry.sheets))
+            .filter(|(_, entry)| sheets.starts_with(&entry.sheets))
+            .filter(|(_, entry)| entry.context == context || entry.state.media.holds(context))
             .max_by_key(|(_, entry)| entry.sheets.len())
             .map(|(index, _)| index)?;
-        let entry = recent.remove(best)?;
+        let mut entry = recent.remove(best)?;
+        // Valid under both contexts; the next lookup under this one is then an exact match.
+        entry.context = context;
         let found = (Rc::clone(&entry.state), entry.sheets.len() == sheets.len());
         recent.push_front(entry);
         Some(found)
@@ -287,6 +299,7 @@ fn parse(
             &mut state.font_faces,
             &mut state.layers,
             &mut state.properties,
+            &mut state.media,
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, skipped)?;
         state.count = index + 1;
@@ -325,21 +338,31 @@ mod tests {
 
     /** The same texts under the same context share one parse; a changed text or context does not. */
     #[test]
-    fn recent_parses_are_shared_by_exact_texts_and_context() {
-        let sheets = vec!["p { color: red }".to_owned()];
+    fn recent_parses_are_shared_by_texts_and_contexts_their_media_cannot_tell_apart() {
+        let sheets =
+            vec!["p { color: red } @media (min-width: 800px) { p { color: green } }".to_owned()];
         let context = RenderContext::default();
         let (first, _) = parsed(&sheets, &[], 0, context).unwrap();
         let (again, _) = parsed(&sheets, &[], 0, context).unwrap();
         assert!(Rc::ptr_eq(&first, &again));
         let (other, _) = parsed(&["p { color: blue }".to_owned()], &[], 0, context).unwrap();
         assert!(!Rc::ptr_eq(&first, &other));
+        // A shorter window answers (min-width: 800px) as before: the parse is reused.
+        let shorter = RenderContext {
+            height: context.height - 34.0,
+            ..context
+        };
+        let (kept, _) = parsed(&sheets, &[], 0, shorter).unwrap();
+        assert!(Rc::ptr_eq(&first, &kept));
+        // A narrow one crosses the breakpoint: parsed again, without the media rule.
         let narrow = RenderContext {
             width: 400.0,
             ..context
         };
         let (narrowed, _) = parsed(&sheets, &[], 0, narrow).unwrap();
         assert!(!Rc::ptr_eq(&first, &narrowed));
-        assert_eq!(first.rules.len(), 1);
+        assert_eq!(first.rules.len(), 2);
+        assert_eq!(narrowed.rules.len(), 1);
     }
 
     /** A list that extends a recent one continues its parse: the earlier rules keep their order

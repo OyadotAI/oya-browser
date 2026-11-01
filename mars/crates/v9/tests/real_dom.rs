@@ -1,5 +1,5 @@
 /** DOM sequences from real pages that cross requests (python.org's Modernizr then jQuery). */
-mod common;
+use crate::common;
 use common::{environment, host, page, round_trip};
 use mars_v9::{DomLevel, PageEvent, PageInput, SimpleFragmentParser, StorageState};
 

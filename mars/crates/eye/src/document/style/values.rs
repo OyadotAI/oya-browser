@@ -26,6 +26,22 @@ impl Dimension {
         self.px + self.percent / PERCENT * reference
     }
 }
+/** A math value that `dimension` cannot reduce to one px-plus-percent pair, kept as an expression
+ * for layout to resolve once its percentage has a containing block; None when `dimension` already
+ * reduces it, and for any value that is not math. */
+pub(super) fn deferred(
+    value: &str,
+    font: f64,
+    context: RenderContext,
+) -> EngineResult<Option<super::length_expr::LengthExpr>> {
+    let value = without_env(value.trim())?;
+    let value = value.as_ref();
+    if !is_math(value) || dimension(value, font, context).is_ok() {
+        return Ok(None);
+    }
+    let tokens = super::calc::tokens(value)?;
+    super::calc::evaluate_expr(&tokens, font, context).map(Some)
+}
 /** Supported lengths are finite nonnegative CSS pixels; `auto` keeps its historic zero. */
 pub(super) fn length(value: &str, font: f64) -> EngineResult<f64> {
     contextual_length(value, font, RenderContext::default())
@@ -139,11 +155,18 @@ fn without_env(value: &str) -> EngineResult<std::borrow::Cow<'_, str>> {
         let inner = &out[open + 1..close];
         let comma = super::syntax::find_top(inner, 0, b",");
         let fallback = inner.get(comma + 1..).map(str::trim).unwrap_or_default();
-        let fallback = if fallback.is_empty() { "0px" } else { fallback };
+        // A unitless zero is a length here: env() takes its fallback's type, and calc() rejects a
+        // bare number beside a length.
+        let fallback = match fallback {
+            "" | "0" => ZERO_LENGTH,
+            other => other,
+        };
         out = format!("{}{fallback}{}", &out[..start], &out[close + 1..]);
     }
     Err(unsupported())
 }
+/// The length an `env()` without a usable fallback resolves to.
+const ZERO_LENGTH: &str = "0px";
 /// CSS pixels per inch.
 const PX_PER_IN: f64 = 96.0;
 /// Centimetres per inch.
@@ -556,11 +579,15 @@ const INTEGER: [&str; 7] = [
 ];
 /** `value` with a numeric math function rounded to an integer for `<integer>` properties. */
 pub(super) fn integer_math<'v>(key: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
+    if !INTEGER.contains(&key) {
+        return value.into();
+    }
     let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
     let math = ["calc(", "min(", "max(", "clamp(", "round("]
         .iter()
-        .any(|function| trimmed.to_ascii_lowercase().starts_with(function));
-    if !INTEGER.contains(&key) || !math {
+        .any(|function| lower.starts_with(function));
+    if !math {
         return value.into();
     }
     super::calc::tokens(trimmed)

@@ -1,9 +1,11 @@
 /**
  * `document.styleSheets`, a style or link element's `sheet`, and form validity: the objects a
  * page reads to find the style sheet it just inserted or to check a field before submitting.
- * V9 has no cascade, so a sheet lists its rules by splitting the element's text, and
- * `insertRule` appends to that text (Eye picks the change up as a sheet change); every field
- * is valid, since V9 runs no constraint validation.
+ * V9 has no cascade, so a sheet keeps its rules as the element's text. `insertRule` and
+ * `deleteRule` edit the sheet's list of top-level rules (see `sheet_list`), which is written back
+ * to the text before Eye reads it (Eye picks the change up as a sheet change), so a nested
+ * `@media` block survives an edit around it. Every field is valid, since V9 runs no constraint
+ * validation.
  */
 use super::dom::{self, DOCUMENT, wrap};
 use super::host_data;
@@ -25,6 +27,49 @@ fn sheet_nodes(vm: &mut Vm) -> Vec<usize> {
                     })
         })
     })
+}
+
+/** A stable hash of a style text; the same text gives the same value in every process. */
+pub(in crate::v9) fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/** Report the texts of the V9-only `<style>` elements the app does not already apply, when that
+list changed since the last report. The document's own parsed head styles are skipped until a
+script changes their text. Runs at the end of every step. */
+pub(in crate::v9) fn publish_local(vm: &mut Vm) {
+    vm.page.flush_sheet_edits();
+    if let Some((hash, texts)) = local_texts(vm) {
+        vm.page.state.local_sheets_hash = hash;
+        vm.page.effects.local_sheets = Some(texts);
+    }
+}
+
+/** The V9-only style texts when they changed since the last report, without reporting them:
+what a synchronous layout mid-step must style with. */
+pub(in crate::v9) fn changed_local(vm: &mut Vm) -> Option<Vec<String>> {
+    local_texts(vm).map(|(_, texts)| texts)
+}
+
+/** The V9-only `<style>` texts the app does not already apply, with their combined hash, when
+that hash differs from the last reported one. */
+fn local_texts(vm: &mut Vm) -> Option<(u64, Vec<String>)> {
+    let mut texts = Vec::new();
+    for node in sheet_nodes(vm) {
+        if vm.page.tag(node) != "style" || vm.page.is_projected(node) {
+            continue;
+        }
+        let text = vm.page.text_content(node);
+        let parsed = vm.page.state.parsed_style_hashes.get(&node).copied();
+        if parsed != Some(text_hash(&text)) {
+            texts.push(text);
+        }
+    }
+    let hash = text_hash(&texts.join("\u{0}"));
+    (hash != vm.page.state.local_sheets_hash).then_some((hash, texts))
 }
 
 /** The CSSStyleSheet object of a node. */
@@ -64,17 +109,14 @@ fn sheet_node(vm: &mut Vm, call: &Call) -> Res<usize> {
     }
 }
 
-/** The sheet's rules as `{cssText, selectorText, style, type}` records, one per `}`-ended block. */
+/** The sheet's rules as `{cssText, selectorText, style, type}` records, one per top-level rule. */
 fn rules(vm: &mut Vm, node: usize) -> Res<JsValue> {
-    let text = vm.page.text_content(node);
+    let blocks = vm.page.sheet_list(node).rule_texts();
     let mut out = Vec::new();
-    for block in text.split('}') {
-        let block = block.trim();
-        if block.is_empty() {
-            continue;
-        }
+    for block in blocks {
+        let block = block.as_str();
         let rule = vm.new_object()?;
-        vm.put(rule, "cssText", JsValue::string(&format!("{block} }}"))?)?;
+        vm.put(rule, "cssText", JsValue::string(block)?)?;
         let selector = block.split('{').next().unwrap_or("").trim();
         vm.put(rule, "selectorText", JsValue::string(selector)?)?;
         vm.put(
@@ -126,27 +168,31 @@ pub(in crate::v9) fn sheet_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = sheet_node(vm, &call)?;
     match dom::native_name(&call) {
-        "insertRule" | "addRule" => {
-            let rule = if dom::native_name(&call) == "addRule" {
-                let selector = vm.to_text(&call.arg(0))?;
-                let body = vm.to_text(&call.arg(1))?;
-                format!("{selector} {{ {body} }}")
-            } else {
-                vm.to_text(&call.arg(0))?
-            };
-            let mut text = vm.page.text_content(node);
-            text.push('\n');
-            text.push_str(&rule);
-            vm.page
-                .set_text(node, &text)
-                .map_err(|error| dom::dom_error(vm, error))?;
-            let count = text
-                .split('}')
-                .filter(|block| !block.trim().is_empty())
-                .count();
-            Ok(JsValue::Number(count.saturating_sub(1) as f64))
+        "insertRule" => {
+            let rule = vm.to_text(&call.arg(0))?;
+            let index = vm.to_number(&call.arg(1))?;
+            insert_rule(vm, node, &rule, Some(index))
         }
-        "deleteRule" | "removeRule" => Err(vm.unsupported_error("CSSStyleSheet rule deletion")),
+        "addRule" => {
+            let selector = vm.to_text(&call.arg(0))?;
+            let body = vm.to_text(&call.arg(1))?;
+            let rule = format!("{selector} {{ {body} }}");
+            let index = match call.arg(2) {
+                JsValue::Undefined => None,
+                value => Some(vm.to_number(&value)?),
+            };
+            insert_rule(vm, node, &rule, index)
+        }
+        "deleteRule" | "removeRule" => {
+            let index =
+                if dom::native_name(&call) == "removeRule" && call.arg(0) == JsValue::Undefined {
+                    0.0
+                } else {
+                    vm.to_number(&call.arg(0))?
+                };
+            delete_rule(vm, node, index)?;
+            Ok(JsValue::Undefined)
+        }
         "replaceSync" | "replace" => {
             let text = vm.to_text(&call.arg(0))?;
             vm.page
@@ -156,6 +202,43 @@ pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => Ok(JsValue::Undefined),
     }
+}
+
+/** The rule index a sheet method's argument names, WebIDL style: NaN counts as 0 and fractions
+truncate. Returns None past `len`, which callers turn into an IndexSizeError. */
+fn sheet_index(index: f64, len: usize) -> Option<usize> {
+    let whole = if index.is_nan() { 0.0 } else { index.trunc() };
+    (whole >= 0.0 && whole <= len as f64).then_some(whole as usize)
+}
+
+/** Insert `rule` before the top-level rule at `index`, or append it when `index` is None or
+equals the rule count, and return the index it landed at. The text around the insertion point is
+kept as it was, so nested blocks and comments stay whole. An index past the rule count is an
+IndexSizeError. */
+fn insert_rule(vm: &mut Vm, node: usize, rule: &str, index: Option<f64>) -> Res<JsValue> {
+    let len = vm.page.sheet_list(node).len();
+    let position = match index {
+        None => len,
+        Some(index) => sheet_index(index, len).ok_or_else(|| index_error(vm))?,
+    };
+    vm.page.edit_sheet(node, |list| list.insert(position, rule));
+    Ok(JsValue::Number(position as f64))
+}
+
+/** Remove the top-level rule at `index`, keeping the text around it as it was. An index outside
+the rules is an IndexSizeError, which a page's own cleanup code relies on to fail loudly. */
+fn delete_rule(vm: &mut Vm, node: usize, index: f64) -> Res<()> {
+    let len = vm.page.sheet_list(node).len();
+    let position = sheet_index(index, len)
+        .filter(|position| *position < len)
+        .ok_or_else(|| index_error(vm))?;
+    vm.page.edit_sheet(node, |list| list.remove(position));
+    Ok(())
+}
+
+/** The IndexSizeError a sheet method throws for an index outside its rules. */
+fn index_error(vm: &mut Vm) -> crate::v9::vm::Thrown {
+    vm.dom_exception("IndexSizeError", "The index is outside the sheet's rules.")
 }
 
 /** `element.validity`: a ValidityState in which every field is valid. */

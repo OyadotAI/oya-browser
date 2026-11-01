@@ -1,5 +1,5 @@
 /** decodeURI and decodeURIComponent decode one UTF-8 sequence per escape run and reject malformed input. */
-mod common;
+use crate::common;
 
 /** Malformed escapes throw URIError: signs, cut sequences, stray continuations, overlongs, surrogates. */
 #[test]

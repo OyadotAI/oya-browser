@@ -65,15 +65,13 @@ pub(in crate::document::style) fn tracks(
                 let opacity = frame
                     .declarations
                     .iter()
-                    .filter(|d| d.name == "opacity")
-                    .last()
+                    .rfind(|d| d.name == "opacity")
                     .and_then(|d| resolve("opacity", &d.value))
                     .and_then(|value| opacity(&value, parent));
                 let easing = frame
                     .declarations
                     .iter()
-                    .filter(|d| d.name == "animation-timing-function")
-                    .last()
+                    .rfind(|d| d.name == "animation-timing-function")
                     .and_then(|d| resolve("animation-timing-function", &d.value))
                     .and_then(|value| TransitionEasing::parse(&value));
                 if opacity.is_none() && easing.is_none() {

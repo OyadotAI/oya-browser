@@ -9,7 +9,7 @@ pub(super) const SNAPSHOT_BYTES: usize = crate::constants::VM_STATE_BYTES / 16;
 /** Read no author code here: request conversion and signal getters must already be complete. */
 pub(super) fn capture(vm: &Vm, request: &mut HostRequest) -> Result<(), String> {
     request.blob_source = None;
-    if !parse_url(&request.url).is_some_and(|url| url.scheme() == "blob") {
+    if parse_url(&request.url).is_none_or(|url| url.scheme() != "blob") {
         return Ok(());
     }
     let source = super::super::blob_urls::resolve(&vm.page, &request.url)

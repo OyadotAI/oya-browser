@@ -1,5 +1,5 @@
 /** The ECMAScript standard library V9 implements in Rust: one file per builtin family. */
-mod array;
+pub(in crate::v9) mod array;
 mod auto_accessors;
 pub(in crate::v9) use auto_accessors::{
     create as create_auto_accessors, public_name as inferred_function_name,

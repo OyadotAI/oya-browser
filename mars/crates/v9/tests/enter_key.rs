@@ -1,7 +1,7 @@
 /** A native Enter reaches the page as Chrome sends it: the field takes focus, keydown and
 keypress carry key "Enter" and keyCode 13, and the app does the native action only when nobody
 cancelled them. Google submits its search from this keydown. */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::KeyboardKey;

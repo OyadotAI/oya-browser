@@ -90,8 +90,10 @@ pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
     let tag = node.tag.as_str();
     style.inline = !BLOCK.contains(&tag);
     style.list_item = tag == "li";
-    // A video is a replaced box: an inline-block with Chromium's 300 by 150 default size.
-    style.inline_block = tag == "video";
+    // A video is a replaced box: an inline-block with Chromium's 300 by 150 default size; an
+    // audio element with controls is a 300 by 54 control strip, as Chromium sizes its panel.
+    style.inline_block =
+        tag == "video" || tag == "audio" && node.attributes.contains_key("controls");
     match tag {
         "ol" => style.list_style = super::ListStyle::Decimal,
         "ul" | "menu" => style.list_style = super::ListStyle::Disc,
@@ -137,7 +139,11 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
         "center" => out.push(("text-align", "-webkit-center")),
         // Chromium's html.css sizes a table's border box: `table { box-sizing: border-box }`.
         "table" => out.extend([("border-spacing", "2px"), ("box-sizing", "border-box")]),
-        "video" => out.extend([("width", "300px"), ("height", "150px")]),
+        // html.css: `audio:not([controls]) { display: none }`; with controls, Chromium's panel.
+        "audio" if node.attributes.contains_key("controls") => {
+            out.extend([("width", "300px"), ("height", "54px")])
+        }
+        "audio" => out.push(("display", "none")),
         // html.css: `iframe { border: 2px inset }`, its color the current color.
         "iframe" => out.extend([
             ("border-top-width", "2px"),
@@ -230,8 +236,8 @@ pub(super) fn body() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 /**
- * Content the UA stylesheet hides whatever the page says: a `dialog` without `open`, and every
- * child of a closed `details` but its first `summary`. Chromium keeps these out of rendering;
+ * Content the UA stylesheet hides whatever the page says: a `dialog` without `open`, every
+ * child of a closed `details` but its first `summary`, and a media element's children. Chromium keeps these out of rendering;
  * an author rule must not make them agent-actionable.
  */
 pub(super) fn closed(node: &Node, parent: Option<&Node>, summary: Option<usize>) -> bool {
@@ -244,5 +250,9 @@ pub(super) fn closed(node: &Node, parent: Option<&Node>, summary: Option<usize>)
                 .contains_key(mars_core::dom::POPOVER_OPEN_ATTRIBUTE))
         || parent.is_some_and(|parent| {
             parent.tag == "details" && shut(parent) && summary != Some(node.local_id)
+                // A media element renders its frames and controls, never its fallback content,
+                // sources or tracks: a browser that supports video shows none of its children.
+                || parent.tag == "video"
+                || parent.tag == "audio"
         })
 }

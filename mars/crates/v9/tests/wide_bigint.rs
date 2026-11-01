@@ -1,5 +1,5 @@
 /** Arbitrary-width BigInts keep exact values, mathematical conversion, real brands and bounded snapshots. */
-mod common;
+use crate::common;
 
 /** Wide literals and results normalize back to inline storage without changing their language type. */
 #[test]

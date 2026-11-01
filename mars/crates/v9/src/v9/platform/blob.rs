@@ -89,6 +89,54 @@ pub(super) fn blob_bytes(vm: &Vm, value: &JsValue) -> Option<Vec<u8>> {
     typed::source_bytes(vm, &read_slot(vm, value, "blobBytes")?)
 }
 
+/** A File's name and last-modified time. */
+pub(in crate::v9) type FileFacts = (JsValue, JsValue);
+/** A Blob's type and bytes, plus its File facts when it is a File. */
+pub(in crate::v9) type BlobParts = (JsValue, Vec<u8>, Option<FileFacts>);
+
+/** A Blob's type, bytes and (for a File) its name and last-modified time, for IndexedDB's persistence. */
+pub(in crate::v9) fn blob_parts(vm: &Vm, value: &JsValue) -> Option<BlobParts> {
+    let bytes = blob_bytes(vm, value)?;
+    let kind = read_slot(vm, value, "blobType").unwrap_or(JsValue::String(JsString::empty()));
+    let file = read_slot(vm, value, "fileName").map(|name| {
+        let modified = read_slot(vm, value, "fileModified").unwrap_or(JsValue::Number(0.0));
+        (name, modified)
+    });
+    Some((kind, bytes, file))
+}
+
+/** structuredClone of a Blob or File: a new object over a copy of the same bytes, type, name and time. None for any other value. */
+pub(in crate::v9) fn clone_blob(vm: &mut Vm, value: &JsValue) -> Res<Option<ObjectId>> {
+    let Some((kind, bytes, file)) = blob_parts(vm, value) else {
+        return Ok(None);
+    };
+    restore_blob(vm, bytes, kind, file).map(Some)
+}
+
+/** A Blob (or, with a name and time, a File) over `bytes`, as a clone or a worker message revives it. */
+pub(in crate::v9) fn restore_blob(
+    vm: &mut Vm,
+    bytes: Vec<u8>,
+    kind: JsValue,
+    file: Option<FileFacts>,
+) -> Res<ObjectId> {
+    let proto = if file.is_some() {
+        ids().file
+    } else {
+        ids().blob
+    };
+    let id = vm.alloc(Object::new(Class::Plain, Some(proto)))?;
+    vm.pin(JsValue::Object(id));
+    let store = typed::new_uint8(vm, bytes)?;
+    write_slot(vm, id, "blobBytes", JsValue::Object(store));
+    write_slot(vm, id, "blobType", kind);
+    if let Some((name, modified)) = file {
+        write_slot(vm, id, "fileName", name);
+        write_slot(vm, id, "fileModified", modified);
+    }
+    Ok(id)
+}
+
 /** Whether the value is a File. */
 pub(super) fn is_file(vm: &Vm, value: &JsValue) -> bool {
     read_slot(vm, value, "fileName").is_some()

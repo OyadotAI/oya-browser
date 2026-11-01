@@ -1,5 +1,5 @@
 /** Indexed and iterated UTF-16 access preserves rope contents without forcing flattening. */
-mod common;
+use crate::common;
 
 /** Repeated short-rope searches retain their positions after the search materializes the rope. */
 #[test]
@@ -34,7 +34,10 @@ fn repeated_strings_stay_compact_across_state_transport() {
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     let encoded = serde_json::to_string(&loaded.state).unwrap();
-    assert!(encoded.len() < 100_000, "repeat flattened into snapshot");
+    assert!(
+        encoded.len() < common::empty_state_bytes() + 100_000,
+        "repeat flattened into snapshot"
+    );
     let restored = serde_json::from_str(&encoded).unwrap();
     let clicked =
         mars_v9::click_page(common::input(&sources, &host, &environment), restored, 3).unwrap();
@@ -51,7 +54,10 @@ fn padded_rope_stays_compact_across_state_transport() {
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     let encoded = serde_json::to_string(&loaded.state).unwrap();
-    assert!(encoded.len() < 100_000, "padding flattened into snapshot");
+    assert!(
+        encoded.len() < common::empty_state_bytes() + 100_000,
+        "padding flattened into snapshot"
+    );
     let clicked = mars_v9::click_page(
         common::input(&sources, &host, &environment),
         serde_json::from_str(&encoded).unwrap(),
@@ -72,7 +78,7 @@ fn comparing_compact_strings_preserves_their_storage() {
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     let encoded = serde_json::to_string(&loaded.state).unwrap();
     assert!(
-        encoded.len() < 100_000,
+        encoded.len() < common::empty_state_bytes() + 100_000,
         "comparison flattened compact strings"
     );
 }
@@ -87,7 +93,7 @@ fn repeated_substrings_stay_compact() {
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     let encoded = serde_json::to_string(&loaded.state).unwrap();
     assert!(
-        encoded.len() < 100_000,
+        encoded.len() < common::empty_state_bytes() + 100_000,
         "repeated substring flattened: {}",
         encoded.len()
     );
@@ -273,7 +279,9 @@ fn well_formed_repair_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Unicode casing reads repeated content without flattening the original string. */
@@ -284,7 +292,9 @@ fn case_mapping_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Normalization preserves a repeated input backing while producing independent output. */
@@ -295,7 +305,9 @@ fn normalization_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 30_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 30_000
+    );
 }
 
 /** Legacy HTML formatting keeps the source string compact while building the result. */
@@ -306,7 +318,9 @@ fn html_formatting_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** String.raw keeps repeated raw segments compact after all observable coercions. */
@@ -317,7 +331,9 @@ fn raw_template_preserves_compact_segments() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Raw-template overflow still observes later getters before reporting a limit. */
@@ -338,7 +354,9 @@ fn regexp_escape_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 30_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 30_000
+    );
 }
 
 /** JSON quoting does not flatten its compact source, including split surrogate pairs. */
@@ -349,7 +367,9 @@ fn json_stringify_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** JSON parsing and reviver source spans read compact UTF-16 input without materializing it. */
@@ -360,7 +380,9 @@ fn json_parse_preserves_compact_input_and_reviver_sources() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Diagnostics retain UTF-16 positions while their source context stays bounded. */
@@ -378,7 +400,9 @@ fn uri_conversions_preserve_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Joining arrays reads elements and separators without flattening their compact backing. */
@@ -389,7 +413,9 @@ fn array_join_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Hex and base64 decoding leave compact input strings unmaterialized. */
@@ -400,7 +426,9 @@ fn typed_codecs_preserve_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Window base64 encoding reads Latin-1 units without flattening the original rope. */
@@ -411,7 +439,9 @@ fn window_base64_preserves_original_storage() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
-    assert!(serde_json::to_string(&loaded.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&loaded.state).unwrap().len() < common::empty_state_bytes() + 100_000
+    );
 }
 
 /** Truly impossible d8 lengths throw before allocation; smaller V9 quota breaches remain fatal. */

@@ -40,7 +40,7 @@ impl Runtime {
             json!({"kind":"keyboard","key":"escape","target":target}),
         )?;
         let changed = self
-            .settle_after_load(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
+            .settle_after_input(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
             || step.changed;
         // A key press is input even when its effect comes later from a timer.
         page.scripting.wake();
@@ -87,7 +87,7 @@ impl Runtime {
             Err(_) => return Ok(Err(revision)),
         };
         let changed = self
-            .settle_after_load(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
+            .settle_after_input(&mut page, Instant::now() + crate::constants::WEB_TIMEOUT)?
             || step.changed;
         let native = std::mem::take(&mut page.scripting.key_default);
         page.scripting.wake();

@@ -1,5 +1,5 @@
 /** The page's window owns every global interface, as a browser's does, so feature detection works. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Constructors and functions are own, writable, configurable, non-enumerable data properties. */
@@ -52,4 +52,11 @@ fn window_handler_defaults_are_isolated_between_pages() {
         "function"
     );
     assert_eq!(eval("const r=String(onload===null);", "r"), "true");
+}
+
+/** Plain platform interfaces detected by modern web apps exist on globalThis. */
+#[test]
+fn plain_platform_interfaces_exist_on_window() {
+    let source = "const r=[typeof ScreenOrientation==='function',typeof Scheduler==='function',typeof SVGFETurbulenceElement==='function'].join();";
+    assert_eq!(eval(source, "r"), "true,true,true");
 }

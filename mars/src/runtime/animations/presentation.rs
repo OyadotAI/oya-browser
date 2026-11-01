@@ -211,9 +211,12 @@ mod tests {
             .iter()
             .find(|entry| entry.node == item.local_id)
             .unwrap();
-        assert!((geometry.x - item.x - 50.0).abs() < 0.000001);
-        assert!((geometry.y - item.y - 20.0).abs() < 0.000001);
-        assert_eq!(geometry.layout_position, Some([item.x, item.y]));
+        // Eye bakes a pure translation into the item; the layout position stays where layout
+        // put the box, half the 100px by 40px translation away.
+        let [left, top] = geometry.layout_position.unwrap();
+        assert!((geometry.x - item.x).abs() < 0.000001);
+        assert!((geometry.x - left - 50.0).abs() < 0.000001);
+        assert!((geometry.y - top - 20.0).abs() < 0.000001);
         scripting.clock_ms = 1000.0;
         assert!(!scripting.pending());
         assert!(

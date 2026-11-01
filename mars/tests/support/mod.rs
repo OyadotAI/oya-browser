@@ -305,6 +305,10 @@ pub fn process_exists(pid: u32) -> bool {
 /** Parent-only termination may take one bounded engine operation before pipe EOF. */
 #[cfg(unix)]
 pub fn assert_gone(pids: &[u32]) {
+    // An engine running inside this process reports this process's pid; it retires with its
+    // runtime's thread, not as a process, so only engines in their own processes are awaited.
+    let own = std::process::id();
+    let pids: Vec<u32> = pids.iter().copied().filter(|pid| *pid != own).collect();
     let deadline = Instant::now() + COMPLETION;
     while pids.iter().any(|pid| process_exists(*pid)) {
         assert!(
@@ -326,14 +330,16 @@ pub fn html(extra_headers: &str, body: &str) -> Vec<u8> {
 
 /** A desktop runtime over the owned engines, with only the fixture origin granted. */
 pub fn desktop(origin: &str) -> mars::runtime::Runtime {
-    use mars::runtime::{
-        EnginePrograms, Runtime,
-        authority::{Authority, Owner},
-    };
+    desktop_as(origin, mars::runtime::authority::Owner::Agent)
+}
+
+/** `desktop` with control initially held by `owner`: the person's window or a connected agent. */
+pub fn desktop_as(origin: &str, owner: mars::runtime::authority::Owner) -> mars::runtime::Runtime {
+    use mars::runtime::{EnginePrograms, Runtime, authority::Authority};
     Runtime::desktop(
         EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
         vec![origin.into()],
-        Authority::shared(Owner::Agent),
+        Authority::shared(owner),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap()

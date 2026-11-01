@@ -1,5 +1,5 @@
 /** Eager iterator helpers preserve callback indices, abrupt completion and direct-record semantics. */
-mod common;
+use crate::common;
 
 /** Materialization bypasses an inherited numeric setter and never consults iterator species. */
 #[test]

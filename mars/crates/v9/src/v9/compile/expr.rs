@@ -515,7 +515,7 @@ impl Compiler {
     }
     /** Object literals. */
     fn object(&mut self, props: &[PropDef]) -> EngineResult<()> {
-        self.check_literal_prototypes(props)?;
+        literal_prototypes(props)?;
         self.emit(Op::NewObject);
         for prop in props {
             match prop {
@@ -563,26 +563,8 @@ impl Compiler {
         }
         Ok(())
     }
-    /** Duplicate prototype setters are early errors only in literals, never cover patterns. */
-    fn check_literal_prototypes(&self, props: &[PropDef]) -> EngineResult<()> {
-        let mut seen = false;
-        for prop in props {
-            if let PropDef::Value(PropKey::Name(name), value) = prop
-                && &**name == "__proto__"
-            {
-                if seen {
-                    return Err(self.error(
-                        value.pos,
-                        "Duplicate __proto__ fields are not allowed in object literals",
-                    ));
-                }
-                seen = true;
-            }
-        }
-        Ok(())
-    }
     /** An enumerable object-literal method or accessor. */
-    fn literal_method(&mut self, key: &PropKey, func: &Rc<Func>, kind: u8) -> EngineResult<()> {
+    fn literal_method(&mut self, key: &PropKey, func: &Arc<Func>, kind: u8) -> EngineResult<()> {
         match key {
             PropKey::Computed(key) => {
                 self.expr(key)?;
@@ -1169,4 +1151,23 @@ impl Compiler {
         self.emit(answer);
         Ok(())
     }
+}
+
+/** Duplicate prototype setters are early errors only in literals, never cover patterns. */
+pub(super) fn literal_prototypes(props: &[PropDef]) -> EngineResult<()> {
+    let mut seen = false;
+    for prop in props {
+        if let PropDef::Value(PropKey::Name(name), value) = prop
+            && &**name == "__proto__"
+        {
+            if seen {
+                return Err(errors::syntax(
+                    value.pos.location(),
+                    "Duplicate __proto__ fields are not allowed in object literals",
+                ));
+            }
+            seen = true;
+        }
+    }
+    Ok(())
 }

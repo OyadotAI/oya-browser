@@ -115,13 +115,22 @@ impl Window {
             return;
         };
         let _ = snapshot;
-        let quiet = matches!(action, Action::Tap(..) | Action::Wheel(..));
+        let quiet = matches!(
+            action,
+            Action::Tap(..) | Action::Wheel(..) | Action::Media(..)
+        );
         let (op, params, target) = match action {
             Action::Edit(id, text, observed) => {
                 ("page.type", self.target(id, Some(text)), Some(observed))
             }
             Action::Click(id, observed) | Action::Tap(id, observed) => {
                 ("page.click", self.target(id, None), Some(observed))
+            }
+            Action::Media(id, observed, control, time) => {
+                let mut params = self.target(id, None);
+                params["action"] = json!(control);
+                params["time"] = json!(if time.is_finite() { time } else { 0.0 });
+                ("page.media_control", params, Some(observed))
             }
             Action::Select(id, option, observed) => {
                 let mut params = self.target(id, None);
@@ -151,12 +160,15 @@ impl Window {
             Action::Activate(mars::RELOAD) => ("page.reload", json!({}), None),
             Action::Activate(tag) if [mars::ADDRESS, mars::DEMO, mars::RETRY].contains(&tag) => {
                 let url = if tag == mars::DEMO {
-                    format!("{}/", self.demo)
+                    format!("{}/start", self.demo)
                 } else if tag == mars::RETRY {
                     self.failed_url
                         .clone()
                         .unwrap_or_else(|| self.mars.committed_url())
                 } else {
+                    // Enter ends address editing and puts focus on the page, as Chrome does, so a
+                    // refused navigation can show the committed address again.
+                    self.window.makeFirstResponder(Some(&self.canvas));
                     self.typed_address()
                 };
                 self.failed_url = Some(url.clone());
@@ -204,10 +216,12 @@ impl Window {
     }
     /// Native tab buttons and shortcuts submit only explicit tab identities through the worker.
     pub(super) fn tab_action(&mut self, tag: isize) {
-        let Ok(permit) = self.broker.local_tab_permit() else {
+        // Closing revokes the tab's agent access first, which advances the authority epoch, so the
+        // permit is issued only after the operation; an earlier permit would be stale at dispatch.
+        let Some((op, params)) = self.tab_operation(tag) else {
             return;
         };
-        let Some((op, params)) = self.tab_operation(tag) else {
+        let Ok(permit) = self.broker.local_tab_permit() else {
             return;
         };
         let command_id = self.next_command();

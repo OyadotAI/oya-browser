@@ -38,11 +38,13 @@ pub(super) fn integer(key: &Key) -> Option<usize> {
     (index.to_string() == text).then_some(index)
 }
 
-/** Only data-only chains can skip absent positions without suppressing author code. */
+/** Only data-only chains can skip absent positions without suppressing author code. The
+entries of `source` and its prototypes with an index in `start..length`, own ones first. */
 fn data(
     vm: &Vm,
     source: ObjectId,
     target: Option<ObjectId>,
+    start: usize,
     length: usize,
 ) -> Option<Vec<(usize, JsValue)>> {
     if target.is_some_and(|target| !ordinary_target(vm, target)) {
@@ -63,10 +65,7 @@ fn data(
                     if elements.logical_present() > vm.limits.array_length {
                         return None;
                     }
-                    for (index, value) in elements
-                        .resident_entries()
-                        .filter(|(index, _)| *index < length)
-                    {
+                    for (index, value) in elements.resident_range(start, length) {
                         values.entry(index).or_insert_with(|| value.clone());
                     }
                 }
@@ -74,7 +73,8 @@ fn data(
                 _ => return None,
             }
             for (key, property) in object.props.iter() {
-                let Some(index) = integer(key).filter(|index| *index < length) else {
+                let Some(index) = integer(key).filter(|index| (start..length).contains(index))
+                else {
                     continue;
                 };
                 let Slot::Data(value) = &property.slot else {
@@ -86,7 +86,8 @@ fn data(
         } else {
             let definition = vm.object_intrinsics(id).object(id)?;
             for (key, property, _) in &definition.props {
-                let Some(index) = integer(key).filter(|index| *index < length) else {
+                let Some(index) = integer(key).filter(|index| (start..length).contains(index))
+                else {
                     continue;
                 };
                 let Static::Value(value) = property else {
@@ -106,7 +107,7 @@ pub(super) fn indexed_data(
     source: ObjectId,
     length: usize,
 ) -> Option<Vec<(usize, JsValue)>> {
-    data(vm, source, None, length)
+    data(vm, source, None, 0, length)
 }
 
 /** Slice can skip absent positions only when source reads and output definitions call no author code. */
@@ -120,10 +121,10 @@ pub(super) fn slice_range(
     let Some(id) = source.object() else {
         return Ok(false);
     };
-    let Some(values) = data(vm, id, Some(result), end) else {
+    let Some(values) = data(vm, id, Some(result), start, end) else {
         return Ok(false);
     };
-    for (index, value) in values.into_iter().filter(|(index, _)| *index >= start) {
+    for (index, value) in values {
         species::define(vm, result, index - start, value)?;
     }
     Ok(true)
@@ -132,7 +133,7 @@ pub(super) fn slice_range(
 /** Fast sparse copies and generic proxy/getter copies share the exact same result definitions. */
 fn spread(vm: &mut Vm, result: ObjectId, item: &JsValue, offset: usize, length: usize) -> Res<()> {
     if let Some(source) = item.object()
-        && let Some(values) = data(vm, source, Some(result), length)
+        && let Some(values) = data(vm, source, Some(result), 0, length)
     {
         for (index, value) in values {
             species::define(vm, result, offset + index, value)?;

@@ -4,7 +4,7 @@
  * classList and relList rules (value setter, update steps, validation, toggle, replace, supports).
  * Each test pins one rule, and where a rule refuses input, the refusal as well as the acceptance.
  */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, StorageState};
 

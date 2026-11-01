@@ -1,5 +1,5 @@
 /** Blob URLs retain branded immutable bytes only inside their creating VM context. */
-mod common;
+use crate::common;
 use mars_v9::{BlobUrlSource, WorkerCommand};
 
 /** Inspect the captured source without acquiring anything from the network. */
@@ -113,12 +113,12 @@ fn registry_and_source_validation_reject_noncanonical_or_oversized_records() {
 
 #[test]
 fn restored_registry_retains_its_source_and_releases_it_when_revoked() {
-    let execution = common::load(
-        "const url=URL.createObjectURL(new Blob(['42']));setTimeout(()=>{new Worker(url);URL.revokeObjectURL(url);new Worker(url)},1);",
-    );
+    let script = "const url=URL.createObjectURL(new Blob(['42']));setTimeout(()=>{new Worker(url);URL.revokeObjectURL(url);new Worker(url)},1);";
+    let execution = common::load(script);
     let host = common::host();
     let environment = common::environment();
-    let input = common::input(&[], &host, &environment);
+    let sources = [script.to_string()];
+    let input = common::input(&sources, &host, &environment);
     let result = mars_v9::run_timers(input, common::round_trip(execution.state), 1.0, 32).unwrap();
     assert!(result.failed.is_empty());
     assert!(source(&result.effects.worker_commands[0]).is_some());

@@ -156,6 +156,11 @@ pub(super) fn rtl(chosen: &Chosen, inherited: bool) -> bool {
 }
 /** Longhands a flow-relative shorthand sets; None when `key` is not one. */
 pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
+    // Every flow-relative shorthand names its axis, so the common case returns before the
+    // patterns below are formatted for every declaration.
+    if !key.contains("inline") && !key.contains("block") {
+        return None;
+    }
     if let Some(axis) = ["border-inline", "border-block"]
         .into_iter()
         .find(|a| *a == key)

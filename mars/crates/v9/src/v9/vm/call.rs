@@ -211,8 +211,9 @@ impl Vm<'_> {
         match behavior {
             Behavior::Native(index) => {
                 let callee = function.object().expect("callable object");
-                self.call_native(index, callee, this, &args, construct)
-                    .map(Invoked::Value)
+                let result = self.call_native(index, callee, this, &args, construct);
+                self.recycle_args(args);
+                result.map(Invoked::Value)
             }
             Behavior::Bound(target, bound_this, bound_args) => {
                 self.charge(1)?;
@@ -352,6 +353,23 @@ impl Vm<'_> {
         self.pins.truncate(mark);
         result
     }
+    /** The code to run at `site`, compiled now if its function deferred its compile to its first
+    call. A compile error is the SyntaxError an eager compile would have raised at load;
+    `missing` names an unknown site. */
+    fn runnable(
+        &mut self,
+        site: u32,
+        missing: &'static str,
+    ) -> Res<std::sync::Arc<crate::v9::compile::Code>> {
+        match self.registry.compiled(site) {
+            Ok(Some(code)) => Ok(code),
+            Ok(None) => Err(EngineError::invalid(missing).into()),
+            Err(error) if error.code == "script_syntax_error" => {
+                Err(self.syntax_error(&crate::v9::errors::syntax_reason(&error)))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
     /** Push a closure frame, or run it to completion for async functions. */
     #[allow(clippy::too_many_arguments)]
     fn call_closure(
@@ -364,11 +382,7 @@ impl Vm<'_> {
         construct: Option<JsValue>,
         boundary: bool,
     ) -> Res<Invoked> {
-        let code = self
-            .registry
-            .get(site)
-            .cloned()
-            .ok_or_else(|| EngineError::invalid("Invalid V9 function code site."))?;
+        let code = self.runnable(site, "Invalid V9 function code site.")?;
         let flags = code.flags;
         if flags.constructor && construct.is_none() {
             let name = code.name.lossy();
@@ -571,6 +585,15 @@ impl Vm<'_> {
     }
     /** Run a just-pushed async function frame until it first awaits or finishes. */
     fn start_async(&mut self) -> Res<JsValue> {
+        let mark = self.pins.len();
+        let result = self.start_async_rooted();
+        // The caller receives the result without another collection point. Suspended frames
+        // belong to their promise reactions; completed results must not stay live all turn.
+        self.pins.truncate(mark);
+        result
+    }
+    /** Keep setup temporaries alive until the result or its continuation owns them. */
+    fn start_async_rooted(&mut self) -> Res<JsValue> {
         let promise = self.new_promise()?;
         self.pin(JsValue::Object(promise));
         let holder = self.alloc(Object::new(
@@ -670,11 +693,7 @@ impl Vm<'_> {
     }
     /** Push a saved frame back, as a boundary frame. */
     pub fn restore_frame(&mut self, saved: SavedFrame, boundary: bool) -> Res<()> {
-        let code = self
-            .registry
-            .get(saved.site)
-            .cloned()
-            .ok_or_else(|| EngineError::invalid("Invalid V9 suspended frame code."))?;
+        let code = self.runnable(saved.site, "Invalid V9 suspended frame code.")?;
         if saved.pc as usize > code.ops.len() || saved.regs.len() != code.registers as usize {
             return Err(EngineError::invalid("Invalid V9 suspended frame.").into());
         }

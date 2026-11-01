@@ -247,14 +247,15 @@ fn failure(
     run_with(source, page(), languages, fragments).unwrap_err()
 }
 
-/** A fragment over FRAGMENT_BYTES UTF-8 bytes is refused before parsing, though it has fewer
-characters than that: the bound is on bytes. */
+/** A fragment past the old 64 KiB per-fragment bound inserts: Chrome has no such limit, and a
+normal page's markup (Amazon's product grid) is larger, so only the document bound applies. */
 #[test]
-fn oversized_fragment_fails_explicitly() {
-    let characters = FRAGMENT_BYTES / EURO_BYTES + 1;
-    let source =
-        format!("var h='€'.repeat({characters});document.body.insertAdjacentHTML('beforeend',h)");
-    assert_eq!(failure(&source, &[], &Empty).code, "limit_exceeded");
+fn fragment_over_the_old_per_fragment_bound_inserts() {
+    let characters = FRAGMENT_BYTES / EURO_BYTES * 2;
+    let source = format!(
+        "document.body.insertAdjacentHTML('beforeend','<p>'+'€'.repeat({characters})+'</p>')"
+    );
+    assert!(run_with(&source, page(), &[], &Empty).is_ok());
 }
 
 /** Fragments one execution inserts share FRAGMENT_TOTAL_BYTES. */
@@ -323,11 +324,15 @@ fn prepend_of_an_ancestor_fails() {
     assert!(error.message.contains("HierarchyRequestError"));
 }
 
-/** Text arguments to prepend are outside the subset. */
+/** A text argument to prepend becomes a leading text node, as ParentNode.prepend specifies. */
 #[test]
-fn prepend_with_a_string_is_unsupported() {
-    let source = "document.body.prepend('x')";
-    assert_eq!(failure(source, &[], &Empty).code, "unsupported_feature");
+fn prepend_with_a_string_inserts_a_text_node() {
+    let source = "document.body.prepend('x');const r=document.body.firstChild.nodeType+'|'+document.body.firstChild.data";
+    let result = run_with(source, page(), &[], &Empty).unwrap();
+    assert_eq!(
+        result.state.globals()["r"].value,
+        Some(JsValue::string("3|x").unwrap())
+    );
 }
 
 /** Replacing parent text detaches retained elements; their attributes remain locally writable. */

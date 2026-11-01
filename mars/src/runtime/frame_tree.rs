@@ -65,8 +65,10 @@ impl Runtime {
 
     /** Reserve every static iframe before executing any child, including later siblings. */
     pub(super) fn initial_frame_tree(&mut self, document: &Document) -> EngineResult<Tree> {
-        let mut tree = Tree::default();
-        tree.window = self.frame_identity()?;
+        let mut tree = Tree {
+            window: self.frame_identity()?,
+            ..Default::default()
+        };
         self.refresh_frame_directory(&mut tree, document)?;
         Ok(tree)
     }
@@ -136,7 +138,7 @@ impl Runtime {
             }
         }
         let contexts = &page.frame_tree.contexts;
-        Arc::make_mut(&mut page.frames).retain(|frame| {
+        Arc::make_mut(&mut page.frames).retain_mut(|frame| {
             if page
                 .document
                 .nodes
@@ -149,6 +151,9 @@ impl Runtime {
                 !retired.contains(&frame.owner()) && frame.window_matches(context.window)
             });
             if !keep {
+                if let Some(child) = frame.page.as_mut() {
+                    super::broadcast::retire_page(child, &mut page.scripting.broadcast);
+                }
                 frame.remove_images(&mut page.images);
             }
             keep

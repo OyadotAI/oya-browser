@@ -59,6 +59,7 @@ fn schedule(vm: &mut Vm, id: ObjectId, state: &mut State, due: f64) -> Res<()> {
         callback: JsValue::Object(callback),
         args: Vec::new(),
         frame: false,
+        nesting: 0,
     });
     state.timer = Some(timer);
     Ok(())

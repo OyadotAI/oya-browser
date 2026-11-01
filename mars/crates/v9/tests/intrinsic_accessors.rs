@@ -1,5 +1,5 @@
 /** Intrinsic accessor metadata and prototype operations retain the prescribed names, attributes and proxy observation. */
-mod common;
+use crate::common;
 
 /** Getter labels include their prefix while native dispatch still reads the correct property. */
 #[test]

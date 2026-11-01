@@ -47,7 +47,8 @@ pub(in crate::runtime) fn decode(asset: &ImageAsset) -> EngineResult<Bitmap> {
     decoder::decode(asset)
 }
 
-/** Governed redirects retain credential policy and validate CORS before granting clean image pixels. */
+/** Governed redirects retain credential policy and validate CORS before granting clean image pixels.
+`avif` false replaces Chrome's image Accept with one that leaves AVIF out. */
 pub(super) fn fetch(
     runtime: &mut Runtime,
     base: &Url,
@@ -55,11 +56,13 @@ pub(super) fn fetch(
     bitmap: bool,
     mode: crate::v9::ImageCors,
     deadline: Instant,
+    avif: bool,
 ) -> EngineResult<(WebResponse, bool)> {
     let mut url = initial.clone();
     let mut flow = cors::ImageFlow::new(base, mode);
     for hops in 0..=crate::constants::REDIRECTS {
-        let (request, credentials) = flow.request(&url, bitmap);
+        let (mut request, credentials) = flow.request(&url, bitmap);
+        request.no_avif = !avif;
         let acquired = runtime.acquire_with(
             request,
             deadline,

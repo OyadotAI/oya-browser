@@ -1,6 +1,6 @@
 /** The page host's `$262.evalScript` hook runs source as a script, not as an eval. */
 #[cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Script evaluation instantiates declarations like a new script: non-configurable vars, script-scoped lets, collisions as SyntaxError. */
 #[cfg(feature = "conformance")]

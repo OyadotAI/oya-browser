@@ -1,5 +1,5 @@
 /** Generic array locale conversion and in-place copying retain callback and failure order. */
-mod common;
+use crate::common;
 
 /** Locale methods receive the actual element and both formatting options. */
 #[test]

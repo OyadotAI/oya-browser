@@ -7,6 +7,158 @@ native runtime was used for these tests.
 
 ## Everyday browsing candidate, 2026-10-30
 
+The YouTube transform failure was caused by SVGElement/SVGGraphicsElement aliases
+sharing HTMLElement.prototype: generated SVG shape completion installed a
+getter-only transform on the shared HTML prototype. SVG now has separate
+Element-based prototype chains, including namespace-aware specialized wrappers,
+while existing style/events and root width/height behavior remain. This permits
+Polymer's legitimate HTMLElement-derived prototype method assignment. Three
+focused regressions are added unrun. Build `c37c38bc` passed in 58.87s; log:
+`/private/tmp/mars-svg-prototype-repair-build.log`. Frozen executable SHA-256:
+`687095f3cb193df99f360e6a913daed873dbbd8a1d1b8529585c3a49a88b921d`.
+Signed and signature-verified `mars/dist/Mars Interface Repair.app` executable:
+`ab7c197e13808ac32a1c6e6bbb333923f4121b494983d397ccd3b15a5f30264c`.
+Its YouTube startup loaded 42 scripts, published 1,325 document nodes, and recorded
+no script-failure diagnostics. Four observed same-origin Innertube POSTs returned
+HTTP 200; the captured document no longer contained the offline fallback copy.
+Evidence: `/private/tmp/mars-youtube-interface-20261030/perf.log` and `captured/`.
+The capture directory was sealed after startup to stop repetitive frame dumps;
+the desktop and three engines remain running for manual testing. This does not
+verify video playback, all interactions or complete YouTube compatibility.
+
+
+BroadcastChannel build `63a005e0` passed in 37.13s with final HTTP-status diagnostics
+after the initial full build. Log: `/private/tmp/mars-broadcast-final-build.log`.
+Frozen executable SHA-256:
+`0946daac3810b858e535eada87fdafeb0cde6ae0b4cab2a2ca01abb05c332a2b`.
+Signed `mars/dist/Mars Channel Repair.app` executable SHA-256:
+`c7771c8bf544867eba566f76baea086c342a2ed324468d7784fca6c888ef831f`.
+Its captured GitHub startup published 2,116 document nodes with no script failure
+diagnostics, resolving the observed BroadcastChannel-constructor failure in that
+startup. Cross-tab interaction and full rendering remain unverified; suites were
+not run. Capture: `/private/tmp/mars-github-broadcast-20261030/inputs`.
+
+The same build captured YouTube's newly reported getter-only `transform` failure
+exactly. Script 29's reported line 5655 rethrows through `_DumpException`; line
+9277 assigns Polymer's `Y.prototype.transform` during construction of its
+HTMLElement mixin. This identifies an interface-binding conflict before ordinary
+API requests rather than proving a network connectivity failure. Capture:
+`/private/tmp/mars-youtube-requests-20261030/inputs`. Both temporary diagnostic
+instances were stopped after their startup evidence was retained.
+
+GitHub's improved error identified BroadcastChannel as the previously unnamed
+illegal constructor. V9 now exposes real construction, immutable names, post/close,
+native message events and listener-sensitive lifetime; the coordinator routes
+committed tasks across same-origin/same-schemeful-partition tabs, frames and workers.
+Receiver sets are captured at post time, ordered by endpoint creation, and checked
+again for close/teardown at delivery. Same-context sibling channels receive; the
+sender object does not. Cross-runtime messaging and Map/Set/Date/shared-buffer
+clone payloads remain unsupported. Seven V9 and seven native broker regressions,
+plus three site-partition checks, are added unrun. Library compilation passed in
+33.39s; the first complete application build passed in 1m 00s.
+
+The YouTube screenshot matches its local API-failure fallback, not a false
+navigator.onLine default: Mars reports true and the inspected binding is correct.
+Private opt-in diagnostics now retain native request identity, fixed endpoint
+category/method, same-origin flag, failure stage/code and HTTP response status.
+They exclude URL/query/header/body and raw error text; POST retry/uncertainty and
+CORS behavior are unchanged. Three focused diagnostics regressions are unrun.
+
+A fresh Oya-site diagnostic startup fetched 85,517 HTML bytes, parsed 523 nodes,
+loaded 13 scripts (697,417 source bytes) and published the page; retained document
+inputs include visible main headings and no script failure diagnostic. This does
+not establish visual correctness or reproduce the user's reported load failure.
+The inline Script 8 indexOf error could not be matched to 654 saved V9 inputs or
+880 standalone HTML/JS artifacts, nor the fresh Oya-site/Google homepage captures;
+its receiver remains unidentified and no speculative fallback was added.
+Temporary capture instances were stopped; repetitive render inputs were removed
+while first/last renders, scripts, network inputs and logs were retained.
+
+Load-event repair build `e73ff8a5` passed in 55.49s. Final build log:
+`/private/tmp/mars-load-event-repair-final-build.log`. Frozen executable SHA-256:
+`a45fb1a90fd1c008d344580002cf3e673214b1d38276cc411526303b03a432e6`.
+`mars/dist/Mars Load Repair.app` was signed, signature-verified and opened at
+DuckDuckGo; its desktop and three service processes were confirmed running.
+Signed executable SHA-256:
+`5ff7d16bcedf606dd4d268cf4314841019f4a5f5b231b080496bf04aa8cfa91d`.
+The normal startup log at `/private/tmp/mars-load-repair-startup-20261030.log`
+records the same 36-script/1,054,188-byte workload as the diagnostic startup,
+followed by script processing and page publication with no listener refusal.
+This is startup diagnostic evidence for the reported failure, not a full page
+rendering/interaction verification. Regression suites and browser QA remain
+unrun; no offline replay or automated browser interactions were performed.
+
+The repeated 16 MiB failure now has a captured cause. A diagnostic app startup at
+DuckDuckGo recorded 28,332 listeners: 28,328 on Window, three on Document and one
+on a node. Admission failed at source offset 52385, line 1, column 9925. The exact
+homepage input (`/private/tmp/mars-listener-startup-20261030/inputs/000002-v9.page.json`)
+maps this to inline script 11's web-vitals readiness callback, which registers
+another capture Window `load` callback while readyState is not complete.
+Mars incorrectly propagated each script-resource load through Window capture.
+Listener dispatch snapshots were correct: growth doubled across subsequent
+resource events rather than within one invocation. The capture has 21 later
+external scripts. Ladybird's `Document.cpp:5213` explicitly returns no parent
+for `load`; Mars now applies that same event-path boundary. Element/Document
+delivery, direct Window load and other event types remain intact. The listener
+budget was not increased. `composedPath()` reports the same boundary; the initial
+compile caught its remaining old call signature, which was corrected before the
+final build. Three focused regressions are added unrun.
+
+The diagnostic build at `f0c154b4` passed in 55.64s and its temporary app was stopped
+after collecting the startup. Numeric evidence is in
+`/private/tmp/mars-listener-startup-20261030/perf.log`. Error details contain bounded
+native counts/stage/name sizes rather than event-name strings; the native opt-in
+perf sink additionally records numeric source coordinates. No replay or browser
+QA was run. Separate source inspection found async setup and async iterator
+temporary pins outliving their setup call; scoped release now preserves pending
+reaction/caller roots, with three regressions added unrun. That independent leak
+does not explain the Window listener growth observed here.
+
+Listener repair build `497f3126` passed in 1m 00s after the final stored-signal
+shape guard, including the layout-cache and aggregate-diagnostic repairs. Final
+log: `/private/tmp/mars-listener-storage-final-build.log`; the earlier production
+compile also passed in 1m 02s. Frozen executable SHA-256:
+`22ecbcde74cab620e134083d2fe2d1808c2bb5aecfe5b4e70f13021a1b1976b6`.
+`mars/dist/Mars Listener Repair.app` was signed, signature-verified and opened at
+DuckDuckGo for manual testing; its desktop and three service processes were
+confirmed running. Signed executable SHA-256:
+`b8fa99c93e2110e67805bb3a44dd694d9c1b11f97dbde248e6f11a80708d6983`.
+Tests and browser QA remain unrun. This replaces the fixed listener ceiling in
+the earlier Page Repair candidate; live DuckDuckGo success and the screenshot's
+overlap remain unverified.
+
+The repeated DuckDuckGo report prompted replacement of the fixed 16,384-listener
+ceiling with a 16 MiB storage budget, one quarter of the unchanged total state cap.
+Each registration accounts for the larger of conservative native tree allocation
+and worst-case escaped JSON, including both retained event-kind strings. Capacity
+therefore depends on event names and platform representation; the earlier rough
+50,000–65,000 estimate was too high once native tree overhead was included.
+Cached usage follows removal, pruning, cloning and node renumbering. Restoration
+streams records into the admitted index, rejecting duplicates and excess storage;
+full and summary validation agree. Dispatch copies are work-charged, IDs fail
+before wrapping, and the total 64 MiB serialized-state writer remains unchanged.
+Focused regressions cover 20,000 retained short-name registrations, storage
+pressure collection, long names, budget recovery, identity/shape rejection and
+full/summary restoration; they remain unrun. No live-page success is inferred
+from this capacity/lifetime repair.
+
+Whole-load errors no longer manufacture one failure per script. Native load
+fallback uses an engine-provided execution index only when valid; otherwise it
+reports one page initialization failure. V9 finalization rollback now carries an
+optional aggregate `load_failure` separately from actual indexed failures; native
+code records it once, including module continuations. Empty-state validation and
+rollback behavior remain unchanged. Five focused regressions are added unrun.
+Source tracing found no registration accumulation from geometry/source-cache
+retries or resident summary restoration.
+
+After the user repeated the listener failure, a second repair batch isolated
+intrinsic keyword measurements per layout. Each context starts with an empty
+cache, publishes completed child widths during premeasurement, and restores the
+enclosing cache after nested vertical layouts, including error returns. Three
+focused regressions are added unrun. Local homepage CSS contains the reported
+search/Duck.ai selectors, but this source-confirmed cache defect is not proven to
+be the screenshot's cause.
+
 Page repair build `3e1ae934` passed in 1m 09s, covering image source admission,
 Window handler defaults, listener cleanup, CSP parsing and constructor diagnostics.
 Build log: `/private/tmp/mars-page-compatibility-build.log`. Frozen executable

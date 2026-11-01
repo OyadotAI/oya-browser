@@ -9,6 +9,9 @@ pub(super) const ACCEPT_ENCODING: &str = "gzip, deflate, br, zstd";
 /// Chrome advertises Brotli and Zstandard only over HTTPS; plain HTTP gets this.
 pub(super) const ACCEPT_ENCODING_PLAIN: &str = "gzip, deflate";
 
+/// Media element requests ask for the bytes as stored, Chrome's exact value.
+pub(super) const MEDIA_ACCEPT_ENCODING: &str = "identity;q=1, *;q=0";
+
 /** Brotli's internal window buffer; any size works, this one matches its documented default. */
 const BROTLI_BUFFER: usize = 4096;
 

@@ -46,6 +46,8 @@ pub(super) struct LayoutContext<'a> {
     pub document: &'a Document,
     /** Identity to vector position, built once so no lookup rescans the tree. */
     positions: Vec<Option<usize>>,
+    /** Select options by identity, built once so a select's title never rescans the document. */
+    pub controls: crate::document::ControlIndex,
     /** Child positions per parent identity in vector order, hidden or not. */
     kids: Vec<Vec<usize>>,
     work: usize,
@@ -109,6 +111,7 @@ impl<'a> LayoutContext<'a> {
         }
         let mut context = Self {
             document,
+            controls: crate::document::ControlIndex::new(document),
             positions,
             kids,
             work: LAYOUT_WORK,
@@ -972,6 +975,9 @@ pub(super) fn specified_content(node: &Node, available: f64) -> Option<f64> {
     if node.style.width_stretch {
         return Some(stretch_content(node, available));
     }
+    if let Some(expr) = &node.style.width_expr {
+        return Some(content_size(node, expr.resolve(available).max(0.0), true));
+    }
     node.style.width.map(|width| {
         content_size(
             node,
@@ -1011,9 +1017,18 @@ pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
     if let Some(width) = own_keyword(node, Bound::Min, containing) {
         return Some(width);
     }
+    if let Some(expr) = &node.style.min_width_expr {
+        return containing
+            .map(|containing| content_size(node, expr.resolve(containing).max(0.0), true));
+    }
     if let Some(percent) = node.style.min_width_percent {
         return containing.map(|containing| {
-            content_size(node, layout_unit_floor(containing * percent / 100.0), true)
+            let offset = node.style.min_width_offset;
+            content_size(
+                node,
+                layout_unit_floor(containing * percent / 100.0) + offset,
+                true,
+            )
         });
     }
     node.style
@@ -1025,6 +1040,11 @@ pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
     if let Some(width) = own_keyword(node, Bound::Max, containing) {
         return width;
     }
+    if let Some(expr) = &node.style.max_width_expr {
+        return containing.map_or(LAYOUT_EXTENT, |containing| {
+            content_size(node, expr.resolve(containing).max(0.0), true)
+        });
+    }
     let Some(value) = node.style.max_width else {
         return LAYOUT_EXTENT;
     };
@@ -1032,7 +1052,11 @@ pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
         return content_size(node, value, true);
     }
     containing.map_or(LAYOUT_EXTENT, |containing| {
-        content_size(node, containing * value / 100.0, true)
+        content_size(
+            node,
+            containing * value / 100.0 + node.style.max_width_offset,
+            true,
+        )
     })
 }
 /** Auto blocks fill the available border box; specified sizes can overflow their containing block. */
@@ -1341,7 +1365,9 @@ fn row_basis_contribution(
     let basis = match child.style.flex_basis {
         crate::document::FlexBasis::Pixels(value) => Some(content_size(child, value, true)),
         crate::document::FlexBasis::Auto => preferred,
-        crate::document::FlexBasis::Percent(_) | crate::document::FlexBasis::Content => None,
+        crate::document::FlexBasis::Percent(_)
+        | crate::document::FlexBasis::Mixed { .. }
+        | crate::document::FlexBasis::Content => None,
     };
     let Some(base) = basis else {
         return;

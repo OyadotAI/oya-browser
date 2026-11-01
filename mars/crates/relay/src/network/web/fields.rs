@@ -1,5 +1,5 @@
 /** Chrome-shaped request header fields, in Chrome 152's order, shared by HTTP/1.1 and HTTP/2. */
-use super::encoding::{ACCEPT_ENCODING, ACCEPT_ENCODING_PLAIN};
+use super::encoding::{ACCEPT_ENCODING, ACCEPT_ENCODING_PLAIN, MEDIA_ACCEPT_ENCODING};
 use crate::network::cookies::site;
 use crate::network::{Destination, Method, WebRequest};
 use ::url::Url;
@@ -95,7 +95,13 @@ pub(super) fn fields(
     }
     fields.push(("user-agent", USER_AGENT.into()));
     if !set_by_page(request, "accept") {
-        fields.push(("accept", accept(destination).into()));
+        let accept = match destination {
+            Destination::Image if request.no_avif => {
+                super::super::constants::ACCEPT_IMAGE_WITHOUT_AVIF
+            }
+            destination => accept(destination),
+        };
+        fields.push(("accept", accept.into()));
     }
     if secure {
         fetch_metadata(&mut fields, url, initiator.as_ref(), request);
@@ -103,7 +109,10 @@ pub(super) fn fields(
     if let Some(referer) = initiator.as_ref().and_then(|from| referer(from, url)) {
         fields.push(("referer", referer));
     }
-    let encoding = if secure {
+    // Chrome asks for media unencoded, so byte ranges address the file itself.
+    let encoding = if destination.media() {
+        MEDIA_ACCEPT_ENCODING
+    } else if secure {
         ACCEPT_ENCODING
     } else {
         ACCEPT_ENCODING_PLAIN
@@ -116,16 +125,23 @@ pub(super) fn fields(
         ));
     }
     fields.extend(conditional.iter().cloned());
+    if let Some((start, end)) = request.range {
+        let end = end.map(|end| end.to_string()).unwrap_or_default();
+        fields.push(("range", format!("bytes={start}-{end}")));
+    }
     if !request.cookie.is_empty() {
         fields.push(("cookie", request.cookie.clone()));
     }
     fields
 }
 
-/// The Origin a request sends: a script or image request's own (the coordinator serialized it the Fetch
-/// way, `null` included), or a form POST's initiator origin.
+/// The Origin a request sends: a script, image or module worker CORS request's own (the
+/// coordinator serialized it the Fetch way, `null` included), or a form POST's initiator origin.
 fn origin(request: &WebRequest, initiator: Option<&Url>) -> Option<String> {
-    if matches!(request.destination, Destination::Empty | Destination::Image) {
+    if matches!(
+        request.destination,
+        Destination::Empty | Destination::Image | Destination::Worker | Destination::WorkerImport
+    ) {
         return request.origin.clone();
     }
     initiator
@@ -191,6 +207,8 @@ pub(super) fn priority(request: &WebRequest) -> (&'static str, u8) {
         Destination::Image => ("u=2, i", 182),
         Destination::Font => ("u=1", 219),
         Destination::Empty => ("u=1, i", 219),
+        // Chrome loads media at low priority, incrementally.
+        Destination::Video | Destination::Audio => ("u=4, i", 147),
     }
 }
 
@@ -204,7 +222,9 @@ fn accept(destination: Destination) -> &'static str {
         | Destination::Worker
         | Destination::WorkerImport
         | Destination::Font
-        | Destination::Empty => "*/*",
+        | Destination::Empty
+        | Destination::Video
+        | Destination::Audio => "*/*",
     }
 }
 
@@ -231,6 +251,21 @@ fn fetch_metadata(
         // Chrome fetches fonts in CORS mode, as CSS Fonts requires; Mars sends the metadata and
         // does not yet refuse a font whose response lacks Access-Control-Allow-Origin.
         Destination::Font => ("cors", "font"),
+        // Media elements without `crossorigin` fetch in no-cors mode, as Chrome's do.
+        Destination::Video => (
+            request
+                .mode
+                .unwrap_or(super::super::cors::Mode::NoCors)
+                .name(),
+            "video",
+        ),
+        Destination::Audio => (
+            request
+                .mode
+                .unwrap_or(super::super::cors::Mode::NoCors)
+                .name(),
+            "audio",
+        ),
         Destination::Empty => (
             request
                 .mode
@@ -403,6 +438,39 @@ mod tests {
         post.initiator = Some("https://a.example/form".into());
         assert_eq!(sent(&post, "origin"), "https://a.example");
         assert_eq!(sent(&post, "cache-control"), "max-age=0");
+    }
+
+    /** An image asks with Chrome's exact Accept, AVIF first; only the retry, which the runtime
+    asks for when its AVIF decoder cannot build a file, leaves AVIF out, and its cache entry is
+    kept apart from the first request's. */
+    #[test]
+    fn image_accept_offers_avif_except_on_the_retry() {
+        let image = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get("https://a.example/p.jpg")
+        };
+        assert_eq!(sent(&image, "accept"), ACCEPT_IMAGE);
+        let retry = WebRequest {
+            no_avif: true,
+            ..image.clone()
+        };
+        assert_eq!(
+            sent(&retry, "accept"),
+            crate::network::constants::ACCEPT_IMAGE_WITHOUT_AVIF
+        );
+        let url = Url::parse(&image.url).expect("url");
+        let keyed = |request: &WebRequest| super::super::cache::Key::of(request, &url, false);
+        let page = WebRequest {
+            top_level: Some("https://a.example/".into()),
+            ..image.clone()
+        };
+        let page_retry = WebRequest {
+            no_avif: true,
+            ..page.clone()
+        };
+        assert!(keyed(&page).is_some());
+        assert_ne!(keyed(&page), keyed(&page_retry));
     }
 
     #[test]

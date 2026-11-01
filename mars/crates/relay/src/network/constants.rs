@@ -7,6 +7,11 @@ use std::time::Duration;
 /// hung (and restarts the engine) instead of receiving an ordinary, degradable timeout.
 pub const REPLY_MARGIN: Duration = Duration::from_millis(300);
 
+/// Chrome's image Accept without AVIF, for the one retry after the runtime's AVIF decoder reports
+/// an AVIF feature it does not build (intra block copy, superres, rotation); the first request
+/// keeps Chrome's exact header, which offers AVIF first.
+pub const ACCEPT_IMAGE_WITHOUT_AVIF: &str = "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
+
 /// One socket read. Large enough that a 2 MiB body is not thousands of system calls, small
 /// enough that the retained cursor buffer stays a fixed, modest allocation.
 pub const READ_BYTES: usize = 16 * 1024;

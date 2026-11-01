@@ -1,5 +1,5 @@
 /** TypedArray.from/of construct generic receivers and preserve iterator-versus-array-like observation order. */
-mod common;
+use crate::common;
 
 /** A subclass constructor is invoked once with length and determines the resulting native view prototype. */
 #[test]

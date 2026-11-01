@@ -147,16 +147,19 @@ impl Vm<'_> {
         if let PromiseState::Fulfilled(value) | PromiseState::Rejected(value) = &state {
             self.pins.push(value.clone());
         }
-        let result = (|| -> Res<()> {
-            #[cfg(feature = "conformance")]
-            if matches!(self.heap.get(promise).map(|object|&object.class),Some(Class::Promise(data))if matches!(data.state,PromiseState::Pending))
-            {
-                super::async_hook_resolve(self, promise)?;
-            }
-            self.settle_inner(promise, state)
-        })();
+        let result = self.settle_hooked(promise, state);
         self.pins.truncate(mark);
         result
+    }
+    /** Settle after the resolve hook (conformance), in its own frame so a hook failure returns
+    early and the caller still releases its pins. */
+    fn settle_hooked(&mut self, promise: ObjectId, state: PromiseState) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        if matches!(self.heap.get(promise).map(|object|&object.class),Some(Class::Promise(data))if matches!(data.state,PromiseState::Pending))
+        {
+            super::async_hook_resolve(self, promise)?;
+        }
+        self.settle_inner(promise, state)
     }
     /** State transitions happen only after the real resolve hook, so hook-added reactions join the same settlement. */
     fn settle_inner(&mut self, promise: ObjectId, state: PromiseState) -> Res<()> {
@@ -193,13 +196,15 @@ impl Vm<'_> {
         let mark = self.pins.len();
         self.pins.push(JsValue::Object(promise));
         self.pins.push(value.clone());
-        let result = (|| -> Res<()> {
-            #[cfg(feature = "conformance")]
-            super::async_hook_resolve(self, promise)?;
-            self.resolve_promise_inner(promise, value)
-        })();
+        let result = self.resolve_hooked(promise, value);
         self.pins.truncate(mark);
         result
+    }
+    /** Resolve after the resolve hook (conformance); see `settle_hooked`. */
+    fn resolve_hooked(&mut self, promise: ObjectId, value: JsValue) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        super::async_hook_resolve(self, promise)?;
+        self.resolve_promise_inner(promise, value)
     }
     /** PromiseResolve keeps thenable access and adoption on the original language path. */
     fn resolve_promise_inner(&mut self, promise: ObjectId, value: JsValue) -> Res<()> {
@@ -321,7 +326,12 @@ impl Vm<'_> {
         self.draining_jobs = true;
         let result = self.drain_jobs_inner();
         self.draining_jobs = false;
-        result
+        result?;
+        // HTML's "cleanup Indexed Database transactions" closes the checkpoint at the end of a task.
+        if self.indexed_db_cleanup && self.frames.is_empty() {
+            crate::v9::platform::indexed_db::end_of_task(self)?;
+        }
+        Ok(())
     }
     /** One checkpoint owns the queue and always releases its reentrancy guard on failure. */
     fn drain_jobs_inner(&mut self) -> Res<()> {
@@ -332,9 +342,21 @@ impl Vm<'_> {
             }
             // Collect while the next job is still in the queue, where the collector sees it.
             self.collect_if_needed()?;
-            self.collect_if_due()?;
+            if self.collect_due {
+                self.collect_if_due()?;
+            }
             let Some(job) = self.jobs.pop_front() else {
-                break;
+                // A stable state: media elements whose attributes or position changed run
+                // their load steps now, and whatever microtasks those queue drain next.
+                match crate::v9::platform::media::stable_state(self) {
+                    Ok(true) => continue,
+                    Ok(false) => break,
+                    Err(Thrown::Value(error)) => {
+                        crate::v9::platform::workers::report_exception(self, &error)?;
+                        continue;
+                    }
+                    Err(fatal) => return Err(fatal),
+                }
             };
             match self.run_rooted_job(job) {
                 Ok(()) => {}
@@ -434,30 +456,41 @@ impl Vm<'_> {
         if let Some(Some(value)) = &previous_data {
             self.pins.push(value.clone());
         }
-        let result = (|| -> Res<()> {
+        let result = self.run_job_hooked(
+            job,
             #[cfg(feature = "conformance")]
-            if let Some(resource) = resource
-                && let Err(error) = super::async_hook_before(self, resource)
-            {
-                super::async_hook_unwind(self)?;
-                return Err(error);
-            }
-            let result = self.run_job(job);
-            #[cfg(feature = "conformance")]
-            if let Some(resource) = resource {
-                if matches!(result, Err(Thrown::Fatal(_))) {
-                    super::async_hook_unwind(self)?;
-                } else {
-                    super::async_hook_after(self, resource)?;
-                }
-            }
-            result
-        })();
+            resource,
+        );
         #[cfg(feature = "conformance")]
         if let Some(previous) = previous_data {
             self.page.state.continuation_data = previous;
         }
         self.pins.truncate(mark);
+        result
+    }
+    /** One microtask between its async hooks (conformance), in its own frame so a hook
+    failure returns early and the caller still restores its state. */
+    fn run_job_hooked(
+        &mut self,
+        job: Job,
+        #[cfg(feature = "conformance")] resource: Option<ObjectId>,
+    ) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        if let Some(resource) = resource
+            && let Err(error) = super::async_hook_before(self, resource)
+        {
+            super::async_hook_unwind(self)?;
+            return Err(error);
+        }
+        let result = self.run_job(job);
+        #[cfg(feature = "conformance")]
+        if let Some(resource) = resource {
+            if matches!(result, Err(Thrown::Fatal(_))) {
+                super::async_hook_unwind(self)?;
+            } else {
+                super::async_hook_after(self, resource)?;
+            }
+        }
         result
     }
     /** One microtask. */

@@ -379,8 +379,13 @@ impl Vm<'_> {
         result
     }
     /** The explicit-frame interpreter selects its top activation before executing each op. */
+    #[inline]
+    #[allow(dead_code)]
     pub(super) fn select_frame_realm(&mut self) -> Res<()> {
         let bank = self.frames.last().map_or(0, |frame| frame.realm);
+        if bank == self.active_realm {
+            return Ok(());
+        }
         self.select_realm(bank)
     }
     /** Publicly retained contexts and the shared value are strong context roots. */

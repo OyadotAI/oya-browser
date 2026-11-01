@@ -1,6 +1,6 @@
 /* Memory measurements execute real collection tasks and account the caller's permitted resident data. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{ConformanceWorkerSession, PageEnvironment};
 
 /** Async tests must produce their final console result through actual promise/task delivery. */

@@ -1,5 +1,5 @@
 /** Native canvas text and PNG encoding use short-lived OS resources over bounded inert pixels. */
-use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font, PNG_BYTES, TEXT_UNITS};
+use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font, FontMetrics, PNG_BYTES, TEXT_UNITS};
 use mars_core::protocol::{EngineError, EngineResult};
 
 /// Application-injected drawing service; it owns no page state or native handles between calls.
@@ -10,10 +10,16 @@ impl CanvasHost for NativeCanvas {
     fn available(&self) -> bool {
         cfg!(target_os = "macos")
     }
+    /// Ascent and descent of the same face that measurement and painting resolve.
+    fn font_metrics(&self, font: &Font) -> EngineResult<FontMetrics> {
+        validate(font, "")?;
+        let (ascent, descent) = super::font_box(face(font));
+        Ok(FontMetrics { ascent, descent })
+    }
     /// Both calls resolve through Eye's shared generic font selection.
     fn measure(&self, font: &Font, text: &str) -> EngineResult<f64> {
         validate(font, text)?;
-        Ok(super::measure(text, face(font)))
+        Ok(advance(text, font))
     }
     /// Rasterize glyphs into transparent pixels; the caller composites those pixels transactionally.
     fn text(
@@ -76,6 +82,9 @@ fn validate(font: &Font, text: &str) -> EngineResult<()> {
         || font.size <= 0.0
         || font.size > f64::from(mars_core::canvas::EDGE)
         || !["serif", "sans-serif", "monospace"].contains(&font.family.as_str())
+        || [font.letter_spacing, font.word_spacing]
+            .iter()
+            .any(|px| !px.is_finite() || px.abs() > f64::from(mars_core::canvas::EDGE))
     {
         return Err(EngineError::invalid("Invalid bounded canvas text."));
     }
@@ -94,8 +103,19 @@ fn face(font: &Font) -> super::Face {
     .unwrap_or(super::Family::SansSerif);
     super::Face {
         family,
+        weight: font.weight,
+        italic: font.italic,
+        spacing: font.letter_spacing,
         ..super::Face::system(font.size, false)
     }
+}
+/** Width of a run as painted: AppKit's letter spacing is inside the face, CSS word spacing is added per separator. */
+fn advance(text: &str, font: &Font) -> f64 {
+    let separators = text
+        .encode_utf16()
+        .filter(|unit| *unit == 0x20 || *unit == 0xa0)
+        .count();
+    super::measure(text, face(font)) + font.word_spacing * separators as f64
 }
 /** Native allocation/encoding refusal is observable, never represented as successful blank ink. */
 fn drawing_error() -> EngineError {
@@ -148,11 +168,11 @@ fn raster(
             f64::from(color[2]) / 255.0,
             f64::from(color[3]) / 255.0,
         );
-        let run = super::styled(text, face(font), &ink, false);
+        let run = super::spaced(text, face(font), &ink, false, font.word_spacing);
         run.drawWithRect_options_context(
             NSRect::new(
                 NSPoint::new(at[0], f64::from(bitmap.height) - at[1]),
-                NSSize::new(super::measure(text, face(font)) + font.size, font.size),
+                NSSize::new(advance(text, font) + font.size, font.size),
             ),
             NSStringDrawingOptions(0),
             None,
@@ -236,6 +256,7 @@ mod tests {
         let font = Font {
             size: 18.0,
             family: "sans-serif".into(),
+            ..Font::default()
         };
         let expected = NativeCanvas
             .text(&bitmap, &font, "MMMM", [10.0, 24.0], [255; 4])
@@ -261,6 +282,7 @@ mod tests {
         let font = Font {
             size: 18.0,
             family: "sans-serif".into(),
+            ..Font::default()
         };
         let expected = NativeCanvas
             .text(&bitmap, &font, "Ink", [12.0, 30.0], [255, 0, 0, 128])

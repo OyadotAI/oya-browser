@@ -729,10 +729,7 @@ pub(super) fn intrinsic(
 ) -> EngineResult<super::super::sizing::IntrinsicWidths> {
     let style = &node.style;
     let gap = style.column_gap;
-    let (defs, _, mut contributions) = lane_tracks(context, kids, style, None)?;
-    for contribution in &mut contributions {
-        contribution.minimum = super::limited_min_content(contribution, &defs);
-    }
+    let (defs, _, contributions) = lane_tracks(context, kids, style, None)?;
     let total = |space| {
         let widths = tracks::size_tracks(&defs, &contributions, space, gap, false);
         widths.iter().sum::<f64>() + gap * widths.len().saturating_sub(1) as f64
@@ -885,7 +882,7 @@ fn row_lane_tracks<'a>(
                 &mut super::row_measure,
             )? {
                 Some(list) => contributions.extend(list),
-                None => contributions.push(super::row_contribution(&item, lane.4 + margins)),
+                None => contributions.push(super::row_contribution(&item, lane.4 + margins, true)),
             }
         }
     }

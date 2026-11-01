@@ -31,6 +31,9 @@ pub(super) struct Effect {
     pub iterations: f64,
     pub fill: String,
     pub direction: String,
+    /** The timing function as written; `getTiming()` reports it. Opacity interpolates linearly
+    (ponytail: easing curves are not applied to the painted value yet). */
+    pub easing: String,
     pub from: Option<f64>,
     pub to: Option<f64>,
 }
@@ -213,6 +216,8 @@ impl Effect {
             iterations,
             fill,
             direction,
+            // States saved before easing was kept read as the linear default they used.
+            easing: text(vm, id, "easing").unwrap_or_else(|| "linear".into()),
             from,
             to,
         })
@@ -228,7 +233,11 @@ impl Effect {
         ] {
             write(vm, id, name, JsValue::Number(value));
         }
-        for (name, value) in [("fill", &self.fill), ("direction", &self.direction)] {
+        for (name, value) in [
+            ("fill", &self.fill),
+            ("direction", &self.direction),
+            ("easing", &self.easing),
+        ] {
             write(
                 vm,
                 id,

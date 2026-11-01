@@ -12,6 +12,22 @@ const CORNERS: [&str; 4] = ["top-left", "top-right", "bottom-right", "bottom-lef
 pub(super) const BORDER_STYLES: [&str; 10] = [
     "none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset",
 ];
+/** One or two values for a pair shorthand: the second repeats the first when it is absent. */
+fn named_pair(value: &str, first: &str, second: &str) -> Option<Vec<(String, String)>> {
+    let values = tokens(value);
+    let (a, b) = match values.as_slice() {
+        [a] => (*a, *a),
+        [a, b] => (*a, *b),
+        _ => return None,
+    };
+    Some(vec![(first.into(), a.into()), (second.into(), b.into())])
+}
+
+/** Outline keyword styles: the border styles plus `auto`, the focus ring. */
+const OUTLINE_STYLES: [&str; 11] = [
+    "auto", "none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset",
+    "outset",
+];
 /** Longhand list of a shorthand, for CSS-wide keywords; None when `key` is not a shorthand. */
 pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
     let sides = |format: &dyn Fn(&str) -> String| Some(SIDES.iter().map(|s| format(s)).collect());
@@ -24,6 +40,16 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
             let part = &key["border-".len()..];
             sides(&|side| format!("border-{side}-{part}"))
         }
+        "text-decoration" => Some(
+            ["line", "style", "thickness"]
+                .map(|part| format!("text-decoration-{part}"))
+                .to_vec(),
+        ),
+        "outline" => Some(
+            ["color", "style", "width"]
+                .map(|part| format!("outline-{part}"))
+                .to_vec(),
+        ),
         "border" => Some(
             SIDES
                 .iter()
@@ -51,6 +77,21 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
         "contain-intrinsic-size" => Some(super::containment::LONGHANDS.map(Into::into).into()),
         "grid-template" | "grid" => Some(GRID_TEMPLATE.map(Into::into).into()),
         "list-style" => Some(vec!["list-style-type".into()]),
+        "overscroll-behavior" => Some(vec![
+            "overscroll-behavior-x".into(),
+            "overscroll-behavior-y".into(),
+        ]),
+        "scroll-padding" => sides(&|side| format!("scroll-padding-{side}")),
+        "scroll-padding-inline" => Some(
+            ["scroll-padding-inline-start", "scroll-padding-inline-end"]
+                .map(Into::into)
+                .into(),
+        ),
+        "scroll-padding-block" => Some(
+            ["scroll-padding-block-start", "scroll-padding-block-end"]
+                .map(Into::into)
+                .into(),
+        ),
         "gap" => Some(vec!["row-gap".into(), "column-gap".into()]),
         "flex" => Some(
             ["flex-grow", "flex-shrink", "flex-basis"]
@@ -120,6 +161,8 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
             let part = &key["border-".len()..];
             four(value).map(|v| sided(&|side| format!("border-{side}-{part}"), v))
         }
+        "outline" => side_tokens(value, &OUTLINE_STYLES).map(|parts| side_parts("outline", &parts)),
+        "text-decoration" => text_decoration(value),
         "border" => border_side(value).map(|parts| {
             SIDES
                 .iter()
@@ -132,6 +175,20 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
         "border-radius" => radius(value),
         "overflow" => overflow(value),
         "list-style" => list_style(value),
+        "overscroll-behavior" => {
+            named_pair(value, "overscroll-behavior-x", "overscroll-behavior-y")
+        }
+        "scroll-padding" => four(value).map(|v| sided(&|side| format!("scroll-padding-{side}"), v)),
+        "scroll-padding-inline" => named_pair(
+            value,
+            "scroll-padding-inline-start",
+            "scroll-padding-inline-end",
+        ),
+        "scroll-padding-block" => named_pair(
+            value,
+            "scroll-padding-block-start",
+            "scroll-padding-block-end",
+        ),
         "background" => background(raw),
         "animation" => super::animation::shorthand(raw),
         "transition" => super::transition::shorthand(raw),
@@ -241,7 +298,8 @@ fn flex_values(value: &str) -> Option<Vec<(String, String)>> {
 /** Blink's factor-first ambiguity rule admits a basis before both factors or after their completed pair. */
 fn parse_flex(value: &str) -> Option<(String, String, String)> {
     let (mut grow, mut shrink, mut basis) = (None, None, None);
-    for token in value.split_whitespace() {
+    // Tokens split at top level only, so a `calc()` basis stays one token.
+    for token in tokens(value) {
         if let Ok(factor) = number(token) {
             if grow.is_none() {
                 grow = Some(token.to_owned());
@@ -367,9 +425,16 @@ fn sided(name: &dyn Fn(&str) -> String, values: [String; 4]) -> Vec<(String, Str
 }
 /** A border side's width, style and color in any order, each optional. */
 pub(super) fn border_side(value: &str) -> Option<[String; 3]> {
+    side_tokens(value, &BORDER_STYLES)
+}
+/**
+ * The width, style and color of a one-side shorthand in any order, each defaulting to its
+ * initial value; a token that fits no slot, or a second color, makes the whole declaration invalid.
+ */
+fn side_tokens(value: &str, styles: &[&str]) -> Option<[String; 3]> {
     let (mut width, mut style, mut color) = (None, None, None);
     for token in tokens(value) {
-        if BORDER_STYLES.contains(&token) && style.is_none() {
+        if styles.contains(&token) && style.is_none() {
             style = Some(token);
         } else if width.is_none() && super::border::width(token).is_ok() {
             width = Some(token);
@@ -385,6 +450,58 @@ pub(super) fn border_side(value: &str) -> Option<[String; 3]> {
         color.unwrap_or("currentcolor").into(),
     ])
 }
+/**
+ * The `text-decoration` shorthand's line, style and thickness. Each unnamed part resets to its
+ * initial value, and colors are dropped since decoration lines paint in the text color. Expanding
+ * here keeps the reset in declaration order, where a longhand written earlier would survive it.
+ */
+fn text_decoration(value: &str) -> Option<Vec<(String, String)>> {
+    let words = tokens(value);
+    let (mut lines, mut style, mut thickness, mut colored) = (Vec::new(), None, None, false);
+    for &token in &words {
+        match token {
+            "none" if words.len() == 1 => {}
+            "underline" | "overline" | "line-through" | "blink" if !lines.contains(&token) => {
+                lines.push(token)
+            }
+            "solid" | "double" | "dotted" | "dashed" | "wavy" if style.is_none() => {
+                style = Some(token)
+            }
+            "auto" | "from-font" if thickness.is_none() => thickness = Some(token),
+            _ if thickness.is_none() && is_length(token) => thickness = Some(token),
+            _ if !colored && is_color(token) => colored = true,
+            // Blink drops the declaration on any other word, or a repeated part.
+            _ => return None,
+        }
+    }
+    let line = if lines.is_empty() {
+        "none".to_string()
+    } else {
+        lines.join(" ")
+    };
+    Some(vec![
+        ("text-decoration-line".into(), line),
+        (
+            "text-decoration-style".into(),
+            style.unwrap_or("solid").into(),
+        ),
+        (
+            "text-decoration-thickness".into(),
+            thickness.unwrap_or("auto").into(),
+        ),
+    ])
+}
+/** Whether a `text-decoration` word is a thickness length, which starts like a number. */
+fn is_length(token: &str) -> bool {
+    token.starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c))
+}
+
+/** Whether a `text-decoration` word is a color: `currentcolor` or one Eye parses. The color itself
+is not kept, since no decoration-color longhand exists yet. */
+fn is_color(token: &str) -> bool {
+    token == "currentcolor" || super::colors::painter_rgba(token).is_some()
+}
+
 /** The three longhands of one side. */
 fn side_parts(prefix: &str, [width, style, color]: &[String; 3]) -> Vec<(String, String)> {
     vec![

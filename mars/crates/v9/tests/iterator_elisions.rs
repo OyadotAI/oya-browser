@@ -1,5 +1,5 @@
 /** Destructuring holes consume iterator steps without observing result values or changing cleanup and native next semantics. */
-mod common;
+use crate::common;
 
 /** A successful elision reads next and done, skips value, then closes the still-live record. */
 #[test]

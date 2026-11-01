@@ -1,5 +1,5 @@
 /** Typed-array integrity and searches follow their native brands and live backing-store witnesses. */
-mod common;
+use crate::common;
 
 /** Integer-indexed elements remain writable after a failed freeze or seal, but extension has stopped. */
 #[test]

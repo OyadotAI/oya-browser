@@ -1,9 +1,7 @@
 /** Box shadows, background layers and 2D transforms parse into bounded painter data. */
 use super::{
     BackgroundLayer, BoxShadow, ColorStop, ComputedStyle, Extent, RadialShape, RadialSize,
-    constants::{
-        BACKGROUND_LAYERS, GRADIENT_STOPS, PERCENT, SHADOWS, TRANSFORM_FUNCTIONS, TRANSFORM_MAX,
-    },
+    constants::{BACKGROUND_LAYERS, GRADIENT_STOPS, PERCENT, SHADOWS, TRANSFORM_MAX},
     layout_props::{background_position, extent},
     note,
     syntax::{split_top, tokens},
@@ -349,38 +347,6 @@ fn stop_position(part: &str, font: f64, context: RenderContext) -> (Option<f64>,
         (false, false) => (Some(0.0), None),
     }
 }
-/** `none`, or a composed list of 2D transform functions and percentage translations. */
-pub(super) fn transform(
-    value: &str,
-    font: f64,
-    context: RenderContext,
-) -> EngineResult<(Option<[f64; 6]>, [f64; 2])> {
-    if value == "none" {
-        return Ok((None, [0.0; 2]));
-    }
-    let functions: Vec<&str> = tokens(value).into_iter().flat_map(adjacent).collect();
-    if functions.len() > TRANSFORM_FUNCTIONS {
-        return Err(unsupported());
-    }
-    let (mut matrix, mut percent) = (IDENTITY, [0.0; 2]);
-    for function in functions {
-        let (next, pct) = transform_function(function, font, context)?;
-        percent = [
-            matrix[0] * pct[0] + matrix[2] * pct[1] + percent[0],
-            matrix[1] * pct[0] + matrix[3] * pct[1] + percent[1],
-        ];
-        matrix = multiply(matrix, next);
-    }
-    if matrix
-        .iter()
-        .chain(percent.iter())
-        .all(|v| v.is_finite() && v.abs() <= TRANSFORM_MAX)
-    {
-        Ok((Some(matrix), percent))
-    } else {
-        Err(unsupported())
-    }
-}
 /** Preserve function provenance so identity rotations, matrices and 3D cannot masquerade as translations. */
 pub(super) fn translation_only(value: &str) -> bool {
     value == "none"
@@ -445,7 +411,7 @@ pub(super) fn scale(value: &str) -> Option<[f64; 2]> {
 }
 
 /** Splits functions minifiers write without a space, as in `translateY(4px)scale(.9)`. */
-fn adjacent(token: &str) -> Vec<&str> {
+pub(super) fn adjacent(token: &str) -> Vec<&str> {
     let (mut parts, mut start, mut depth) = (Vec::new(), 0, 0usize);
     for (index, byte) in token.bytes().enumerate() {
         match byte {
@@ -466,126 +432,6 @@ fn adjacent(token: &str) -> Vec<&str> {
 }
 /** The identity affine matrix. */
 pub(super) const IDENTITY: [f64; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-/** `m1 × m2` for affine matrices in (a, b, c, d, e, f) order. */
-pub(super) fn multiply(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
-    [
-        m[0] * n[0] + m[2] * n[1],
-        m[1] * n[0] + m[3] * n[1],
-        m[0] * n[2] + m[2] * n[3],
-        m[1] * n[2] + m[3] * n[3],
-        m[0] * n[4] + m[2] * n[5] + m[4],
-        m[1] * n[4] + m[3] * n[5] + m[5],
-    ]
-}
-/** One transform function as a matrix and optional `[tx_percent, ty_percent]` of the box size. */
-fn transform_function(
-    source: &str,
-    font: f64,
-    context: RenderContext,
-) -> EngineResult<([f64; 6], [f64; 2])> {
-    let (name, inner) = source
-        .strip_suffix(')')
-        .and_then(|value| value.split_once('('))
-        .ok_or_else(unsupported)?;
-    let args = split_top(inner, b',');
-    let args = if args.len() == 1 {
-        tokens(args[0])
-    } else {
-        args
-    };
-    let offset = |index: usize| -> EngineResult<(f64, f64)> {
-        let Some(arg) = args.get(index) else {
-            return Ok((0.0, 0.0));
-        };
-        let dim = dimension(arg, font, context)?;
-        if !dim.px.is_finite() || !dim.percent.is_finite() {
-            return Err(unsupported());
-        }
-        Ok((
-            dim.px.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR),
-            dim.percent.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR),
-        ))
-    };
-    let number = |index: usize| -> EngineResult<f64> {
-        let arg = args.get(index).ok_or_else(unsupported)?;
-        super::values::signed_number(arg)
-    };
-    let tan = |degrees: f64| degrees.to_radians().tan();
-    Ok(match name.trim().to_ascii_lowercase().as_str() {
-        "translate" => {
-            let ((x, px), (y, py)) = (offset(0)?, offset(1)?);
-            ([1.0, 0.0, 0.0, 1.0, x, y], [px, py])
-        }
-        "translate3d" if args.len() == 3 => {
-            let ((x, px), (y, py), (_, z_percent)) = (offset(0)?, offset(1)?, offset(2)?);
-            if z_percent != 0.0 {
-                return Err(unsupported());
-            }
-            ([1.0, 0.0, 0.0, 1.0, x, y], [px, py])
-        }
-        "translatez" if args.len() == 1 => {
-            if offset(0)?.1 != 0.0 {
-                return Err(unsupported());
-            }
-            (IDENTITY, [0.0; 2])
-        }
-        "translatex" => {
-            let (x, px) = offset(0)?;
-            ([1.0, 0.0, 0.0, 1.0, x, 0.0], [px, 0.0])
-        }
-        "translatey" => {
-            let (y, py) = offset(0)?;
-            ([1.0, 0.0, 0.0, 1.0, 0.0, y], [0.0, py])
-        }
-        "scale" | "scale3d" => {
-            let x = number(0)?;
-            let y = if args.len() > 1 { number(1)? } else { x };
-            ([x, 0.0, 0.0, y, 0.0, 0.0], [0.0; 2])
-        }
-        "scalex" => ([number(0)?, 0.0, 0.0, 1.0, 0.0, 0.0], [0.0; 2]),
-        "scaley" => ([1.0, 0.0, 0.0, number(0)?, 0.0, 0.0], [0.0; 2]),
-        "rotate" | "rotatez" => {
-            let radians = angle(args.first().ok_or_else(unsupported)?)?.to_radians();
-            let (sin, cos) = radians.sin_cos();
-            ([cos, sin, -sin, cos, 0.0, 0.0], [0.0; 2])
-        }
-        "skew" => {
-            let x = angle(args.first().ok_or_else(unsupported)?)?;
-            let y = args.get(1).map_or(Ok(0.0), |arg| angle(arg))?;
-            ([1.0, tan(y), tan(x), 1.0, 0.0, 0.0], [0.0; 2])
-        }
-        "skewx" => (
-            [
-                1.0,
-                0.0,
-                tan(angle(args.first().ok_or_else(unsupported)?)?),
-                1.0,
-                0.0,
-                0.0,
-            ],
-            [0.0; 2],
-        ),
-        "skewy" => (
-            [
-                1.0,
-                tan(angle(args.first().ok_or_else(unsupported)?)?),
-                0.0,
-                1.0,
-                0.0,
-                0.0,
-            ],
-            [0.0; 2],
-        ),
-        "matrix" if args.len() == 6 => {
-            let mut m = [0.0; 6];
-            for (index, slot) in m.iter_mut().enumerate() {
-                *slot = number(index)?;
-            }
-            (m, [0.0; 2])
-        }
-        _ => return Err(unsupported()),
-    })
-}
 /** A `<bg-position>` keyword: which axis it pins (None for `center`) and how far along it. */
 fn position_keyword(word: &str) -> Option<(Option<bool>, f64)> {
     Some(match word {

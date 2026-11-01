@@ -1,5 +1,5 @@
 /** Wasm float conversions preserve payloads while quieting signaling NaNs. */
-mod common;
+use crate::common;
 
 /** Promoting an f32 signaling NaN sets the binary64 quiet bit without discarding its payload. */
 #[test]

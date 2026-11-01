@@ -1,5 +1,5 @@
 /** RegExp.escape produces literal Unicode patterns while preserving native admission and resource limits. */
-mod common;
+use crate::common;
 
 /** A leading ASCII alphanumeric is hexadecimal, while subsequent letters and digits stay literal. */
 #[test]

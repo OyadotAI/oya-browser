@@ -303,6 +303,9 @@ pub(in crate::v9) struct Vm<'h> {
     call allocated two vectors and every return freed them, and calls are the most common
     operation in page scripts after property access. Bounded by FRAME_POOL. */
     pub frame_pool: Vec<(Vec<JsValue>, Vec<JsValue>)>,
+    /** Argument vectors of returned frames and native calls, reused by the next call (bounded by
+    FRAME_POOL), so a call with its arguments and return allocates nothing. */
+    pub arg_pool: Vec<Vec<JsValue>>,
     /** Selected native bodies retain their real position only during the active invocation. */
     pub native_activations: Vec<NativeActivation>,
     /** Native async drivers identify current output promises; committed continuations remain in the ordinary heap graph. */
@@ -311,6 +314,8 @@ pub(in crate::v9) struct Vm<'h> {
     pub formatting_stack: bool,
     /** Nested microtask checkpoints leave the active drain in charge of its queue. */
     pub draining_jobs: bool,
+    /** A transaction was created this task: the end of its microtask checkpoint runs IndexedDB's cleanup. Never serialized; a task never spans steps. */
+    pub indexed_db_cleanup: bool,
     /** Values native code holds across calls back into scripts. */
     pub pins: Vec<JsValue>,
     /** WeakRef targets observed in this task survive through its complete microtask checkpoint. */
@@ -786,9 +791,13 @@ impl<'h> Vm<'h> {
         #[cfg(feature = "conformance")]
         page.state.interned_strings.clear();
         let mut heap = heap;
-        heap.string_budget = string_budget::StringBudget::default();
-        heap.last_registered_string_units = 0;
-        heap.register_existing_strings();
+        // A heap copied from a resident state shares its string backings with the state that
+        // registered them, so its registrations stay valid. Only a decoded heap (which arrives
+        // without any) walks every object to rebuild them: that walk was ~1/4 of each YouTube step.
+        if heap.string_budget.is_empty() {
+            heap.last_registered_string_units = 0;
+            heap.register_existing_strings();
+        }
         #[cfg(feature = "conformance")]
         let profile_clock =
             crate::v9::builtins::ProfileClock::new(page.state.cpu_profile.last_time());
@@ -814,10 +823,12 @@ impl<'h> Vm<'h> {
             number_source_hashes: FastMap::default(),
             frames: Vec::new(),
             frame_pool: Vec::new(),
+            arg_pool: Vec::new(),
             native_activations: Vec::new(),
             async_drivers: Vec::new(),
             formatting_stack: false,
             draining_jobs: false,
+            indexed_db_cleanup: false,
             pins: Vec::new(),
             kept_weak: FastMap::default(),
             pinning: false,
@@ -1025,6 +1036,13 @@ impl<'h> Vm<'h> {
             .saturating_add(self.page.state.cpu_profile.units());
         #[cfg(not(feature = "conformance"))]
         let units = counts.units;
+        // The registered-string count is an upper estimate that grows with every string a step
+        // creates, freed ones included; YouTube's churn crossed the limit every few hundred ms
+        // and each crossing ran a full collection with 2-4 M of 16 M units actually live.
+        // Recounting the live registrations first walks the strings, not the heap.
+        if self.heap.last_registered_string_units > limits.units {
+            self.heap.last_registered_string_units = self.heap.string_budget.resident_units();
+        }
         // Global let, const and class bindings live outside the heap but are bindings too.
         if counts.properties > limits.properties
             || units > limits.units

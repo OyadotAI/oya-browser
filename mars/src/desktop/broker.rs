@@ -1,5 +1,9 @@
 /** One bounded worker serializes native UI and agent operations against one Runtime. */
+// Named by path so tests/broker.rs, which includes this file directly, finds it too.
+#[path = "broker/closing.rs"]
 mod closing;
+// The window's closing path uses it; tests/broker.rs includes this file without the window.
+#[allow(unused_imports)]
 pub(super) use closing::SaveTicket;
 
 use crate::{
@@ -55,6 +59,8 @@ pub struct ProfileStores {
     pub storage: std::sync::Arc<dyn mars::profile::WebStorageStore>,
     /// Ordered saved tab URLs.
     pub sessions: std::sync::Arc<dyn mars::profile::SessionStore>,
+    /// Service worker registrations, Cache Storage and stored credentials.
+    pub records: std::sync::Arc<dyn mars::profile::RecordStore>,
 }
 
 /// Native UI actions are admitted with a local human epoch.
@@ -234,6 +240,7 @@ impl Broker {
                 cookies: mars::profile::system_store(),
                 storage: mars::profile::system_web_storage_store(),
                 sessions: mars::profile::system_session_store(),
+                records: mars::profile::system_record_store(),
             },
         )
     }
@@ -303,6 +310,7 @@ impl Broker {
             profile: stores.cookies,
             storage: stores.storage,
             sessions: stores.sessions,
+            records: stores.records,
         };
         let worker = thread::spawn(move || worker(start, guard, stop, input, updates));
         Ok(Self {
@@ -371,6 +379,8 @@ struct WorkerStart {
     storage: std::sync::Arc<dyn mars::profile::WebStorageStore>,
     /// Session URLs remain in a third independent encrypted record.
     sessions: std::sync::Arc<dyn mars::profile::SessionStore>,
+    /// The platform APIs' sealed records (service workers, caches, credentials).
+    records: std::sync::Arc<dyn mars::profile::RecordStore>,
 }
 
 /** Failed startup or a closed UI receiver cannot strand supervised children. */
@@ -390,6 +400,7 @@ fn worker(
         profile,
         storage,
         sessions,
+        records,
     } = start;
     let mut runtime = match Runtime::desktop_with_session_profiles(
         EnginePrograms::same(&program),
@@ -406,6 +417,7 @@ fn worker(
             return;
         }
     };
+    runtime.attach_platform_records(records);
     let first_paint = events.clone();
     runtime.show_first_paint_scoped(Box::new(move |snapshot, permit| {
         let _ = first_paint.try_send(Event::Preview {

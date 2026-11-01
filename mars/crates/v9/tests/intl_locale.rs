@@ -4,7 +4,7 @@
  * options and getters, likely subtags, Locale Info and `Intl.DisplayNames`. formatjs builds on
  * these when a page like craigslist starts.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

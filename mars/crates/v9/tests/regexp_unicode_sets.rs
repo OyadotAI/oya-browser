@@ -1,5 +1,5 @@
 /** RegExp v-flag (ES2024 unicodeSets): set operators, nested classes, \q{} string alternatives and their early errors. */
-mod common;
+use crate::common;
 
 /** Every Unicode string-property family matches real sequences and rejects unrelated text. */
 #[test]

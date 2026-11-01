@@ -1,5 +1,5 @@
 /** Dynamic code pressure collects unreachable source units while retaining closure identity and validated source locations. */
-mod common;
+use crate::common;
 
 /** Repeated distinct temporary functions release code instead of accumulating execution history against the source allowance. */
 #[test]

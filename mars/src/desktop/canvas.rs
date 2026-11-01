@@ -5,8 +5,12 @@ mod choice_button;
 mod controls;
 mod editing;
 mod hit;
+mod lines;
+pub(crate) mod media;
+mod outline;
 mod paint;
 mod painted;
+mod pattern;
 mod push_button;
 mod vector;
 use crate::{document::DisplayItem, platform, runtime::BrowserSnapshot};
@@ -32,8 +36,6 @@ use std::{
 
 /// Document tags are offset from negative toolbar actions.
 pub(super) const NODE_TAG: isize = 100;
-/// Underlines sit this far below the baseline, as Chromium draws them at small sizes.
-const UNDERLINE_OFFSET: f64 = 1.5;
 /// Chromium's light-scheme LinkText; the system link color would follow the OS into dark mode.
 const LIGHT_LINK: &str = "#0000ee";
 /// UI event storage is bounded independently of engine admission.
@@ -59,6 +61,8 @@ pub(super) enum Action {
     span with role=button, a link whose widget is still deferred); the runtime decides whether
     anything listens, and a click nothing listens to stays silent, as in a browser. */
     Tap(usize, String),
+    /** A click on a media element's native controls: node, page, action and seek time. */
+    Media(usize, String, &'static str, f64),
     /** Local text bounds reject input before allocating a queued engine request. */
     Rejected,
     Select(usize, usize, String),
@@ -99,6 +103,9 @@ define_class!(
         /** Native keyboard navigation can enter the owned document viewport. */
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_focus(&self)->bool {true}
+        /** A press in an inactive window is the page's click too, as in Chrome, not only an activation. */
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self,_event:&objc2_app_kit::NSEvent)->bool {true}
         /** Engine geometry uses a top-left document origin. */
         #[unsafe(method(isFlipped))]
         fn flipped(&self)->bool {true}
@@ -117,7 +124,7 @@ define_class!(
             let point=self.convertPoint_fromView(event.locationInWindow(),None);
             let node=self.node_at(point);
             self.ivars().pressed.set(node.map(|node|(node,point)));
-            if let Some(node)=node && self.ivars().human.get() {self.focus_input(node);}
+            if let Some(node)=node && self.ivars().human.get() {self.focus_input(self.field_at(point).unwrap_or(node));}
             unsafe {let _:()=msg_send![super(self),mouseDown:event];}
         }
         /** A release on the node that was pressed, without dragging, is a click on that node. */
@@ -125,7 +132,13 @@ define_class!(
         fn mouse_up(&self,event:&objc2_app_kit::NSEvent) {
             unsafe {let _:()=msg_send![super(self),mouseUp:event];}
             let point=self.convertPoint_fromView(event.locationInWindow(),None);
-            if let Some((node,down))=self.ivars().pressed.take()
+            let pressed=self.ivars().pressed.take();
+            if let Some(page)=self.page_id()
+                && let Some((media,action,time))=self.media_action(&page,point) {
+                self.push(Action::Media(media,page,action,time));
+                return;
+            }
+            if let Some((node,down))=pressed
                 && hit::is_click(down,point) && self.node_at(point)==Some(node)
                 && let Some(page)=self.page_id() {self.push(Action::Tap(node,page));}
         }
@@ -182,6 +195,18 @@ impl Canvas {
         );
         this
     }
+    /** The text field a press at this canvas point focuses: a label's field, or the field itself. */
+    fn field_at(&self, point: NSPoint) -> Option<usize> {
+        let snapshot = self.ivars().snapshot.borrow();
+        let snapshot = snapshot.as_ref()?;
+        hit::field_at_frames(
+            snapshot.display.as_ref()?,
+            snapshot.document.as_ref()?,
+            &snapshot.frame_documents,
+            point,
+            self.visibleRect().origin.y,
+        )
+    }
     /** The page node under a canvas point, when the current page has one there. */
     fn node_at(&self, point: NSPoint) -> Option<usize> {
         let snapshot = self.ivars().snapshot.borrow();
@@ -236,6 +261,34 @@ impl Canvas {
             .as_ref()
             .and_then(|snapshot| snapshot.display.as_ref())
             .is_some_and(|display| display.viewport_locked)
+    }
+    /** The media element whose native controls a click at `point` lands on, what the click does
+    there, and the media time a scrubber click seeks to; None off any element showing controls. */
+    fn media_action(&self, page: &str, point: NSPoint) -> Option<(usize, &'static str, f64)> {
+        let snapshot = self.ivars().snapshot.borrow();
+        let item = snapshot
+            .as_ref()?
+            .display
+            .as_ref()?
+            .items
+            .iter()
+            .rev()
+            .find(|item| {
+                matches!(item.tag.as_str(), "video" | "audio")
+                    && item.transform.is_none()
+                    && (item.x..item.x + item.width).contains(&point.x)
+                    && (item.y..item.y + item.height).contains(&point.y)
+            })?;
+        let view = super::media::view(page, item.local_id).filter(|view| view.controls)?;
+        let bounds = item
+            .content_box
+            .unwrap_or([item.x, item.y, item.width, item.height]);
+        let (action, fraction) = media::control_action(bounds, view.video, point.x, point.y)?;
+        Some((
+            item.local_id,
+            action,
+            fraction * view.status.duration.max(0.0),
+        ))
     }
     /** Native callbacks stamp the current visible generation before entering a queue. */
     fn page_id(&self) -> Option<String> {
@@ -488,6 +541,7 @@ impl Canvas {
         let mut painted = self.ivars().painted.borrow_mut();
         let painted = painted.get_or_insert_with(|| painted::Painted::new(display));
         let top = self.visibleRect().origin.y;
+        let mut outlined = Vec::new();
         for index in painted.visible(dirty) {
             let item = &display.items[index as usize];
             let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
@@ -501,6 +555,19 @@ impl Canvas {
             painter.groups(item);
             painter.enter(item, shift);
             self.paint_item(&painter, painted, index, snapshot, display, seen);
+            painter.leave();
+            if item.outline.is_some() {
+                outlined.push((index, shift));
+            }
+        }
+        // Outlines paint after the content of the whole pass (CSS2 Appendix E step 10), so a
+        // sibling's background cannot cover a ring that sits outside its box.
+        for (index, shift) in outlined {
+            let item = &display.items[index as usize];
+            painter.groups(item);
+            painter.enter(item, shift);
+            let alpha = painter.residual(item);
+            outline::paint(item, &painter, &paint::Shape::of(item), alpha);
             painter.leave();
         }
         painter.finish();
@@ -582,6 +649,12 @@ impl Canvas {
                 ))
             });
             painter.sides(&shape, item.border_widths, colors);
+        }
+        if item.tag == "video" || item.tag == "audio" {
+            if let Some(page) = snapshot.inspection["page_id"].as_str() {
+                media::paint(page, item, &shape, painter, alpha);
+            }
+            return;
         }
         if let Some(bitmap) = &item.canvas {
             if let Some(image) = painted.canvas(item.local_id, bitmap) {
@@ -759,32 +832,14 @@ fn paint_lines(
         }
     }
 }
-/** A run's underline and line-through, across its own width. */
+/** A run's underline and line-through, across its own width, in the item's decoration style. */
 fn decorate_line(
     item: &DisplayItem,
     line: &crate::document::PaintLine,
     color: &NSColor,
     (baseline, ascender): (f64, f64),
 ) {
-    let thickness = (item.font_size / 16.0).clamp(1.0, 2.5);
-    if item.underline {
-        color.setStroke();
-        let underline = NSBezierPath::bezierPath();
-        let y = baseline + UNDERLINE_OFFSET;
-        underline.moveToPoint(NSPoint::new(line.x, y));
-        underline.lineToPoint(NSPoint::new(line.x + line.width, y));
-        underline.setLineWidth(thickness);
-        underline.stroke();
-    }
-    if item.strikethrough {
-        color.setStroke();
-        let strike = NSBezierPath::bezierPath();
-        let y = baseline - ascender * 0.35;
-        strike.moveToPoint(NSPoint::new(line.x, y));
-        strike.lineToPoint(NSPoint::new(line.x + line.width, y));
-        strike.setLineWidth(thickness);
-        strike.stroke();
-    }
+    lines::decorate(item, line, color, (baseline, ascender));
 }
 /** A chained run (Eye's text_chains): its chain's joined text drawn from the chain's start,
 clipped to the columns this run owns, so its glyphs sit where one shaped string's would. False

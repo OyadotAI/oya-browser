@@ -1,11 +1,12 @@
 /** Eye owns the bounded document, cascade and rendering model. */
 mod content;
 mod context;
-mod entities;
 mod forms;
 mod markup;
+pub(crate) mod matrix;
 mod mutation;
 mod parser;
+mod pointer;
 mod quirks;
 mod recovery;
 mod render;
@@ -20,8 +21,8 @@ use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
 pub use context::{Appearance, FRAME_VIEWPORT_MIN, RenderContext};
 pub use forms::{
-    Submission, form_owner, label, option_disabled, own_text, select, select_options, set_checked,
-    submission,
+    ControlIndex, Submission, form_owner, label, option_disabled, own_text, select, select_options,
+    set_checked, submission,
 };
 use mars_core::dom::descendant_ids;
 pub use mars_core::dom::{
@@ -30,13 +31,17 @@ pub use mars_core::dom::{
 };
 pub use mutation::{apply_changes, apply_script_changes};
 pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml};
+pub use pointer::{
+    focus_field, is_text_field, item_contains, labeled_control, pointer_target, takes_pointer,
+};
 pub use render::vertical::{WRITING_CCW, WRITING_LR, WRITING_RL};
 pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 pub use render::{
-    ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
-    FillRule, GradientStop, GradientTile, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine,
-    PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible,
-    embed_frame, frame_viewport, painted_bounds, render, render_frame, render_scrolled,
+    ClipRect, DecorationLine, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList,
+    DisplayOutline, DisplayShadow, FillRule, GradientStop, GradientTile, ImageSize, LineCap,
+    LineJoin, MAX_OUTLINE_OFFSET, OpacityGroup, PaintLine, PathCommand, Pin, ScrollArea,
+    ScrollOffsets, VectorPath, agent_hidden, agent_visible, embed_frame, frame_viewport,
+    painted_bounds, render, render_frame, render_frame_scrolled, render_scrolled,
     render_with_context, role, sliced_shadow, spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
@@ -44,7 +49,9 @@ pub use script::{DomFragments, Fragments, normalize_document_text, script_docume
 use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
 use std::collections::BTreeMap;
+pub use style::DecorationStyle;
 pub use style::default_transform_origin;
+pub use style::evaluate_media;
 pub use style::{
     AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
     ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
@@ -56,6 +63,7 @@ pub use style::{
     AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
 };
 pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
+pub use style::{COMPUTED_PROPERTIES, computed_value as computed_css_value, css_color};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
@@ -108,6 +116,10 @@ pub struct Document {
     /// never nodes, so layout, paint and agents never see them; scripts find them through V9.
     #[serde(default)]
     pub metadata: Vec<MetadataElement>,
+    /// The first `<meta http-equiv=refresh>` whose content names a delay, as the shared declarative
+    /// refresh steps read it. The coordinator follows it the way Chrome does; eye only parses it.
+    #[serde(default)]
+    pub refresh: Option<MetaRefresh>,
     /// The encoding name the parser settled: a meta charset when one agreed with the decoding,
     /// else the transport's. Empty only for fragments; it is what `document.characterSet` reports.
     #[serde(default)]
@@ -132,6 +144,17 @@ impl ScriptKind {
     pub fn is_classic(&self) -> bool {
         *self == Self::Classic
     }
+}
+
+/// A declarative refresh: after `seconds`, navigate to `url`. Absent `url` means the document's own
+/// address; a relative one stays as written and resolves against the document's base.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaRefresh {
+    /// The delay before the navigation, in seconds; a fraction is allowed.
+    pub seconds: f64,
+    /// The address to navigate to, or None for the document's own address.
+    pub url: Option<String>,
 }
 
 /// Meta-delivered policies one document keeps; later ones are dropped with a diagnostic.

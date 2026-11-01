@@ -111,16 +111,14 @@ impl Runtime {
                 if page.scripting.workers.contexts.contains_key(&child) {
                     return Err(EngineError::invalid("Duplicate Worker identity."));
                 }
-                match self.create_worker(
-                    page,
-                    &owner,
-                    &url,
+                let spec = super::lifecycle::WorkerSpec {
+                    url,
                     name,
                     worker_type,
                     credentials,
                     blob_source,
-                    until,
-                ) {
+                };
+                match self.create_worker(page, &owner, spec, until) {
                     Ok(worker) => {
                         page.scripting.workers.contexts.insert(child, worker);
                     }

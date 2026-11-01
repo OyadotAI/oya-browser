@@ -1,5 +1,5 @@
 /** Legacy RegExp result accessors retain exact successful matches across string operations. */
-mod common;
+use crate::common;
 
 /** Numbered captures, aliases and contexts come from the actual latest match. */
 #[test]

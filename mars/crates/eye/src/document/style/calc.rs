@@ -4,8 +4,10 @@
  * `infinity`. */
 use super::{
     constants::{CALC_DEPTH, CALC_TOKENS},
+    length_expr::LengthExpr,
     unsupported,
-    values::{Dimension, signed_number, unit},
+    values::{Dimension, unit},
+    visual_model::Extent,
 };
 use crate::{document::RenderContext, protocol::EngineResult};
 /** One lexical piece of a math expression. */
@@ -25,12 +27,14 @@ pub(super) enum Token {
     Word(String),
 }
 /** Intermediate values keep plain numbers apart from lengths, as CSS type checking does. */
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Value {
     /// Unitless.
     Number(f64),
     /// px plus percent.
     Length(Dimension),
+    /// A min, max or mixed expression whose percentage waits for its basis (length_expr.rs).
+    Deferred(LengthExpr),
 }
 /** Lexes an expression; signs glued to a following digit start a number. */
 pub(super) fn tokens(source: &str) -> EngineResult<Vec<Token>> {
@@ -130,7 +134,7 @@ pub(super) fn evaluate(
             px: 0.0,
             percent: 0.0,
         },
-        Value::Number(_) => return Err(unsupported()),
+        Value::Number(_) | Value::Deferred(_) => return Err(unsupported()),
     };
     // Blink keeps lengths as floats, so `calc(infinity * 1px)` saturates at the largest one.
     let saturate = |v: f64| v.clamp(-f64::from(f32::MAX), f64::from(f32::MAX));
@@ -142,6 +146,25 @@ pub(super) fn evaluate(
     } else {
         Err(unsupported())
     }
+}
+/** Evaluates a whole token list to a length expression, keeping a min, max or clamp over mixed
+ * percentages and pixels for layout to resolve (length_expr.rs). */
+pub(super) fn evaluate_expr(
+    tokens: &[Token],
+    font: f64,
+    context: RenderContext,
+) -> EngineResult<LengthExpr> {
+    let mut parser = Parser {
+        tokens,
+        index: 0,
+        font,
+        context,
+    };
+    let value = parser.factor(0)?;
+    if parser.index != tokens.len() {
+        return Err(unsupported());
+    }
+    as_expr(value)
 }
 /** Recursive descent over a bounded token slice. */
 struct Parser<'a> {
@@ -227,21 +250,21 @@ impl Parser<'_> {
             return Err(unsupported());
         }
         match (name, arguments.as_slice()) {
-            ("" | "calc", [value]) => Ok(*value),
-            ("min", values) => extreme(values, f64::min),
-            ("max", values) => extreme(values, f64::max),
+            ("" | "calc", [value]) => Ok(value.clone()),
+            ("min", values) => extreme(values, f64::min, LengthExpr::Min),
+            ("max", values) => extreme(values, f64::max, LengthExpr::Max),
             ("clamp", [low, value, high]) => {
-                let value = extreme(&[*value, *high], f64::min)?;
-                extreme(&[*low, value], f64::max)
+                let value = extreme(&[value.clone(), high.clone()], f64::min, LengthExpr::Min)?;
+                extreme(&[low.clone(), value], f64::max, LengthExpr::Max)
             }
             ("round", [Value::Number(a)]) => {
                 stepped(Value::Number(*a), Value::Number(1.0), strategy)
             }
-            ("round", [a, b]) => stepped(*a, *b, strategy),
-            ("mod", [a, b]) => stepped(*a, *b, Rounding::Mod),
-            ("rem", [a, b]) => stepped(*a, *b, Rounding::Rem),
-            ("abs", [value]) => sign_related(*value, f64::abs),
-            ("sign", [value]) => match sign_related(*value, sign)? {
+            ("round", [a, b]) => stepped(a.clone(), b.clone(), strategy),
+            ("mod", [a, b]) => stepped(a.clone(), b.clone(), Rounding::Mod),
+            ("rem", [a, b]) => stepped(a.clone(), b.clone(), Rounding::Rem),
+            ("abs", [value]) => sign_related(value.clone(), f64::abs),
+            ("sign", [value]) => match sign_related(value.clone(), sign)? {
                 Value::Length(dimension) => Ok(Value::Number(dimension.px)),
                 number => Ok(number),
             },
@@ -330,13 +353,22 @@ fn sign_related(value: Value, apply: fn(f64) -> f64) -> EngineResult<Value> {
 }
 /** A unitless token is a number; anything else is a length. */
 fn leaf(text: &str, font: f64, context: RenderContext) -> EngineResult<Value> {
-    if let Ok(number) = signed_number(text) {
+    // A number keeps its full magnitude: `calc(1e30 * 1px)` saturates at the length's end, not
+    // here, as Blink's float math does.
+    if let Some(number) = text.parse::<f64>().ok().filter(|n| n.is_finite()) {
         return Ok(Value::Number(number));
     }
     unit(text, font, context).map(Value::Length)
 }
 /** Same-kind addition; a literal zero acts as a zero length. */
 fn add(left: Value, right: Value, sign: f64) -> EngineResult<Value> {
+    if matches!(left, Value::Deferred(_)) || matches!(right, Value::Deferred(_)) {
+        let subtrahend = LengthExpr::Scale(Box::new(as_expr(right)?), sign);
+        return Ok(Value::Deferred(LengthExpr::Sum(
+            Box::new(as_expr(left)?),
+            Box::new(subtrahend),
+        )));
+    }
     Ok(match (left, right) {
         (Value::Number(a), Value::Number(b)) => Value::Number(a + sign * b),
         (Value::Length(a), Value::Length(b)) => Value::Length(Dimension {
@@ -348,10 +380,21 @@ fn add(left: Value, right: Value, sign: f64) -> EngineResult<Value> {
 }
 /** Scaling a length by a number, or dividing by a nonzero number. */
 fn multiply(left: Value, right: Value, divide: bool) -> EngineResult<Value> {
+    if let Some(expr) = deferred_scale(&left, &right, divide)? {
+        return Ok(Value::Deferred(expr));
+    }
+    // A zero component stays zero even against an infinite factor (`0 * infinity` is NaN).
+    let times = |component: f64, factor: f64| {
+        if component == 0.0 {
+            0.0
+        } else {
+            component * factor
+        }
+    };
     let scale = |dimension: Dimension, factor: f64| {
         Value::Length(Dimension {
-            px: dimension.px * factor,
-            percent: dimension.percent * factor,
+            px: times(dimension.px, factor),
+            percent: times(dimension.percent, factor),
         })
     };
     Ok(match (left, right, divide) {
@@ -364,12 +407,45 @@ fn multiply(left: Value, right: Value, divide: bool) -> EngineResult<Value> {
         _ => return Err(unsupported()),
     })
 }
-/** min/max compare pure numbers or pure pixel lengths; mixed percentages need layout. */
-fn extreme(values: &[Value], pick: fn(f64, f64) -> f64) -> EngineResult<Value> {
+/** A deferred expression scaled by a number, as `*` and `/` do to a min or max; None when neither
+ * side is deferred. A division by zero has no answer, so the declaration is dropped. */
+fn deferred_scale(left: &Value, right: &Value, divide: bool) -> EngineResult<Option<LengthExpr>> {
+    let (expr, factor) = match (left, right) {
+        (Value::Deferred(expr), Value::Number(factor))
+        | (Value::Number(factor), Value::Deferred(expr))
+            if !divide =>
+        {
+            (expr, *factor)
+        }
+        (Value::Deferred(expr), Value::Number(factor)) if *factor != 0.0 => (expr, 1.0 / factor),
+        (Value::Deferred(_), Value::Number(_)) => return Err(unsupported()),
+        _ => return Ok(None),
+    };
+    Ok(Some(LengthExpr::Scale(Box::new(expr.clone()), factor)))
+}
+/** A value as a length expression: a length is its leaf, a deferred value is itself, and a
+ * unitless number has no length meaning. */
+fn as_expr(value: Value) -> EngineResult<LengthExpr> {
+    match value {
+        Value::Length(dimension) => Ok(LengthExpr::Leaf(Extent {
+            px: dimension.px,
+            percent: dimension.percent,
+        })),
+        Value::Deferred(expr) => Ok(expr),
+        Value::Number(_) => Err(unsupported()),
+    }
+}
+/** min/max compare pure numbers or pure pixel lengths. Any other mix keeps the operands as a
+ * deferred `wrap` expression, so a percentage resolves against the containing block at layout. */
+fn extreme(
+    values: &[Value],
+    pick: fn(f64, f64) -> f64,
+    wrap: fn(Vec<LengthExpr>) -> LengthExpr,
+) -> EngineResult<Value> {
     let mut result: Option<Value> = None;
     for value in values {
         result = Some(match (result, value) {
-            (None, value) => *value,
+            (None, value) => value.clone(),
             (Some(Value::Number(a)), Value::Number(b)) => Value::Number(pick(a, *b)),
             (Some(Value::Length(a)), Value::Length(b)) if a.percent == 0.0 && b.percent == 0.0 => {
                 Value::Length(Dimension {
@@ -377,8 +453,20 @@ fn extreme(values: &[Value], pick: fn(f64, f64) -> f64) -> EngineResult<Value> {
                     percent: 0.0,
                 })
             }
-            _ => return Err(unsupported()),
+            _ => return deferred_extreme(values, wrap),
         });
     }
     result.ok_or_else(unsupported)
+}
+/** The operands of a min or max as one deferred expression. */
+fn deferred_extreme(
+    values: &[Value],
+    wrap: fn(Vec<LengthExpr>) -> LengthExpr,
+) -> EngineResult<Value> {
+    let operands = values
+        .iter()
+        .cloned()
+        .map(as_expr)
+        .collect::<EngineResult<Vec<_>>>()?;
+    Ok(Value::Deferred(wrap(operands)))
 }

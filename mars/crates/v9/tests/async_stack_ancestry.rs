@@ -1,5 +1,5 @@
 /** Async stack frames come from real suspended awaiters, with strict/realm privacy and ordinary traced heap lifetimes. */
-mod common;
+use crate::common;
 
 /** Public page execution drains the genuine Promise job queue before returning observable globals. */
 fn eval(source: &str) -> String {

@@ -1,5 +1,5 @@
 /** Promise executors reject script exceptions but must preserve fatal host failures. */
-mod common;
+use crate::common;
 use mars_v9::{DocumentHost, PageEnvironment, PageInput, StorageState};
 
 /** A deterministic transport failure exercises fatal propagation without timeouts or network. */

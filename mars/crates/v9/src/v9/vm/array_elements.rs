@@ -482,6 +482,38 @@ impl ArrayElements {
         }
     }
 
+    /** `resident_entries` with an index in `start..end`, read straight from that range of the
+    dense part and the sparse map, so `slice(i, i + 1)` of a long array costs one element. */
+    pub fn resident_range(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Box<dyn Iterator<Item = (usize, &JsValue)> + '_> {
+        if start >= end {
+            return Box::new(std::iter::empty());
+        }
+        if self.characters.is_some() || self.repeated.is_some() {
+            return Box::new(
+                self.resident_entries()
+                    .skip_while(move |(index, _)| *index < start)
+                    .take_while(move |(index, _)| *index < end),
+            );
+        }
+        let dense = start.min(self.dense.len())..end.min(self.dense.len());
+        Box::new(
+            self.dense[dense.clone()]
+                .iter()
+                .enumerate()
+                .map(move |(offset, value)| (dense.start + offset, value))
+                .chain(
+                    self.sparse
+                        .range(start..end)
+                        .map(|(index, value)| (*index, value)),
+                )
+                .filter(|(_, value)| **value != JsValue::Hole),
+        )
+    }
+
     /** Tracing and heap accounting inspect live values rather than a potentially huge length. */
     pub fn resident_values(&self) -> Box<dyn Iterator<Item = &JsValue> + '_> {
         if let Some(characters) = &self.characters {

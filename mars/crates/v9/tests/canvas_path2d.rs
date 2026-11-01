@@ -1,5 +1,5 @@
 /** Retained-path regressions cover pixels, copy ownership, native brands and bounded GC lifetime. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, Execution};
 

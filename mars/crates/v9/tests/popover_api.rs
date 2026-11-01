@@ -1,6 +1,6 @@
 /** The HTML popover API in V9: the `popover` reflection, show/hide/toggle with Blink's
 exceptions, beforetoggle and coalesced toggle events, the auto stack, and popovertarget. */
-mod common;
+use crate::common;
 use common::{console, environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 

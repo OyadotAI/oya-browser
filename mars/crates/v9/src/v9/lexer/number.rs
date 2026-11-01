@@ -72,8 +72,8 @@ pub(super) fn number(source: &mut Source<'_>) -> EngineResult<Kind> {
             return Err(errors::syntax(start, "invalid numeric suffix"));
         }
         return Ok(match crate::v9::vm::bigint::parse_bigint(&digits) {
-            Some(big) => Kind::BigInt(big),
-            None => Kind::BigIntWide(digits),
+            Some(big) => Kind::BigInt(Box::new(big)),
+            None => Kind::BigIntWide(digits.into_boxed_str()),
         });
     }
     if source

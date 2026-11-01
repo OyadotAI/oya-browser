@@ -1,6 +1,6 @@
 //! The opt-in shell native grammar executes only implemented operations on genuine VM state.
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** V8's numeric hole-NaN test value preserves its bits without becoming a V9 missing element. */
 #[test]

@@ -44,7 +44,9 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         text_decoration_none: parent.text_decoration_none,
         underline: parent.underline,
         strikethrough: parent.strikethrough,
+        underline_offset: parent.underline_offset,
         list_style: parent.list_style,
+        list_marker: parent.list_marker.clone(),
         border_spacing: parent.border_spacing,
         border_spacing_rows: parent.border_spacing_rows,
         border_collapse: parent.border_collapse,
@@ -55,6 +57,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         writing_sideways: parent.writing_sideways,
         text_orientation: parent.text_orientation,
         text_box_edge: parent.text_box_edge,
+        kept_values: super::kept_values::inherited(parent),
         ..ComputedStyle::default()
     }
 }
@@ -89,8 +92,10 @@ fn inherits(key: &str) -> bool {
             "caption-side",
             "pointer-events",
             "text-box-edge",
+            "text-underline-offset",
         ]
         .contains(&key)
+        || super::kept_values::inherits(key)
 }
 /**
  * Resolves `inherit`, `initial`, `unset` and `revert` for one property by copying the parent's
@@ -109,7 +114,9 @@ pub(super) fn keyword(style: &mut ComputedStyle, parent: &ComputedStyle, key: &s
  * `visibility`, which never un-hides an inherited hidden subtree, keep their current value.
  */
 fn copy(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
-    if super::transition::copy(&mut style.transition, &source.transition, key) {
+    if super::transition::copy(&mut style.transition, &source.transition, key)
+        || super::kept_values::copy(style, source, key)
+    {
         return;
     }
     if let Some(index) = super::calc_size::KEYS.iter().position(|name| *name == key) {
@@ -174,6 +181,7 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
             style.width = source.width;
             style.percent_width = source.percent_width;
             style.width_offset = source.width_offset;
+            style.width_expr = source.width_expr.clone();
             style.width_stretch = source.width_stretch;
             style.width_fit = source.width_fit;
             style.size_keywords[0] = source.size_keywords[0];
@@ -181,11 +189,15 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "max-width" => {
             style.max_width = source.max_width;
             style.percent_max_width = source.percent_max_width;
+            style.max_width_offset = source.max_width_offset;
+            style.max_width_expr = source.max_width_expr.clone();
             style.size_keywords[2] = source.size_keywords[2];
         }
         "min-width" => {
             style.min_width = source.min_width;
             style.min_width_percent = source.min_width_percent;
+            style.min_width_offset = source.min_width_offset;
+            style.min_width_expr = source.min_width_expr.clone();
             style.size_keywords[1] = source.size_keywords[1];
         }
         "height" => {
@@ -366,7 +378,17 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.underline = source.underline;
             style.strikethrough = source.strikethrough;
         }
-        "list-style" | "list-style-type" => style.list_style = source.list_style,
+        "text-decoration-style" => style.decoration_style = source.decoration_style,
+        "text-decoration-thickness" => style.decoration_thickness = source.decoration_thickness,
+        "text-underline-offset" => style.underline_offset = source.underline_offset,
+        "outline-style" => style.outline_style = source.outline_style,
+        "outline-width" => style.outline_width = source.outline_width,
+        "outline-color" => style.outline_color = source.outline_color.clone(),
+        "outline-offset" => style.outline_offset = source.outline_offset,
+        "list-style" | "list-style-type" => {
+            style.list_style = source.list_style;
+            style.list_marker = source.list_marker.clone();
+        }
         "border-spacing" => {
             style.border_spacing = source.border_spacing;
             style.border_spacing_rows = source.border_spacing_rows;
@@ -411,12 +433,22 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
         "text-shadow" => style.text_shadows = source.text_shadows.clone(),
         "transform" => {
             style.transform = source.transform;
+            style.transform_4 = source.transform_4;
             style.translate_percent = source.translate_percent;
+            style.translate_percent_cross = source.translate_percent_cross;
+            style.translate_percent_depth = source.translate_percent_depth;
             style.transform_animation_excluded = source.transform_animation_excluded;
             style.rotation_radians = source.rotation_radians;
             style.scale_factors = source.scale_factors;
         }
-        "transform-origin" => style.transform_origin = source.transform_origin,
+        "transform-origin" => {
+            style.transform_origin = source.transform_origin;
+            style.transform_origin_z = source.transform_origin_z;
+        }
+        "perspective" => style.perspective = source.perspective,
+        "perspective-origin" => style.perspective_origin = source.perspective_origin,
+        "transform-style" => style.preserve_3d = source.preserve_3d,
+        "backface-visibility" => style.backface_hidden = source.backface_hidden,
         "object-fit" => style.object_fit = source.object_fit,
         "object-position" => style.object_position = source.object_position,
         "clip" => style.clip_rect = source.clip_rect,

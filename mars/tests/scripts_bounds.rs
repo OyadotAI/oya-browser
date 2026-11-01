@@ -14,10 +14,10 @@ const _: () = assert!(TOKENS >= SCRIPT_BYTES / 4 && OPERATIONS >= 50_000_000);
 /** The raised budgets admit real bundles and the time guard fires before the RPC deadline. */
 #[test]
 fn bounds_admit_real_bundles_and_fit_the_frame() {
-    assert_eq!(SCRIPT_BYTES, 12 * 1024 * 1024);
+    assert_eq!(SCRIPT_BYTES, 16 * 1024 * 1024);
     assert_eq!(SCRIPT_COUNT, 512);
     assert_eq!(STYLE_BYTES, 4 * 1024 * 1024);
-    assert_eq!(STYLE_SHEETS, 256);
+    assert_eq!(STYLE_SHEETS, 1024);
     assert_eq!(TEXT_BYTES, 64 * 1024);
     assert!(SCRIPT_DEADLINE_DEFAULT < RPC_TIMEOUT);
 }

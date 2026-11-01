@@ -1,6 +1,6 @@
 //! JavaScript modules: syntax, linking, cycles, live bindings, dynamic import, import maps,
 //! top-level await, isolated failures and bounds, through the page entry points the app uses.
-mod common;
+use crate::common;
 
 use common::{environment, host, page, round_trip};
 use mars_v9::{
@@ -450,7 +450,7 @@ fn module_bounds_are_enforced() {
     let environment = environment();
     let sources = vec![String::new()];
     let mut input = ModuleInput::default();
-    for index in 0..=mars_v9::constants::MODULES {
+    for index in 0..=mars_v9::constants::MODULE_SOURCES {
         input.sources.push(ModuleSource {
             url: format!("{BASE}{index}.js"),
             source: Some(String::new()),

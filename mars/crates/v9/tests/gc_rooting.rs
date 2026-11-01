@@ -5,7 +5,7 @@
  * under the Rust locals that still hold it, or the committed state carries a dangling
  * reference and the next request refuses it.
  */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::{PageEvent, constants::VM_FUNCTIONS};
@@ -21,7 +21,7 @@ fn collections_during_await_keep_the_state_consistent() {
          let settled = 0;
          async function step(n) {{ await null; settled += 1; return n }}
          for (var j = 0; j < 150; j++) {{ step(j); keep[j % 8].pop(); keep[j % 8].pop(); }}",
-        fill = VM_FUNCTIONS - 200
+        fill = VM_FUNCTIONS - 200 - common::empty_page_functions()
     )];
     let execution = load_with(&sources[0], &environment);
     assert_eq!(failure(&execution), None);

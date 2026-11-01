@@ -23,6 +23,10 @@ pub struct WebRequest {
     /// Selects the smaller binary resource budget for explicitly requested images.
     #[serde(default)]
     pub image: bool,
+    /// An image request that leaves AVIF out of its Accept: the one retry after the runtime
+    /// could not decode a server's AVIF (see `constants::ACCEPT_IMAGE_WITHOUT_AVIF`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_avif: bool,
     /// Fetch body readers need exact decoded bytes, independently of declared text charset.
     #[serde(default)]
     pub raw_response: bool,
@@ -56,6 +60,10 @@ pub struct WebRequest {
     /// method and headers may follow, with no cookies, headers or body of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preflight: Option<Preflight>,
+    /// For media (`Video`/`Audio`) only: the inclusive byte range to ask for, end open when
+    /// None, sent as `Range: bytes=start-end` so a player fetches only what it is about to play.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<(u64, Option<u64>)>,
 }
 /// What a CORS preflight asks the server about the request waiting behind it.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -88,6 +96,16 @@ pub enum Destination {
     Font,
     /// Script-issued fetch or XHR.
     Empty,
+    /// A `<video>` element's media resource: raw bytes, fetched in byte ranges.
+    Video,
+    /// An `<audio>` element's media resource: raw bytes, fetched in byte ranges.
+    Audio,
+}
+impl Destination {
+    /** Media element fetches, which carry raw bytes and may ask for a byte range. */
+    pub fn media(self) -> bool {
+        matches!(self, Self::Video | Self::Audio)
+    }
 }
 impl WebRequest {
     /// Navigation cannot accidentally inherit a previous submission body.
@@ -105,6 +123,11 @@ impl WebRequest {
                 && (self.destination != Destination::Empty
                     || self.image
                     || self.preflight.is_some())
+            || self.range.is_some()
+                && (!self.destination.media() || self.method != Method::Get || self.image)
+            || self
+                .range
+                .is_some_and(|(start, end)| end.is_some_and(|end| end < start))
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)
             || (self.method.is_safe() && !self.body.is_empty())
@@ -180,7 +203,16 @@ impl WebRequest {
                 None | Some(super::cors::Mode::NoCors) => self.origin.is_none(),
                 _ => false,
             };
-        (script || image || !used) && headers_ok && origin_ok && preflight_ok
+        // Module workers and their imports are CORS requests by spec: the host sets the mode
+        // (and, cross-origin, the Origin); page headers and preflights never ride along.
+        let worker = matches!(
+            self.destination,
+            Destination::Worker | Destination::WorkerImport
+        ) && self.method == Method::Get
+            && self.headers.is_empty()
+            && self.preflight.is_none()
+            && matches!(self.mode, None | Some(super::cors::Mode::Cors));
+        (script || image || worker || !used) && headers_ok && origin_ok && preflight_ok
     }
 }
 /// Raw response metadata is private to the coordinator; never export cookies to agents.

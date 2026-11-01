@@ -368,7 +368,8 @@ pub(super) fn layout(
     if !html && !body && !nodes {
         return layout_once(document, presentation);
     }
-    let wrappers = (html || body).then(|| super::sizing::resolve_wrapper_sides(document, presentation.width));
+    let wrappers =
+        (html || body).then(|| super::sizing::resolve_wrapper_sides(document, presentation.width));
     let document = wrappers.as_ref().unwrap_or(document);
     let items = if nodes {
         layout_once(document, presentation)?.0
@@ -490,10 +491,16 @@ fn layout_once(
     let top = collapsed_body_edge(document, &items, authored, 0).unwrap_or(y);
     let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
     let decoration = super::body::decoration(document, x, top, width, end);
-    let in_flow_end = (body_end + margin).max(floats_end).max(after.end + after.margin);
+    let in_flow_end = (body_end + margin)
+        .max(floats_end)
+        .max(after.end + after.margin);
     let resize_wrappers = super::resize_wrappers::measure(
-        document, viewport, body, [width, top, end],
-        in_flow_end - (y - flowed_y), context.exhausted(),
+        document,
+        viewport,
+        body,
+        [width, top, end],
+        in_flow_end - (y - flowed_y),
+        context.exhausted(),
     );
     // This document has resolved percentage edges and these boxes have their final layout sizes.
     for item in &mut items {
@@ -502,7 +509,13 @@ fn layout_once(
             item.resize_box = Some(super::effects::resize_box(item, node));
         }
     }
-    Ok((items, height, decoration, context.exhausted(), resize_wrappers))
+    Ok((
+        items,
+        height,
+        decoration,
+        context.exhausted(),
+        resize_wrappers,
+    ))
 }
 /** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
 and ends at `end`; None for a static body, whose top-level absolute boxes use the viewport. */
@@ -751,9 +764,10 @@ fn dispatch(
     block(context, node, flow, items, forced)
 }
 /** Replaced boxes sized from a natural size: images, canvases from their bitmap's `width` and
-`height` (render.rs `canvases`), and embedded frames. */
+`height` (render.rs `canvases`), videos from their media's frame size (or the default object
+size before it is known), and embedded frames. */
 pub(super) fn replaced_image(node: &Node) -> bool {
-    node.tag == "img" || node.tag == "canvas" || frame(node)
+    matches!(node.tag.as_str(), "img" | "canvas" | "video") || frame(node)
 }
 /** A box showing another document (HTML's iframe, or an object or embed the runtime loaded a
 document or drawing into): a replaced box whose content the runtime paints into its content box.
@@ -766,7 +780,7 @@ fn atomic_inline(node: &Node) -> bool {
     node.style.inline_block
         || frame(node)
         || [
-            "img", "canvas", "svg", "input", "button", "select", "textarea",
+            "img", "canvas", "video", "svg", "input", "button", "select", "textarea",
         ]
         .contains(&node.tag.as_str())
 }
@@ -1340,6 +1354,8 @@ pub(super) fn box_item(
         backgrounds: Vec::new(),
         clip: None,
         transform: None,
+        quad: None,
+        layout_origin: None,
         pin: None,
         z: 0,
         stacking_opacity: Vec::new(),
@@ -1352,6 +1368,8 @@ pub(super) fn box_item(
         underline: !node.style.text_decoration_none
             && (node.style.underline || (node.tag == "a" && node.href.is_some())),
         strikethrough: !node.style.text_decoration_none && node.style.strikethrough,
+        decoration: super::display::decoration_line(&node.style),
+        outline: None,
         italic: face.italic,
         object_fit: crate::document::style::ObjectFit::Fill,
         object_position: super::display::default_object_position(),

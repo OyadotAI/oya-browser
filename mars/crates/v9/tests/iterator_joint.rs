@@ -1,5 +1,5 @@
 /** Static iterator sequencing and joint iteration preserve lazy opening, cleanup and keyed row identity. */
-mod common;
+use crate::common;
 
 /** Concat reads iterator methods now but opens each input only after the previous one finishes. */
 #[test]

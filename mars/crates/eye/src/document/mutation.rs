@@ -99,7 +99,7 @@ fn set_root_attribute(
 ) -> EngineResult<()> {
     if !script_attribute_allowed(name) {
         return Err(EngineError::unsupported(
-            "Scripts may not write event handler, srcdoc or http-equiv attributes.",
+            "Scripts may not write srcdoc or http-equiv attributes.",
         ));
     }
     if let Some(value) = value {
@@ -153,7 +153,7 @@ fn set_any_attribute(
 ) -> EngineResult<()> {
     if !script_attribute_allowed(name) {
         return Err(EngineError::unsupported(
-            "Scripts may not write event handler, srcdoc or http-equiv attributes.",
+            "Scripts may not write srcdoc or http-equiv attributes.",
         ));
     }
     if let Some(value) = value {

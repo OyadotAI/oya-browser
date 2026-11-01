@@ -1,4 +1,5 @@
 /** Computed styles are bounded shared data consumed by native layout, painting and control guards. */
+use super::length_expr::LengthExpr;
 use {
     super::flex_model::*,
     super::formatting::{ColorScheme, LineHeight},
@@ -69,6 +70,15 @@ pub struct ComputedStyle {
     /// `max_width` is a percentage of the containing block's width.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub percent_max_width: bool,
+    /// Pixel part of a mixed `calc()` max-width such as `calc(100% - 32px)`, added once the
+    /// percentage resolves against the containing block; 0 for a plain max-width. Without it
+    /// BBC News' card gutter was refused and the card ran edge to edge.
+    #[serde(skip_serializing_if = "default")]
+    pub max_width_offset: f64,
+    /// A `max-width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels,
+    /// resolved against the containing block at layout; None otherwise, and then `max_width` holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_width_expr: Option<LengthExpr>,
     pub border: f64,
     pub border_color: Option<String>,
     pub align: String,
@@ -162,6 +172,14 @@ pub struct ComputedStyle {
     /// beside an 840px image, and shrank under it without this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_width_percent: Option<f64>,
+    /// Pixel part of a mixed `calc()` percentage min-width such as `calc(100% + 50px)`, added
+    /// once the percentage resolves; 0 otherwise.
+    #[serde(skip_serializing_if = "default")]
+    pub min_width_offset: f64,
+    /// A `min-width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels,
+    /// resolved against the containing block at layout; None otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_width_expr: Option<LengthExpr>,
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
@@ -225,6 +243,25 @@ pub struct ComputedStyle {
     /// Flattened matrices lose transform function identity; retain exclusions for bounded interpolation.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub transform_animation_excluded: bool,
+    /// The full 4x4 matrix (`matrix3d()` order) of a `transform` that leaves the plane; None
+    /// when the planar `transform` says everything, so 2D pages never pay for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform_4: Option<[f64; 16]>,
+    /// The z of `transform-origin` in px, its third value; 0 when absent.
+    #[serde(default, skip_serializing_if = "default")]
+    pub transform_origin_z: f64,
+    /// `perspective` in px: the distance from which this box's children are viewed; None for `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perspective: Option<f64>,
+    /// `perspective-origin` as [x px, x percent, y px, y percent]; None is the border box center.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perspective_origin: Option<[f64; 4]>,
+    /// `transform-style: preserve-3d`: children share this box's 3D rendering context.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preserve_3d: bool,
+    /// `backface-visibility: hidden`: the box paints nothing while its back faces the viewer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backface_hidden: bool,
     /// A single authored 2D rotate() keeps its unwrapped angle; matrices cannot recover full turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_radians: Option<f64>,
@@ -335,6 +372,9 @@ pub struct ComputedStyle {
     /// Inherited marker kind.
     #[serde(skip_serializing_if = "default")]
     pub list_style: ListStyle,
+    /// A `list-style-type` string (`'*'`) drawn as the marker in place of `list_style`'s symbol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_marker: Option<String>,
     /// Grid container.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub display_grid: bool,
@@ -527,7 +567,7 @@ pub struct ComputedStyle {
     /// unlike `break-word`, its breaks count toward min-content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_wrap_anywhere: Option<bool>,
-    /// Declared `word-break`: Some(true) for `break-all` or `break-word`, None when inherited.
+    /// Declared `word-break: break-all` (Some(true)) or another value, None when inherited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_all: Option<bool>,
     /// Declared `word-break: break-all` (Some(true)) or another value (Some(false)), None when
@@ -644,6 +684,26 @@ pub struct ComputedStyle {
     /// Inherited: `text-decoration` includes `line-through`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
+    /// Not inherited: `text-decoration-style`, the shape the decoration lines paint.
+    #[serde(skip_serializing_if = "default")]
+    pub decoration_style: DecorationStyle,
+    /// Not inherited: `text-decoration-thickness` in px; None is `auto` or `from-font`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoration_thickness: Option<f64>,
+    /// Inherited: `text-underline-offset` in px, moving the underline away from the text; None is `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline_offset: Option<f64>,
+    /// `outline-style` as a painted line; None for `none` and `hidden`, which paint no outline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_style: Option<super::border::BorderStyle>,
+    /// `outline-width` in px, `medium` (3px) initially.
+    pub outline_width: f64,
+    /// `outline-color` as authored; None is `currentcolor`, the element's text color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_color: Option<String>,
+    /// `outline-offset` in px: the gap between the border edge and the outline's inner edge.
+    #[serde(skip_serializing_if = "default")]
+    pub outline_offset: f64,
     /// Percentage parts of `top`, `right`, `bottom`, `left` insets.
     #[serde(skip_serializing_if = "default")]
     pub inset_percent: [f64; 4],
@@ -661,6 +721,13 @@ pub struct ComputedStyle {
     /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
     #[serde(skip_serializing_if = "default")]
     pub translate_percent: [f64; 2],
+    /// The cross part of a percentage translation after a rotate or skew: `[y from width %,
+    /// x from height %]`. Zero for the common centering translate.
+    #[serde(default, skip_serializing_if = "default")]
+    pub translate_percent_cross: [f64; 2],
+    /// The z part of a percentage translation after a 3D function: `[from width %, from height %]`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub translate_percent_depth: [f64; 2],
     /// `transform-origin` as [x px, x percent, y px, y percent] of the border box; None is
     /// the initial center.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -670,6 +737,10 @@ pub struct ComputedStyle {
     /// was refused and a two-column row stacked.
     #[serde(skip_serializing_if = "default")]
     pub width_offset: f64,
+    /// A `width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels, resolved
+    /// against the containing block at layout; None otherwise, and then `width` holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_expr: Option<LengthExpr>,
     /// `width: stretch` (`-webkit-fill-available`): the margin box fills the containing block
     /// whatever `box-sizing` says, as Blink's fill-available size does. Without it LinkedIn's
     /// header row shrank to its content and the nav ended mid-page.
@@ -739,6 +810,11 @@ pub struct ComputedStyle {
     /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub svg_paint: std::collections::BTreeMap<String, String>,
+    /// Canonical values of the kept properties (`kept_values.rs`) the author declared; absent
+    /// names read as their initial value in `getComputedStyle`.
+    /// Shared by reference: an inherited value is the parent's string, not a copy of it.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub kept_values: std::collections::BTreeMap<String, std::sync::Arc<str>>,
     /// Bits of the grouping properties that make this box a stacking context in Blink without
     /// positioning (`filter`, `backdrop-filter`, `mix-blend-mode`, `isolation`, `will-change`,
     /// `contain`, a shaped `clip-path`); see `visual::STACKING_*`. Paint order reads it.
@@ -846,6 +922,8 @@ impl Default for ComputedStyle {
             percent_width: false,
             max_width: None,
             percent_max_width: false,
+            max_width_offset: 0.0,
+            max_width_expr: None,
             border: 0.0,
             border_color: None,
             align: "start".into(),
@@ -879,6 +957,8 @@ impl Default for ComputedStyle {
             align_items: AlignItems::Stretch,
             min_width: None,
             min_width_percent: None,
+            min_width_offset: 0.0,
+            min_width_expr: None,
             opacity: 1.0,
             opacity_animations: Vec::new(),
             opacity_animation_blocked: false,
@@ -900,6 +980,12 @@ impl Default for ComputedStyle {
             backgrounds: Vec::new(),
             transform: None,
             transform_animation_excluded: false,
+            transform_4: None,
+            transform_origin_z: 0.0,
+            perspective: None,
+            perspective_origin: None,
+            preserve_3d: false,
+            backface_hidden: false,
             rotation_radians: None,
             scale_factors: None,
             text_decoration_none: false,
@@ -934,6 +1020,7 @@ impl Default for ComputedStyle {
             vertical_align: VerticalAlign::Baseline,
             list_item: false,
             list_style: ListStyle::Disc,
+            list_marker: None,
             display_grid: false,
             display_contents: false,
             table_box: TableBox::None,
@@ -1027,13 +1114,23 @@ impl Default for ComputedStyle {
             }; 2],
             underline: false,
             strikethrough: false,
+            decoration_style: DecorationStyle::Solid,
+            decoration_thickness: None,
+            underline_offset: None,
+            outline_style: None,
+            outline_width: super::constants::BORDER_MEDIUM,
+            outline_color: None,
+            outline_offset: 0.0,
             inset_percent: [0.0; 4],
             radius_percent: [0.0; 4],
             radius_px: [0.0; 4],
             radius_y: [None; 4],
             translate_percent: [0.0; 2],
+            translate_percent_cross: [0.0; 2],
+            translate_percent_depth: [0.0; 2],
             transform_origin: None,
             width_offset: 0.0,
+            width_expr: None,
             width_stretch: false,
             width_fit: false,
             height_fit: false,
@@ -1050,6 +1147,7 @@ impl Default for ComputedStyle {
             central_baseline: false,
             counter_rotate: 0,
             svg_paint: std::collections::BTreeMap::new(),
+            kept_values: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,
             overflow_clip_margin: 0.0,

@@ -1,5 +1,5 @@
 /** Aggregate finalization failures travel independently of real indexed script failures. */
-mod common;
+use crate::common;
 use mars_v9::Execution;
 
 #[test]

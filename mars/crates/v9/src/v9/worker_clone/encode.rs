@@ -13,7 +13,7 @@ pub(in crate::v9) fn encode(vm: &mut Vm, value: &JsValue) -> Res<WorkerData> {
 }
 
 /** Unsupported values produce the standard language-visible clone failure. */
-fn refused(vm: &mut Vm) -> crate::v9::vm::Thrown {
+pub(super) fn refused(vm: &mut Vm) -> crate::v9::vm::Thrown {
     vm.dom_exception("DataCloneError", "The value cannot be cloned for a Worker")
 }
 
@@ -70,6 +70,13 @@ fn atom(
         .get(id)
         .map(|object| object.class.clone())
         .ok_or_else(|| refused(vm))?;
+    let mut nested = |vm: &mut Vm, item: &JsValue, graph: &mut WorkerData| {
+        atom(vm, item, graph, seen, bytes, depth + 1)
+    };
+    if let Some((kind, fields)) = super::kinds::encode(vm, value, &class, graph, &mut nested)? {
+        graph.nodes[index] = Node { kind, fields };
+        return Ok(Atom::Reference(index));
+    }
     let kind = match class {
         Class::Plain => {
             if vm.heap.get(id).is_some_and(|object| {

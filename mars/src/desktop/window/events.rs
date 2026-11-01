@@ -253,6 +253,7 @@ impl Window {
                             && self.mars.address.currentEditor().is_none()
                         {
                             self.canvas.restore(&self.mars.address, url);
+                            self.mars.hold_presented(url);
                         }
                     }
                     let title = banner_title(error);

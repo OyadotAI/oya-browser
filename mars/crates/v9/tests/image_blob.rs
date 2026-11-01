@@ -1,5 +1,5 @@
 /** Blob images capture source generations after settled attributes and retain only bounded native snapshots. */
-mod common;
+use crate::common;
 
 /** A source revoked before stable-state admission cannot gain bytes; later revocation keeps an admitted copy. */
 #[test]

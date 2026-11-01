@@ -54,7 +54,7 @@ fn implicit_termination_preserves_expression_and_statement_depth_limits() {
     );
     let error = load(&expression, &[]).unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("expression nesting"));
+    assert!(error.message.contains("syntax depth"), "{}", error.message);
     let nested = format!(
         "{}0{}",
         "{".repeat(STATEMENT_DEPTH),

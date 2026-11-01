@@ -1,5 +1,5 @@
 /** Host string-compilation admission and explicit shell RNG seeds obey real policy, context and persistence boundaries. */
-mod common;
+use crate::common;
 
 /** Every dynamic Function family and both eval forms reject strings through the intrinsic EvalError brand. */
 #[test]

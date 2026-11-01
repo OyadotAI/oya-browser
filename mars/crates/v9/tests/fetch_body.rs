@@ -1,6 +1,6 @@
 /** Fetch's "extract a body" and "consume body": Blob, FormData and object bodies, and the
 arrayBuffer, bytes, blob and formData readers on Request and Response. */
-mod common;
+use crate::common;
 use common::{console, input};
 
 /** Load one script and return the execution, with microtasks run. */

@@ -5,7 +5,7 @@ use crate::v9::HostRequest;
 use std::collections::BTreeSet;
 
 /** Match the initiating context's pending snapshot quota without depending on its restored counters. */
-const SNAPSHOT_BYTES: usize = VM_STATE_BYTES / 16;
+pub(super) const SNAPSHOT_BYTES: usize = VM_STATE_BYTES / 16;
 
 /** Cancellation is idempotent for completed IDs and always precedes new snapshot admission. */
 pub(in crate::runtime) fn queue(

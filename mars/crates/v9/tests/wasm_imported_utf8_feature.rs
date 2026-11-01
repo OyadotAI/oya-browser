@@ -1,6 +1,6 @@
 /* The shell feature flag controls UTF-8 compile-time string imports. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Disabled collections remain ordinary imports; enabled collections resolve builtins. */
 #[test]

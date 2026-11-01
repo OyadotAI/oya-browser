@@ -54,6 +54,8 @@ pub(super) struct Page {
     pub scripts: Vec<String>,
     /** Already-governed source supports resize/theme restyling without refetch or script execution. */
     pub resolved_stylesheets: Vec<String>,
+    /** Where V9's script-only `<style>` texts sit in `resolved_stylesheets`: start and length. */
+    pub local_sheets: (usize, usize),
     /** Final URL after policy-checked redirects. */
     pub url: String,
     /// The root document's site partitions worker loads independently of their own origin.
@@ -380,12 +382,7 @@ impl Runtime {
         crate::document::validate_content(&page.document)?;
         let effects = super::animations::paint_effects(&page.scripting);
         let effective = super::animations::effective_presentation(&page.document, &effects)?;
-        let call = RenderCall {
-            document: &effective,
-            context: self.render_context,
-            scroll: &page.element_scroll,
-        };
-        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        let mut display = self.eye_render(&effective, self.render_context, &page.element_scroll)?;
         self.embed_frames(&mut display, &page.frames)?;
         page.display = Some(display);
         page.laid_out_before = next_node(&page.document);
@@ -415,12 +412,7 @@ impl Runtime {
     ) -> EngineResult<DisplayList> {
         crate::document::validate_content(document)?;
         let effective = super::animations::effective_presentation(document, effects)?;
-        let call = RenderCall {
-            document: &effective,
-            context: self.render_context,
-            scroll,
-        };
-        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        let mut display = self.eye_render(&effective, self.render_context, scroll)?;
         let frames = self.page.as_ref().map(|page| page.frames.clone());
         self.embed_frames(&mut display, frames.as_deref().map_or(&[], Vec::as_slice))?;
         Ok(display)
@@ -491,6 +483,15 @@ impl Runtime {
         }
         value
     }
+    /** A window's context under window bounds; a frame page's (see `Runtime::framed`) under
+    frame bounds, which admit a 240 by 180 iframe no window could be. */
+    fn validate_context(&self, context: crate::document::RenderContext) -> EngineResult<()> {
+        if self.framed {
+            context.validate_frame()
+        } else {
+            context.validate()
+        }
+    }
     /** Point layout is prepared by the engine before the publication authority check. */
     pub(super) fn prepare(&mut self, page: &mut Page) -> EngineResult<()> {
         self.prepare_presentation(page, self.render_context)
@@ -501,7 +502,7 @@ impl Runtime {
         page: &mut Page,
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
-        context.validate()?;
+        self.validate_context(context)?;
         page.document = self.styled(&page.document, &page.resolved_stylesheets, context)?;
         page.styled = true;
         self.prepare_styled(page, context)
@@ -521,12 +522,63 @@ impl Runtime {
         sheets: &[String],
         context: crate::document::RenderContext,
     ) -> EngineResult<Document> {
+        let (owned, owned_sheets) = (document.clone(), sheets.to_vec());
+        let framed = self.framed;
+        let typed = self.call_job("document", "document.styles", None, move || {
+            if framed {
+                crate::document::compute_frame_styles(&owned, &owned_sheets, context)
+            } else {
+                crate::document::compute_styles_with_context(&owned, &owned_sheets, context)
+            }
+        });
+        if let Some(styled) = typed {
+            return styled;
+        }
         let call = StylesCall {
             document,
             sheets,
             context,
         };
-        self.call_typed("document", "document.styles", &call, None)
+        let op = if framed {
+            "document.frame_styles"
+        } else {
+            "document.styles"
+        };
+        self.call_typed("document", op, &call, None)
+    }
+    /**
+     * Eye's layout of `document`: a typed job when Eye runs in this process, so a page-sized
+     * document is copied rather than encoded and decoded; the framed call otherwise.
+     */
+    fn eye_render(
+        &mut self,
+        document: &Document,
+        context: crate::document::RenderContext,
+        scroll: &crate::document::ScrollOffsets,
+    ) -> EngineResult<DisplayList> {
+        let (owned, owned_scroll) = (document.clone(), scroll.clone());
+        let framed = self.framed;
+        let typed = self.call_job("document", "document.render", None, move || {
+            if framed {
+                crate::document::render_frame_scrolled(&owned, context, &owned_scroll)
+            } else {
+                crate::document::render_scrolled(&owned, context, &owned_scroll)
+            }
+        });
+        if let Some(display) = typed {
+            return display;
+        }
+        let call = RenderCall {
+            document,
+            context,
+            scroll,
+        };
+        let op = if framed {
+            "document.frame_render"
+        } else {
+            "document.render"
+        };
+        self.call_typed("document", op, &call, None)
     }
     /**
      * Checks and lays out a document already styled with the page's sheets under `context`.
@@ -538,7 +590,7 @@ impl Runtime {
         page: &mut Page,
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
-        context.validate()?;
+        self.validate_context(context)?;
         if page.untrusted_styles {
             untrusted(&mut page.document);
         }
@@ -552,12 +604,7 @@ impl Runtime {
         if self.web_origins.is_some() {
             let effects = super::animations::paint_effects(&page.scripting);
             let effective = super::animations::effective_presentation(&page.document, &effects)?;
-            let call = RenderCall {
-                document: &effective,
-                context,
-                scroll: &page.element_scroll,
-            };
-            let mut display = self.call_typed("document", "document.render", &call, None)?;
+            let mut display = self.eye_render(&effective, context, &page.element_scroll)?;
             self.embed_frames(&mut display, &page.frames)?;
             page.display = Some(display);
             page.laid_out_before = next_node(&page.document);
@@ -582,6 +629,18 @@ impl Runtime {
         changes: &[DomChange],
         script_changes: &[crate::document::ScriptChange],
     ) -> EngineResult<Document> {
+        let owned = (document.clone(), changes.to_vec(), script_changes.to_vec());
+        let typed = self.call_job("document", "document.apply", None, move || {
+            let (document, changes, script_changes) = owned;
+            let applied = crate::document::apply_changes(&document, &changes)?;
+            if script_changes.is_empty() {
+                return Ok(applied);
+            }
+            crate::document::apply_script_changes(&applied, &script_changes)
+        });
+        if let Some(applied) = typed {
+            return applied;
+        }
         let call = ApplyCall {
             document,
             changes,

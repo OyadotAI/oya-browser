@@ -571,6 +571,7 @@ fn pseudo_matches<'a>(tree: &Tree<'a>, element: Element<'a>, pseudo: Pseudo) -> 
             Element::Node(node) => tree.focus_chain.contains(&node.local_id),
             _ => !tree.focus_chain.is_empty(),
         },
+        Pseudo::FocusVisible => node.is_some_and(|node| node.focused && read_write(node)),
         Pseudo::Never => false,
     }
 }

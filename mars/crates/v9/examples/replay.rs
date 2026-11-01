@@ -109,6 +109,8 @@ fn main() {
     }
     let folder = args.first().expect("a dump folder");
     let mut resident: HashMap<String, Vec<String>> = HashMap::new();
+    // Source keys hashed once per source list, as the app's service keeps them resident.
+    let mut keys: HashMap<Vec<usize>, Vec<mars_v9::SourceKey>> = HashMap::new();
     let mut carried: Option<VmState> = None;
     let mut carried_document: Option<ScriptDocument> = None;
     let mut carried_text: BTreeMap<usize, String> = BTreeMap::new();
@@ -145,9 +147,19 @@ fn main() {
         if chain && !carried_text.is_empty() {
             environment.node_text = carried_text.clone();
         }
+        let shape: Vec<usize> = call.sources.iter().map(String::len).collect();
+        let source_keys = keys
+            .entry(shape)
+            .or_insert_with(|| {
+                call.sources
+                    .iter()
+                    .map(|source| mars_v9::source_key(source))
+                    .collect()
+            })
+            .clone();
         let input = PageInput {
             sources: &call.sources,
-            source_keys: &[],
+            source_keys: &source_keys,
             document: document.clone(),
             storage: call.storage,
             host: &host,

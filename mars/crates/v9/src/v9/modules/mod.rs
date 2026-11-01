@@ -40,12 +40,14 @@ use super::value::{JsString, JsValue, ObjectId};
 use super::vm::heap::{ENUMERABLE, EnvId, Key, Prop, Slot as HeapSlot, WRITABLE};
 use super::vm::realm::{Builder, symbol};
 use super::vm::{Call, Res, Vm};
-use crate::constants::{MODULE_BYTES, MODULES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES};
+use crate::constants::{
+    MODULE_BYTES, MODULE_SOURCES, MODULES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES,
+};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::syntax::Name;
 use import_map::ImportMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use url::Url;
 
@@ -54,7 +56,7 @@ pub(in crate::v9) const MODULE_OFFSET: usize = 128 * 1024 * 1024;
 /* Classic sources end before the module region, and modules end before dynamic code. */
 const _: () = assert!(
     SCRIPT_TOTAL_BYTES + SCRIPT_COUNT <= MODULE_OFFSET
-        && MODULE_OFFSET + MODULE_BYTES + MODULES <= super::DYNAMIC_OFFSET
+        && MODULE_OFFSET + MODULE_BYTES + MODULE_SOURCES <= super::DYNAMIC_OFFSET
 );
 
 /// The module scripts, import maps and fetched modules of a page, supplied with every request.
@@ -236,6 +238,9 @@ pub(in crate::v9) struct Modules {
     entries: BTreeMap<usize, ModuleEntry>,
     /// Offset spans of fetched modules, for import() referrers.
     ranges: Vec<(usize, usize, String)>,
+    /// Every URL the app delivered this request, as a module or a classic script: a set, so a
+    /// page with hundreds of dynamic scripts checks each one in constant time.
+    fetched: HashSet<String>,
     /// Offset spans of page sources.
     scripts: Vec<(usize, usize)>,
     /// The page sources' URLs ("" when inline).
@@ -338,6 +343,7 @@ impl Modules {
         let mut offset = MODULE_OFFSET;
         for module in &input.sources {
             let length = module.source.as_ref().map_or(0, String::len);
+            modules.fetched.insert(module.url.clone());
             modules
                 .ranges
                 .push((offset, offset + length, module.url.clone()));
@@ -377,7 +383,7 @@ impl Modules {
     }
     /** Whether the app delivered this URL already (as a source or as a failure). */
     pub fn delivered(&self, url: &str) -> bool {
-        self.ranges.iter().any(|(_, _, delivered)| delivered == url)
+        self.fetched.contains(url)
     }
     /** The source a page byte offset falls in, for diagnostics: a page script's URL (or its
     one-based index when inline), a fetched module's or script's URL, or dynamic code. */
@@ -516,8 +522,8 @@ fn unavailable(url: &str) -> EngineError {
 /** Input bounds: MODULES sources within MODULE_BYTES, none over SCRIPT_BYTES, entries that
 name real page sources once each. */
 fn validate(input: &ModuleInput, sources: usize) -> EngineResult<()> {
-    if input.sources.len() > MODULES {
-        return Err(EngineError::limit("modules", MODULES));
+    if input.sources.len() > MODULE_SOURCES {
+        return Err(EngineError::limit("modules", MODULE_SOURCES));
     }
     let mut total = 0usize;
     for module in &input.sources {
@@ -579,20 +585,7 @@ fn compile_classic(
 /** Compile one module at its page offset; the outer error is a service failure. */
 fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompilation> {
     Ok(vm.registry.module(source, offset, || {
-        super::lexer::tokenize_module(source)
-            .map_err(|mut error| {
-                if let Some(location) = error.location.as_deref_mut() {
-                    location.byte_offset += offset;
-                }
-                error
-            })
-            .and_then(|mut tokens| {
-                for token in &mut tokens {
-                    token.location.byte_offset += offset;
-                    token.end += offset;
-                }
-                syntax::parse_module(tokens)
-            })
+        super::lexer::tokenize_module_at(source, offset).and_then(syntax::parse_module)
     }))
 }
 

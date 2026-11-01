@@ -1,5 +1,5 @@
 /** Promise resolving functions share one once-only record while releasing settled targets. */
-mod common;
+use crate::common;
 
 /** Clearing the target after claiming must not allow the sibling resolver to settle again. */
 #[test]

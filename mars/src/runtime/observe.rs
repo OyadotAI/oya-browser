@@ -204,56 +204,78 @@ fn options(document: &Document, select: usize) -> impl Iterator<Item = &Node> {
     crate::document::select_options(document, select).into_iter()
 }
 
-/** Tags a pointer click reaches: what page.click accepts, plus text areas a click focuses. */
-const CLICKABLE: &[&str] = &["a", "button", "label", "input", "textarea"];
-
 impl Page {
     /**
-     * The topmost painted node under a document point, and the nearest node a click there would
-     * activate. Items are in paint order, so the last one containing the point is on top.
+     * The topmost box under a document point whose node takes pointer events, and the frame base
+     * and node it belongs to. The point goes to that node, and the runtime's activation rules pick
+     * the link, button, label or field that acts for it. Transparent boxes are hit, as in Chrome;
+     * an agent still never acts on a node aria-hidden, which refuses the point. `top` is the
+     * viewport's scroll offset.
      */
-    pub(super) fn hit(&self, x: f64, y: f64) -> Option<(usize, &Node, Option<&Node>)> {
-        let inside = |left: f64, top: f64, width: f64, height: f64| {
-            x >= left && x < left + width && y >= top && y < top + height
-        };
-        let item = self.display.as_ref()?.items.iter().rev().find(|item| {
-            crate::document::agent_visible(item)
-                && inside(item.x, item.y, item.width, item.height)
-                && item
-                    .clip
-                    .is_none_or(|clip| inside(clip.x, clip.y, clip.width, clip.height))
+    pub(super) fn hit(&self, x: f64, y: f64, top: f64) -> Option<(usize, &Node)> {
+        let display = self.display.as_ref()?;
+        // Whether the item last resolved (the one pointer_target settles on) is painted visibly.
+        let shown = std::cell::Cell::new(true);
+        let (base, node) = crate::document::pointer_target(display, [x, y], top, |item| {
+            shown.set(crate::document::agent_visible(item));
+            self.painted_node(item)
         })?;
-        let frame = self
-            .frames
+        // An invisible box on top (opacity 0, clipped away) is refused rather than clicked: an agent
+        // acts on what it is shown, so a transparent overlay must not take its click. A transparent
+        // form field over its own visible label is ordinary custom styling and keeps the click.
+        let allowed = shown.get()
+            || transparent_field(node) && self.own_label_under(display, [x, y], top, (base, node));
+        (allowed && !agent_hidden(self.owner_document(base), node)).then_some((base, node))
+    }
+    /** Whether the topmost visibly painted box under the point belongs to a label that names `field`: the
+    custom-control case, where a page hides a field over its own label. An invisible field over
+    anything else (a "Cancel" button's text) is a clickjacking surface and is refused. */
+    fn own_label_under(
+        &self,
+        display: &crate::document::DisplayList,
+        point: [f64; 2],
+        top: f64,
+        (base, field): (usize, &Node),
+    ) -> bool {
+        let document = self.owner_document(base);
+        // Only the topmost visible content under the point counts: the label must be what the agent
+        // sees there, not something an opaque box covers.
+        let first_visible = display
+            .items
             .iter()
-            .find(|frame| frame.node(item.local_id).is_some());
-        let (base, document) = frame.map_or((0, &self.document), |frame| {
-            (frame.id_base(), frame.document())
-        });
-        let position = |id: usize| local_position(&document.nodes, id, |node| node.local_id);
-        let node = &document.nodes[position(item.local_id - base)?];
-        if !agent_visible(document, node) {
-            return None;
-        }
-        let mut current = Some(node);
-        while let Some(candidate) = current {
-            if CLICKABLE.contains(&candidate.tag.as_str()) {
-                return Some((base, node, Some(candidate)));
-            }
-            current = candidate
-                .parent
-                .and_then(position)
-                .map(|index| &document.nodes[index]);
-        }
-        Some((base, node, None))
+            .rev()
+            .filter(|item| crate::document::item_contains(item, point, top))
+            .filter(|item| crate::document::agent_visible(item))
+            .filter_map(|item| self.painted_node(item))
+            .find(|(owner, node)| !(*owner == base && node.local_id == field.local_id));
+        first_visible
+            .is_some_and(|(owner, node)| owner == base && names_field(document, node, field))
+    }
+    /** The node a painted item belongs to, read from the frame that owns its identity range. */
+    fn painted_node(&self, item: &crate::document::DisplayItem) -> Option<(usize, &Node)> {
+        let (base, document) = self.frame_of(item.local_id);
+        let index = local_position(&document.nodes, item.local_id - base, |node| node.local_id)?;
+        Some((base, &document.nodes[index]))
+    }
+    /** The frame base and document that own a painted identity; the page's own document has base 0. */
+    fn frame_of(&self, painted: usize) -> (usize, &Document) {
+        self.frames
+            .iter()
+            .find(|frame| frame.node(painted).is_some())
+            .map_or((0, &self.document), |frame| {
+                (frame.id_base(), frame.document())
+            })
+    }
+    /** The document a frame base belongs to, so a node's ancestors and labels resolve in its own frame. */
+    pub(super) fn owner_document(&self, base: usize) -> &Document {
+        self.frames
+            .iter()
+            .find(|frame| frame.id_base() == base)
+            .map_or(&self.document, |frame| frame.document())
     }
     /** What a point lookup reports about a node: identity, role and name, never a secret value. */
     pub(super) fn point_node(&self, base: usize, node: &Node) -> Value {
-        let document = self
-            .frames
-            .iter()
-            .find(|frame| frame.id_base() == base)
-            .map_or(&self.document, |frame| frame.document());
+        let document = self.owner_document(base);
         let labels = super::names::names(document);
         let name = local_position(&document.nodes, node.local_id, |node| node.local_id)
             .and_then(|index| labels.get(index))
@@ -839,5 +861,37 @@ impl Runtime {
         Ok(
             json!({"satisfied":satisfied,"page_id":page.id(),"revision":page.revision,"url":safe_url(&page.url,page.sensitive)}),
         )
+    }
+}
+
+/** Whether `node` is, or sits inside, a label whose control is `field`. */
+fn names_field(document: &Document, node: &Node, field: &Node) -> bool {
+    let mut current = Some(node);
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(at) = current else {
+            return false;
+        };
+        if at.tag == "label" {
+            return crate::document::labeled_control(document, at)
+                .is_some_and(|control| control.local_id == field.local_id);
+        }
+        current = at.parent.and_then(|parent| {
+            local_position(&document.nodes, parent, |node| node.local_id)
+                .map(|index| &document.nodes[index])
+        });
+    }
+    false
+}
+
+/// Input types that act as buttons: an invisible one is a clickjacking surface, not a styled field.
+const BUTTON_INPUTS: [&str; 4] = ["submit", "button", "image", "reset"];
+
+/** Whether an invisible hit may still take an agent's click: a field (text input, checkbox, radio,
+select, textarea) a page styles by hiding it over its visible label, never a button or link. */
+fn transparent_field(node: &Node) -> bool {
+    match node.tag.as_str() {
+        "select" | "textarea" => true,
+        "input" => !BUTTON_INPUTS.contains(&node.input_type()),
+        _ => false,
     }
 }

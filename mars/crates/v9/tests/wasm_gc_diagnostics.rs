@@ -1,5 +1,5 @@
 /** Wasm reference conversion failures retain the standard JS boundary diagnostic. */
-mod common;
+use crate::common;
 
 /** Incompatible values reject with a TypeError that identifies the JS conversion boundary. */
 #[test]

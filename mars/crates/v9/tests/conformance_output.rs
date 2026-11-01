@@ -1,6 +1,6 @@
 /* Native d8 output preserves real host records, coercion order, timers, stack traces and explicitly exposed CPU marks. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, HostEffects, PageEnvironment};
 
 /** A shell host is explicitly selected; browser pages continue to use their own console contract. */

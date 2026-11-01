@@ -22,12 +22,16 @@ mod clip;
 mod color_spaces;
 mod colors;
 mod compute;
+mod computed_css;
+mod length_expr;
+pub use computed_css::{COMPUTED_PROPERTIES, computed_value, css_color};
 mod constants;
 mod container;
 mod container_query;
 mod containment;
 mod content;
 mod declaration;
+mod decoration;
 mod flex;
 mod flex_model;
 mod font;
@@ -39,18 +43,28 @@ mod hints;
 mod import;
 mod individual;
 mod initial_letter;
+mod kept_grammar;
+mod kept_values;
 mod layer;
 pub(crate) mod layer_urls;
 mod layout_props;
 mod logical;
 mod media;
+/** Whether a media query list holds under `context`, as `@media` rules evaluate it: the one
+evaluator script `matchMedia` must agree with, so a page's layout code and its stylesheets
+never disagree about the viewport. Unknown features are false, as in a browser. */
+pub fn evaluate_media(query: &str, context: crate::document::RenderContext) -> bool {
+    media::media(query, context) == media::Truth::True
+}
 mod model;
 mod multicol;
+mod outline;
 mod paint;
 mod parsed;
 mod resolve;
 mod scroll_button;
 mod scroll_marker;
+mod selector_names;
 mod selector_parse;
 mod selectors;
 mod sheet;
@@ -58,6 +72,7 @@ mod shorthand;
 mod subjects;
 mod syntax;
 mod text_align;
+mod transform3d;
 mod transition;
 pub use animation::{RotationAnimation, RotationAnimations, RotationKeyframe};
 pub use animation::{ScaleAnimation, ScaleAnimations, ScaleKeyframe};
@@ -65,6 +80,7 @@ pub use transition::{OpacityTransitions, TransitionEasing, TransitionStyle, Tran
 pub use transition::{Rotation, RotationTransitions};
 pub use transition::{Scale, ScaleTransitions};
 pub use transition::{Translation, TranslationTransitions};
+mod reuse;
 pub(crate) mod text_box;
 mod ua;
 mod urls;
@@ -101,9 +117,9 @@ pub use multicol::Multicol;
 pub use urls::{BACKGROUND_IMAGES, background_urls, rebase_urls};
 pub use visual_model::{
     BackgroundBox, BackgroundLayer, BackgroundRepeat, BackgroundSize, BoxShadow, Clear, ColorStop,
-    ContainerType, Extent, Float, FontFamily, GridArea, GridLine, GridTemplate, LineName,
-    ListStyle, MaskLayer, ObjectFit, Overflow, Position, RadialShape, RadialSize, RepeatStyle,
-    TableBox, TextTransform, Track, TrackSize, VerticalAlign, WhiteSpace,
+    ContainerType, DecorationStyle, Extent, Float, FontFamily, GridArea, GridLine, GridTemplate,
+    LineName, ListStyle, MaskLayer, ObjectFit, Overflow, Position, RadialShape, RadialSize,
+    RepeatStyle, TableBox, TextTransform, Track, TrackSize, VerticalAlign, WhiteSpace,
 };
 pub use visual_model::{ContentKeyword, TrackContent};
 /** Internal value failures; never include arbitrary declarations or selectors in an error. */

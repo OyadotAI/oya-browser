@@ -4,7 +4,7 @@
  * the parsererror document for a source that is not well-formed, the HTML builder, the refusal
  * and unanswered cases, and the request and `load` round trip a script-created iframe takes.
  */
-mod common;
+use crate::common;
 use common::{environment, failure, global, host, input, load_with, round_trip};
 use mars_v9::{FrameDocument, ModuleInput, PageEnvironment};
 
@@ -225,4 +225,36 @@ fn the_page_document_still_reports_the_page_window() {
     let execution = load_with(source, &environment());
     assert_eq!(failure(&execution), None);
     assert_eq!(global(&execution, "r"), "true|true");
+}
+
+/** Writes into two frames' documents share one budget for the execution's markup: a 3 MiB write
+into one frame fits, then a 2 MiB write into the other frame pushes the total past it, and the
+limit ends the execution, as the per-document write limit does. */
+#[test]
+fn document_writes_across_frames_share_one_fragment_budget() {
+    let source = "const r=[];const f=document.createElement('iframe');f.src='/child.html';\
+        document.head.appendChild(f);const d=f.contentDocument;\
+        try{d.write('<p>'+'x'.repeat(3*1024*1024)+'</p>');r.push('frame ok')}catch(e){r.push('frame refused')}\
+        const g=document.createElement('iframe');g.src='/other.html';document.head.appendChild(g);\
+        try{g.contentDocument.write('<p>'+'y'.repeat(2*1024*1024)+'</p>');r.push('other ok')}catch(e){r.push('other refused')}\
+        const out=r.join();";
+    let mut environment = answered(
+        "https://example.com/child.html",
+        "text/html",
+        Some("<p>child</p>"),
+    );
+    environment.frame_documents.insert(
+        "https://example.com/other.html".to_string(),
+        FrameDocument {
+            address: "https://example.com/other.html".into(),
+            media_type: "text/html".into(),
+            source: Some("<p>other</p>".into()),
+        },
+    );
+    let execution = load_with(source, &environment);
+    let message = failure(&execution).unwrap_or_default();
+    assert!(
+        message.contains("execution fragment bytes"),
+        "a write past the shared budget is refused, got {message:?}"
+    );
 }

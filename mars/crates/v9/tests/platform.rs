@@ -1,5 +1,5 @@
 /** Browser globals: window, navigator, location, history, screen, console, cookies, storage, timers. */
-mod common;
+use crate::common;
 use common::{console, eval, input, load, load_with};
 use mars_v9::{PageEvent, StorageState};
 
@@ -266,15 +266,17 @@ fn random_uuid_is_unpredictable_and_well_formed() {
     }
 }
 
-/** Native shared-memory APIs are present while the unsupported WebSocket surface remains absent. */
+/** Native shared-memory APIs work, while WebSocket has only Chrome's interface shape: constructing
+one refuses explicitly instead of returning a socket that never connects. */
 #[test]
 fn supported_and_absent_platform_apis_are_distinct() {
     assert_eq!(
         eval(
-            "const r=[typeof Atomics,typeof SharedArrayBuffer,typeof WebSocket,typeof fetch,typeof XMLHttpRequest].join();",
+            "let made;try{new WebSocket('wss://x.test/');made='made'}catch(e){made=e.message}
+             const r=[typeof Atomics,typeof SharedArrayBuffer,typeof fetch,typeof XMLHttpRequest,made].join();",
             "r"
         ),
-        "object,function,undefined,function,function"
+        "object,function,function,function,Failed to construct 'WebSocket': Illegal constructor"
     );
 }
 
@@ -300,5 +302,26 @@ fn navigator_plugin_accessors_and_csi_page_time_match_blink() {
     assert_eq!(
         eval(source, "r"),
         "function|get plugins|function|get mimeTypes|4|5|2|false|1|true|navigation|navigate|number"
+    );
+}
+
+/** HTML's nesting clamp: a chain of zero-delay timeouts more than five deep waits 4 ms a step,
+so the virtual clock reaches the next animation frame and the frame runs inside the chain
+instead of starving behind it (YouTube's scheduler waited on such a frame forever). */
+#[test]
+fn nested_zero_delay_timeouts_cannot_starve_an_animation_frame() {
+    let sources = vec!["let depth=0;function chain(){depth++;if(depth<100)setTimeout(chain,0);else console.log('end '+depth)}\
+        setTimeout(chain,0);requestAnimationFrame(()=>console.log('frame at depth '+depth));".to_string()];
+    let environment = common::environment();
+    let host = common::host();
+    let loaded = mars_v9::load_page(input(&sources, &host, &environment)).unwrap();
+    let state = common::round_trip(loaded.state);
+    let ran =
+        mars_v9::run_timers(input(&sources, &host, &environment), state, 1000.0, 1000).unwrap();
+    let log = console(&ran);
+    assert_eq!(log.last().map(String::as_str), Some("end 100"), "{log:?}");
+    assert!(
+        log[0].starts_with("frame at depth ") && log[0] != "frame at depth 100",
+        "{log:?}"
     );
 }

@@ -3,7 +3,7 @@
  * Document.createProcessingInstruction and the ownerDocument each of them answers with, plus
  * the rule that replaced children stay reachable for mutation records.
  */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, StorageState};
 

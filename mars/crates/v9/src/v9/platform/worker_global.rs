@@ -29,8 +29,10 @@ const GLOBALS: &[&str] = &[
     "crypto",
     "structuredClone",
     "MessageChannel",
+    "BroadcastChannel",
     "MessagePort",
     "Worker",
+    super::host_bridge::GLOBAL,
 ];
 /** Window exposes these implemented global functions with worker-compatible behavior. */
 const FUNCTIONS: &[&str] = &[

@@ -1,5 +1,5 @@
 /** Default stack serialization uses real CallSite source coordinates and distinguishes named functions from unnamed locations. */
-mod common;
+use crate::common;
 
 /** Source identity is supplied through the same public metadata path used by a real host. */
 fn eval(source: &str) -> String {

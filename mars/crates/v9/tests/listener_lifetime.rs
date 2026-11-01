@@ -1,10 +1,15 @@
 /** Listener pressure reclaims dead registrations while preserving live callbacks and native signals. */
-mod common;
+use crate::common;
 
 /** Run the actual page event bindings and require an ordinary successful execution. */
 fn run(source: &str) -> mars_v9::Execution {
     let execution = common::load(source);
     assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert!(
+        execution.load_failure.is_none(),
+        "{:?}",
+        execution.load_failure
+    );
     execution
 }
 
@@ -12,7 +17,7 @@ fn run(source: &str) -> mars_v9::Execution {
 #[test]
 fn abort_releases_capacity_before_abort_callbacks() {
     let execution = run(
-        "const c=new AbortController();let hits=0;const callback=()=>hits++;Object.defineProperty(c.signal,'aborted',{get(){throw Error('public aborted getter')}});for(let i=0;i<16384;i++)window.addEventListener('unused'+i,callback,{signal:c.signal});c.signal.onabort=()=>window.addEventListener('after',callback);c.abort();window.dispatchEvent(new Event('unused0'));window.dispatchEvent(new Event('after'));const result=String(hits);",
+        "const c=new AbortController();let hits=0;const callback=()=>hits++;Object.defineProperty(c.signal,'aborted',{get(){throw Error('public aborted getter')}});const kind='x'.repeat(1048576);window.addEventListener(kind+'a',callback,{signal:c.signal});window.addEventListener(kind+'b',callback,{signal:c.signal});c.signal.onabort=()=>window.addEventListener(kind+'c',callback);c.abort();window.dispatchEvent(new Event(kind+'a'));window.dispatchEvent(new Event(kind+'c'));const result=String(hits);",
     );
     assert_eq!(common::global(&execution, "result"), "1");
 }
@@ -21,7 +26,7 @@ fn abort_releases_capacity_before_abort_callbacks() {
 #[test]
 fn listener_pressure_collects_dead_targets_and_pins_new_signal() {
     let execution = run(
-        "const noop=()=>{};function discard(){for(let i=0;i<16384;i++){const target=new EventTarget();target.addEventListener('x',noop)}}discard();let hits=0;const keep=new EventTarget();keep.addEventListener('x',()=>hits++,{get signal(){return new AbortController().signal}});keep.dispatchEvent(new Event('x'));const result=String(hits);",
+        "const noop=()=>{},kind='x'.repeat(1048576);function discard(){for(let i=0;i<2;i++){const target=new EventTarget();target.addEventListener(kind,noop)}}discard();let hits=0;const keep=new EventTarget();keep.addEventListener(kind,()=>hits++,{get signal(){return new AbortController().signal}});keep.dispatchEvent(new Event(kind));const result=String(hits);",
     );
     assert_eq!(common::global(&execution, "result"), "1");
     let restored: mars_v9::VmState =
@@ -29,20 +34,45 @@ fn listener_pressure_collects_dead_targets_and_pins_new_signal() {
     restored.validate_document(&common::page()).unwrap();
 }
 
-/** Truly live Window registrations remain rooted and retain the unchanged explicit limit. */
+/** Short framework event registrations may exceed the old count ceiling within the byte budget. */
 #[test]
-fn live_listener_limit_is_still_enforced() {
+fn short_live_registrations_exceed_the_old_count_limit() {
+    let execution = run(
+        "let hits=0;const callback=()=>hits++;for(let i=0;i<20000;i++)window.addEventListener('live'+i,callback);window.dispatchEvent(new Event('live19999'));const result=String(hits);",
+    );
+    assert_eq!(common::global(&execution, "result"), "1");
+    let restored: mars_v9::VmState =
+        serde_json::from_slice(&serde_json::to_vec(&execution.state).unwrap()).unwrap();
+    restored.validate_document(&common::page()).unwrap();
+    restored
+        .summary()
+        .validate_summary_document(&common::page())
+        .unwrap();
+}
+
+/** Long live event names hit accounted storage even with only three registrations. */
+#[test]
+fn live_event_name_bytes_are_bounded() {
     let execution = common::load(
-        "const callback=()=>{};for(let i=0;i<16385;i++)window.addEventListener('live'+i,callback);",
+        "const kind='x'.repeat(1048576),callback=()=>{};window.addEventListener(kind+'a',callback);window.addEventListener(kind+'b',callback);window.addEventListener(kind+'c',callback);",
     );
     assert!(
-        execution.failed.iter().any(
-            |failure| failure.error.message.contains("V9 event listeners")
-                && failure.error.message.contains("16384")
-        ),
+        execution.failed.iter().any(|failure| failure
+            .error
+            .message
+            .contains("V9 event listener storage bytes")),
         "{:?}",
         execution.failed
     );
+}
+
+/** Explicit removal releases the same storage that registration admission charges. */
+#[test]
+fn removal_releases_event_name_storage() {
+    let execution = run(
+        "const kind='x'.repeat(1048576);let hits=0;const callback=()=>hits++;window.addEventListener(kind+'a',callback);window.addEventListener(kind+'b',callback);window.removeEventListener(kind+'a',callback);window.addEventListener(kind+'c',callback);window.dispatchEvent(new Event(kind+'c'));const result=String(hits);",
+    );
+    assert_eq!(common::global(&execution, "result"), "1");
 }
 
 /** An AbortSignal lookalike cannot register callbacks or run an author-controlled aborted getter. */

@@ -3,7 +3,7 @@
  * and Back or Forward to an entry of the same document fires `popstate` with that state (then
  * `hashchange` for a fragment-only move) instead of reloading, so single-page routers work.
  */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::PageEvent;

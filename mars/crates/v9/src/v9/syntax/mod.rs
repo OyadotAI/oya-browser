@@ -216,7 +216,7 @@ impl Parser {
     /** Decoded token values cannot erase Annex B's strict-mode lexical early errors. */
     fn strict_literal(&self, token: &Token) -> EngineResult<()> {
         match token.legacy {
-            Some(message) if self.strict => Err(errors::syntax(token.location, message)),
+            Some(legacy) if self.strict => Err(errors::syntax(token.location, legacy.message())),
             _ => Ok(()),
         }
     }
@@ -331,11 +331,11 @@ impl Parser {
     }
     /** Exclusive end of the last consumed token, without following trivia. */
     fn consumed_end(&self) -> u32 {
-        self.tokens[self.position.saturating_sub(1)].end as u32
+        self.tokens[self.position.saturating_sub(1)].end
     }
     /** Position of the current token. */
     fn pos(&self) -> Pos {
-        Pos::from_location(self.peek().location)
+        self.peek().location
     }
     /** Punctuator spelling of the current token. */
     fn punct(&self) -> Option<&'static str> {
@@ -426,13 +426,13 @@ impl Parser {
     fn unexpected_reason(&self, token: &Token) -> String {
         match &token.kind {
             Kind::End => "Unexpected end of input".to_string(),
-            Kind::Illegal(reason) => reason.clone(),
+            Kind::Illegal(reason) => reason.to_string(),
             Kind::Number(_) | Kind::BigInt(_) | Kind::BigIntWide(_) => {
                 "Unexpected number".to_string()
             }
             Kind::String(_) | Kind::Opaque(_) => "Unexpected string".to_string(),
             Kind::Template { .. } => "Unexpected template string".to_string(),
-            Kind::Regex { .. } => "Unexpected regular expression".to_string(),
+            Kind::Regex(_) => "Unexpected regular expression".to_string(),
             Kind::Private(name) => format!("Unexpected identifier '#{name}'"),
             Kind::Name(name) => self.unexpected_name(name, token.escaped),
             kind => format!("Unexpected token '{}'", spelling(kind).unwrap_or("")),
@@ -569,7 +569,7 @@ impl Parser {
             return Err(self.unexpected());
         }
         self.next();
-        Ok(Name::from(name.as_str()))
+        Ok(name.0.clone())
     }
     /** `arguments` cannot be referenced from a class field initializer or static block. */
     fn check_arguments(&self, name: &str, pos: Pos) -> EngineResult<()> {
@@ -627,7 +627,7 @@ impl Parser {
     fn property_name(&mut self) -> EngineResult<Name> {
         match &self.peek().kind {
             Kind::Name(name) => {
-                let name = Name::from(name.as_str());
+                let name = name.0.clone();
                 self.next();
                 Ok(name)
             }
@@ -707,54 +707,55 @@ pub(in crate::v9) fn spelling(kind: &Kind) -> Option<&'static str> {
 
 /** Words that can never be identifier references; strict mode reserves a few more. */
 fn reserved(name: &str, strict: bool) -> bool {
-    const ALWAYS: [&str; 36] = [
-        "break",
-        "case",
-        "catch",
-        "class",
-        "const",
-        "continue",
-        "debugger",
-        "default",
-        "delete",
-        "do",
-        "else",
-        "enum",
-        "export",
-        "extends",
-        "false",
-        "finally",
-        "for",
-        "function",
-        "if",
-        "import",
-        "in",
-        "instanceof",
-        "new",
-        "null",
-        "return",
-        "super",
-        "switch",
-        "this",
-        "throw",
-        "true",
-        "try",
-        "typeof",
-        "var",
-        "void",
-        "while",
-        "with",
-    ];
-    const STRICT: [&str; 9] = [
-        "implements",
-        "interface",
-        "let",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "static",
-        "yield",
-    ];
-    ALWAYS.contains(&name) || strict && STRICT.contains(&name)
+    matches!(
+        name,
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+    ) || strict
+        && matches!(
+            name,
+            "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
+                | "yield"
+        )
 }

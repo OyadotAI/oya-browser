@@ -10,7 +10,7 @@ folder; unset means everything. `TEST262_ROOT` / `MJSUNIT_ROOT` override the che
 `CONF_OUT` the results folder, `CONF_JOBS` the thread count, `CONF_TIMEOUT_MS` the per-run timeout.
 Set `CONF_REQUIRE_PASS=1` to fail the command after saving results when any executed case fails.
 The opt-in `conformance` feature supplies d8.file fixture operations; the browser build omits it. */
-mod common;
+use crate::common;
 #[path = "support/mjsunit.rs"]
 mod mjsunit_host;
 use serde_json::{Value, json};

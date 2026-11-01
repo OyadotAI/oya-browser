@@ -1,6 +1,6 @@
 /* WasmFX continuation types retain actual signature identity behind the proposal flag. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Continuation types are gated and must refer to an actual function signature. */
 #[test]

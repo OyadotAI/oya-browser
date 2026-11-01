@@ -15,17 +15,63 @@ fn options_record(vm: &mut Vm, value: &JsValue) -> Res<ObjectId> {
     imports::store(vm, record, options)?;
     Ok(record)
 }
-/** Standard Response streaming requires an embedding-owned source consumer, never implicit network IO. */
-fn allowed(vm: &Vm) -> bool {
-    #[cfg(feature = "conformance")]
-    {
-        vm.page.environment.conformance_d8
+/** The MIME type a Response must carry to be compiled, as WebAssembly's Web API requires. */
+const WASM_MIME: &str = "application/wasm";
+
+/** A fulfilled source that is a Response: check it as the Web API's "process a Response" step
+does, then read its bytes through its own `arrayBuffer()` and continue with them. None when the
+source is not a Response, so the caller compiles it as a byte source. */
+fn response_bytes(vm: &mut Vm, source: &JsValue, continuation: ObjectId) -> Res<Option<JsValue>> {
+    let reader = match source {
+        JsValue::Object(_) => vm.get(source, &Key::from("arrayBuffer"))?,
+        _ => return Ok(None),
+    };
+    if !vm.is_callable(&reader) || vm.get(source, &Key::from("headers"))?.object().is_none() {
+        return Ok(None);
     }
-    #[cfg(not(feature = "conformance"))]
-    {
-        let _ = vm;
-        false
+    check_response(vm, source)?;
+    let promise = vm.call(reader, source.clone(), Vec::new())?;
+    let Some(read) = promise.object() else {
+        return Err(vm.type_error("Response.arrayBuffer() did not return a promise"));
+    };
+    let next = vm.new_promise()?;
+    vm.perform_then(
+        read,
+        ReactionHandler::Function(JsValue::Object(continuation)),
+        ReactionHandler::Function(JsValue::Undefined),
+        Some(next),
+    )?;
+    Ok(Some(JsValue::Object(next)))
+}
+
+/** A Response streams only when it is OK, unread and served as application/wasm. */
+fn check_response(vm: &mut Vm, response: &JsValue) -> Res<()> {
+    let headers = vm.get(response, &Key::from("headers"))?;
+    let get = vm.get(&headers, &Key::from("get"))?;
+    let kind = vm.call(get, headers, vec![JsValue::string("content-type")?])?;
+    let essence = if kind.nullish() {
+        String::new()
+    } else {
+        vm.to_text(&kind)?
+    };
+    let essence = essence
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if essence != WASM_MIME {
+        return Err(vm.type_error("Incorrect response MIME type. Expected 'application/wasm'."));
     }
+    if vm.get(response, &Key::from("ok"))? != JsValue::Boolean(true) {
+        return Err(vm.type_error("HTTP status code is not ok"));
+    }
+    if vm.get(response, &Key::from("bodyUsed"))? == JsValue::Boolean(true) {
+        return Err(
+            vm.type_error("Cannot compile WebAssembly.Module from an already read Response")
+        );
+    }
+    Ok(())
 }
 /** The returned promise belongs to the intrinsic constructor even when user Promise species changes. */
 fn begin(
@@ -37,9 +83,6 @@ fn begin(
 ) -> Res<JsValue> {
     let result = vm.new_promise()?;
     let prepared = (|| {
-        if !allowed(vm) {
-            return Err(vm.unsupported_error("WebAssembly Response streaming"));
-        }
         let options = options_record(vm, &options)?;
         let input = vm.new_promise()?;
         vm.resolve_promise(input, source)?;
@@ -75,6 +118,11 @@ fn instantiate(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 /** A fulfilled source is copied and genuinely compiled; failure rejects the actual output Promise. */
 fn received(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if let Some(next) = response_bytes(vm, &call.arg(0), call.callee)
+        .map_err(|e| api_prefix(vm, e, "WebAssembly.compileStreaming()"))?
+    {
+        return Ok(next);
+    }
     let result = (|| {
         let slots = vm.slots(call.callee);
         let record = slots

@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mars Start</title>
+<style>
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  margin: 0;
+  padding: 40px 24px;
+  background-color: #fafbfc;
+  color: #1f2328;
+  line-height: 1.5;
+}
+.container {
+  max-width: 680px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 8px 0;
+  color: #0d1117;
+}
+p.subtitle {
+  font-size: 15px;
+  color: #636c76;
+  margin: 0 0 24px 0;
+}
+.search-card {
+  background: #ffffff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.search-card h2 {
+  font-size: 16px;
+  margin: 0 0 12px 0;
+}
+form {
+  display: block;
+  margin-bottom: 8px;
+}
+input[type="text"] {
+  width: 70%;
+  padding: 8px 12px;
+  font-size: 14px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+button {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: #0969da;
+  border: 1px solid #0969da;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 12px 0;
+}
+.links-grid {
+  background: #ffffff;
+  border: 1px solid #d0d7de;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+.links-grid ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.links-grid li {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+.links-grid li:last-child {
+  border-bottom: none;
+}
+a {
+  color: #0969da;
+  text-decoration: none;
+  font-weight: 500;
+}
+.engine-status {
+  font-size: 13px;
+  color: #636c76;
+  padding: 12px 16px;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Mars Browser</h1>
+  <p class="subtitle">Independent Rust browser for people and agents.</p>
+
+  <div class="search-card">
+    <h2>Search or Address</h2>
+    <p>Type any web address or query into the address bar above, or search the web:</p>
+    <form action="https://lite.duckduckgo.com/lite/" method="get">
+      <input type="text" name="q" placeholder="Search the web with DuckDuckGo…">
+      <button type="submit">Search</button>
+    </form>
+  </div>
+
+  <div class="section-title">Verified Reading Destinations</div>
+  <div class="links-grid">
+    <ul>
+      <li><a href="https://news.ycombinator.com">Hacker News</a> — Programming and technology news</li>
+      <li><a href="https://en.wikipedia.org/wiki/Special:Random">Wikipedia</a> — Free online encyclopedia (random article)</li>
+      <li><a href="https://lite.duckduckgo.com/lite/">DuckDuckGo Lite</a> — Clean, fast, lightweight web search</li>
+      <li><a href="https://example.com">Example Domain</a> — Standard protocol verification reference</li>
+    </ul>
+  </div>
+
+  <div class="section-title">Local Test Suites</div>
+  <div class="links-grid">
+    <ul>
+      <li><a href="/demo">Interactive Counter & Greeting Demo</a> — V9 state and methods</li>
+      <li><a href="/forms">Styled Forms & Session Storage</a> — HTTP cookies & POST handling</li>
+      <li><a href="/reading/styled">Reading Tier Typography</a> — CSS fonts, headings & margins</li>
+    </ul>
+  </div>
+
+  <div class="engine-status">
+    <strong>Engine Architecture:</strong> Relay (TLS & HTTP) • Eye (Document & Layout) • V9 (In-Process JS with JIT Bridge)
+  </div>
+</div>
+</body>
+</html>

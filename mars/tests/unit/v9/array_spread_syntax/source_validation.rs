@@ -39,7 +39,7 @@ fn spread_operands_retain_expression_depth_limits() {
     );
     let error = execute(&format!("const a={expression};")).unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("expression nesting"));
+    assert!(error.message.contains("syntax depth"), "{}", error.message);
 }
 
 /** Single-source scanning and ordered-script admission retain their existing End-token distinction. */

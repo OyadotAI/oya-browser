@@ -87,7 +87,7 @@ fn cross_origin_redirect_taints_canvas_pixels() {
     let fixture = Fixture::routes(vec![("/", page("/image.png")), ("/image.png", redirect)]);
     let mut runtime = runtime(vec![fixture.url.clone(), image.url.clone()]);
     let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
-    assert_eq!(result(&loaded), "SecurityError");
+    assert_eq!(result(&loaded), "SecurityError", "{loaded}");
     let snapshot = runtime.snapshot();
     let bitmap = snapshot
         .document

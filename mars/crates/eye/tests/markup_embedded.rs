@@ -1,5 +1,5 @@
-/** Embedded content is never loaded or run by Eye: empty media show inert placeholder boxes, and
-frames are replaced boxes the runtime fills with their documents. */
+/** Embedded content is never loaded or run by Eye: objects and embeds show inert placeholder
+boxes, while media, canvases and frames are replaced boxes the app fills itself. */
 use mars_eye::{Document, Node, compute_styles, parse, render, role};
 
 /** The embeds fixture, parsed once per test. */
@@ -53,38 +53,57 @@ fn zero_size_frames_get_no_placeholder() {
     assert!(placeholder(&embeds(), "pixel").is_none());
 }
 
-/** Video with fallback content renders the fallback; bare video gets a placeholder. */
+/** Video is a replaced box the app paints: no placeholder child, and its fallback content stays
+in the tree for scripts but is hidden from rendering, as in a browser that plays video. */
 #[test]
-fn video_renders_fallback_or_placeholder() {
+fn video_is_a_painted_box_without_placeholder() {
     let document = embeds();
     assert!(placeholder(&document, "clip").is_none());
-    assert!(
-        document
-            .nodes
-            .iter()
-            .any(|n| n.text == "Download the video")
-    );
-    assert_eq!(
-        placeholder(&document, "bare").unwrap().text,
-        "Video (not supported yet)"
-    );
+    assert!(placeholder(&document, "bare").is_none());
+    let styled = compute_styles(&document, &[]).unwrap();
+    let fallback = styled
+        .nodes
+        .iter()
+        .find(|n| n.text == "Download the video")
+        .expect("fallback text stays in the tree");
+    assert!(fallback.style.hidden, "fallback content must not render");
+    assert!(!document.diagnostics.iter().any(|d| d.contains("Video")));
 }
 
-/** Audio shows a box only with controls, as browsers size it. */
+/** Audio shows a 300 by 54 control strip only with controls, as Chromium sizes its panel. */
 #[test]
 fn audio_shows_a_box_only_with_controls() {
     let document = embeds();
-    assert!(placeholder(&document, "podcast").is_some());
-    assert!(placeholder(&document, "silent").is_none());
+    let styled = compute_styles(&document, &[]).unwrap();
+    assert!(placeholder(&document, "podcast").is_none());
+    assert!(!by_id(&styled, "podcast").style.hidden);
+    assert!(by_id(&styled, "silent").style.hidden);
+    let display = render(&styled, 800.0).unwrap();
+    let strip = display
+        .items
+        .iter()
+        .find(|item| item.local_id == by_id(&styled, "podcast").local_id)
+        .expect("audio box");
+    assert_eq!((strip.width, strip.height), (300.0, 54.0));
 }
 
-/** Canvas fallback text renders; an empty canvas gets the default 300 by 150 box. */
+/** Canvas fallback text stays in the tree; an empty canvas paints its own default 300 by 150
+box (the app draws its bitmap there), with no placeholder child. */
 #[test]
 fn canvas_renders_fallback_or_default_box() {
     let document = embeds();
     assert!(placeholder(&document, "chart").is_none());
     assert_eq!(by_id(&document, "chart").text, "A chart of downloads.");
-    assert!(placeholder(&document, "blank").unwrap().attributes["style"].contains("width:300px"));
+    assert!(placeholder(&document, "blank").is_none());
+    let styled = compute_styles(&document, &[]).unwrap();
+    let display = render(&styled, 800.0).unwrap();
+    let blank = by_id(&styled, "blank").local_id;
+    let item = display
+        .items
+        .iter()
+        .find(|item| item.local_id == blank)
+        .expect("canvas box");
+    assert_eq!((item.width, item.height), (300.0, 150.0));
 }
 
 /** Objects render fallback; void embeds get a placeholder; picture keeps its image. */

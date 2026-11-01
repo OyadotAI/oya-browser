@@ -150,3 +150,33 @@ pub fn composite_coverage(
     }
     pixel[3] = (combined * 255.0).round() as u8;
 }
+
+/** Composite a whole layer through one operator and clip; transparent layer pixels follow the operator's own rules. */
+pub fn composite_layer(
+    destination: &mut Bitmap,
+    layer: &Bitmap,
+    clip: Option<&ClipMask>,
+    alpha: f64,
+    mode: Composite,
+) -> EngineResult<()> {
+    destination.validate()?;
+    layer.validate()?;
+    if (destination.width, destination.height) != (layer.width, layer.height) {
+        return Err(EngineError::invalid(
+            "Canvas layer size differs from its target.",
+        ));
+    }
+    let width = destination.width as usize;
+    let pixels = destination.pixels.make_mut()?;
+    for (index, (pixel, source)) in pixels
+        .chunks_exact_mut(CHANNELS)
+        .zip(layer.pixels.chunks_exact(CHANNELS))
+        .enumerate()
+    {
+        let (x, y) = ((index % width) as u32, (index / width) as u32);
+        let clip_coverage = clip.map_or(1.0, |clip| clip.coverage(x, y));
+        let color = [source[0], source[1], source[2], source[3]];
+        composite_coverage(pixel, color, alpha, mode, 1.0, clip_coverage);
+    }
+    Ok(())
+}

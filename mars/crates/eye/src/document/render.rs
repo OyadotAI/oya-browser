@@ -55,8 +55,8 @@ mod path;
 mod phrase;
 mod plaintext;
 mod positioned;
-mod root_box;
 mod resize_wrappers;
+mod root_box;
 mod root_fit;
 mod root_flow;
 mod root_generated;
@@ -152,6 +152,12 @@ pub struct DisplayList {
     pub viewport_locked: bool,
 }
 
+/**
+ * The widest outline offset a box may carry, in points. Past this a ring is drawn far outside its
+ * box, and its painted path (and any dash plan over it) grows with the offset for no visible use.
+ */
+pub const MAX_OUTLINE_OFFSET: f64 = 1024.0;
+
 /// A formatting box can paint author decoration without inventing a DOM or agent identity.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -165,6 +171,38 @@ pub struct DisplayDecoration {
     pub color: Option<String>,
     pub border: f64,
     pub border_color: Option<String>,
+}
+
+/// How a text item's underline, overline and line-through paint when they differ from the solid
+/// default: the shape, the thickness and the offset from the default underline position.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DecorationLine {
+    /// The line's shape, from `text-decoration-style`.
+    #[serde(default, skip_serializing_if = "display::is_solid_line")]
+    pub style: crate::document::style::DecorationStyle,
+    /// Stroke thickness in points; None lets the painter derive it from the font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    /// Points the line moves away from its default position; None keeps that position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<f64>,
+}
+
+/// A box's outline: a ring painted outside its border edge, which layout never sees.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayOutline {
+    /// The ring's line style; `double` and the 3D styles paint as their border counterparts do.
+    pub style: crate::document::BorderStyle,
+    /// Ring width in points.
+    pub width: f64,
+    /// Literal color; None paints the element's own text color (`currentcolor`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Gap in points between the border edge and the ring's inner edge; negative overlaps the box.
+    #[serde(default, skip_serializing_if = "display::is_zero_f64")]
+    pub offset: f64,
 }
 
 /// Native controls and text drawing use exactly these boxes.
@@ -255,6 +293,15 @@ pub struct DisplayItem {
     /// Absolute affine (a, b, c, d, e, f) applied after `clip`; pure translations are baked into geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<[f64; 6]>,
+    /// The exact projected corners (top-left, top-right, bottom-right, bottom-left) of a box in a
+    /// 3D context, where `transform` is only the affine that paints it. None for planar boxes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quad: Option<[[f64; 2]; 4]>,
+    /// Where layout put the box when a transform (its own or an ancestor's) moved its paint
+    /// away from there: layout APIs such as `offsetLeft` ignore transforms. None when the box
+    /// paints where layout put it, at `x` and `y`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_origin: Option<[f64; 2]>,
     /// z-index of the stacking layer this item paints in; items are already in paint order.
     #[serde(default, skip_serializing_if = "display::is_zero")]
     pub z: i32,
@@ -291,6 +338,12 @@ pub struct DisplayItem {
     /// Lines are struck through (`text-decoration: line-through`, `<s>`, `<del>`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
+    /// The decoration lines' shape, thickness and offset when they are not the solid defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoration: Option<DecorationLine>,
+    /// The element's outline ring, painted outside its border box; None paints no outline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<DisplayOutline>,
     /// Italic or oblique font posture.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub italic: bool,
@@ -442,8 +495,17 @@ pub fn render_scrolled(
 /// As `render_scrolled` for a document embedded in a frame: `context` is the frame's content
 /// box, which `RenderContext::validate_frame` bounds instead of the window bounds.
 pub fn render_frame(document: &Document, context: RenderContext) -> EngineResult<DisplayList> {
+    render_frame_scrolled(document, context, &ScrollOffsets::new())
+}
+/// As `render_frame`, painting each scroll container inside the frame at `offsets`: a scripted
+/// frame's own page scrolls its containers like a window page does.
+pub fn render_frame_scrolled(
+    document: &Document,
+    context: RenderContext,
+    offsets: &ScrollOffsets,
+) -> EngineResult<DisplayList> {
     context.validate_frame()?;
-    laid_out(document, context, &ScrollOffsets::new())
+    laid_out(document, context, offsets)
 }
 /** Layout and paint order for a context its caller already validated. */
 fn laid_out(
@@ -554,9 +616,11 @@ fn viewport_locked(root: &super::ComputedStyle, body: &super::ComputedStyle) -> 
 }
 /** HTML's canvas natural size: its `width` and `height` attributes when they are valid
 non-negative integers, else 300 by 150, read at every layout so a script's resize applies. The
-bitmap itself is transparent until something draws on it. */
+bitmap itself is transparent until something draws on it. A video with no reported size yet
+gets the same 300 by 150 default object size; CSS sizes it like any replaced element. */
 fn canvases(document: &Document) -> Option<Document> {
-    let canvas = |node: &Node| node.tag == "canvas" && node.image_size.is_none();
+    let canvas =
+        |node: &Node| matches!(node.tag.as_str(), "canvas" | "video") && node.image_size.is_none();
     if !document.nodes.iter().any(canvas) {
         return None;
     }
@@ -568,6 +632,9 @@ fn canvases(document: &Document) -> Option<Document> {
                 .and_then(|value| mars_core::canvas::dimension(value))
                 .unwrap_or(default)
         };
+        // A video's own size arrives with its metadata (the app sets it). Until then its
+        // width and height attributes give its shape, as their mapped aspect-ratio does in
+        // browsers, else HTML's default object size; a canvas always reads its attributes.
         node.image_size = Some((side("width", CANVAS_SIZE.0), side("height", CANVAS_SIZE.1)));
     }
     Some(copy)

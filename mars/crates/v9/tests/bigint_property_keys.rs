@@ -1,5 +1,5 @@
 /** BigInt literal keys retain exact decimal names even outside the runtime arithmetic bound. */
-mod common;
+use crate::common;
 
 /** Each radix produces the same canonical decimal property name. */
 #[test]

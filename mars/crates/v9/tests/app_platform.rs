@@ -5,7 +5,7 @@
  * Components hydrate from. Without them every app module failed, or React replaced the page
  * with "Something went wrong".
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

@@ -40,7 +40,7 @@ impl Shape {
         }
     }
     /// Grows (or with a negative amount shrinks) every edge; radii follow, never below zero.
-    fn outset(&self, amount: f64) -> Self {
+    pub fn outset(&self, amount: f64) -> Self {
         Self {
             x: self.x - amount,
             y: self.y - amount,
@@ -284,6 +284,19 @@ impl Painter {
         CGContext::set_line_width(self.cg(), width);
         self.path(&shape.outset(-width / 2.0));
         CGContext::stroke_path(self.cg());
+    }
+    /// Strokes a rounded box's outline with a dash pattern (`dashes` in points, alternating on and
+    /// off); an empty pattern is the solid stroke `stroke` draws. The pattern resets afterwards.
+    pub fn stroke_dashed(&self, shape: &Shape, width: f64, color: &NSColor, dashes: &[f64]) {
+        color.setStroke();
+        let cg = self.cg();
+        CGContext::set_line_width(cg, width);
+        // SAFETY: `dashes` outlives the call, and CoreGraphics copies the pattern when it is set.
+        unsafe { CGContext::set_line_dash(cg, 0.0, dashes.as_ptr(), dashes.len()) };
+        self.path(&shape.outset(-width / 2.0));
+        CGContext::stroke_path(cg);
+        // SAFETY: a zero count with a null pattern restores the solid line.
+        unsafe { CGContext::set_line_dash(cg, 0.0, std::ptr::null(), 0) };
     }
     /// Fills each side of a non-uniform border as its own trapezoid with its own color.
     pub fn sides(&self, shape: &Shape, widths: [f64; 4], colors: [Option<Retained<NSColor>>; 4]) {

@@ -37,16 +37,11 @@ pub(in crate::document::style) fn tracks(
             let pick = |key: &str| super::super::pick(&values, key, index);
             let mut frames: Vec<RotationKeyframe> = Vec::new();
             for frame in &set.frames {
-                let declaration = frame
-                    .declarations
-                    .iter()
-                    .filter(|d| d.name == "transform")
-                    .last();
+                let declaration = frame.declarations.iter().rfind(|d| d.name == "transform");
                 let radians = frame
                     .declarations
                     .iter()
-                    .filter(|d| d.name == "transform")
-                    .last()
+                    .rfind(|d| d.name == "transform")
                     .and_then(|d| resolve("transform", &d.value))
                     .and_then(|value| radians(&value, parent));
                 if declaration.is_some() && radians.is_none() {
@@ -56,8 +51,7 @@ pub(in crate::document::style) fn tracks(
                 let easing = frame
                     .declarations
                     .iter()
-                    .filter(|d| d.name == "animation-timing-function")
-                    .last()
+                    .rfind(|d| d.name == "animation-timing-function")
                     .and_then(|d| resolve("animation-timing-function", &d.value))
                     .and_then(|value| TransitionEasing::parse(&value));
                 if radians.is_none() && easing.is_none() {

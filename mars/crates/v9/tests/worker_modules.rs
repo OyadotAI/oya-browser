@@ -1,5 +1,5 @@
 /** Dedicated module entry and resumption keep module scope and worker initialization state. */
-mod common;
+use crate::common;
 use mars_v9::{
     DocumentHost, EntryKind, ModuleEntry, ModuleInput, ModuleSource, PageEnvironment, PageInput,
 };
@@ -27,7 +27,6 @@ fn modules(source: &str) -> ModuleInput {
             source: Some(source.into()),
             classic: false,
         }],
-        ..ModuleInput::default()
     }
 }
 

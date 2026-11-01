@@ -186,7 +186,12 @@ impl Vm<'_> {
     }
     /** All collection modes share the same exact strong roots, tracer, bounds and sweep. */
     fn collect_with(&mut self, kind: Collection) -> Res<()> {
-        let mut marker = Marker::default();
+        // Marked objects are at most the heap's objects, so the set is sized once rather than
+        // doubling (and rehashing every mark) as the trace grows it.
+        let mut marker = Marker {
+            objects: FastSet::with_capacity_and_hasher(self.heap.objects.len(), Default::default()),
+            ..Marker::default()
+        };
         marker.object(GLOBAL);
         self.realm_roots(&mut marker);
         if kind != Collection::Major {
@@ -242,6 +247,7 @@ impl Vm<'_> {
         self.module_roots(&mut marker);
         let mut roots = Vec::new();
         self.page.roots(&mut roots);
+        super::super::platform::broadcast::roots(self, &mut roots);
         // Connected DOM owns observable wrapper data; detached trees need actual reachability.
         let wrappers: Vec<(usize, ObjectId)> = self
             .page
@@ -277,6 +283,10 @@ impl Vm<'_> {
             if ((data || listened) && self.page.connected(node)) || virtual_node {
                 marker.object(id);
             }
+        }
+        // A MediaQueryList with a change listener is retained by the document, as the spec requires.
+        for id in self.page.state.media_lists.keys() {
+            marker.object(*id);
         }
         let pending: Vec<ObjectId> = self.page.state.xhrs.keys().copied().collect();
         for id in pending {

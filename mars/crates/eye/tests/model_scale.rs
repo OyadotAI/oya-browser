@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 /** A third of the private call deadline, so one stage leaves room for the others in the same call. */
 const STAGE_BUDGET: Duration = Duration::from_secs(RPC_TIMEOUT.as_secs() / 3);
-/** Labeled inputs in the large fixture; the form-control cap keeps it below 256. */
+/** Labeled inputs in the large fixture, all of them controls the node budget already bounds. */
 const LABELED: usize = 120;
 
 /** A NODES-node page with labeled inputs, wrapping labels and duplicate author IDs. */
@@ -117,12 +117,17 @@ fn table(rows: usize) -> String {
     format!("<table>{}</table>", "<tr><td>x</td></tr>".repeat(rows))
 }
 
-/** A table at TABLE_ROWS parses and one more row is refused with the row limit. */
+/** A table at TABLE_ROWS is annotated with headers; one more row still parses, keeps every
+cell, and only goes without header associations. */
 #[test]
-fn table_rows_limit_holds_at_the_boundary() {
-    parse(&table(TABLE_ROWS)).unwrap();
-    let error = parse(&table(TABLE_ROWS + 1)).unwrap_err();
-    assert!(error.message.contains("table rows"), "{}", error.message);
+fn a_table_past_the_annotation_bound_still_parses() {
+    let small = parse(&table(TABLE_ROWS)).unwrap();
+    assert!(small.nodes.iter().any(|node| node.table_cell.is_some()));
+    let large = parse(&table(TABLE_ROWS + 1)).unwrap();
+    let cells = large.nodes.iter().filter(|node| node.tag == "td").count();
+    assert_eq!(cells, TABLE_ROWS + 1);
+    assert!(large.nodes.iter().all(|node| node.table_cell.is_none()));
+    assert!(large.diagnostics.iter().any(|d| d.contains("large table")));
 }
 
 /** Static text totaling `bytes`, split into nodes at the per-node cap. */

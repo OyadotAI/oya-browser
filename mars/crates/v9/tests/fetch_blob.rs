@@ -1,5 +1,5 @@
 /** Blob fetch captures context-owned bytes only after request conversion and within aggregate limits. */
-mod common;
+use crate::common;
 
 /** Constructing Request does not acquire a Blob; actual fetch keeps its admitted bytes after revoke. */
 #[test]

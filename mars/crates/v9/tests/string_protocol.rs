@@ -1,5 +1,5 @@
 /** String methods preserve observable Symbol protocol lookup, coercion order and receivers. */
-mod common;
+use crate::common;
 
 /** An explicit false @@match makes an actual RegExp acceptable as a search string. */
 #[test]

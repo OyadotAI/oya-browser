@@ -1,6 +1,6 @@
 /* Dynamic constructor admission follows the real host-entered context before source coercion and preserves realm isolation. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** All four native constructor kinds deny access in the entered realm without observing source objects. */
 #[test]

@@ -1,6 +1,6 @@
 /** Intl.NumberFormat and Intl.PluralRules, ported from ECMA-402: option order and validation,
 exact rounding, notations, sign display, currencies, units, parts and ranges. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Options are read in the spec's order (unit options, notation, digit options, the rest). */

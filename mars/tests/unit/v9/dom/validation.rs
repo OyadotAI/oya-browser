@@ -90,7 +90,10 @@ fn hostile_listener_records_and_monotonic_counters_fail_closed() {
                 .push(original["page"]["listeners"][0].clone()),
             _ => wire["page"]["identity"] = json!("page-b"),
         }
-        let state: VmState = serde_json::from_value(wire).unwrap();
+        // Refusing a forged record while decoding fails closed as well as validation does.
+        let Ok(state) = serde_json::from_value::<VmState>(wire) else {
+            continue;
+        };
         let checked = state.validate_document(&document).and_then(|()| {
             click_document_scripts(
                 &[source.into()],
@@ -109,23 +112,22 @@ fn hostile_listener_records_and_monotonic_counters_fail_closed() {
     assert!(accepted.is_empty(), "accepted forged cases {accepted:?}");
 }
 
-/** V9's own page-wide listener bound (`events::LISTENERS`), raised so component frameworks such
- * as YouTube's fit; this test pins it. */
-const LISTENERS: usize = 16 * 1024;
-
-/** Listener registrations have their own bound, and the legacy event API refuses a projected page's state. */
+/** Listener registrations are bounded by their storage bytes (each record charges its event
+type), not by a count: many small listeners fit, and a registration past the budget is refused.
+The legacy event API refuses a projected page's state. */
 #[test]
 fn listener_count_is_bounded_and_legacy_event_api_rejects_projected_states() {
-    let script = |count: usize| {
-        format!(
-            "const b=document.getElementById('button');for(let i=0;i<{count};i++){{b.addEventListener('click',()=>{{}});}}"
-        )
-    };
-    assert!(load_document_scripts(&[script(LISTENERS)], page(), StorageState::default()).is_ok());
-    let error = load_document_scripts(&[script(LISTENERS + 1)], page(), StorageState::default())
-        .unwrap_err();
+    let many = "const b=document.getElementById('button');for(let i=0;i<16385;i++){b.addEventListener('click',()=>{});}";
+    let loaded = load_document_scripts(&[many.into()], page(), StorageState::default()).unwrap();
+    assert!(loaded.failed.is_empty(), "{:?}", loaded.failed);
+    let heavy = "const b=document.getElementById('button'),kind='x'.repeat(1048576);for(let i=0;i<4;i++){b.addEventListener(kind,()=>{});}";
+    let error =
+        load_document_scripts(&[heavy.into()], page(), StorageState::default()).unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("event listeners"), "{error:?}");
+    assert!(
+        error.message.contains("event listener storage"),
+        "{error:?}"
+    );
     let source = "function run(){}";
     let loaded = load(source, &page());
     assert_eq!(

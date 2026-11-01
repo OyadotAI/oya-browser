@@ -1,5 +1,5 @@
 /** Platform APIs real pages reach for at load: document.fonts, structuredClone, bare window calls. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Google preloads emoji fonts through document.fonts.load(...).catch(...). */

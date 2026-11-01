@@ -1,5 +1,5 @@
 /** Statement headers permit regex expressions without changing division after calls. */
-mod common;
+use crate::common;
 
 #[test]
 fn regex_expression_statement_follows_for_of_and_nested_if() {

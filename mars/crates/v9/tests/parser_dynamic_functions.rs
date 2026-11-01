@@ -1,5 +1,5 @@
 /** Parser admission preserves short-circuit grammar, Unicode names and dynamic function argument boundaries. */
-mod common;
+use crate::common;
 
 /** Direct and indirect eval expose the parse reason in JavaScript without a host location prefix. */
 #[test]

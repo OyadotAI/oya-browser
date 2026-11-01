@@ -1,5 +1,5 @@
 /** Error string conversion rejects primitive receivers with inert diagnostics before reading ordinary object fields. */
-mod common;
+use crate::common;
 
 /** Rejected primitives retain their actual display without boxing or authored conversion. */
 #[test]

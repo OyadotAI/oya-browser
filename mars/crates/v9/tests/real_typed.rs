@@ -1,5 +1,5 @@
 /** Typed arrays, DataView, TextEncoder/TextDecoder and getRandomValues as page bundles use them. */
-mod common;
+use crate::common;
 use common::{eval, failure, load};
 
 /** Views share their buffer's bytes, convert on write and iterate like arrays. */

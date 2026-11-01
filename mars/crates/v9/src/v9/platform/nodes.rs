@@ -6,7 +6,8 @@
  */
 use super::{Detached, DomLevel, Page};
 use crate::constants::{
-    FRAGMENT_BYTES, FRAGMENT_TOTAL_BYTES, SCRIPT_CHANGE_BYTES, STATEMENTS, VM_DETACHED_NODES,
+    FRAGMENT_BYTES, FRAGMENT_TOTAL_BYTES, HTML_BYTES, SCRIPT_CHANGE_BYTES, STATEMENTS,
+    VM_DETACHED_NODES,
 };
 use crate::document::{DomChange, InsertPosition, ScriptChange, ScriptNode};
 use crate::protocol::{EngineError, EngineResult};
@@ -72,6 +73,21 @@ pub(in crate::v9) struct Tree {
     elements: FastMap<usize, Vec<usize>>,
 }
 
+impl Tree {
+    /** An empty index sized for `nodes` projected nodes. Rebuilding it from empty grew three hash
+    maps by doubling on every rebuild, each doubling rehashing every entry; sizing them once
+    up front makes a rebuild one pass of inserts. */
+    fn with_capacity(nodes: usize) -> Self {
+        Self {
+            children: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            parents: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            index: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            shadow: false,
+            elements: FastMap::default(),
+        }
+    }
+}
+
 /** The list a parent with no children reads as. */
 const EMPTY: &[usize] = &[];
 
@@ -84,11 +100,18 @@ pub(in crate::v9) struct NodeView {
     pub value: Option<String>,
 }
 
+/// Elements whose `value` IDL attribute reflects the `value` content attribute.
+const REFLECTED_VALUE: [&str; 4] = ["option", "button", "data", "param"];
+
 impl Page<'_> {
     /** The projected-node index, built on demand. */
     fn tree(&mut self) -> &Tree {
         if self.tree.is_none() {
-            let mut tree = Tree::default();
+            let nodes = self
+                .document
+                .as_ref()
+                .map_or(0, |document| document.nodes.len());
+            let mut tree = Tree::with_capacity(nodes);
             if let Some(document) = &self.document {
                 for (position, node) in document.nodes.iter().enumerate() {
                     let parent = node.parent.unwrap_or(BODY);
@@ -110,6 +133,8 @@ impl Page<'_> {
     /** Mark the tree changed. Every live collection rescans on its next read; the mark costs O(1), so
     a mutation pays nothing for the collections it may affect. */
     pub fn touch(&mut self) {
+        // Edited style sheets write their text before this change, so their edits are not lost under it.
+        self.flush_sheet_edits();
         self.generation = next_generation();
     }
     /** Bring the index up to date after `count` nodes were spliced in at `at`, instead of
@@ -159,6 +184,10 @@ impl Page<'_> {
         let position = *self.tree().index.get(&id)?;
         self.document.as_ref()?.nodes.get(position)
     }
+    /** A projected node's place in the document's order, or None when it is not in the projection. */
+    pub fn projected_position(&mut self, id: usize) -> Option<usize> {
+        self.tree().index.get(&id).copied()
+    }
     /** Whether a node exists. */
     pub fn exists(&mut self, id: usize) -> bool {
         matches!(id, HTML | HEAD | BODY)
@@ -187,6 +216,8 @@ impl Page<'_> {
     }
     /** A view of a node. */
     pub fn view(&mut self, id: usize) -> Option<NodeView> {
+        // Edited style sheets write their text back first, so a read never sees it behind them.
+        self.flush_sheet_edits();
         // Every read a page makes goes through here, so the engine-only popover marker never
         // reaches getAttribute, attribute lists, serialization or clones.
         let mut view = self.view_with_marker(id)?;
@@ -458,8 +489,30 @@ impl Page<'_> {
         let tag = self.tag(id);
         !tag.is_empty() && !tag.starts_with('#')
     }
+    /** A parsed page script's own source, while scripts have not given it children or text. */
+    pub(in crate::v9) fn parsed_script_text(&mut self, id: usize) -> Option<String> {
+        let index = self
+            .state
+            .parsed_scripts
+            .as_ref()?
+            .iter()
+            .position(|node| *node == id)?;
+        let text = self
+            .inline_scripts
+            .get(index)
+            .filter(|text| !text.is_empty())?
+            .clone();
+        let untouched = self.all_children(id).is_empty()
+            && self
+                .view(id)
+                .is_none_or(|view| view.text.is_none_or(|own| own.is_empty()));
+        untouched.then_some(text)
+    }
     /** All text inside a node, in document order. */
     pub fn text_content(&mut self, id: usize) -> String {
+        if let Some(text) = self.parsed_script_text(id) {
+            return text;
+        }
         let view = self.view(id);
         if let Some(view) = &view
             && view.tag == "#text"
@@ -472,7 +525,7 @@ impl Page<'_> {
         }
         for child in self.descendants(id) {
             if let Some(view) = self.view(child)
-                && view.tag == "#text"
+                && contributes_text(&view.tag)
             {
                 out.push_str(view.text.as_deref().unwrap_or(""));
             }
@@ -696,6 +749,7 @@ impl Page<'_> {
     }
     /** Remove a node from its parent. */
     pub fn remove(&mut self, id: usize) -> EngineResult<()> {
+        super::media::removing(self, id);
         let owner = self.changed_option_owner(id);
         self.remove_node(id)?;
         if let Some(owner) = owner {
@@ -753,6 +807,7 @@ impl Page<'_> {
             .iter()
             .find(|(old, _)| *old == child)
             .map_or(child, |(_, new)| *new);
+        super::media::inserted(self, adopted);
         let new_owner = self.changed_option_owner(adopted);
         if old_owner != new_owner
             && let Some(owner) = old_owner
@@ -763,6 +818,11 @@ impl Page<'_> {
             self.normalize_selection(owner)?;
         }
         Ok(mapping)
+    }
+    /** Whether inserting `child` into `parent` is a Text node joining a raw-text element. */
+    fn appends_raw_text(&mut self, parent: usize, child: usize) -> bool {
+        const RAW_TEXT: [&str; 5] = ["style", "script", "textarea", "title", "xmp"];
+        self.tag(child) == "#text" && RAW_TEXT.contains(&self.tag(parent).as_str())
     }
     /** Structural insertion keeps its mapping so option state can follow adopted native identities. */
     fn insert_node(
@@ -798,6 +858,13 @@ impl Page<'_> {
                     .map(|()| Vec::new());
             }
             self.remove(child)?;
+        }
+        if self.is_projected(parent) && self.appends_raw_text(parent, child) {
+            // A style or script element's content is text, not markup: Modernizr appends
+            // `createTextNode(css)` to a `<style>`, which the fragment parser cannot take.
+            // ponytail: the text joins the parent's text; the Text node itself stays detached.
+            let text = self.text_content(parent) + &self.text_content(child);
+            return self.set_text(parent, &text).map(|()| Vec::new());
         }
         if parent == BODY || self.is_projected(parent) {
             return self.insert_projected(parent, child, reference);
@@ -846,6 +913,16 @@ impl Page<'_> {
         }
         out
     }
+    /** The document anchor for inserting before `reference`: itself when the document holds it,
+    else the next sibling the document holds (a V9-local child such as an undrawn SVG `<animate>`
+    has no place in the projection), or None to append. */
+    fn projected_anchor(&mut self, children: &[usize], reference: Option<usize>) -> Option<usize> {
+        let start = children.iter().position(|node| Some(*node) == reference)?;
+        children[start..]
+            .iter()
+            .copied()
+            .find(|node| self.is_projected(*node))
+    }
     /**
      * Where an insertion lands, as the change log expresses positions: before the first child is
      * "afterbegin" of the parent, and a node inserted before itself stays where it is.
@@ -870,6 +947,7 @@ impl Page<'_> {
         } else {
             reference
         };
+        let reference = self.projected_anchor(&children, reference);
         match reference {
             Some(reference) if Some(reference) == first && children.first() == Some(&reference) => {
                 (
@@ -895,6 +973,24 @@ impl Page<'_> {
         self.invalidate();
         self.record(ScriptChange::Dom { change })
     }
+    /** Keep `child` as a V9-local child of a projected `parent`, before `reference` when given. */
+    fn insert_local(
+        &mut self,
+        parent: usize,
+        child: usize,
+        reference: Option<usize>,
+    ) -> EngineResult<Vec<(usize, usize)>> {
+        self.state
+            .local_children
+            .entry(parent)
+            .or_default()
+            .push((child, reference));
+        if let Some(record) = self.state.detached.get_mut(&child) {
+            record.parent = Some(parent);
+        }
+        self.touch();
+        Ok(Vec::new())
+    }
     /** Serialize a detached subtree, insert it through the fragment parser, and adopt the new ids. */
     fn insert_projected(
         &mut self,
@@ -918,6 +1014,12 @@ impl Page<'_> {
         let (target, position) = self.placement(parent, child, reference);
         let context = self.tag(parent);
         let nodes = self.parse_fragment(&context, &html)?;
+        if nodes.is_empty() {
+            // The document keeps none of it (SVG `<animate>` outside the drawing subset): it stays
+            // a script-visible child that is never drawn, as a browser keeps undrawn elements.
+            // Refusing stopped Apple's global header script.
+            return self.insert_local(parent, child, reference);
+        }
         let tags: Vec<String> = old.iter().map(|id| self.adoption_tag(*id)).collect();
         let Some(mapping) =
             adopted(&old, &tags, &nodes).filter(|m| m.first().map(|p| p.0) == Some(child))
@@ -1100,18 +1202,25 @@ impl Page<'_> {
             }
         }
     }
-    /** Parse a fragment through the host parser with fresh identities. */
-    pub fn parse_fragment(&mut self, context: &str, html: &str) -> EngineResult<Vec<ScriptNode>> {
-        if html.len() > FRAGMENT_BYTES {
-            return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES));
-        }
-        if self.fragment_bytes + html.len() > FRAGMENT_TOTAL_BYTES {
+    /** Charge markup against the budget every fragment one execution inserts shares. document.write
+    and the innerHTML paths all draw on it, so no mix of them parses more than FRAGMENT_TOTAL_BYTES
+    in one execution; past it the write is refused rather than parsed. */
+    pub fn charge_fragment_bytes(&mut self, bytes: usize) -> EngineResult<()> {
+        if self.fragment_bytes + bytes > FRAGMENT_TOTAL_BYTES {
             return Err(EngineError::limit(
                 "execution fragment bytes",
                 FRAGMENT_TOTAL_BYTES,
             ));
         }
-        self.fragment_bytes += html.len();
+        self.fragment_bytes += bytes;
+        Ok(())
+    }
+    /** Parse a fragment through the host parser with fresh identities. */
+    pub fn parse_fragment(&mut self, context: &str, html: &str) -> EngineResult<Vec<ScriptNode>> {
+        if html.len() > HTML_BYTES {
+            return Err(EngineError::limit("fragment bytes", HTML_BYTES));
+        }
+        self.charge_fragment_bytes(html.len())?;
         let nodes = self.fragments.parse(context, html, self.next_id)?;
         let next = nodes
             .iter()
@@ -1137,7 +1246,8 @@ impl Page<'_> {
                     "Replacing the body's text is not supported.",
                 ));
             }
-            let removed = self.descendants(id);
+            // Shadow trees inside the subtree go too; skipping them lost nodes scripts still held.
+            let removed = self.all_descendants(id);
             let frames: Vec<_> = removed
                 .iter()
                 .copied()
@@ -1230,6 +1340,7 @@ impl Page<'_> {
             self.detach_attr(id, name, old.clone());
         }
         super::images::source_changed(self, id, name)?;
+        super::media::attribute_changed(self, id, name);
         if let Some(bitmap) = canvas_reset {
             super::canvas::resized(self, id, bitmap);
         }
@@ -1323,18 +1434,24 @@ impl Page<'_> {
         };
         self.record(change)
     }
-    /** Set a field's value. */
+    /** Set a field's value, or the reflected `value` attribute of elements that have one. */
     pub fn set_value(&mut self, id: usize, value: &str) -> EngineResult<()> {
         self.touch();
         crate::document::validate_text(value)?;
         if self.tag(id) == "select" {
             return self.select_value(id, value);
         }
-        if self.tag(id) == "option" {
+        let tag = self.tag(id);
+        // These elements' `value` reflects their content attribute (HTML's button, option,
+        // data and param), so a write is an attribute change, never a field value.
+        if REFLECTED_VALUE.contains(&tag.as_str()) {
             return self.set_attribute(id, "value", Some(value));
         }
         self.state.values.insert(id, value.into());
-        if self.is_projected(id) && self.environment.dom_level == DomLevel::Extended {
+        // Only fields carry a native value the document engine replays (Apple's video
+        // controls set a button's value, which Eye rightly refuses as a field write).
+        let field = matches!(tag.as_str(), "input" | "textarea");
+        if field && self.is_projected(id) && self.environment.dom_level == DomLevel::Extended {
             self.record(ScriptChange::Value {
                 node: id,
                 value: value.into(),
@@ -1375,6 +1492,7 @@ impl Page<'_> {
             let document = self.document.as_mut().ok_or_else(invalid)?;
             let at = document.insert(target, position, nodes)?;
             self.tree_inserted(at, count);
+            super::media::inserted_range(self, first_id, count);
             return self.record(ScriptChange::Dom {
                 change: DomChange::InsertHtml {
                     target,
@@ -1411,6 +1529,13 @@ impl Page<'_> {
         }
         Ok(())
     }
+}
+
+/** Whether a node below the one textContent reads adds its own text: a text node does, and so
+does an element, which holds its lone text child itself. Comments and processing instructions
+never do, so the textContent of a parent leaves them out. */
+fn contributes_text(tag: &str) -> bool {
+    tag == "#text" || !tag.starts_with('#')
 }
 
 /** Projection inconsistencies are invalid input, never silently ignored. */

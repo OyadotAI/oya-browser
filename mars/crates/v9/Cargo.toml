@@ -5,6 +5,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 description = "V9: Mars's bounded, Rust-owned JavaScript runtime"
+# The integration tests are one binary (tests/main.rs) rather than one per file.
+autotests = false
 
 [dependencies]
 mars-core = { path = "../core" }
@@ -23,6 +25,9 @@ icu_normalizer = { version = "=2.3.0", default-features = false, features = ["co
 icu_properties = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
+# Already in the workspace (the Clear Key CDM); the block cipher under crypto.subtle's AES-CBC,
+# whose chaining and PKCS#7 padding are V9's own, since ring has no CBC mode.
+aes = "=0.8.4"
 # Pure-Rust port of musl's fdlibm-derived math: the same algorithms V8 ships in
 # src/base/ieee754.cc, so Math results match Chrome bit for bit instead of the host libm.
 libm = "=0.2.16"
@@ -50,3 +55,7 @@ required-features = ["measure"]
 [[example]]
 name = "replay"
 required-features = ["measure"]
+
+[[test]]
+name = "v9"
+path = "tests/main.rs"

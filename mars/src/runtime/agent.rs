@@ -137,6 +137,7 @@ impl Runtime {
             ("page.layout", Self::layout),
             ("page.click", Self::click),
             ("page.type", Self::type_text),
+            ("page.keys", Self::keys),
             ("page.back", Self::back),
             ("page.forward", Self::forward),
             ("page.reload", Self::reload),
@@ -146,6 +147,7 @@ impl Runtime {
             ("page.submit", Self::submit),
             ("page.screenshot", Self::screenshot),
             ("page.click_at", Self::click_at),
+            ("page.media_control", Self::media_control_op),
             ("page.hover", Self::hover),
             ("page.scroll_at", Self::scroll_at),
             ("page.press", Self::press),
@@ -184,12 +186,14 @@ impl Runtime {
         handler(self, request.params)
     }
 
-    /// Desktop page operations require an exact discovered tab identity.
+    /// Desktop page operations require an exact discovered tab identity: a person may switch
+    /// tabs under the agent. A headless agent session has no window, so it defaults to its
+    /// selected tab whether or not it may reach the public web.
     fn page_tab_id(&self, params: &Value) -> EngineResult<String> {
         let id = params.get("tab_id").and_then(Value::as_str);
         match id {
             Some(id) => Ok(id.into()),
-            None if self.web_origins.is_none() => Ok(self.selected_tab_id().into()),
+            None if self.authority.is_none() => Ok(self.selected_tab_id().into()),
             None => Err(EngineError::invalid("Page operations require tab_id.")),
         }
     }
@@ -309,7 +313,7 @@ impl Runtime {
             "engines":self.process_ids().into_iter().map(|(name,pid)|json!({"name":name,"pid":pid})).collect::<Vec<_>>(),
             "subsets":{"network":"literal loopback HTTP GET; UTF-8 HTML; no redirects","document":"bounded explicit HTML tree, classic inline/external scripts run blocking, then defer, then async, each in document order, text, links, inputs and buttons","v9":"ordered classic scripts share page state and budgets; typed values; own-property objects and arrays; lexical bindings; named functions with parameters and returns; if/while; arithmetic and comparisons; input reads and textContent writes","web_storage":{"localStorage":{"scope":"canonical origin","methods":["getItem","setItem","removeItem","clear"]},"sessionStorage":{"scope":"tab and canonical origin","methods":["getItem","setItem","removeItem","clear"]}},"layout":LAYOUT_UNIT},
             "unavailable":["desktop_window","pixels","css","full_javascript","https","internet","frames","named_profiles","electron_profile_import","cookie_inspection","human_agent_handoff","os_sandbox"],
-            "limits":{"frame_bytes":FRAME_BYTES,"html_bytes":HTML_BYTES,"header_bytes":HEADER_BYTES,"nodes":NODES,"text_bytes":TEXT_BYTES,"script_bytes":SCRIPT_BYTES,"script_total_bytes":SCRIPT_TOTAL_BYTES,"script_count":SCRIPT_COUNT,"statements":STATEMENTS,"tokens":TOKENS,"operations":OPERATIONS,"expression_nesting":EXPRESSION_DEPTH,"js_string_units":JS_STRING_UNITS,"js_environment_units":JS_ENVIRONMENT_UNITS,"vm_state_bytes":crate::constants::VM_STATE_BYTES,"vm_objects":crate::constants::VM_OBJECTS,"vm_properties":crate::constants::VM_PROPERTIES,"vm_array_length":crate::constants::VM_ARRAY_LENGTH,"function_parameters":crate::constants::FUNCTION_PARAMETERS,"url_bytes":URL_BYTES,"id_bytes":ID_BYTES,"network_deadline_ms":NETWORK_TIMEOUT.as_millis(),"rpc_deadline_ms":RPC_TIMEOUT.as_millis()}});
+            "limits":{"frame_bytes":FRAME_BYTES,"html_bytes":HTML_BYTES,"header_bytes":HEADER_BYTES,"nodes":NODES,"text_bytes":TEXT_BYTES,"script_bytes":SCRIPT_BYTES,"script_total_bytes":SCRIPT_TOTAL_BYTES,"script_count":SCRIPT_COUNT,"statements":STATEMENTS,"tokens":TOKENS,"operations":OPERATIONS,"expression_nesting":EXPRESSION_DEPTH,"js_string_units":JS_STRING_UNITS,"js_environment_units":JS_ENVIRONMENT_UNITS,"vm_state_bytes":crate::constants::VM_STATE_BYTES,"vm_objects":crate::constants::VM_OBJECTS,"vm_properties":crate::constants::VM_PROPERTIES,"vm_array_length":crate::constants::VM_ARRAY_LENGTH,"function_parameters":crate::constants::FUNCTION_PARAMETERS,"url_bytes":URL_BYTES,"id_bytes":ID_BYTES,"network_deadline_ms":NETWORK_TIMEOUT.as_millis(),"rpc_deadline_ms":crate::constants::rpc_timeout().as_millis()}});
         result["subsets"]["v9"] = json!(
             "ordered classic scripts; automatic semicolon insertion in the supported classic-script grammar; numeric, UTF-16 string, Boolean, null and undefined values; own-property objects and arrays; UTF-16 string length and indexed reads; string trim and literal-separator split; array map, filter and join with bounded callable processing; array some and find with bounded callable predicates; array-literal spread of owned arrays and primitive strings, with bounded code-point string iteration; lexical let/const and reassignment; function-scoped and script-global var declarations; declaration hoisting and supported var/function redeclarations; first-class functions; function expressions and nested declarations; callbacks and lexical closures with shared captured bindings; arrow functions with simple parameters, expression/block bodies and lexical capture; receiver-aware ordinary function calls; this expressions; lexical this capture in arrows; supported strict and non-strict receiver behavior; Function.prototype.call, apply and bind; bound receivers and prefixed arguments; supported function name/length metadata; simple assignment expressions; arithmetic compound assignments (+=, -=, *=, /=, %=); prefix and postfix numeric updates (++, --); conditional expressions; typeof and void; document-scoped element references from getElementById; current permitted input-value reads and text-content writes; ordered callable click listeners on explicit type=button controls without default actions; listener removal and a bounded click-event facade; parameters and returns; blocks, if/else, bounded while and standard for loops with captured iteration bindings and break/continue; arithmetic, strict equality, abstract equality (==, !=) for supported primitives and reference fast paths, comparisons and short-circuit logic; input reads and textContent writes"
         );
@@ -396,6 +400,7 @@ impl Runtime {
             "page.set_text",
             "page.click",
             "page.type",
+            "page.keys",
             "page.back",
             "page.forward",
             "page.reload",
@@ -432,6 +437,7 @@ fn session_mutation(op: &str) -> bool {
         "page.reload",
         "page.submit",
         "page.type",
+        "page.keys",
         "page.set_text",
         "page.set_checked",
         "page.select",
@@ -468,6 +474,7 @@ pub fn mutating(op: &str) -> bool {
         "page.set_text",
         "page.click",
         "page.type",
+        "page.keys",
         "page.back",
         "page.forward",
         "page.reload",
@@ -477,6 +484,7 @@ pub fn mutating(op: &str) -> bool {
         "page.submit",
         "page.act",
         "page.click_at",
+        "page.media_control",
         "page.scroll_at",
         "page.press",
         "page.devtools",

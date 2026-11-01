@@ -1,5 +1,5 @@
 /** Error subclasses built through `super()` hide their own constructor frames, while outer callers stay visible. */
-mod common;
+use crate::common;
 
 /** Public `stack` text is the observable boundary; the tests never inspect private trace records. */
 fn eval(source: &str) -> String {

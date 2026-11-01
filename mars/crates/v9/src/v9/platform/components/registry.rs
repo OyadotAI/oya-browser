@@ -3,7 +3,7 @@
  * HTMLElement constructor that `class extends HTMLElement` calls through `super()`, element
  * creation for defined names, and the upgrade of elements that existed before their definition.
  */
-use super::{DEFINITIONS, Definition};
+use super::{DEFINITIONS, Definition, candidates};
 use crate::v9::platform::Page;
 use crate::v9::platform::dom::{self, dom_error, native_name, wrap};
 use crate::v9::value::JsValue;
@@ -42,17 +42,23 @@ pub(super) fn definition_for(page: &mut Page, node: usize) -> Option<usize> {
     if page.state.components.definitions.is_empty() {
         return None;
     }
-    let view = page.view(node)?;
-    let definitions = &page.state.components.definitions;
-    if valid_name(&view.tag) {
-        return definitions
+    let tag = page.tag(node);
+    if valid_name(&tag) {
+        return page
+            .state
+            .components
+            .definitions
             .iter()
-            .position(|definition| definition.name == view.tag && definition.extends.is_none());
+            .position(|definition| definition.name == tag && definition.extends.is_none());
     }
-    let is = view.attributes.get("is")?;
-    definitions.iter().position(|definition| {
-        definition.name == *is && definition.extends.as_deref() == Some(view.tag.as_str())
-    })
+    let is = page.attribute_value(node, "is")?;
+    page.state
+        .components
+        .definitions
+        .iter()
+        .position(|definition| {
+            definition.name == is && definition.extends.as_deref() == Some(tag.as_str())
+        })
 }
 
 /** CustomElementRegistry methods. */
@@ -213,18 +219,12 @@ fn read_definition(
     })
 }
 
-/** Upgrade every element of a new definition already in the document, in tree order. */
+/**
+ * Upgrade every connected element a new definition matches, in tree order. The candidate index
+ * supplies them, so a definition with no matching element costs nothing beyond its own lookup.
+ */
 fn upgrade_document(vm: &mut Vm, name: &str) -> Res<()> {
-    let mut candidates = Vec::new();
-    for node in vm.page.all_descendants(crate::v9::platform::HTML) {
-        let matches = vm.page.with_element(node, |tag, attributes| {
-            tag == name || attributes.get("is").is_some_and(|is| is == name)
-        });
-        if matches == Some(true) {
-            candidates.push(node);
-        }
-    }
-    for node in candidates {
+    for node in candidates::take(vm, name) {
         if vm.page.exists(node) {
             upgrade(vm, node)?;
         }

@@ -5,6 +5,7 @@
 use super::super::supervisor::Runtime;
 use crate::document::Node;
 use crate::protocol::{EngineError, EngineResult, Request, parameters};
+use crate::v9::Stroke;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -12,10 +13,6 @@ use serde_json::{Value, json};
 const PAGE_STEP: f64 = 0.9;
 /// Modifier names a press may carry, in the spelling the DOM uses.
 const MODIFIERS: &[&str] = &["Shift", "Control", "Alt", "Meta"];
-/// Input types that are buttons or choices, not text an agent can edit.
-const NOT_TEXT: &[&str] = &[
-    "checkbox", "radio", "submit", "button", "reset", "file", "image", "hidden", "color", "range",
-];
 
 /** A point in viewport coordinates on one observed page revision. */
 #[derive(Deserialize)]
@@ -85,29 +82,51 @@ impl Runtime {
     }
 
     /**
-     * page.click_at: click whatever a person would click at this point. A text field has no click
-     * action; it is reported as `focused` so the agent can type into it with page.press.
+     * page.click_at: a click at this point reaches what is painted there, as a person's would. A text
+     * field under the point, or a label's field, is focused and reported so the agent can type with
+     * page.press. A point where nothing reacts reports the hit and no effect, rather than refusing.
      */
     pub(super) fn click_at(&mut self, params: Value) -> EngineResult<Value> {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
-        let page = self.current()?;
-        let (base, hit, target) = page.hit(x, y).ok_or_else(nothing_here)?;
-        let hit = page.point_node(base, hit);
-        let target = target.ok_or_else(nothing_here)?;
-        let node_id = page.node_id(base + target.local_id);
-        if editable(target) {
+        let page = self.current()?.clone();
+        // The point was read from one page revision; a click aimed at it must not land on whatever
+        // replaced it, so a stale page or revision is refused before anything runs.
+        observed(&page, &input.page_id, input.expected_revision)?;
+        let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
+        let report = page.point_node(base, hit);
+        let owner = page.owner_document(base);
+        if let Some(field) = crate::document::focus_field(owner, hit)
+            .filter(|field| !crate::document::agent_hidden(owner, field))
+            .cloned()
+        {
+            let focused = page.node_id(base + field.local_id);
+            // A field in a subframe belongs to that frame's own script context; until clicks are
+            // routed there, it keeps only the agent's focus record rather than running the top
+            // page's handlers against a node of another document.
+            let clicked = match base {
+                0 => self.focus_field_by_click(page.clone(), &field)?,
+                _ => None,
+            };
+            let mut result =
+                clicked.unwrap_or_else(|| json!({"page_id":page.id(),"revision":page.revision}));
+            result["focused"] = json!(focused);
+            result["hit"] = report;
+            return Ok(result);
+        }
+        if !self.click_has_effect(&page, hit)? {
             return Ok(
-                json!({"page_id":page.id(),"revision":page.revision,"focused":node_id,"hit":hit}),
+                json!({"page_id":page.id(),"revision":page.revision,"activated":false,"hit":report}),
             );
         }
+        let node_id = page.node_id(base + hit.local_id);
         let request = Request::new(
             "click_at",
             "page.click",
             json!({"page_id":input.page_id,"node_id":node_id,"expected_revision":input.expected_revision}),
         );
         let mut result = self.dispatch_active(request)?;
-        result["hit"] = hit;
+        result["hit"] = report;
         Ok(result)
     }
 
@@ -120,10 +139,10 @@ impl Runtime {
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?;
         let mut result = json!({"page_id":page.id(),"revision":page.revision,"events":"none"});
-        if let Some((base, hit, target)) = page.hit(x, y) {
+        if let Some((base, hit)) = page.hit(x, y, self.scroll_y) {
             result["hit"] = page.point_node(base, hit);
-            if let Some(target) = target {
-                result["clickable"] = json!(page.node_id(base + target.local_id));
+            if self.click_has_effect(page, hit)? {
+                result["clickable"] = json!(page.node_id(base + hit.local_id));
             }
         }
         Ok(result)
@@ -250,21 +269,27 @@ impl Runtime {
             .iter()
             .find(|node| page.node_id(node.local_id) == node_id)
             .ok_or_else(stale)?;
-        let text = editable(node);
+        let text = crate::document::is_text_field(node);
         let command = input
             .modifiers
             .iter()
             .any(|modifier| modifier == "Control" || modifier == "Meta");
         let typed = |value: String| Ok(("page.type", json!({"text":value})));
+        let keys = |strokes: Vec<Stroke>| Ok(("page.keys", json!({"strokes":strokes})));
+        let characters = |chars: &str| chars.chars().map(Stroke::Character).collect::<Vec<_>>();
         if let Some(appended) = &input.text {
             return if text {
-                typed(format!("{}{appended}", node.value))
+                keys(characters(appended))
             } else {
                 Err(not_text())
             };
         }
         match key {
             "Enter" if text && node.tag == "textarea" => typed(format!("{}\n", node.value)),
+            // Implicit submission needs a form: a field outside one does nothing, as in a browser.
+            "Enter" if text && crate::document::form_owner(&page.document, node).is_none() => {
+                keys(Vec::new())
+            }
             "Enter" if text => Ok(("page.submit", json!({}))),
             "Enter" if ["a", "button"].contains(&node.tag.as_str()) || button(node) => {
                 Ok(("page.click", json!({})))
@@ -274,12 +299,13 @@ impl Runtime {
                 "page.set_checked",
                 json!({"checked":node.input_type() == "radio" || !node.checked}),
             )),
-            "Space" | " " if text => typed(format!("{} ", node.value)),
+            "Space" | " " if text => keys(characters(" ")),
             "Space" | " " if node.tag == "button" || button(node) => Ok(("page.click", json!({}))),
-            "Backspace" if text => typed(erase(&node.value, command, &input.modifiers)),
-            single if text && !command && single.chars().count() == 1 => {
-                typed(format!("{}{single}", node.value))
+            "Backspace" if text && (command || word_erase(&input.modifiers)) => {
+                typed(erase(&node.value, command, &input.modifiers))
             }
+            "Backspace" if text => keys(vec![Stroke::Backspace]),
+            single if text && !command && single.chars().count() == 1 => keys(characters(single)),
             _ => Err(EngineError::new(
                 "unsupported_operation",
                 "This key has no native action on that node.",
@@ -294,11 +320,10 @@ fn button(node: &Node) -> bool {
     node.tag == "input" && ["submit", "button", "reset", "image"].contains(&node.input_type())
 }
 
-/** Fields whose value is text an agent can type into. */
-fn editable(node: &Node) -> bool {
-    node.tag == "textarea" || node.tag == "input" && !NOT_TEXT.contains(&node.input_type())
+/** Alt+Backspace erases a word, which is a whole-text edit rather than one keystroke. */
+fn word_erase(modifiers: &[String]) -> bool {
+    modifiers.iter().any(|modifier| modifier == "Alt")
 }
-
 /**
  * Backspace with no caret model erases from the end: one character, the last word with Alt,
  * or everything with Control or Meta (select-all, then delete).
@@ -341,6 +366,25 @@ fn not_text() -> EngineError {
         "That node does not take typed text.",
         "Target a text field from page_summary.",
     )
+}
+
+/** Refuses an action read from another page or an older revision, as `page.click` does. */
+fn observed(page: &super::super::page::Page, page_id: &str, revision: u64) -> EngineResult<()> {
+    if page.id() != page_id {
+        return Err(EngineError::new(
+            "invalid_target",
+            "The page has changed since it was observed.",
+            "Inspect the current page before changing it.",
+        ));
+    }
+    if page.revision != revision {
+        return Err(EngineError::new(
+            "revision_conflict",
+            "The document revision has changed.",
+            "Inspect the current page before changing it.",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

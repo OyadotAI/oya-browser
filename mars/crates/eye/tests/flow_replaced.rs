@@ -138,3 +138,14 @@ fn percent_width_image_is_compressible_in_a_grid_track() {
     let r = rect(markup, (700, 560), "i");
     assert!(close(r, 392.0, 313.6), "{r:?}");
 }
+
+/** A loaded image with `width: 100%` fills its container and keeps its ratio. */
+#[test]
+fn loaded_image_with_percent_width_fills_its_container() {
+    let r = rect(
+        "<div style='width:526px'><img id=i style='width:100%'></div>",
+        (1052, 592),
+        "i",
+    );
+    assert!(close(r, 526.0, 296.0), "{r:?}");
+}

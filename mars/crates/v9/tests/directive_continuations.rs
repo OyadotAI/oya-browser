@@ -1,5 +1,5 @@
 /** Directive prologues contain entire literal statements, not string tokens inside continued expressions. */
-mod common;
+use crate::common;
 
 /** A newline before in continues the expression and leaves legacy reflection on the function available. */
 #[test]

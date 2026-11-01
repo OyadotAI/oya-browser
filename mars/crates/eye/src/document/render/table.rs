@@ -16,8 +16,9 @@ pub(super) use collapse::resolve as collapse_borders;
 
 /** Columns one table lays out; cells past it are skipped rather than widen the grid without bound. */
 const GRID_COLUMNS: usize = 128;
-/** Rows one table lays out, matching the parser's table bound. */
-const GRID_ROWS: usize = crate::constants::TABLE_ROWS * 4;
+/** Rows one table lays out: every row the document can hold, since rows are nodes and the node
+cap already bounds them. Dropping rows silently cut long tables (Hacker News threads) short. */
+const GRID_ROWS: usize = crate::constants::NODES;
 
 /** One cell in the grid with its span. */
 struct Slot<'a> {

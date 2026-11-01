@@ -15,6 +15,7 @@
 use super::frames::{Embedding, FRAME_COUNT, Frame, HTTP_OK, same_origin};
 use super::images::stops_loading;
 use super::page::Page;
+use super::scripting::Settle;
 use super::supervisor::Runtime;
 use crate::network::{Destination, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
@@ -104,27 +105,40 @@ impl Runtime {
         };
         if parent.display.is_none() || !parent.styled {
             let previous = self.render_context;
+            let framed = self.framed;
             let scroll = self.scroll_y;
             if !parent.frame_ancestors.is_empty() {
                 self.render_context.width = parent.scripting.environment.viewport_width;
                 self.render_context.height = parent.scripting.environment.viewport_height;
+                self.framed = true;
                 self.scroll_y = parent.scripting.scroll_y.unwrap_or(0.0);
             }
             let prepared = self.prepare_current(parent);
             self.render_context = previous;
+            self.framed = framed;
             self.scroll_y = scroll;
             prepared?;
         }
         let dimensions = frame_dimensions(parent, owner);
         let previous = self.render_context;
+        let framed = self.framed;
         let scroll = self.scroll_y;
         self.render_context.width = dimensions.0;
         self.render_context.height = dimensions.1;
+        self.framed = true;
         self.scroll_y = 0.0;
         let partition = self.frame_partition.replace(parent.top_level_url.clone());
-        let built = self.build_page(acquired, deadline, false, Some(&embedding), context);
+        let built = self.build_page(
+            acquired,
+            deadline,
+            false,
+            Some(&embedding),
+            context,
+            Settle::Settled,
+        );
         self.frame_partition = partition;
         self.render_context = previous;
+        self.framed = framed;
         self.scroll_y = scroll;
         match built {
             Ok(page) => {
@@ -404,7 +418,7 @@ impl Runtime {
         }
         if child.scripting.loaded {
             let end = child.scripting.clock_ms + advance_ms;
-            let result = if observe_only || Instant::now() >= child.scripting.awake_until {
+            let result = if observe_only || !child.scripting.awake_at(Instant::now()) {
                 if child.scripting.intersections.ready() {
                     self.observe_intersections(child)
                 } else {
@@ -520,9 +534,12 @@ pub(super) fn prune_routes(page: &mut Page) {
     if removed.is_empty() {
         return;
     }
-    Arc::make_mut(&mut page.frames).retain(|frame| {
+    Arc::make_mut(&mut page.frames).retain_mut(|frame| {
         if !removed.contains(&frame.owner()) {
             return true;
+        }
+        if let Some(child) = frame.page.as_mut() {
+            super::broadcast::retire_page(child, &mut page.scripting.broadcast);
         }
         frame.remove_images(&mut page.images);
         false

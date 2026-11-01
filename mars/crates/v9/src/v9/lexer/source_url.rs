@@ -7,8 +7,8 @@ pub(in crate::v9) fn source_url(source: &str) -> EngineResult<Option<String>> {
     let mut result = None;
     let mut end = 0;
     for token in tokens {
-        trivia(&source[end..token.location.byte_offset], &mut result);
-        end = token.end;
+        trivia(&source[end..token.location.offset as usize], &mut result);
+        end = token.end as usize;
     }
     Ok(result.filter(|value| !value.is_empty()))
 }

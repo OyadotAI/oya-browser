@@ -40,6 +40,28 @@ impl Truth {
         self.not().and(other.not()).not()
     }
 }
+/** The `@media` conditions a parse evaluated, each once with its answer. A parse depends on
+its render context only through these, so it holds under any context that answers every one
+the same way: a viewport a few pixels shorter (the window's first resize) keeps YouTube's
+3.3 MB parse instead of starting it over. */
+#[derive(Clone, Default)]
+pub(super) struct MediaSeen(std::collections::BTreeMap<Box<str>, Truth>);
+
+impl MediaSeen {
+    /** Note that `condition` answered `truth`. */
+    pub fn record(&mut self, condition: &str, truth: Truth) {
+        if !self.0.contains_key(condition) {
+            self.0.insert(condition.into(), truth);
+        }
+    }
+    /** Whether `context` answers every noted condition as the parse saw it. */
+    pub fn holds(&self, context: RenderContext) -> bool {
+        self.0
+            .iter()
+            .all(|(condition, truth)| media(condition, context) == *truth)
+    }
+}
+
 /** A media query list: any query holding makes the list hold; an empty list holds. */
 pub(super) fn media(source: &str, context: RenderContext) -> Truth {
     let source = source.to_ascii_lowercase();

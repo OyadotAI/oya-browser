@@ -615,7 +615,7 @@ fn settle(
     mut execution: mars_v9::Execution,
     expected_throw: bool,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + crate::timeout();
+    let deadline = Instant::now() + crate::test262_runner::timeout();
     let mut modules = input.modules.clone();
     for _ in 0..TIMER_CALLBACK_LIMIT {
         if check(&execution, expected_throw)? {
@@ -625,7 +625,7 @@ fn settle(
             return Err("host event loop time limit exceeded".into());
         }
         if !execution.module_requests.is_empty() {
-            let strict = !crate::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty();
+            let strict = !crate::test262_runner::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty();
             let supplied = execution
                 .module_requests
                 .iter()
@@ -700,7 +700,7 @@ fn copy_input<'a>(input: &mars_v9::PageInput<'a>) -> mars_v9::PageInput<'a> {
 
 /** The explicit engine exception channel cannot confuse a console.error call with a throw. */
 fn check(execution: &mars_v9::Execution, expected_throw: bool) -> Result<bool, String> {
-    if !crate::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty()
+    if !crate::test262_runner::prefixes("MJSUNIT_INCLUDE_DIRS").is_empty()
         && !execution.effects.unsupported.is_empty()
     {
         return Err(format!(
@@ -1057,7 +1057,7 @@ mod tests {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let file = crate::out_dir()
+        let file = crate::test262_runner::out_dir()
             .join("cpu-profiles")
             .join(name)
             .join("root/v8.prof");

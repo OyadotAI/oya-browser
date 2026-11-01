@@ -1,6 +1,6 @@
 /* Real weak edges, job lifetime and deferred finalization across serialized page requests. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment};
 
 /** A finite task allowance makes an accidental rescheduling loop fail visibly. */

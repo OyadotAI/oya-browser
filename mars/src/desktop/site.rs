@@ -29,6 +29,9 @@ pub(super) struct Site {
 
 impl Site {
     /** Stop demo acceptance without making its bounded socket cleanup block native events. */
+    // Called by the desktop window's shutdown loop (src/desktop/window.rs); the demo_site test
+    // target compiles this file through a #[path] include and never calls it.
+    #[allow(dead_code)]
     pub fn shutdown_finished(&mut self) -> bool {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = &self.worker {

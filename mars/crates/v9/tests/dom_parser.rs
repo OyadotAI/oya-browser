@@ -5,7 +5,7 @@
  * standard requires (an unsupported type, a missing argument, malformed XML). Each test pins
  * one rule through the public surface.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

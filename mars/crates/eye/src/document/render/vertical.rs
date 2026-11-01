@@ -479,20 +479,27 @@ fn swap_sizes(style: &ComputedStyle, out: &mut ComputedStyle) {
     };
     out.height = extent(style.width, style.percent_width, style.width_offset);
     out.min_height = extent(style.min_width, false, 0.0).or_else(|| {
-        style
-            .min_width_percent
-            .map(|percent| Extent { px: 0.0, percent })
+        style.min_width_percent.map(|percent| Extent {
+            px: style.min_width_offset,
+            percent,
+        })
     });
-    out.max_height = extent(style.max_width, style.percent_max_width, 0.0);
+    out.max_height = extent(
+        style.max_width,
+        style.percent_max_width,
+        style.max_width_offset,
+    );
     let (width, percent, offset) = length(style.height);
     (out.width, out.percent_width, out.width_offset) = (width, percent, offset);
-    let (min, min_percent, _) = length(style.min_height);
+    let (min, min_percent, min_offset) = length(style.min_height);
     (out.min_width, out.min_width_percent) = match min_percent {
         true => (None, min),
         false => (min, None),
     };
-    let (max, max_percent, _) = length(style.max_height);
+    out.min_width_offset = min_offset;
+    let (max, max_percent, max_offset) = length(style.max_height);
     (out.max_width, out.percent_max_width) = (max, max_percent);
+    out.max_width_offset = max_offset;
     out.height_fit = style.width_fit || style.size_keywords[0] != Default::default();
     out.width_fit = style.height_fit;
     out.width_stretch = false;

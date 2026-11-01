@@ -4,7 +4,7 @@
  * runs; run it before and after an engine change with
  * `cargo test --release --offline -p mars-v9 --test value_bench -- --ignored --nocapture`.
  */
-mod common;
+use crate::common;
 
 /** Iterations per row. */
 const ITERATIONS: u32 = 1_000_000;

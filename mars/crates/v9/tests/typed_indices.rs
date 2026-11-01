@@ -1,5 +1,5 @@
 /** Integer-indexed exotic objects reject deletion and keep canonical numeric keys out of prototypes. */
-mod common;
+use crate::common;
 
 /** Element descriptors stay configurable in reflection while deleting a valid element still fails. */
 #[test]
