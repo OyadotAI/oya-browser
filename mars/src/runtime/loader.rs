@@ -27,8 +27,8 @@ const RPC_MARGIN: Duration = Duration::from_secs(5);
 
 /// One job for a worker.
 enum Job {
-    /// Prepare and transmit one request.
-    Hop(Hop),
+    /// Prepare and transmit one request. Boxed so the small maintenance variants stay small.
+    Hop(Box<Hop>),
     /// Empty the worker's HTTP cache ("Clear browsing data").
     ClearCache,
     /// Drop the worker's cached copies of these URLs: another process sent them an unsafe request.
@@ -106,7 +106,7 @@ impl Loader {
             grants,
             remaining_ms,
         };
-        if worker.jobs.send(Job::Hop(hop)).is_err() {
+        if worker.jobs.send(Job::Hop(Box::new(hop))).is_err() {
             worker.busy.fetch_sub(1, Ordering::Relaxed);
         }
         id
@@ -207,7 +207,7 @@ fn ensure_service(service: &mut Option<Service>, exe: &Path, cancel: &Arc<Atomic
 /** Dispatches a single worker job to the network service. */
 fn dispatch_job(service: &mut Option<Service>, job: Job) -> Option<Done> {
     match job {
-        Job::Hop(hop) => Some(run(service, hop)),
+        Job::Hop(hop) => Some(run(service, *hop)),
         Job::ClearCache => maintain(service, "network.cache_clear", json!({})),
         Job::Forget(urls) => maintain(service, "network.cache_forget", json!({"urls": urls})),
     }

@@ -1,4 +1,4 @@
-/** Media types as AVFoundation names them: a response's MIME type to the uniform type identifier its resource loader expects. */
+/*! Media types as AVFoundation names them: a response's MIME type to the uniform type identifier its resource loader expects. */
 
 /// MIME essences and the container type identifier AVFoundation parses them as.
 const TYPES: &[(&str, &str)] = &[

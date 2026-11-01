@@ -1,4 +1,4 @@
-/**
+/*!
  * The `<style>` texts V9 alone holds (head styles scripts create or change, which the document
  * engine never sees as nodes) kept as one block inside the page's stylesheet list. CSS-in-JS
  * libraries insert their rules this way; without the block those rules never applied.

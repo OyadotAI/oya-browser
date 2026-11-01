@@ -27,6 +27,9 @@ use std::rc::Rc;
 /** Selector features that read a node's descendants; only then does a subtree change count. */
 const DESCENDANT_FEATURES: [&str; 4] = [":has(", ":focus-within", ":empty", ":blank"];
 
+/** A reusable result: the previous computed style, its custom properties, and whether it was reused. */
+type ReusedStyle = (ComputedStyle, BTreeMap<Rc<str>, Rc<str>>, bool);
+
 /** What decides whether a node's previous style still stands. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Key {
@@ -128,7 +131,7 @@ impl Plan {
         node: &Node,
         index: usize,
         parent_style: &ComputedStyle,
-    ) -> Option<(ComputedStyle, BTreeMap<Rc<str>, Rc<str>>, bool)> {
+    ) -> Option<ReusedStyle> {
         let previous = self.previous.as_ref()?;
         let entry = previous.entries.get(&node.local_id)?;
         if entry.key != self.keys[index] {

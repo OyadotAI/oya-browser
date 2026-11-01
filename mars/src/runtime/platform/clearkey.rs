@@ -33,10 +33,13 @@ pub enum DecryptError {
     Malformed,
 }
 
+/** The usable keys of one session, by key ID. */
+type SessionKeys = BTreeMap<[u8; BLOCK], [u8; BLOCK]>;
+
 /** Usable keys by context identity, then session id, then key ID. */
 #[derive(Default)]
 pub(in crate::runtime) struct Keys {
-    contexts: BTreeMap<String, BTreeMap<String, BTreeMap<[u8; BLOCK], [u8; BLOCK]>>>,
+    contexts: BTreeMap<String, BTreeMap<String, SessionKeys>>,
 }
 
 impl Keys {

@@ -265,7 +265,7 @@ fn fetched(response: crate::network::WebResponse, start: u64) -> EngineResult<Fe
         }
         OK => (0, Some(bytes.len() as u64)),
         status => {
-            return Err(EngineError::unsupported(&format!(
+            return Err(EngineError::unsupported(format!(
                 "MEDIA_ELEMENT_ERROR: the server answered HTTP {status}"
             )));
         }

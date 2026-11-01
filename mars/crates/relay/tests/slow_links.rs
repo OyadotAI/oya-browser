@@ -41,7 +41,7 @@ fn a_body_that_keeps_moving_loads_however_long_it_takes() {
     let started = Instant::now();
     let response = Prepared::connect(
         WebRequest::get(&format!("{origin}/slow")),
-        &[origin.clone()],
+        std::slice::from_ref(&origin),
         CEILING_MS,
     )
     .and_then(Prepared::transmit)

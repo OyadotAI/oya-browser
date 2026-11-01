@@ -1400,10 +1400,10 @@ impl Runtime {
         if let (true, Some(page)) = (landed, self.page.as_mut()) {
             page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
         }
-        if self.platform_wants_turn() {
-            if let Some(page) = self.page.as_mut() {
-                page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
-            }
+        if self.platform_wants_turn()
+            && let Some(page) = self.page.as_mut()
+        {
+            page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
         }
         let due = self.page.as_ref().is_some_and(|page| {
             ((page.scripting.pending() || page.frames_pending())

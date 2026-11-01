@@ -65,8 +65,10 @@ impl Runtime {
 
     /** Reserve every static iframe before executing any child, including later siblings. */
     pub(super) fn initial_frame_tree(&mut self, document: &Document) -> EngineResult<Tree> {
-        let mut tree = Tree::default();
-        tree.window = self.frame_identity()?;
+        let mut tree = Tree {
+            window: self.frame_identity()?,
+            ..Default::default()
+        };
         self.refresh_frame_directory(&mut tree, document)?;
         Ok(tree)
     }

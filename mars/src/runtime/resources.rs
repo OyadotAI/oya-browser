@@ -24,6 +24,14 @@ pub(super) enum Redirects {
     /** Hand it back so the caller re-decides credentials and origin for the next hop. */
     Return,
 }
+/** Who asked for a request: the page that initiated it, and whether it is a top-level navigation. */
+struct Requester {
+    /** The initiating page's URL, or `None` for a typed URL with no initiator. */
+    initiator: Option<Url>,
+    /** Whether the request navigates a top-level document rather than loading a subresource. */
+    top_level: bool,
+}
+
 /** Response metadata keeps final method for history replay policy. */
 pub(super) struct Acquired {
     pub response: WebResponse,
@@ -62,8 +70,10 @@ impl Runtime {
         self.acquire_diagnosed(
             request,
             deadline,
-            initiator,
-            top_level,
+            Requester {
+                initiator,
+                top_level,
+            },
             redirects_policy,
             credentials,
             None,
@@ -75,12 +85,15 @@ impl Runtime {
         &mut self,
         mut request: WebRequest,
         deadline: Instant,
-        initiator: Option<Url>,
-        top_level: bool,
+        requester: Requester,
         redirects_policy: Redirects,
         credentials: bool,
         diagnostic: Option<(RequestDiagnostic, FailureStage)>,
     ) -> EngineResult<Acquired> {
+        let Requester {
+            initiator,
+            top_level,
+        } = requester;
         let started = Instant::now();
         let mut admitted_unsafe = false;
         let mut diagnostics = Vec::new();
@@ -687,8 +700,10 @@ impl Runtime {
         match self.acquire_diagnosed(
             web,
             until,
-            Some(base.clone()),
-            false,
+            Requester {
+                initiator: Some(base.clone()),
+                top_level: false,
+            },
             Redirects::Return,
             cookies,
             Some((diagnostic, stage)),

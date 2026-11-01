@@ -2,6 +2,8 @@
 // Named by path so tests/broker.rs, which includes this file directly, finds it too.
 #[path = "broker/closing.rs"]
 mod closing;
+// The window's closing path uses it; tests/broker.rs includes this file without the window.
+#[allow(unused_imports)]
 pub(super) use closing::SaveTicket;
 
 use crate::{

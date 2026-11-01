@@ -240,12 +240,15 @@ mod tests {
         let a = json!({"name":"a","value":"1","domain":null,"path":"/"});
         let a2 = json!({"name":"a","value":"2","domain":null,"path":"/"});
         let b = json!({"name":"b","value":"1","domain":null,"path":"/"});
-        let (changed, deleted) = diff(&[a.clone(), b], &[a2.clone()]);
+        let (changed, deleted) = diff(&[a.clone(), b], std::slice::from_ref(&a2));
         assert_eq!(changed, vec![a2]);
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0]["name"], "b");
         assert!(deleted[0]["value"].is_null());
-        assert_eq!(diff(&[a.clone()], &[a]), (vec![], vec![]));
+        assert_eq!(
+            diff(std::slice::from_ref(&a), std::slice::from_ref(&a)),
+            (vec![], vec![])
+        );
     }
 
     /** Domain must domain-match the host, and __Host- cookies must be host-only at "/". */

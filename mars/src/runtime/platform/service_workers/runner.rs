@@ -462,7 +462,6 @@ fn entry(module: bool, url: &str, source: String) -> (Vec<String>, crate::v9::Mo
             source: Some(source),
             classic: false,
         }],
-        ..crate::v9::ModuleInput::default()
     };
     (vec![String::new()], input)
 }
