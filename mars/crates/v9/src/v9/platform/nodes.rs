@@ -497,7 +497,7 @@ impl Page<'_> {
         }
         for child in self.descendants(id) {
             if let Some(view) = self.view(child)
-                && view.tag == "#text"
+                && contributes_text(&view.tag)
             {
                 out.push_str(view.text.as_deref().unwrap_or(""));
             }
@@ -1494,6 +1494,13 @@ impl Page<'_> {
         }
         Ok(())
     }
+}
+
+/** Whether a node below the one textContent reads adds its own text: a text node does, and so
+does an element, which holds its lone text child itself. Comments and processing instructions
+never do, so the textContent of a parent leaves them out. */
+fn contributes_text(tag: &str) -> bool {
+    tag == "#text" || !tag.starts_with('#')
 }
 
 /** Projection inconsistencies are invalid input, never silently ignored. */

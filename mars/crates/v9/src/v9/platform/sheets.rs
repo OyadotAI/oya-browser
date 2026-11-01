@@ -188,7 +188,16 @@ pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .count();
             Ok(JsValue::Number(count.saturating_sub(1) as f64))
         }
-        "deleteRule" | "removeRule" => Err(vm.unsupported_error("CSSStyleSheet rule deletion")),
+        "deleteRule" | "removeRule" => {
+            let index =
+                if dom::native_name(&call) == "removeRule" && call.arg(0) == JsValue::Undefined {
+                    0.0
+                } else {
+                    vm.to_number(&call.arg(0))?
+                };
+            delete_rule(vm, node, index)?;
+            Ok(JsValue::Undefined)
+        }
         "replaceSync" | "replace" => {
             let text = vm.to_text(&call.arg(0))?;
             vm.page
@@ -198,6 +207,30 @@ pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => Ok(JsValue::Undefined),
     }
+}
+
+/** Remove the rule at `index` from the sheet's text, as deleteRule does. Rules are the blocks
+between closing braces, as `rules` reads them, so the rest keep their order. An index outside the
+rules is an IndexSizeError, which a page's own cleanup code relies on to fail loudly.
+ponytail: nested at-rule blocks split like any other, the ceiling `insertRule` and `cssRules`
+already share; a real CSS rule parser is the upgrade. */
+fn delete_rule(vm: &mut Vm, node: usize, index: f64) -> Res<()> {
+    let text = vm.page.text_content(node);
+    let mut blocks: Vec<&str> = text
+        .split('}')
+        .map(str::trim)
+        .filter(|block| !block.is_empty())
+        .collect();
+    let position = (index >= 0.0 && index < blocks.len() as f64).then_some(index as usize);
+    let Some(position) = position else {
+        return Err(vm.dom_exception("IndexSizeError", "The index is outside the sheet's rules."));
+    };
+    blocks.remove(position);
+    let rebuilt: String = blocks.iter().map(|block| format!("{block} }}\n")).collect();
+    vm.page
+        .set_text(node, &rebuilt)
+        .map_err(|error| dom::dom_error(vm, error))?;
+    Ok(())
 }
 
 /** `element.validity`: a ValidityState in which every field is valid. */
