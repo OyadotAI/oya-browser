@@ -166,5 +166,6 @@ pub(super) const JIT_TRACE_ENV: &str = "MARS_V9_JIT_TRACE";
 pub(super) const JIT_VALUE_ON: &str = "1";
 /** Value of `MARS_V9_JIT` that turns the JIT off, even once it is the default. */
 pub(super) const JIT_VALUE_OFF: &str = "0";
-/** Whether the JIT compiles when `MARS_V9_JIT` is unset. Off until the full suite passes with it on. */
-pub(super) const DEFAULT_JIT_ENABLED: bool = false;
+/** Whether the JIT compiles when `MARS_V9_JIT` is unset. On: the full suite passes with it on, and
+also at a tier-up threshold of 1, which compiles every function it runs. */
+pub(super) const DEFAULT_JIT_ENABLED: bool = true;
