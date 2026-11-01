@@ -350,6 +350,27 @@ fn backface_hidden_child_under_perspective_hides() {
     );
 }
 
+/** A flip card's face hides its content with it: a flat box with a hidden back face paints its
+children in its own plane, so they turn away and hide too. Under preserve-3d they keep their own facing. */
+#[test]
+fn a_hidden_back_face_hides_its_flattened_children() {
+    let hidden = |style: &str| {
+        let (document, display) = layout(&format!(
+            "<div style='backface-visibility:hidden;width:40px;height:20px;{style}'>\
+             <span id=t style='display:block;width:20px;height:10px'>t</span></div>"
+        ));
+        item(&document, &display, "t")
+            .clip
+            .is_some_and(|clip| clip.width == 0.0)
+    };
+    assert!(hidden("transform:rotateY(180deg)"));
+    assert!(hidden("transform:scaleX(-1)"));
+    assert!(!hidden("transform:none"));
+    assert!(!hidden(
+        "transform:rotateY(180deg);transform-style:preserve-3d"
+    ));
+}
+
 /** Individual `translate`, `rotate` and `scale` take three-dimensional forms. */
 #[test]
 fn individual_properties_take_three_dimensional_forms() {
@@ -451,4 +472,28 @@ unchanged. */
 fn planar_boxes_carry_no_projected_quad() {
     let (document, display) = layout("<p id=t style='transform:translate(4px, 5px)'>t</p>");
     assert!(item(&document, &display, "t").quad.is_none());
+}
+
+/** A deep tree under one 3D transform is placed in linear time: each box reuses its parent's
+memoized context instead of recomposing every ancestor. */
+#[test]
+fn a_deep_tree_under_a_3d_transform_places_quickly() {
+    const DEPTH: usize = 1500;
+    let markup = format!(
+        "<div style='transform:rotateY(10deg)'>{}x{}</div>",
+        "<div>".repeat(DEPTH),
+        "</div>".repeat(DEPTH)
+    );
+    // Layout recurses per level, so run it on the stack the engine's own service thread gets.
+    let elapsed = std::thread::Builder::new()
+        .stack_size(mars_eye::constants::SERVICE_STACK_BYTES)
+        .spawn(move || {
+            let start = std::time::Instant::now();
+            let _ = layout(&markup);
+            start.elapsed()
+        })
+        .expect("thread")
+        .join()
+        .expect("layout");
+    assert!(elapsed < std::time::Duration::from_secs(5));
 }

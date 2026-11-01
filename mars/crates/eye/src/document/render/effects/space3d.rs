@@ -44,43 +44,117 @@ struct Level {
     perspective: Matrix4,
     /// Whether children share this box's 3D rendering context instead of flattening into it.
     preserve: bool,
+    /// Whether the box's back face is hidden, which hides its flattened subtree with it.
+    backface_hidden: bool,
+    /// The box's layout rectangle `[x, y, w, h]`, which its facing is judged by.
+    rect: [f64; 4],
 }
 
-/** Whether a box needs the 3D pass: some box on its path is in 3D, or its back face may hide it. */
-pub(super) fn needed(tree: &Tree<'_>, node: &Node, item: &DisplayItem) -> EngineResult<bool> {
-    if node.style.backface_hidden
-        || generated_style(node, item).is_some_and(|style| style.transform_4.is_some())
-    {
-        return Ok(true);
-    }
-    let mut current = Some(node);
-    while let Some(anchor) = current {
-        if anchor.style.transform_4.is_some() || anchor.style.perspective.is_some() {
-            return Ok(true);
+/** What a box's 3D context hands its descendants, memoized per identity so a deep tree is
+walked once rather than once per box. */
+#[derive(Clone, Copy)]
+pub(super) struct Space {
+    /// Whether this box or an ancestor is in 3D or hides a back face, so the box needs the pass.
+    needed: bool,
+    /// The box's full matrix from the root: every ancestor's offset, transform and perspective.
+    full: Matrix4,
+    /// What children compose onto: `full`, flattened when the box flattens, then its perspective.
+    down: Matrix4,
+    /// Whether a flattening ancestor's hidden back face hides this box with it.
+    hidden: bool,
+    /// Whether this box's descendants are hidden: `hidden`, or its own flattening face turned away.
+    hidden_down: bool,
+}
+
+/** The root's context: nothing in 3D yet. */
+const ROOT_SPACE: Space = Space {
+    needed: false,
+    full: IDENTITY4,
+    down: IDENTITY4,
+    hidden: false,
+    hidden_down: false,
+};
+
+/** A box's space, computed from its nearest memoized ancestor down and memoized on the way. */
+fn space(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Space> {
+    let mut pending = vec![node];
+    let mut base = ROOT_SPACE;
+    let mut current = node.parent;
+    while let Some(local) = current {
+        if let Some(found) = tree.spaces.get(local).copied().flatten() {
+            base = found;
+            break;
         }
-        current = anchor.parent.map(|local| tree.node(local)).transpose()?;
+        let ancestor = tree.node(local)?;
+        pending.push(ancestor);
+        current = ancestor.parent;
     }
-    Ok(false)
+    for anchor in pending.into_iter().rev() {
+        base = child_space(&base, &level(tree, items, anchor)?, &anchor.style);
+        if let Some(slot) = tree.spaces.get_mut(anchor.local_id) {
+            *slot = Some(base);
+        }
+    }
+    Ok(base)
+}
+
+/** A box's space from its parent's. Flattening drops the z output (CSS Transforms 2), which
+for points in a plane is a left multiply by `flatten(IDENTITY4)`, so the chain is one product. */
+fn child_space(parent: &Space, level: &Level, style: &ComputedStyle) -> Space {
+    let full = multiply(&parent.down, &level.local);
+    let flat = match level.preserve {
+        true => full,
+        false => flatten_after(&full),
+    };
+    let own_face = level.backface_hidden && !level.preserve && faces_away(&full, level.rect);
+    Space {
+        needed: parent.needed
+            || style.transform_4.is_some()
+            || style.perspective.is_some()
+            || style.backface_hidden,
+        full,
+        down: multiply(&flat, &level.perspective),
+        hidden: parent.hidden_down,
+        hidden_down: parent.hidden_down || own_face,
+    }
+}
+
+/** `full` followed by dropping z: the matrix a flattening box hands its subtree. */
+fn flatten_after(full: &Matrix4) -> Matrix4 {
+    multiply(full, &flatten(&IDENTITY4))
 }
 
 /** Places a box in the 3D pass, or None when nothing in its path needs one. */
 pub(super) fn placed(
-    tree: &Tree<'_>,
+    tree: &mut Tree<'_>,
     items: &[DisplayItem],
     node: &Node,
     item: &DisplayItem,
 ) -> EngineResult<Option<Placed>> {
-    if !needed(tree, node, item)? {
+    let space = space(tree, items, node)?;
+    let generated_3d = generated_style(node, item).is_some_and(|style| style.transform_4.is_some());
+    if !space.needed && !generated_3d {
         return Ok(None);
     }
-    let levels = levels(tree, items, node)?;
-    let mut full = compose(&levels, 0);
     let [sx, sy] = super::scrolled(tree, node)?;
-    full = multiply(&translation([-sx, -sy, 0.0]), &full);
+    let mut full = multiply(&translation([-sx, -sy, 0.0]), &space.full);
     if let Some(style) = generated_style(node, item) {
         full = multiply(&full, &own_matrix(style, Some(item)));
     }
-    Ok(Some(project_box(item, &full, node.style.backface_hidden)))
+    let mut placed = project_box(item, &full, node.style.backface_hidden);
+    // A flattening ancestor whose hidden back face turned away paints this box in its own plane,
+    // so the box hides with it (CSS Transforms 2, backface-visibility).
+    placed.hidden |= space.hidden;
+    Ok(Some(placed))
+}
+
+/** Whether a box under `full` shows its back, or has a corner with no screen position. */
+fn faces_away(full: &Matrix4, [x, y, w, h]: [f64; 4]) -> bool {
+    let corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    match all_some(&corners.map(|corner| project(full, corner))) {
+        Some(quad) => orientation(quad[0], quad[TOP_RIGHT], quad[BOTTOM_LEFT]) < 0.0,
+        None => true,
+    }
 }
 
 /** The projected corners, the paint affine fitted through three of them, and the facing. */
@@ -121,17 +195,6 @@ fn all_some(points: &[Option<[f64; 2]>; 4]) -> Option<[[f64; 2]; 4]> {
     Some(quad)
 }
 
-/** Each box from the context root down to `node`, with `node` last. */
-fn levels(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Vec<Level>> {
-    let mut chain = tree.ancestors(node)?;
-    chain.reverse();
-    chain.push(node);
-    chain
-        .into_iter()
-        .map(|anchor| level(tree, items, anchor))
-        .collect()
-}
-
 /** One box's level: its offset and own transform, its perspective, and its preserve-3d flag. */
 fn level(tree: &Tree<'_>, items: &[DisplayItem], anchor: &Node) -> EngineResult<Level> {
     let own = own_box(tree, items, anchor);
@@ -140,6 +203,8 @@ fn level(tree: &Tree<'_>, items: &[DisplayItem], anchor: &Node) -> EngineResult<
         local: multiply(&translation([x, y, 0.0]), &own_matrix(&anchor.style, own)),
         perspective: perspective_matrix(&anchor.style, own),
         preserve: preserves_3d(&anchor.style),
+        backface_hidden: anchor.style.backface_hidden,
+        rect: own.map_or([0.0; 4], |item| [item.x, item.y, item.width, item.height]),
     })
 }
 
@@ -219,21 +284,4 @@ fn perspective_matrix(style: &ComputedStyle, own: Option<&DisplayItem>) -> Matri
         &translation(origin),
         &multiply(&perspective(distance), &translation(origin.map(|v| -v))),
     )
-}
-
-/** Composes levels from `start` down: each level's local matrix, the perspective of the level
-above it, and at every flattening box the flattened subtree below it (its z is dropped there). */
-fn compose(levels: &[Level], start: usize) -> Matrix4 {
-    let mut out = IDENTITY4;
-    for index in start..levels.len() {
-        if index > start {
-            out = multiply(&out, &levels[index - 1].perspective);
-        }
-        out = multiply(&out, &levels[index].local);
-        if index + 1 < levels.len() && !levels[index].preserve {
-            let below = multiply(&levels[index].perspective, &compose(levels, index + 1));
-            return multiply(&out, &flatten(&below));
-        }
-    }
-    out
 }

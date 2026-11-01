@@ -46,6 +46,8 @@ struct Tree<'a> {
     boxes: Vec<Option<usize>>,
     /// Memoized absolute matrices per identity.
     matrices: Vec<Option<Matrix>>,
+    /// Memoized 3D contexts per identity (`space3d`), so a deep tree is composed once.
+    spaces: Vec<Option<space3d::Space>>,
     /// Memoized absolute relative and sticky offsets per identity, without transforms: where
     /// layout APIs (`offsetLeft`) see a box, which a transform never moves.
     shifts: Vec<Option<[f64; 2]>>,
@@ -118,6 +120,7 @@ pub(super) fn stack(
         document,
         painting,
         matrices: vec![None; positions.len()],
+        spaces: vec![None; positions.len()],
         shifts: vec![None; positions.len()],
         positions,
         boxes,
@@ -136,6 +139,7 @@ pub(super) fn stack(
         .map(|(local, range)| (*local, range.reach))
         .collect();
     tree.matrices.iter_mut().for_each(|slot| *slot = None);
+    tree.spaces.iter_mut().for_each(|slot| *slot = None);
     tree.shifts.iter_mut().for_each(|slot| *slot = None);
     let areas = scroll_areas(&mut tree, &items, &ranges)?;
     let mut resolved = Vec::with_capacity(items.len());
@@ -143,7 +147,7 @@ pub(super) fn stack(
     let mut placements = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let node = tree.node(item.local_id)?;
-        let place = space3d::placed(&tree, &items, node, item)?;
+        let place = space3d::placed(&mut tree, &items, node, item)?;
         let matrix = match &place {
             Some(placed) => placed.affine,
             None => painted(&mut tree, &items, node)?,
