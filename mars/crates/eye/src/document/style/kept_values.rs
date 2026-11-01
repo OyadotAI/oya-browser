@@ -5,9 +5,9 @@
  * it inherits, and the grammar that canonicalizes what the author wrote. Shorthands are expanded
  * in `shorthand.rs`, so only longhands reach `apply`.
  */
-use super::{ComputedStyle, kept_grammar as grammar};
+use super::{ComputedStyle, constants::KEPT_VALUE_BYTES, kept_grammar as grammar};
 use crate::{document::RenderContext, protocol::EngineResult};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 /** A validator: the canonical value for `value`, or an unsupported-value error. */
 type Check = fn(&str, &ComputedStyle, RenderContext) -> EngineResult<String>;
@@ -181,8 +181,11 @@ pub(super) fn apply(
     let Some(kept) = entry(key) else {
         return Ok(false);
     };
+    if value.len() > KEPT_VALUE_BYTES {
+        return Err(super::unsupported());
+    }
     let canonical = (kept.check)(value, style, context)?;
-    style.kept_values.insert(key.to_string(), canonical);
+    style.kept_values.insert(key.to_string(), canonical.into());
     Ok(true)
 }
 
@@ -202,7 +205,7 @@ pub(super) fn copy(style: &mut ComputedStyle, source: &ComputedStyle, key: &str)
 }
 
 /** The values a child inherits from its parent: the inherited kept properties it stores. */
-pub(super) fn inherited(parent: &ComputedStyle) -> BTreeMap<String, String> {
+pub(super) fn inherited(parent: &ComputedStyle) -> BTreeMap<String, Arc<str>> {
     parent
         .kept_values
         .iter()
@@ -220,7 +223,6 @@ pub(super) fn computed(style: &ComputedStyle, name: &str) -> Option<String> {
         style
             .kept_values
             .get(name)
-            .cloned()
-            .unwrap_or_else(|| kept.initial.to_string())
+            .map_or_else(|| kept.initial.to_string(), |value| value.to_string())
     })
 }

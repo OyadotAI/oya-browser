@@ -6,7 +6,9 @@
 use super::{
     ComputedStyle,
     computed_css::css_color,
-    constants::{FONT_TAG_BYTES, FONT_TAG_FIRST_BYTE, FONT_TAG_LAST_BYTE, SNAP_ALIGN_WORDS},
+    constants::{
+        FONT_TAG_BYTES, FONT_TAG_FIRST_BYTE, FONT_TAG_LAST_BYTE, KEPT_LIST_ITEMS, SNAP_ALIGN_WORDS,
+    },
     syntax::{split_top, tokens},
     unsupported,
     values::{contextual_color, dimension, number, signed_number},
@@ -340,6 +342,16 @@ fn quoted_tag(item: &str) -> EngineResult<(&str, &str)> {
     Ok((tag, item[close + 1..].trim()))
 }
 
+/** The comma-separated entries of a settings list, or an error past `KEPT_LIST_ITEMS`, so a
+long list cannot be inherited by every descendant. */
+fn list_items(value: &str) -> EngineResult<Vec<&str>> {
+    let items = split_top(value, b',');
+    match items.len() <= KEPT_LIST_ITEMS {
+        true => Ok(items),
+        false => Err(unsupported()),
+    }
+}
+
 /** `font-feature-settings`: `normal`, or tags with `on`, `off` or a non-negative integer. */
 pub(super) fn font_feature_settings(
     value: &str,
@@ -350,7 +362,7 @@ pub(super) fn font_feature_settings(
         return Ok("normal".into());
     }
     let mut out = Vec::new();
-    for item in split_top(value, b',') {
+    for item in list_items(value)? {
         let (tag, rest) = quoted_tag(item.trim())?;
         let setting = match rest.to_ascii_lowercase().as_str() {
             "" | "on" => 1.0,
@@ -375,7 +387,7 @@ pub(super) fn font_variation_settings(
         return Ok("normal".into());
     }
     let mut out = Vec::new();
-    for item in split_top(value, b',') {
+    for item in list_items(value)? {
         let (tag, rest) = quoted_tag(item.trim())?;
         out.push(format!("\"{tag}\" {}", signed_number(rest)?));
     }

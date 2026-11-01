@@ -787,8 +787,9 @@ pub struct ComputedStyle {
     pub svg_paint: std::collections::BTreeMap<String, String>,
     /// Canonical values of the kept properties (`kept_values.rs`) the author declared; absent
     /// names read as their initial value in `getComputedStyle`.
+    /// Shared by reference: an inherited value is the parent's string, not a copy of it.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub kept_values: std::collections::BTreeMap<String, String>,
+    pub kept_values: std::collections::BTreeMap<String, std::sync::Arc<str>>,
     /// Bits of the grouping properties that make this box a stacking context in Blink without
     /// positioning (`filter`, `backdrop-filter`, `mix-blend-mode`, `isolation`, `will-change`,
     /// `contain`, a shaped `clip-path`); see `visual::STACKING_*`. Paint order reads it.

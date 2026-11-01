@@ -303,3 +303,51 @@ fn user_select_and_touch_action_stay_out_of_the_way_of_other_properties() {
     assert_eq!(computed(&document, "a", "user-select"), "none");
     assert_eq!(by_id(&document, "a").style.color.as_deref(), Some("red"));
 }
+
+/** A value over the byte cap is dropped with a diagnostic, so one declaration cannot retain an
+unbounded string on every element it inherits to. */
+#[test]
+fn an_oversized_kept_value_is_dropped_with_a_diagnostic() {
+    let settings = vec!["\"liga\" 1"; 300].join(", ");
+    assert!(settings.len() > 2048);
+    let document = styled(
+        "<p id=a>a</p>",
+        &format!("#a{{font-feature-settings:{settings}}}"),
+    );
+    assert_eq!(computed(&document, "a", "font-feature-settings"), "normal");
+    assert!(dropped(&document, "font-feature-settings"));
+}
+
+/** A list of settings longer than the item cap is dropped, even when its bytes fit the cap. */
+#[test]
+fn a_kept_list_past_its_item_cap_is_dropped() {
+    let settings = vec!["'wght' 400"; 65].join(", ");
+    assert!(settings.len() < 2048);
+    let document = styled(
+        "<p id=a>a</p>",
+        &format!("#a{{font-variation-settings:{settings}}}"),
+    );
+    assert_eq!(
+        computed(&document, "a", "font-variation-settings"),
+        "normal"
+    );
+    assert!(dropped(&document, "font-variation-settings"));
+}
+
+/** An inherited kept value is the parent's stored string, shared rather than copied, at every
+depth of the tree. */
+#[test]
+fn inherited_kept_values_share_their_parents_storage() {
+    let document = styled(
+        "<div id=p><span id=c><b id=g>g</b></span></div>",
+        "#p{font-feature-settings:'liga' 1}",
+    );
+    let parent = &by_id(&document, "p").style.kept_values["font-feature-settings"];
+    for id in ["c", "g"] {
+        let child = &by_id(&document, id).style.kept_values["font-feature-settings"];
+        assert!(
+            std::sync::Arc::ptr_eq(parent, child),
+            "{id} copied the value"
+        );
+    }
+}

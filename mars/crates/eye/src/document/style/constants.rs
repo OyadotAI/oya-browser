@@ -9,6 +9,11 @@ pub(super) const SELECTOR_ARGUMENTS: usize = 16;
 pub(super) const HAS_VISITS: usize = 512;
 /** Custom property values are retained per declaring element, so each one is bounded. */
 pub(super) const CUSTOM_PROPERTY_BYTES: usize = 2048;
+/** Kept property values are inherited by every descendant, so each one is bounded like a custom
+property; an oversized value is dropped rather than stored. */
+pub(super) const KEPT_VALUE_BYTES: usize = CUSTOM_PROPERTY_BYTES;
+/** Entries in a kept list such as `font-feature-settings`; past this the declaration is dropped. */
+pub(super) const KEPT_LIST_ITEMS: usize = 64;
 /** `var()` chains stop here; deeper or cyclic references are invalid at computed-value time. */
 pub(super) const VAR_DEPTH: usize = 8;
 /** Substituted values cannot double themselves past this size through repeated references. */
