@@ -308,6 +308,7 @@ mod string_rope_access;
 mod structured_clone_kinds;
 mod style_sheet_rules;
 mod submit_event;
+mod subtle_aes;
 mod subtle_digest;
 mod subtle_interface;
 mod super_updates;

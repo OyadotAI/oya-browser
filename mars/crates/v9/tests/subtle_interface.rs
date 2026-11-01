@@ -42,7 +42,7 @@ fn members_carry_their_webidl_names_and_lengths() {
 fn unimplemented_members_reject_with_not_supported() {
     assert_eq!(
         common::eval(
-            "let r='';crypto.subtle.encrypt({name:'AES-GCM'},null,new Uint8Array(1)).then(()=>{r='resolved'},e=>{r=e.name});",
+            "let r='';crypto.subtle.sign({name:'HMAC'},null,new Uint8Array(1)).then(()=>{r='resolved'},e=>{r=e.name});",
             "r"
         ),
         "NotSupportedError"
