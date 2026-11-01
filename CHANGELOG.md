@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
+
 - Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
 
 - Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
