@@ -629,3 +629,19 @@ fn an_invisible_field_over_unrelated_text_is_refused() {
     let after = call(&mut runtime, "page.inspect", json!({})).unwrap();
     assert_eq!(node(&after, "buy")["checked"], false);
 }
+
+/** A field's own label covered by an opaque button does not let the invisible field take the
+click: the agent sees the button, so the point is refused. */
+#[test]
+fn an_invisible_field_over_its_covered_label_is_refused() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><label id="lab" for="buy" style="position:absolute;left:10px;top:10px;width:200px;height:40px">Buy now</label><button id="cancel" style="position:absolute;left:10px;top:10px;width:200px;height:40px">Cancel</button><input id="buy" type="checkbox" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0;margin:0"></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, centre(&page, "cancel"));
+    assert_eq!(result.unwrap_err().code, "invalid_target");
+    let after = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert_eq!(node(&after, "buy")["checked"], false);
+}

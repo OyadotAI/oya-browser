@@ -227,7 +227,7 @@ impl Page {
             || transparent_field(node) && self.own_label_under(display, [x, y], top, (base, node));
         (allowed && !agent_hidden(self.owner_document(base), node)).then_some((base, node))
     }
-    /** Whether a visibly painted box under the point belongs to a label that names `field`: the
+    /** Whether the topmost visibly painted box under the point belongs to a label that names `field`: the
     custom-control case, where a page hides a field over its own label. An invisible field over
     anything else (a "Cancel" button's text) is a clickjacking surface and is refused. */
     fn own_label_under(
@@ -238,14 +238,18 @@ impl Page {
         (base, field): (usize, &Node),
     ) -> bool {
         let document = self.owner_document(base);
-        display
+        // Only the topmost visible content under the point counts: the label must be what the agent
+        // sees there, not something an opaque box covers.
+        let first_visible = display
             .items
             .iter()
             .rev()
             .filter(|item| crate::document::item_contains(item, point, top))
             .filter(|item| crate::document::agent_visible(item))
             .filter_map(|item| self.painted_node(item))
-            .any(|(owner, node)| owner == base && names_field(document, node, field))
+            .find(|(owner, node)| !(*owner == base && node.local_id == field.local_id));
+        first_visible
+            .is_some_and(|(owner, node)| owner == base && names_field(document, node, field))
     }
     /** The node a painted item belongs to, read from the frame that owns its identity range. */
     fn painted_node(&self, item: &crate::document::DisplayItem) -> Option<(usize, &Node)> {
