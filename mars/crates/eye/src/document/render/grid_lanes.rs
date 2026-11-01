@@ -729,10 +729,7 @@ pub(super) fn intrinsic(
 ) -> EngineResult<super::super::sizing::IntrinsicWidths> {
     let style = &node.style;
     let gap = style.column_gap;
-    let (defs, _, mut contributions) = lane_tracks(context, kids, style, None)?;
-    for contribution in &mut contributions {
-        contribution.minimum = super::limited_min_content(contribution, &defs);
-    }
+    let (defs, _, contributions) = lane_tracks(context, kids, style, None)?;
     let total = |space| {
         let widths = tracks::size_tracks(&defs, &contributions, space, gap, false);
         widths.iter().sum::<f64>() + gap * widths.len().saturating_sub(1) as f64

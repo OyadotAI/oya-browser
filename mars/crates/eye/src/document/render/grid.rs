@@ -562,8 +562,8 @@ fn track_sizing(
         .collect()
 }
 /** An item's column contributions as outer widths: min-content, max-content and the minimum
- * contribution, which is its `min-width`, or its automatic minimum (the content-based minimum,
- * clamped by the fixed tracks it spans, or zero for a scroll container). */
+ * contribution, which is its `min-width`, or its automatic minimum: the content-based minimum
+ * clamped by the fixed tracks it spans when `content_based_minimum` applies, else zero. */
 fn column_contribution(
     context: &mut LayoutContext<'_>,
     item: &Placed<'_>,
@@ -594,7 +594,10 @@ fn column_contribution(
         None => (intrinsic.min_content, intrinsic.max_content),
     };
     let spanned = &defs[item.column.min(defs.len())..(item.column + item.columns).min(defs.len())];
-    let minimum = if node.style.min_width.is_some() || super::flex::scroll_container(node) {
+    let minimum = if node.style.min_width.is_some()
+        || super::flex::scroll_container(node)
+        || !content_based_minimum(spanned)
+    {
         clamp(0.0)
     } else {
         let mut content = fixed.unwrap_or(intrinsic.min_content);
@@ -610,6 +613,19 @@ fn column_contribution(
         min_content: clamp(min_content),
         max_content: clamp(max_content),
     })
+}
+/** Whether an item's automatic minimum is its content-based minimum (css-grid-1 6.6): it spans
+ * a track whose minimum is `auto`, and when it spans more than one track, none of them is
+ * flexible. Otherwise the automatic minimum is zero, so a wide item spanning fractional tracks
+ * does not force them open to its min-content width (Blink's special_spanning_criteria). */
+fn content_based_minimum(spanned: &[tracks::TrackSizing]) -> bool {
+    let auto_minimum = spanned
+        .iter()
+        .any(|track| track.min == tracks::MinSizing::Auto);
+    let flexible = spanned
+        .iter()
+        .any(|track| matches!(track.max, tracks::MaxSizing::Fr(_)));
+    auto_minimum && (!flexible || spanned.len() <= 1)
 }
 /** The summed fixed maxima of spanned tracks when every one is fixed, which caps a
  * content-based minimum (css-grid-2 6.6). */
@@ -852,10 +868,7 @@ pub(super) fn intrinsic(
         &columns,
         None,
     );
-    let mut items = column_items(context, style, &placed, &defs, gap)?;
-    for contribution in &mut items {
-        contribution.minimum = limited_min_content(contribution, &defs);
-    }
+    let items = column_items(context, style, &placed, &defs, gap)?;
     let total = |space| {
         let widths = tracks::size_tracks(&defs, &items, space, gap, false);
         widths.iter().sum::<f64>() + gap * widths.len().saturating_sub(1) as f64
@@ -864,14 +877,4 @@ pub(super) fn intrinsic(
         min_content: total(tracks::Space::MinContent),
         max_content: total(tracks::Space::MaxContent(0.0)),
     })
-}
-/** An item's limited min-content contribution (css-grid-2 12.5.1): its min-content contribution
- * capped by the spanned tracks' fixed maximum when they all have one, never below its minimum
- * contribution. */
-fn limited_min_content(item: &tracks::Contribution, defs: &[tracks::TrackSizing]) -> f64 {
-    let end = (item.start + item.span).min(defs.len());
-    let spanned = &defs[item.start.min(end)..end];
-    let limited =
-        fixed_maxima(spanned).map_or(item.min_content, |limit| item.min_content.min(limit));
-    limited.max(item.minimum)
 }
