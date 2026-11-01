@@ -40,6 +40,32 @@ impl<'a> Source<'a> {
             ..self.location
         }
     }
+    /** A whole name of ASCII letters, digits, `$` and `_` with no escape after it, consumed in
+    one step: the common identifier, read without decoding a char at a time. None when the
+    name starts otherwise or runs into a backslash or non-ASCII character, which the full
+    identifier scanner handles. */
+    pub fn ascii_name(&mut self) -> Option<&'a str> {
+        let rest = self.rest();
+        let bytes = rest.as_bytes();
+        let part = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_');
+        if !bytes
+            .first()
+            .is_some_and(|b| part(b) && !b.is_ascii_digit())
+        {
+            return None;
+        }
+        let length = bytes.iter().position(|b| !part(b)).unwrap_or(bytes.len());
+        if bytes
+            .get(length)
+            .is_some_and(|b| *b == b'\\' || !b.is_ascii())
+        {
+            return None;
+        }
+        self.location.byte_offset += length;
+        self.location.column += length;
+        self.after_cr = false;
+        Some(&rest[..length])
+    }
     /** CRLF is one line; astral characters are two UTF-16 column units. */
     pub fn next(&mut self) -> Option<char> {
         let character = self.peek()?;

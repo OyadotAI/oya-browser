@@ -14,13 +14,26 @@ pub(in crate::v9) const SETTER: u8 = 2;
 
 impl Compiler {
     /** Compile a function literal and push a closure over the current environment. */
-    pub(super) fn closure(&mut self, func: &Rc<Func>, self_name: bool) -> EngineResult<()> {
+    pub(super) fn closure(&mut self, func: &Arc<Func>, self_name: bool) -> EngineResult<()> {
         self.compile_function(func, self_name)?;
         self.emit(Op::Closure(func.site));
         Ok(())
     }
-    /** Compile one function into the registry. */
-    pub(super) fn compile_function(&mut self, func: &Func, self_name: bool) -> EngineResult<()> {
+    /** Compile one function into the registry, or file a stub that compiles on first call. */
+    pub(super) fn compile_function(
+        &mut self,
+        func: &Arc<Func>,
+        self_name: bool,
+    ) -> EngineResult<()> {
+        if self.deferrable(func) {
+            let stub = self.defer(func, self_name)?;
+            self.done.push(stub);
+            return Ok(());
+        }
+        self.compile_now(func, self_name)
+    }
+    /** Compile one function into the registry now. */
+    pub(super) fn compile_now(&mut self, func: &Func, self_name: bool) -> EngineResult<()> {
         let uses = scan::function_uses(func);
         // A module's bindings live in its environment, where other modules read them.
         let mapped = uses.arguments && !func.strict && simple_parameters(func) && !func.flags.arrow;
@@ -675,7 +688,7 @@ impl Compiler {
     }
     /** Distinguish a block function from an intervening let that forbids an Annex B var copy. */
     pub(super) fn mark_block_function(&mut self, name: &Name) {
-        let scope = self.scopes.last_mut().expect("block scope");
+        let scope = Arc::make_mut(self.scopes.last_mut().expect("block scope"));
         if let Some(&at) = scope.index.get(name) {
             scope.bindings[at].block_function = true;
         }
@@ -714,7 +727,7 @@ impl Compiler {
 fn simple_parameters(func: &Func) -> bool {
     func.rest.is_none() && func.params.iter().all(|p| matches!(p, Pattern::Ident(..)))
 }
-fn parameter_early_errors(func: &Func, params: &[Name]) -> EngineResult<()> {
+pub(super) fn parameter_early_errors(func: &Func, params: &[Name]) -> EngineResult<()> {
     let restricted = |name: &Name| &**name == "eval" || &**name == "arguments";
     if func.strict && (params.iter().any(restricted) || func.name.as_ref().is_some_and(restricted))
     {

@@ -343,24 +343,24 @@ fn push_brace(braces: &mut Vec<bool>, template: bool, start: SourceLocation) -> 
 fn regex_allowed(previous: Option<&Kind>) -> bool {
     match previous {
         None => true,
-        Some(Kind::Name(name)) => [
-            "return",
-            "typeof",
-            "instanceof",
-            "in",
-            "of",
-            "new",
-            "delete",
-            "void",
-            "throw",
-            "case",
-            "do",
-            "else",
-            "yield",
-            "await",
-            "extends",
-        ]
-        .contains(&name.as_str()),
+        Some(Kind::Name(name)) => matches!(
+            name.as_str(),
+            "return"
+                | "typeof"
+                | "instanceof"
+                | "in"
+                | "of"
+                | "new"
+                | "delete"
+                | "void"
+                | "throw"
+                | "case"
+                | "do"
+                | "else"
+                | "yield"
+                | "await"
+                | "extends"
+        ),
         Some(
             Kind::Number(_)
             | Kind::BigInt(_)
@@ -425,6 +425,9 @@ fn skip(source: &mut Source<'_>, html: bool, first: bool) -> EngineResult<bool> 
 fn token(source: &mut Source<'_>, regex: bool, names: &mut Names) -> EngineResult<Kind> {
     let start = source.location();
     let character = source.peek().expect("scanner cursor is nonempty");
+    if let Some(kind) = plain_symbol(source, character) {
+        return Ok(kind);
+    }
     if character == '\'' || character == '"' {
         source.next();
         return Ok(literals::string(source, character, start)?.map_or(
@@ -445,6 +448,9 @@ fn token(source: &mut Source<'_>, regex: bool, names: &mut Names) -> EngineResul
                 .is_some_and(|c| c.is_ascii_digit())
     {
         return number(source);
+    }
+    if let Some(name) = source.ascii_name() {
+        return Ok(Kind::Name(intern(names, name)));
     }
     if identifier_start(character) || character == '\\' {
         return identifier(source, start).map(|name| Kind::Name(intern(names, &name)));
@@ -497,6 +503,19 @@ fn token(source: &mut Source<'_>, regex: bool, names: &mut Names) -> EngineResul
         return Ok(Kind::Punct(spelling));
     }
     Err(errors::syntax(start, "unexpected character"))
+}
+/** Punctuation no longer token begins with, read without trying every longer spelling first.
+A `.` qualifies unless a digit (a number) or another `.` (a spread) follows. */
+fn plain_symbol(source: &mut Source<'_>, character: char) -> Option<Kind> {
+    let plain = match character {
+        '(' | ')' | ';' | '{' | '}' | '[' | ']' | ',' | ':' => true,
+        '.' => !matches!(source.rest().as_bytes().get(1), Some(b'.' | b'0'..=b'9')),
+        _ => false,
+    };
+    plain.then(|| {
+        source.next();
+        Kind::Symbol(character)
+    })
 }
 /** Operators V9 recognizes for syntax only, longest spelling first so none splits another. */
 const PUNCTUATORS: [&str; 15] = [
@@ -580,17 +599,17 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
 }
 /** Count and compound tokens are recognized only after rejecting every longer unsupported prefix. */
 fn mutation_token(source: &str) -> Option<(&'static str, Kind)> {
-    [
-        ("++", Kind::Update(UpdateOperator::Increment)),
-        ("--", Kind::Update(UpdateOperator::Decrement)),
-        ("+=", Kind::Assignment(AssignmentOperator::Add)),
-        ("-=", Kind::Assignment(AssignmentOperator::Subtract)),
-        ("*=", Kind::Assignment(AssignmentOperator::Multiply)),
-        ("/=", Kind::Assignment(AssignmentOperator::Divide)),
-        ("%=", Kind::Assignment(AssignmentOperator::Remainder)),
-    ]
-    .into_iter()
-    .find(|(spelling, _)| source.starts_with(spelling))
+    let bytes = source.as_bytes();
+    Some(match (*bytes.first()?, *bytes.get(1)?) {
+        (b'+', b'+') => ("++", Kind::Update(UpdateOperator::Increment)),
+        (b'-', b'-') => ("--", Kind::Update(UpdateOperator::Decrement)),
+        (b'+', b'=') => ("+=", Kind::Assignment(AssignmentOperator::Add)),
+        (b'-', b'=') => ("-=", Kind::Assignment(AssignmentOperator::Subtract)),
+        (b'*', b'=') => ("*=", Kind::Assignment(AssignmentOperator::Multiply)),
+        (b'/', b'=') => ("/=", Kind::Assignment(AssignmentOperator::Divide)),
+        (b'%', b'=') => ("%=", Kind::Assignment(AssignmentOperator::Remainder)),
+        _ => return None,
+    })
 }
 
 /** A statement header allows a following regex; calls and grouped expressions allow division.

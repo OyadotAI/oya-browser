@@ -46,6 +46,21 @@ impl Unit {
             bytes: self.bytes,
         }
     }
+    /** A unit over a deferred function's codes, sharing its script's source text rather than
+    copying it; the script's unit already counted those bytes. */
+    pub fn sharing(codes: Vec<Code>, entry: Code, source: Option<(Arc<str>, usize)>) -> Self {
+        let bytes = codes.iter().chain([&entry]).map(Code::footprint).sum();
+        let attach = |mut code: Code| {
+            code.source = source.clone();
+            Arc::new(code)
+        };
+        Self {
+            codes: codes.into_iter().map(attach).collect(),
+            entry: attach(entry),
+            info: None,
+            bytes,
+        }
+    }
     /** A unit over freshly compiled codes. */
     pub fn new(
         mut codes: Vec<Code>,

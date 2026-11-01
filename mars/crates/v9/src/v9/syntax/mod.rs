@@ -707,54 +707,55 @@ pub(in crate::v9) fn spelling(kind: &Kind) -> Option<&'static str> {
 
 /** Words that can never be identifier references; strict mode reserves a few more. */
 fn reserved(name: &str, strict: bool) -> bool {
-    const ALWAYS: [&str; 36] = [
-        "break",
-        "case",
-        "catch",
-        "class",
-        "const",
-        "continue",
-        "debugger",
-        "default",
-        "delete",
-        "do",
-        "else",
-        "enum",
-        "export",
-        "extends",
-        "false",
-        "finally",
-        "for",
-        "function",
-        "if",
-        "import",
-        "in",
-        "instanceof",
-        "new",
-        "null",
-        "return",
-        "super",
-        "switch",
-        "this",
-        "throw",
-        "true",
-        "try",
-        "typeof",
-        "var",
-        "void",
-        "while",
-        "with",
-    ];
-    const STRICT: [&str; 9] = [
-        "implements",
-        "interface",
-        "let",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "static",
-        "yield",
-    ];
-    ALWAYS.contains(&name) || strict && STRICT.contains(&name)
+    matches!(
+        name,
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+    ) || strict
+        && matches!(
+            name,
+            "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
+                | "yield"
+        )
 }

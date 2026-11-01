@@ -1,7 +1,7 @@
 /** The complete classic-script and module syntax tree V9 compiles; it carries positions, never native handles. */
 use crate::protocol::SourceLocation;
 use crate::v9::value::JsString;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /** Identifier names are shared, since the same name appears many times in one bundle. They are
 atomic so compiled code, which holds them, can be cached across V9's per-request threads. */
@@ -158,8 +158,8 @@ pub(in crate::v9) struct Case {
 pub(in crate::v9) enum StmtKind {
     Expr(Expr),
     Var(VarKind, Vec<Declarator>),
-    Function(Rc<Func>),
-    Class(Rc<Class>),
+    Function(Arc<Func>),
+    Class(Arc<Class>),
     Return(Option<Expr>),
     If(Expr, Box<Stmt>, Option<Box<Stmt>>),
     Block(Vec<Stmt>),
@@ -280,9 +280,9 @@ pub(in crate::v9) enum PropDef {
     Shorthand(Name, Pos),
     /** `{a = 1}`, valid only once the literal becomes a destructuring pattern. */
     ShorthandDefault(Name, Pos, Box<Expr>),
-    Method(PropKey, Rc<Func>),
-    Getter(PropKey, Rc<Func>),
-    Setter(PropKey, Rc<Func>),
+    Method(PropKey, Arc<Func>),
+    Getter(PropKey, Arc<Func>),
+    Setter(PropKey, Arc<Func>),
     Spread(Expr),
 }
 
@@ -313,8 +313,8 @@ pub(in crate::v9) enum ExprKind {
     Bool(bool),
     Array(Vec<Element>),
     Object(Vec<PropDef>),
-    Function(Rc<Func>),
-    Class(Rc<Class>),
+    Function(Arc<Func>),
+    Class(Arc<Class>),
     Unary(UnaryOp, Box<Expr>),
     Update(bool, bool, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
@@ -402,6 +402,30 @@ pub(in crate::v9) fn site_of(pos: Pos) -> u32 {
     pos.offset * SITE_TAGS + SITE_SCRIPT
 }
 
+/** A function field the parser fills in after building the node (an inferred name, a class's
+source span) and the compiler reads, possibly on another thread when it compiles a deferred
+function on first call; a RefCell cannot cross threads. Never contended: the parser writes
+before any compiler reads. */
+#[derive(Default)]
+pub(in crate::v9) struct Late<T>(std::sync::Mutex<T>);
+
+impl<T> Late<T> {
+    /** A field holding `value`. */
+    pub fn new(value: T) -> Self {
+        Self(std::sync::Mutex::new(value))
+    }
+    /** Read the field. */
+    pub fn borrow(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    /** Replace the field. */
+    pub fn borrow_mut(&self) -> std::sync::MutexGuard<'_, T> {
+        self.borrow()
+    }
+}
+
 /** A function literal; its start offset is its code identity. */
 pub(in crate::v9) struct Func {
     /// Identity of the code across requests: page-relative offset plus a tag.
@@ -409,7 +433,7 @@ pub(in crate::v9) struct Func {
     /// Binding name of a declaration or named expression.
     pub name: Option<Name>,
     /// Observable `name`, including inferred names.
-    pub display: std::cell::RefCell<Name>,
+    pub display: Late<Name>,
     /// Parameters, possibly patterns with defaults.
     pub params: Vec<Pattern>,
     /// `...rest` parameter.
@@ -423,16 +447,16 @@ pub(in crate::v9) struct Func {
     /// Where the literal starts.
     pub pos: Pos,
     /// Exact source boundaries, including class bodies for their constructor function.
-    pub source_span: std::cell::RefCell<Option<(u32, u32)>>,
+    pub source_span: Late<Option<(u32, u32)>>,
     /// Count of parameters before the first default or rest, as `length` reports.
     pub length: u32,
 }
 
 /** A class method kind; fields and static blocks move into synthesized initializers. */
 pub(in crate::v9) enum MemberKind {
-    Method(Rc<Func>),
-    Getter(Rc<Func>),
-    Setter(Rc<Func>),
+    Method(Arc<Func>),
+    Getter(Arc<Func>),
+    Setter(Arc<Func>),
     /** A real accessor pair uses this hidden private field for its per-instance storage. */
     AutoAccessor(Name),
 }
@@ -450,12 +474,12 @@ pub(in crate::v9) struct Class {
     pub name: Option<Name>,
     pub superclass: Option<Expr>,
     /// The explicit constructor, or a synthesized one.
-    pub constructor: Rc<Func>,
+    pub constructor: Arc<Func>,
     pub members: Vec<ClassMember>,
     /// Instance field initializers compiled as one function run by the constructor.
-    pub fields: Option<Rc<Func>>,
+    pub fields: Option<Arc<Func>>,
     /// Static fields and static blocks, in order, run once with the class as `this`.
-    pub statics: Option<Rc<Func>>,
+    pub statics: Option<Arc<Func>>,
     /// The `#names` this class body declares; a reference to any other belongs to an outer class.
     pub privates: Vec<Name>,
     pub pos: Pos,
