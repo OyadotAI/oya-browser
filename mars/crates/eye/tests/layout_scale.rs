@@ -148,3 +148,22 @@ fn agent_hidden_follows_parents_after_a_move() {
         .unwrap();
     assert!(paragraph.y >= cell.y && paragraph.x >= cell.x);
 }
+
+/** A table longer than the old 1024-row grid lays out every row, as a long Hacker News thread
+needs: none is dropped. */
+#[test]
+fn a_long_table_lays_out_every_row() {
+    const ROWS: usize = 1500;
+    let markup = format!(
+        "<table>{}</table>",
+        "<tr><td style='height:10px'>x</td></tr>".repeat(ROWS)
+    );
+    let document = styled(&markup);
+    let display = mars_eye::render(&document, 800.0).unwrap();
+    let cells = display
+        .items
+        .iter()
+        .filter(|item| item.lines.iter().any(|l| l.text == "x"))
+        .count();
+    assert_eq!(cells, ROWS);
+}

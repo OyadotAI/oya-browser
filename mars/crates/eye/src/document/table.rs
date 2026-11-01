@@ -2,7 +2,7 @@
 use super::{Document, Node, TableCell};
 use crate::{
     constants::{DIAGNOSTICS, TABLE_CELLS, TABLE_COLUMNS, TABLE_ROWS},
-    protocol::{EngineError, EngineResult},
+    protocol::EngineResult,
 };
 use std::collections::BTreeMap;
 
@@ -120,22 +120,30 @@ fn spanning(node: &Node) -> bool {
             .is_some_and(|scope| !["row", "col"].contains(&scope.as_str())))
 }
 
-/** Each table has independently bounded source-ordered rows and columns. */
+/** Each table's cells learn their row, column and headers, within independent bounds. A table
+past them (a long Hacker News thread, a data dump) still parses and lays out like any other; it
+only goes without header associations, as a browser never refuses a page for a large table. */
 fn annotate_table(
     document: &mut Document,
     kids: &Children,
     table: usize,
     rows: &[usize],
 ) -> EngineResult<()> {
-    if rows.len() > TABLE_ROWS {
-        return Err(EngineError::limit("table rows", TABLE_ROWS));
-    }
     let cells = rows
         .iter()
         .map(|row| children(document, kids, *row))
         .collect::<Vec<_>>();
-    if cells.iter().map(Vec::len).sum::<usize>() > TABLE_CELLS {
-        return Err(EngineError::limit("table cells", TABLE_CELLS));
+    let oversized = rows.len() > TABLE_ROWS
+        || cells.iter().map(Vec::len).sum::<usize>() > TABLE_CELLS
+        || cells.iter().any(|row| row.len() > TABLE_COLUMNS);
+    if oversized {
+        let message = "A large table's cells were not associated with their headers.";
+        if document.diagnostics.len() < DIAGNOSTICS
+            && !document.diagnostics.iter().any(|d| d == message)
+        {
+            document.diagnostics.push(message.into());
+        }
+        return Ok(());
     }
     annotate_cells(document, table, rows, &cells)
 }
@@ -165,9 +173,6 @@ fn annotate_cells(
                 || cells.iter().all(|id| document.nodes[*id].tag == "th"))
     });
     for (row_index, row_cells) in cells.iter().enumerate() {
-        if row_cells.len() > TABLE_COLUMNS {
-            return Err(EngineError::limit("table columns", TABLE_COLUMNS));
-        }
         for (column_index, id) in row_cells.iter().enumerate() {
             if is_column_header(document, *id, row_index, table, first_header_row) {
                 column_headers.entry(column_index).or_default().push(*id);
