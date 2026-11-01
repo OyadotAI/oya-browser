@@ -341,54 +341,58 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
         let length = nodes.len();
         return static_list_own(vm, index.is_some(), found, length, name.is("length"));
     }
-    let data = (**data).clone();
     let readonly = |value: JsValue| Prop {
         slot: Slot::Data(value),
         attrs: crate::v9::vm::heap::ENUMERABLE,
     };
-    match &data {
+    // Each arm copies the handle's scalars or small fields out of the heap before it calls into
+    // the VM, so no clone of the whole `HostData` (a header's list, a URL, a response) is made.
+    match &**data {
         HostData::Children(parent, elements) => {
+            let (parent, elements) = (*parent, *elements);
             if let Some(index) = key.index() {
-                return match vm.page.child_at(*parent, *elements, index as usize) {
+                return match vm.page.child_at(parent, elements, index as usize) {
                     Some(node) => Ok(Some(readonly(wrap(vm, node)?))),
                     None => Ok(None),
                 };
             }
             if name.is("length") {
-                let count = vm.page.child_count(*parent, *elements);
+                let count = vm.page.child_count(parent, elements);
                 return Ok(Some(readonly(JsValue::Number(count as f64))));
             }
             Ok(None)
         }
-        HostData::Live(list) => live_own(vm, list, key),
-        HostData::ClassList(node) => token_own(vm, *node, "class", key),
-        HostData::TokenList(node, attribute) => token_own(vm, *node, attribute, key),
+        HostData::Live(list) => {
+            let list = std::sync::Arc::clone(list);
+            live_own(vm, &list, key)
+        }
+        HostData::ClassList(node) => {
+            let node = *node;
+            token_own(vm, node, "class", key)
+        }
+        HostData::TokenList(node, attribute) => {
+            let (node, attribute) = (*node, attribute.clone());
+            token_own(vm, node, &attribute, key)
+        }
         HostData::Style(node) => {
-            let text = name.lossy();
-            if !style_property(&text) {
-                return Ok(None);
-            }
-            let declarations = style_map(vm, *node);
-            let value = declarations
-                .iter()
-                .find(|(property, _)| *property == css_name(&text))
-                .map(|(_, value)| value.clone())
-                .unwrap_or_default();
-            Ok(Some(Prop::data(JsValue::string(&value)?)))
+            let node = *node;
+            host_style_own(vm, node, name)
         }
         HostData::Computed(node) => {
+            let node = *node;
             let text = name.lossy();
             if !style_property(&text) {
                 return Ok(None);
             }
-            let value = computed_value(vm, *node, &css_name(&text));
+            let value = computed_value(vm, node, &css_name(&text));
             Ok(Some(data_prop(JsValue::string(&value)?)))
         }
         HostData::Dataset(node) => {
+            let node = *node;
             let attribute = format!("data-{}", kebab(&name.lossy()));
             let value = vm
                 .page
-                .with_element(*node, |_, attributes| attributes.get(&attribute).cloned())
+                .with_element(node, |_, attributes| attributes.get(&attribute).cloned())
                 .flatten();
             match value {
                 Some(value) => Ok(Some(Prop::data(JsValue::string(&value)?))),
@@ -396,11 +400,12 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             }
         }
         HostData::Storage(local) => {
+            let local = *local;
             let text = name.lossy();
             if storage_method(&text) {
                 return Ok(None);
             }
-            let area = if *local {
+            let area = if local {
                 &vm.page.storage.local
             } else {
                 &vm.page.storage.session
@@ -412,6 +417,22 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
         }
         _ => Ok(None),
     }
+}
+
+/** A CSSStyleDeclaration's own property: the inline value of a CSS property name, when the name
+is one. Split out of `host_own` so that function stays a dispatch over the host kinds. */
+fn host_style_own(vm: &mut Vm, node: usize, name: &JsString) -> Res<Option<Prop>> {
+    let text = name.lossy();
+    if !style_property(&text) {
+        return Ok(None);
+    }
+    let declarations = style_map(vm, node);
+    let value = declarations
+        .iter()
+        .find(|(property, _)| *property == css_name(&text))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+    Ok(Some(Prop::data(JsValue::string(&value)?)))
 }
 
 /** Host objects' own writes. */
