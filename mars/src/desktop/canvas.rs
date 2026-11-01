@@ -526,6 +526,7 @@ impl Canvas {
         let mut painted = self.ivars().painted.borrow_mut();
         let painted = painted.get_or_insert_with(|| painted::Painted::new(display));
         let top = self.visibleRect().origin.y;
+        let mut outlined = Vec::new();
         for index in painted.visible(dirty) {
             let item = &display.items[index as usize];
             let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
@@ -539,6 +540,19 @@ impl Canvas {
             painter.groups(item);
             painter.enter(item, shift);
             self.paint_item(&painter, painted, index, snapshot, display, seen);
+            painter.leave();
+            if item.outline.is_some() {
+                outlined.push((index, shift));
+            }
+        }
+        // Outlines paint after the content of the whole pass (CSS2 Appendix E step 10), so a
+        // sibling's background cannot cover a ring that sits outside its box.
+        for (index, shift) in outlined {
+            let item = &display.items[index as usize];
+            painter.groups(item);
+            painter.enter(item, shift);
+            let alpha = painter.residual(item);
+            outline::paint(item, &painter, &paint::Shape::of(item), alpha);
             painter.leave();
         }
         painter.finish();
@@ -621,7 +635,6 @@ impl Canvas {
             });
             painter.sides(&shape, item.border_widths, colors);
         }
-        outline::paint(item, painter, &shape, alpha);
         if item.tag == "video" || item.tag == "audio" {
             if let Some(page) = snapshot.inspection["page_id"].as_str() {
                 media::paint(page, item, &shape, painter, alpha);

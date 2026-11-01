@@ -29,6 +29,7 @@ fn item(markup: &str, sheet: &str) -> DisplayItem {
 fn ink(item: &DisplayItem, rows: std::ops::Range<usize>) -> usize {
     let mut canvas = Canvas::new(0.0, 0.0, SIZE[0], SIZE[1], WHITE);
     canvas.item(item, BLACK, None);
+    canvas.paint_outlines();
     rows.flat_map(|y| (0..canvas.width).map(move |x| (x, y)))
         .filter(|&(x, y)| {
             let at = (y * canvas.width + x) * 3;
