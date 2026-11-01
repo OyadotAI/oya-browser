@@ -4,6 +4,13 @@ pub const PASSES: usize = 3;
 
 /** Box widths whose three successive passes match the variance of a Gaussian with this sigma. */
 pub fn box_widths(sigma: f64) -> [usize; PASSES] {
+    // A blur wider than the largest canvas changes nothing more, so page input (a filter or shadow
+    // blur of 1e300px, NaN) is bounded here, where every blur path sizes its boxes.
+    let sigma = if sigma.is_finite() {
+        sigma.clamp(0.0, f64::from(crate::canvas::EDGE))
+    } else {
+        0.0
+    };
     let ideal = (12.0 * sigma * sigma / PASSES as f64 + 1.0).sqrt();
     let mut lower = ideal.floor() as i64;
     if lower % 2 == 0 {
@@ -66,6 +73,23 @@ fn vertical_pass(values: &mut [f32], width: usize, height: usize, radius: usize)
         box_pass(&mut column, radius);
         for (y, cell) in column.iter().enumerate() {
             values[y * width + x] = *cell;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** Absurd and non-finite blur sizes stay within the canvas edge instead of overflowing. */
+    #[test]
+    fn huge_or_non_finite_sigmas_stay_bounded() {
+        let bound = 2 * crate::canvas::EDGE as usize + 3;
+        for sigma in [1e300, f64::MAX, f64::INFINITY, f64::NAN, -5.0] {
+            assert!(
+                box_widths(sigma).iter().all(|width| *width <= bound),
+                "{sigma}"
+            );
         }
     }
 }
