@@ -14,6 +14,11 @@ mod border_image_tests;
 mod chain_tests;
 #[path = "glyphs.rs"]
 mod glyphs;
+#[path = "raster_lines.rs"]
+mod lines;
+#[cfg(test)]
+#[path = "raster_lines_tests.rs"]
+mod lines_tests;
 #[path = "object_fit.rs"]
 mod object_fit;
 #[path = "raster_stroke.rs"]
@@ -372,6 +377,8 @@ impl Canvas {
             self.text_shadows(item, &fade);
             self.text(item, ink);
         }
+        // Outlines paint over the box's own content, as Blink's outline phase does.
+        self.outline(item, ink);
     }
     /** `text-shadow` layers, last listed first: the runs again in the shadow's color, moved by
     its offset, under the text. ponytail: no blur here (the desktop canvas blurs); a soft glow
@@ -572,6 +579,7 @@ impl Canvas {
             if let Some(member) = member
                 && self.chained(item, line, (member, baseline), ink)
             {
+                self.decorate(item, line, ink);
                 continue;
             }
             let canvas = [self.left, self.top, self.width as f64, self.height as f64];
@@ -593,6 +601,7 @@ impl Canvas {
                     ink,
                 ),
             }
+            self.decorate(item, line, ink);
         }
     }
     /** A chained run's glyphs: its chain's joined coverage (rasterized once, from the chain's
