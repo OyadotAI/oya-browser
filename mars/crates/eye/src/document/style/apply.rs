@@ -67,8 +67,11 @@ pub(super) fn apply(
         style.min_width_percent = None;
         style.min_width = None;
         style.min_width_offset = 0.0;
+        style.min_width_expr = None;
         if let Some(percent) = value.strip_suffix('%') {
             style.min_width_percent = Some(number(percent)?);
+        } else if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+            style.min_width_expr = Some(expr);
         } else if value.starts_with("calc(") {
             let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
             match percent {
@@ -316,6 +319,12 @@ fn layout(
             style.size_keywords[2] = keyword;
             style.percent_max_width = value.ends_with('%');
             style.max_width_offset = 0.0;
+            style.max_width_expr = None;
+            if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+                (style.max_width, style.percent_max_width) = (None, false);
+                style.max_width_expr = Some(expr);
+                return Ok(true);
+            }
             style.max_width = match value {
                 _ if keyword != SizeKeyword::None => {
                     style.percent_max_width = false;
@@ -386,6 +395,7 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
     let keyword = size_keyword(value, style.font_size, context)?;
     style.size_keywords[0] = keyword;
     style.width_offset = 0.0;
+    style.width_expr = None;
     style.percent_width = value.ends_with('%');
     style.width_stretch = matches!(value, "stretch" | "-webkit-fill-available");
     style.width_fit = keyword != SizeKeyword::None;
@@ -399,6 +409,11 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
         // containing block; sizing subtracts the margins and edges.
         style.percent_width = true;
         style.width = Some(100.0);
+        return Ok(());
+    }
+    if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+        (style.width, style.percent_width) = (None, false);
+        style.width_expr = Some(expr);
         return Ok(());
     }
     style.width = match value {

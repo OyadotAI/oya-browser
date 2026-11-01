@@ -23,6 +23,7 @@ mod color_spaces;
 mod colors;
 mod compute;
 mod computed_css;
+mod length_expr;
 pub use computed_css::{COMPUTED_PROPERTIES, computed_value, css_color};
 mod constants;
 mod container;

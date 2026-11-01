@@ -26,6 +26,22 @@ impl Dimension {
         self.px + self.percent / PERCENT * reference
     }
 }
+/** A math value that `dimension` cannot reduce to one px-plus-percent pair, kept as an expression
+ * for layout to resolve once its percentage has a containing block; None when `dimension` already
+ * reduces it, and for any value that is not math. */
+pub(super) fn deferred(
+    value: &str,
+    font: f64,
+    context: RenderContext,
+) -> EngineResult<Option<super::length_expr::LengthExpr>> {
+    let value = without_env(value.trim())?;
+    let value = value.as_ref();
+    if !is_math(value) || dimension(value, font, context).is_ok() {
+        return Ok(None);
+    }
+    let tokens = super::calc::tokens(value)?;
+    super::calc::evaluate_expr(&tokens, font, context).map(Some)
+}
 /** Supported lengths are finite nonnegative CSS pixels; `auto` keeps its historic zero. */
 pub(super) fn length(value: &str, font: f64) -> EngineResult<f64> {
     contextual_length(value, font, RenderContext::default())

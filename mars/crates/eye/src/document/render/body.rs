@@ -102,26 +102,36 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
         0.0
     };
     let available = (viewport - style.margin[1] - style.margin[3]).max(0.0);
-    let specified = style.width.map(|width| {
-        if style.percent_width {
-            viewport * width / 100.0 + style.width_offset
-        } else {
-            width
-        }
-    });
+    let specified = style
+        .width_expr
+        .as_ref()
+        .map(|expr| expr.resolve(viewport).max(0.0))
+        .or_else(|| {
+            style.width.map(|width| {
+                if style.percent_width {
+                    viewport * width / 100.0 + style.width_offset
+                } else {
+                    width
+                }
+            })
+        });
     let minimum = style
         .min_width
         .map(|width| width + adjustment)
         .unwrap_or(edges)
         .max(edges);
     let maximum = style
-        .max_width
-        .map(|width| {
-            if style.percent_max_width {
-                viewport * width / 100.0 + style.max_width_offset
-            } else {
-                width + adjustment
-            }
+        .max_width_expr
+        .as_ref()
+        .map(|expr| expr.resolve(viewport).max(0.0) + adjustment)
+        .or_else(|| {
+            style.max_width.map(|width| {
+                if style.percent_max_width {
+                    viewport * width / 100.0 + style.max_width_offset
+                } else {
+                    width + adjustment
+                }
+            })
         })
         .unwrap_or(crate::constants::LAYOUT_EXTENT)
         .max(minimum);

@@ -972,6 +972,9 @@ pub(super) fn specified_content(node: &Node, available: f64) -> Option<f64> {
     if node.style.width_stretch {
         return Some(stretch_content(node, available));
     }
+    if let Some(expr) = &node.style.width_expr {
+        return Some(content_size(node, expr.resolve(available).max(0.0), true));
+    }
     node.style.width.map(|width| {
         content_size(
             node,
@@ -1011,6 +1014,10 @@ pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
     if let Some(width) = own_keyword(node, Bound::Min, containing) {
         return Some(width);
     }
+    if let Some(expr) = &node.style.min_width_expr {
+        return containing
+            .map(|containing| content_size(node, expr.resolve(containing).max(0.0), true));
+    }
     if let Some(percent) = node.style.min_width_percent {
         return containing.map(|containing| {
             let offset = node.style.min_width_offset;
@@ -1029,6 +1036,11 @@ pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
 pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
     if let Some(width) = own_keyword(node, Bound::Max, containing) {
         return width;
+    }
+    if let Some(expr) = &node.style.max_width_expr {
+        return containing.map_or(LAYOUT_EXTENT, |containing| {
+            content_size(node, expr.resolve(containing).max(0.0), true)
+        });
     }
     let Some(value) = node.style.max_width else {
         return LAYOUT_EXTENT;

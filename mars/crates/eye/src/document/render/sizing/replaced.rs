@@ -313,6 +313,11 @@ impl<'a> Replaced<'a> {
             // `width: stretch` is the border box filling the available width less margins.
             return self.available.map(|_| self.stretch_fit());
         }
+        if let Some(expr) = &style.width_expr {
+            return self
+                .available
+                .map(|available| self.inline_border(expr.resolve(available).max(0.0)));
+        }
         let width = style.width?;
         let value = if style.percent_width {
             layout_unit_floor(self.available? * width / 100.0) + style.width_offset
@@ -326,6 +331,11 @@ impl<'a> Replaced<'a> {
         if self.node.style.size_keywords[1] != SizeKeyword::None {
             return self.intrinsic_inline(mode, block).unwrap_or(self.edges.0);
         }
+        if let Some(expr) = &self.node.style.min_width_expr {
+            return self.available.map_or(self.edges.0, |available| {
+                self.inline_border(expr.resolve(available).max(0.0))
+            });
+        }
         self.node
             .style
             .min_width
@@ -336,6 +346,11 @@ impl<'a> Replaced<'a> {
         let style = &self.node.style;
         if style.size_keywords[2] != SizeKeyword::None {
             return self.intrinsic_inline(mode, block).unwrap_or(UNBOUNDED);
+        }
+        if let Some(expr) = &style.max_width_expr {
+            return self.available.map_or(UNBOUNDED, |available| {
+                self.inline_border(expr.resolve(available).max(0.0))
+            });
         }
         let Some(value) = style.max_width else {
             return UNBOUNDED;

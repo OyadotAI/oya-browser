@@ -1,4 +1,5 @@
 /** Computed styles are bounded shared data consumed by native layout, painting and control guards. */
+use super::length_expr::LengthExpr;
 use {
     super::flex_model::*,
     super::formatting::{ColorScheme, LineHeight},
@@ -74,6 +75,10 @@ pub struct ComputedStyle {
     /// BBC News' card gutter was refused and the card ran edge to edge.
     #[serde(skip_serializing_if = "default")]
     pub max_width_offset: f64,
+    /// A `max-width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels,
+    /// resolved against the containing block at layout; None otherwise, and then `max_width` holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_width_expr: Option<LengthExpr>,
     pub border: f64,
     pub border_color: Option<String>,
     pub align: String,
@@ -171,6 +176,10 @@ pub struct ComputedStyle {
     /// once the percentage resolves; 0 otherwise.
     #[serde(skip_serializing_if = "default")]
     pub min_width_offset: f64,
+    /// A `min-width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels,
+    /// resolved against the containing block at layout; None otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_width_expr: Option<LengthExpr>,
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
@@ -728,6 +737,10 @@ pub struct ComputedStyle {
     /// was refused and a two-column row stacked.
     #[serde(skip_serializing_if = "default")]
     pub width_offset: f64,
+    /// A `width` that is `min()`, `max()` or `clamp()` over mixed percentages and pixels, resolved
+    /// against the containing block at layout; None otherwise, and then `width` holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_expr: Option<LengthExpr>,
     /// `width: stretch` (`-webkit-fill-available`): the margin box fills the containing block
     /// whatever `box-sizing` says, as Blink's fill-available size does. Without it LinkedIn's
     /// header row shrank to its content and the nav ended mid-page.
@@ -910,6 +923,7 @@ impl Default for ComputedStyle {
             max_width: None,
             percent_max_width: false,
             max_width_offset: 0.0,
+            max_width_expr: None,
             border: 0.0,
             border_color: None,
             align: "start".into(),
@@ -944,6 +958,7 @@ impl Default for ComputedStyle {
             min_width: None,
             min_width_percent: None,
             min_width_offset: 0.0,
+            min_width_expr: None,
             opacity: 1.0,
             opacity_animations: Vec::new(),
             opacity_animation_blocked: false,
@@ -1115,6 +1130,7 @@ impl Default for ComputedStyle {
             translate_percent_depth: [0.0; 2],
             transform_origin: None,
             width_offset: 0.0,
+            width_expr: None,
             width_stretch: false,
             width_fit: false,
             height_fit: false,
