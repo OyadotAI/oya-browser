@@ -5,7 +5,7 @@
  * coordinator, the updates it gets back, the elements whose media attributes or tree position
  * changed (handed to the script at the next stable state) and DOM identity adoption.
  */
-use super::{Page, dom};
+use super::{Page, dom, media_source};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::realm::Builder;
@@ -181,6 +181,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(host, "takeTouched", 0, |vm, _| take_touched(vm));
     b.method(host, "support", 0, support);
     b.method(host, "activation", 0, activation);
+    b.method(host, "append", 3, append);
     b.ids.media_host = host;
 }
 
@@ -269,6 +270,27 @@ fn take_touched(vm: &mut Vm) -> Res<JsValue> {
 fn support(vm: &mut Vm, _: Call) -> Res<JsValue> {
     let text = serde_json::to_string(&vm.page.environment.media).unwrap_or_default();
     Ok(JsValue::string(&text)?)
+}
+
+/**
+ * `host.append(bytes, init, request)`: the coded frame processing of one Media Source append, as JSON. The result
+ * is the outcome, or `{"error": text}` when the bytes are refused, so the script can raise its append error.
+ */
+fn append(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let bytes = crate::v9::builtins::typed::source_bytes(vm, &call.arg(0))
+        .ok_or_else(|| vm.type_error("The data is not a BufferSource."))?;
+    if bytes.len() > APPEND_BYTES {
+        return Err(EngineError::limit("media segment bytes", APPEND_BYTES).into());
+    }
+    let init = crate::v9::builtins::typed::source_bytes(vm, &call.arg(1));
+    let request = vm.to_text(&call.arg(2))?;
+    let request: media_source::Request = serde_json::from_str(&request)
+        .map_err(|_| Thrown::Fatal(EngineError::invalid("Invalid media segment request.")))?;
+    let text = match media_source::append(init.as_deref(), &bytes, &request) {
+        Ok(outcome) => serde_json::to_string(&outcome),
+        Err(refusal) => serde_json::to_string(&serde_json::json!({ "error": refusal.message() })),
+    };
+    Ok(JsValue::string(&text.unwrap_or_default())?)
 }
 
 /** `host.activation()`: whether a person has clicked or typed in this page (sticky activation). */

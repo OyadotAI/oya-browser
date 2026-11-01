@@ -631,6 +631,7 @@ dependencies = [
  "libc",
  "libm",
  "mars-core",
+ "mars-mp4",
  "mars-xml",
  "ring",
  "ryu-js",

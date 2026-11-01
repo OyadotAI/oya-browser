@@ -34,6 +34,8 @@ pub struct TrackSpec {
     pub trex: [u32; 3],
     /** An elst with one entry of this media time, when set. */
     pub media_time: Option<i32>,
+    /** The tkhd display size in pixels (zero for audio). */
+    pub size: (u32, u32),
 }
 
 impl TrackSpec {
@@ -45,6 +47,7 @@ impl TrackSpec {
             audio: false,
             trex: [0, 0, 0],
             media_time: None,
+            size: (320, 240),
         }
     }
     /** An audio track at timescale 48000. */
@@ -55,6 +58,7 @@ impl TrackSpec {
             audio: true,
             trex: [0, 0, 0],
             media_time: None,
+            size: (0, 0),
         }
     }
 }
@@ -98,7 +102,12 @@ fn trak(spec: &TrackSpec) -> Vec<u8> {
         b"tkhd",
         0,
         0,
-        &[u32s(&[0, 0, spec.id, 0]), vec![0u8; 60]].concat(),
+        &[
+            u32s(&[0, 0, spec.id, 0]),
+            vec![0u8; 52],
+            u32s(&[spec.size.0 << 16, spec.size.1 << 16]),
+        ]
+        .concat(),
     );
     let mdhd = fb(b"mdhd", 0, 0, &u32s(&[0, 0, spec.timescale, 0]));
     let (handler, entry) = if spec.audio {

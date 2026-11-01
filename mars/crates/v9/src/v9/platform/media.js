@@ -1608,7 +1608,7 @@
       super();
       bufferOf.set(this, {
         source: ms, type, id: nextBuffer++, mode: 'segments', updating: false, removed: false,
-        ranges: [], timestampOffset: 0, appendWindowStart: 0, appendWindowEnd: Infinity, parser: newParser(),
+        ranges: [], timestampOffset: 0, appendWindowStart: 0, appendWindowEnd: Infinity, init: null, tracks: [], pending: null,
       });
     }
     get mode() { return sourceBuffer(this).mode; }
@@ -1641,14 +1641,15 @@
       b.updating = true;
       queueFire(this, 'updatestart');
       const s = m.element && state(m.element);
-      const segment = parseSegments(b, bytes);
       if (s && s.player) post(s, { op: 'append', player: s.player, buffer: b.id, mime: b.type }, bytes);
-      queueTask(() => finishAppend(this, b, segment));
+      queueTask(() => { if (b.updating) finishAppend(this, b, processAppend(b, bytes)); });
     }
     abort() {
-      const b = usable(this, 'abort');
+      const b = sourceBuffer(this);
+      if (b.removed) throw domError('InvalidStateError', "Failed to execute 'abort' on 'SourceBuffer': This SourceBuffer has been removed from the parent media source.");
+      if (source(b.source).readyState !== 'open') throw domError('InvalidStateError', "Failed to execute 'abort' on 'SourceBuffer': The MediaSource's readyState is not 'open'.");
       if (b.updating) { b.updating = false; queueFire(this, 'abort'); queueFire(this, 'updateend'); }
-      b.parser = newParser(b.parser.init);
+      b.pending = null;
     }
     remove(start, end) {
       const b = usable(this, 'remove');
@@ -1691,18 +1692,16 @@
     return null;
   }
   function finishAppend(self, b, segment) {
-    if (!b.updating) return;
     b.updating = false;
     if (segment.error) {
+      b.pending = null;
       fire(self, 'error');
       fire(self, 'updateend');
       const element = source(b.source).element;
       if (element) resourceFailed(state(element), MEDIA_ERR_DECODE, 'CHUNK_DEMUXER_ERROR_APPEND_FAILED');
       return;
     }
-    for (const range of segment.ranges) b.ranges = normalize(b.ranges.concat([range]));
-    const m = source(b.source);
-    if (segment.duration && Number.isNaN(m.duration)) setSourceDuration(b.source, segment.duration);
+    b.ranges = segment.ranges.map(r => [r[0], r[1]]);
     refreshSourceBuffered(b.source);
     fire(self, 'update');
     fire(self, 'updateend');
@@ -1715,11 +1714,12 @@
     const s = state(element);
     const lists = m.active.map(b => sourceBuffer(b).ranges);
     s.buffered = lists.length ? lists.reduce(intersect) : [];
-    if (s.readyState === HAVE_NOTHING && m.buffers.length && m.buffers.every(b => sourceBuffer(b).parser.init)) {
-      const v = m.buffers.map(b => sourceBuffer(b).parser).find(p => p.width);
+    const tracks = m.buffers.flatMap(b => sourceBuffer(b).tracks);
+    if (s.readyState === HAVE_NOTHING && m.buffers.length && m.buffers.every(b => sourceBuffer(b).init)) {
+      const v = tracks.find(t => t.kind === 'video');
       metadataUpdate(s, {
         duration: Number.isNaN(m.duration) ? null : m.duration, width: v ? v.width : 0, height: v ? v.height : 0,
-        audio: m.buffers.some(b => sourceBuffer(b).parser.audio), video: !!v, enough: false,
+        audio: tracks.some(t => t.kind === 'audio'), video: !!v, enough: false,
       });
     }
     if (s.readyState >= HAVE_METADATA) {
@@ -1753,126 +1753,39 @@
   }
 
   /**
-   * A minimal ISO BMFF reader for appended fragmented MP4: the init segment's track timescales
-   * and video size, and each fragment's time range from tfdt and trun, so `buffered` is known
-   * the moment an append completes, as MSE requires.
+   * Coded frame processing for one append runs in the host (mars-mp4 reads the boxes and the samples); this
+   * script keeps the SourceBuffer state it needs: the init segment bytes, the tracks it declared, the bytes of
+   * a box still arriving, and the ranges. A parse refusal comes back as `{ error }`.
    */
-  function newParser(init) {
-    return { init: init || null, tracks: (init && init.tracks) || {}, width: init ? init.width : 0, audio: init ? init.audio : false, pending: null };
-  }
-  function parseSegments(b, bytes) {
-    const p = b.parser;
-    let data = bytes;
-    if (p.pending) {
-      const joined = new Uint8Array(p.pending.length + bytes.length);
-      joined.set(p.pending, 0);
-      joined.set(bytes, p.pending.length);
-      data = joined;
-      p.pending = null;
-    }
-    const out = { ranges: [], duration: 0, error: false };
-    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let at = 0;
-    while (at + 8 <= data.length) {
-      let size = view.getUint32(at);
-      const type = boxType(data, at + 4);
-      let header = 8;
-      if (size === 1) {
-        if (at + 16 > data.length) break;
-        size = Number(view.getBigUint64(at + 8));
-        header = 16;
-      } else if (size === 0) size = data.length - at;
-      if (size < header) { out.error = true; return out; }
-      if (at + size > data.length) break;
-      if (type === 'moov') readMoov(p, view, at + header, at + size, out);
-      else if (type === 'moof') readMoof(p, view, at + header, at + size, b, out);
-      else if (type === 'EBML' || data[at] === 0x1a && data[at + 1] === 0x45) { out.error = true; return out; }
-      at += size;
-    }
-    if (at < data.length) p.pending = data.slice(at);
-    return out;
-  }
-  function boxType(data, at) {
-    return String.fromCharCode(data[at], data[at + 1], data[at + 2], data[at + 3]);
-  }
-  function children(view, start, end, visit) {
-    let at = start;
-    while (at + 8 <= end) {
-      const size = view.getUint32(at);
-      if (size < 8 || at + size > end) return;
-      visit(boxType(new Uint8Array(view.buffer, view.byteOffset, view.byteLength), at + 4), at + 8, at + size);
-      at += size;
-    }
-  }
-  function readMoov(p, view, start, end, out) {
-    const init = { tracks: {}, width: 0, audio: false };
-    children(view, start, end, (type, s, e) => {
-      if (type === 'mvhd') {
-        const version = view.getUint8(s);
-        const scale = view.getUint32(s + (version ? 20 : 12));
-        const duration = version ? Number(view.getBigUint64(s + 24)) : view.getUint32(s + 16);
-        if (scale && duration && duration !== 0xffffffff) out.duration = duration / scale;
-      }
-      if (type !== 'trak') return;
-      let id = 0, scale = 0, handler = '', width = 0, height = 0;
-      children(view, s, e, (t, s2, e2) => {
-        if (t === 'tkhd') {
-          const version = view.getUint8(s2);
-          id = view.getUint32(s2 + (version ? 20 : 12));
-          width = view.getUint32(e2 - 8) >>> 16;
-          height = view.getUint32(e2 - 4) >>> 16;
-        }
-        if (t === 'mdia') children(view, s2, e2, (t3, s3) => {
-          if (t3 === 'mdhd') scale = view.getUint32(s3 + (view.getUint8(s3) ? 20 : 12));
-          if (t3 === 'hdlr') handler = String.fromCharCode(view.getUint8(s3 + 8), view.getUint8(s3 + 9), view.getUint8(s3 + 10), view.getUint8(s3 + 11));
-        });
-      });
-      init.tracks[id] = { scale: scale || 1, handler };
-      if (handler === 'vide' && width) { init.width = width; init.height = height; }
-      if (handler === 'soun') init.audio = true;
+  function processAppend(b, bytes) {
+    const data = b.pending ? joinBytes(b.pending, bytes) : bytes;
+    b.pending = null;
+    const request = JSON.stringify({
+      offset: b.timestampOffset, windowStart: b.appendWindowStart,
+      windowEnd: Number.isFinite(b.appendWindowEnd) ? b.appendWindowEnd : null, ranges: b.ranges,
     });
-    p.init = init;
-    p.tracks = init.tracks;
-    p.width = init.width;
-    p.height = init.height;
-    p.audio = init.audio;
+    const result = JSON.parse(host.append(data, b.init, request));
+    if (result.error) return { error: result.error };
+    if (result.initLen) b.init = data.slice(0, result.initLen);
+    if (result.tracks.length) {
+      if (!tracksMatchType(b.type, result.tracks)) return { error: 'the initialization segment does not match the type' };
+      b.tracks = result.tracks;
+    }
+    if (result.consumed < data.length) b.pending = data.slice(result.consumed);
+    return { error: null, ranges: result.ranges };
   }
-  function readMoof(p, view, start, end, b, out) {
-    children(view, start, end, (type, s, e) => {
-      if (type !== 'traf') return;
-      let id = 0, base = 0, duration = 0, defaultDuration = 0;
-      children(view, s, e, (t, s2) => {
-        const flags = view.getUint32(s2) & 0xffffff;
-        const version = view.getUint8(s2);
-        if (t === 'tfhd') {
-          id = view.getUint32(s2 + 4);
-          let at = s2 + 8;
-          if (flags & 0x1) at += 8;
-          if (flags & 0x2) at += 4;
-          if (flags & 0x8) defaultDuration = view.getUint32(at);
-          const known = p.init && p.init.defaults && p.init.defaults[id];
-          if (!defaultDuration && known) defaultDuration = known;
-        }
-        if (t === 'tfdt') base = version ? Number(view.getBigUint64(s2 + 4)) : view.getUint32(s2 + 4);
-        if (t === 'trun') {
-          const count = view.getUint32(s2 + 4);
-          let at = s2 + 8;
-          if (flags & 0x1) at += 4;
-          if (flags & 0x4) at += 4;
-          const per = ((flags & 0x100) ? 4 : 0) + ((flags & 0x200) ? 4 : 0) + ((flags & 0x400) ? 4 : 0) + ((flags & 0x800) ? 4 : 0);
-          for (let i = 0; i < count; i++) {
-            duration += (flags & 0x100) ? view.getUint32(at) : defaultDuration;
-            at += per;
-          }
-        }
-      });
-      const track = p.tracks[id] || { scale: 1 };
-      const startTime = base / track.scale + b.timestampOffset;
-      const endTime = (base + duration) / track.scale + b.timestampOffset;
-      if (endTime > startTime) out.ranges.push([startTime, endTime]);
-    });
+  function joinBytes(first, second) {
+    const joined = new Uint8Array(first.length + second.length);
+    joined.set(first, 0);
+    joined.set(second, first.length);
+    return joined;
   }
-
+  /** Every track the init segment declares must be a codec the type names. */
+  function tracksMatchType(type, tracks) {
+    const { codecs } = parseType(type);
+    if (codecs === null) return true;
+    return tracks.every(t => codecs.some(c => codecFamily(c) === codecFamily(t.codec)));
+  }
   const listSource = new WeakMap();
   class SourceBufferList extends global.EventTarget {
     constructor(token, getter) {

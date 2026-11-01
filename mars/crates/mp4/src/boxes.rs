@@ -32,6 +32,69 @@ pub(crate) fn split(input: &[u8]) -> Result<(Boxed<'_>, &[u8])> {
     Ok((boxed, &input[total..]))
 }
 
+/** Where one complete top-level box sits in a byte run: its type and its byte range, header included. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoxSpan {
+    /** The four-character box type. */
+    pub kind: [u8; 4],
+    /** Offset of the box's first byte (its size field). */
+    pub start: usize,
+    /** Offset just past the box's last byte. */
+    pub end: usize,
+}
+
+/** The whole top-level boxes at the front of `input`. A box the input cuts short is not an error: the next append
+ * completes it, so it is left out. A size field that cannot be right is an error, since no later bytes can fix it. */
+pub fn complete_boxes(input: &[u8]) -> Result<Vec<BoxSpan>> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    while start < input.len() {
+        let rest = &input[start..];
+        let Some(span) = header_span(rest)? else {
+            break;
+        };
+        if start + span.1 > input.len() {
+            break;
+        }
+        spans.push(BoxSpan {
+            kind: [rest[4], rest[5], rest[6], rest[7]],
+            start,
+            end: start + span.1,
+        });
+        start += span.1;
+    }
+    Ok(spans)
+}
+
+/** A box's header size, or None when the header itself is still incomplete. A type that is not printable ASCII is refused: it means the bytes are not ISO BMFF at all. */
+fn header_span(rest: &[u8]) -> Result<Option<(usize, usize)>> {
+    if rest.len() < HEADER {
+        return Ok(None);
+    }
+    if !rest[4..HEADER]
+        .iter()
+        .all(|byte| (b' '..=b'~').contains(byte))
+    {
+        return Err(Error::Malformed("box type"));
+    }
+    let size = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+    let total = match size {
+        SIZE_TO_END => rest.len(),
+        SIZE_LARGE if rest.len() < HEADER_LARGE => return Ok(None),
+        SIZE_LARGE => large_size(rest)?,
+        size => size as usize,
+    };
+    let header = if size == SIZE_LARGE {
+        HEADER_LARGE
+    } else {
+        HEADER
+    };
+    if total < header {
+        return Err(Error::Malformed("box size"));
+    }
+    Ok(Some((header, total)))
+}
+
 /** The 64-bit size that follows a large-size box header. */
 fn large_size(input: &[u8]) -> Result<usize> {
     let mut cursor = Cursor::new(&input[HEADER..], "large box size");

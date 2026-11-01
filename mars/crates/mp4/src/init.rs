@@ -7,9 +7,9 @@ use crate::boxes::{Boxed, Cursor, children, find, full_box};
 use crate::constants::{
     AOT_SHIFT, AUDIO_ENTRY_FIELDS, AVC1, AVC3, AVCC, DECODER_CONFIG_FIXED, DESC_DECODER_CONFIG,
     DESC_DECODER_SPECIFIC, DESC_ES, EDTS, ELST, ES_FIXED, ES_OCR, ES_SKIP_BYTES,
-    ES_STREAM_DEPENDENCE, ES_URL, ESDS, HDLR, Kind, LENGTH_BYTES_MAX, LENGTH_MASK, LENGTH_MORE,
-    MDHD, MDIA, MINF, MOOV, MP4A, MVEX, SOUN, STBL, STSD, TKHD, TRAK, TREX, VERSION_LARGE, VIDE,
-    VISUAL_ENTRY_FIELDS,
+    ES_STREAM_DEPENDENCE, ES_URL, ESDS, FIXED_INTEGER_SHIFT, HDLR, Kind, LENGTH_BYTES_MAX,
+    LENGTH_MASK, LENGTH_MORE, MDHD, MDIA, MINF, MOOV, MP4A, MVEX, SOUN, STBL, STSD, TKHD, TRAK,
+    TREX, VERSION_LARGE, VIDE, VISUAL_ENTRY_FIELDS,
 };
 use crate::error::{Error, Result};
 
@@ -43,6 +43,10 @@ pub struct Track {
     pub default_flags: u32,
     /** The first edit's media time, subtracted from presentation times; zero when there is no edit. */
     pub edit_offset: i64,
+    /** The display width in pixels from tkhd, zero for a track with no picture (audio). */
+    pub width: u32,
+    /** The display height in pixels from tkhd, zero for a track with no picture (audio). */
+    pub height: u32,
 }
 
 /** The tracks of an initialization segment, in moov order. Fails when there is no moov or no track. */
@@ -68,7 +72,9 @@ pub fn parse_init(bytes: &[u8]) -> Result<Vec<Track>> {
 /** One trak box: id from tkhd, timing from mdia, codec from stsd, defaults from trex, offset from edts. */
 fn parse_trak(body: &[u8], trex: &[Boxed<'_>]) -> Result<Track> {
     let kids = children(body)?;
-    let id = track_id(required(&kids, TKHD)?.body)?;
+    let tkhd = required(&kids, TKHD)?.body;
+    let id = track_id(tkhd)?;
+    let (width, height) = display_size(tkhd)?;
     let mdia = children(required(&kids, MDIA)?.body)?;
     let timescale = timescale(required(&mdia, MDHD)?.body)?;
     let kind = handler(required(&mdia, HDLR)?.body)?;
@@ -85,6 +91,8 @@ fn parse_trak(body: &[u8], trex: &[Boxed<'_>]) -> Result<Track> {
         default_size,
         default_flags,
         edit_offset: edit_offset(&kids)?,
+        width,
+        height,
     })
 }
 
@@ -99,6 +107,21 @@ fn track_id(body: &[u8]) -> Result<u32> {
     let mut cursor = Cursor::new(payload, "tkhd");
     cursor.skip(time_fields(version))?;
     cursor.u32()
+}
+
+/** The display size: the last two 32-bit fields of tkhd, 16.16 fixed point, so the integer part is the pixel count. */
+fn display_size(body: &[u8]) -> Result<(u32, u32)> {
+    let (_, _, payload) = full_box(body)?;
+    let fields = payload;
+    let tail = fields
+        .len()
+        .checked_sub(8)
+        .ok_or(Error::Truncated("tkhd"))?;
+    let mut size = Cursor::new(&fields[tail..], "tkhd");
+    Ok((
+        size.u32()? >> FIXED_INTEGER_SHIFT,
+        size.u32()? >> FIXED_INTEGER_SHIFT,
+    ))
 }
 
 /** The media timescale: the 32-bit field after the creation and modification times. */

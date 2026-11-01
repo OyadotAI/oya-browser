@@ -87,3 +87,15 @@ fn init_refuses_a_box_cut_short() {
     bytes.truncate(bytes.len() - 20);
     assert!(matches!(parse_init(&bytes), Err(Error::Truncated(_))));
 }
+
+/** The display size is the tkhd's 16.16 width and height, so a video track reports its pixels and audio reports none. */
+#[test]
+fn init_reads_the_display_size_from_tkhd() {
+    let video = TrackSpec {
+        size: (1280, 720),
+        ..TrackSpec::video(1)
+    };
+    let tracks = parse_init(&init_segment(&[video, TrackSpec::audio(2)])).unwrap();
+    assert_eq!((tracks[0].width, tracks[0].height), (1280, 720));
+    assert_eq!((tracks[1].width, tracks[1].height), (0, 0));
+}

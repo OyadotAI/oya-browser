@@ -78,6 +78,8 @@ pub(crate) const ES_URL: u8 = 0x40;
 pub(crate) const ES_OCR: u8 = 0x20;
 /// An AAC audio object type is the high five bits of the DecoderSpecificInfo's first byte.
 pub(crate) const AOT_SHIFT: u32 = 3;
+/** The bits of a 16.16 fixed-point field below the integer part. */
+pub(crate) const FIXED_INTEGER_SHIFT: u32 = 16;
 /// A descriptor length's continuation bit and value mask (one to four bytes).
 pub(crate) const LENGTH_MORE: u8 = 0x80;
 pub(crate) const LENGTH_MASK: u8 = 0x7f;

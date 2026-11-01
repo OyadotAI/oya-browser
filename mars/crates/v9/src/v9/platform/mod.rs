@@ -78,6 +78,7 @@ mod sheet_rules;
 mod sheets;
 pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
 pub(in crate::v9) mod media;
+pub(in crate::v9) mod media_source;
 mod subtle;
 mod subtle_aes;
 mod subtle_cbc;

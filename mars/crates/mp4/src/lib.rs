@@ -10,6 +10,7 @@ mod error;
 mod fragment;
 mod init;
 
+pub use boxes::{BoxSpan, complete_boxes};
 pub use error::{Error, Result};
 pub use fragment::{Sample, parse_segment};
 pub use init::{Track, TrackKind, parse_init};
