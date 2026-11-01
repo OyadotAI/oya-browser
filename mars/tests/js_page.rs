@@ -939,3 +939,33 @@ fn raw_text_closer_from_script_adds_no_element() {
     assert!(!evil, "{page}");
     assert!(texts(&page).contains("still working"), "{page}");
 }
+
+/** A closing tag split across two text nodes of a raw-text element, or an element a script
+appends inside one, still cannot end the element early when the document is projected: the
+element's whole text is guarded at once and its children are written as text. */
+#[test]
+fn split_or_nested_raw_text_closers_add_no_element() {
+    let (_fixture, _runtime, page) = load(
+        "<div id=root></div><script>const s=document.createElement('style');\
+         s.appendChild(document.createTextNode('</st'));\
+         s.appendChild(document.createTextNode('yle><a id=split href=/x>x</a>'));\
+         document.getElementById('root').appendChild(s);\
+         const t=document.createElement('style');\
+         const inner=document.createElement('b');inner.textContent='</style><a id=nested href=/y>y</a>';\
+         t.appendChild(inner);document.getElementById('root').appendChild(t);\
+         const p=document.createElement('p');p.textContent='still working';\
+         document.getElementById('root').appendChild(p);</script>",
+        vec![],
+    );
+    let ids: Vec<&str> = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|node| node["html_id"].as_str())
+        .collect();
+    assert!(
+        !ids.contains(&"split") && !ids.contains(&"nested"),
+        "{page}"
+    );
+    assert!(texts(&page).contains("still working"), "{page}");
+}

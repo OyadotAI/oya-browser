@@ -103,6 +103,16 @@ fn raw_text_safe(text: &str, tag: &str) -> String {
     out.push_str(&text[last..]);
     out
 }
+/** A raw-text element's body and end tag. Its whole text content is written and guarded at once,
+so a closing tag split across text nodes, or element children a script appended, cannot end the
+element early when the markup is parsed again: children are written as their text, never as tags. */
+fn write_raw_body(page: &mut Page, id: usize, qualified: &str, out: &mut String) {
+    let text = page.text_content(id);
+    out.push_str(&raw_text_safe(&text, qualified));
+    out.push_str("</");
+    out.push_str(qualified);
+    out.push('>');
+}
 /** Write one node; `shadow` includes shadow roots. */
 fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow: bool) {
     let Some(view) = page.view(id) else {
@@ -150,6 +160,10 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
             let qualified = page.qualified_element_name(id);
             write_open(&qualified, &view, out);
             if VOID.contains(&tag) || depth > DOCUMENT_DEPTH * 4 {
+                return;
+            }
+            if RAW.contains(&tag) {
+                write_raw_body(page, id, &qualified, out);
                 return;
             }
             let children = if shadow {
