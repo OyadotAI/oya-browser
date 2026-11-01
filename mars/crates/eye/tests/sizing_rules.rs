@@ -229,3 +229,25 @@ fn stretch_width_fills_the_room_beside_floats() {
     );
     assert_eq!(r.0, 100.0);
 }
+
+/** css-sizing max-width: a `calc()` of a percentage and a length caps an auto block at the
+ * containing width less the length (BBC News' `max-width: calc(100% - 32px)` gutter). */
+#[test]
+fn max_width_calc_percent_minus_length_caps_the_block() {
+    let r = size(
+        "<div style='width:400px'><div id=t style='max-width:calc(100% - 32px)'>x</div></div>",
+        "t",
+    );
+    assert_eq!(r.0, 368.0);
+}
+
+/** css-sizing min-width: a `calc()` of a percentage and a length floors the block at the
+ * containing width plus the length; before, the whole declaration was dropped. */
+#[test]
+fn min_width_calc_percent_plus_length_floors_the_block() {
+    let r = size(
+        "<div style='width:200px'><div id=t style='min-width:calc(100% + 50px)'>x</div></div>",
+        "t",
+    );
+    assert_eq!(r.0, 250.0);
+}

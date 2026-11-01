@@ -69,6 +69,11 @@ pub struct ComputedStyle {
     /// `max_width` is a percentage of the containing block's width.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub percent_max_width: bool,
+    /// Pixel part of a mixed `calc()` max-width such as `calc(100% - 32px)`, added once the
+    /// percentage resolves against the containing block; 0 for a plain max-width. Without it
+    /// BBC News' card gutter was refused and the card ran edge to edge.
+    #[serde(skip_serializing_if = "default")]
+    pub max_width_offset: f64,
     pub border: f64,
     pub border_color: Option<String>,
     pub align: String,
@@ -162,6 +167,10 @@ pub struct ComputedStyle {
     /// beside an 840px image, and shrank under it without this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_width_percent: Option<f64>,
+    /// Pixel part of a mixed `calc()` percentage min-width such as `calc(100% + 50px)`, added
+    /// once the percentage resolves; 0 otherwise.
+    #[serde(skip_serializing_if = "default")]
+    pub min_width_offset: f64,
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
@@ -900,6 +909,7 @@ impl Default for ComputedStyle {
             percent_width: false,
             max_width: None,
             percent_max_width: false,
+            max_width_offset: 0.0,
             border: 0.0,
             border_color: None,
             align: "start".into(),
@@ -933,6 +943,7 @@ impl Default for ComputedStyle {
             align_items: AlignItems::Stretch,
             min_width: None,
             min_width_percent: None,
+            min_width_offset: 0.0,
             opacity: 1.0,
             opacity_animations: Vec::new(),
             opacity_animation_blocked: false,

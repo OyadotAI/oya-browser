@@ -118,7 +118,7 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
         .max_width
         .map(|width| {
             if style.percent_max_width {
-                viewport * width / 100.0
+                viewport * width / 100.0 + style.max_width_offset
             } else {
                 width + adjustment
             }

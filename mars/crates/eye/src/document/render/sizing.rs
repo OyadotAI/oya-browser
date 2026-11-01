@@ -1013,7 +1013,12 @@ pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
     }
     if let Some(percent) = node.style.min_width_percent {
         return containing.map(|containing| {
-            content_size(node, layout_unit_floor(containing * percent / 100.0), true)
+            let offset = node.style.min_width_offset;
+            content_size(
+                node,
+                layout_unit_floor(containing * percent / 100.0) + offset,
+                true,
+            )
         });
     }
     node.style
@@ -1032,7 +1037,11 @@ pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
         return content_size(node, value, true);
     }
     containing.map_or(LAYOUT_EXTENT, |containing| {
-        content_size(node, containing * value / 100.0, true)
+        content_size(
+            node,
+            containing * value / 100.0 + node.style.max_width_offset,
+            true,
+        )
     })
 }
 /** Auto blocks fill the available border box; specified sizes can overflow their containing block. */

@@ -66,8 +66,15 @@ pub(super) fn apply(
         style.size_keywords[1] = keyword;
         style.min_width_percent = None;
         style.min_width = None;
+        style.min_width_offset = 0.0;
         if let Some(percent) = value.strip_suffix('%') {
             style.min_width_percent = Some(number(percent)?);
+        } else if value.starts_with("calc(") {
+            let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+            match percent {
+                true => (style.min_width_percent, style.min_width_offset) = (Some(main), offset),
+                false => style.min_width = Some(main),
+            }
         } else if keyword == SizeKeyword::None && value != "auto" {
             style.min_width = Some(contextual_length(value, style.font_size, context)?);
         }
@@ -308,6 +315,7 @@ fn layout(
             let keyword = size_keyword(value, style.font_size, context)?;
             style.size_keywords[2] = keyword;
             style.percent_max_width = value.ends_with('%');
+            style.max_width_offset = 0.0;
             style.max_width = match value {
                 _ if keyword != SizeKeyword::None => {
                     style.percent_max_width = false;
@@ -318,6 +326,11 @@ fn layout(
                     None
                 }
                 _ if style.percent_max_width => Some(number(value.trim_end_matches('%'))?),
+                _ if value.starts_with("calc(") => {
+                    let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+                    (style.percent_max_width, style.max_width_offset) = (percent, offset);
+                    Some(main)
+                }
                 _ => Some(contextual_length(value, style.font_size, context)?),
             }
         }
@@ -352,6 +365,20 @@ fn size_keyword(value: &str, font: f64, context: RenderContext) -> EngineResult<
     })
 }
 /**
+ * A `calc()` of a percentage and a length, split into its main part (the percentage when there
+ * is one, else the pixels), whether that part is a percentage, and the pixel offset that rides
+ * on the percentage. A math function out of range is clamped, as CSS Values 4 requires.
+ */
+fn mixed_calc(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, bool, f64)> {
+    let mixed = super::values::dimension(value, font, context)?;
+    let percent = mixed.percent != 0.0;
+    let (main, offset) = match percent {
+        true => (mixed.percent, mixed.px),
+        false => (mixed.px, 0.0),
+    };
+    Ok((main.clamp(0.0, CSS_MAX_SCALAR), percent, offset))
+}
+/**
  * `width`: a keyword, a percentage, a length, or a `calc()` mixing both, whose px part waits in
  * `width_offset` until the percentage resolves against the containing block.
  */
@@ -381,19 +408,8 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
         }
         _ if style.percent_width => Some(number(value.trim_end_matches('%'))?),
         _ if value.starts_with("calc(") => {
-            let mixed = super::values::dimension(value, style.font_size, context)?;
-            style.percent_width = mixed.percent != 0.0;
-            style.width_offset = if style.percent_width { mixed.px } else { 0.0 };
-            let main = if style.percent_width {
-                mixed.percent
-            } else {
-                mixed.px
-            };
-            // A part past the computed-style bounds drops the declaration instead of failing
-            // the whole cascade at validation.
-            if !(0.0..=crate::constants::CSS_MAX_SCALAR).contains(&main) {
-                return Err(unsupported());
-            }
+            let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+            (style.percent_width, style.width_offset) = (percent, offset);
             Some(main)
         }
         _ => Some(contextual_length(value, style.font_size, context)?),

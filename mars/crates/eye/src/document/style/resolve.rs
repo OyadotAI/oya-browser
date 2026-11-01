@@ -188,11 +188,13 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "max-width" => {
             style.max_width = source.max_width;
             style.percent_max_width = source.percent_max_width;
+            style.max_width_offset = source.max_width_offset;
             style.size_keywords[2] = source.size_keywords[2];
         }
         "min-width" => {
             style.min_width = source.min_width;
             style.min_width_percent = source.min_width_percent;
+            style.min_width_offset = source.min_width_offset;
             style.size_keywords[1] = source.size_keywords[1];
         }
         "height" => {

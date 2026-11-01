@@ -344,7 +344,7 @@ impl<'a> Replaced<'a> {
             return self.inline_border(value);
         }
         self.available.map_or(UNBOUNDED, |available| {
-            self.inline_border(available * value / 100.0)
+            self.inline_border(available * value / 100.0 + style.max_width_offset)
         })
     }
     /** An authored width in the node's box-sizing as a border-box width. */
