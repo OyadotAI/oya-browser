@@ -43,7 +43,7 @@ impl Parser {
             .filter(|value| *value != NO_CLOSER);
         if closing
             .and_then(|index| self.tokens.get(index as usize))
-            .is_some_and(|token| token.location.byte_offset == expected)
+            .is_some_and(|token| token.location.offset as usize == expected)
         {
             Ok(())
         } else {

@@ -334,10 +334,7 @@ impl Parser {
         if ends {
             self.error_at(pos, AWAIT_BINDING)
         } else {
-            self.error_at(
-                Pos::from_location(self.peek_at(1).location),
-                UNTERMINATED_ARGUMENTS,
-            )
+            self.error_at(self.peek_at(1).location, UNTERMINATED_ARGUMENTS)
         }
     }
     /** Postfix `++` and `--` with no line break before them. */
@@ -739,7 +736,7 @@ impl Parser {
             }
             Kind::String(value) => {
                 self.next();
-                ExprKind::String(value)
+                ExprKind::String(*value)
             }
             Kind::Opaque(feature) => {
                 self.next();
@@ -747,11 +744,11 @@ impl Parser {
             }
             Kind::BigInt(value) => {
                 self.next();
-                ExprKind::BigInt(value)
+                ExprKind::BigInt(*value)
             }
             Kind::BigIntWide(digits) => {
                 self.next();
-                ExprKind::BigIntWide(Name::from(digits.as_str()))
+                ExprKind::BigIntWide(Name::from(&*digits))
             }
             Kind::Regex(regex) => {
                 let crate::v9::lexer::RegexText { pattern, flags } = *regex;

@@ -96,27 +96,29 @@ pub(super) struct RegexText {
     pub flags: String,
 }
 
-/** Tokens retain locations independently of the value or identifier they carry. */
+/** Tokens retain locations independently of the value or identifier they carry. Kept small
+(48 bytes): a 10 MB bundle scans to millions of them. */
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Token {
     pub kind: Kind,
-    pub location: SourceLocation,
+    pub location: super::syntax::Pos,
     /** Exclusive byte end keeps comments and exact function source observable. */
-    pub end: usize,
+    pub end: u32,
     /// Decoded equality cannot make an escaped string a strict-mode directive.
     pub exact_strict: bool,
     /** Trivia before this token, rather than lines inside its predecessor, controls restricted grammar. */
     pub line_terminator_before: bool,
     /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
     pub escaped: bool,
-    /// Annex B numeric spellings and string escapes are legal only outside strict code; the
+    /// Annex B numeric spellings and string escapes are legal only outside strict code; its
     /// message is the one V8 gives for that spelling when strict code meets it.
-    pub legacy: Option<&'static str>,
+    pub legacy: Option<legacy::Legacy>,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Kind {
-    String(JsString),
+    /** Boxed, with the other rare wide variants, so a token stays small. */
+    String(Box<JsString>),
     Number(f64),
     /** Interned per scan: every occurrence of a name shares one allocation. */
     Name(Text),
@@ -132,9 +134,9 @@ pub(super) enum Kind {
     string); evaluating it raises an unsupported error naming this feature. */
     Opaque(&'static str),
     /** A BigInt literal within V9's 128-bit bound. */
-    BigInt(i128),
+    BigInt(Box<i128>),
     /** Wide literal digits stay exact for property names; runtime values retain their bound. */
-    BigIntWide(String),
+    BigIntWide(Box<str>),
     /** Operators that V9 parses for syntax but does not evaluate, such as `**` or `>>>`. */
     Punct(&'static str),
     /** `#name` class member names. */
@@ -153,7 +155,7 @@ pub(super) enum Kind {
     /** Text the scanner could not read, carrying its reason. V8 scans one token ahead of the
     parser, so a parse error earlier in the source beats a scan error later in it; V9 scans the
     whole script first, so the scan error waits here until the parser reaches it. */
-    Illegal(String),
+    Illegal(Box<str>),
     End,
 }
 /** Scanning consumes the complete bounded script before any evaluation can begin. */
@@ -199,8 +201,8 @@ fn tokenize_with_limit(
         if !has_token {
             tokens.push(Token {
                 kind: Kind::End,
-                location: source.location(),
-                end: source.location().byte_offset,
+                location: super::syntax::Pos::from_location(source.location()),
+                end: source.location().byte_offset as u32,
                 exact_strict: false,
                 line_terminator_before,
                 escaped: false,
@@ -245,8 +247,8 @@ fn tokenize_with_limit(
         let legacy = legacy::literal(&text[..consumed], &kind);
         tokens.push(Token {
             kind,
-            location,
-            end: source.location().byte_offset,
+            location: super::syntax::Pos::from_location(location),
+            end: source.location().byte_offset as u32,
             exact_strict,
             line_terminator_before,
             escaped,
@@ -262,8 +264,8 @@ substitution is "Unexpected token '}'" before the unterminated template is anyth
 fn defer(tokens: &mut Vec<Token>, error: &EngineError, location: SourceLocation, brace: bool) {
     let blank = |kind, location: SourceLocation| Token {
         kind,
-        location,
-        end: location.byte_offset,
+        location: super::syntax::Pos::from_location(location),
+        end: location.byte_offset as u32,
         exact_strict: false,
         line_terminator_before: false,
         escaped: false,
@@ -272,10 +274,7 @@ fn defer(tokens: &mut Vec<Token>, error: &EngineError, location: SourceLocation,
     if brace {
         tokens.push(blank(Kind::Symbol('}'), location));
     }
-    tokens.push(blank(
-        Kind::Illegal(errors::reason(error).to_string()),
-        location,
-    ));
+    tokens.push(blank(Kind::Illegal(errors::reason(error).into()), location));
     tokens.push(blank(Kind::End, location));
 }
 /** Braces decide whether `}` closes a block or resumes the template it interrupted. */
@@ -432,7 +431,7 @@ fn token(source: &mut Source<'_>, regex: bool, names: &mut Names) -> EngineResul
         source.next();
         return Ok(literals::string(source, character, start)?.map_or(
             Kind::Opaque("string literals over the string length limit"),
-            Kind::String,
+            |text| Kind::String(Box::new(text)),
         ));
     }
     if source.rest().starts_with("...") {
@@ -633,4 +632,15 @@ fn control_header(tokens: &[Token]) -> bool {
     !end.checked_sub(2)
         .and_then(|i| tokens.get(i))
         .is_some_and(|t| matches!(t.kind, Kind::Symbol('.') | Kind::Punct("?.")))
+}
+
+#[cfg(test)]
+mod size_tests {
+    /** A token stays within 48 bytes: a 10 MB bundle scans to millions of them, and at the
+    112 bytes tokens once took the scan's own writes were a fifth of its time. */
+    #[test]
+    fn tokens_stay_small() {
+        let size = std::mem::size_of::<super::Token>();
+        assert!(size <= 48, "Token grew to {size} bytes");
+    }
 }

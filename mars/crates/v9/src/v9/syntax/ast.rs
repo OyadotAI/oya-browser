@@ -18,6 +18,13 @@ pub(in crate::v9) struct Pos {
     pub column: u32,
 }
 
+impl From<Pos> for SourceLocation {
+    /** A token's compact position as the shared protocol location. */
+    fn from(pos: Pos) -> Self {
+        pos.location()
+    }
+}
+
 impl Pos {
     /** Diagnostics keep the shared protocol location shape. */
     pub fn location(self) -> SourceLocation {

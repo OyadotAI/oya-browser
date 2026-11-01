@@ -216,7 +216,7 @@ impl Parser {
     /** Decoded token values cannot erase Annex B's strict-mode lexical early errors. */
     fn strict_literal(&self, token: &Token) -> EngineResult<()> {
         match token.legacy {
-            Some(message) if self.strict => Err(errors::syntax(token.location, message)),
+            Some(legacy) if self.strict => Err(errors::syntax(token.location, legacy.message())),
             _ => Ok(()),
         }
     }
@@ -335,7 +335,7 @@ impl Parser {
     }
     /** Position of the current token. */
     fn pos(&self) -> Pos {
-        Pos::from_location(self.peek().location)
+        self.peek().location
     }
     /** Punctuator spelling of the current token. */
     fn punct(&self) -> Option<&'static str> {
@@ -426,7 +426,7 @@ impl Parser {
     fn unexpected_reason(&self, token: &Token) -> String {
         match &token.kind {
             Kind::End => "Unexpected end of input".to_string(),
-            Kind::Illegal(reason) => reason.clone(),
+            Kind::Illegal(reason) => reason.to_string(),
             Kind::Number(_) | Kind::BigInt(_) | Kind::BigIntWide(_) => {
                 "Unexpected number".to_string()
             }
