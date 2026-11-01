@@ -5,7 +5,10 @@
  * append window, enforces the byte quotas, removes ranges, and evicts frames behind the playhead at a keyframe, so
  * what remains still decodes. Every refusal leaves the buffer as it was.
  */
-use super::constants::{AUDIO_QUOTA_BYTES, KEEP_BEHIND, TOTAL_QUOTA_BYTES, VIDEO_QUOTA_BYTES};
+use super::constants::{
+    AUDIO_QUOTA_BYTES, KEEP_BEHIND, MAX_PICTURE_HEIGHT, MAX_PICTURE_WIDTH, TOTAL_QUOTA_BYTES,
+    VIDEO_QUOTA_BYTES,
+};
 use mars_mp4::{Error, Track, TrackKind, parse_init, parse_segment};
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -178,7 +181,7 @@ impl Stream {
         let tracks = if init.is_empty() {
             self.tracks(buffer)
         } else {
-            parse_init(init)?
+            within_ceiling(parse_init(init)?)?
         };
         let frames = if media.is_empty() {
             Vec::new()
@@ -313,6 +316,18 @@ impl Stream {
     }
 }
 
+/** Refuse an init segment whose video is larger than the decoder opens, as an unsupported codec would be. */
+fn within_ceiling(tracks: Vec<Track>) -> Result<Vec<Track>, Error> {
+    let oversize = tracks.iter().any(|track| {
+        track.kind == TrackKind::Video
+            && (track.width > MAX_PICTURE_WIDTH || track.height > MAX_PICTURE_HEIGHT)
+    });
+    if oversize {
+        return Err(Error::Malformed("picture larger than the decoder plays"));
+    }
+    Ok(tracks)
+}
+
 /** The frames a media segment yields, each tagged with its track id; the append window clips them. */
 fn collect_frames(
     tracks: &[Track],
@@ -412,11 +427,16 @@ mod tests {
 
     /** A moov with one track of the given handler type, id 1, carrying the same avc1 entry as `init`. */
     fn init_with(handler: &[u8; 4]) -> Vec<u8> {
+        init_sized(handler, 320, 240)
+    }
+
+    /** `init_with` at a display size of the caller's choosing. */
+    fn init_sized(handler: &[u8; 4], width: u32, height: u32) -> Vec<u8> {
         let mut tkhd = vec![0u8; 8];
         tkhd.extend(1u32.to_be_bytes());
         tkhd.extend([0u8; 68]);
-        tkhd.extend((320u32 << 16).to_be_bytes());
-        tkhd.extend((240u32 << 16).to_be_bytes());
+        tkhd.extend((width << 16).to_be_bytes());
+        tkhd.extend((height << 16).to_be_bytes());
         let mut mdhd = vec![0u8; 8];
         mdhd.extend(1000u32.to_be_bytes());
         mdhd.extend([0u8; 4]);
@@ -697,6 +717,18 @@ mod tests {
         let outcome = stream.append(1, first(&bytes, init.len()));
         assert!(matches!(outcome, Err(Refusal::Container(_))));
         assert_eq!(stream.total(), 0);
+    }
+
+    /** An init segment whose video is larger than the decoder's ceiling is refused, so no picture of it is ever decoded. */
+    #[test]
+    fn an_init_segment_past_the_picture_ceiling_is_refused() {
+        let huge = init_sized(b"vide", 7680, 4320);
+        let mut stream = Stream::default();
+        let outcome = stream.append(1, first(&huge, huge.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(stream.lanes().count(), 0);
+        let fits = init_sized(b"vide", 4096, 2304);
+        assert!(stream.append(1, first(&fits, fits.len())).is_ok());
     }
 
     /** An init segment that gives an existing track id another kind is refused, and the lane keeps its kind and bytes. */

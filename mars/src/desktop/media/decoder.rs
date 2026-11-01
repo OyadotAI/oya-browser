@@ -5,10 +5,11 @@
  * are already length-prefixed NAL units, which is the layout VideoToolbox takes. VideoToolbox is linked here
  * directly: the bindings have no crate for it. The sample buffers it decodes are built in samples.rs.
  */
-use super::constants::NO_ERROR;
+use super::constants::{NO_ERROR, PICTURE_PIXEL_BYTES};
 use super::frames;
 use super::samples::{Sample, release};
 use crate::runtime::media::avc::AvcConfig;
+use crate::runtime::media::constants::{MAX_PICTURE_HEIGHT, MAX_PICTURE_WIDTH};
 use crate::runtime::media::stream::Frame;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -25,10 +26,34 @@ const SYNCHRONOUS: u32 = 0;
 /// The pixel format frames.rs expects: 32-bit BGRA.
 const BGRA: u32 = 0x4247_5241;
 
-/** One decoded picture: its presentation time in seconds and the image the painter draws. */
+/** One decoded picture: its presentation time in seconds, the image the painter draws, and the bytes it holds. */
 struct Decoded {
     pts: f64,
     image: Retained<NSImage>,
+    bytes: usize,
+}
+
+/** A format description's picture size, as CoreMedia reads it from the parameter sets. */
+#[repr(C)]
+struct Dimensions {
+    width: i32,
+    height: i32,
+}
+
+/** Why a decoder was not opened: VideoToolbox or CoreMedia refused with a status, or the picture is too large. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecoderError {
+    /** The framework's status for a session or description it would not create. */
+    Refused(i32),
+    /** The parameter sets declare a picture larger than the ceiling, which would decode to pictures of unbounded size. */
+    TooLarge,
+}
+
+impl From<i32> for DecoderError {
+    /** A framework status is a refusal. */
+    fn from(status: i32) -> Self {
+        Self::Refused(status)
+    }
 }
 
 /** VideoToolbox's output record: the callback and the context pointer it is given back. */
@@ -68,6 +93,7 @@ unsafe extern "C" {
         length_size: i32,
         format: *mut *mut c_void,
     ) -> i32;
+    fn CMVideoFormatDescriptionGetDimensions(format: *const c_void) -> Dimensions;
 }
 
 /** A decoding session for one H.264 track: its format description, its VideoToolbox session, and the pictures it has produced. */
@@ -79,9 +105,16 @@ pub struct Decoder {
 }
 
 impl Decoder {
-    /** A session for a track whose parameter sets are in `config`; refused when VideoToolbox will not take them. */
-    pub fn new(config: &AvcConfig) -> Result<Self, i32> {
+    /** A session for a track whose parameter sets are in `config`; refused when VideoToolbox will not take them or the picture is past the ceiling. */
+    pub fn new(config: &AvcConfig) -> Result<Self, DecoderError> {
         let format = format_description(config)?;
+        // SAFETY: the format was created above; CoreMedia reads the size it parsed from the parameter sets.
+        let size = unsafe { CMVideoFormatDescriptionGetDimensions(format) };
+        if size.width > MAX_PICTURE_WIDTH as i32 || size.height > MAX_PICTURE_HEIGHT as i32 {
+            // SAFETY: the format was created above and is not used again.
+            unsafe { release(format) };
+            return Err(DecoderError::TooLarge);
+        }
         let output = Box::new(RefCell::new(VecDeque::new()));
         let record = OutputRecord {
             callback: deliver,
@@ -103,7 +136,7 @@ impl Decoder {
         if status != NO_ERROR {
             // SAFETY: the format was created above and is not used again.
             unsafe { release(format) };
-            return Err(status);
+            return Err(DecoderError::Refused(status));
         }
         Ok(Self {
             format,
@@ -164,6 +197,15 @@ impl Decoder {
     pub fn pending(&self) -> usize {
         self.output.borrow().len()
     }
+
+    /** The bytes those pictures hold, since a count alone bounds nothing at 4K. */
+    pub fn pending_bytes(&self) -> usize {
+        self.output
+            .borrow()
+            .iter()
+            .map(|picture| picture.bytes)
+            .sum()
+    }
 }
 
 impl Drop for Decoder {
@@ -201,10 +243,14 @@ extern "C" fn deliver(
     if !pts.is_finite() {
         return;
     }
+    let bytes = objc2_core_video::CVPixelBufferGetWidth(buffer)
+        * objc2_core_video::CVPixelBufferGetHeight(buffer)
+        * PICTURE_PIXEL_BYTES;
     if let Some(picture) = frames::image(buffer) {
         output.borrow_mut().push_back(Decoded {
             pts,
             image: picture,
+            bytes,
         });
     }
 }
@@ -309,6 +355,21 @@ mod tests {
         assert!(decoder.picture_at(-1.0, 1.0).is_none());
         assert!(decoder.picture_at(0.05, 1.0).is_some());
         assert!(decoder.pending() < lane.frames.len());
+    }
+
+    /** Parameter sets declaring a picture past the ceiling open no session: the avcC of a 4352x2432 stream ffmpeg made. */
+    #[test]
+    fn a_picture_larger_than_the_ceiling_is_refused() {
+        const BIG_AVCC: &[u8] = &[
+            0x01, 0x42, 0xc0, 0x3c, 0xff, 0xe1, 0x00, 0x1a, 0x67, 0x42, 0xc0, 0x3c, 0xda, 0x00,
+            0x44, 0x00, 0x4c, 0x6c, 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x03,
+            0x00, 0x83, 0xc2, 0x01, 0x0a, 0x80, 0x01, 0x00, 0x04, 0x68, 0xce, 0x0f, 0xc8,
+        ];
+        let config = parse_avcc(BIG_AVCC).unwrap();
+        assert_eq!(
+            Decoder::new(&config).err(),
+            Some(super::DecoderError::TooLarge)
+        );
     }
 
     /** Clearing drops every picture waiting to be shown, so a seek or a replaced track never shows stale frames. */

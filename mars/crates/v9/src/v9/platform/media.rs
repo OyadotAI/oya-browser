@@ -40,7 +40,8 @@ pub struct MediaSupport {
     pub containers: Vec<String>,
     /// Playable `container|codec` pairs, the codec as its four-character family (`avc1`, `mp4a`).
     pub codecs: Vec<String>,
-    /// Container types the host can also play from appended Media Source segments.
+    /// `container|codec` pairs the host can also play from appended Media Source segments: narrower than
+    /// `codecs`, since segments go through the host's own decoders rather than the OS player.
     pub streams: Vec<String>,
 }
 

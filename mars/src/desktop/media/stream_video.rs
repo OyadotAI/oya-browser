@@ -2,12 +2,13 @@
  * The video of a Media Source player: the first video lane's samples are fed to a VideoToolbox decoder a little ahead of
  * the playhead, and the picture due at the playhead is handed to the painter. Feeding starts at a sync frame and
  * restarts after a seek or when the track's configuration changes, so the decoder never sees a frame whose references
- * it does not hold. Feeding stops while the decoder holds its cap of pictures, so a stream cannot fill memory.
+ * it does not hold. Feeding stops while the decoder holds its cap of pictures or its byte budget of them, so a stream
+ * cannot fill memory at any picture size.
  */
 use super::constants::LOOKAHEAD;
 use super::decoder::Decoder;
 use crate::runtime::media::avc::parse_avcc;
-use crate::runtime::media::constants::MAX_PENDING_PICTURES;
+use crate::runtime::media::constants::{MAX_PENDING_PICTURES, PENDING_PICTURE_BYTES};
 use crate::runtime::media::stream::{Frame, Lane, Stream};
 use mars_mp4::TrackKind;
 use objc2::rc::Retained;
@@ -62,22 +63,22 @@ impl StreamVideo {
             &lane.frames,
             &mut self.fed,
             playhead + LOOKAHEAD,
-            MAX_PENDING_PICTURES,
+            (MAX_PENDING_PICTURES, PENDING_PICTURE_BYTES),
         );
         decoder.picture_at(playhead, LOOKAHEAD)
     }
 }
 
 /**
- * Hand the decoder every frame after the last fed one, up to `until`, stopping while it holds `cap` pictures; the first
- * frame fed is a sync frame.
+ * Hand the decoder every frame after the last fed one, up to `until`, stopping while it holds `cap` pictures or bytes
+ * of them (a count, then a byte budget); the first frame fed is a sync frame.
  */
 pub fn feed(
     decoder: &mut Decoder,
     frames: &VecDeque<Frame>,
     fed: &mut Option<f64>,
     until: f64,
-    cap: usize,
+    cap: (usize, usize),
 ) {
     let start = match *fed {
         Some(last) => frames.partition_point(|frame| frame.decode <= last),
@@ -87,7 +88,8 @@ pub fn feed(
         },
     };
     for frame in frames.range(start..) {
-        if frame.decode > until || decoder.pending() >= cap {
+        let full = decoder.pending() >= cap.0 || decoder.pending_bytes() >= cap.1;
+        if frame.decode > until || full {
             break;
         }
         if decoder.decode(frame).is_ok() {
@@ -146,11 +148,34 @@ mod tests {
             .unwrap();
         let mut decoder = Decoder::new(&parse_avcc(&lane.track.config).unwrap()).unwrap();
         let mut fed = None;
-        feed(&mut decoder, &lane.frames, &mut fed, f64::INFINITY, 3);
+        let cap = (3, usize::MAX);
+        feed(&mut decoder, &lane.frames, &mut fed, f64::INFINITY, cap);
         assert_eq!(decoder.pending(), 3);
         assert!(fed.unwrap() < lane.frames.back().unwrap().decode);
         decoder.clear();
-        feed(&mut decoder, &lane.frames, &mut fed, f64::INFINITY, 3);
+        feed(&mut decoder, &lane.frames, &mut fed, f64::INFINITY, cap);
         assert_eq!(decoder.pending(), 3);
+    }
+
+    /** Feeding stops once the pending pictures hold the byte budget, however few they are: two 64x48 BGRA pictures here. */
+    #[test]
+    fn feeding_stops_at_the_picture_byte_budget() {
+        let stream = fixture_stream();
+        let lane = stream
+            .lanes()
+            .find(|lane| lane.kind() == mars_mp4::TrackKind::Video)
+            .unwrap();
+        let mut decoder = Decoder::new(&parse_avcc(&lane.track.config).unwrap()).unwrap();
+        let mut fed = None;
+        let two_pictures = 2 * 64 * 48 * 4;
+        feed(
+            &mut decoder,
+            &lane.frames,
+            &mut fed,
+            f64::INFINITY,
+            (10, two_pictures),
+        );
+        assert_eq!(decoder.pending(), 2);
+        assert_eq!(decoder.pending_bytes(), two_pictures);
     }
 }

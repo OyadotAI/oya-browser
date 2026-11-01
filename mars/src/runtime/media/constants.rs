@@ -18,3 +18,9 @@ pub const KEEP_BEHIND: f64 = 30.0;
 pub const MAX_REORDER_DEPTH: usize = 16;
 /// Decoded pictures a stream may hold waiting for their time, each a full BGRA frame: reorder depth plus a few.
 pub const MAX_PENDING_PICTURES: usize = MAX_REORDER_DEPTH + 4;
+/// The largest picture the stream decoder opens, the platform's 4K: a decoded BGRA picture of it is 38 MB,
+/// and the SPS of a hostile stream can declare any size.
+pub const MAX_PICTURE_WIDTH: u32 = 4096;
+pub const MAX_PICTURE_HEIGHT: u32 = 2304;
+/// Decoded bytes a stream may hold waiting for their time, beside the picture count: three 4K pictures.
+pub const PENDING_PICTURE_BYTES: usize = 128 * 1024 * 1024;

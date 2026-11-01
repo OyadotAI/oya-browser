@@ -1460,10 +1460,13 @@
     if (codecs === null) return 'maybe';
     return codecs.length && codecsPlayable(essence, codecs) ? 'probably' : '';
   }
+  /** Whether a Media Source can play the type: the host lists what it streams as container|family pairs, which
+   * is narrower than what it plays from a file, since appended segments go through its own decoders. */
   function streamPlayable(type) {
     const { essence, codecs } = parseType(type);
-    if (!support.streams.includes(essence)) return false;
-    return codecs === null || codecsPlayable(essence, codecs);
+    const families = support.streams.filter(s => s.startsWith(essence + '|')).map(s => s.slice(essence.length + 1));
+    if (!families.length) return false;
+    return codecs === null || codecs.every(c => families.includes(codecFamily(c)));
   }
 
   if (global.navigator && typeof global.MediaCapabilities === 'function') {

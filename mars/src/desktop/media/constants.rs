@@ -35,3 +35,5 @@ pub const LENGTH_GROUP_BITS: u32 = 7;
 pub const LENGTH_GROUP_MASK: u32 = 0x7f;
 pub const LENGTH_CONTINUES: u8 = 0x80;
 pub const LENGTH_GROUPS: u32 = 4;
+/// Bytes of one decoded BGRA pixel, for the budget of pictures waiting to be shown.
+pub const PICTURE_PIXEL_BYTES: usize = 4;

@@ -4,7 +4,7 @@ use mars_v9::{
     DomLevel, Execution, MediaCommand, MediaSupport, PageEnvironment, PageEvent, VmState,
 };
 
-/** A host that plays MP4 (H.264 and AAC) and MP3, from files and from Media Source. */
+/** A host that plays MP4 (H.264, AV1 and AAC) and MP3 from files, and H.264 and AAC in MP4 from Media Source. */
 fn environment() -> PageEnvironment {
     PageEnvironment {
         dom_level: DomLevel::Extended,
@@ -13,10 +13,15 @@ fn environment() -> PageEnvironment {
             codecs: vec![
                 "video/mp4|avc1".into(),
                 "video/mp4|mp4a".into(),
+                "video/mp4|av01".into(),
                 "audio/mp4|mp4a".into(),
                 "audio/mpeg|mp3".into(),
             ],
-            streams: vec!["video/mp4".into(), "audio/mp4".into()],
+            streams: vec![
+                "video/mp4|avc1".into(),
+                "video/mp4|mp4a".into(),
+                "audio/mp4|mp4a".into(),
+            ],
         },
         ..common::environment()
     }
@@ -411,6 +416,17 @@ fn is_type_supported_answers_for_streamable_mp4_codecs() {
            MediaSource.isTypeSupported('video/mp4')].join('|');",
     );
     assert_eq!(page.global("r"), "true|true|true|false|false|true");
+}
+
+/** A codec the host plays from a file but not from segments (AV1 here) is refused for streaming while canPlayType still says probably. */
+#[test]
+fn is_type_supported_refuses_a_codec_the_host_plays_but_cannot_stream() {
+    let page = Page::load(
+        "const v = document.createElement('video');\
+         let r = [v.canPlayType('video/mp4; codecs=\"av01.0.08M.08\"'), MediaSource.isTypeSupported('video/mp4; codecs=\"av01.0.08M.08\"'),\
+           MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.4D400C, av01.0.08M.08\"')].join('|');",
+    );
+    assert_eq!(page.global("r"), "probably|false|false");
 }
 
 /** addSourceBuffer refuses a type the host cannot stream with NotSupportedError. */
