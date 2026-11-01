@@ -1824,6 +1824,9 @@ fn load_isolated(
         state,
         input.modules,
     )?;
+    // A page starts at the viewport it loaded at: a later step reports only what changed after.
+    let current = viewport_of(&vm);
+    vm.page.state.viewport.get_or_insert(current);
     let Compiled::Each(codes) = compiled else {
         return Err(EngineError::invalid(
             "V9 compiled scripts in the wrong mode.",
@@ -2178,8 +2181,28 @@ fn open<'h>(
         Some(state),
         input.modules,
     )?;
+    report_resize(&mut vm)?;
     report_media_changes(&mut vm)?;
     Ok((vm, compiled))
+}
+
+/** The viewport the environment gives the page now. */
+fn viewport_of(vm: &Vm) -> (f64, f64) {
+    let environment = &vm.page.environment;
+    (environment.viewport_width, environment.viewport_height)
+}
+
+/** Fire `resize` at the window when the viewport differs from the one the last step reported. It
+runs before the media query report, as the HTML rendering steps run the resize steps first, so a
+handler already reads the new innerWidth and a media listener hears a flip after it. */
+fn report_resize(vm: &mut Vm) -> EngineResult<()> {
+    let now = viewport_of(vm);
+    match vm.page.state.viewport.replace(now) {
+        Some(previous) if previous != now => {
+            fire_lifecycle(vm, platform::Target::Window, "resize", false)
+        }
+        _ => Ok(()),
+    }
 }
 
 /** Fire `change` on the media query lists whose result the viewport flipped. A listener's failure

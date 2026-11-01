@@ -81,3 +81,29 @@ fn idle_resize_fires_the_media_query_change_listener() {
     runtime.set_viewport(NARROW, 200.0).unwrap();
     settle(&mut runtime, "after:true:true");
 }
+
+/** A page whose window resize listener writes the size it sees, before its media listener runs. */
+fn resize_page() -> Vec<u8> {
+    html(
+        "",
+        r#"<p id=result>pending</p><script>
+        let log='';
+        window.addEventListener('resize',()=>{log+='resize:'+innerWidth+' ';
+            document.getElementById('result').textContent=log;});
+        const query=matchMedia('(max-width: 656px)');
+        query.addEventListener('change',()=>{log+='media:'+query.matches;
+            document.getElementById('result').textContent=log;});
+        document.getElementById('result').textContent='before';
+        </script>"#,
+    )
+}
+
+/** An idle page hears the window resize, with the new innerWidth, before its media query change. */
+#[test]
+fn idle_resize_fires_the_window_resize_listener_before_media_changes() {
+    let fixture = Fixture::raw(resize_page());
+    let mut runtime = load(&fixture);
+    settle(&mut runtime, "before");
+    runtime.set_viewport(NARROW, 200.0).unwrap();
+    settle(&mut runtime, "resize:640 media:true");
+}

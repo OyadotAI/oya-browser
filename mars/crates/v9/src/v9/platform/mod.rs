@@ -1305,6 +1305,9 @@ pub(in crate::v9) struct PageState {
     /// MediaQueryLists that have a `change` listener, with the result their listeners last heard.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub media_lists: BTreeMap<ObjectId, bool>,
+    /// The viewport the last step reported to the page, so a step that finds another one fires `resize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<(f64, f64)>,
     /// close() prevents future owner posts while allowing the current synchronous task to finish.
     pub worker_closed: bool,
     /// Imported Script offsets retain their governed source URL for later stack traces.

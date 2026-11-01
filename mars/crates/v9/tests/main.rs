@@ -376,6 +376,7 @@ mod web_animations;
 mod webapis;
 mod wide_bigint;
 mod window_globals;
+mod window_resize;
 mod with;
 mod worker_modules;
 mod workers;
