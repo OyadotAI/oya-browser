@@ -2,7 +2,7 @@
 [workspace]
 # vendor/rustls is its own package: a patched copy of the registry crate, see vendor/rustls/MARS.md.
 exclude = ["vendor/rustls"]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
@@ -22,6 +22,7 @@ mars-eye = { path = "crates/eye" }
 mars-v9 = { path = "crates/v9" }
 mars-relay = { path = "crates/relay" }
 mars-link = { path = "crates/link" }
+mars-avif = { path = "crates/avif" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
@@ -92,4 +93,8 @@ rustls = { path = "vendor/rustls" }
 # V9's interpreter runs tests (and debug builds) optimized: unoptimized it is 10-50x slower and
 # its budget and deadline tests took most of the suite's time. Debug assertions stay on.
 [profile.dev.package.mars-v9]
+opt-level = 2
+
+# mars-avif's corruption sweeps run thousands of full decodes: over five minutes in debug, about three optimised.
+[profile.dev.package.mars-avif]
 opt-level = 2

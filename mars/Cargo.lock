@@ -514,6 +514,7 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "libc",
+ "mars-avif",
  "mars-core",
  "mars-eye",
  "mars-link",
@@ -536,6 +537,13 @@ dependencies = [
  "serde_json",
  "url",
  "woff2-patched",
+]
+
+[[package]]
+name = "mars-avif"
+version = "0.1.0"
+dependencies = [
+ "jpeg-decoder",
 ]
 
 [[package]]

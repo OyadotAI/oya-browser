@@ -1,0 +1,12 @@
+[package]
+name = "mars-avif"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# No dependencies: the HEIF container reader and the AV1 decoder are Mars's own, std only.
+[dependencies]
+
+# The JPEG of the same Airbnb picture is decoded only by a test, to check the reconstructed luma against it.
+[dev-dependencies]
+jpeg-decoder = "=0.3.2"
