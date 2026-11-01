@@ -36,6 +36,9 @@ pub(super) struct Parsed {
     /// The cross terms of that carry: y from a width percent, x from a height percent. Zero
     /// unless a rotate or skew sits before a percentage translate.
     pub cross: [f64; 2],
+    /// The z carry of the same percentages: z from a width percent, then from a height percent.
+    /// Zero unless a rotate about y or x, or a 3D function, sits before a percentage translate.
+    pub depth: [f64; 2],
 }
 
 /** The `transform` value of `none`, which parses to no transform at all. */
@@ -52,6 +55,10 @@ const PERCENT_SCALE: f64 = 100.0;
 const AFFINE_ARGS: usize = 6;
 /** Argument count of `matrix3d()`. */
 const MATRIX3D_ARGS: usize = 16;
+/** The w row of a 4x4 matrix: its entries in row 4, which a perspective function fills. */
+const PROJECTIVE_ROW: [usize; 3] = [3, 7, 11];
+/** Argument count of every function that takes exactly one argument. */
+const ONE_ARG: usize = 1;
 
 impl Parsed {
     /** Whether the matrix leaves the plane, so painting needs the 3D pass. */
@@ -73,15 +80,21 @@ pub(super) fn parse(
     if functions.len() > TRANSFORM_FUNCTIONS {
         return Err(unsupported());
     }
-    let (mut matrix, mut percent, mut cross) = (IDENTITY4, [0.0; 2], [0.0; 2]);
+    let (mut matrix, mut percent, mut cross, mut depth) = (IDENTITY4, [0.0; 2], [0.0; 2], [0.0; 2]);
     for function in functions {
         let (next, pct) = function_matrix(function, font, context)?;
-        // A percentage translation is expressed in the frame of the functions before it: its
-        // width part maps through their x column and its height part through their y column.
+        if pct != [0.0; 2] && is_projective(&matrix) {
+            // The perspective divide sits between the translation and the box: not linear.
+            return Err(unsupported());
+        }
+        // A percentage translation is expressed in the frame of the functions before it: each
+        // part maps through the prefix's matrix columns, so x, y and z all carry.
         percent[0] += matrix[0] * pct[0];
         cross[0] += matrix[1] * pct[0];
         cross[1] += matrix[4] * pct[1];
         percent[1] += matrix[5] * pct[1];
+        depth[0] += matrix[2] * pct[0];
+        depth[1] += matrix[6] * pct[1];
         matrix = multiply(&matrix, &next);
     }
     bounded(&matrix, &percent)?;
@@ -89,7 +102,13 @@ pub(super) fn parse(
         matrix,
         percent,
         cross,
+        depth,
     }))
+}
+
+/** Whether a prefix matrix has a perspective term, so its output is a projection, not affine. */
+fn is_projective(matrix: &Matrix4) -> bool {
+    PROJECTIVE_ROW.iter().any(|&index| matrix[index] != 0.0)
 }
 
 /** Every entry of the matrix and percentage must be finite and within the transform bound. */
@@ -109,12 +128,14 @@ pub(super) fn store(style: &mut ComputedStyle, parsed: Option<Parsed>) {
             style.transform_4 = None;
             style.translate_percent = [0.0; 2];
             style.translate_percent_cross = [0.0; 2];
+            style.translate_percent_depth = [0.0; 2];
         }
         Some(parsed) => {
             style.transform = Some(planar(&parsed.matrix));
             style.transform_4 = parsed.spatial().then_some(parsed.matrix);
             style.translate_percent = parsed.percent;
             style.translate_percent_cross = parsed.cross;
+            style.translate_percent_depth = parsed.depth;
         }
     }
 }
@@ -196,6 +217,10 @@ impl Arguments<'_> {
     fn count(&self) -> usize {
         self.args.len()
     }
+    /** Whether the function takes exactly one argument, as every single-axis function does. */
+    fn single(&self) -> bool {
+        self.count() == ONE_ARG
+    }
     /** Builds the named function, or refuses a name Eye does not know. */
     fn build(&self, name: &str) -> EngineResult<(Matrix4, [f64; 2])> {
         if let Some(result) = self.build_2d(name)? {
@@ -218,11 +243,11 @@ impl Arguments<'_> {
                 let ((x, px), (y, py)) = (self.length(0)?, self.optional_length(1)?);
                 (translation([x, y, FLAT_Z]), [px, py])
             }
-            "translatex" => {
+            "translatex" if self.single() => {
                 let (x, px) = self.length(0)?;
                 (translation([x, 0.0, FLAT_Z]), [px, 0.0])
             }
-            "translatey" => {
+            "translatey" if self.single() => {
                 let (y, py) = self.length(0)?;
                 (translation([0.0, y, FLAT_Z]), [0.0, py])
             }
@@ -235,9 +260,9 @@ impl Arguments<'_> {
                 };
                 (scaled([x, y, UNIT_SCALE]), [0.0; 2])
             }
-            "scalex" => (scaled([self.factor(0)?, 1.0, UNIT_SCALE]), [0.0; 2]),
-            "scaley" => (scaled([1.0, self.factor(0)?, UNIT_SCALE]), [0.0; 2]),
-            "rotate" => (rotation([0.0, 0.0, 1.0], self.radians(0)?), [0.0; 2]),
+            "scalex" if self.single() => (scaled([self.factor(0)?, 1.0, UNIT_SCALE]), [0.0; 2]),
+            "scaley" if self.single() => (scaled([1.0, self.factor(0)?, UNIT_SCALE]), [0.0; 2]),
+            "rotate" if self.single() => (rotation([0.0, 0.0, 1.0], self.radians(0)?), [0.0; 2]),
             "skew" if self.count() <= 2 => {
                 let x = tan(self.radians(0)?);
                 let y = if self.count() == 2 {
@@ -247,11 +272,11 @@ impl Arguments<'_> {
                 };
                 (from_affine([1.0, y, x, 1.0, 0.0, 0.0]), [0.0; 2])
             }
-            "skewx" => (
+            "skewx" if self.single() => (
                 from_affine([1.0, 0.0, tan(self.radians(0)?), 1.0, 0.0, 0.0]),
                 [0.0; 2],
             ),
-            "skewy" => (
+            "skewy" if self.single() => (
                 from_affine([1.0, tan(self.radians(0)?), 0.0, 1.0, 0.0, 0.0]),
                 [0.0; 2],
             ),
@@ -272,20 +297,20 @@ impl Arguments<'_> {
                 let ((x, px), (y, py)) = (self.length(0)?, self.length(1)?);
                 (translation([x, y, self.pixels(2)?]), [px, py])
             }
-            "translatez" => (translation([0.0, 0.0, self.pixels(0)?]), [0.0; 2]),
+            "translatez" if self.single() => (translation([0.0, 0.0, self.pixels(0)?]), [0.0; 2]),
             "scale3d" if self.count() == 3 => (
                 scaled([self.factor(0)?, self.factor(1)?, self.factor(2)?]),
                 [0.0; 2],
             ),
-            "scalez" => (scaled([1.0, 1.0, self.number(0)?]), [0.0; 2]),
-            "rotatex" => (rotation([1.0, 0.0, 0.0], self.radians(0)?), [0.0; 2]),
-            "rotatey" => (rotation([0.0, 1.0, 0.0], self.radians(0)?), [0.0; 2]),
-            "rotatez" => (rotation([0.0, 0.0, 1.0], self.radians(0)?), [0.0; 2]),
+            "scalez" if self.single() => (scaled([1.0, 1.0, self.factor(0)?]), [0.0; 2]),
+            "rotatex" if self.single() => (rotation([1.0, 0.0, 0.0], self.radians(0)?), [0.0; 2]),
+            "rotatey" if self.single() => (rotation([0.0, 1.0, 0.0], self.radians(0)?), [0.0; 2]),
+            "rotatez" if self.single() => (rotation([0.0, 0.0, 1.0], self.radians(0)?), [0.0; 2]),
             "rotate3d" if self.count() == 4 => {
                 let axis = normalized([self.number(0)?, self.number(1)?, self.number(2)?]);
                 (rotation(axis, self.radians(3)?), [0.0; 2])
             }
-            "perspective" => (self.perspective()?, [0.0; 2]),
+            "perspective" if self.single() => (self.perspective()?, [0.0; 2]),
             _ => return Ok(None),
         }))
     }
@@ -297,7 +322,8 @@ impl Arguments<'_> {
             Ok((0.0, 0.0))
         }
     }
-    /** `perspective(d)`: `none` and a zero distance are the identity, a negative one is refused. */
+    /** `perspective(d)`: `none` is the identity, a negative distance is refused, and a distance
+    under 1px renders as 1px (`perspective()` clamps it, as Blink's `UsedPerspective` does). */
     fn perspective(&self) -> EngineResult<Matrix4> {
         if self.args.first().is_some_and(|arg| arg.trim() == NONE) {
             return Ok(IDENTITY4);
@@ -306,11 +332,7 @@ impl Arguments<'_> {
         if distance < 0.0 {
             return Err(unsupported());
         }
-        Ok(if distance == 0.0 {
-            IDENTITY4
-        } else {
-            perspective(distance)
-        })
+        Ok(perspective(distance))
     }
 }
 

@@ -456,20 +456,22 @@ fn side_tokens(value: &str, styles: &[&str]) -> Option<[String; 3]> {
  * here keeps the reset in declaration order, where a longhand written earlier would survive it.
  */
 fn text_decoration(value: &str) -> Option<Vec<(String, String)>> {
-    let (mut lines, mut style, mut thickness) = (Vec::new(), None, None);
-    for token in tokens(value) {
+    let words = tokens(value);
+    let (mut lines, mut style, mut thickness, mut colored) = (Vec::new(), None, None, false);
+    for &token in &words {
         match token {
-            "underline" | "overline" | "line-through" | "blink" | "none" => lines.push(token),
+            "none" if words.len() == 1 => {}
+            "underline" | "overline" | "line-through" | "blink" if !lines.contains(&token) => {
+                lines.push(token)
+            }
             "solid" | "double" | "dotted" | "dashed" | "wavy" if style.is_none() => {
                 style = Some(token)
             }
-            "auto" | "from-font" => thickness = thickness.or(Some(token)),
-            _ if thickness.is_none()
-                && token.starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c)) =>
-            {
-                thickness = Some(token);
-            }
-            _ => {}
+            "auto" | "from-font" if thickness.is_none() => thickness = Some(token),
+            _ if thickness.is_none() && is_length(token) => thickness = Some(token),
+            _ if !colored && is_color(token) => colored = true,
+            // Blink drops the declaration on any other word, or a repeated part.
+            _ => return None,
         }
     }
     let line = if lines.is_empty() {
@@ -489,6 +491,17 @@ fn text_decoration(value: &str) -> Option<Vec<(String, String)>> {
         ),
     ])
 }
+/** Whether a `text-decoration` word is a thickness length, which starts like a number. */
+fn is_length(token: &str) -> bool {
+    token.starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c))
+}
+
+/** Whether a `text-decoration` word is a color: `currentcolor` or one Eye parses. The color itself
+is not kept, since no decoration-color longhand exists yet. */
+fn is_color(token: &str) -> bool {
+    token == "currentcolor" || super::colors::painter_rgba(token).is_some()
+}
+
 /** The three longhands of one side. */
 fn side_parts(prefix: &str, [width, style, color]: &[String; 3]) -> Vec<(String, String)> {
     vec![

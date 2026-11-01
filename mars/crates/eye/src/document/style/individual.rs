@@ -115,10 +115,16 @@ pub(super) fn compose(style: &mut ComputedStyle, parts: &[Option<Parsed>]) {
     let total = multiply(&composed, &own);
     style.transform = Some(planar(&total));
     style.transform_4 = (!is_planar(&total)).then_some(total);
-    let (added, cross) = parts
+    let (added, cross, depth) = parts
         .first()
         .and_then(Option::as_ref)
-        .map_or(([0.0; 2], [0.0; 2]), |part| (part.percent, part.cross));
+        .map_or(([0.0; 2], [0.0; 2], [0.0; 2]), |part| {
+            (part.percent, part.cross, part.depth)
+        });
+    style.translate_percent_depth = [
+        style.translate_percent_depth[0] + depth[0],
+        style.translate_percent_depth[1] + depth[1],
+    ];
     style.translate_percent = [
         style.translate_percent[0] + added[0],
         style.translate_percent[1] + added[1],

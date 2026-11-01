@@ -52,10 +52,15 @@ pub fn is_planar(m: &Matrix4) -> bool {
         && (m[15] - 1.0).abs() <= PLANAR_EPSILON
 }
 
-/** `perspective(d)`: the matrix that divides x and y by `1 - z / d` (CSS Transforms 2). */
+/** The shortest perspective distance rendered, in px. CSS Transforms 2 treats smaller distances as
+this one; Chromium's `UsedPerspective` is `max(1, d)` (ui/gfx and blink perspective_transform_operation). */
+const MIN_PERSPECTIVE: f64 = 1.0;
+
+/** `perspective(d)`: the matrix that divides x and y by `1 - z / d` (CSS Transforms 2). A distance
+under `MIN_PERSPECTIVE` is clamped to it, so zero no longer divides by zero or drops the perspective. */
 pub fn perspective(distance: f64) -> Matrix4 {
     let mut m = IDENTITY4;
-    m[PERSPECTIVE_INDEX] = -1.0 / distance;
+    m[PERSPECTIVE_INDEX] = -1.0 / distance.max(MIN_PERSPECTIVE);
     m
 }
 

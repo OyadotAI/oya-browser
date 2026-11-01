@@ -117,3 +117,70 @@ fn thin_thickness_is_raised_to_the_minimum_line() {
         Some(0.5)
     );
 }
+
+/** `text-decoration-style` and `text-decoration-thickness` are not inherited (css-text-decor), so a
+child of a wavy, thick parent paints its own decoration as solid at the font's thickness. The
+underline offset is inherited and still carries to the child. */
+#[test]
+fn decoration_style_and_thickness_do_not_inherit() {
+    let (document, _) = layout(
+        "<p id=p><span id=c>c</span></p>",
+        "#p{text-decoration:underline wavy 4px;text-underline-offset:3px}\
+         #c{text-decoration:underline}",
+    );
+    let child = &document
+        .nodes
+        .iter()
+        .find(|node| node.html_id == "c")
+        .unwrap()
+        .style;
+    assert_eq!(child.decoration_style, DecorationStyle::Solid);
+    assert_eq!(child.decoration_thickness, None);
+    assert_eq!(child.underline_offset, Some(3.0));
+}
+
+/** The `text-decoration` shorthand drops on an unknown word or a repeated part, so the earlier
+value of the same declaration block survives the dropped one (as Blink's parser does). */
+#[test]
+fn text_decoration_shorthand_drops_unknown_or_repeated_words() {
+    for value in [
+        "underline bogus",
+        "underline underline",
+        "wavy dotted",
+        "1px 2px",
+        "none underline",
+        "auto 2px",
+    ] {
+        let (document, _) = layout(
+            "<p id=a>a</p>",
+            &format!("#a{{text-decoration:underline wavy 4px;text-decoration:{value}}}"),
+        );
+        let style = &document
+            .nodes
+            .iter()
+            .find(|node| node.html_id == "a")
+            .unwrap()
+            .style;
+        assert!(style.underline, "{value}");
+        assert_eq!(style.decoration_style, DecorationStyle::Wavy, "{value}");
+        assert_eq!(style.decoration_thickness, Some(4.0), "{value}");
+    }
+}
+
+/** A color is a valid word of the shorthand beside its lines, style and thickness. */
+#[test]
+fn text_decoration_shorthand_accepts_a_color_beside_its_words() {
+    let (document, _) = layout(
+        "<p id=a>a</p>",
+        "#a{text-decoration:underline wavy 2px red}",
+    );
+    let style = &document
+        .nodes
+        .iter()
+        .find(|node| node.html_id == "a")
+        .unwrap()
+        .style;
+    assert!(style.underline);
+    assert_eq!(style.decoration_style, DecorationStyle::Wavy);
+    assert_eq!(style.decoration_thickness, Some(2.0));
+}

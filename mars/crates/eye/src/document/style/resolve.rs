@@ -44,8 +44,6 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         text_decoration_none: parent.text_decoration_none,
         underline: parent.underline,
         strikethrough: parent.strikethrough,
-        decoration_style: parent.decoration_style,
-        decoration_thickness: parent.decoration_thickness,
         underline_offset: parent.underline_offset,
         list_style: parent.list_style,
         list_marker: parent.list_marker.clone(),
@@ -94,8 +92,6 @@ fn inherits(key: &str) -> bool {
             "caption-side",
             "pointer-events",
             "text-box-edge",
-            "text-decoration-style",
-            "text-decoration-thickness",
             "text-underline-offset",
         ]
         .contains(&key)
@@ -435,6 +431,7 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.transform_4 = source.transform_4;
             style.translate_percent = source.translate_percent;
             style.translate_percent_cross = source.translate_percent_cross;
+            style.translate_percent_depth = source.translate_percent_depth;
             style.transform_animation_excluded = source.transform_animation_excluded;
             style.rotation_radians = source.rotation_radians;
             style.scale_factors = source.scale_factors;

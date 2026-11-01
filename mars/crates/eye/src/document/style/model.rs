@@ -666,10 +666,10 @@ pub struct ComputedStyle {
     /// Inherited: `text-decoration` includes `line-through`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
-    /// Inherited: `text-decoration-style`, the shape the decoration lines paint.
+    /// Not inherited: `text-decoration-style`, the shape the decoration lines paint.
     #[serde(skip_serializing_if = "default")]
     pub decoration_style: DecorationStyle,
-    /// Inherited: `text-decoration-thickness` in px; None is `auto` or `from-font`.
+    /// Not inherited: `text-decoration-thickness` in px; None is `auto` or `from-font`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decoration_thickness: Option<f64>,
     /// Inherited: `text-underline-offset` in px, moving the underline away from the text; None is `auto`.
@@ -707,6 +707,9 @@ pub struct ComputedStyle {
     /// x from height %]`. Zero for the common centering translate.
     #[serde(default, skip_serializing_if = "default")]
     pub translate_percent_cross: [f64; 2],
+    /// The z part of a percentage translation after a 3D function: `[from width %, from height %]`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub translate_percent_depth: [f64; 2],
     /// `transform-origin` as [x px, x percent, y px, y percent] of the border box; None is
     /// the initial center.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1098,6 +1101,7 @@ impl Default for ComputedStyle {
             radius_y: [None; 4],
             translate_percent: [0.0; 2],
             translate_percent_cross: [0.0; 2],
+            translate_percent_depth: [0.0; 2],
             transform_origin: None,
             width_offset: 0.0,
             width_stretch: false,

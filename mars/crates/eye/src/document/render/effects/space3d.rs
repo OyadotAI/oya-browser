@@ -266,6 +266,8 @@ fn own_matrix(style: &ComputedStyle, own: Option<&DisplayItem>) -> Matrix4 {
     let [cross_y, cross_x] = style.translate_percent_cross;
     moved[12] += (w * style.translate_percent[0] + h * cross_x) / PERCENT;
     moved[13] += (w * cross_y + h * style.translate_percent[1]) / PERCENT;
+    let [depth_w, depth_h] = style.translate_percent_depth;
+    moved[14] += (w * depth_w + h * depth_h) / PERCENT;
     let origin = origin_point(
         style
             .transform_origin

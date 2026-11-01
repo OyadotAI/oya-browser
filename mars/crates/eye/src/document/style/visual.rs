@@ -376,8 +376,6 @@ fn tab_size(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64
         .then_some((used, true))
         .ok_or_else(unsupported)
 }
-/** `none | [capitalize | uppercase | lowercase] || full-width || full-size-kana` as the case
-mapping and the full-width and full-size-kana flags; a keyword twice is invalid. */
 /** The keywords `transform-box` accepts; every one paints against the border box Eye lays out. */
 const TRANSFORM_BOXES: [&str; 5] = [
     "border-box",
@@ -387,8 +385,9 @@ const TRANSFORM_BOXES: [&str; 5] = [
     "view-box",
 ];
 
-/** `perspective`: `none` or a non-negative length in px. Zero means no perspective, as Chrome
-treats a zero distance as the identity; a percentage has no meaning here and is refused. */
+/** `perspective`: `none` or a non-negative length in px. Zero is a perspective too: Blink's
+`HasPerspective` is `Perspective() >= 0`, and it renders as the 1px minimum. A percentage has no
+meaning here and is refused. */
 fn perspective(value: &str, font: f64, context: RenderContext) -> EngineResult<Option<f64>> {
     if value.trim() == "none" {
         return Ok(None);
@@ -397,9 +396,11 @@ fn perspective(value: &str, font: f64, context: RenderContext) -> EngineResult<O
     if dim.percent != 0.0 || !dim.px.is_finite() || dim.px < 0.0 {
         return Err(unsupported());
     }
-    Ok((dim.px > 0.0).then_some(dim.px.min(CSS_MAX_SCALAR)))
+    Ok(Some(dim.px.min(CSS_MAX_SCALAR)))
 }
 
+/** `none | [capitalize | uppercase | lowercase] || full-width || full-size-kana` as the case
+mapping and the full-width and full-size-kana flags; a keyword twice is invalid. */
 fn text_transform(value: &str) -> EngineResult<(TextTransform, bool, bool)> {
     if value == "none" {
         return Ok((TextTransform::None, false, false));

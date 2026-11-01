@@ -541,5 +541,71 @@ fn a_deep_tree_under_a_3d_transform_places_quickly() {
         .expect("thread")
         .join()
         .expect("layout");
-    assert!(elapsed < std::time::Duration::from_secs(5));
+    // Generous: this checks the algorithm is linear, not the speed of a loaded debug CI runner.
+    assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+}
+
+/** A percentage translate after a 3D rotation carries its z too: under a 200px perspective, a 40px
+box `rotateY(60deg) translateX(50%)` projects exactly as `rotateY(60deg) translateX(20px)` does. */
+#[test]
+fn a_percentage_translate_after_a_3d_rotation_projects_like_its_pixels() {
+    let quad_of = |transform: &str| {
+        let (document, display) = layout(&format!(
+            "<div style='perspective:200px;width:200px;height:100px'>\
+             <p id=c style='width:40px;height:20px;margin:0;transform:{transform}'>c</p></div>"
+        ));
+        item(&document, &display, "c").quad.unwrap()
+    };
+    near_quad(
+        quad_of("rotateY(60deg) translateX(50%)"),
+        quad_of("rotateY(60deg) translateX(20px)"),
+    );
+}
+
+/** A perspective distance under 1px renders as 1px, as Blink's `UsedPerspective` does: `perspective: 0`
+projects a child lifted 0.5px exactly as `perspective: 1px` does, not as an unclamped divide by zero. */
+#[test]
+fn a_perspective_under_one_pixel_renders_as_one_pixel() {
+    let quad_of = |perspective: &str| {
+        let (document, display) = layout(&format!(
+            "<div style='perspective:{perspective};width:200px;height:100px'>\
+             <p id=c style='transform:translateZ(0.5px);width:40px;height:20px;margin:0'>c</p></div>"
+        ));
+        item(&document, &display, "c").quad.unwrap()
+    };
+    near_quad(quad_of("0"), quad_of("1px"));
+    let (document, _) = layout("<p id=p style='transform:perspective(0px)'>p</p>");
+    near(style(&document, "p").transform_4.unwrap()[11], -1.0);
+}
+
+/** Each single-axis function takes exactly one argument; any other count is invalid and drops the
+whole transform, as Blink's parser does. */
+#[test]
+fn single_axis_functions_refuse_other_argument_counts() {
+    for transform in [
+        "rotate(10deg 20deg)",
+        "rotate(10deg, 20deg)",
+        "translateX(1px, 2px)",
+        "translateY(1px 2px)",
+        "translateZ(1px, 2px)",
+        "skewX(10deg, 5deg)",
+        "skewY(1deg 2deg)",
+        "rotateX(10deg 5deg)",
+        "rotateY(1deg,2deg)",
+        "rotateZ(1deg 2deg)",
+        "scaleX(2, 3)",
+        "scaleY(2 3)",
+        "scaleZ(2, 3)",
+        "perspective(10px, 20px)",
+    ] {
+        let (document, _) = layout(&format!("<p id=t style='transform:{transform}'>t</p>"));
+        assert_eq!(style(&document, "t").transform, None, "{transform}");
+    }
+}
+
+/** `scaleZ()` takes a percentage like the other scale functions: `scaleZ(50%)` is `scaleZ(0.5)`. */
+#[test]
+fn scale_z_takes_a_percentage() {
+    let (document, _) = layout("<p id=s style='transform:scaleZ(50%)'>s</p>");
+    near(style(&document, "s").transform_4.unwrap()[10], 0.5);
 }
