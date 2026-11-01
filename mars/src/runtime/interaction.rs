@@ -409,9 +409,10 @@ impl Runtime {
             Err(error) if stops_operation(&error) => return Err(error),
             Err(_) => return Ok(None),
         };
+        // Read the verdict now: every later step of the settle overwrites submit_allowed.
+        let allowed = page.scripting.submit_allowed.take() == Some(form);
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
         let changed = self.settle_after_input(&mut page, deadline)? || step.changed;
-        let allowed = page.scripting.submit_allowed.take() == Some(form);
         page.scripting.wake();
         let result = if changed {
             self.finish_mutation(page)?

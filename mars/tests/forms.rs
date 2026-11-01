@@ -290,6 +290,33 @@ fn validation_html_is_rendered_and_post_history_never_replays() {
     );
     assert_eq!(fixture.records.lock().unwrap().len(), 2);
 }
+/** A submission the page allowed goes ahead even when the timers its settle runs come due after the submit event. */
+#[test]
+fn an_allowed_submit_survives_timers_that_run_after_it() {
+    let fixture = Fixture::start(|r| {
+        if r.starts_with("POST ") {
+            reply("303 See Other", "text/html", "Location: /done\r\n", "")
+        } else if r.starts_with("GET /done ") {
+            reply("200 OK", "text/html", "", "<h1>Done</h1>")
+        } else {
+            reply(
+                "200 OK",
+                "text/html",
+                "",
+                "<form method=post><input name=x value=one><button>Submit</button></form><script>setInterval(function(){ document.title = 'tick' }, 0)</script>",
+            )
+        }
+    });
+    let mut runtime = fixture.runtime();
+    let page = call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let result = call(&mut runtime, "page.click", target(&page, "Submit")).unwrap();
+    assert!(
+        result["url"].as_str().unwrap().ends_with("/done"),
+        "{result}"
+    );
+    let records = fixture.records.lock().unwrap();
+    assert_eq!(records.iter().filter(|r| r.starts_with("POST ")).count(), 1);
+}
 /** A protected GET keeps real form semantics while every browser URL projection drops its query. */
 #[test]
 fn password_get_redirects_redact_urls_and_acknowledgments() {
