@@ -14,7 +14,7 @@ use crate::document::{
 /** No upper bound, Blink's `LayoutUnit::Max()`. */
 const UNBOUNDED: f64 = f64::INFINITY;
 /** The default natural size of a replaced box with neither natural size nor ratio (CSS 2.1 10.3.2). */
-const DEFAULT_NATURAL: (f64, f64) = (300.0, 150.0);
+pub(super) const DEFAULT_NATURAL: (f64, f64) = (300.0, 150.0);
 
 /** Which lengths a recursive pass ignores, Blink's `ReplacedSizeMode`. */
 #[derive(Clone, Copy, PartialEq, Eq)]

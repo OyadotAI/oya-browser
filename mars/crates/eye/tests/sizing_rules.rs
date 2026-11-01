@@ -198,6 +198,28 @@ fn svg_image_natural_width_comes_from_its_markup() {
     assert_eq!((item.width, item.height), (100.0, 100.0));
 }
 
+/** A drawing an img shows with only a viewBox has a ratio and no size: it lays out as the default
+ * object size, 300 by 150, contained by that ratio, whether it is wider or taller than the box. */
+#[test]
+fn svg_image_with_only_a_view_box_takes_the_default_object_size() {
+    for (view_box, expected) in [
+        ("0 0 100 50", (300.0, 150.0)),
+        ("0 0 50 100", (75.0, 150.0)),
+    ] {
+        let mut document = parse("<img id=t>").unwrap();
+        for node in document.nodes.iter_mut().filter(|n| n.tag == "img") {
+            node.image_src = Some(format!(
+                "data:image/svg+xml,<svg viewBox=\"{view_box}\"></svg>"
+            ));
+            node.image_size = Some((100, 50));
+        }
+        let document = compute_styles(&document, &[]).unwrap();
+        let display = render(&document, 800.0).unwrap();
+        let item = display.items.iter().find(|i| i.tag == "img").unwrap();
+        assert_eq!((item.width, item.height), expected, "viewBox {view_box}");
+    }
+}
+
 /** `width: stretch` fills the layout opportunity beside a float, not the whole container. */
 #[test]
 fn stretch_width_fills_the_room_beside_floats() {

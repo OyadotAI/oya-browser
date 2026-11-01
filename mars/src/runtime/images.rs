@@ -882,10 +882,15 @@ impl super::supervisor::Runtime {
                     node.image_size = Some(css_size(size, density));
                     images.insert(node.local_id, asset);
                 }
-                Some((Fetched::Vector(markup, size), _, _)) => {
+                Some((Fetched::Vector(markup, size), _, selected)) => {
                     node.image_ratio_free = !vector_ratio(&markup);
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
+                    // Stored like a raster so the script lifecycle reuses this drawing; without
+                    // it the lifecycle asks again, against a budget the stored images have filled.
+                    let mut asset = Fetched::Vector(markup, size).into_asset();
+                    asset.image_source = selected;
+                    images.insert(node.local_id, asset);
                 }
                 None => node.text = node.image_alt.clone(),
             }
@@ -1320,11 +1325,20 @@ fn serialize(document: &Document, node: &Node, out: &mut String) {
 /** Paint properties Eye's drawing reads from attributes; illustrators often set them in `style`. */
 const PRESENTATION: [&str; 4] = ["fill", "stroke", "stroke-width", "stroke-linejoin"];
 
+/// Whether an attribute must be dropped from a drawing because it would reach outside it: event
+/// handlers run script, and an `href` that is not a fragment names another document. Dropping
+/// them keeps an svg image linkless and script-free, as the spec's static image mode requires.
+fn leaves_drawing(name: &str, value: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("on") || (name.ends_with("href") && !value.trim_start().starts_with('#'))
+}
+
 /// A drawing element's attributes with its `style` paint declarations lifted into presentation
 /// attributes, which they override as in CSS. Without this an illustration that writes
 /// `style="fill: #fbf1e2"` (LinkedIn's hero) paints every shape in the default black.
 fn presentation(node: &Node) -> BTreeMap<String, String> {
     let mut attributes = node.attributes.clone();
+    attributes.retain(|name, value| !leaves_drawing(name, value));
     let style = attributes.get("style").cloned().unwrap_or_default();
     for declaration in style.split(';') {
         let Some((name, value)) = declaration.split_once(':') else {
@@ -1652,6 +1666,29 @@ mod tests {
         assert!(markup.contains("<path d=\"M0 0h20v10z\" fill=\"#f00\"></path>"));
         assert!(!markup.contains("linearGradient"));
         assert!(svg_url(&markup).starts_with(SVG_DATA));
+    }
+
+    /** An svg image runs no script, loads nothing and follows no link: script, foreign content, links
+     * and external references do not survive the reduction to a drawing. */
+    #[test]
+    fn svg_image_drops_script_links_and_external_references() {
+        let text = "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='4' height='4'><script>alert(1)</script><foreignObject><iframe src='http://x'/></foreignObject><a href='http://evil/'><path d='M0 0h4v4z'/></a><image href='http://x/i.png' width='4' height='4'/><use xlink:href='http://x/s.svg#a'/><path d='M0 0h4v4z' onload='alert(2)'/></svg>";
+        let Ok(Fetched::Vector(markup, _)) = vector("image/svg+xml", text) else {
+            panic!("expected a drawing");
+        };
+        for banned in [
+            "script",
+            "foreignObject",
+            "iframe",
+            "<a",
+            "<image",
+            "x/",
+            "evil",
+            "onload",
+            "alert",
+        ] {
+            assert!(!markup.contains(banned), "{banned} survived in {markup}");
+        }
     }
 
     /** data: images decode base64 bitmaps and percent-encoded drawings locally. */
