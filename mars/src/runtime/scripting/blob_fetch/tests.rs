@@ -120,8 +120,10 @@ fn blob_worker_uses_its_inherited_connection_policy() {
 /** Native queues account snapshots independently and release old captures before admitting replacements. */
 #[test]
 fn cancelled_queued_snapshots_release_their_budget_before_new_admission() {
+    // Sixteen snapshots of a sixteenth of the budget each overflow it by their URLs and types.
     let mut capture = request();
-    capture.blob_source.as_mut().unwrap().bytes = Arc::new(vec![0; VM_RESPONSE_BYTES]);
+    capture.blob_source.as_mut().unwrap().bytes =
+        Arc::new(vec![0; super::super::requests::SNAPSHOT_BYTES / 16]);
     let mut queued: Vec<_> = (1..=15)
         .map(|id| {
             let mut next = capture.clone();

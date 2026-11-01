@@ -305,6 +305,10 @@ pub fn process_exists(pid: u32) -> bool {
 /** Parent-only termination may take one bounded engine operation before pipe EOF. */
 #[cfg(unix)]
 pub fn assert_gone(pids: &[u32]) {
+    // An engine running inside this process reports this process's pid; it retires with its
+    // runtime's thread, not as a process, so only engines in their own processes are awaited.
+    let own = std::process::id();
+    let pids: Vec<u32> = pids.iter().copied().filter(|pid| *pid != own).collect();
     let deadline = Instant::now() + COMPLETION;
     while pids.iter().any(|pid| process_exists(*pid)) {
         assert!(

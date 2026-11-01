@@ -74,6 +74,17 @@ name = "failures"
 path = "tests/failures.rs"
 required-features = ["test-support"]
 
+# These drive `mars agent --fixture-origin`, which only test builds accept.
+[[test]]
+name = "limits"
+path = "tests/limits.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "runtime"
+path = "tests/runtime.rs"
+required-features = ["test-support"]
+
 [patch.crates-io]
 # Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
 rustls = { path = "vendor/rustls" }

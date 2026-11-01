@@ -54,6 +54,9 @@ fn launch() -> EngineResult<()> {
     if arguments[0] == "desktop" {
         return mars::desktop::run(mars::desktop::Options::parse(&arguments[1..])?);
     }
+    if arguments[0] == "agent" && arguments.len() > 1 {
+        return fixture_agent(&arguments[1..]);
+    }
     if arguments.len() != 1 {
         return Err(usage());
     }
@@ -66,6 +69,29 @@ fn launch() -> EngineResult<()> {
     let executable = std::env::current_exe().map_err(|_| usage())?;
     let mut runtime = Runtime::start(EnginePrograms::same(&executable))?;
     handler(&mut runtime)
+}
+
+/** `mars agent --fixture-origin ORIGIN`: the headless agent with one loopback test fixture
+granted, so integration tests drive the real executable against a local server. Test builds
+only; anything else is a usage error. */
+fn fixture_agent(arguments: &[String]) -> EngineResult<()> {
+    #[cfg(feature = "test-support")]
+    if let [flag, origin] = arguments
+        && flag == "--fixture-origin"
+        && let Some(origin) = mars::desktop::fixture_origin(origin)
+    {
+        let executable = std::env::current_exe().map_err(|_| usage())?;
+        let mut runtime = Runtime::start(EnginePrograms::same(&executable))?;
+        runtime.enable_web();
+        runtime.grant_fixture_origin(origin);
+        return run_agent(
+            &mut runtime,
+            &mut BufReader::new(io::stdin().lock()),
+            &mut io::stdout().lock(),
+        );
+    }
+    let _ = arguments;
+    Err(usage())
 }
 
 /** Older macOS versions pass a process serial number to apps started from Finder. */

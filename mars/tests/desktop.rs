@@ -2067,7 +2067,11 @@ fn window_cancellation_reaps_engines_during_network_wait() {
     let started = Instant::now();
     cancel.store(true, Ordering::Relaxed);
     assert!(worker.join().unwrap().is_err());
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
     support::assert_gone(&pids);
 }
 
@@ -2093,11 +2097,20 @@ fn repeated_navigation_stop_retires_only_the_waiting_service() {
     call(&mut runtime, "page.navigate", json!({"url":fast.url}), 1).unwrap();
     let committed = runtime.snapshot().inspection["page_id"].clone();
     for slow in fixtures.drain(..) {
-        let before = runtime
+        let instances = |runtime: &Runtime| {
+            runtime
+                .service_instances()
+                .into_iter()
+                .map(|(name, instance)| (name.to_owned(), instance))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = instances(&runtime);
+        let network_pid = runtime
             .process_ids()
             .into_iter()
-            .map(|(name, pid)| (name.to_owned(), pid))
-            .collect::<std::collections::BTreeMap<_, _>>();
+            .find(|(name, _)| *name == "network")
+            .map(|(_, pid)| pid)
+            .unwrap();
         let permit = authority
             .lock()
             .unwrap()
@@ -2129,17 +2142,17 @@ fn repeated_navigation_stop_retires_only_the_waiting_service() {
         let (returned, result) = worker.join().unwrap();
         runtime = returned;
         assert_eq!(result.unwrap_err().code, "control_denied");
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
         assert_eq!(runtime.snapshot().inspection["page_id"], committed);
-        let after = runtime
-            .process_ids()
-            .into_iter()
-            .map(|(name, pid)| (name.to_owned(), pid))
-            .collect::<std::collections::BTreeMap<_, _>>();
+        let after = instances(&runtime);
         assert_ne!(before["network"], after["network"]);
         assert_eq!(before["document"], after["document"]);
         assert_eq!(before["v9"], after["v9"]);
-        support::assert_gone(&[before["network"]]);
+        support::assert_gone(&[network_pid]);
     }
     let epoch = authority
         .lock()

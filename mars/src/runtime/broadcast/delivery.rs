@@ -114,14 +114,17 @@ impl Runtime {
                 .expect("known frame");
             let child = frame.page.as_mut().expect("scripted frame");
             let viewport = self.render_context;
+            let framed = self.framed;
             let scroll = self.scroll_y;
             self.render_context.width = dimensions.0;
             self.render_context.height = dimensions.1;
+            self.framed = true;
             self.scroll_y = child.scripting.scroll_y.unwrap_or(0.0);
             let partition = self.frame_partition.replace(child.top_level_url.clone());
             let result = self.broadcast_in_page(child, identity, event);
             self.frame_partition = partition;
             self.render_context = viewport;
+            self.framed = framed;
             self.scroll_y = scroll;
             if let Some(changed) = result? {
                 if changed {

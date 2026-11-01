@@ -34,6 +34,9 @@ pub struct EnginePrograms {
     pub document: PathBuf,
     /// V9 service executable.
     pub v9: PathBuf,
+    /// Run every engine as its own child process, as `MARS_PROCESS_ISOLATION` does for the
+    /// whole process: where an engine crash must stay an engine crash (crash-recovery tests).
+    pub isolated: bool,
 }
 
 impl EnginePrograms {
@@ -43,7 +46,19 @@ impl EnginePrograms {
             network: executable.into(),
             document: executable.into(),
             v9: executable.into(),
+            isolated: false,
         }
+    }
+    /** The same programs, each engine in its own child process. */
+    pub fn isolated(mut self) -> Self {
+        self.isolated = true;
+        self
+    }
+    /** Whether one engine runs a different program than the others: a test's fault-injecting
+    service. In-process engines run this binary's own code and cannot honor it, so every
+    engine then runs as a child process. */
+    pub(super) fn substituted(&self) -> bool {
+        self.network != self.document || self.document != self.v9
     }
 }
 
@@ -75,6 +90,10 @@ pub struct Runtime {
     pub(super) history_cursor: Option<usize>,
     /** Canonical point viewport is shared by display and inspection. */
     pub(super) render_context: crate::document::RenderContext,
+    /// `render_context` is a frame's content box, not the window: frame pages are validated,
+    /// styled and laid out under frame bounds, which admit viewports smaller than any window.
+    /// Set wherever a frame's page swaps its viewport in, and restored with it.
+    pub(super) framed: bool,
     /** Scrolling is presentation state, not a separate page. */
     pub(super) scroll_y: f64,
     /** Session secrets are never part of public page or desktop snapshots. */
@@ -552,6 +571,13 @@ impl Runtime {
         Self::start_cancel(programs, Arc::new(AtomicBool::new(false)))
     }
 
+    /** Grants one loopback test fixture origin (see `desktop::fixture_origin`) on top of the
+    public web. Test builds only. */
+    #[cfg(feature = "test-support")]
+    pub fn grant_fixture_origin(&mut self, origin: String) {
+        self.web_origins.get_or_insert_with(Vec::new).push(origin);
+    }
+
     /** Enables web egress for public HTTP/HTTPS destinations. */
     pub fn enable_web(&mut self) {
         if self.web_origins.is_none() {
@@ -577,6 +603,7 @@ impl Runtime {
             history: Vec::new(),
             history_cursor: None,
             render_context: crate::document::RenderContext::default(),
+            framed: false,
             scroll_y: 0.0,
             cookies: Default::default(),
             profile_store: None,
@@ -610,7 +637,7 @@ impl Runtime {
             next_broadcast_sequence: 0,
             provisional: None,
         };
-        let isolate = process_isolation_enabled();
+        let isolate = process_isolation_enabled() || programs.isolated || programs.substituted();
         for (name, executable) in [
             ("network", programs.network),
             ("document", programs.document),
@@ -1114,6 +1141,15 @@ impl Runtime {
             .collect()
     }
 
+    /** Each service's start number: changes when the service is replaced, in or out of process,
+    where a pid stays the host's for an in-process service. */
+    pub fn service_instances(&self) -> Vec<(&str, u64)> {
+        self.services
+            .iter()
+            .map(|service| (service.name, service.instance))
+            .collect()
+    }
+
     /// Closing a local owner is idempotent and reaps every child.
     pub fn stop(&mut self) -> bool {
         if self.session_dirty {
@@ -1157,6 +1193,17 @@ pub(super) struct Service {
     /** Tells an in-process engine thread to exit even while a host callback (V9's layout host)
     still holds a sender to it, which would otherwise keep its channel open forever. */
     stop: Arc<AtomicBool>,
+    /** This start of the service, unique in the process (see `Runtime::service_instances`). */
+    instance: u64,
+}
+
+/** Numbers each service start, so a replaced in-process service, which keeps the host's pid,
+still reads as replaced. */
+static SERVICE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/** The next service start's number. */
+fn next_instance() -> u64 {
+    SERVICE_INSTANCES.fetch_add(1, Ordering::Relaxed)
 }
 
 /** Whether process isolation (separate child processes) is explicitly requested. */
@@ -1186,6 +1233,7 @@ impl Service {
             replies: rep_rx,
             worker: Some(worker),
             sequence: 0,
+            instance: next_instance(),
             stop,
         })
     }
@@ -1231,6 +1279,7 @@ impl Service {
             replies: receiver,
             worker: Some(worker),
             sequence: 0,
+            instance: next_instance(),
             stop: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -1297,8 +1346,13 @@ impl Service {
             .map_err(|_| EngineError::service(self.name, false))?;
         let mut callback = 0_u32;
         let mut imported_bytes = 0_usize;
+        // Revoked while V9 waited on an import: every later import is refused and the call runs
+        // out on its own, so the engine, and the committed page's script state it holds, stays.
+        let mut abandoned = false;
         let reply = loop {
-            cancellation.check()?;
+            if !abandoned {
+                cancellation.check()?;
+            }
             if self.cancel.load(Ordering::Relaxed) {
                 return Err(EngineError::service(self.name, false));
             }
@@ -1309,16 +1363,25 @@ impl Service {
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
                 Ok(reply) => {
-                    cancellation.check()?;
+                    if !abandoned {
+                        cancellation.check()?;
+                    }
                     let reply = reply?;
                     if let Some(load) = &mut imports
                         && let Some(request) = super::worker_io::request(&reply, &id, callback + 1)
                             .map_err(|_| EngineError::service(self.name, false))?
                     {
                         callback += 1;
-                        cancellation.check()?;
-                        let mut source = load(&request.url, deadline);
-                        cancellation.check()?;
+                        abandoned |= cancellation.check().is_err();
+                        let mut source = if abandoned {
+                            Err(super::authority::denied())
+                        } else {
+                            load(&request.url, deadline)
+                        };
+                        if !abandoned && cancellation.check().is_err() {
+                            abandoned = true;
+                            source = Err(super::authority::denied());
+                        }
                         if let Ok(Some(text)) = &source {
                             imported_bytes = imported_bytes.saturating_add(text.len());
                             if text.len() > crate::constants::SCRIPT_BYTES
@@ -1337,6 +1400,9 @@ impl Service {
                             .try_send(Inbound::Frame(answer))
                             .map_err(|_| EngineError::service(self.name, false))?;
                         continue;
+                    }
+                    if abandoned {
+                        return Err(super::authority::denied());
                     }
                     break reply;
                 }
@@ -1400,15 +1466,22 @@ struct Mismatch;
 type ImportLoader<'a> = dyn FnMut(&str, Instant) -> EngineResult<Option<String>> + 'a;
 
 impl Drop for Service {
-    /** Kill child if subprocess, release channels, then join worker thread. */
+    /** Kill child if subprocess, release channels, then join the worker thread if it is done.
+    An in-process worker still inside an operation (a read from a stalled server) cannot be
+    killed the way a child process is; joining it held a cancelled navigation for the read's
+    whole timeout. It has been told to stop and its request channel is closed, so it exits
+    when that operation ends, on its own. */
     fn drop(&mut self) {
+        let subprocess = self.child.is_some();
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
         self.requests.take();
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
+        if let Some(worker) = self.worker.take()
+            && (subprocess || worker.is_finished())
+        {
             let _ = worker.join();
         }
     }
@@ -1430,8 +1503,11 @@ fn rpc_timeout(op: &str) -> Duration {
         crate::constants::WEB_PREPARE_RPC_TIMEOUT
     } else if op.starts_with("network.") && op != "network.fetch" {
         WEB_RPC_TIMEOUT
-    } else {
+    } else if op.starts_with("v9.") {
+        // Script work may run to the script deadline; the call must outlast it.
         crate::constants::rpc_timeout()
+    } else {
+        crate::constants::RPC_TIMEOUT
     }
 }
 

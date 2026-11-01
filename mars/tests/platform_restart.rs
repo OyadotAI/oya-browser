@@ -19,10 +19,11 @@ const IN_FLIGHT: Duration = Duration::from_millis(300);
 /** One more crash than the restart budget allows inside its window. */
 const CRASH_LOOP: usize = 4;
 
-/** A desktop runtime with the person in control of every tab. */
+/** A desktop runtime with the person in control of every tab, each engine in its own process
+so killing one is an engine crash, not the test's own death. */
 fn runtime(origins: &[&str]) -> Runtime {
     Runtime::desktop(
-        EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars"))),
+        EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars"))).isolated(),
         origins.iter().map(|origin| (*origin).to_owned()).collect(),
         Authority::shared(Owner::Human),
         Arc::new(AtomicBool::new(false)),

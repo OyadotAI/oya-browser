@@ -104,27 +104,33 @@ impl Runtime {
         };
         if parent.display.is_none() || !parent.styled {
             let previous = self.render_context;
+            let framed = self.framed;
             let scroll = self.scroll_y;
             if !parent.frame_ancestors.is_empty() {
                 self.render_context.width = parent.scripting.environment.viewport_width;
                 self.render_context.height = parent.scripting.environment.viewport_height;
+                self.framed = true;
                 self.scroll_y = parent.scripting.scroll_y.unwrap_or(0.0);
             }
             let prepared = self.prepare_current(parent);
             self.render_context = previous;
+            self.framed = framed;
             self.scroll_y = scroll;
             prepared?;
         }
         let dimensions = frame_dimensions(parent, owner);
         let previous = self.render_context;
+        let framed = self.framed;
         let scroll = self.scroll_y;
         self.render_context.width = dimensions.0;
         self.render_context.height = dimensions.1;
+        self.framed = true;
         self.scroll_y = 0.0;
         let partition = self.frame_partition.replace(parent.top_level_url.clone());
         let built = self.build_page(acquired, deadline, false, Some(&embedding), context);
         self.frame_partition = partition;
         self.render_context = previous;
+        self.framed = framed;
         self.scroll_y = scroll;
         match built {
             Ok(page) => {

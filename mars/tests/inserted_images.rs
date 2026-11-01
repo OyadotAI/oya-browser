@@ -239,16 +239,17 @@ fn inserted_frames_and_controls_do_not_stop_scripts() {
     assert!(text.contains("cell"), "{page}");
 }
 
-/** Scripts and inline handlers from inserted markup remain inert under the existing parser contract. */
+/** A script inserted through innerHTML never runs, while an inserted element's inline handler
+does, as in Chrome: the missing image's `onerror` appends once and the script never writes. */
 #[test]
-fn inserted_scripts_and_handlers_never_run() {
+fn inserted_scripts_never_run_but_inline_handlers_do() {
     let (_fixture, _runtime, page) = load(
         "<div id=host></div><p id=out>safe</p><script>document.getElementById('host').innerHTML=\
          '<script>document.getElementById(\"out\").textContent=\"wrong-script\"</'+'script>\
          <img src=/missing.png onerror=\"document.getElementById(&quot;out&quot;).textContent+=&quot;:error&quot;\">';</script>",
     );
     scripts_ran(&page);
-    assert_eq!(node(&page, "out")["text"], "safe", "{page}");
+    assert_eq!(node(&page, "out")["text"], "safe:error", "{page}");
 }
 
 /** A frame built with createElement and appended keeps the page's scripts running. */

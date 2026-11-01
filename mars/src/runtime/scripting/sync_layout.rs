@@ -150,7 +150,7 @@ impl SyncLayout {
             .try_send(Inbound::Job(job))
             .map_err(|_| EngineError::service("document", false))?;
         result
-            .recv_timeout(crate::constants::rpc_timeout())
+            .recv_timeout(crate::constants::RPC_TIMEOUT)
             .map_err(|_| EngineError::service("document", false))?
     }
 }

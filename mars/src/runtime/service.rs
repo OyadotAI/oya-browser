@@ -479,13 +479,13 @@ fn frame_styles(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
         document::compute_frame_styles(&input.document, &input.sheets, context)
     })
 }
-/** A frame's document laid out in its content box, unscrolled. */
+/** A frame's document laid out in its content box, its scroll containers at `scroll`. */
 fn frame_render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
     typed(frame, id, |input: Render| {
         let context = input
             .context
             .ok_or_else(|| EngineError::invalid("A frame needs its viewport."))?;
-        document::render_frame(&input.document, context)
+        document::render_frame_scrolled(&input.document, context, &input.scroll)
     })
 }
 /** Input editing does not reinterpret its value as source. */

@@ -483,6 +483,15 @@ impl Runtime {
         }
         value
     }
+    /** A window's context under window bounds; a frame page's (see `Runtime::framed`) under
+    frame bounds, which admit a 240 by 180 iframe no window could be. */
+    fn validate_context(&self, context: crate::document::RenderContext) -> EngineResult<()> {
+        if self.framed {
+            context.validate_frame()
+        } else {
+            context.validate()
+        }
+    }
     /** Point layout is prepared by the engine before the publication authority check. */
     pub(super) fn prepare(&mut self, page: &mut Page) -> EngineResult<()> {
         self.prepare_presentation(page, self.render_context)
@@ -493,7 +502,7 @@ impl Runtime {
         page: &mut Page,
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
-        context.validate()?;
+        self.validate_context(context)?;
         page.document = self.styled(&page.document, &page.resolved_stylesheets, context)?;
         page.styled = true;
         self.prepare_styled(page, context)
@@ -514,8 +523,13 @@ impl Runtime {
         context: crate::document::RenderContext,
     ) -> EngineResult<Document> {
         let (owned, owned_sheets) = (document.clone(), sheets.to_vec());
+        let framed = self.framed;
         let typed = self.call_job("document", "document.styles", None, move || {
-            crate::document::compute_styles_with_context(&owned, &owned_sheets, context)
+            if framed {
+                crate::document::compute_frame_styles(&owned, &owned_sheets, context)
+            } else {
+                crate::document::compute_styles_with_context(&owned, &owned_sheets, context)
+            }
         });
         if let Some(styled) = typed {
             return styled;
@@ -525,7 +539,12 @@ impl Runtime {
             sheets,
             context,
         };
-        self.call_typed("document", "document.styles", &call, None)
+        let op = if framed {
+            "document.frame_styles"
+        } else {
+            "document.styles"
+        };
+        self.call_typed("document", op, &call, None)
     }
     /**
      * Eye's layout of `document`: a typed job when Eye runs in this process, so a page-sized
@@ -538,8 +557,13 @@ impl Runtime {
         scroll: &crate::document::ScrollOffsets,
     ) -> EngineResult<DisplayList> {
         let (owned, owned_scroll) = (document.clone(), scroll.clone());
+        let framed = self.framed;
         let typed = self.call_job("document", "document.render", None, move || {
-            crate::document::render_scrolled(&owned, context, &owned_scroll)
+            if framed {
+                crate::document::render_frame_scrolled(&owned, context, &owned_scroll)
+            } else {
+                crate::document::render_scrolled(&owned, context, &owned_scroll)
+            }
         });
         if let Some(display) = typed {
             return display;
@@ -549,7 +573,12 @@ impl Runtime {
             context,
             scroll,
         };
-        self.call_typed("document", "document.render", &call, None)
+        let op = if framed {
+            "document.frame_render"
+        } else {
+            "document.render"
+        };
+        self.call_typed("document", op, &call, None)
     }
     /**
      * Checks and lays out a document already styled with the page's sheets under `context`.
@@ -561,7 +590,7 @@ impl Runtime {
         page: &mut Page,
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
-        context.validate()?;
+        self.validate_context(context)?;
         if page.untrusted_styles {
             untrusted(&mut page.document);
         }

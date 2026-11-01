@@ -255,6 +255,11 @@ pub struct DisplayItem {
     /// Absolute affine (a, b, c, d, e, f) applied after `clip`; pure translations are baked into geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<[f64; 6]>,
+    /// Where layout put the box when a transform (its own or an ancestor's) moved its paint
+    /// away from there: layout APIs such as `offsetLeft` ignore transforms. None when the box
+    /// paints where layout put it, at `x` and `y`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_origin: Option<[f64; 2]>,
     /// z-index of the stacking layer this item paints in; items are already in paint order.
     #[serde(default, skip_serializing_if = "display::is_zero")]
     pub z: i32,
@@ -442,8 +447,17 @@ pub fn render_scrolled(
 /// As `render_scrolled` for a document embedded in a frame: `context` is the frame's content
 /// box, which `RenderContext::validate_frame` bounds instead of the window bounds.
 pub fn render_frame(document: &Document, context: RenderContext) -> EngineResult<DisplayList> {
+    render_frame_scrolled(document, context, &ScrollOffsets::new())
+}
+/// As `render_frame`, painting each scroll container inside the frame at `offsets`: a scripted
+/// frame's own page scrolls its containers like a window page does.
+pub fn render_frame_scrolled(
+    document: &Document,
+    context: RenderContext,
+    offsets: &ScrollOffsets,
+) -> EngineResult<DisplayList> {
     context.validate_frame()?;
-    laid_out(document, context, &ScrollOffsets::new())
+    laid_out(document, context, offsets)
 }
 /** Layout and paint order for a context its caller already validated. */
 fn laid_out(

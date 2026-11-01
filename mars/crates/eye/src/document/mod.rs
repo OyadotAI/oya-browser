@@ -36,8 +36,8 @@ pub use render::{
     ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
     FillRule, GradientStop, GradientTile, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine,
     PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible,
-    embed_frame, frame_viewport, painted_bounds, render, render_frame, render_scrolled,
-    render_with_context, role, sliced_shadow, spread_radius, wheel_target,
+    embed_frame, frame_viewport, painted_bounds, render, render_frame, render_frame_scrolled,
+    render_scrolled, render_with_context, role, sliced_shadow, spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
 pub use script::{DomFragments, Fragments, normalize_document_text, script_document};

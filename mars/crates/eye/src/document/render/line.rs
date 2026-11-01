@@ -568,6 +568,10 @@ pub(super) fn translate(item: &mut DisplayItem, dx: f64, dy: f64) {
     }
     item.x += dx;
     item.y += dy;
+    if let Some(origin) = &mut item.layout_origin {
+        origin[0] += dx;
+        origin[1] += dy;
+    }
     for line in item.lines.iter_mut().chain(item.validation.iter_mut()) {
         line.x += dx;
         line.y += dy;

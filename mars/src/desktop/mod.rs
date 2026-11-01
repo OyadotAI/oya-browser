@@ -72,20 +72,8 @@ impl Options {
                 "--url" => result.url = Some(args.next().ok_or_else(usage)?.clone()),
                 #[cfg(feature = "test-support")]
                 "--fixture-origin" => {
-                    let origin = args.next().ok_or_else(usage)?.clone();
-                    let url = url::Url::parse(&origin).map_err(|_| usage())?;
-                    if url.scheme() != "http"
-                        || url.host_str() != Some("127.0.0.1")
-                        || url.port().is_none()
-                        || url.path() != "/"
-                        || url.query().is_some()
-                        || url.fragment().is_some()
-                        || !url.username().is_empty()
-                        || url.password().is_some()
-                    {
-                        return Err(usage());
-                    }
-                    result.fixture_origin = Some(url.origin().ascii_serialization());
+                    let origin = args.next().ok_or_else(usage)?;
+                    result.fixture_origin = Some(fixture_origin(origin).ok_or_else(usage)?);
                     result.test_profile = true;
                 }
                 #[cfg(feature = "test-support")]
@@ -135,4 +123,20 @@ fn usage() -> EngineError {
     EngineError::invalid(
         "Expected desktop [--agent|--mcp] [--agent-control] [--capture-dir DIR] [--url URL|demo].",
     )
+}
+
+/** A test fixture's origin, as `--fixture-origin` grants it: plain HTTP on 127.0.0.1 with a port
+and nothing after the origin. Test builds only; shipped agents reach the public web alone. */
+#[cfg(feature = "test-support")]
+pub fn fixture_origin(text: &str) -> Option<String> {
+    let url = url::Url::parse(text).ok()?;
+    let fixture = url.scheme() == "http"
+        && url.host_str() == Some("127.0.0.1")
+        && url.port().is_some()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.username().is_empty()
+        && url.password().is_none();
+    fixture.then(|| url.origin().ascii_serialization())
 }

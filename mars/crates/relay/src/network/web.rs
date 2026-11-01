@@ -402,6 +402,9 @@ fn send_http1(
     Ok((response, connection))
 }
 
+/** HTTP statuses that send the request on to their `Location`. */
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
 /**
  * Fresh and cached responses alike pass the same media type, image and charset checks, and a
  * cached body is held to the current body budget. A top-level download keeps its raw bytes.
@@ -426,7 +429,9 @@ fn finish(
         .and_then(|value| mime::parse(value))
         .map(|parsed| (parsed.essence, parsed.charset))
         .unwrap_or_default();
-    if request.image && !IMAGE_TYPES.contains(&mime.as_str()) {
+    // A redirect carries no image: its caller follows it and checks the image it leads to.
+    let redirect = REDIRECT_STATUSES.contains(&status);
+    if request.image && !redirect && !IMAGE_TYPES.contains(&mime.as_str()) {
         return Err(EngineError::unsupported(
             "Only PNG, JPEG, WebP and GIF images are supported.",
         ));
@@ -557,7 +562,7 @@ pub fn fetch(value: &str, fixture_origins: &[String]) -> EngineResult<WebPage> {
         if response.status == HTTP_OK {
             return complete(response, url);
         }
-        if redirects == REDIRECTS || ![301, 302, 303, 307, 308].contains(&response.status) {
+        if redirects == REDIRECTS || !REDIRECT_STATUSES.contains(&response.status) {
             return Err(EngineError::unsupported(
                 "Unsupported HTTP status or redirect limit exceeded.",
             ));
