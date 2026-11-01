@@ -78,6 +78,7 @@ mod sheet_rules;
 mod sheets;
 pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
 pub(in crate::v9) mod media;
+mod media_metadata;
 pub(in crate::v9) mod media_source;
 mod subtle;
 mod subtle_aes;
@@ -1230,6 +1231,9 @@ pub(in crate::v9) struct Pending {
     /** An IndexedDB coordinator request: `owner` is the callback that receives the answer text. */
     #[serde(default)]
     pub indexed: bool,
+    /** HEAD fetches expose a null body even when a server sent payload bytes. */
+    #[serde(default)]
+    pub head: bool,
 }
 
 /** document.readyState. */

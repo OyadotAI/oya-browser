@@ -9,6 +9,93 @@ use support::{Fixture, agent_call, desktop, html};
 /** Page loads a refresh chain may make: the first page plus the runtime's bound on refresh navigations. */
 const LOADS_PER_CHAIN: usize = 6;
 
+/** Both script servers must receive a request before either sends its response. */
+const CONCURRENT_SCRIPTS: usize = 2;
+/** A sequential implementation fails promptly instead of leaving a fixture thread blocked. */
+const SCRIPT_OVERLAP_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+/** Independent fixture threads rendezvous without relying on elapsed-time performance assertions. */
+type ScriptArrival = Arc<(std::sync::Mutex<usize>, std::sync::Condvar)>;
+
+/** A script server records whether both downloads were active while it held its response. */
+fn held_script(
+    arrived: ScriptArrival,
+    overlapped: Arc<std::sync::atomic::AtomicUsize>,
+    text: &'static str,
+) -> Fixture {
+    Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = arrived.as_ref();
+            let mut count = count.lock().unwrap();
+            *count += 1;
+            wake.notify_all();
+            let (count, _) = wake
+                .wait_timeout_while(count, SCRIPT_OVERLAP_WAIT, |count| {
+                    *count < CONCURRENT_SCRIPTS
+                })
+                .unwrap();
+            if *count >= CONCURRENT_SCRIPTS {
+                overlapped.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            reply("text/javascript", "", text)
+        }),
+        false,
+    )
+}
+
+/** Dynamic classic downloads overlap, while their effects still follow the page's requested order. */
+#[test]
+fn dynamic_classic_scripts_download_concurrently() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let arrived = ScriptArrival::default();
+    let overlapped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let first = held_script(
+        Arc::clone(&arrived),
+        Arc::clone(&overlapped),
+        "document.getElementById('out').textContent+='a'",
+    );
+    let second = held_script(
+        Arc::clone(&arrived),
+        Arc::clone(&overlapped),
+        "document.getElementById('out').textContent+='b'",
+    );
+    let body = format!(
+        "<p id=out></p><script>for(const src of ['{}/a.js','{}/b.js']){{const s=document.createElement('script');s.async=false;s.src=src;document.head.appendChild(s)}}</script>",
+        first.url, second.url
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        vec![fixture.url.clone(), first.url.clone(), second.url.clone()],
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert_eq!(
+        overlapped.load(std::sync::atomic::Ordering::SeqCst),
+        CONCURRENT_SCRIPTS
+    );
+    assert!(texts(&page).contains("ab"), "{page}");
+}
+
+/** A denied dynamic script never reaches the network, including through batch prefetch. */
+#[test]
+fn dynamic_script_prefetch_preserves_csp_admission() {
+    let body = "<p id=out></p><script nonce=run>let failed=0;for(const src of ['/a.js','/b.js']){const s=document.createElement('script');s.src=src;s.onerror=()=>document.getElementById('out').textContent=String(++failed);document.head.appendChild(s)}</script>";
+    let (fixture, counts) = Fixture::routes_counted(vec![(
+        "/",
+        html("Content-Security-Policy: script-src 'nonce-run'\r\n", body),
+    )]);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(texts(&page).contains('2'), "{page}");
+    let counts = counts.lock().unwrap();
+    assert!(!counts.contains_key("/a.js") && !counts.contains_key("/b.js"));
+}
+
 /** A 200 response of `mime` with any extra header lines. */
 fn reply(mime: &str, headers: &str, body: &str) -> Vec<u8> {
     format!(

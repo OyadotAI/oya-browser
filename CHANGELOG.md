@@ -8,6 +8,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
+
+- Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
+
 - Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
 
 - Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.

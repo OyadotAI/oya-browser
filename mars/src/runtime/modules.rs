@@ -222,6 +222,23 @@ impl Runtime {
     ) -> EngineResult<()> {
         let requests = std::mem::take(&mut page.scripting.modules.pending_scripts);
         let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
+        if !give_up {
+            let batch = requests
+                .iter()
+                .filter(|request| !page.scripting.modules.known(&request.url))
+                .filter_map(|request| classic_script_url(page, &base, request))
+                .map(|url| {
+                    (
+                        WebRequest {
+                            destination: Destination::Script,
+                            ..WebRequest::get(url.as_str())
+                        },
+                        base.clone(),
+                    )
+                })
+                .collect();
+            self.prefetch(batch, deadline)?;
+        }
         for request in requests {
             if page.scripting.modules.known(&request.url) {
                 continue;
@@ -243,19 +260,9 @@ impl Runtime {
         request: &ScriptLoadRequest,
         deadline: Instant,
     ) -> EngineResult<Option<String>> {
-        let Ok(url) = Url::parse(&request.url) else {
+        let Some(url) = classic_script_url(page, base, request) else {
             return Ok(None);
         };
-        let candidate = super::csp::Candidate {
-            url: Some(&url),
-            nonce: request.nonce.as_deref(),
-            source: "",
-        };
-        if !["http", "https", "data"].contains(&url.scheme())
-            || !super::csp::allows(&page.document.csp, base, &candidate)
-        {
-            return Ok(None);
-        }
         let Ok(source) = self.fetch_script(base, url.as_str(), deadline)? else {
             return Ok(None);
         };
@@ -327,6 +334,19 @@ fn hand_over(page: &mut Page, url: String, source: Option<String>, classic: bool
         text: format!("Script {url} was not delivered: the page has too many sources."),
     };
     super::scripting::record_console(&mut page.scripting, vec![entry], 0);
+}
+
+/** Prefetch and final delivery share admission, so blocked scripts never start a speculative hop. */
+fn classic_script_url(page: &Page, base: &Url, request: &ScriptLoadRequest) -> Option<Url> {
+    let url = Url::parse(&request.url).ok()?;
+    let candidate = super::csp::Candidate {
+        url: Some(&url),
+        nonce: request.nonce.as_deref(),
+        source: "",
+    };
+    (["http", "https", "data"].contains(&url.scheme())
+        && super::csp::allows(&page.document.csp, base, &candidate))
+    .then_some(url)
 }
 
 /** The first hop `fetch_for_script` sends for a module, so a batch prefetch can answer it. */

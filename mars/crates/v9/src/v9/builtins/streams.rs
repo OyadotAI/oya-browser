@@ -11,6 +11,7 @@
  * writers never apply backpressure. Add them when a page needs one.
  */
 use super::*;
+use crate::protocol::EngineError;
 use crate::v9::vm::Thrown;
 use crate::v9::vm::data::{Class, PromiseState, ReactionHandler};
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Object, Prop, Slot};
@@ -47,6 +48,37 @@ static PROTOTYPES: std::sync::OnceLock<Prototypes> = std::sync::OnceLock::new();
 /** The stream prototypes. */
 fn prototypes() -> &'static Prototypes {
     PROTOTYPES.get().expect("stream prototypes installed")
+}
+
+/** A buffered Fetch body uses the same reader, locking and cancellation state as other streams. */
+pub(in crate::v9) fn readable_from_bytes(vm: &mut Vm, bytes: Vec<u8>) -> Res<ObjectId> {
+    let stream = instance(vm, prototypes().readable)?;
+    vm.pin(JsValue::Object(stream));
+    set_state(vm, stream, "readable")?;
+    if !bytes.is_empty() {
+        let chunk = super::typed::new_uint8(vm, bytes)?;
+        enqueue(vm, stream, JsValue::Object(chunk))?;
+    }
+    close(vm, stream)?;
+    Ok(stream)
+}
+
+/** Body consumers observe native disturbance even after a reader releases its lock. */
+pub(in crate::v9) fn readable_disturbed(vm: &Vm, stream: ObjectId) -> bool {
+    flag(vm, stream, "disturbed")
+}
+
+/** Native body readers cannot bypass a lock using replaceable JavaScript properties. */
+pub(in crate::v9) fn readable_locked(vm: &Vm, stream: ObjectId) -> bool {
+    object_slot(vm, stream, "reader").is_some()
+}
+
+/** Whole-body readers drain the buffered bytes under their own retained reader lock. */
+pub(in crate::v9) fn consume_readable(vm: &mut Vm, stream: ObjectId) -> Res<()> {
+    acquire_reader(vm, stream)?;
+    set_flag(vm, stream, "disturbed", true);
+    take_list(vm, stream, "queue");
+    finish_close(vm, stream)
 }
 
 /** The stream interfaces and their prototypes. */
@@ -416,7 +448,7 @@ fn finish_close(vm: &mut Vm, stream: ObjectId) -> Res<()> {
 }
 
 /** ReadableStreamError: waiting reads and the reader's `closed` reject with the reason. */
-fn error_stream(vm: &mut Vm, stream: ObjectId, reason: JsValue) -> Res<()> {
+pub(in crate::v9) fn error_stream(vm: &mut Vm, stream: ObjectId, reason: JsValue) -> Res<()> {
     if state(vm, stream) != "readable" {
         return Ok(());
     }
@@ -439,12 +471,13 @@ fn error_stream(vm: &mut Vm, stream: ObjectId, reason: JsValue) -> Res<()> {
 
 /** A promise nothing may await (a reader's `closed`) never reports an unhandled rejection. */
 fn mark_handled(vm: &mut Vm, promise: ObjectId) -> Res<()> {
-    vm.perform_then(
-        promise,
-        ReactionHandler::Function(JsValue::Undefined),
-        ReactionHandler::Function(JsValue::Undefined),
-        None,
-    )
+    let Some(Class::Promise(data)) = vm.heap.get_mut(promise).map(|object| &mut object.class)
+    else {
+        return Err(EngineError::invalid("Invalid stream reader promise.").into());
+    };
+    data.handled = true;
+    vm.page.unhandled.retain(|id| *id != promise);
+    Ok(())
 }
 
 /** The stream behind a controller, reader or writer `this`. */
@@ -501,6 +534,11 @@ fn get_reader(vm: &mut Vm, call: Call) -> Res<JsValue> {
             ));
         }
     }
+    acquire_reader(vm, stream)
+}
+
+/** Acquiring a reader locks the stream without consuming any queued bytes. */
+fn acquire_reader(vm: &mut Vm, stream: ObjectId) -> Res<JsValue> {
     if object_slot(vm, stream, "reader").is_some() {
         return Err(vm.type_error("Failed to execute 'getReader': ReadableStream is locked"));
     }
@@ -527,6 +565,7 @@ fn reader_read(vm: &mut Vm, call: Call) -> Res<JsValue> {
         let error = type_error_value(vm, "This readable stream reader has been released.")?;
         return reject_with(vm, error);
     };
+    set_flag(vm, stream, "disturbed", true);
     match state(vm, stream).as_str() {
         "closed" => {
             let result = read_result(vm, JsValue::Undefined, true)?;
@@ -579,6 +618,7 @@ fn reader_release(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** ReadableStreamCancel: the queue empties, the stream closes and the source hears why. */
 fn cancel(vm: &mut Vm, stream: ObjectId, reason: JsValue) -> Res<JsValue> {
+    set_flag(vm, stream, "disturbed", true);
     match state(vm, stream).as_str() {
         "closed" => return fulfilled(vm, JsValue::Undefined),
         "errored" => {

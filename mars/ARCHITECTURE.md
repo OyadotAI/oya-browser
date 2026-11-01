@@ -423,6 +423,18 @@ module requests keep their prior charset decoding. Fetch text/JSON readers apply
 UTF-8 independently of MIME charset. Image/navigation/preflight requests cannot
 select the raw script response flag, and existing network/VM response caps remain.
 
+Request and Response expose one lazy native default ReadableStream over their buffered
+bytes. Stream locks and disturbance govern whole-body consumers, cloning and inherited
+Request bodies; an absent body remains distinct from a present empty body. Fetched streams
+retain their AbortSignal independently of the Response wrapper. Whole-body reads avoid
+allocating a stream unless script requests it. This does not add incremental network
+streaming, BYOB readers or ReadableStream upload bodies.
+
+Independent dynamic classic-script requests use the existing bounded parallel prefetch
+path before ordered delivery. Prefetch and final acquisition share URL/CSP admission;
+JavaScript MIME and integrity checks still govern execution. Request keys include the
+shaped credentials and headers, and batch duplicate detection uses an ordered set.
+
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally
 unique. Pending and live workers share the six-worker admission ceiling; existing
@@ -632,9 +644,12 @@ mute, rate and pitch setting, its resource loader reads only from the hub (it ne
 socket), and frames are pulled from a BGRA output and painted into the element's box with
 `object-fit`/`object-position`, under captions and Chromium-like native controls. Eye lays
 media out as replaced boxes (300 by 150 video, 300 by 54 audio with controls, audio without
-controls hidden) and never renders their children. Media Source appends are parsed for
-buffered ranges, but the native player cannot yet play appended segments, so
-`MediaSource.isTypeSupported` answers false.
+controls hidden) and never renders their children. Supported H.264/AAC fragmented MP4
+Media Source appends reach the native video and audio decoders. Sample ends are calculated
+in integer presentation timestamps before conversion to seconds, so contiguous buffered
+ranges merge without floating-point gaps. Unsupported codec combinations remain explicit
+refusals. Native MediaMetadata owns title, artist, album and normalized immutable artwork
+records; broader Media Session behavior and chapter metadata remain unfinished.
 
 ## Performance and footprint targets
 

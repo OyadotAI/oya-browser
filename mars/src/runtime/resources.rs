@@ -309,6 +309,7 @@ impl Runtime {
             return Ok(());
         };
         let mut shaped: Vec<(String, WebRequest)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for (mut request, initiator) in requests {
             let Ok(url) = crate::network::policy::web_url(&request.url) else {
                 continue;
@@ -321,7 +322,7 @@ impl Runtime {
             }
             self.shape_hop(&mut request, &url, Some(&initiator), false, true);
             let key = prefetch_key(&request);
-            if !self.prefetched.contains_key(&key) && !shaped.iter().any(|(k, _)| *k == key) {
+            if !self.prefetched.contains_key(&key) && seen.insert(key.clone()) {
                 shaped.push((key, request));
             }
         }

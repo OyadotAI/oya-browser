@@ -58,6 +58,10 @@ mod proxy;
 mod reflect;
 mod regexp;
 mod streams;
+pub(in crate::v9) use streams::{
+    consume_readable, error_stream as error_readable, readable_disturbed, readable_from_bytes,
+    readable_locked,
+};
 mod string;
 mod symbol;
 mod temporal;
