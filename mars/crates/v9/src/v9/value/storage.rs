@@ -247,7 +247,7 @@ pub(super) struct Concat {
 impl Storage {
     /** Register this node by allocation identity without retaining its backing. */
     /** The registration identity alone, without taking a weak reference: a kind tag and the
-            backing allocation's address. */
+                backing allocation's address. */
     pub(super) fn registration_identity(&self) -> (u8, usize) {
         match self {
             Self::Flat(value) => (0, Arc::as_ptr(value) as *const () as usize),

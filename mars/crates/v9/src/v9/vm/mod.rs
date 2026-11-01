@@ -336,8 +336,6 @@ pub(in crate::v9) struct Vm<'h> {
     pub regexps: FastMap<(JsString, String), Rc<super::regexp::Program>>,
     /** The error object an unsupported feature threw last, so an uncaught one reports as such. */
     pub unsupported: Option<(ObjectId, EngineError)>,
-    /** Execution profiling and tier bridge for JIT compilation. */
-    pub jit: super::jit::JitBridge,
     pub limits: Limits,
     pub page: Page<'h>,
     /** Dynamic sources compiled by `new Function` and indirect eval, kept so state can recompile. */
@@ -840,7 +838,6 @@ impl<'h> Vm<'h> {
             suspended: None,
             regexps: FastMap::default(),
             unsupported: None,
-            jit: super::jit::JitBridge::new(),
             limits,
             page,
             dynamic: Vec::new(),

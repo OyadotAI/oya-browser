@@ -364,10 +364,6 @@ impl Vm<'_> {
         construct: Option<JsValue>,
         boundary: bool,
     ) -> Res<Invoked> {
-        if let Some(id) = function.object() {
-            self.jit.record_call(id);
-        }
-        self.jit.record_call(site);
         let code = self
             .registry
             .get(site)

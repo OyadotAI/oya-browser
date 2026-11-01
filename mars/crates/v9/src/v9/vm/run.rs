@@ -1034,16 +1034,13 @@ impl Vm<'_> {
                     )));
                 }
                 68 => {
+                    // V9 never optimizes, so it reports V8's own no-turbofan answer: mjsunit's
+                    // assertUnoptimized passes and assertOptimized fails with its usual message.
                     let value = self.pop();
-                    let status = match value {
-                        JsValue::Object(id) => self.jit.status(id) as f64,
-                        _ => {
-                            if self.is_callable(&value) {
-                                OPTIMIZATION_STATUS_FUNCTION
-                            } else {
-                                OPTIMIZATION_STATUS_NEVER
-                            }
-                        }
+                    let status = if self.is_callable(&value) {
+                        OPTIMIZATION_STATUS_FUNCTION
+                    } else {
+                        OPTIMIZATION_STATUS_NEVER
                     };
                     self.push(JsValue::Smi(status));
                 }
@@ -2611,6 +2608,12 @@ impl Vm<'_> {
     fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
         if let JsValue::Object(id) = base {
             self.guard_realm_global(*id)?;
+            // A hit is an own data property of this exact shape, which beats a named frame in
+            // every case (dotted names are never indexes), so it answers before the key is built
+            // and the frame directory is consulted.
+            if let Some(value) = self.load_hit(site, base) {
+                return Ok(value);
+            }
             let key = self.constant_key(site);
             if let Some(value) = crate::v9::platform::frame_directory::lookup(self, *id, &key)? {
                 return Ok(value);
