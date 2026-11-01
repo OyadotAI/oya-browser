@@ -1,20 +1,19 @@
 /**
  * `document.styleSheets`, a style or link element's `sheet`, and form validity: the objects a
  * page reads to find the style sheet it just inserted or to check a field before submitting.
- * V9 has no cascade, so a sheet keeps its rules as the element's text: `insertRule` and
- * `deleteRule` edit that text at the boundaries of its top-level rules (Eye picks the change up
- * as a sheet change), so a nested `@media` block survives an edit around it. Every field is
- * valid, since V9 runs no constraint validation.
+ * V9 has no cascade, so a sheet keeps its rules as the element's text. `insertRule` and
+ * `deleteRule` edit the sheet's list of top-level rules (see `sheet_list`), which is written back
+ * to the text before Eye reads it (Eye picks the change up as a sheet change), so a nested
+ * `@media` block survives an edit around it. Every field is valid, since V9 runs no constraint
+ * validation.
  */
 use super::dom::{self, DOCUMENT, wrap};
 use super::host_data;
-use super::sheet_rules::top_level_rules;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::realm;
 use crate::v9::vm::{Call, Res, Vm};
-use std::ops::Range;
 
 /** The style-sheet-bearing elements of the document, in document order. */
 fn sheet_nodes(vm: &mut Vm) -> Vec<usize> {
@@ -42,6 +41,7 @@ pub(in crate::v9) fn text_hash(text: &str) -> u64 {
 list changed since the last report. The document's own parsed head styles are skipped until a
 script changes their text. Runs at the end of every step. */
 pub(in crate::v9) fn publish_local(vm: &mut Vm) {
+    vm.page.flush_sheet_edits();
     if let Some((hash, texts)) = local_texts(vm) {
         vm.page.state.local_sheets_hash = hash;
         vm.page.effects.local_sheets = Some(texts);
@@ -109,21 +109,12 @@ fn sheet_node(vm: &mut Vm, call: &Call) -> Res<usize> {
     }
 }
 
-/** The sheet's text and the byte ranges of its top-level rules, in order.
-ponytail: every insertRule/deleteRule rescans the whole sheet text, so n edits cost O(n * text);
-keep the rule ranges beside the text, dropped on set_text, when a large sheet shows in a profile. */
-fn sheet_rule_ranges(vm: &mut Vm, node: usize) -> (String, Vec<Range<usize>>) {
-    let text = vm.page.text_content(node);
-    let ranges = top_level_rules(&text);
-    (text, ranges)
-}
-
 /** The sheet's rules as `{cssText, selectorText, style, type}` records, one per top-level rule. */
 fn rules(vm: &mut Vm, node: usize) -> Res<JsValue> {
-    let (text, ranges) = sheet_rule_ranges(vm, node);
+    let blocks = vm.page.sheet_list(node).rule_texts();
     let mut out = Vec::new();
-    for range in ranges {
-        let block = text.get(range).unwrap_or_default().trim();
+    for block in blocks {
+        let block = block.as_str();
         let rule = vm.new_object()?;
         vm.put(rule, "cssText", JsValue::string(block)?)?;
         let selector = block.split('{').next().unwrap_or("").trim();
@@ -225,33 +216,23 @@ equals the rule count, and return the index it landed at. The text around the in
 kept as it was, so nested blocks and comments stay whole. An index past the rule count is an
 IndexSizeError. */
 fn insert_rule(vm: &mut Vm, node: usize, rule: &str, index: Option<f64>) -> Res<JsValue> {
-    let (text, ranges) = sheet_rule_ranges(vm, node);
+    let len = vm.page.sheet_list(node).len();
     let position = match index {
-        None => ranges.len(),
-        Some(index) => sheet_index(index, ranges.len()).ok_or_else(|| index_error(vm))?,
+        None => len,
+        Some(index) => sheet_index(index, len).ok_or_else(|| index_error(vm))?,
     };
-    let edited = match ranges.get(position) {
-        Some(next) => format!("{}{rule}\n{}", &text[..next.start], &text[next.start..]),
-        None => format!("{text}\n{rule}"),
-    };
-    vm.page
-        .set_text(node, &edited)
-        .map_err(|error| dom::dom_error(vm, error))?;
+    vm.page.edit_sheet(node, |list| list.insert(position, rule));
     Ok(JsValue::Number(position as f64))
 }
 
 /** Remove the top-level rule at `index`, keeping the text around it as it was. An index outside
 the rules is an IndexSizeError, which a page's own cleanup code relies on to fail loudly. */
 fn delete_rule(vm: &mut Vm, node: usize, index: f64) -> Res<()> {
-    let (text, ranges) = sheet_rule_ranges(vm, node);
-    let range = sheet_index(index, ranges.len())
-        .filter(|position| *position < ranges.len())
-        .map(|position| ranges[position].clone())
+    let len = vm.page.sheet_list(node).len();
+    let position = sheet_index(index, len)
+        .filter(|position| *position < len)
         .ok_or_else(|| index_error(vm))?;
-    let edited = format!("{}{}", &text[..range.start], &text[range.end..]);
-    vm.page
-        .set_text(node, &edited)
-        .map_err(|error| dom::dom_error(vm, error))?;
+    vm.page.edit_sheet(node, |list| list.remove(position));
     Ok(())
 }
 

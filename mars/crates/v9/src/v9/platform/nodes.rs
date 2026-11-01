@@ -132,6 +132,8 @@ impl Page<'_> {
     /** Mark the tree changed. Every live collection rescans on its next read; the mark costs O(1), so
     a mutation pays nothing for the collections it may affect. */
     pub fn touch(&mut self) {
+        // Edited style sheets write their text before this change, so their edits are not lost under it.
+        self.flush_sheet_edits();
         self.generation = next_generation();
     }
     /** Bring the index up to date after `count` nodes were spliced in at `at`, instead of
@@ -209,6 +211,8 @@ impl Page<'_> {
     }
     /** A view of a node. */
     pub fn view(&mut self, id: usize) -> Option<NodeView> {
+        // Edited style sheets write their text back first, so a read never sees it behind them.
+        self.flush_sheet_edits();
         // Every read a page makes goes through here, so the engine-only popover marker never
         // reaches getAttribute, attribute lists, serialization or clones.
         let mut view = self.view_with_marker(id)?;

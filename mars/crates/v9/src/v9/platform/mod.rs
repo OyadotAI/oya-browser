@@ -72,6 +72,7 @@ pub(in crate::v9) use trusted_types::trusted_script_text;
 pub(in crate::v9) mod frame_directory;
 mod scrolling;
 mod selector;
+mod sheet_list;
 mod sheet_rules;
 mod sheets;
 pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
@@ -1439,6 +1440,13 @@ pub(in crate::v9) struct PageState {
     /** A hash of the last `local_sheets` list reported, so an unchanged list is not resent. */
     #[serde(default)]
     pub local_sheets_hash: u64,
+    /** Each style sheet's rule list, read from its text when a sheet method first needs it. Not
+    saved: every step flushes its edits to the text before it ends, so the saved text is complete. */
+    #[serde(skip)]
+    pub sheet_lists: BTreeMap<usize, sheet_list::SheetList>,
+    /** Sheets whose list holds edits the element's text does not carry yet, in edit order. */
+    #[serde(skip)]
+    pub dirty_sheets: Vec<usize>,
     /** Iframes scripts connected whose documents the app has not answered yet, by element: the
     URL each asked for. The answer fires the element's `load` event and leaves the list. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

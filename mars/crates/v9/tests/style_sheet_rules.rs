@@ -130,3 +130,26 @@ fn statement_at_rules_are_one_rule_each() {
     );
     assert_eq!(r, "2|p");
 }
+
+/** Thousands of insertRule calls in a row, the way styled-components builds its sheet, keep
+the rule order and the element's text, and stay fast: each insert costs its rule, not the sheet. */
+#[test]
+fn five_thousand_inserts_then_deletes_keep_order_and_stay_fast() {
+    const INSERTS: usize = 5000;
+    const BUDGET: std::time::Duration = std::time::Duration::from_secs(60);
+    let started = std::time::Instant::now();
+    let r = eval(
+        "const s = document.createElement('style');
+         document.head.appendChild(s);
+         for (let i = 0; i < 5000; i++) s.sheet.insertRule('.r' + i + ' { color: red }', i);
+         for (let i = 0; i < 100; i++) s.sheet.deleteRule(0);
+         s.sheet.deleteRule(10);
+         const r = [s.sheet.cssRules.length, s.sheet.cssRules[0].selectorText,
+           s.sheet.cssRules[10].selectorText, s.textContent.includes('.r4999 {'),
+           s.textContent.includes('.r50 {')].join('|');",
+        "r",
+    );
+    let elapsed = started.elapsed();
+    assert_eq!(r, format!("{}|.r100|.r111|true|false", INSERTS - 101));
+    assert!(elapsed < BUDGET, "{INSERTS} inserts took {elapsed:?}");
+}
