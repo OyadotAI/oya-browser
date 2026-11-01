@@ -1,5 +1,8 @@
 # Cargo settings for the Mars workspace. The [env] table gives the test binaries a generous V9
 # script deadline: the deadline is wall-clock, so a loaded machine would otherwise stop scripts
 # before the heap and property bounds under test are reached. The product default is unchanged.
+# Allocating past the 4M object bound takes about 25 s in a debug build on an idle machine and
+# several times that beside other builds, so the guard is minutes, not seconds; infinite loops
+# still stop at the operation budget.
 [env]
-MARS_V9_SCRIPT_DEADLINE_MS = "60000"
+MARS_V9_SCRIPT_DEADLINE_MS = "240000"

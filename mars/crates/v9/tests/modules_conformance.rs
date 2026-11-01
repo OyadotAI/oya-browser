@@ -31,6 +31,7 @@ fn load(files: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
         let page_input = PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: page(),
             storage: StorageState::default(),
             host: &host,

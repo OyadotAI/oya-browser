@@ -678,6 +678,7 @@ mod tests {
                 PageInput {
                     sources: &[source],
                     source_keys: &[],
+                    module_keys: &[],
                     document: ScriptDocument {
                         identity: "page-1".into(),
                         charset: "UTF-8".into(),
@@ -727,6 +728,7 @@ mod tests {
         let execution = crate::load_page(PageInput {
             sources: &[source],
             source_keys: &[],
+            module_keys: &[],
             document: ScriptDocument {
                 identity: "page-1".into(),
                 charset: "UTF-8".into(),

@@ -248,3 +248,25 @@ fn decoder_support_includes_h264_and_aac_in_mp4() {
         "{support:?}"
     );
 }
+
+/** Media Source streams only H.264 and AAC in MP4: never a family the OS plays from a file but the stream players do not decode. */
+#[cfg(target_os = "macos")]
+#[test]
+fn stream_support_is_h264_and_aac_in_mp4_only() {
+    let support = mars::runtime::media::support();
+    assert!(
+        support.streams.iter().any(|s| s == "video/mp4|avc1"),
+        "{support:?}"
+    );
+    assert!(
+        support.streams.iter().any(|s| s == "audio/mp4|mp4a"),
+        "{support:?}"
+    );
+    assert!(
+        support
+            .streams
+            .iter()
+            .all(|s| s.ends_with("|avc1") || s.ends_with("|mp4a")),
+        "{support:?}"
+    );
+}

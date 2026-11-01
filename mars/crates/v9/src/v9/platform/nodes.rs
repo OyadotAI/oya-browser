@@ -1001,6 +1001,7 @@ impl Page<'_> {
         self.materialize_leading_text(child)?;
         let mut old = vec![child];
         old.extend(self.all_descendants(child));
+        let slots = self.child_slots(&old);
         // The document parser keeps no blank text run, but a script's blank text node can be
         // real: a binding placeholder it fills later (Polymer stamps `<span> </span>` and sets
         // the text node's data). Such a node crosses as a zero-width space and gets its own text
@@ -1021,7 +1022,7 @@ impl Page<'_> {
             return self.insert_local(parent, child, reference);
         }
         let tags: Vec<String> = old.iter().map(|id| self.adoption_tag(*id)).collect();
-        let Some(mapping) =
+        let Some(mut mapping) =
             adopted(&old, &tags, &nodes).filter(|m| m.first().map(|p| p.0) == Some(child))
         else {
             return Err(EngineError::unsupported(format!(
@@ -1073,9 +1074,10 @@ impl Page<'_> {
                 self.state.values.insert(*new_id, value);
             }
         }
+        let adopted_by_old: BTreeMap<usize, usize> = mapping.iter().copied().collect();
         for (old_id, text) in blanks {
-            if let Some((_, new_id)) = mapping.iter().find(|(id, _)| *id == old_id) {
-                self.set_text(*new_id, &text)?;
+            if let Some(&new_id) = adopted_by_old.get(&old_id) {
+                self.set_text(new_id, &text)?;
             }
         }
         let mut owners = std::collections::BTreeSet::new();
@@ -1098,6 +1100,8 @@ impl Page<'_> {
                 self.normalize_selection(owner)?;
             }
         }
+        let split = self.insert_split_texts(&slots, &mapping)?;
+        mapping.extend(split);
         Ok(mapping)
     }
     /** Whether an inserted subtree too large for one fragment can go in as its element and then
@@ -1146,8 +1150,9 @@ impl Page<'_> {
         Ok(mapping)
     }
     /** The blank text nodes of an inserted subtree that cross as placeholders, with their text:
-    the inserted node itself, and blank text that is its element's only child (outside raw-text
-    elements, whose content is not markup). */
+    the inserted node itself, blank text that is its element's only child, and every empty text
+    (a script holds it, and it must come back as the same node). Raw-text elements are left out,
+    since their content is not markup. */
     fn blank_texts(&mut self, child: usize, subtree: &[usize]) -> Vec<(usize, String)> {
         let mut out = Vec::new();
         for id in subtree.iter().copied() {
@@ -1158,15 +1163,81 @@ impl Page<'_> {
             if !text.trim().is_empty() {
                 continue;
             }
-            let sole = self.parent(id).is_some_and(|parent| {
-                self.children(parent).len() == 1
-                    && !super::html::RAW.contains(&self.tag(parent).as_str())
-            });
-            if id == child || sole {
+            let parent = self.parent(id);
+            let raw =
+                parent.is_some_and(|parent| super::html::RAW.contains(&self.tag(parent).as_str()));
+            let sole = parent.is_some_and(|parent| self.children(parent).len() == 1) && !raw;
+            if id == child || sole || (text.is_empty() && !raw) {
                 out.push((id, text));
             }
         }
         out
+    }
+    /** Each element's children in order, taken before the markup replaces the subtree. Raw-text
+    elements are left out: their text is their content, not child nodes. */
+    fn child_slots(&mut self, subtree: &[usize]) -> Vec<(usize, Vec<usize>)> {
+        let mut slots = Vec::new();
+        for id in subtree.iter().copied() {
+            if super::html::RAW.contains(&self.tag(id).as_str()) {
+                continue;
+            }
+            let kids = self
+                .state
+                .detached
+                .get(&id)
+                .map(|record| record.children.clone())
+                .unwrap_or_default();
+            if !kids.is_empty() {
+                slots.push((id, kids));
+            }
+        }
+        slots
+    }
+    /** Puts back the text nodes the markup merged into a neighbour or left out, under a parent the
+    markup did keep. Each goes in alone, before the next sibling the markup kept, so the node a
+    script holds is the one in the document. Walking the children from the end means each one
+    goes before the node already placed after it. Whitespace-only runs stay out, as the parser
+    leaves them.
+    ponytail: one projection per merged text, so a long run of them is quadratic in its length;
+    a marker-based single parse if a page ever builds one. */
+    fn insert_split_texts(
+        &mut self,
+        slots: &[(usize, Vec<usize>)],
+        mapping: &[(usize, usize)],
+    ) -> EngineResult<Vec<(usize, usize)>> {
+        let kept: BTreeMap<usize, usize> = mapping.iter().copied().collect();
+        let mut out = Vec::new();
+        for (parent, kids) in slots {
+            let Some(&parent_new) = kept.get(parent) else {
+                continue;
+            };
+            let mut next = None;
+            for kid in kids.iter().rev() {
+                if let Some(&new) = kept.get(kid) {
+                    next = Some(new);
+                    continue;
+                }
+                if !self.keeps_split_text(*kid) {
+                    continue;
+                }
+                let placed = self.insert(parent_new, *kid, next)?;
+                next = placed
+                    .iter()
+                    .find(|(old, _)| old == kid)
+                    .map(|(_, new)| *new);
+                out.extend(placed);
+            }
+        }
+        Ok(out)
+    }
+    /** Whether an unkept child is a text node to put back: any text that is not whitespace-only,
+    and an empty one (a placeholder a script holds). */
+    fn keeps_split_text(&mut self, id: usize) -> bool {
+        if self.tag(id) != "#text" {
+            return false;
+        }
+        let text = self.text_content(id);
+        text.is_empty() || !text.trim().is_empty()
     }
     /** The subtree's markup with each of `blanks` written as BLANK_TEXT_PLACEHOLDER; the nodes'
     own text is left as it was. */

@@ -353,13 +353,15 @@ pub const JS_ENVIRONMENT_UNITS: usize = 16 * 1024 * 1024;
 /// YouTube holds 47869 once loaded and allocates as it renders, and LinkedIn's React app keeps
 /// more than 262144 alive while it hydrates (Chromium has no count bound at all, only memory).
 /// VM_STATE_BYTES stays the memory cap on what a page commits; this only stops a runaway run.
-pub const VM_OBJECTS: usize = 1_048_576;
+pub const VM_OBJECTS: usize = 4_194_304;
 /** The first allocation is the page's permanent global receiver, never a replaceable supplied object. */
 pub const VM_GLOBAL_OBJECT_ID: u32 = 0;
 /// Live properties. Google's main bundle needs more than 131072 and YouTube's loaded app holds
 /// 225108 before it renders anything; four per object at the old 262144-object bound keeps the
 /// ratio real pages show (many objects a large app keeps are small: arrays, fibers, closures' data).
-pub const VM_PROPERTIES: usize = 1_048_576;
+/// Array elements count here, and YouTube's results page passed 1048576 during a search, which
+/// stopped all of its scripts and froze the results and watch pages; 4194304 keeps it running.
+pub const VM_PROPERTIES: usize = 4_194_304;
 /// UTF-16 units of one property key; CNN's inline scripts use keys past 64 units, and YouTube's
 /// app keys its caches by whole request URLs and serialized bodies past 1024.
 pub const VM_PROPERTY_KEY_UNITS: usize = 64 * 1024;

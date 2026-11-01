@@ -382,6 +382,9 @@ pub(in crate::v9) struct Code {
     pub name: JsString,
     /// Exact source is shared by all functions compiled from one source unit.
     pub source: Option<(Arc<str>, usize)>,
+    /// The caller scopes a direct eval compiled under, as the compiler's context text; None for
+    /// every other code. A retained eval is reused only under the same scopes.
+    pub scopes: Option<Arc<str>>,
     /// Absolute byte boundaries of this function or class literal.
     pub source_span: Option<(u32, u32)>,
     /// Observable function length.
@@ -411,6 +414,8 @@ pub(in crate::v9) struct Code {
     pub caches: crate::v9::vm::shape::SiteCaches,
     /// A stub's deferred compile: None for compiled code (see `lazy`).
     pub lazy: Option<Arc<lazy::Lazy>>,
+    /// Call and loop heat, and the compiled form once the JIT has produced one.
+    pub jit: crate::v9::jit::JitSlot,
 }
 
 impl Code {
@@ -468,6 +473,7 @@ impl Code {
                 .source
                 .as_ref()
                 .map(|(text, base)| (text.clone(), (*base as i64 + delta) as usize)),
+            scopes: self.scopes.clone(),
             source_span: self
                 .source_span
                 .map(|(start, end)| (shift(start), shift(end))),
@@ -517,6 +523,7 @@ impl Code {
                 .collect(),
             caches: crate::v9::vm::shape::SiteCaches::new(self.strings.len()),
             lazy: self.lazy.as_ref().map(|lazy| Arc::new(lazy.rebased(delta))),
+            jit: crate::v9::jit::JitSlot::default(),
         }
     }
     /** Bytes this code holds, for the process cache's bound. */
@@ -544,6 +551,7 @@ impl Code {
                 .sum::<usize>()
             + self.strict_ranges.len() * std::mem::size_of::<(u32, u32)>()
             + self.caches.bytes()
+            + self.scopes.as_ref().map_or(0, |scopes| scopes.len())
     }
 }
 
@@ -589,6 +597,11 @@ enum Filing {
 /** The content key of a classic script, wherever it sits on a page. */
 pub(in crate::v9) fn source_key(source: &str) -> cache::Key {
     cache::text_key(cache::Grammar::Script, source)
+}
+
+/** SHA-256 of a module's text, the part of its cache key that does not depend on its offset. */
+pub(in crate::v9) fn module_source_key(source: &str) -> cache::Key {
+    cache::text_key(cache::Grammar::Module, source)
 }
 
 /** Native-fixture grammar has its own cache namespace, even for identical source bytes. */
@@ -665,6 +678,7 @@ impl Registry {
                     &parse(scopes.strict, &scopes.private_names(), scopes.grammar)?,
                     scopes,
                     (source, offset),
+                    context,
                 )?;
                 cache::put(key, unit.clone());
                 unit
@@ -684,7 +698,21 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
-        let key = cache::key(cache::Grammar::Module, offset, source);
+        self.module_keyed(module_source_key(source), source, offset, parse)
+    }
+    /**
+     * `module` for a source whose `module_source_key` the caller already holds: a service that
+     * keeps a page's modules resident hashes each once, not on every request, and the key at
+     * an offset is one cheap hash of that text key.
+     */
+    pub fn module_keyed(
+        &mut self,
+        text: cache::Key,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
+        let key = cache::at(&text, offset);
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
@@ -702,6 +730,27 @@ impl Registry {
             .clone()
             .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
         Ok((unit.entry.clone(), info))
+    }
+    /**
+     * The code already filed at `site` when it is exactly this dynamic source: the same text at
+     * the same offset, under the same caller scopes for direct eval. It answers with no parse
+     * and no hash, so a step re-adopting a retained source costs one text comparison. Any other
+     * source at the site is None, and the keyed path tells the cases apart.
+     */
+    pub fn refiled(
+        &mut self,
+        site: u32,
+        source: &str,
+        offset: usize,
+        scopes: Option<&str>,
+    ) -> Option<Arc<Code>> {
+        let entry = self.codes.get(&site)?;
+        if !is_same_source(entry, source, offset, scopes) {
+            return None;
+        }
+        let entry = entry.clone();
+        self.adopted.insert(site);
+        Some(entry)
     }
     /** Start a step: what earlier steps filed stays, but no longer counts as this step's. */
     pub fn begin_step(&mut self) {
@@ -814,6 +863,16 @@ impl Registry {
     }
 }
 
+/** Whether `code` is the entry of exactly this dynamic source: its text, its offset and, for
+direct eval, its caller scopes. Scripts carry no scopes, so they match only scripts. */
+fn is_same_source(code: &Code, source: &str, offset: usize, scopes: Option<&str>) -> bool {
+    code.scopes.as_deref() == scopes
+        && code
+            .source
+            .as_ref()
+            .is_some_and(|(text, at)| *at == offset && **text == *source)
+}
+
 /** Compile a classic script and its nested functions into one shareable unit. */
 fn compile_script(
     program: &Program,
@@ -834,9 +893,11 @@ fn compile_eval(
     program: &Program,
     context: eval::Context,
     source: (&str, usize),
+    scopes: &str,
 ) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
-    let script = compiler.eval_script(program, context)?;
+    let mut script = compiler.eval_script(program, context)?;
+    script.scopes = Some(Arc::from(scopes));
     Ok(Arc::new(cache::Unit::new(
         compiler.done,
         script,
@@ -1199,6 +1260,7 @@ impl Compiler {
             strict_ranges: state.strict_ranges,
             name,
             source: None,
+            scopes: None,
             source_span: func.and_then(|func| *func.source_span.borrow()),
             length,
             ops: state.ops,
@@ -1206,6 +1268,7 @@ impl Compiler {
             env,
             arguments: state.arguments,
             caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
+            jit: crate::v9::jit::JitSlot::default(),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),
             templates: state.templates,
@@ -1409,6 +1472,91 @@ mod rebase_real_page {
                 "script {index} differs"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod retained_tests {
+    use super::{Code, Registry, cache};
+    use crate::v9::compile_dynamic;
+    use std::sync::Arc;
+
+    /** The caller context the Function constructor compiles under. */
+    const INDIRECT: &str = "n|g";
+    /** A strict caller's context: the same text compiles to other code under it. */
+    const STRICT: &str = "s|g";
+    /** The offset of the first dynamic source; a second one sits past it. */
+    const BASE: usize = crate::v9::DYNAMIC_OFFSET;
+    /** Where a second dynamic source starts, clear of the first. */
+    const SECOND: usize = BASE + 100;
+
+    /** The registry the next step starts from: the carried one, with nothing adopted yet. */
+    fn next_step(carried: &Registry) -> Registry {
+        let mut step = carried.clone();
+        step.begin_step();
+        step
+    }
+
+    /** The source text a code was compiled from. */
+    fn text(code: &Code) -> &str {
+        code.source
+            .as_ref()
+            .map(|(text, _)| &**text)
+            .unwrap_or_default()
+    }
+
+    /** Classic and eval code kept by an earlier step is handed back as the same code to a later
+    step that re-adopts it: nothing is parsed or compiled again. */
+    #[test]
+    fn retained_dynamic_code_is_reused_across_steps() {
+        let mut first = Registry::default();
+        let script = compile_dynamic(&mut first, "1+1", BASE, None, false).unwrap();
+        let eval = compile_dynamic(&mut first, "2+2", SECOND, Some(INDIRECT), false).unwrap();
+        let lookups = cache::lookups();
+        let mut step = next_step(&first);
+        let again = compile_dynamic(&mut step, "1+1", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&script, &again));
+        let again = compile_dynamic(&mut step, "2+2", SECOND, Some(INDIRECT), false).unwrap();
+        assert!(Arc::ptr_eq(&eval, &again));
+        let mut later = next_step(&step);
+        let again = compile_dynamic(&mut later, "1+1", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&script, &again));
+        // No keyed lookup at all: the registry answers before the source is hashed.
+        assert_eq!(cache::lookups(), lookups);
+    }
+
+    /** Another source at an offset an earlier step's source held compiles fresh, and the next
+    step sees the new one, not the old one. */
+    #[test]
+    fn a_different_source_at_the_same_offset_recompiles() {
+        let mut first = Registry::default();
+        let old = compile_dynamic(&mut first, "1+1", BASE, None, false).unwrap();
+        let mut step = next_step(&first);
+        let new = compile_dynamic(&mut step, "2+2", BASE, None, false).unwrap();
+        assert!(!Arc::ptr_eq(&old, &new));
+        assert_eq!(text(&new), "2+2");
+        let mut later = next_step(&step);
+        let again = compile_dynamic(&mut later, "2+2", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&new, &again));
+    }
+
+    /** The same text at the same offset under other caller scopes, or as a plain script, is
+    other code: a retained eval answers only for its own scopes. */
+    #[test]
+    fn an_eval_with_a_different_context_recompiles() {
+        let mut first = Registry::default();
+        let indirect = compile_dynamic(&mut first, "x", BASE, Some(INDIRECT), false).unwrap();
+        let mut step = next_step(&first);
+        let strict = compile_dynamic(&mut step, "x", BASE, Some(STRICT), false).unwrap();
+        assert!(!Arc::ptr_eq(&indirect, &strict));
+        assert_eq!(strict.scopes.as_deref(), Some(STRICT));
+        let mut again = next_step(&step);
+        let script = compile_dynamic(&mut again, "x", BASE, None, false).unwrap();
+        assert!(!Arc::ptr_eq(&strict, &script));
+        assert_eq!(script.scopes, None);
+        let mut back = next_step(&again);
+        let indirect_again = compile_dynamic(&mut back, "x", BASE, Some(INDIRECT), false).unwrap();
+        assert_eq!(indirect_again.scopes.as_deref(), Some(INDIRECT));
     }
 }
 

@@ -13,7 +13,7 @@ mars-core = { path = "../core" }
 # Namespace-aware XML well-formedness for XML and XHTML frame documents; no dependencies.
 mars-xml = { path = "../xml" }
 serde = { version = "=1.0.229", features = ["derive", "rc"] }
-serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
+serde_json = { version = "=1.0.154", features = ["float_roundtrip", "raw_value"] }
 ryu-js = "=1.0.3"
 # Already in the workspace through the app; WHATWG URL parsing for location, URL and fetch.
 url = "=2.5.8"
@@ -28,6 +28,8 @@ ring = "=0.17.14"
 # Already in the workspace (the Clear Key CDM); the block cipher under crypto.subtle's AES-CBC,
 # whose chaining and PKCS#7 padding are V9's own, since ring has no CBC mode.
 aes = "=0.8.4"
+# Mars's own fragmented MP4 demuxer: Media Source parses appended segments with it. No dependencies.
+mars-mp4 = { path = "../mp4" }
 # Pure-Rust port of musl's fdlibm-derived math: the same algorithms V8 ships in
 # src/base/ieee754.cc, so Math results match Chrome bit for bit instead of the host libm.
 libm = "=0.2.16"

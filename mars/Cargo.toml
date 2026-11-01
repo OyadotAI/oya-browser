@@ -2,7 +2,7 @@
 [workspace]
 # vendor/rustls is its own package: a patched copy of the registry crate, see vendor/rustls/MARS.md.
 exclude = ["vendor/rustls"]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif", "crates/mp4"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
@@ -23,6 +23,7 @@ mars-v9 = { path = "crates/v9" }
 mars-relay = { path = "crates/relay" }
 mars-link = { path = "crates/link" }
 mars-avif = { path = "crates/avif" }
+mars-mp4 = { path = "crates/mp4" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
@@ -47,8 +48,8 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, features
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGContext", "CGGradient", "CGColor", "CGColorSpace", "CGAffineTransform", "CGPath"] }
 # Media playback: AVFoundation demuxes and decodes (VideoToolbox/AudioToolbox underneath) and
 # outputs audio; Mars feeds it bytes fetched through Relay via a resource loader.
-objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime" ] }
-objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase"] }
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "objc2-core-foundation", "AVAsset", "AVAssetTrack", "AVAssetResourceLoader", "AVPlayer", "AVPlayerItem", "AVPlayerItemOutput", "AVAudioProcessingSettings", "AVMediaFormat", "AVTime", "AVQueuedSampleBufferRendering", "AVSampleBufferAudioRenderer", "AVSampleBufferRenderSynchronizer" ] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMTime", "CMTimeRange", "CMBase", "CMSampleBuffer", "CMSync"] }
 objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer", "CVReturn", "CVBase", "CVPixelBufferIOSurface", "CVHostTime"] }
 dispatch2 = "=0.3.1"
 block2 = "=0.6.2"
@@ -84,6 +85,12 @@ required-features = ["test-support"]
 [[test]]
 name = "runtime"
 path = "tests/runtime.rs"
+required-features = ["test-support"]
+
+# Ticks the native media players from the test thread, which only test builds expose.
+[[test]]
+name = "media_source"
+path = "tests/media_source.rs"
 required-features = ["test-support"]
 
 [patch.crates-io]

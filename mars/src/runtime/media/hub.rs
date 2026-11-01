@@ -41,6 +41,10 @@ pub struct Status {
     pub seek_time: f64,
     /// Frames presented so far, for getVideoPlaybackQuality and requestVideoFrameCallback.
     pub frames: u64,
+    /// A Media Source's stored bytes per source buffer, as video and audio: the script's quota check reads them.
+    pub stored: Vec<(u32, [usize; 2])>,
+    /// The player streams a Media Source, whose duration the page owns: metadata leaves it out.
+    pub media_source: bool,
     /// The player predicts playback will not stall.
     pub likely: bool,
     /// Every byte of the resource is fetched.
@@ -56,6 +60,8 @@ pub struct Shared {
     pub initiator: String,
     /// An `<audio>` element (Sec-Fetch-Dest: audio) rather than `<video>`.
     pub audio: bool,
+    /// A Media Source player, which counts toward the page's cap on them.
+    pub stream: bool,
     /// The element's node, where its frames and controls paint.
     pub node: usize,
     /// Fetched bytes, filled by the coordinator, read by the native loader.

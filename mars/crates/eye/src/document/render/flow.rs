@@ -1291,6 +1291,7 @@ pub(super) fn box_item(
 ) -> DisplayItem {
     let face = super::sizing::face(&node.style);
     DisplayItem {
+        pointer_excluded: !crate::document::takes_pointer(node),
         resize_box: None,
         canvas: node.canvas.clone(),
         local_id: node.local_id,

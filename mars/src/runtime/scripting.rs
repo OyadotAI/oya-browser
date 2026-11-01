@@ -592,9 +592,9 @@ impl Runtime {
         changed |= apply_local_sheets(page, effects.local_sheets.take());
         if let Some(applied) = applied {
             let before = page.document.styles.len();
-            page.resolved_stylesheets
+            std::sync::Arc::make_mut(&mut page.resolved_stylesheets)
                 .extend(inserted_sheets(&applied, before));
-            page.document = applied;
+            page.document = std::sync::Arc::new(applied);
             super::frame_pages::prune_routes(page);
             page.styled = false;
         }
@@ -688,7 +688,7 @@ impl Runtime {
             page.scripting.scroll_x = effects.scroll_x;
         }
         if let Some(title) = effects.title {
-            page.document.title = title;
+            std::sync::Arc::make_mut(&mut page.document).title = title;
         }
         apply_history(page, &effects.history);
         page.scripting.submit_allowed = effects.submit;
@@ -775,11 +775,11 @@ impl Runtime {
             crate::document::background_urls(&page.document, &page.url)
                 .into_iter()
                 .collect();
-        page.document = self.styled(
-            &page.document,
+        page.document = std::sync::Arc::new(self.styled(
+            std::sync::Arc::clone(&page.document),
             &page.resolved_stylesheets,
             self.render_context,
-        )?;
+        )?);
         page.styled = true;
         super::animations::refresh_timelines(page)?;
         self.refresh_image_visibility(page);
@@ -814,7 +814,7 @@ impl Runtime {
             )
             .and_then(|()| {
                 self.load_images_skipping(
-                    &mut page.document,
+                    std::sync::Arc::make_mut(&mut page.document),
                     &base,
                     deadline,
                     &mut budget,
@@ -841,14 +841,16 @@ impl Runtime {
                     .managed
                     .contains(&node.local_id)
         }) {
-            page.images.remove(&node.local_id);
+            std::sync::Arc::make_mut(&mut page.images).remove(&node.local_id);
         }
-        page.images.extend(images);
+        std::sync::Arc::make_mut(&mut page.images).extend(images);
         for note in notes {
             if page.document.diagnostics.len() < DIAGNOSTICS
                 && !page.document.diagnostics.contains(&note)
             {
-                page.document.diagnostics.push(note);
+                std::sync::Arc::make_mut(&mut page.document)
+                    .diagnostics
+                    .push(note);
             }
             if page.degraded.len() < DIAGNOSTICS && !page.degraded.iter().any(|f| f == "images") {
                 page.degraded.push("images".into());
@@ -876,7 +878,7 @@ impl Runtime {
                 page.untrusted_styles = true;
                 continue;
             }
-            page.resolved_stylesheets.push(css);
+            std::sync::Arc::make_mut(&mut page.resolved_stylesheets).push(css);
             page.styled = false;
             added = true;
         }
@@ -946,7 +948,7 @@ impl Runtime {
         let resident = digest
             .as_ref()
             .is_some_and(|digest| self.v9_sources.contains(digest));
-        let input = &page.scripting.modules.input;
+        let input: &crate::v9::ModuleInput = &page.scripting.modules.input;
         let modules_digest = (!is_classic(&input)).then(|| super::service::modules_digest(input));
         let modules_resident = modules_digest
             .as_ref()
@@ -1006,9 +1008,8 @@ impl Runtime {
         let load = matches!(action, super::service::PageAction::Load);
         let call = super::service::TypedPage {
             sources: self.shared_sources_for(&page.scripts),
-            // ponytail: modules are copied per step (2.75 MB on YouTube, a memcpy); share them
-            // like the scripts if this shows in a profile.
-            modules: std::sync::Arc::new(page.scripting.modules.input.clone()),
+            modules: std::sync::Arc::clone(&page.scripting.modules.input),
+            module_keys: std::sync::Arc::clone(&page.scripting.modules.keys),
             document: projection.clone(),
             storage: page.storage.clone(),
             languages: self.languages.clone(),
@@ -1025,7 +1026,7 @@ impl Runtime {
 
     /** The step's environment with a layout host, so a read of a box or style the last layout
     cannot answer lays out at once on V9's thread instead of running the step twice.
-    ponytail: copies the document and sheets per step; share them by Arc if it shows. */
+    The base document and sheets are shared with the page by Arc, so this copies nothing. */
     fn with_sync_layout(&mut self, page: &Page, environment: &PageEnvironment) -> PageEnvironment {
         let mut environment = environment.clone();
         let inputs = sync_layout::Inputs {
@@ -1085,12 +1086,12 @@ impl Runtime {
             &execution.changes,
             &execution.script_changes,
         )?;
-        let mut sheets = page.resolved_stylesheets.clone();
+        let mut sheets = page.resolved_stylesheets.as_ref().clone();
         if let Some(texts) = &execution.effects.local_sheets {
             local_sheets::replace(&mut sheets, page.local_sheets, texts);
         }
         sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
-        let styled = self.styled(&applied, &sheets, self.render_context)?;
+        let styled = self.styled(std::sync::Arc::new(applied), &sheets, self.render_context)?;
         // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
         let mut scroll = page.element_scroll.clone();
         scroll.extend(execution.effects.element_scroll.clone());
@@ -1748,11 +1749,12 @@ impl Runtime {
             None
         };
         let origin = page.origin.clone();
-        let storage = page.storage.clone();
+        // Only a dirty candidate publishes storage, so only it pays for a copy of the maps.
+        let storage = page.storage_dirty.then(|| page.storage.clone());
         let published = self.publish(move |runtime| {
             let mut page = page;
-            if page.storage_dirty {
-                runtime.commit_storage(&origin, &storage);
+            if let Some(storage) = &storage {
+                runtime.commit_storage(&origin, storage);
             }
             page.storage_dirty = false;
             runtime.broadcast = broadcast;
@@ -1846,9 +1848,9 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         .take(crate::network::network::constants::SCRIPT_REQUEST_HEADERS)
         .collect();
     let body = if method.is_safe() {
-        String::new()
+        Vec::new()
     } else if request.body_bytes.is_empty() {
-        request.body.clone().unwrap_or_default()
+        request.body.clone().unwrap_or_default().into_bytes()
     } else {
         identity_body(&request.body_bytes, &mut headers)?
     };
@@ -1869,18 +1871,21 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
 }
 
 /**
- * A binary body as the text Relay sends. Relay carries text bodies only, so a gzip or deflate
- * encoded body (YouTube gzips its Innertube JSON, the guide among it) goes out decoded, without
- * its Content-Encoding: the server reads the same JSON. Any other binary body, or one that does
- * not decode to UTF-8 within the body bound, cannot be sent and fails as a network error.
- * ponytail: decode-and-send until Relay's WebRequest body is bytes; then send them unchanged.
+ * A binary body as Relay sends it: byte for byte, as a browser does, so a protobuf or an
+ * arbitrary buffer reaches the server unchanged. A gzip or deflate encoded body (YouTube gzips
+ * its Innertube JSON, the guide among it) keeps going out decoded, without its Content-Encoding,
+ * as it always has: the server reads the same JSON. A body claiming another encoding, or one
+ * that does not decode within the body bound, cannot be sent and fails as a network error.
  */
-fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<String> {
+fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<Vec<u8>> {
     use std::io::Read;
-    let encoding = headers
+    let Some(encoding) = headers
         .iter()
         .find(|(name, _)| name == "content-encoding")
-        .map(|(_, value)| value.to_ascii_lowercase())?;
+        .map(|(_, value)| value.to_ascii_lowercase())
+    else {
+        return Some(bytes.to_vec());
+    };
     let limit = crate::constants::VM_REQUEST_BODY_BYTES as u64 + 1;
     let mut decoded = Vec::new();
     match encoding.as_str() {
@@ -1897,7 +1902,7 @@ fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<St
         return None;
     }
     headers.retain(|(name, _)| name != "content-encoding");
-    String::from_utf8(decoded).ok()
+    Some(decoded)
 }
 
 /** Admit exact fetch bytes or legacy decoded text within VM_RESPONSE_BYTES, exposing only
@@ -2010,9 +2015,13 @@ pub(super) fn stop_scripts(page: &mut Page, error: &EngineError) {
     if !page.document.diagnostics.contains(&message) {
         // A terminal failure must remain explainable even when CSS warnings filled the list.
         if page.document.diagnostics.len() >= DIAGNOSTICS {
-            page.document.diagnostics.pop();
+            std::sync::Arc::make_mut(&mut page.document)
+                .diagnostics
+                .pop();
         }
-        page.document.diagnostics.push(message);
+        std::sync::Arc::make_mut(&mut page.document)
+            .diagnostics
+            .push(message);
     }
     if page.degraded.len() < DIAGNOSTICS
         && !page.degraded.iter().any(|feature| feature == "scripts")
@@ -2030,9 +2039,13 @@ fn record_load_failure(page: &mut Page, error: &EngineError) {
     let message = format!("Page script state could not be retained ({code}): {reason}");
     if !page.document.diagnostics.contains(&message) {
         if page.document.diagnostics.len() >= DIAGNOSTICS {
-            page.document.diagnostics.pop();
+            std::sync::Arc::make_mut(&mut page.document)
+                .diagnostics
+                .pop();
         }
-        page.document.diagnostics.push(message.clone());
+        std::sync::Arc::make_mut(&mut page.document)
+            .diagnostics
+            .push(message.clone());
         record_console(
             &mut page.scripting,
             vec![ConsoleEntry {
@@ -2180,8 +2193,11 @@ pub(super) fn apply_local_sheets(page: &mut Page, texts: Option<Vec<String>>) ->
     let Some(texts) = texts else {
         return false;
     };
-    page.local_sheets =
-        local_sheets::replace(&mut page.resolved_stylesheets, page.local_sheets, &texts);
+    page.local_sheets = local_sheets::replace(
+        std::sync::Arc::make_mut(&mut page.resolved_stylesheets),
+        page.local_sheets,
+        &texts,
+    );
     page.styled = false;
     true
 }

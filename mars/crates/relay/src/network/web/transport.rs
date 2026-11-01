@@ -219,7 +219,7 @@ impl Connection {
         deadline: Instant,
     ) -> EngineResult<()> {
         let wire = http1_request(url, request, conditional)?;
-        let mut bytes = wire.as_bytes();
+        let mut bytes = wire.as_slice();
         while !bytes.is_empty() {
             self.deadline(deadline)?;
             let count = match self {
@@ -470,7 +470,7 @@ fn http1_request(
     url: &Url,
     request: &WebRequest,
     conditional: &[(&'static str, String)],
-) -> EngineResult<String> {
+) -> EngineResult<Vec<u8>> {
     let host = url.host_str().ok_or_else(denied)?;
     let host = url
         .port()
@@ -501,7 +501,8 @@ fn http1_request(
         wire.push_str(&format!("{}: {value}\r\n", super::fields::http1_name(name)));
     }
     wire.push_str("\r\n");
-    wire.push_str(&request.body);
+    let mut wire = wire.into_bytes();
+    wire.extend_from_slice(&request.body);
     Ok(wire)
 }
 

@@ -22,6 +22,7 @@ fn run(source: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: StorageState::default(),
         host: &host,

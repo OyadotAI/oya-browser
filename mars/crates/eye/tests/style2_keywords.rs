@@ -113,9 +113,9 @@ fn keywords_never_make_a_hidden_subtree_visible_or_a_masked_box_actionable() {
         "<div id=p><a id=a href=/x>a</a></div>",
         "#p{visibility:hidden}#a{visibility:initial;pointer-events:initial}",
     );
-    let a = &by_id(&document, "a").style;
+    let a = by_id(&document, "a");
     // `visibility: hidden` is the inherited `invisible`; a keyword never clears it.
-    assert!(a.invisible && !a.interactive);
+    assert!(a.style.invisible && !mars_eye::takes_pointer(a));
 }
 
 #[test]

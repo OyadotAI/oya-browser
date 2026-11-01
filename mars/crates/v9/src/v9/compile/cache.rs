@@ -8,7 +8,7 @@
  */
 use super::{Code, ModuleInfo};
 use crate::constants::CODE_CACHE_BYTES;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /** Which grammar the text compiled under: the same text is different code in each. */
@@ -92,15 +92,34 @@ impl Unit {
 /** SHA-256 of grammar, offset and source. */
 pub(super) type Key = [u8; 32];
 
-/** The process cache: units by key, with use order and the bytes they hold. */
+/** A cached unit and the stamp of its last use. */
+struct Slot {
+    unit: Arc<Unit>,
+    stamp: u64,
+}
+
+/** The process cache: units by key, their use order and the bytes they hold. */
 #[derive(Default)]
 struct Cache {
-    units: HashMap<Key, Arc<Unit>>,
-    /// Least recently used first.
-    order: VecDeque<Key>,
+    units: HashMap<Key, Slot>,
+    /// Keys by last-use stamp, least recently used first. A stamp is never reused, so every use
+    /// moves its key in O(log n) rather than scanning the order for it.
+    order: BTreeMap<u64, Key>,
+    /// The stamp the next use takes.
+    clock: u64,
     bytes: usize,
+    /// Set when an eviction may have left `texts` naming a unit that is gone.
+    evicted: bool,
     /// Where each source text was last compiled: its offset and the key of that unit there.
     texts: HashMap<Key, (usize, Key)>,
+}
+
+impl Cache {
+    /** The next use stamp, after every stamp taken so far. */
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
 }
 
 /** The one cache of this process. */
@@ -112,23 +131,6 @@ fn cache() -> std::sync::MutexGuard<'static, Cache> {
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/** The key of `source` compiled under `grammar` at page offset `offset`. */
-pub(super) fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-    context.update(&[match grammar {
-        Grammar::Script => 0,
-        Grammar::Module => 1,
-        #[cfg(feature = "conformance")]
-        Grammar::NativeFixture => 2,
-    }]);
-    context.update(&(offset as u64).to_le_bytes());
-    context.update(&(source.len() as u64).to_le_bytes());
-    context.update(source.as_bytes());
-    let mut key = Key::default();
-    key.copy_from_slice(context.finish().as_ref());
-    key
 }
 
 /** SHA-256 of `source` under `grammar`, wherever it sits on a page. */
@@ -161,15 +163,17 @@ pub(super) fn at(text: &Key, offset: usize) -> Key {
 pub(super) fn elsewhere(text: &Key) -> Option<(usize, Arc<Unit>)> {
     let cache = cache();
     let (offset, key) = cache.texts.get(text)?;
-    Some((*offset, cache.units.get(key)?.clone()))
+    Some((*offset, cache.units.get(key)?.unit.clone()))
 }
 
 /** Records that `text` was compiled at `offset` under `key`, for `elsewhere`. */
 pub(super) fn remember(text: Key, offset: usize, key: Key) {
     let mut cache = cache();
     cache.texts.insert(text, (offset, key));
-    let Cache { texts, units, .. } = &mut *cache;
-    texts.retain(|_, (_, key)| units.contains_key(key));
+    if std::mem::take(&mut cache.evicted) {
+        let Cache { texts, units, .. } = &mut *cache;
+        texts.retain(|_, (_, key)| units.contains_key(key));
+    }
 }
 
 /** The key of direct eval `source` at `offset` in caller scopes `scopes`: the same text in other
@@ -188,14 +192,30 @@ pub(super) fn eval_key(offset: usize, scopes: &str, source: &str) -> Key {
     key
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Keyed lookups this thread made: a test reads it to tell a re-adoption that went through
+    /// the keyed cache from one that answered from the registry.
+    static LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/** Keyed lookups this thread has made (test builds only). */
+#[cfg(test)]
+pub(super) fn lookups() -> usize {
+    LOOKUPS.with(std::cell::Cell::get)
+}
+
 /** The unit under `key`, now the most recently used. */
 pub(super) fn get(key: &Key) -> Option<Arc<Unit>> {
+    #[cfg(test)]
+    LOOKUPS.with(|count| count.set(count.get() + 1));
     let mut cache = cache();
-    let unit = cache.units.get(key)?.clone();
-    if let Some(position) = cache.order.iter().position(|known| known == key) {
-        cache.order.remove(position);
-    }
-    cache.order.push_back(*key);
+    let stamp = cache.tick();
+    let slot = cache.units.get_mut(key)?;
+    let previous = std::mem::replace(&mut slot.stamp, stamp);
+    let unit = slot.unit.clone();
+    cache.order.remove(&previous);
+    cache.order.insert(stamp, *key);
     Some(unit)
 }
 
@@ -210,16 +230,18 @@ pub(super) fn put(key: Key, unit: Arc<Unit>) {
         return;
     }
     while cache.bytes + unit.bytes > CODE_CACHE_BYTES {
-        let Some(oldest) = cache.order.pop_front() else {
+        let Some((_, oldest)) = cache.order.pop_first() else {
             break;
         };
         if let Some(evicted) = cache.units.remove(&oldest) {
-            cache.bytes -= evicted.bytes;
+            cache.bytes -= evicted.unit.bytes;
+            cache.evicted = true;
         }
     }
+    let stamp = cache.tick();
     cache.bytes += unit.bytes;
-    cache.order.push_back(key);
-    cache.units.insert(key, unit);
+    cache.order.insert(stamp, key);
+    cache.units.insert(key, Slot { unit, stamp });
 }
 
 /** Compiled units cross threads: every request runs on its own stack. */
@@ -232,6 +254,11 @@ fn units_are_shareable() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** The key a caller computes from a text key and an offset, as the registry does. */
+    fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
+        at(&text_key(grammar, source), offset)
+    }
 
     /** Keys separate grammar, offset and text, including texts that differ only in length. */
     #[test]

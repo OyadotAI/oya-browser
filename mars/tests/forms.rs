@@ -552,6 +552,53 @@ fn visibility_hidden_boxes_are_not_hit() {
     );
 }
 
+/** A closed fixed drawer keeps its layout box but cannot veto a link's DOM-routed click. */
+#[test]
+fn fixed_hidden_drawer_does_not_block_dom_routed_clicks() {
+    dom_routed_overlay_click("visibility:hidden", "under");
+}
+
+/** An explicitly visible child remains a target even inside a hidden fixed drawer. */
+#[test]
+fn visible_child_of_hidden_drawer_receives_dom_routed_clicks() {
+    dom_routed_overlay_click("visibility:hidden", "child");
+}
+
+/** A pointer-transparent drawer falls through in DOM queries as well as native targeting. */
+#[test]
+fn pointer_transparent_drawer_does_not_block_dom_routed_clicks() {
+    dom_routed_overlay_click("pointer-events:none", "under");
+}
+
+/** Exercise native targeting and both DOM hit APIs against the same fixed overlay and point. */
+fn dom_routed_overlay_click(style: &str, expected: &str) {
+    let child = if expected == "child" {
+        "<a id=child href=/child style='visibility:visible;position:absolute;left:0;top:0;width:200px;height:100px'>Child</a>"
+    } else {
+        ""
+    };
+    let body = format!(
+        "<html><body style='margin:0'><a id=under href=/under style='position:absolute;left:0;top:0;width:200px;height:100px'>Under</a>\
+         <div id=drawer style='position:fixed;inset:0;{style}'>{child}</div>\
+         <script>document.getElementById('{expected}').addEventListener('click',e=>{{\
+         const hit=document.elementFromPoint(50,50);\
+         const hits=document.elementsFromPoint(50,50);\
+         if(!hit||hit.id!=='{expected}'||hits.some(n=>n.id==='drawer'))e.preventDefault();\
+         }});</script></body></html>"
+    );
+    let fixture = Fixture::start(move |_| reply("200 OK", "text/html", "", &body));
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, (50.0, 50.0)).unwrap();
+    assert!(
+        result["url"]
+            .as_str()
+            .is_some_and(|url| url.ends_with(&format!("/{expected}"))),
+        "{result}"
+    );
+}
+
 /** An inert subtree is never hit; the click reaches the link beneath it. */
 #[test]
 fn inert_subtrees_are_not_hit() {
@@ -646,20 +693,27 @@ fn an_invisible_field_over_its_covered_label_is_refused() {
     assert_eq!(node(&after, "buy")["checked"], false);
 }
 
-/** A point read from an older revision is refused before anything runs, so a click aimed at a
-field cannot land on what replaced it. */
+/** A click at a point on the same page lands even when a busy page moved on a revision since it was
+observed, as a person's click does; only a different page refuses it. */
 #[test]
-fn a_click_at_from_an_old_revision_is_refused() {
+fn a_click_at_from_an_older_revision_of_the_same_page_still_lands() {
     let fixture = serve(r#"<html><body><input id="name"></body></html>"#);
     let mut runtime = fixture.runtime();
     call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
     let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
     let (x, y) = centre(&page, "name");
-    let stale = page["revision"].as_u64().unwrap() + 1;
-    let result = call(
+    let older = page["revision"].as_u64().unwrap().saturating_sub(1);
+    let landed = call(
         &mut runtime,
         "page.click_at",
-        json!({"page_id":page["page_id"],"expected_revision":stale,"x":x,"y":y}),
+        json!({"page_id":page["page_id"],"expected_revision":older,"x":x,"y":y}),
+    )
+    .unwrap();
+    assert_eq!(landed["focused"], node(&page, "name")["node_id"]);
+    let elsewhere = call(
+        &mut runtime,
+        "page.click_at",
+        json!({"page_id":"page-other","expected_revision":older,"x":x,"y":y}),
     );
-    assert_eq!(result.unwrap_err().code, "revision_conflict");
+    assert_eq!(elsewhere.unwrap_err().code, "invalid_target");
 }

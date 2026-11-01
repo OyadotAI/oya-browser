@@ -328,6 +328,8 @@ pub(in crate::v9) struct Vm<'h> {
     /** Nested native-to-script calls. */
     pub native_depth: usize,
     pub remaining: usize,
+    /** A taken backward jump made its function hot: the interpreter looks for compiled code. */
+    pub jit_request: bool,
     pub deadline: Option<std::time::Instant>,
     /** A fresh native clock anchors monotonic profiler timestamps across each execution request. */
     #[cfg(feature = "conformance")]
@@ -835,6 +837,7 @@ impl<'h> Vm<'h> {
             collect_due: false,
             native_depth: 0,
             remaining: limits.operations,
+            jit_request: false,
             deadline: None,
             #[cfg(feature = "conformance")]
             profile_clock,

@@ -4,7 +4,7 @@ use mars_v9::{
     DomLevel, Execution, MediaCommand, MediaSupport, PageEnvironment, PageEvent, VmState,
 };
 
-/** A host that plays MP4 (H.264 and AAC) and MP3, from files and from Media Source. */
+/** A host that plays MP4 (H.264, AV1 and AAC) and MP3 from files, and H.264 and AAC in MP4 from Media Source. */
 fn environment() -> PageEnvironment {
     PageEnvironment {
         dom_level: DomLevel::Extended,
@@ -13,10 +13,15 @@ fn environment() -> PageEnvironment {
             codecs: vec![
                 "video/mp4|avc1".into(),
                 "video/mp4|mp4a".into(),
+                "video/mp4|av01".into(),
                 "audio/mp4|mp4a".into(),
                 "audio/mpeg|mp3".into(),
             ],
-            streams: vec!["video/mp4".into(), "audio/mp4".into()],
+            streams: vec![
+                "video/mp4|avc1".into(),
+                "video/mp4|mp4a".into(),
+                "audio/mp4|mp4a".into(),
+            ],
         },
         ..common::environment()
     }
@@ -372,8 +377,8 @@ fn media_source_buffers_appended_fragments() {
     );
 }
 
-/** A tiny fragmented MP4 built in the page: moov with one 320x240 video track at timescale 1000,
-then one moof whose trun holds two samples of 1000 ticks from tfdt 0, so it buffers [0, 2). */
+/** A tiny fragmented MP4 built in the page: moov with one 320x240 video track at timescale 1000, then one moof
+whose trun holds two 2-byte samples of 1000 ticks from tfdt 0, and an mdat that holds their bytes, so it buffers [0, 2). */
 const SEGMENT: &str = "(() => {\
   const u32 = n => [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255];\
   const box = (type, ...parts) => { const body = [].concat(...parts); return [...u32(body.length + 8), ...[...type].map(c => c.charCodeAt(0)), ...body]; };\
@@ -381,7 +386,237 @@ const SEGMENT: &str = "(() => {\
   const tkhd = box('tkhd', u32(0), u32(0), u32(0), u32(1), u32(0), u32(0), zeros(8), zeros(8), zeros(36), u32(320 << 16), u32(240 << 16));\
   const mdhd = box('mdhd', u32(0), u32(0), u32(0), u32(1000), u32(0), zeros(4));\
   const hdlr = box('hdlr', u32(0), u32(0), [...'vide'].map(c => c.charCodeAt(0)), zeros(12), [0]);\
-  const moov = box('moov', box('trak', tkhd, box('mdia', mdhd, hdlr)));\
-  const traf = box('traf', box('tfhd', u32(0), u32(1)), box('tfdt', u32(0), u32(0)), box('trun', u32(0x100), u32(2), u32(1000), u32(1000)));\
-  return [...moov, ...box('moof', traf)];\
+  const avc1 = box('avc1', zeros(78), box('avcC', [1, 0x42, 0xE0, 0x1E, 0xFF, 0xE1, 0, 0]));
+  const minf = box('minf', box('stbl', box('stsd', u32(0), u32(1), avc1)));\
+  const moov = box('moov', box('trak', tkhd, box('mdia', mdhd, hdlr, minf)));\
+  const moofWith = off => box('moof', box('traf', box('tfhd', u32(0), u32(1)), box('tfdt', u32(0), u32(0)), box('trun', u32(0x301), u32(2), u32(off), u32(1000), u32(2), u32(1000), u32(2))));\
+  const moofSize = moofWith(0).length;\
+  return [...moov, ...moofWith(moofSize + 8), ...box('mdat', [1, 2, 3, 4])];\
 })()";
+
+/** The page for one Media Source test: the recorder, a source attached to a video, and `body` run once it opens. */
+fn open(body: &str) -> String {
+    format!(
+        "{RECORDER} let m = ''; const ms = new MediaSource(); v.src = URL.createObjectURL(ms);\
+         const seg = {SEGMENT}; const moovSize = seg[0] << 24 | seg[1] << 16 | seg[2] << 8 | seg[3];\
+         const media = seg.slice(moovSize);\
+         ms.addEventListener('sourceopen', () => {{ {body} }});"
+    )
+}
+
+/** isTypeSupported answers for the containers and codecs the host streams, and for nothing else. */
+#[test]
+fn is_type_supported_answers_for_streamable_mp4_codecs() {
+    let page = Page::load(
+        "let r = [MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.4d401f\"'),\
+           MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"'),\
+           MediaSource.isTypeSupported('audio/mp4; codecs=\"mp4a.40.2\"'),\
+           MediaSource.isTypeSupported('video/mp4; codecs=\"vp09.00.10.08\"'),\
+           MediaSource.isTypeSupported('video/webm'),\
+           MediaSource.isTypeSupported('video/mp4')].join('|');",
+    );
+    assert_eq!(page.global("r"), "true|true|true|false|false|true");
+}
+
+/** A codec the host plays from a file but not from segments (AV1 here) is refused for streaming while canPlayType still says probably. */
+#[test]
+fn is_type_supported_refuses_a_codec_the_host_plays_but_cannot_stream() {
+    let page = Page::load(
+        "const v = document.createElement('video');\
+         let r = [v.canPlayType('video/mp4; codecs=\"av01.0.08M.08\"'), MediaSource.isTypeSupported('video/mp4; codecs=\"av01.0.08M.08\"'),\
+           MediaSource.isTypeSupported('video/mp4; codecs=\"avc1.4D400C, av01.0.08M.08\"')].join('|');",
+    );
+    assert_eq!(page.global("r"), "probably|false|false");
+}
+
+/** addSourceBuffer refuses a type the host cannot stream with NotSupportedError. */
+#[test]
+fn add_source_buffer_refuses_an_unstreamable_type() {
+    let page = Page::load(&open(
+        "try { ms.addSourceBuffer('video/webm; codecs=\"vp9\"'); } catch (e) { m = e.name; }",
+    ));
+    assert_eq!(page.global("m"), "NotSupportedError");
+}
+
+/** An append is asynchronous: updating is set at once, updatestart, update and updateend follow in order. */
+#[test]
+fn append_brackets_the_update_events_around_the_async_work() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('updatestart', () => m += 'start;');\
+         sb.addEventListener('update', () => m += 'update;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.end(0) + ';');\
+         sb.appendBuffer(new Uint8Array(seg)); m += 'sync:' + sb.updating + ';';",
+    ));
+    assert_eq!(page.global("m"), "sync:true;start;update;end:2;");
+}
+
+/** timestampOffset moves a segment's samples on the timeline: the range becomes [10, 12). */
+#[test]
+fn timestamp_offset_moves_the_buffered_range() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.timestampOffset = 10;\
+         sb.addEventListener('updateend', () => m += sb.buffered.start(0) + '-' + sb.buffered.end(0));\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "10-12");
+}
+
+/** The append window drops samples that end before its start and clips the one that straddles it. */
+#[test]
+fn append_window_start_drops_samples_before_it() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.appendWindowStart = 1;\
+         sb.addEventListener('updateend', () => m += sb.buffered.start(0) + '-' + sb.buffered.end(0));\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "1-2");
+}
+
+/** The append window's end clips the samples that run past it. */
+#[test]
+fn append_window_end_clips_samples_after_it() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.appendWindowEnd = 1.5;\
+         sb.addEventListener('updateend', () => m += sb.buffered.start(0) + '-' + sb.buffered.end(0));\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "0-1.5");
+}
+
+/** A media segment before any init segment is an append error: error, then updateend, and nothing buffers. */
+#[test]
+fn media_segment_before_its_init_is_an_append_error() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array(media));",
+    ));
+    assert_eq!(page.global("m"), "error;end:0;");
+}
+
+/** A box cut by one append waits in the buffer for the next append to complete it. */
+#[test]
+fn a_box_split_across_appends_is_completed_by_the_next() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         let n = 0;\
+         sb.addEventListener('updateend', () => {{\
+           n++;\
+           if (n === 1) {{ m += 'first:' + sb.buffered.length + ';'; sb.appendBuffer(new Uint8Array(seg).subarray(40)); }}\
+           else m += 'second:' + sb.buffered.length + ':' + sb.buffered.end(0);\
+         }});\
+         sb.appendBuffer(new Uint8Array(seg).subarray(0, 40));",
+    ));
+    assert_eq!(page.global("m"), "first:0;second:1:2");
+}
+
+/** remove drops the buffered time between its bounds and leaves the rest of the range. */
+#[test]
+fn remove_trims_the_buffered_ranges() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         let n = 0;\
+         sb.addEventListener('updateend', () => {{\
+           n++;\
+           if (n === 1) {{ m += sb.buffered.start(0) + '-' + sb.buffered.end(0) + ';'; sb.remove(0, 1); }}\
+           else m += sb.buffered.start(0) + '-' + sb.buffered.end(0);\
+         }});\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "0-2;1-2");
+}
+
+/** A later media segment joins the init segment already kept for the buffer; its ranges merge. */
+#[test]
+fn a_media_segment_reuses_the_init_segment_kept_for_the_buffer() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         let n = 0;\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => {{\
+           n++;\
+           if (n === 1) sb.appendBuffer(new Uint8Array(media));\
+           else m += sb.buffered.length + ':' + sb.buffered.end(0);\
+         }});\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "1:2");
+}
+
+/** An init segment whose codec the type does not name is refused, so mismatched tracks never buffer. */
+#[test]
+fn an_init_segment_with_another_codec_is_an_append_error() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('audio/mp4; codecs=\"mp4a.40.2\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array(seg));",
+    ));
+    assert_eq!(page.global("m"), "error;end:0;");
+}
+
+/** Bytes that are not ISO BMFF (a WebM header here) are refused as an append error. */
+#[test]
+fn bytes_that_are_not_mp4_are_an_append_error() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0, 0, 0x7f, 1, 2, 3, 4]));",
+    ));
+    assert_eq!(page.global("m"), "error;end:0;");
+}
+
+/** abort during an append cancels it: abort then updateend, and the append never buffers. */
+#[test]
+fn abort_during_an_append_cancels_it() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('abort', () => m += 'abort;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array(seg)); sb.abort();",
+    ));
+    assert_eq!(page.global("m"), "abort;end:0;");
+}
+
+/** endOfStream moves the source to ended and fires sourceended. */
+#[test]
+fn end_of_stream_ends_the_source() {
+    let page = Page::load(&open(
+        "ms.addEventListener('sourceended', () => m += 'ended:' + ms.readyState);\
+         ms.endOfStream();",
+    ));
+    assert_eq!(page.global("m"), "ended:ended");
+}
+
+/** A hostile trun that declares four billion samples is an append error: nothing buffers and the page keeps running. */
+#[test]
+fn a_hostile_sample_count_is_an_append_error_not_a_crash() {
+    let hostile = "const u = n => [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255];\
+        const box = (t, ...p) => { const b = [].concat(...p); return [...u(b.length + 8), ...[...t].map(c => c.charCodeAt(0)), ...b]; };\
+        const moof = box('moof', box('traf', box('tfhd', u(0), u(1)), box('tfdt', u(0), u(0)), box('trun', u(0x100), u(0xFFFFFFFF), u(1000))));";
+    let page = Page::load(&open(&format!(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         {hostile} sb.appendBuffer(new Uint8Array([...seg.slice(0, moovSize), ...moof]));"
+    )));
+    assert_eq!(page.global("m"), "error;end:0;");
+}
+
+/** A box claiming u32::MAX bytes is only ever incomplete: the append consumes nothing and buffers nothing, with no panic. */
+#[test]
+fn a_box_claiming_u32_max_bytes_waits_without_crashing() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array([...seg.slice(0, moovSize), 0xFF, 0xFF, 0xFF, 0xFF, 0x6d, 0x64, 0x61, 0x74, 1, 2, 3]));",
+    ));
+    assert_eq!(page.global("m"), "end:0;");
+}

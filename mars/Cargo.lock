@@ -518,6 +518,7 @@ dependencies = [
  "mars-core",
  "mars-eye",
  "mars-link",
+ "mars-mp4",
  "mars-relay",
  "mars-v9",
  "objc2",
@@ -598,6 +599,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mars-mp4"
+version = "0.1.0"
+
+[[package]]
 name = "mars-relay"
 version = "0.1.0"
 dependencies = [
@@ -627,6 +632,7 @@ dependencies = [
  "libc",
  "libm",
  "mars-core",
+ "mars-mp4",
  "mars-xml",
  "ring",
  "ryu-js",

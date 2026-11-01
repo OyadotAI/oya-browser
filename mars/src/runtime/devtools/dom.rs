@@ -115,7 +115,7 @@ impl Runtime {
             name: input.name.to_ascii_lowercase(),
             value: input.value,
         };
-        page.document = self.apply_all(&page.document, &[], &[change])?;
+        page.document = std::sync::Arc::new(self.apply_all(&page.document, &[], &[change])?);
         page.styled = false;
         let result = self.finish_mutation(page)?;
         Ok(json!({"page_id":result["page_id"],"revision":result["revision"]}))

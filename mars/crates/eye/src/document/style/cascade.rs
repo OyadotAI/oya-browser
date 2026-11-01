@@ -376,9 +376,9 @@ impl<'a> Cascade<'a> {
             || node.tag == "option"
             || node.tag == "#comment"
             || (node.tag == "input" && node.input_type() == "hidden");
-        // pointer-events:auto re-enables a box under pointer-events:none, as in CSS, but nothing
-        // inside a hidden subtree is ever actionable.
-        style.interactive &= !style.hidden && !style.invisible;
+        // Display suppression removes the subtree. Visibility is tested on each target instead:
+        // a descendant can restore visibility without overriding inherited pointer-events.
+        style.interactive &= !style.hidden;
         if self.parsed.pseudo_rules && !style.hidden {
             let scope = self.scopes.len() - 1;
             for after in [false, true] {

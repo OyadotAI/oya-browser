@@ -6,7 +6,9 @@
 mod binding;
 mod builtins;
 mod compile;
+mod encoded;
 mod errors;
+mod jit;
 mod keyboard;
 pub use keyboard::{KeyboardKey, Stroke, keyboard_page, typed_page};
 mod legacy_handlers;
@@ -519,6 +521,7 @@ impl VmState {
     /// resident in the V9 service. Sending a summary back as a step's state would lose the
     /// page's heap, so the app never does.
     pub fn summary(&self) -> Self {
+        self.page.keep_encodings();
         let page = {
             #[cfg(feature = "conformance")]
             {
@@ -587,7 +590,23 @@ impl VmState {
         let limits = Limits::default();
         self.validate_projection_bounds(&limits, false)?;
         self.validate_size(&limits)?;
+        #[cfg(debug_assertions)]
+        self.assert_kept_encodings_match();
         self.validate_document_references(document)
+    }
+    /** Debug builds: the bytes the size check counts from kept encodings must be exactly what a
+    fresh walk of every map encodes, so a missed invalidation fails the suites instead of
+    silently shifting the 64 MiB refusal. */
+    #[cfg(debug_assertions)]
+    fn assert_kept_encodings_match(&self) {
+        let kept = serde_json::to_vec(self).ok();
+        let mut fresh = self.clone();
+        fresh.page.forget_encodings();
+        debug_assert_eq!(
+            kept,
+            serde_json::to_vec(&fresh).ok(),
+            "a kept page encoding went stale"
+        );
     }
     /// Document identity and retained node ownership apply equally to full states and summaries.
     fn validate_document_references(&self, document: &ScriptDocument) -> EngineResult<()> {
@@ -1006,6 +1025,16 @@ pub fn source_key(source: &str) -> SourceKey {
     compile::source_key(source)
 }
 
+/// The key under which a module source's compiled code is cached, from `classic` telling a
+/// classic script delivered for a page element (keyed as `source_key`) from a module.
+pub fn module_source_key(source: &str, classic: bool) -> SourceKey {
+    if classic {
+        compile::source_key(source)
+    } else {
+        compile::module_source_key(source)
+    }
+}
+
 /// Everything one page request needs besides committed state.
 pub struct PageInput<'a> {
     /// The page's classic scripts in execution order. A failed script keeps its text, since its
@@ -1013,6 +1042,9 @@ pub struct PageInput<'a> {
     pub sources: &'a [String],
     /// Each source's `source_key`, or empty to hash them here.
     pub source_keys: &'a [SourceKey],
+    /// Each module source's `module_source_key`, aligned with `modules.sources`, or empty to
+    /// hash them here.
+    pub module_keys: &'a [SourceKey],
     /// The current projection.
     pub document: ScriptDocument,
     /// Origin storage candidates.
@@ -1193,6 +1225,10 @@ pub(in crate::v9) fn compile_dynamic(
     if let Some(code) = registry.adopted_this_step(site) {
         return Ok(code);
     }
+    // A retained source filed by an earlier step answers before any parsing or hashing.
+    if let Some(code) = registry.refiled(site, source, base, context) {
+        return Ok(code);
+    }
     match context {
         Some(context) => registry.eval(source, base, context, |strict, private_names, grammar| {
             if source.len() > SCRIPT_BYTES {
@@ -1281,6 +1317,7 @@ fn session<'h>(
     environment: &PageEnvironment,
     state: Option<VmState>,
     modules: &ModuleInput,
+    module_keys: &[SourceKey],
 ) -> EngineResult<(Vm<'h>, Compiled)> {
     #[allow(unused_mut)]
     let mut limits = limits;
@@ -1400,7 +1437,14 @@ fn session<'h>(
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
     initialize_page(&mut vm);
-    modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
+    modules::Modules::open(
+        &mut vm,
+        modules,
+        module_keys,
+        sources,
+        &offsets(sources),
+        state.modules,
+    )?;
     let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
     let mut imports = Vec::new();
     for (index, source) in state.dynamic.iter().enumerate() {
@@ -1823,6 +1867,7 @@ fn load_isolated(
         input.environment,
         state,
         input.modules,
+        input.module_keys,
     )?;
     // A page starts at the viewport it loaded at: a later step reports only what changed after.
     let current = viewport_of(&vm);
@@ -1859,6 +1904,7 @@ fn load_isolated(
             let empty = PageInput {
                 sources: &[],
                 source_keys: &[],
+                module_keys: &[],
                 document: initial.0,
                 storage: initial.1,
                 host: input.host,
@@ -1876,6 +1922,7 @@ fn load_isolated(
                 empty.environment,
                 None,
                 empty.modules,
+                empty.module_keys,
             )?;
             finish(vm)?
         }
@@ -2180,6 +2227,7 @@ fn open<'h>(
         input.environment,
         Some(state),
         input.modules,
+        input.module_keys,
     )?;
     report_resize(&mut vm)?;
     report_media_changes(&mut vm)?;
@@ -2477,6 +2525,7 @@ pub fn load_document_scripts(
             &environment,
             None,
             NO_MODULES,
+            &[],
         )?;
         let Compiled::All(codes) = compiled else {
             return Err(EngineError::invalid(
@@ -2511,6 +2560,7 @@ pub fn load_document_scripts_isolated(
     load_page(PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document,
         storage,
         host,
@@ -2551,6 +2601,7 @@ pub fn click_document_scripts_with(
         PageInput {
             sources,
             source_keys: &[],
+            module_keys: &[],
             document,
             storage,
             host,
@@ -2623,6 +2674,7 @@ fn legacy(
             &environment,
             state,
             NO_MODULES,
+            &[],
         )?;
         vm.page.legacy = true;
         let Compiled::All(codes) = compiled else {
@@ -2919,3 +2971,105 @@ pub fn replay(
 /** Keep the unused host data import referenced for documentation of the wrapper model. */
 #[allow(dead_code)]
 fn _host(_: HostData, _: Class, _: SourceLocation) {}
+
+#[cfg(test)]
+mod near_bounds_collection_tests {
+    //! A heap at 95% of an object bound collects at the end of its step, so garbage the page
+    //! made is not counted toward a refusal (`near_bounds` in `finish`).
+    use super::*;
+
+    /** Objects a page keeps alive for the whole test. */
+    const SURVIVORS: usize = 2_000;
+    /** A small object bound so the test runs fast; the default is `VM_OBJECTS`. */
+    const OBJECT_BOUND: usize = 4_000;
+    /** Garbage that takes the heap past 95% of the bound but not over it. */
+    const GARBAGE: usize = 500;
+    /** Entries a step may add beyond the survivors' own, for its bookkeeping. */
+    const SLACK: usize = 64;
+
+    /** Load a page that keeps `SURVIVORS` objects and drops `garbage` more; the entries its
+    heap holds at the end of the step. */
+    fn entries_after_load(garbage: usize) -> usize {
+        let limits = Limits {
+            objects: OBJECT_BOUND,
+            ..Limits::default()
+        };
+        let sources = [format!(
+            "var kept = []; for (var i = 0; i < {SURVIVORS}; i++) kept.push({{ i }}); for (var j = 0; j < {garbage}; j++) ({{ j }});"
+        )];
+        let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment::default();
+        let input = PageInput {
+            sources: &sources,
+            source_keys: &[],
+            module_keys: &[],
+            document: ScriptDocument {
+                identity: "page-1".into(),
+                nodes: Vec::new(),
+                charset: "UTF-8".into(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: ModuleInput::NONE,
+        };
+        let execution = load_isolated(input, None, limits, false)
+            .expect("garbage near the object bound is collected, not refused");
+        let wire = serde_json::to_value(&execution.state).unwrap();
+        wire["heap"][0].as_array().unwrap().len() + wire["heap"][1].as_array().unwrap().len()
+    }
+
+    #[test]
+    /** A heap near its object bound collects before the bound is checked: the step succeeds and
+    ends with what it would hold had it made no garbage, not with the garbage counted. */
+    fn a_heap_near_its_bound_still_collects_before_refusing() {
+        let clean = entries_after_load(0);
+        let near = entries_after_load(GARBAGE);
+        assert!(
+            near <= clean + SLACK,
+            "{near} entries after garbage, {clean} without it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod summary_bound_tests {
+    //! The typed path's refusal point is the encoded size of the summary, counted from kept page
+    //! encodings; it must stay the exact byte count so the refusal happens at the same total.
+    use super::*;
+
+    #[test]
+    /** A typed summary is accepted at exactly the state ceiling and refused one byte past it, as a
+    state-bytes limit, whether or not its page maps still hold their kept encodings. */
+    fn a_typed_summary_past_the_state_bound_is_refused() {
+        let document = ScriptDocument {
+            identity: "page-1".into(),
+            nodes: Vec::new(),
+            charset: "UTF-8".into(),
+        };
+        let mut summary = VmState::default();
+        summary.page.texts.insert(0, String::new());
+        let limit = Limits::default().state_bytes;
+        let base = serde_json::to_vec(&summary).unwrap().len();
+        summary.page.texts.insert(0, "x".repeat(limit - base));
+        summary
+            .summary()
+            .validate_summary_document(&document)
+            .expect("exactly at the bound");
+        summary.page.texts.insert(0, "x".repeat(limit - base + 1));
+        let error = summary
+            .summary()
+            .validate_summary_document(&document)
+            .unwrap_err();
+        assert!(
+            error.message.contains("V9 state bytes"),
+            "{}",
+            error.message
+        );
+    }
+}

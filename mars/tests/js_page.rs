@@ -422,8 +422,8 @@ fn bound_text_in_whitespace_node_renders() {
 }
 
 /** A gzip-encoded binary body, as YouTube posts its guide request, reaches the server as the
-JSON it encodes: Relay carries text bodies, so the runtime sends the decoded identity body
-without the Content-Encoding header, and the page reads the answer. */
+JSON it encodes: the runtime sends the decoded identity body without the Content-Encoding
+header, as it always has, and the page reads the answer. */
 #[test]
 fn gzipped_binary_body_reaches_the_server_decoded() {
     let (fixture, _runtime, page) = load(
@@ -443,6 +443,48 @@ fn gzipped_binary_body_reaches_the_server_decoded() {
     assert!(request.ends_with("{\"guide\":true}"), "{request}");
     assert!(
         !request.to_ascii_lowercase().contains("content-encoding"),
+        "{request}"
+    );
+}
+
+/** A binary body that is not UTF-8 (a protobuf, as YouTube's SABR requests carry) reaches the server
+whole: its Content-Length is the byte count, no Content-Type is invented for a buffer, and the
+server sees every byte (here through the fixture's lossy view, where each invalid byte is one
+replacement character). */
+#[test]
+fn a_binary_body_reaches_the_server_whole() {
+    let (fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const raw=new Uint8Array([8,255,0,128,195,40,10]);\
+         fetch('/api',{method:'POST',body:raw}).then(r=>r.text()).then(t=>{\
+         document.getElementById('out').textContent='sent '+t},e=>{\
+         document.getElementById('out').textContent='failed '+e})</script>",
+        vec![("/api", reply("text/plain", "", "ok"))],
+    );
+    assert!(texts(&page).contains("sent ok"), "{page}");
+    let request = fixture.last_request.lock().unwrap().clone();
+    let lossy = String::from_utf8_lossy(&[8, 255, 0, 128, 195, 40, 10]).to_string();
+    assert!(request.ends_with(&lossy), "{request:?}");
+    let lower = request.to_ascii_lowercase();
+    assert!(lower.contains("content-length: 7"), "{request}");
+    assert!(!lower.contains("content-type"), "{request}");
+}
+
+/** A string body still goes out as UTF-8 text labeled text/plain. */
+#[test]
+fn a_text_body_reaches_the_server_as_utf8_text() {
+    let (fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>fetch('/api',{method:'POST',body:'h\\u00e9llo'})\
+         .then(r=>r.text()).then(t=>{document.getElementById('out').textContent='sent '+t},e=>{\
+         document.getElementById('out').textContent='failed '+e})</script>",
+        vec![("/api", reply("text/plain", "", "ok"))],
+    );
+    assert!(texts(&page).contains("sent ok"), "{page}");
+    let request = fixture.last_request.lock().unwrap().clone();
+    assert!(request.ends_with("h\u{e9}llo"), "{request:?}");
+    let lower = request.to_ascii_lowercase();
+    assert!(lower.contains("content-length: 6"), "{request}");
+    assert!(
+        lower.contains("content-type: text/plain;charset=utf-8"),
         "{request}"
     );
 }
@@ -792,8 +834,9 @@ fn clicking_a_button_descendant_preserves_the_original_event_target() {
     assert!(texts(&clicked).contains("child"), "{clicked}");
 }
 
-/** How long the slow route below holds its answer: longer than a navigation's settle. */
-const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(3);
+/** How long the slow route below holds its answer: well past a navigation's settle, with room for a
+debug build on a loaded machine, so the test tells waiting apart from slowness. */
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(8);
 
 /** A fetch on a slow link does not hold the page: navigation returns before the answer comes,
 and the answer still reaches the page on a later background run. */

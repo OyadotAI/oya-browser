@@ -157,6 +157,7 @@ fn listener_only_callback_and_abort_signal_graphs_are_validated_before_dispatch(
         let input = || mars_v9::PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: mars_v9::document::ScriptDocument {
                 identity: "probe".into(),
                 charset: "UTF-8".into(),
@@ -222,6 +223,7 @@ fn structured_clone_wire_graphs_validate_bounds_and_neutralize_proto() {
     let input = || mars_v9::PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: mars_v9::document::ScriptDocument {
             identity: "probe".into(),
             charset: "UTF-8".into(),

@@ -72,6 +72,7 @@ fn input<'a>(
     PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         environment,
         host,
         modules,

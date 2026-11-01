@@ -94,6 +94,28 @@ fn blank_text_nodes_survive_insertion() {
     assert_eq!(common::global(&execution, "r"), "1|filled|true|filled");
 }
 
+/**
+ * Attaching a detached subtree keeps every text node it holds as the same node: empty texts a
+ * script will fill, and texts next to each other, which markup alone would merge into one.
+ */
+#[test]
+fn attached_subtree_keeps_empty_and_adjacent_text_nodes() {
+    let mut environment = common::environment();
+    environment.dom_level = DomLevel::Extended;
+    let execution = load_with(
+        "const host = document.getElementById('first'); const d = document.createElement('div');
+         d.appendChild(document.createTextNode('')); d.appendChild(document.createTextNode(''));
+         d.appendChild(document.createTextNode('x')); d.appendChild(document.createTextNode('y'));
+         d.appendChild(document.createElement('b')); const made = Array.from(d.childNodes);
+         host.appendChild(d); const kids = Array.from(d.childNodes);
+         const r = [kids.length, kids.map(n => n.data ?? n.tagName).join(','),
+           kids.every((n, i) => n === made[i]), made.every(n => n.parentNode === d)].join('|');",
+        &environment,
+    );
+    assert_eq!(failure(&execution), None);
+    assert_eq!(common::global(&execution, "r"), "5|,,x,y,B|true|true");
+}
+
 /** `Node.ELEMENT_NODE` lives on the constructor as well as the prototype. */
 #[test]
 fn node_constants_are_static() {
@@ -527,6 +549,7 @@ fn eval_extended(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(mars_v9::PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: mars_v9::StorageState::default(),
         host: &host,

@@ -95,3 +95,25 @@ unsafe fn copy(
     }
     Some(())
 }
+
+/** The RGBA rows of a frame image, for tests that check what was painted: (width, height, bytes). */
+#[cfg(feature = "test-support")]
+pub(super) fn pixels(image: &NSImage) -> Option<(usize, usize, Vec<u8>)> {
+    let rep = image
+        .representations()
+        .into_iter()
+        .find_map(|rep| rep.downcast::<NSBitmapImageRep>().ok())?;
+    let (width, height) = (rep.pixelsWide() as usize, rep.pixelsHigh() as usize);
+    let (stride, data) = (rep.bytesPerRow() as usize, rep.bitmapData());
+    if data.is_null() || stride < width * PIXEL {
+        return None;
+    }
+    let mut out = Vec::with_capacity(width * height * PIXEL);
+    for y in 0..height {
+        // SAFETY: each row lies within the bitmap's own allocation, which `rep` keeps alive.
+        out.extend_from_slice(unsafe {
+            std::slice::from_raw_parts(data.add(y * stride), width * PIXEL)
+        });
+    }
+    Some((width, height, out))
+}

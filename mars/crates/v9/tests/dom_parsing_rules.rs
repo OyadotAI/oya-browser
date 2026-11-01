@@ -15,6 +15,7 @@ fn run_with_charset(charset: &str, source: &str) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

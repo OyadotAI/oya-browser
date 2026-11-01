@@ -61,6 +61,7 @@ fn load(input: PageInput<'_>, state: Option<VmState>) -> EngineResult<Execution>
         input.environment,
         state,
         input.modules,
+        input.module_keys,
     )?;
     let Compiled::Each(mut scripts) = compiled else {
         return Err(EngineError::invalid("Invalid worker compilation mode."));

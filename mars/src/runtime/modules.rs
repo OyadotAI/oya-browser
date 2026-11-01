@@ -33,8 +33,13 @@ const MODULE_WALL: Duration = Duration::from_millis(15_000);
 /// A page's module scripts and the modules fetched for them, kept between V9 requests.
 #[derive(Clone, Default)]
 pub(super) struct Modules {
-    /// What every V9 request carries: which sources are modules, and the fetched modules.
-    pub input: ModuleInput,
+    /// What every V9 request carries: which sources are modules, and the fetched modules. Shared
+    /// by Arc so a step or a tick copies the page without copying its megabytes of module text;
+    /// `deliver` appends through `Arc::make_mut`, which copies only while a step still holds it.
+    pub input: std::sync::Arc<ModuleInput>,
+    /// The V9 key of each delivered source (`module_source_key`), in `input.sources` order, so a
+    /// step hands V9 keys instead of making it hash the page's module text again.
+    pub keys: std::sync::Arc<Vec<crate::v9::SourceKey>>,
     /// Integrity metadata of external module scripts, by URL.
     integrity: BTreeMap<String, String>,
     /// Modules V9 asked for that the next round fetches.
@@ -87,11 +92,13 @@ impl Modules {
             if let (Some(url), Some(integrity)) = (&entry.url, entry.integrity) {
                 modules.integrity.insert(url.clone(), integrity);
             }
-            modules.input.entries.push(ModuleEntry {
-                index,
-                kind: entry.kind,
-                url: entry.url,
-            });
+            std::sync::Arc::make_mut(&mut modules.input)
+                .entries
+                .push(ModuleEntry {
+                    index,
+                    kind: entry.kind,
+                    url: entry.url,
+                });
         }
         modules
     }
@@ -110,11 +117,15 @@ impl Modules {
         let source = source.filter(fits);
         self.bytes += url.len() + source.as_ref().map_or(0, String::len);
         self.delivered.insert(url.clone());
-        self.input.sources.push(ModuleSource {
-            url,
-            source,
-            classic,
-        });
+        let key = crate::v9::module_source_key(source.as_deref().unwrap_or(""), classic);
+        std::sync::Arc::make_mut(&mut self.keys).push(key);
+        std::sync::Arc::make_mut(&mut self.input)
+            .sources
+            .push(ModuleSource {
+                url,
+                source,
+                classic,
+            });
         true
     }
     /** Whether a URL was delivered already, as a module or a classic script. */
@@ -281,7 +292,7 @@ impl Runtime {
             worker_policy: None,
             url,
             method: Method::Get,
-            body: String::new(),
+            body: Vec::new(),
             headers: Vec::new(),
             mode: cors::Mode::Cors,
             credentials: Credentials::SameOrigin,

@@ -107,9 +107,9 @@ impl Frame {
         );
         Self {
             owner,
-            document: page.document.clone(),
+            document: (*page.document).clone(),
             url: url::Url::parse(&page.url).ok().unwrap_or_else(blank),
-            sheets: page.resolved_stylesheets.clone(),
+            sheets: page.resolved_stylesheets.as_ref().clone(),
             id_base,
             frames: page.frames.as_ref().clone(),
             page: Some(Box::new(page)),

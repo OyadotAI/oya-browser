@@ -128,7 +128,7 @@ impl Runtime {
             self.scroll_y = scroll;
             if let Some(changed) = result? {
                 if changed {
-                    frame.follow_page(&mut page.images);
+                    frame.follow_page(std::sync::Arc::make_mut(&mut page.images));
                 }
                 return Ok(Some(changed));
             }

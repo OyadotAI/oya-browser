@@ -137,6 +137,7 @@ impl Ids {
             implementation: shift(self.implementation, amount),
             implementation_prototype: shift(self.implementation_prototype, amount),
             function_prototype: shift(self.function_prototype, amount),
+            media_query_list_prototype: shift(self.media_query_list_prototype, amount),
             array_prototype: shift(self.array_prototype, amount),
             array: shift(self.array, amount),
             string_prototype: shift(self.string_prototype, amount),

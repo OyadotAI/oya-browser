@@ -76,9 +76,12 @@ const PROBES: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Containers a Media Source can stream on this host. None yet: the native player cannot be fed
-/// appended segments, so `isTypeSupported` says no rather than accept media it cannot play.
-const STREAMS: &[&str] = &[];
+/// What a Media Source can stream on this host, as container|family pairs: fragmented MP4 with
+/// H.264 (every avc1 profile YouTube asks for, 42001E through 64001F) and AAC-LC, the codecs the
+/// stream players decode and play. Narrower than the file probe above: the OS may play AV1 or HEVC
+/// from a file, but appended segments go through the stream players' own decoders. Each pair is
+/// advertised only when the OS probe also plays the family.
+const STREAMS: &[&str] = &["video/mp4|avc1", "video/mp4|mp4a", "audio/mp4|mp4a"];
 
 /** The probed support, computed on first use and kept for the process. */
 pub fn support() -> MediaSupport {
@@ -95,12 +98,14 @@ fn probe() -> MediaSupport {
         }
         support.containers.push((*container).into());
         for (family, sample) in *codecs {
-            if playable(&format!("{container}; codecs=\"{sample}\"")) {
-                support.codecs.push(format!("{container}|{family}"));
+            if !playable(&format!("{container}; codecs=\"{sample}\"")) {
+                continue;
             }
-        }
-        if STREAMS.contains(container) {
-            support.streams.push((*container).into());
+            let pair = format!("{container}|{family}");
+            if STREAMS.contains(&pair.as_str()) {
+                support.streams.push(pair.clone());
+            }
+            support.codecs.push(pair);
         }
     }
     support

@@ -71,13 +71,13 @@ impl Runtime {
             page.state_token,
             &crate::document::script_document(&page.document, &page.script_identity)?,
         )?;
-        page.document = self.apply(
+        page.document = std::sync::Arc::new(self.apply(
             &page.document,
             &[DomChange::Text {
                 html_id: node.html_id,
                 text: input.text,
             }],
-        )?;
+        )?);
         page.styled = false;
         super::scripting::validate_script_state(
             &page.state,
@@ -284,7 +284,7 @@ impl Runtime {
     /** Native input clicks share form/radio behavior with agent activation. */
     fn activate_control(&mut self, mut page: Page, node: Node) -> EngineResult<Value> {
         if ["checkbox", "radio"].contains(&node.input_type()) {
-            page.document = crate::document::set_checked(
+            page.document = std::sync::Arc::new(crate::document::set_checked(
                 &page.document,
                 node.local_id,
                 if node.input_type() == "radio" {
@@ -292,7 +292,7 @@ impl Runtime {
                 } else {
                     !node.checked
                 },
-            )?;
+            )?);
             page.styled = false;
             return self.finish_mutation(page);
         }
@@ -311,7 +311,11 @@ impl Runtime {
             &input.node_id,
             input.expected_revision,
         )?;
-        page.document = crate::document::set_checked(&page.document, node.local_id, input.checked)?;
+        page.document = std::sync::Arc::new(crate::document::set_checked(
+            &page.document,
+            node.local_id,
+            input.checked,
+        )?);
         page.styled = false;
         self.finish_mutation(page)
     }
@@ -332,7 +336,11 @@ impl Runtime {
             .find(|n| page.node_id(n.local_id) == input.option_id)
             .ok_or_else(invalid_target)?
             .local_id;
-        page.document = crate::document::select(&page.document, node.local_id, option)?;
+        page.document = std::sync::Arc::new(crate::document::select(
+            &page.document,
+            node.local_id,
+            option,
+        )?);
         page.styled = false;
         self.notify_input(&mut page, &node, "")?;
         self.finish_mutation(page)
@@ -386,8 +394,7 @@ impl Runtime {
             Err(error) => {
                 if let Some(id) = error.invalid_node.as_deref() {
                     let mut candidate = page.clone();
-                    if let Some(node) = candidate
-                        .document
+                    if let Some(node) = std::sync::Arc::make_mut(&mut candidate.document)
                         .nodes
                         .iter_mut()
                         .find(|n| n.local_id == *id)

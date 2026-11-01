@@ -5,8 +5,13 @@
  * into the element's box. It lives on the main thread, reads bytes only through its loader, and
  * reports what it observes as plain status in the hub.
  */
+use super::audio::StreamAudio;
+use super::clock::Clock;
 use super::loader::Loader;
+use super::stream_video::{StreamVideo, video_lane};
+use crate::runtime::media::constants::KEEP_BEHIND;
 use crate::runtime::media::hub::{Shared, Status};
+use crate::runtime::media::stream::{Append, Stream};
 use crate::v9::MediaSettings;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, ProtocolObject};
@@ -59,6 +64,16 @@ pub(super) struct Native {
     pending_seek: Option<(f64, bool)>,
     /// A player for a Media Source stream, which has no fetchable URL.
     stream: bool,
+    /// The segments a Media Source stream has been given, per source buffer.
+    pub media: Stream,
+    /// The playhead of a Media Source stream, which its audio renderer plays on.
+    clock: Clock,
+    /// The video decoder of a Media Source stream.
+    video: StreamVideo,
+    /// The audio renderer of a Media Source stream.
+    audio: StreamAudio,
+    /// The page ended its Media Source, so the buffered end is the duration and reaching it is the end.
+    stream_ended: bool,
 }
 
 impl Native {
@@ -78,6 +93,11 @@ impl Native {
             seek_time: 0.0,
             pending_seek: None,
             stream,
+            media: Stream::default(),
+            clock: Clock::default(),
+            video: StreamVideo::default(),
+            audio: StreamAudio::default(),
+            stream_ended: false,
         };
         native.start_if_allowed(mtm);
         native
@@ -95,14 +115,26 @@ impl Native {
             self.seek(time, fast);
         }
     }
+    /** A segment the script accepted for one source buffer; a refused one is logged and buffers nothing. An append reopens an ended source. */
+    pub fn append(&mut self, buffer: u32, append: Append<'_>) {
+        self.stream_ended = false;
+        if let Err(error) = self.media.append(buffer, append) {
+            crate::runtime::media::debug(|| format!("append refused: {error}"));
+        }
+    }
+    /** The page called endOfStream: what is buffered is all there is, so the buffered end is the end. */
+    pub fn end_of_stream(&mut self) {
+        self.stream_ended = true;
+    }
     /** New settings from the page. */
     pub fn set(&mut self, mtm: MainThreadMarker, settings: MediaSettings) {
         self.settings = settings;
         self.start_if_allowed(mtm);
         self.apply();
     }
-    /** Play or pause at the page's rate, volume and pitch handling. */
-    fn apply(&self) {
+    /** Play or pause at the page's rate, volume and pitch handling; a stream's clock takes the rate at its tick. */
+    fn apply(&mut self) {
+        self.audio.apply(&self.settings);
         let Some(engine) = &self.engine else { return };
         let settings = &self.settings;
         // SAFETY: AVPlayer and AVPlayerItem setters, on the main thread that owns them.
@@ -126,6 +158,14 @@ impl Native {
     }
     /** Seek; the hub hears of it once AVFoundation finishes the latest seek. */
     pub fn seek(&mut self, time: f64, fast: bool) {
+        if self.stream {
+            self.seeks += 1;
+            self.seek_time = time;
+            self.clock.seek(time);
+            self.video.reset();
+            self.audio.flush();
+            return;
+        }
         let Some(engine) = &self.engine else {
             self.pending_seek = Some((time, fast));
             return;
@@ -160,6 +200,10 @@ impl Native {
     /** One frame tick: serve bytes, observe the player, and pull a new frame when there is one. */
     pub fn tick(&mut self, shared: &mut Shared, host_time: f64) {
         self.loader.serve(shared);
+        if self.stream {
+            self.tick_stream(shared);
+            return;
+        }
         let Some(engine) = &self.engine else {
             return;
         };
@@ -187,6 +231,65 @@ impl Native {
                 self.fresh = true;
                 self.frames += 1;
             }
+        }
+    }
+}
+
+/**
+ * One tick of a Media Source player: run its clock while there is media ahead of the playhead, stall at the buffered
+ * end (the page hears `waiting`, then `playing` once more arrives; `ended` once the source has ended), evict behind
+ * the playhead, present, and publish its state.
+ */
+impl Native {
+    fn tick_stream(&mut self, shared: &mut Shared) {
+        let playhead = self.clock.time();
+        let dry = self.media.buffered_end().is_none_or(|end| playhead >= end);
+        let rate = if self.settings.paused || dry {
+            0.0
+        } else {
+            self.settings.rate
+        };
+        self.clock.set_rate(rate);
+        self.media.evict_behind(playhead);
+        self.video.forget_before(playhead - KEEP_BEHIND);
+        if let Some(picture) = self.video.step(&self.media, playhead) {
+            self.frame = Some(picture);
+            self.fresh = true;
+            self.frames += 1;
+        }
+        self.audio.step(&self.media, playhead, &self.clock);
+        let stalled = dry && self.media.buffered_end().is_some();
+        shared.status = self.stream_status(shared, playhead, stalled);
+    }
+
+    /**
+     * What a stream shows now: ready once a decoder or renderer is open, an audio failure as a decode error, waiting
+     * while play ran into the buffered end, and ended there once the source has ended.
+     */
+    fn stream_status(&self, shared: &Shared, playhead: f64, stalled: bool) -> Status {
+        let size = video_lane(&self.media).map(|lane| (lane.track.width, lane.track.height));
+        let (width, height) = size.unwrap_or((0, 0));
+        let ready = self.video.ready() || self.audio.ready();
+        let failed = self.audio.error().map(|message| (DECODE_ERROR, message));
+        let ended = stalled && self.stream_ended;
+        Status {
+            time: playhead,
+            error: shared.status.error.clone().or(failed),
+            playing: self.clock.running(),
+            waiting: stalled && !ended && !self.settings.paused,
+            ended,
+            seeks: self.seeks,
+            seek_time: self.seek_time,
+            frames: self.frames,
+            stored: self.media.buffers(),
+            video: width > 0 && height > 0,
+            audio: self.audio.ready(),
+            ready,
+            likely: ready,
+            media_source: true,
+            width,
+            height,
+            ..Status::default()
         }
     }
 }

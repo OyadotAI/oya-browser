@@ -151,6 +151,23 @@ fn work_budget_failure_rolls_back_all_native_candidates() {
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "2 2");
 }
+/** A step that fails after it wrote the title and the DOM leaves the committed document as it was: the candidate copied the shared document on its first write, and the copy goes with it. */
+#[test]
+fn a_discarded_step_leaves_the_committed_document_untouched() {
+    let body = "<title>committed</title><p id=out>initial</p><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>function bad(){document.title='candidate';document.getElementById('out').textContent='candidate';try{for(;;){}}catch(error){}}function read(){document.getElementById('out').textContent=document.title;}</script>";
+    let fixture = fixture(body);
+    let mut runtime = runtime(&fixture.url);
+    let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let before = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let error = call(&mut runtime, "page.click", target(&page, "bad")).unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert_eq!(
+        call(&mut runtime, "page.inspect", json!({})).unwrap(),
+        before
+    );
+    let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
+    assert_eq!(text(&page, "out"), "committed");
+}
 /** Capability discovery advertises implemented closures and explicit graph caps without claiming complete JS. */
 #[test]
 fn native_capabilities_expose_closures_and_their_bounds() {

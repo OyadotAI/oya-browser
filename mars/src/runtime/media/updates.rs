@@ -29,6 +29,7 @@ pub struct Reported {
     error: bool,
     time_at: Option<Instant>,
     frames: u64,
+    stored: Vec<(u32, [usize; 2])>,
 }
 
 /** The updates that bring the page up to `status`, recording what was sent. */
@@ -39,6 +40,7 @@ pub fn diff(player: u64, status: &Status, sent: &mut Reported, now: Instant) -> 
         out.push(json!({"player":player,"kind":"error","code":code,"message":message}));
         return out;
     }
+    stored(player, status, sent, &mut out);
     if !status.ready || sent.error {
         return out;
     }
@@ -47,6 +49,20 @@ pub fn diff(player: u64, status: &Status, sent: &mut Reported, now: Instant) -> 
     seeks(player, status, sent, &mut out);
     playback(player, status, sent, now, &mut out);
     out
+}
+
+/** The bytes each source buffer holds, sent when they change so the script can refuse an append past the quota. */
+fn stored(player: u64, status: &Status, sent: &mut Reported, out: &mut Vec<Value>) {
+    if status.stored == sent.stored {
+        return;
+    }
+    sent.stored.clone_from(&status.stored);
+    let buffers: Vec<Value> = status
+        .stored
+        .iter()
+        .map(|(id, [video, audio])| json!([id, video, audio]))
+        .collect();
+    out.push(json!({"player":player,"kind":"stored","buffers":buffers}));
 }
 
 /** The first metadata, and later size or duration changes. */
@@ -63,6 +79,11 @@ fn metadata(player: u64, status: &Status, sent: &mut Reported, out: &mut Vec<Val
     let duration = duration.is_finite().then_some(duration);
     let mut update = json!({"player":player,"kind":"metadata","duration":duration,
         "width":size.0,"height":size.1,"audio":status.audio,"video":status.video,"enough":status.likely});
+    if status.media_source {
+        update
+            .as_object_mut()
+            .map(|fields| fields.remove("duration"));
+    }
     if !first {
         update["enough"] = Value::Bool(sent.likely);
     }
@@ -125,5 +146,29 @@ fn playback(player: u64, status: &Status, sent: &mut Reported, now: Instant, out
         out.push(json!({"player":player,"kind":"ended","time":status.time}));
     } else if !status.ended {
         sent.ended = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /** Metadata of a Media Source player leaves the duration out, so the page keeps the MediaSource's own. */
+    #[test]
+    fn a_media_source_status_leaves_the_duration_to_the_page() {
+        let status = super::Status {
+            ready: true,
+            video: true,
+            width: 64,
+            height: 48,
+            media_source: true,
+            ..super::Status::default()
+        };
+        let mut sent = super::Reported::default();
+        let updates = super::diff(1, &status, &mut sent, std::time::Instant::now());
+        let metadata = updates
+            .iter()
+            .find(|update| update["kind"] == "metadata")
+            .unwrap();
+        assert!(metadata.get("duration").is_none());
+        assert_eq!(metadata["width"], 64);
     }
 }

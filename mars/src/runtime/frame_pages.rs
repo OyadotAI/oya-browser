@@ -150,7 +150,7 @@ impl Runtime {
                     owner,
                     page,
                     paint_base - parent.frame_base,
-                    &mut parent.images,
+                    std::sync::Arc::make_mut(&mut parent.images),
                 )))
             }
             Err(error) if stops_loading(&error) => Err(error),
@@ -295,7 +295,7 @@ impl Runtime {
                 result => result?,
             };
             if let Some(frame) = opened {
-                page.document.nodes[index].embedded = true;
+                std::sync::Arc::make_mut(&mut page.document).nodes[index].embedded = true;
                 Arc::make_mut(&mut page.frames).push(frame);
                 added = true;
             }
@@ -352,7 +352,7 @@ impl Runtime {
         for frame in Arc::make_mut(&mut page.frames) {
             if let Some(child) = frame.page.as_mut() {
                 changed |= self.prune_frame_branch(child)?;
-                frame.follow_page(&mut page.images);
+                frame.follow_page(std::sync::Arc::make_mut(&mut page.images));
             }
         }
         Ok(changed)
@@ -392,7 +392,7 @@ impl Runtime {
         for frame in Arc::make_mut(&mut page.frames) {
             if let Some(child) = frame.page.as_mut() {
                 changed |= self.admit_frame_branch(child, until, budget)?;
-                frame.follow_page(&mut page.images);
+                frame.follow_page(std::sync::Arc::make_mut(&mut page.images));
             }
         }
         Ok(changed)
@@ -541,7 +541,7 @@ pub(super) fn prune_routes(page: &mut Page) {
         if let Some(child) = frame.page.as_mut() {
             super::broadcast::retire_page(child, &mut page.scripting.broadcast);
         }
-        frame.remove_images(&mut page.images);
+        frame.remove_images(std::sync::Arc::make_mut(&mut page.images));
         false
     });
     // The router rejects stale destinations and retires transferred peers; dropping

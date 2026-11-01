@@ -74,7 +74,8 @@ fn a_hostile_dotted_outline_stays_bounded() {
     let sheet = "body{margin:0}#t{width:100px;height:40px;outline:0.01px dotted red;outline-offset:100000px}";
     let started = std::time::Instant::now();
     let _ = ink(&item("<div id=t></div>", sheet), 0..1);
-    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    // Generous: the bound catches unbounded planning (minutes), not a slow debug build under load.
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
 }
 
 /** A wavy line with zero thickness still terminates and paints. */

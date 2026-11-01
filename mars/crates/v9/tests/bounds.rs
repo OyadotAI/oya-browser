@@ -5,8 +5,9 @@ use mars_v9::constants::{JS_STRING_UNITS, VM_FUNCTIONS, VM_OBJECTS, VM_PROPERTIE
 
 /// Objects one loop iteration allocates. The bounds are large enough that one allocation per
 /// iteration would meet the script deadline first in a debug build, so each iteration makes a
-/// batch and the bound is reached in a few thousand iterations.
-const BATCH: usize = 32;
+/// batch and the bound is reached in a few thousand iterations. The batch scales with the bound:
+/// at 4194304 objects, 128 per iteration keeps the loop short enough for a loaded machine.
+const BATCH: usize = 128;
 
 /** An array literal of BATCH empty objects (BATCH + 1 allocations). The tests keep them in Sets,
 which hold objects without own properties, so the object bound is the one reached, not the

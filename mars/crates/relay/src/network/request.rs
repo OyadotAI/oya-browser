@@ -18,8 +18,10 @@ pub struct WebRequest {
     pub url: String,
     /// Only the owned cookie jar assembles this field.
     pub cookie: String,
-    /// Already URL-encoded successful form controls.
-    pub body: String,
+    /// The body's bytes, sent as they are: URL-encoded form controls for a submission, or whatever a
+    /// script gave fetch or XHR (text as UTF-8, a buffer or Blob byte for byte).
+    #[serde(default)]
+    pub body: Vec<u8>,
     /// Selects the smaller binary resource budget for explicitly requested images.
     #[serde(default)]
     pub image: bool,

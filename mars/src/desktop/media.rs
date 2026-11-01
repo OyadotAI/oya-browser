@@ -4,12 +4,19 @@
  * its state and pull a new video frame, and says which element boxes need repainting. The
  * painter reads frames, controls state and captions from here.
  */
+mod audio;
+mod clock;
+mod constants;
+mod decoder;
 mod frames;
 mod loader;
 mod player;
+mod samples;
+mod stream_video;
 mod types;
 
 use crate::runtime::media::hub::{self, PlayerKey, Status};
+use crate::runtime::media::stream::Append;
 use crate::v9::MediaCommand;
 use objc2::MainThreadMarker;
 use player::Native;
@@ -87,14 +94,32 @@ fn apply(
             native.start_if_allowed(mtm);
         }
         MediaCommand::Captions { lines, .. } => native.captions = lines,
+        MediaCommand::Append {
+            buffer,
+            bytes,
+            init_len,
+            offset,
+            window_start,
+            window_end,
+            ..
+        } => native.append(
+            buffer,
+            Append {
+                bytes: &bytes,
+                init_len,
+                offset,
+                window: (window_start, window_end),
+            },
+        ),
+        MediaCommand::Remove {
+            buffer, start, end, ..
+        } => native.media.remove(buffer, start, end),
         MediaCommand::Bind { node, .. } => native.node = node,
+        MediaCommand::EndOfStream { .. } => native.end_of_stream(),
         MediaCommand::Unload { .. } => {
             players.remove(&key);
         }
-        MediaCommand::Load { .. }
-        | MediaCommand::Append { .. }
-        | MediaCommand::Remove { .. }
-        | MediaCommand::EndOfStream { .. } => {}
+        MediaCommand::Load { .. } => {}
     }
 }
 
@@ -125,4 +150,31 @@ pub(super) fn view(page: &str, node: usize) -> Option<View> {
 fn host_seconds() -> f64 {
     let ticks = objc2_core_video::CVGetCurrentHostTime() as f64;
     ticks / objc2_core_video::CVGetHostClockFrequency()
+}
+
+/** Test support: the players ticked and read from a test thread, since no window runs under cargo test. */
+#[cfg(feature = "test-support")]
+pub mod testing {
+    use objc2::MainThreadMarker;
+
+    /**
+     * Tick every player once. The test thread stands in for the main thread: no window exists, and the
+     * frameworks a stream player uses (VideoToolbox and the sample buffer renderers) do not require it.
+     */
+    pub fn tick() {
+        // SAFETY: see above; nothing a stream player calls asserts the main thread.
+        let mtm = unsafe { MainThreadMarker::new_unchecked() };
+        super::tick(mtm);
+    }
+
+    /** The frame the first player of `page` shows, as RGBA rows: (width, height, bytes). */
+    pub fn frame(page: &str) -> Option<(usize, usize, Vec<u8>)> {
+        super::PLAYERS.with_borrow(|players| {
+            players
+                .iter()
+                .find(|((id, _), _)| id == page)
+                .and_then(|(_, native)| native.frame.as_deref())
+                .and_then(super::frames::pixels)
+        })
+    }
 }

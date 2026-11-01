@@ -521,8 +521,8 @@ pub(super) struct ScriptRequest {
     pub url: Url,
     /// Any method a script may send; only GET and HEAD are safe.
     pub method: Method,
-    /// The text body (empty for GET and HEAD).
-    pub body: String,
+    /// The body's bytes (empty for GET and HEAD): text as UTF-8, a buffer or Blob as given.
+    pub body: Vec<u8>,
     /// Page-set headers, forbidden names already dropped.
     pub headers: Vec<(String, String)>,
     /// cors, no-cors or same-origin.

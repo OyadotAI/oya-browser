@@ -5,7 +5,7 @@
  * coordinator, the updates it gets back, the elements whose media attributes or tree position
  * changed (handed to the script at the next stable state) and DOM identity adoption.
  */
-use super::{Page, dom};
+use super::{Page, dom, media_source};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::realm::Builder;
@@ -40,7 +40,8 @@ pub struct MediaSupport {
     pub containers: Vec<String>,
     /// Playable `container|codec` pairs, the codec as its four-character family (`avc1`, `mp4a`).
     pub codecs: Vec<String>,
-    /// Container types the host can also play from appended Media Source segments.
+    /// `container|codec` pairs the host can also play from appended Media Source segments: narrower than
+    /// `codecs`, since segments go through the host's own decoders rather than the OS player.
     pub streams: Vec<String>,
 }
 
@@ -87,7 +88,9 @@ pub enum MediaCommand {
     },
     /// Seek to a media time in seconds; `fast` allows the nearest keyframe.
     Seek { player: u64, time: f64, fast: bool },
-    /// Media Source: append a segment to one source buffer of the given kind.
+    /// Media Source: a segment the script accepted, appended to one source buffer. The bytes are whole
+    /// boxes: the first `init_len` of them are an initialization segment, and the rest are media. The offset and
+    /// append window are the buffer's values when the append was processed.
     Append {
         player: u64,
         buffer: u32,
@@ -95,6 +98,14 @@ pub enum MediaCommand {
         mime: String,
         #[serde(default)]
         bytes: Vec<u8>,
+        #[serde(default)]
+        init_len: usize,
+        #[serde(default)]
+        offset: f64,
+        #[serde(default)]
+        window_start: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_end: Option<f64>,
     },
     /// Media Source: drop buffered media of one buffer between two times.
     Remove {
@@ -135,8 +146,21 @@ impl MediaCommand {
             Self::Load { url, settings, .. } => url.len() <= COMMAND_TEXT && settings_ok(settings),
             Self::Settings { settings, .. } => settings_ok(settings),
             Self::Seek { time, .. } => finite(*time) && *time >= 0.0,
-            Self::Append { mime, bytes, .. } => {
-                mime.len() <= COMMAND_TEXT && bytes.len() <= APPEND_BYTES
+            Self::Append {
+                mime,
+                bytes,
+                init_len,
+                offset,
+                window_start,
+                window_end,
+                ..
+            } => {
+                mime.len() <= COMMAND_TEXT
+                    && bytes.len() <= APPEND_BYTES
+                    && *init_len <= bytes.len()
+                    && finite(*offset)
+                    && finite(*window_start)
+                    && window_end.is_none_or(finite)
             }
             Self::Remove { start, end, .. } => finite(*start) && !end.is_nan(),
             Self::EndOfStream { duration, .. } => !duration.is_nan(),
@@ -181,6 +205,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(host, "takeTouched", 0, |vm, _| take_touched(vm));
     b.method(host, "support", 0, support);
     b.method(host, "activation", 0, activation);
+    b.method(host, "append", 3, append);
     b.ids.media_host = host;
 }
 
@@ -269,6 +294,27 @@ fn take_touched(vm: &mut Vm) -> Res<JsValue> {
 fn support(vm: &mut Vm, _: Call) -> Res<JsValue> {
     let text = serde_json::to_string(&vm.page.environment.media).unwrap_or_default();
     Ok(JsValue::string(&text)?)
+}
+
+/**
+ * `host.append(bytes, init, request)`: the coded frame processing of one Media Source append, as JSON. The result
+ * is the outcome, or `{"error": text}` when the bytes are refused, so the script can raise its append error.
+ */
+fn append(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let bytes = crate::v9::builtins::typed::source_bytes(vm, &call.arg(0))
+        .ok_or_else(|| vm.type_error("The data is not a BufferSource."))?;
+    if bytes.len() > APPEND_BYTES {
+        return Err(EngineError::limit("media segment bytes", APPEND_BYTES).into());
+    }
+    let init = crate::v9::builtins::typed::source_bytes(vm, &call.arg(1));
+    let request = vm.to_text(&call.arg(2))?;
+    let request: media_source::Request = serde_json::from_str(&request)
+        .map_err(|_| Thrown::Fatal(EngineError::invalid("Invalid media segment request.")))?;
+    let text = match media_source::append(init.as_deref(), &bytes, &request) {
+        Ok(outcome) => serde_json::to_string(&outcome),
+        Err(refusal) => serde_json::to_string(&serde_json::json!({ "error": refusal.message() })),
+    };
+    Ok(JsValue::string(&text.unwrap_or_default())?)
 }
 
 /** `host.activation()`: whether a person has clicked or typed in this page (sticky activation). */
