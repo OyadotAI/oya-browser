@@ -186,7 +186,12 @@ impl Vm<'_> {
     }
     /** All collection modes share the same exact strong roots, tracer, bounds and sweep. */
     fn collect_with(&mut self, kind: Collection) -> Res<()> {
-        let mut marker = Marker::default();
+        // Marked objects are at most the heap's objects, so the set is sized once rather than
+        // doubling (and rehashing every mark) as the trace grows it.
+        let mut marker = Marker {
+            objects: FastSet::with_capacity_and_hasher(self.heap.objects.len(), Default::default()),
+            ..Marker::default()
+        };
         marker.object(GLOBAL);
         self.realm_roots(&mut marker);
         if kind != Collection::Major {

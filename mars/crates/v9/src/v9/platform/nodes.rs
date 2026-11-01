@@ -72,6 +72,21 @@ pub(in crate::v9) struct Tree {
     elements: FastMap<usize, Vec<usize>>,
 }
 
+impl Tree {
+    /** An empty index sized for `nodes` projected nodes. Rebuilding it from empty grew three hash
+    maps by doubling on every rebuild, each doubling rehashing every entry; sizing them once
+    up front makes a rebuild one pass of inserts. */
+    fn with_capacity(nodes: usize) -> Self {
+        Self {
+            children: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            parents: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            index: FastMap::with_capacity_and_hasher(nodes, Default::default()),
+            shadow: false,
+            elements: FastMap::default(),
+        }
+    }
+}
+
 /** The list a parent with no children reads as. */
 const EMPTY: &[usize] = &[];
 
@@ -91,7 +106,11 @@ impl Page<'_> {
     /** The projected-node index, built on demand. */
     fn tree(&mut self) -> &Tree {
         if self.tree.is_none() {
-            let mut tree = Tree::default();
+            let nodes = self
+                .document
+                .as_ref()
+                .map_or(0, |document| document.nodes.len());
+            let mut tree = Tree::with_capacity(nodes);
             if let Some(document) = &self.document {
                 for (position, node) in document.nodes.iter().enumerate() {
                     let parent = node.parent.unwrap_or(BODY);

@@ -196,3 +196,16 @@ fn projected_hosts_keep_their_shadow_root_through_the_change_log() {
             .any(|node| node.tag == "b" && node.parent == Some(root.local_id))
     );
 }
+
+/** A definition made after hundreds of matching elements exist upgrades each one once, in tree
+order, and leaves elements of other names alone. */
+#[test]
+fn elements_defined_after_many_nodes_upgrade_in_tree_order() {
+    let source = "const d=document.getElementById('main');let h='<x-u id=u1></x-u>';\
+        for(let i=0;i<200;i++)h+='<x-t id=t'+i+'></x-t>';d.innerHTML=h;\
+        const order=[];class XT extends HTMLElement{constructor(){super();order.push(this.id)}}\
+        customElements.define('x-t',XT);\
+        const r=[order.length,order[0],order[199],order.join(',')===Array.from({length:200},(_,i)=>'t'+i).join(','),\
+        document.getElementById('u1') instanceof XT].join('|');";
+    assert_eq!(eval(source, "r"), "200|t0|t199|true|false");
+}
