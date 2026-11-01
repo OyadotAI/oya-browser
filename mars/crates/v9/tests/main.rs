@@ -287,6 +287,7 @@ mod resizable_buffers;
 mod resize_observer_cycles;
 mod resize_observers;
 mod response_binary;
+mod retained_dynamic_code;
 mod root_style_budget;
 mod script_scrolling;
 mod script_state_log;

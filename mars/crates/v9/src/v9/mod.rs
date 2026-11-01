@@ -1194,6 +1194,10 @@ pub(in crate::v9) fn compile_dynamic(
     if let Some(code) = registry.adopted_this_step(site) {
         return Ok(code);
     }
+    // A retained source filed by an earlier step answers before any parsing or hashing.
+    if let Some(code) = registry.refiled(site, source, base, context) {
+        return Ok(code);
+    }
     match context {
         Some(context) => registry.eval(source, base, context, |strict, private_names, grammar| {
             if source.len() > SCRIPT_BYTES {

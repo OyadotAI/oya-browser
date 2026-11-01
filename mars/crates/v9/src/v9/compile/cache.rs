@@ -188,8 +188,23 @@ pub(super) fn eval_key(offset: usize, scopes: &str, source: &str) -> Key {
     key
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Keyed lookups this thread made: a test reads it to tell a re-adoption that went through
+    /// the keyed cache from one that answered from the registry.
+    static LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/** Keyed lookups this thread has made (test builds only). */
+#[cfg(test)]
+pub(super) fn lookups() -> usize {
+    LOOKUPS.with(std::cell::Cell::get)
+}
+
 /** The unit under `key`, now the most recently used. */
 pub(super) fn get(key: &Key) -> Option<Arc<Unit>> {
+    #[cfg(test)]
+    LOOKUPS.with(|count| count.set(count.get() + 1));
     let mut cache = cache();
     let unit = cache.units.get(key)?.clone();
     if let Some(position) = cache.order.iter().position(|known| known == key) {

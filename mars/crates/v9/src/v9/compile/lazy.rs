@@ -143,6 +143,7 @@ impl Code {
             strict_ranges: Vec::new(),
             name: JsString::from_utf8(&func.display.borrow()).unwrap_or_else(|_| empty()),
             source: None,
+            scopes: None,
             source_span: *func.source_span.borrow(),
             length: func.length,
             ops: Vec::new(),
