@@ -52,12 +52,16 @@ pub const STORAGE_AREA_BYTES: usize = 64 * 1024;
 pub const HTML_BYTES: usize = 16 * 1024 * 1024;
 /// One image transfer: 2 MiB fits real hero photos and stays small inside one private JSON frame.
 pub const IMAGE_BYTES: usize = 2 * 1024 * 1024;
-/// A committed page owns a bounded number of image resources; news front pages show dozens.
-pub const IMAGE_COUNT: usize = 64;
+/// Image requests one page may make. Busy pages pass a hundred (a Wikipedia article showed 67,
+/// a YouTube results page sixty thumbnails before scrolling), and the old bound of 64 silently
+/// turned the rest into alt text; the byte budgets below are what bound memory.
+pub const IMAGE_COUNT: usize = 1024;
 /// Encoded bytes all of a page's images may hold together, separate from the per-image bound.
-pub const IMAGE_TOTAL_BYTES: usize = 16 * 1024 * 1024;
-/// Decoded bitmap pixels (4 bytes each) a page's images may hold together.
-pub const IMAGE_DECODED_BYTES: usize = 128 * 1024 * 1024;
+pub const IMAGE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+/// Decoded bitmap pixels (4 bytes each) a page's images may hold together: about 180 photos at
+/// Airbnb's listing size. ponytail: every image stays decoded for the page's life; decoding on
+/// demand and dropping offscreen bitmaps, as Chrome does, would let long scrolls hold more.
+pub const IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
 /// Image dimensions prevent pathological decoder allocations; 8192 admits 2x hero images, and
 /// IMAGE_DECODED_BYTES stays the real bound on what one image may decode to.
 pub const IMAGE_DIMENSION: u32 = 8192;
