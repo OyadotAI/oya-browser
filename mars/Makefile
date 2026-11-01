@@ -40,7 +40,7 @@ test-core: ## Shared types.
 	$(CARGO) test $(QUIET) -p mars-core
 
 test-mars: ## The runtime and desktop suites that need no window.
-	$(CARGO) test $(QUIET) -p mars $(FEATURES) --lib --test desktop --test js_page --test runtime --test forms
+	$(CARGO) test $(QUIET) -p mars $(FEATURES) --lib --test desktop --test js_page --test runtime --test forms --test media_source
 
 test-window: ## Real-window tests: they open windows, so leave the screen alone while they run.
 	$(CARGO) test $(QUIET) -p mars $(FEATURES) --test window -- --ignored --test-threads=1

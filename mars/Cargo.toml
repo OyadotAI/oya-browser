@@ -87,6 +87,12 @@ name = "runtime"
 path = "tests/runtime.rs"
 required-features = ["test-support"]
 
+# Ticks the native media players from the test thread, which only test builds expose.
+[[test]]
+name = "media_source"
+path = "tests/media_source.rs"
+required-features = ["test-support"]
+
 [patch.crates-io]
 # Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
 rustls = { path = "vendor/rustls" }

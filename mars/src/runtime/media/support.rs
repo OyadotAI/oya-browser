@@ -76,9 +76,10 @@ const PROBES: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Containers a Media Source can stream on this host. None yet: the native player cannot be fed
-/// appended segments, so `isTypeSupported` says no rather than accept media it cannot play.
-const STREAMS: &[&str] = &[];
+/// Containers a Media Source can stream on this host: fragmented MP4 with H.264 (every avc1
+/// profile YouTube asks for, 42001E through 64001F) and AAC-LC, which the stream players decode
+/// and play. Each is listed only with the codec families the OS probe above confirmed.
+const STREAMS: &[&str] = &["video/mp4", "audio/mp4"];
 
 /** The probed support, computed on first use and kept for the process. */
 pub fn support() -> MediaSupport {
