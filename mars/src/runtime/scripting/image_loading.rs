@@ -105,6 +105,15 @@ impl Loading {
     }
 }
 
+/** Text one image completion carries back to V9: its source, its resolved URL and its selected URL. */
+fn response_text_bytes(request: &ImageRequest, current_src: &str) -> usize {
+    request
+        .source
+        .len()
+        .saturating_add(request.url.len())
+        .saturating_add(current_src.len())
+}
+
 /** Both copies of an embedded URL count before they enter the persistent native request queue. */
 fn request_text_bytes(requests: &[ImageRequest]) -> usize {
     requests.iter().fold(0usize, |used, request| {
@@ -387,16 +396,27 @@ impl Runtime {
             .collect();
         self.prefetch_batch(page, &requests)?;
         let mut responses = Vec::with_capacity(count);
+        let mut response_text = 0usize;
         let mut requests = requests.into_iter();
         for request in requests.by_ref() {
             let started = Instant::now();
-            if !responses.is_empty() && started >= deadline {
-                // Past the slice: keep this one and the rest pending, in order.
+            // The page-chosen selection is text the batch must carry too, so it is charged here.
+            let mut current_src = self.current_source(page, request.node);
+            let text = response_text_bytes(&request, &current_src);
+            let fits = response_text.saturating_add(text) <= REQUEST_TEXT_BYTES;
+            if (!responses.is_empty() && started >= deadline) || (!fits && !responses.is_empty()) {
+                // Past the slice or the batch's text budget: keep this one and the rest pending, in order.
                 let later = std::iter::once(request).chain(requests.by_ref());
                 let queued = std::mem::take(&mut page.scripting.image_loading.pending);
                 page.scripting.image_loading.pending = later.chain(queued).collect();
                 break;
             }
+            if !fits {
+                // A lone request always answers; its oversized selection is dropped instead.
+                current_src.clear();
+            }
+            response_text =
+                response_text.saturating_add(response_text_bytes(&request, &current_src));
             let until = deadline.max(started + IMAGE_REQUEST_WALL);
             let mut decoded = None;
             let dimensions =
@@ -413,7 +433,6 @@ impl Runtime {
             } else {
                 super::super::images::canvas::source(asset, used)
             };
-            let current_src = self.current_source(page, request.node);
             let mut request = request;
             request.blob_source = None;
             responses.push(ImageResponse {
@@ -565,5 +584,25 @@ impl Runtime {
             node.image_size = None;
             node.text = node.image_alt.clone();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** The selected URL is charged with the request's own text, so a page cannot slip it past the cap. */
+    #[test]
+    fn a_page_chosen_selection_counts_against_the_response_text_cap() {
+        let plain = ImageRequest {
+            node: 1,
+            generation: 1,
+            source: "s".repeat(10),
+            url: "u".repeat(20),
+            cors: ImageCors::default(),
+            blob_source: None,
+        };
+        assert_eq!(response_text_bytes(&plain, ""), 30);
+        assert_eq!(response_text_bytes(&plain, &"c".repeat(100)), 130);
     }
 }
