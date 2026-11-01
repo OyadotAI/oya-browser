@@ -57,18 +57,7 @@ fn block_image(
     flow.newline();
     let sized = sized(node, flow.definite);
     if !shown(node) && !sized {
-        let lines = super::text::text(context, &node.text, node, flow, items.len())?;
-        let width = lines
-            .iter()
-            .map(|line| line.x + line.width)
-            .fold(flow.x, f64::max)
-            - flow.x;
-        let height = authored_height(node, flow.definite)
-            .unwrap_or_else(|| flow.line.max(super::sizing::advance(&node.style)));
-        items.push(box_item(node, flow.x, flow.y, width, height, lines));
-        flow.after_block(flow.y + height, node.style.margin[2]);
-        flow.newline();
-        return Ok(());
+        return alt_block(context, node, flow, items);
     }
     let (natural_width, natural_height) = image_size(node, flow.width, flow.definite);
     let y = flow.block_top(node.style.margin[0]);
@@ -77,6 +66,67 @@ fn block_image(
     items.push(drawn(context, node, item)?);
     flow.after_block(y + natural_height, node.style.margin[2]);
     Ok(())
+}
+/** A broken or unloaded img in block flow is a box holding its alt text. An authored CSS width
+ * gives the box its width (Chrome sizes it by the width and lays the alt text inside), and without
+ * one the box is as wide as its text. */
+fn alt_block(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+    items: &mut Vec<DisplayItem>,
+) -> EngineResult<()> {
+    let authored = alt_authored_width(node, flow);
+    let x = flow.x
+        + authored.map_or(0.0, |width| {
+            super::body::margin_start(&node.style, flow.width, width)
+        });
+    let (lines, height) = alt_contents(context, node, flow, items.len(), x, flow.y, authored)?;
+    let width = authored.unwrap_or_else(|| {
+        lines
+            .iter()
+            .map(|line| line.x + line.width)
+            .fold(x, f64::max)
+            - x
+    });
+    items.push(box_item(node, x, flow.y, width, height, lines));
+    flow.after_block(flow.y + height, node.style.margin[2]);
+    flow.newline();
+    Ok(())
+}
+/** The alt text of a broken or unloaded img laid inside a box at (`x`, `y`) of `width`, when one is
+ * given (else the text is laid on one line), with the box height it takes. */
+fn alt_contents(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &Flow,
+    item: usize,
+    x: f64,
+    y: f64,
+    width: Option<f64>,
+) -> EngineResult<(Vec<super::PaintLine>, f64)> {
+    let mut inner = Flow::new(x, y, width.unwrap_or(flow.width));
+    let lines = super::text::text(context, &node.text, node, &mut inner, item)?;
+    Ok((lines, alt_height(node, flow, inner.line)))
+}
+/** The border-box width an authored CSS width gives an img in `flow`, or None without one. */
+fn alt_authored_width(node: &Node, flow: &Flow) -> Option<f64> {
+    node.style
+        .width
+        .is_some()
+        .then(|| image_size(node, flow.width, flow.definite).0)
+}
+/** The height of a broken or unloaded img in block flow: its authored height, else the aspect
+ * ratio's height, else its alt text's line (at least the font's advance). */
+fn alt_height(node: &Node, flow: &Flow, text_line: f64) -> f64 {
+    let (_, ratio_height) = image_size(node, flow.width, flow.definite);
+    authored_height(node, flow.definite).unwrap_or_else(|| {
+        if ratio_height > 0.0 {
+            ratio_height
+        } else {
+            text_line.max(super::sizing::advance(&node.style))
+        }
+    })
 }
 /** Min- and max-content widths of an img. One still showing its alt text is laid out by Blink as
  * a block of that fallback text (HTMLImageFallbackHelper), so only an authored width replaces the
@@ -192,17 +242,25 @@ pub(super) fn image_size(node: &Node, available: f64, definite: Option<f64>) -> 
 }
 /** Image heights stay inside layout geometry bounds even for extreme aspect ratios. */
 const LAYOUT_LIMIT: f64 = crate::constants::LAYOUT_EXTENT;
-/** Inline images occupy replaced-content geometry in the same line as adjacent text. */
+/** Inline images occupy replaced-content geometry in the same line as adjacent text. A broken or
+ * unloaded img with an authored width is a box of that width holding its alt text. */
 fn inline_image(
     context: &mut LayoutContext<'_>,
     node: &Node,
     flow: &mut Flow,
     items: &mut Vec<DisplayItem>,
 ) -> EngineResult<()> {
-    let (width, height) = image_size(node, flow.width, flow.definite);
-    if !shown(node) && !sized(node, flow.definite) {
+    let alt = !shown(node) && !sized(node, flow.definite);
+    let authored = alt_authored_width(node, flow);
+    if alt && authored.is_none() {
         return inline_alt(context, node, flow, items);
     }
+    let (width, height) = image_size(node, flow.width, flow.definite);
+    let width = if alt {
+        authored.unwrap_or(width)
+    } else {
+        width
+    };
     let style = &node.style;
     let outer = width + style.margin[1] + style.margin[3];
     if flow.cursor > 0.0 && !super::glue::held(flow) && !flow.fits(outer) {
@@ -210,14 +268,14 @@ fn inline_image(
     }
     flow.fit(outer);
     let start = items.len();
-    let item = box_item(
-        node,
-        flow.left() + flow.cursor + style.margin[3],
-        flow.y + style.margin[0],
-        width,
-        height,
-        Vec::new(),
-    );
+    let left = flow.left() + flow.cursor + style.margin[3];
+    let top = flow.y + style.margin[0];
+    let (lines, height) = if alt {
+        alt_contents(context, node, flow, start, left, top, Some(width))?
+    } else {
+        (Vec::new(), height)
+    };
+    let item = box_item(node, left, top, width, height, lines);
     items.push(drawn(context, node, item)?);
     // A replaced box's baseline is its bottom margin edge.
     let margin_box = height + style.margin[0] + style.margin[2];
