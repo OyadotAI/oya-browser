@@ -556,14 +556,22 @@ fn write(vm: &mut Vm, document: usize, text: &str) -> Res<()> {
         open(vm, document)?;
     }
     let limit = crate::constants::HTML_BYTES;
-    let buffer = vm.page.state.writes.entry(document).or_default();
-    if buffer.len() + text.len() > limit {
+    let written = vm.page.state.writes.get(&document).map_or(0, String::len);
+    if written + text.len() > limit {
         return Err(dom_error(
             vm,
             crate::protocol::EngineError::limit("document.write bytes", limit),
         ));
     }
-    buffer.push_str(text);
+    vm.page
+        .charge_fragment_bytes(text.len())
+        .map_err(|error| dom_error(vm, error))?;
+    vm.page
+        .state
+        .writes
+        .entry(document)
+        .or_default()
+        .push_str(text);
     Ok(())
 }
 

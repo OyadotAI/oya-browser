@@ -1202,18 +1202,25 @@ impl Page<'_> {
             }
         }
     }
-    /** Parse a fragment through the host parser with fresh identities. */
-    pub fn parse_fragment(&mut self, context: &str, html: &str) -> EngineResult<Vec<ScriptNode>> {
-        if html.len() > HTML_BYTES {
-            return Err(EngineError::limit("fragment bytes", HTML_BYTES));
-        }
-        if self.fragment_bytes + html.len() > FRAGMENT_TOTAL_BYTES {
+    /** Charge markup against the budget every fragment one execution inserts shares. document.write
+    and the innerHTML paths all draw on it, so no mix of them parses more than FRAGMENT_TOTAL_BYTES
+    in one execution; past it the write is refused rather than parsed. */
+    pub fn charge_fragment_bytes(&mut self, bytes: usize) -> EngineResult<()> {
+        if self.fragment_bytes + bytes > FRAGMENT_TOTAL_BYTES {
             return Err(EngineError::limit(
                 "execution fragment bytes",
                 FRAGMENT_TOTAL_BYTES,
             ));
         }
-        self.fragment_bytes += html.len();
+        self.fragment_bytes += bytes;
+        Ok(())
+    }
+    /** Parse a fragment through the host parser with fresh identities. */
+    pub fn parse_fragment(&mut self, context: &str, html: &str) -> EngineResult<Vec<ScriptNode>> {
+        if html.len() > HTML_BYTES {
+            return Err(EngineError::limit("fragment bytes", HTML_BYTES));
+        }
+        self.charge_fragment_bytes(html.len())?;
         let nodes = self.fragments.parse(context, html, self.next_id)?;
         let next = nodes
             .iter()

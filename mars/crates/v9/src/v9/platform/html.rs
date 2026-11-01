@@ -282,7 +282,7 @@ pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
             rest = remaining;
             if RAW.contains(&tag.as_str()) || RCDATA.contains(&tag.as_str()) {
                 let close = format!("</{tag}");
-                let end = rest.to_ascii_lowercase().find(&close).unwrap_or(rest.len());
+                let end = find_ignore_ascii_case(rest, &close).unwrap_or(rest.len());
                 if end > 0 {
                     let text = decode_entities(&rest[..end], !RAW.contains(&tag.as_str()));
                     nodes.push(Parsed {
@@ -456,6 +456,19 @@ fn implied_close(open: &mut Vec<(usize, String)>, tag: &str) {
     }
 }
 
+/** The byte offset of the first `needle` in `haystack`, ignoring ASCII case. It copies nothing, so
+a raw-text scan that moves past each element's own text stays linear across a whole fragment; a
+lowercased copy of the rest per element was quadratic in the number of raw-text elements. */
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
+}
+
 /** Read a start tag after `<`: name, attributes, self-closing flag, and the rest of the input. */
 fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
     let name_end = input
@@ -517,5 +530,41 @@ pub(in crate::v9) fn decode_entities(text: &str, decode: bool) -> String {
         mars_core::entities::decode(text, false)
     } else {
         text.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tree;
+    use std::time::{Duration, Instant};
+
+    /** Raw-text elements in the 15 MB fragment: about the most the node bound lets one parse keep. */
+    const RAW_TEXT_TEST_ELEMENTS: usize = 15_000;
+    /** The time a linear parse of the fragment may take, far above the linear cost (about 30 ms) and far
+    below the quadratic one (about 4 s). */
+    const PARSE_LIMIT: Duration = Duration::from_secs(2);
+
+    /** Each `<style>` raw-text element in a 15 MB fragment is found and kept, within the time limit:
+    the close-tag search for one element does not copy the markup after it, so the parse is linear. */
+    #[test]
+    fn many_raw_text_elements_in_one_large_fragment_parse_in_linear_time() {
+        let element = format!("<style>{}</style>", "a{color:red}".repeat(90));
+        let markup = element.repeat(RAW_TEXT_TEST_ELEMENTS);
+        let started = Instant::now();
+        let parsed = parse_tree(&markup).expect("the fragment is within its bounds");
+        assert!(
+            started.elapsed() < PARSE_LIMIT,
+            "parsed in {:?}",
+            started.elapsed()
+        );
+        let styles = parsed.iter().filter(|node| node.tag == "style").count();
+        assert_eq!(styles, RAW_TEXT_TEST_ELEMENTS);
+    }
+
+    /** A fragment past HTML_BYTES is refused rather than parsed, whatever its element count. */
+    #[test]
+    fn fragment_past_the_document_bound_is_refused() {
+        let markup = "a".repeat(crate::constants::HTML_BYTES + 1);
+        assert!(parse_tree(&markup).is_err());
     }
 }
