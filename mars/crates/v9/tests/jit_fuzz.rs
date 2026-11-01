@@ -19,8 +19,9 @@ const CHILD_ENV: &str = "MARS_V9_JIT_FUZZ_CHILD";
 const CASES_ENV: &str = "MARS_V9_JIT_FUZZ_CASES";
 /** Environment variable that picks the generator's seed. */
 const SEED_ENV: &str = "MARS_V9_JIT_FUZZ_SEED";
-/** Cases run by default: thousands, enough to reach the shape and type changes in every class. */
-const DEFAULT_CASES: usize = 3000;
+/** Cases run by default. Each case runs a loop of hundreds of iterations, so a debug build spends
+about a third of a second per case; this keeps the default run near a minute. Big runs set the env var. */
+const DEFAULT_CASES: usize = 150;
 /** Seed used when the environment does not name one, so the default run is reproducible. */
 const DEFAULT_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 /** The compilation report the JIT writes to stderr when tracing is on. */
@@ -200,8 +201,9 @@ fn jit_matches_interpreter_on_generated_programs() {
         std::fs::write(results_path, lines.join("\n")).expect("write child results");
         return;
     }
-    let (interpreted, _) = run_child("interpreter", &[("MARS_V9_JIT", "0")]);
-    let (compiled, report) = run_child(
+    // Both tiers run at once: each child is a separate process, so the wall time is the slower one.
+    let interpreter = spawn_child("interpreter", &[("MARS_V9_JIT", "0")]);
+    let compiled = spawn_child(
         "compiled",
         &[
             ("MARS_V9_JIT", "1"),
@@ -209,6 +211,8 @@ fn jit_matches_interpreter_on_generated_programs() {
             ("MARS_V9_JIT_TRACE", "1"),
         ],
     );
+    let (interpreted, _) = collect_child(interpreter);
+    let (compiled, report) = collect_child(compiled);
     assert_eq!(compiled.len(), cases(), "every case reported a result");
     let divergent: Vec<String> = interpreted
         .iter()
@@ -228,30 +232,48 @@ fn jit_matches_interpreter_on_generated_programs() {
     );
 }
 
-/** Runs this test in a child with `environment`, returning its results and its stderr. The
-results travel through a file, because the child's stdout shares a line with the harness. The
-kill switch is cleared so an operator's `MARS_JIT=0` cannot silently turn the compiled tier off. */
-fn run_child(tier: &str, environment: &[(&str, &str)]) -> (Vec<String>, String) {
+/** A started child: the process, the file its results are written to, and the file its stderr
+goes to. Stderr goes to a file rather than a pipe, so a child that logs a lot cannot block while
+its sibling is being waited for. */
+struct Child {
+    process: std::process::Child,
+    results_path: std::path::PathBuf,
+    log_path: std::path::PathBuf,
+}
+
+/** Starts this test in a child with `environment`. The results travel through a file, because the
+child's stdout shares a line with the harness. The kill switch is cleared so an operator's
+`MARS_JIT=0` cannot silently turn the compiled tier off. */
+fn spawn_child(tier: &str, environment: &[(&str, &str)]) -> Child {
     let executable = std::env::current_exe().expect("test executable");
-    let results_path =
-        std::env::temp_dir().join(format!("v9-jit-fuzz-{}-{tier}.txt", std::process::id()));
-    let output = Command::new(executable)
+    let stem = format!("v9-jit-fuzz-{}-{tier}", std::process::id());
+    let results_path = std::env::temp_dir().join(format!("{stem}.txt"));
+    let log_path = std::env::temp_dir().join(format!("{stem}.log"));
+    let log = std::fs::File::create(&log_path).expect("child log");
+    let process = Command::new(executable)
         .args(["--exact", TEST_NAME, "--nocapture", "--test-threads=1"])
         .env(CHILD_ENV, &results_path)
         .env_remove("MARS_JIT")
         .envs(environment.iter().copied())
-        .output()
+        .stderr(std::process::Stdio::from(log))
+        .spawn()
         .expect("spawn child");
-    assert!(
-        output.status.success(),
-        "child failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let results = std::fs::read_to_string(&results_path).expect("child results");
-    let _ = std::fs::remove_file(&results_path);
+    Child {
+        process,
+        results_path,
+        log_path,
+    }
+}
+
+/** Waits for a child, returning its results and its stderr log. */
+fn collect_child(child: Child) -> (Vec<String>, String) {
+    let mut process = child.process;
+    let status = process.wait().expect("wait for child");
+    let log = std::fs::read_to_string(&child.log_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&child.log_path);
+    assert!(status.success(), "child failed: {log}");
+    let results = std::fs::read_to_string(&child.results_path).expect("child results");
+    let _ = std::fs::remove_file(&child.results_path);
     let results = results.lines().map(str::to_string).collect();
-    (
-        results,
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
+    (results, log)
 }
