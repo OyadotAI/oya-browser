@@ -4,6 +4,7 @@
  * its state and pull a new video frame, and says which element boxes need repainting. The
  * painter reads frames, controls state and captions from here.
  */
+mod clock;
 mod frames;
 mod loader;
 mod player;

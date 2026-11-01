@@ -29,6 +29,7 @@ pub struct Reported {
     error: bool,
     time_at: Option<Instant>,
     frames: u64,
+    stored: Vec<(u32, [usize; 2])>,
 }
 
 /** The updates that bring the page up to `status`, recording what was sent. */
@@ -39,6 +40,7 @@ pub fn diff(player: u64, status: &Status, sent: &mut Reported, now: Instant) -> 
         out.push(json!({"player":player,"kind":"error","code":code,"message":message}));
         return out;
     }
+    stored(player, status, sent, &mut out);
     if !status.ready || sent.error {
         return out;
     }
@@ -47,6 +49,20 @@ pub fn diff(player: u64, status: &Status, sent: &mut Reported, now: Instant) -> 
     seeks(player, status, sent, &mut out);
     playback(player, status, sent, now, &mut out);
     out
+}
+
+/** The bytes each source buffer holds, sent when they change so the script can refuse an append past the quota. */
+fn stored(player: u64, status: &Status, sent: &mut Reported, out: &mut Vec<Value>) {
+    if status.stored == sent.stored {
+        return;
+    }
+    sent.stored.clone_from(&status.stored);
+    let buffers: Vec<Value> = status
+        .stored
+        .iter()
+        .map(|(id, [video, audio])| json!([id, video, audio]))
+        .collect();
+    out.push(json!({"player":player,"kind":"stored","buffers":buffers}));
 }
 
 /** The first metadata, and later size or duration changes. */

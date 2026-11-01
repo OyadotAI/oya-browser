@@ -41,6 +41,8 @@ pub struct Status {
     pub seek_time: f64,
     /// Frames presented so far, for getVideoPlaybackQuality and requestVideoFrameCallback.
     pub frames: u64,
+    /// A Media Source's stored bytes per source buffer, as video and audio: the script's quota check reads them.
+    pub stored: Vec<(u32, [usize; 2])>,
     /// The player predicts playback will not stall.
     pub likely: bool,
     /// Every byte of the resource is fetched.

@@ -16,6 +16,8 @@ pub(crate) const ELST: Kind = *b"elst";
 pub(crate) const MVEX: Kind = *b"mvex";
 pub(crate) const TREX: Kind = *b"trex";
 pub(crate) const MOOF: Kind = *b"moof";
+/// The four-character type of a media data box, whose payload holds the sample bytes a moof describes.
+pub(crate) const MDAT: Kind = *b"mdat";
 pub(crate) const TRAF: Kind = *b"traf";
 pub(crate) const TFHD: Kind = *b"tfhd";
 pub(crate) const TFDT: Kind = *b"tfdt";

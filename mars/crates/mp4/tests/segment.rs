@@ -228,13 +228,13 @@ fn segment_resets_to_the_moof_when_the_base_is_moof() {
         let second = [
             fb(b"tfhd", 0, TFHD_BASE_IS_MOOF, &u32s(&[1])),
             tfdt(0, 10),
-            trun(0, SIZE | DATA_OFFSET, offset, None, &[[0, 10, 0, 0]]),
+            trun(0, SIZE | DATA_OFFSET, offset + 10, None, &[[0, 10, 0, 0]]),
         ]
         .concat();
         vec![first, second]
     });
     let samples = parse_segment(&bytes, &video_tracks(None)).unwrap();
-    assert_eq!(samples[1].offset, samples[0].offset);
+    assert_eq!(samples[1].offset, samples[0].offset + 10);
 }
 
 /** A version 1 tfdt carries a 64-bit decode time. */
@@ -368,5 +368,40 @@ fn segment_refuses_a_zero_size_sample() {
     assert_eq!(
         parse_segment(&bytes, &video_tracks(None)),
         Err(Error::Malformed("zero-size sample"))
+    );
+}
+
+/** Two fragments that name the same bytes are refused: overlapping samples would let one append copy them repeatedly. */
+#[test]
+fn segment_refuses_samples_that_overlap_across_fragments() {
+    let bytes = media_segment(&[7; 8], |offset| {
+        let run = trun(0, SIZE | DATA_OFFSET, offset, None, &[[0, 4, 0, 0]]);
+        vec![
+            [tfhd(1, 0, &[]), tfdt(0, 0), run.clone()].concat(),
+            [tfhd(1, 0, &[]), tfdt(0, 0), run].concat(),
+        ]
+    });
+    assert_eq!(
+        parse_segment(&bytes, &video_tracks(None)),
+        Err(Error::Malformed("overlapping samples"))
+    );
+}
+
+/** Samples may not claim more bytes than the segment's mdat holds, even when each lies inside the segment. */
+#[test]
+fn segment_refuses_samples_that_claim_more_than_the_mdat_holds() {
+    let bytes = media_segment(&[7; 4], |_| {
+        vec![
+            [
+                tfhd(1, 0, &[]),
+                tfdt(0, 0),
+                trun(0, SIZE | DATA_OFFSET, 0, None, &[[0, 16, 0, 0]]),
+            ]
+            .concat(),
+        ]
+    });
+    assert_eq!(
+        parse_segment(&bytes, &video_tracks(None)),
+        Err(Error::Malformed("sample bytes past mdat"))
     );
 }

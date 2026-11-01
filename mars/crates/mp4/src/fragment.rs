@@ -5,7 +5,7 @@
  */
 use crate::boxes::{Boxed, Cursor, children, find, full_box, split};
 use crate::constants::{
-    MOOF, SAMPLE_LIMIT, SAMPLE_NON_SYNC, SAMPLES_PER_SEGMENT, TFDT, TFHD, TFHD_BASE_IS_MOOF,
+    MDAT, MOOF, SAMPLE_LIMIT, SAMPLE_NON_SYNC, SAMPLES_PER_SEGMENT, TFDT, TFHD, TFHD_BASE_IS_MOOF,
     TFHD_BASE_OFFSET, TFHD_DEFAULT_DURATION, TFHD_DEFAULT_FLAGS, TFHD_DEFAULT_SIZE,
     TFHD_SAMPLE_DESCRIPTION, TRAF, TRUN, TRUN_COMPOSITION, TRUN_DATA_OFFSET, TRUN_DURATION,
     TRUN_FIRST_FLAGS, TRUN_FLAGS, TRUN_SIZE, VERSION_LARGE,
@@ -35,11 +35,14 @@ pub struct Sample {
 /**
  * The samples of every fragment in a media segment, in file order. `tracks` comes from the init segment. A segment
  * yields at most `min(bytes.len(), SAMPLES_PER_SEGMENT)` samples: every sample must name at least one byte of the
- * segment, so a count beyond the segment's own length is hostile, and the cap bounds the rest. Refusal is an error.
+ * segment, so a count beyond the segment's own length is hostile, and the cap bounds the rest. Samples must not
+ * overlap, and together they may not exceed the segment's media data: the caller copies those bytes, so this bounds
+ * what one append can make the player hold. Refusal is an error.
  */
 pub fn parse_segment(bytes: &[u8], tracks: &[Track]) -> Result<Vec<Sample>> {
     let budget = bytes.len().min(SAMPLES_PER_SEGMENT);
     let mut samples = Vec::new();
+    let mut media_bytes = 0usize;
     let mut rest = bytes;
     while !rest.is_empty() {
         let moof_start = bytes.len() - rest.len();
@@ -47,10 +50,28 @@ pub fn parse_segment(bytes: &[u8], tracks: &[Track]) -> Result<Vec<Sample>> {
         if boxed.kind == MOOF {
             let room = budget - samples.len();
             samples.extend(parse_moof(bytes, boxed, moof_start, tracks, room)?);
+        } else if boxed.kind == MDAT {
+            media_bytes += boxed.body.len();
         }
         rest = after;
     }
+    check_disjoint(&samples)?;
+    let claimed: usize = samples.iter().map(|sample| sample.size).sum();
+    if claimed > media_bytes {
+        return Err(Error::Malformed("sample bytes past mdat"));
+    }
     Ok(samples)
+}
+
+/** Samples in file order must each start at or after the end of the one before: overlapping ranges would let one
+ * append copy the same bytes many times over. */
+fn check_disjoint(samples: &[Sample]) -> Result<()> {
+    for pair in samples.windows(2) {
+        if pair[1].offset < pair[0].offset + pair[0].size {
+            return Err(Error::Malformed("overlapping samples"));
+        }
+    }
+    Ok(())
 }
 
 /** One moof: each traf in order; a traf without an explicit base continues after the previous one. */

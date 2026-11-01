@@ -53,6 +53,8 @@
   /** Spec constants. */
   const NETWORK_EMPTY = 0, NETWORK_IDLE = 1, NETWORK_LOADING = 2, NETWORK_NO_SOURCE = 3;
   const HAVE_NOTHING = 0, HAVE_METADATA = 1, HAVE_CURRENT_DATA = 2, HAVE_FUTURE_DATA = 3, HAVE_ENOUGH_DATA = 4;
+  /* Byte quotas per SourceBuffer, mirroring the host's constants: video when any track is video, audio otherwise. */
+  const SOURCE_QUOTA_VIDEO = 150 * 1024 * 1024, SOURCE_QUOTA_AUDIO = 12 * 1024 * 1024;
   const MEDIA_ERR_ABORTED = 1, MEDIA_ERR_NETWORK = 2, MEDIA_ERR_DECODE = 3, MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
   /** Progress fires at most this often while fetching (HTML: "about every 350ms"). */
   const PROGRESS_MS = 350;
@@ -1086,6 +1088,7 @@
     control: controlUpdate,
     frames: (s, u) => { s.frames = u.frames || 0; s.dropped = u.dropped || 0; runFrameCallbacks(s, u); },
     buffered: (s, u) => sourceBufferUpdate(s, u),
+    stored: (s, u) => sourceBufferStored(s, u),
   };
   function onUpdates(json) {
     let updates;
@@ -1609,6 +1612,7 @@
       bufferOf.set(this, {
         source: ms, type, id: nextBuffer++, mode: 'segments', updating: false, removed: false,
         ranges: [], timestampOffset: 0, appendWindowStart: 0, appendWindowEnd: Infinity, init: null, tracks: [], pending: null,
+        stored: 0, inflight: 0,
       });
     }
     get mode() { return sourceBuffer(this).mode; }
@@ -1638,6 +1642,9 @@
       if (!bytes) throw new TypeError("Failed to execute 'appendBuffer' on 'SourceBuffer': The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.");
       const m = source(b.source);
       if (m.readyState === 'ended') { m.readyState = 'open'; queueFire(b.source, 'sourceopen'); }
+      if (b.stored + b.inflight + bytes.length > sourceQuota(b)) {
+        throw domError('QuotaExceededError', "Failed to execute 'appendBuffer' on 'SourceBuffer': The SourceBuffer is full, and cannot be appended to.");
+      }
       b.updating = true;
       queueFire(this, 'updatestart');
       queueTask(() => { if (b.updating) finishAppend(this, b, processAppend(b, bytes)); });
@@ -1726,6 +1733,22 @@
       setReadyState(s, covered ? HAVE_ENOUGH_DATA : HAVE_METADATA);
     }
   }
+  /** The byte quota of a SourceBuffer: the video limit unless every track it has declared is audio. */
+  function sourceQuota(b) {
+    const audioOnly = b.tracks.length > 0 && b.tracks.every(t => t.kind !== 'video');
+    return audioOnly ? SOURCE_QUOTA_AUDIO : SOURCE_QUOTA_VIDEO;
+  }
+  /** The host's stored bytes per buffer, as [id, video, audio]; what it stores now replaces the estimate. */
+  function sourceBufferStored(s, u) {
+    if (!s.mediaSource || !Array.isArray(u.buffers)) return;
+    for (const [id, video, audio] of u.buffers) {
+      const buffer = source(s.mediaSource).buffers.find(b => sourceBuffer(b).id === id);
+      if (!buffer) continue;
+      const b = sourceBuffer(buffer);
+      b.stored = video + audio;
+      b.inflight = 0;
+    }
+  }
   function sourceBufferUpdate(s, u) {
     if (!s.mediaSource) return;
     const buffer = source(s.mediaSource).buffers.find(b => sourceBuffer(b).id === u.buffer);
@@ -1780,6 +1803,7 @@
     if (!element) return;
     const s = state(element);
     if (!s.player) return;
+    b.inflight += accepted.length;
     post(s, {
       op: 'append', player: s.player, buffer: b.id, mime: b.type, init_len: initLen,
       offset: b.timestampOffset, window_start: b.appendWindowStart,

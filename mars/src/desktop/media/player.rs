@@ -5,6 +5,7 @@
  * into the element's box. It lives on the main thread, reads bytes only through its loader, and
  * reports what it observes as plain status in the hub.
  */
+use super::clock::Clock;
 use super::loader::Loader;
 use crate::runtime::media::hub::{Shared, Status};
 use crate::runtime::media::stream::{Append, Stream};
@@ -62,6 +63,8 @@ pub(super) struct Native {
     stream: bool,
     /// The segments a Media Source stream has been given, per source buffer.
     pub media: Stream,
+    /// The playhead of a Media Source stream.
+    clock: Clock,
 }
 
 impl Native {
@@ -82,6 +85,7 @@ impl Native {
             pending_seek: None,
             stream,
             media: Stream::default(),
+            clock: Clock::default(),
         };
         native.start_if_allowed(mtm);
         native
@@ -136,6 +140,12 @@ impl Native {
     }
     /** Seek; the hub hears of it once AVFoundation finishes the latest seek. */
     pub fn seek(&mut self, time: f64, fast: bool) {
+        if self.stream {
+            self.seeks += 1;
+            self.seek_time = time;
+            self.clock.seek(time, super::host_seconds());
+            return;
+        }
         let Some(engine) = &self.engine else {
             self.pending_seek = Some((time, fast));
             return;
@@ -170,6 +180,10 @@ impl Native {
     /** One frame tick: serve bytes, observe the player, and pull a new frame when there is one. */
     pub fn tick(&mut self, shared: &mut Shared, host_time: f64) {
         self.loader.serve(shared);
+        if self.stream {
+            self.tick_stream(shared, host_time);
+            return;
+        }
         let Some(engine) = &self.engine else {
             return;
         };
@@ -198,6 +212,24 @@ impl Native {
                 self.frames += 1;
             }
         }
+    }
+}
+
+/** One tick of a Media Source player: move its playhead, evict what is behind it, and publish its state. */
+impl Native {
+    fn tick_stream(&mut self, shared: &mut Shared, host_time: f64) {
+        self.clock.set_running(!self.settings.paused, host_time);
+        let playhead = self.clock.time(host_time);
+        self.media.evict_behind(playhead);
+        shared.status = Status {
+            time: playhead,
+            playing: self.clock.running(),
+            seeks: self.seeks,
+            seek_time: self.seek_time,
+            frames: self.frames,
+            stored: self.media.buffers(),
+            ..Status::default()
+        };
     }
 }
 
