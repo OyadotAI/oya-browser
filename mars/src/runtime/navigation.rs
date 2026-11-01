@@ -468,7 +468,7 @@ impl Runtime {
             sheets.iter().map(String::len).sum::<usize>().to_string()
         });
         phase = Instant::now();
-        document = self.styled(&document, &sheets, self.render_context)?;
+        document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
         perf::record("page.styles", phase, String::new);
         phase = Instant::now();
         let all = crate::constants::IMAGE_COUNT;
@@ -479,7 +479,7 @@ impl Runtime {
         // `ch` and `ic` resolved against fallback faces before the web fonts arrived; Blink
         // restyles font-relative lengths when a font loads, so the page styles once more.
         if document.formatting.font_metrics && document.formatting.fonts.len() > fonts {
-            document = self.styled(&document, &sheets, self.render_context)?;
+            document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
         }
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();

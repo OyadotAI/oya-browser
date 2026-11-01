@@ -336,7 +336,7 @@ impl Runtime {
         // Restyle only after a change: an unconditional restyle cost GitHub 600 ms per image turn.
         if !page.styled {
             page.document = std::sync::Arc::new(self.styled(
-                &page.document,
+                std::sync::Arc::clone(&page.document),
                 &page.resolved_stylesheets,
                 self.render_context,
             )?);

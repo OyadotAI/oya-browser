@@ -505,7 +505,7 @@ impl Runtime {
     ) -> EngineResult<()> {
         self.validate_context(context)?;
         page.document = std::sync::Arc::new(self.styled(
-            &page.document,
+            std::sync::Arc::clone(&page.document),
             &page.resolved_stylesheets,
             context,
         )?);
@@ -520,27 +520,32 @@ impl Runtime {
             self.prepare(page)
         }
     }
-    /** One Eye cascade of `document` with `sheets` under `context`. */
+    /**
+     * One Eye cascade of `document` with `sheets` under `context`. The document arrives shared:
+     * a typed job takes its own handle rather than a copy of the whole DOM, and a caller that
+     * owns a document it is about to replace hands it over without a clone.
+     */
     pub(super) fn styled(
         &mut self,
-        document: &Document,
+        document: std::sync::Arc<Document>,
         sheets: &[String],
         context: crate::document::RenderContext,
     ) -> EngineResult<Document> {
-        let (owned, owned_sheets) = (document.clone(), sheets.to_vec());
+        let owned_sheets = sheets.to_vec();
         let framed = self.framed;
+        let job_document = std::sync::Arc::clone(&document);
         let typed = self.call_job("document", "document.styles", None, move || {
             if framed {
-                crate::document::compute_frame_styles(&owned, &owned_sheets, context)
+                crate::document::compute_frame_styles(&job_document, &owned_sheets, context)
             } else {
-                crate::document::compute_styles_with_context(&owned, &owned_sheets, context)
+                crate::document::compute_styles_with_context(&job_document, &owned_sheets, context)
             }
         });
         if let Some(styled) = typed {
             return styled;
         }
         let call = StylesCall {
-            document,
+            document: &document,
             sheets,
             context,
         };

@@ -776,7 +776,7 @@ impl Runtime {
                 .into_iter()
                 .collect();
         page.document = std::sync::Arc::new(self.styled(
-            &page.document,
+            std::sync::Arc::clone(&page.document),
             &page.resolved_stylesheets,
             self.render_context,
         )?);
@@ -948,7 +948,7 @@ impl Runtime {
         let resident = digest
             .as_ref()
             .is_some_and(|digest| self.v9_sources.contains(digest));
-        let input = &page.scripting.modules.input;
+        let input: &crate::v9::ModuleInput = &page.scripting.modules.input;
         let modules_digest = (!is_classic(&input)).then(|| super::service::modules_digest(input));
         let modules_resident = modules_digest
             .as_ref()
@@ -1008,9 +1008,7 @@ impl Runtime {
         let load = matches!(action, super::service::PageAction::Load);
         let call = super::service::TypedPage {
             sources: self.shared_sources_for(&page.scripts),
-            // ponytail: modules are copied per step (2.75 MB on YouTube, a memcpy); share them
-            // like the scripts if this shows in a profile.
-            modules: std::sync::Arc::new(page.scripting.modules.input.clone()),
+            modules: std::sync::Arc::clone(&page.scripting.modules.input),
             document: projection.clone(),
             storage: page.storage.clone(),
             languages: self.languages.clone(),
@@ -1092,7 +1090,7 @@ impl Runtime {
             local_sheets::replace(&mut sheets, page.local_sheets, texts);
         }
         sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
-        let styled = self.styled(&applied, &sheets, self.render_context)?;
+        let styled = self.styled(std::sync::Arc::new(applied), &sheets, self.render_context)?;
         // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
         let mut scroll = page.element_scroll.clone();
         scroll.extend(execution.effects.element_scroll.clone());
@@ -1750,11 +1748,12 @@ impl Runtime {
             None
         };
         let origin = page.origin.clone();
-        let storage = page.storage.clone();
+        // Only a dirty candidate publishes storage, so only it pays for a copy of the maps.
+        let storage = page.storage_dirty.then(|| page.storage.clone());
         let published = self.publish(move |runtime| {
             let mut page = page;
-            if page.storage_dirty {
-                runtime.commit_storage(&origin, &storage);
+            if let Some(storage) = &storage {
+                runtime.commit_storage(&origin, storage);
             }
             page.storage_dirty = false;
             runtime.broadcast = broadcast;
