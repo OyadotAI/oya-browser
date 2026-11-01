@@ -34,17 +34,19 @@ pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml}
 pub use render::vertical::{WRITING_CCW, WRITING_LR, WRITING_RL};
 pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 pub use render::{
-    ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
-    FillRule, GradientStop, GradientTile, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine,
-    PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible,
-    embed_frame, frame_viewport, painted_bounds, render, render_frame, render_frame_scrolled,
-    render_scrolled, render_with_context, role, sliced_shadow, spread_radius, wheel_target,
+    ClipRect, DecorationLine, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList,
+    DisplayOutline, DisplayShadow, FillRule, GradientStop, GradientTile, ImageSize, LineCap,
+    LineJoin, OpacityGroup, PaintLine, PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath,
+    agent_hidden, agent_visible, embed_frame, frame_viewport, painted_bounds, render, render_frame,
+    render_frame_scrolled, render_scrolled, render_with_context, role, sliced_shadow,
+    spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
 pub use script::{DomFragments, Fragments, normalize_document_text, script_document};
 use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
 use std::collections::BTreeMap;
+pub use style::DecorationStyle;
 pub use style::default_transform_origin;
 pub use style::evaluate_media;
 pub use style::{

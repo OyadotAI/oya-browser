@@ -23,6 +23,11 @@ fn named_pair(value: &str, first: &str, second: &str) -> Option<Vec<(String, Str
     Some(vec![(first.into(), a.into()), (second.into(), b.into())])
 }
 
+/** Outline keyword styles: the border styles plus `auto`, the focus ring. */
+const OUTLINE_STYLES: [&str; 11] = [
+    "auto", "none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset",
+    "outset",
+];
 /** Longhand list of a shorthand, for CSS-wide keywords; None when `key` is not a shorthand. */
 pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
     let sides = |format: &dyn Fn(&str) -> String| Some(SIDES.iter().map(|s| format(s)).collect());
@@ -35,6 +40,16 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
             let part = &key["border-".len()..];
             sides(&|side| format!("border-{side}-{part}"))
         }
+        "text-decoration" => Some(
+            ["line", "style", "thickness"]
+                .map(|part| format!("text-decoration-{part}"))
+                .to_vec(),
+        ),
+        "outline" => Some(
+            ["color", "style", "width"]
+                .map(|part| format!("outline-{part}"))
+                .to_vec(),
+        ),
         "border" => Some(
             SIDES
                 .iter()
@@ -146,6 +161,8 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
             let part = &key["border-".len()..];
             four(value).map(|v| sided(&|side| format!("border-{side}-{part}"), v))
         }
+        "outline" => side_tokens(value, &OUTLINE_STYLES).map(|parts| side_parts("outline", &parts)),
+        "text-decoration" => text_decoration(value),
         "border" => border_side(value).map(|parts| {
             SIDES
                 .iter()
@@ -408,9 +425,16 @@ fn sided(name: &dyn Fn(&str) -> String, values: [String; 4]) -> Vec<(String, Str
 }
 /** A border side's width, style and color in any order, each optional. */
 pub(super) fn border_side(value: &str) -> Option<[String; 3]> {
+    side_tokens(value, &BORDER_STYLES)
+}
+/**
+ * The width, style and color of a one-side shorthand in any order, each defaulting to its
+ * initial value; a token that fits no slot, or a second color, makes the whole declaration invalid.
+ */
+fn side_tokens(value: &str, styles: &[&str]) -> Option<[String; 3]> {
     let (mut width, mut style, mut color) = (None, None, None);
     for token in tokens(value) {
-        if BORDER_STYLES.contains(&token) && style.is_none() {
+        if styles.contains(&token) && style.is_none() {
             style = Some(token);
         } else if width.is_none() && super::border::width(token).is_ok() {
             width = Some(token);
@@ -424,6 +448,45 @@ pub(super) fn border_side(value: &str) -> Option<[String; 3]> {
         width.unwrap_or("medium").into(),
         style.unwrap_or("none").into(),
         color.unwrap_or("currentcolor").into(),
+    ])
+}
+/**
+ * The `text-decoration` shorthand's line, style and thickness. Each unnamed part resets to its
+ * initial value, and colors are dropped since decoration lines paint in the text color. Expanding
+ * here keeps the reset in declaration order, where a longhand written earlier would survive it.
+ */
+fn text_decoration(value: &str) -> Option<Vec<(String, String)>> {
+    let (mut lines, mut style, mut thickness) = (Vec::new(), None, None);
+    for token in tokens(value) {
+        match token {
+            "underline" | "overline" | "line-through" | "blink" | "none" => lines.push(token),
+            "solid" | "double" | "dotted" | "dashed" | "wavy" if style.is_none() => {
+                style = Some(token)
+            }
+            "auto" | "from-font" => thickness = thickness.or(Some(token)),
+            _ if thickness.is_none()
+                && token.starts_with(|c: char| c.is_ascii_digit() || "+-.".contains(c)) =>
+            {
+                thickness = Some(token);
+            }
+            _ => {}
+        }
+    }
+    let line = if lines.is_empty() {
+        "none".to_string()
+    } else {
+        lines.join(" ")
+    };
+    Some(vec![
+        ("text-decoration-line".into(), line),
+        (
+            "text-decoration-style".into(),
+            style.unwrap_or("solid").into(),
+        ),
+        (
+            "text-decoration-thickness".into(),
+            thickness.unwrap_or("auto").into(),
+        ),
     ])
 }
 /** The three longhands of one side. */

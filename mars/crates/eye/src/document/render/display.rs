@@ -1,5 +1,5 @@
 /** Resolved paint values carried by display items: clips, shadows, gradients and opacity groups. */
-use super::DisplayItem;
+use super::{DecorationLine, DisplayItem, DisplayOutline};
 use serde::{Deserialize, Serialize};
 
 /// An absolute clip rectangle in document points, rounded when any radius is positive.
@@ -465,6 +465,32 @@ pub(super) fn is_center_object_position(position: &[f64; 4]) -> bool {
     *position == default_object_position()
 }
 
+/** The solid decoration line is the default and omitted from serialized items. */
+pub(super) fn is_solid_line(style: &crate::document::style::DecorationStyle) -> bool {
+    *style == crate::document::style::DecorationStyle::Solid
+}
+
+/** The decoration line's paint when it differs from the solid default; None keeps the painter's own. */
+pub(super) fn decoration_line(style: &crate::document::ComputedStyle) -> Option<DecorationLine> {
+    let line = DecorationLine {
+        style: style.decoration_style,
+        thickness: style.decoration_thickness,
+        offset: style.underline_offset,
+    };
+    (line != DecorationLine::default()).then_some(line)
+}
+
+/** The outline ring a box paints: a line style other than `none` and a positive width. */
+pub(super) fn outline(style: &crate::document::ComputedStyle) -> Option<DisplayOutline> {
+    let kind = style.outline_style?;
+    (style.outline_width > 0.0).then(|| DisplayOutline {
+        style: kind,
+        width: style.outline_width,
+        color: style.outline_color.clone(),
+        offset: style.outline_offset,
+    })
+}
+
 /** Effect values reach CoreGraphics only when finite and bounded, like every other coordinate. */
 pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> {
     use super::validation::offset as bounded;
@@ -474,6 +500,12 @@ pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> 
     values.push(item.letter_spacing);
     values.push(item.word_spacing);
     values.extend(item.object_position);
+    if let Some(line) = item.decoration {
+        values.extend([line.thickness.unwrap_or(0.0), line.offset.unwrap_or(0.0)]);
+    }
+    if let Some(outline) = &item.outline {
+        values.extend([outline.width, outline.offset]);
+    }
     if let Some(content) = item.content_box {
         values.extend(content);
     }

@@ -666,6 +666,26 @@ pub struct ComputedStyle {
     /// Inherited: `text-decoration` includes `line-through`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
+    /// Inherited: `text-decoration-style`, the shape the decoration lines paint.
+    #[serde(skip_serializing_if = "default")]
+    pub decoration_style: DecorationStyle,
+    /// Inherited: `text-decoration-thickness` in px; None is `auto` or `from-font`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoration_thickness: Option<f64>,
+    /// Inherited: `text-underline-offset` in px, moving the underline away from the text; None is `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub underline_offset: Option<f64>,
+    /// `outline-style` as a painted line; None for `none` and `hidden`, which paint no outline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_style: Option<super::border::BorderStyle>,
+    /// `outline-width` in px, `medium` (3px) initially.
+    pub outline_width: f64,
+    /// `outline-color` as authored; None is `currentcolor`, the element's text color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_color: Option<String>,
+    /// `outline-offset` in px: the gap between the border edge and the outline's inner edge.
+    #[serde(skip_serializing_if = "default")]
+    pub outline_offset: f64,
     /// Percentage parts of `top`, `right`, `bottom`, `left` insets.
     #[serde(skip_serializing_if = "default")]
     pub inset_percent: [f64; 4],
@@ -1064,6 +1084,13 @@ impl Default for ComputedStyle {
             }; 2],
             underline: false,
             strikethrough: false,
+            decoration_style: DecorationStyle::Solid,
+            decoration_thickness: None,
+            underline_offset: None,
+            outline_style: None,
+            outline_width: super::constants::BORDER_MEDIUM,
+            outline_color: None,
+            outline_offset: 0.0,
             inset_percent: [0.0; 4],
             radius_percent: [0.0; 4],
             radius_px: [0.0; 4],

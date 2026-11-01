@@ -91,7 +91,7 @@ pub(super) fn apply(
                 return Err(unsupported());
             }
         }
-        "text-decoration" | "text-decoration-line" => {
+        "text-decoration-line" => {
             let none = value.split_whitespace().any(|part| part == "none");
             style.text_decoration_none = none;
             if none {

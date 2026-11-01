@@ -106,6 +106,8 @@ pub(super) fn apply(
         || super::multicol::apply(style, key, value, context)?
         || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
+        || super::outline::apply(style, key, value, context)?
+        || super::decoration::apply(style, key, value, context)?
         || super::border_image::apply(style, key, value, context)?
         || super::kept_values::apply(style, key, value, context)?
     {
@@ -320,10 +322,6 @@ fn layout(
             }
         }
         "opacity" => style.opacity = opacity(value)?,
-        "outline" | "outline-color" | "outline-width" | "outline-style" | "outline-offset" => note(
-            diagnostics,
-            format!("Style decoration {key} is not painted."),
-        ),
         _ => return Ok(false),
     }
     Ok(true)

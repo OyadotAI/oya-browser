@@ -44,6 +44,9 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         text_decoration_none: parent.text_decoration_none,
         underline: parent.underline,
         strikethrough: parent.strikethrough,
+        decoration_style: parent.decoration_style,
+        decoration_thickness: parent.decoration_thickness,
+        underline_offset: parent.underline_offset,
         list_style: parent.list_style,
         list_marker: parent.list_marker.clone(),
         border_spacing: parent.border_spacing,
@@ -91,6 +94,9 @@ fn inherits(key: &str) -> bool {
             "caption-side",
             "pointer-events",
             "text-box-edge",
+            "text-decoration-style",
+            "text-decoration-thickness",
+            "text-underline-offset",
         ]
         .contains(&key)
         || super::kept_values::inherits(key)
@@ -371,6 +377,13 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.underline = source.underline;
             style.strikethrough = source.strikethrough;
         }
+        "text-decoration-style" => style.decoration_style = source.decoration_style,
+        "text-decoration-thickness" => style.decoration_thickness = source.decoration_thickness,
+        "text-underline-offset" => style.underline_offset = source.underline_offset,
+        "outline-style" => style.outline_style = source.outline_style,
+        "outline-width" => style.outline_width = source.outline_width,
+        "outline-color" => style.outline_color = source.outline_color.clone(),
+        "outline-offset" => style.outline_offset = source.outline_offset,
         "list-style" | "list-style-type" => {
             style.list_style = source.list_style;
             style.list_marker = source.list_marker.clone();

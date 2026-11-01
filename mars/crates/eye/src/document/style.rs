@@ -30,6 +30,7 @@ mod container_query;
 mod containment;
 mod content;
 mod declaration;
+mod decoration;
 mod flex;
 mod flex_model;
 mod font;
@@ -56,6 +57,7 @@ pub fn evaluate_media(query: &str, context: crate::document::RenderContext) -> b
 }
 mod model;
 mod multicol;
+mod outline;
 mod paint;
 mod parsed;
 mod resolve;
@@ -114,9 +116,9 @@ pub use multicol::Multicol;
 pub use urls::{BACKGROUND_IMAGES, background_urls, rebase_urls};
 pub use visual_model::{
     BackgroundBox, BackgroundLayer, BackgroundRepeat, BackgroundSize, BoxShadow, Clear, ColorStop,
-    ContainerType, Extent, Float, FontFamily, GridArea, GridLine, GridTemplate, LineName,
-    ListStyle, MaskLayer, ObjectFit, Overflow, Position, RadialShape, RadialSize, RepeatStyle,
-    TableBox, TextTransform, Track, TrackSize, VerticalAlign, WhiteSpace,
+    ContainerType, DecorationStyle, Extent, Float, FontFamily, GridArea, GridLine, GridTemplate,
+    LineName, ListStyle, MaskLayer, ObjectFit, Overflow, Position, RadialShape, RadialSize,
+    RepeatStyle, TableBox, TextTransform, Track, TrackSize, VerticalAlign, WhiteSpace,
 };
 pub use visual_model::{ContentKeyword, TrackContent};
 /** Internal value failures; never include arbitrary declarations or selectors in an error. */

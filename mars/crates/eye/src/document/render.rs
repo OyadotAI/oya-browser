@@ -167,6 +167,38 @@ pub struct DisplayDecoration {
     pub border_color: Option<String>,
 }
 
+/// How a text item's underline, overline and line-through paint when they differ from the solid
+/// default: the shape, the thickness and the offset from the default underline position.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DecorationLine {
+    /// The line's shape, from `text-decoration-style`.
+    #[serde(default, skip_serializing_if = "display::is_solid_line")]
+    pub style: crate::document::style::DecorationStyle,
+    /// Stroke thickness in points; None lets the painter derive it from the font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness: Option<f64>,
+    /// Points the line moves away from its default position; None keeps that position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<f64>,
+}
+
+/// A box's outline: a ring painted outside its border edge, which layout never sees.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayOutline {
+    /// The ring's line style; `double` and the 3D styles paint as their border counterparts do.
+    pub style: crate::document::BorderStyle,
+    /// Ring width in points.
+    pub width: f64,
+    /// Literal color; None paints the element's own text color (`currentcolor`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Gap in points between the border edge and the ring's inner edge; negative overlaps the box.
+    #[serde(default, skip_serializing_if = "display::is_zero_f64")]
+    pub offset: f64,
+}
+
 /// Native controls and text drawing use exactly these boxes.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -300,6 +332,12 @@ pub struct DisplayItem {
     /// Lines are struck through (`text-decoration: line-through`, `<s>`, `<del>`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
+    /// The decoration lines' shape, thickness and offset when they are not the solid defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decoration: Option<DecorationLine>,
+    /// The element's outline ring, painted outside its border box; None paints no outline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<DisplayOutline>,
     /// Italic or oblique font posture.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub italic: bool,

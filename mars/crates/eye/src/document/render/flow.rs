@@ -1368,6 +1368,8 @@ pub(super) fn box_item(
         underline: !node.style.text_decoration_none
             && (node.style.underline || (node.tag == "a" && node.href.is_some())),
         strikethrough: !node.style.text_decoration_none && node.style.strikethrough,
+        decoration: super::display::decoration_line(&node.style),
+        outline: None,
         italic: face.italic,
         object_fit: crate::document::style::ObjectFit::Fill,
         object_position: super::display::default_object_position(),
