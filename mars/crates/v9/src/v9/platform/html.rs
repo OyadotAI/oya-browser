@@ -86,6 +86,23 @@ fn inner_children(page: &mut Page, id: usize) -> Vec<usize> {
     }
 }
 
+/**
+ * Raw text as written inside its element. A `</` that starts the element's own closing tag, in
+ * any case, is written `<\/` so the parser reads it as text: a script's `</style><a>` in a live
+ * `<style>` would otherwise re-parse as an element the script never made.
+ */
+fn raw_text_safe(text: &str, tag: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (index, _) in lower.match_indices(&format!("</{tag}")) {
+        out.push_str(&text[last..index]);
+        out.push_str("<\\");
+        last = index + 1;
+    }
+    out.push_str(&text[last..]);
+    out
+}
 /** Write one node; `shadow` includes shadow roots. */
 fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow: bool) {
     let Some(view) = page.view(id) else {
@@ -93,13 +110,10 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
     };
     match view.tag.as_str() {
         "#text" => {
-            let parent_raw = page
-                .parent(id)
-                .map(|parent| page.tag(parent))
-                .is_some_and(|tag| RAW.contains(&tag.as_str()));
+            let parent_tag = page.parent(id).map(|parent| page.tag(parent));
             let text = view.text.unwrap_or_default();
-            if parent_raw {
-                out.push_str(&text);
+            if let Some(tag) = parent_tag.filter(|tag| RAW.contains(&tag.as_str())) {
+                out.push_str(&raw_text_safe(&text, &tag));
             } else {
                 escape_text(&text, out);
             }

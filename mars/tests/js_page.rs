@@ -917,3 +917,25 @@ fn delete_rule_leaves_later_rules_in_force_after_a_media_block() {
     );
     assert!(texts(&page).contains("vis=hidden"), "{page}");
 }
+
+/** A script's `<style>` text that closes itself with markup stays text in the agent's document:
+the `</style>` in it cannot make an `<a id=evil>` element the script never created. The page keeps
+working, so the script's own element still renders. */
+#[test]
+fn raw_text_closer_from_script_adds_no_element() {
+    let (_fixture, _runtime, page) = load(
+        "<div id=root></div><script>const s=document.createElement('style');\
+         s.textContent='</style><a id=evil href=/x>x</a>';\
+         document.getElementById('root').appendChild(s);\
+         const p=document.createElement('p');p.textContent='still working';\
+         document.getElementById('root').appendChild(p);</script>",
+        vec![],
+    );
+    let evil = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["html_id"] == "evil");
+    assert!(!evil, "{page}");
+    assert!(texts(&page).contains("still working"), "{page}");
+}
