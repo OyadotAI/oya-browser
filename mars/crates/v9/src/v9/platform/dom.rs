@@ -868,10 +868,24 @@ pub(in crate::v9) fn style_map(vm: &mut Vm, node: usize) -> Vec<(String, String)
     text.split(';')
         .filter_map(|declaration| {
             let (name, value) = declaration.split_once(':')?;
-            Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+            Some((property_name(name.trim()), value.trim().to_string()))
         })
         .filter(|(name, _)| !name.is_empty())
         .collect()
+}
+
+/**
+ * A CSSOM property name as the style attribute keeps it. Standard names are ASCII
+ * case-insensitive, so they lowercase; a custom property (`--name`) is case-sensitive, so
+ * `--AirImage-height` must not become `--airimage-height`, or the `var()` references that name
+ * fall back and Airbnb's listing photos stop filling their boxes.
+ */
+pub(in crate::v9) fn property_name(name: &str) -> String {
+    if name.starts_with("--") {
+        name.to_string()
+    } else {
+        name.to_ascii_lowercase()
+    }
 }
 
 /** Elements that display as blocks by default. */
@@ -3902,12 +3916,12 @@ fn style_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     match name {
         "getPropertyValue" if computed => {
-            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let property = property_name(&vm.to_text(&call.arg(0))?);
             let value = computed_value(vm, node, &property);
             JsValue::string(&value).map_err(Into::into)
         }
         "getPropertyValue" => {
-            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let property = property_name(&vm.to_text(&call.arg(0))?);
             let value = style_map(vm, node)
                 .into_iter()
                 .find(|(name, _)| *name == property)
@@ -3916,7 +3930,7 @@ fn style_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             JsValue::string(&value).map_err(Into::into)
         }
         "setProperty" => {
-            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let property = property_name(&vm.to_text(&call.arg(0))?);
             let value = if call.arg(1).nullish() {
                 String::new()
             } else {
@@ -3926,7 +3940,7 @@ fn style_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Undefined)
         }
         "removeProperty" => {
-            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let property = property_name(&vm.to_text(&call.arg(0))?);
             set_style(vm, node, &property, "")?;
             Ok(JsValue::Undefined)
         }

@@ -83,6 +83,7 @@ mod consumer;
 mod control_header_regex;
 mod cors_xhr;
 mod cover_initialized_name;
+mod custom_property_case;
 mod d8_data_modules;
 mod dataview_coercion;
 mod date_legacy_numeric;
