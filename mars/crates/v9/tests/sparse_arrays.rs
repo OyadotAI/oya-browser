@@ -730,3 +730,19 @@ fn typed_sort_nan_comparison_is_stable() {
         "3:1:2"
     );
 }
+
+/** Slice reads its own range only: holes stay holes, sparse entries past the dense part and an
+index inherited from Array.prototype inside the range are copied, and entries outside it are not. */
+#[test]
+fn slice_copies_exactly_its_range_of_own_and_inherited_indices() {
+    assert_eq!(
+        common::eval(
+            "let a=[0,1,,3];a[1000]='far';Array.prototype[2]='inherited';\
+             const s=a.slice(1,3),t=a.slice(999,1001),u=a.slice(5,4);\
+             delete Array.prototype[2];\
+             let result=[s.length,s[0],s[1],1 in s,t.length,0 in t,t[1],u.length].join(':');",
+            "result"
+        ),
+        "2:1:inherited:true:2:false:far:0"
+    );
+}

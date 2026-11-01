@@ -1201,12 +1201,28 @@ impl Storage {
     }
 
     /** Report real allocations without flattening; the caller retains content sharing and context attribution. */
-    pub(super) fn allocations(&self, mut visit: impl FnMut(bool, usize, usize, usize)) {
+    pub(super) fn allocations(&self, visit: impl FnMut(bool, usize, usize, usize)) {
+        self.allocations_except(|_| false, visit);
+    }
+    /** `allocations`, without descending into a child subtree `known` accepts (by registration
+    identity): a string budget charging a new rope node skips the parts it already charged, so
+    building a string by repeated `+=` charges each piece once, in time for the new node alone,
+    instead of the whole rope again on every step. */
+    pub(super) fn allocations_except(
+        &self,
+        known: impl Fn((u8, usize)) -> bool,
+        mut visit: impl FnMut(bool, usize, usize, usize),
+    ) {
         let mut pending = vec![self.clone()];
+        let push = |pending: &mut Vec<Storage>, child: Storage| {
+            if !known(child.registration_identity()) {
+                pending.push(child);
+            }
+        };
         while let Some(storage) = pending.pop() {
             #[cfg(feature = "conformance")]
             if let Some(target) = storage.forwarding_target() {
-                pending.push(target);
+                push(&mut pending, target);
             }
             match storage {
                 #[cfg(not(feature = "conformance"))]
@@ -1240,7 +1256,7 @@ impl Storage {
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
-                    pending.push(node.parent.clone());
+                    push(&mut pending, node.parent.clone());
                 }
                 Self::Repeat(node) => {
                     let bytes = std::mem::size_of::<Repeat>() + ARC_HEADER_BYTES;
@@ -1255,13 +1271,13 @@ impl Storage {
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(flat) = node.flat_identity.get() {
-                        pending.push(Self::Flat(flat.clone()));
+                        push(&mut pending, Self::Flat(flat.clone()));
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
-                    pending.push(node.child.clone());
+                    push(&mut pending, node.child.clone());
                 }
                 Self::Cons(node) => {
                     let bytes = std::mem::size_of::<Concat>() + ARC_HEADER_BYTES;
@@ -1280,14 +1296,15 @@ impl Storage {
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(flat) = node.flat_identity.get() {
-                        pending.push(Self::Flat(flat.clone()));
+                        push(&mut pending, Self::Flat(flat.clone()));
                     }
                     #[cfg(feature = "conformance")]
                     if let Some(external) = node.external.get() {
                         report_external(&external, &mut visit);
                     }
                     if let Some((left, right)) = children {
-                        pending.extend([right, left]);
+                        push(&mut pending, right);
+                        push(&mut pending, left);
                     }
                 }
             }

@@ -142,7 +142,12 @@ impl StringBudget {
         if self.nodes.insert(identity, weak).is_none() {
             self.added += 1;
             let mut bytes = 0usize;
-            text.resident_allocations(|_, _, _, upper| bytes = bytes.saturating_add(upper));
+            // Registered parts were charged when they registered; only what is new counts.
+            let nodes = &self.nodes;
+            text.new_allocations(
+                |part| nodes.contains_key(&part),
+                |_, _, _, upper| bytes = bytes.saturating_add(upper),
+            );
             self.upper_units = self.upper_units.saturating_add(bytes.div_ceil(2));
         }
         // Proportional, so each prune's walk over every registration is paid for by as many
@@ -161,7 +166,6 @@ impl StringBudget {
 
     /** Re-observe live nodes, including flat and external caches created since registration. */
     pub(super) fn resident_units(&mut self) -> usize {
-        let observed = crate::v9::value::materialized_units();
         let mut seen = FastSet::default();
         let mut bytes = 0usize;
         // Removing dead registrations frees their reserved addresses for new strings.
@@ -174,7 +178,7 @@ impl StringBudget {
             })
         });
         self.added = 0;
-        self.observed_units = observed;
+        self.observed_units = crate::v9::value::materialized_units();
         self.upper_units = bytes.div_ceil(2);
         self.upper_units
     }
@@ -257,6 +261,29 @@ mod tests {
         assert!(budget.resident_units() >= 200000);
         drop(alias);
         assert_eq!(budget.resident_units(), 0);
+    }
+
+    /** Building a string by repeated `+=` charges each piece once: each new rope node adds
+    its own allocation, not every piece below it again, so the estimate stays near the exact
+    count instead of growing with the square of the steps (which made every later concat on
+    YouTube recount every live string). */
+    #[test]
+    fn appending_to_a_rope_charges_each_piece_once() {
+        let piece = JsString::from_utf8(&"x".repeat(64)).unwrap();
+        let mut built = JsString::from_utf8("start").unwrap();
+        let mut budget = StringBudget::default();
+        budget.register(&built);
+        // Every step stays alive, so the exact count includes each one the estimate charged.
+        let mut steps = Vec::new();
+        for _ in 0..2000 {
+            budget.register(&piece);
+            built = built.concat(&piece).unwrap();
+            budget.register(&built);
+            steps.push(built.clone());
+        }
+        let estimate = budget.upper_units();
+        let exact = budget.resident_units();
+        assert!(estimate <= exact * 2, "estimate {estimate} exact {exact}");
     }
 
     /** Two distinct rope roots sharing a child count its allocation only once after observation. */

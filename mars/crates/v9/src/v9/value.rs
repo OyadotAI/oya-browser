@@ -166,11 +166,11 @@ impl std::fmt::Debug for JsString {
 }
 
 impl JsString {
-    /** Retain a non-owning allocation identity for VM resident tracking. */
     /** The identity `weak_registration` would report, without taking a weak reference. */
     pub(in crate::v9) fn registration_identity(&self) -> (u8, usize) {
         self.0.registration_identity()
     }
+    /** Retain a non-owning allocation identity for VM resident tracking. */
     pub(in crate::v9) fn weak_registration(&self) -> ((u8, usize), WeakString) {
         let (identity, weak) = self.0.downgrade();
         (identity, WeakString(weak))
@@ -178,6 +178,15 @@ impl JsString {
     /** Visit immutable backing allocations for bounded heap accounting. */
     pub(in crate::v9) fn resident_allocations(&self, visit: impl FnMut(bool, usize, usize, usize)) {
         self.0.allocations(visit);
+    }
+    /** `resident_allocations` without the child subtrees `known` names by registration
+    identity: those already counted (see `Storage::allocations_except`). */
+    pub(in crate::v9) fn new_allocations(
+        &self,
+        known: impl Fn((u8, usize)) -> bool,
+        visit: impl FnMut(bool, usize, usize, usize),
+    ) {
+        self.0.allocations_except(known, visit);
     }
 
     /** Estimate resident UTF-16 units including allocation overhead, deduplicating this value's aliases. */
