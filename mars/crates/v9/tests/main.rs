@@ -197,6 +197,7 @@ mod iterator_lazy;
 mod iterator_pattern_close;
 mod iterator_protocol;
 mod jit_equivalence;
+mod jit_fuzz;
 mod jsfunc;
 mod json_coercion;
 mod json_raw;
