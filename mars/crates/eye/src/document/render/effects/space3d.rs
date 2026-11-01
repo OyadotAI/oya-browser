@@ -11,7 +11,7 @@ use crate::{
     document::{
         ComputedStyle, DisplayItem, Node, Overflow,
         matrix::{
-            IDENTITY4, Matrix4, fit_affine, flatten, from_affine, multiply, orientation,
+            IDENTITY4, Matrix4, fit_affine, flatten, from_affine, is_back_facing, multiply,
             perspective, project, translation,
         },
         style::default_transform_origin,
@@ -46,7 +46,7 @@ struct Level {
     preserve: bool,
     /// Whether the box's back face is hidden, which hides its flattened subtree with it.
     backface_hidden: bool,
-    /// The box's layout rectangle `[x, y, w, h]`, which its facing is judged by.
+    /// The box's layout rectangle `[x, y, w, h]`, whose corners must project for it to be seen.
     rect: [f64; 4],
 }
 
@@ -60,6 +60,11 @@ pub(super) struct Space {
     full: Matrix4,
     /// What children compose onto: `full`, flattened when the box flattens, then its perspective.
     down: Matrix4,
+    /// The box's matrix relative to its 3D rendering context root, which is where its facing is
+    /// judged. A flattening ancestor is a root, so only its perspective carries into this.
+    context: Matrix4,
+    /// What the box's children compose onto within the same rendering context.
+    context_down: Matrix4,
     /// Whether a flattening ancestor's hidden back face hides this box with it.
     hidden: bool,
     /// Whether this box's descendants are hidden: `hidden`, or its own flattening face turned away.
@@ -71,6 +76,8 @@ const ROOT_SPACE: Space = Space {
     needed: false,
     full: IDENTITY4,
     down: IDENTITY4,
+    context: IDENTITY4,
+    context_down: IDENTITY4,
     hidden: false,
     hidden_down: false,
 };
@@ -106,7 +113,9 @@ fn child_space(parent: &Space, level: &Level, style: &ComputedStyle) -> Space {
         true => full,
         false => flatten_after(&full),
     };
-    let own_face = level.backface_hidden && !level.preserve && faces_away(&full, level.rect);
+    let context = multiply(&parent.context_down, &level.local);
+    let own_face =
+        level.backface_hidden && !level.preserve && turned_away(&full, &context, level.rect);
     Space {
         needed: parent.needed
             || style.transform_4.is_some()
@@ -114,8 +123,19 @@ fn child_space(parent: &Space, level: &Level, style: &ComputedStyle) -> Space {
             || style.backface_hidden,
         full,
         down: multiply(&flat, &level.perspective),
+        context,
+        context_down: multiply(&context_base(level.preserve, &context), &level.perspective),
         hidden: parent.hidden_down,
         hidden_down: parent.hidden_down || own_face,
+    }
+}
+
+/** What a box's children start from within its rendering context: the box's own matrix when it
+preserves 3D, so they share its context, and identity when it flattens, which ends the context. */
+fn context_base(preserve: bool, context: &Matrix4) -> Matrix4 {
+    match preserve {
+        true => *context,
+        false => IDENTITY4,
     }
 }
 
@@ -138,27 +158,37 @@ pub(super) fn placed(
     }
     let [sx, sy] = super::scrolled(tree, node)?;
     let mut full = multiply(&translation([-sx, -sy, 0.0]), &space.full);
+    let mut context = space.context;
     if let Some(style) = generated_style(node, item) {
-        full = multiply(&full, &own_matrix(style, Some(item)));
+        let own = own_matrix(style, Some(item));
+        full = multiply(&full, &own);
+        context = multiply(&context, &own);
     }
-    let mut placed = project_box(item, &full, node.style.backface_hidden);
+    let mut placed = project_box(item, &full, &context, node.style.backface_hidden);
     // A flattening ancestor whose hidden back face turned away paints this box in its own plane,
     // so the box hides with it (CSS Transforms 2, backface-visibility).
     placed.hidden |= space.hidden;
     Ok(Some(placed))
 }
 
-/** Whether a box under `full` shows its back, or has a corner with no screen position. */
-fn faces_away(full: &Matrix4, [x, y, w, h]: [f64; 4]) -> bool {
+/** Whether a flattening box's back is turned away from the viewer: its own matrix shows its back,
+or a corner has no screen position, which hides it too. */
+fn turned_away(full: &Matrix4, context: &Matrix4, [x, y, w, h]: [f64; 4]) -> bool {
     let corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
     match all_some(&corners.map(|corner| project(full, corner))) {
-        Some(quad) => orientation(quad[0], quad[TOP_RIGHT], quad[BOTTOM_LEFT]) < 0.0,
+        Some(_) => is_back_facing(context),
         None => true,
     }
 }
 
-/** The projected corners, the paint affine fitted through three of them, and the facing. */
-fn project_box(item: &DisplayItem, full: &Matrix4, backface_hidden: bool) -> Placed {
+/** The projected corners, the paint affine fitted through three of them, and the facing, which
+is judged by the box's matrix within its rendering context rather than its projected area. */
+fn project_box(
+    item: &DisplayItem,
+    full: &Matrix4,
+    context: &Matrix4,
+    backface_hidden: bool,
+) -> Placed {
     let (x, y, w, h) = (item.x, item.y, item.width, item.height);
     let corners = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
     let projected = corners.map(|corner| project(full, corner));
@@ -169,11 +199,10 @@ fn project_box(item: &DisplayItem, full: &Matrix4, backface_hidden: bool) -> Pla
             hidden: true,
         };
     };
-    let facing_away = orientation(quad[0], quad[TOP_RIGHT], quad[BOTTOM_LEFT]) < 0.0;
     Placed {
         affine: fit_affine([x, y, w, h], [quad[0], quad[TOP_RIGHT], quad[BOTTOM_LEFT]]),
         quad,
-        hidden: backface_hidden && facing_away,
+        hidden: backface_hidden && is_back_facing(context),
     }
 }
 

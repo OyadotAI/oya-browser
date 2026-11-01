@@ -321,7 +321,9 @@ fn backface_hidden_boxes_hide_when_their_back_faces_the_viewer() {
     };
     assert!(hidden_when("rotateY(180deg)"));
     assert!(hidden_when("rotateY(120deg)"));
-    assert!(hidden_when("scaleX(-1)"));
+    assert!(hidden_when("scaleZ(-1)"));
+    assert!(hidden_when("rotateX(180deg) scaleY(-1)"));
+    assert!(!hidden_when("scaleX(-1)"));
     assert!(!hidden_when("rotateY(0deg)"));
     assert!(!hidden_when("rotateY(60deg)"));
     assert!(!hidden_when("none"));
@@ -350,6 +352,50 @@ fn backface_hidden_child_under_perspective_hides() {
     );
 }
 
+/** The facing of a back face is the sign of cofactor33 times the determinant (Blink's
+`Transform::IsBackFaceVisible`), not the sign of the projected area: a mirror in x alone keeps the
+front facing the viewer, while a mirror in z turns it away. */
+#[test]
+fn backface_facing_follows_the_determinant_of_the_accumulated_matrix() {
+    let hidden_when = |transform: &str| {
+        let (document, display) = layout(&format!(
+            "<p id=b style='backface-visibility:hidden;width:40px;height:20px;margin:0;transform:{transform}'>b</p>"
+        ));
+        item(&document, &display, "b")
+            .clip
+            .is_some_and(|clip| clip.width == 0.0)
+    };
+    assert!(hidden_when("scaleZ(-1)"));
+    assert!(hidden_when("rotateX(180deg) scaleY(-1)"));
+    assert!(!hidden_when("scaleX(-1)"));
+}
+
+/** A flat parent ends the 3D context: its child's back face is judged by the child's own matrix,
+so a half turn under a half turn is still turned away, not composed back to the front. */
+#[test]
+fn flat_parents_restart_the_backface_context() {
+    let (document, display) = layout(
+        "<div style='transform:rotateY(180deg);width:200px;height:100px'>\
+         <p id=c style='backface-visibility:hidden;transform:rotateY(180deg);width:40px;height:20px;margin:0'>c</p></div>",
+    );
+    assert!(
+        item(&document, &display, "c")
+            .clip
+            .is_some_and(|clip| clip.width == 0.0)
+    );
+}
+
+/** A hidden back face under a flat parent turned away paints in the parent's plane, so its own
+facing is what counts: an unturned child stays visible. */
+#[test]
+fn hidden_backface_child_of_a_flat_turned_parent_stays_visible() {
+    let (document, display) = layout(
+        "<div style='transform:rotateY(180deg);width:200px;height:100px'>\
+         <p id=c style='backface-visibility:hidden;width:40px;height:20px;margin:0'>c</p></div>",
+    );
+    assert!(item(&document, &display, "c").clip.is_none());
+}
+
 /** A flip card's face hides its content with it: a flat box with a hidden back face paints its
 children in its own plane, so they turn away and hide too. Under preserve-3d they keep their own facing. */
 #[test]
@@ -364,7 +410,7 @@ fn a_hidden_back_face_hides_its_flattened_children() {
             .is_some_and(|clip| clip.width == 0.0)
     };
     assert!(hidden("transform:rotateY(180deg)"));
-    assert!(hidden("transform:scaleX(-1)"));
+    assert!(!hidden("transform:scaleX(-1)"));
     assert!(!hidden("transform:none"));
     assert!(!hidden(
         "transform:rotateY(180deg);transform-style:preserve-3d"

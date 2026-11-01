@@ -89,10 +89,38 @@ pub fn project(m: &Matrix4, [x, y]: [f64; 2]) -> Option<[f64; 2]> {
     (sx.is_finite() && sy.is_finite()).then_some([sx, sy])
 }
 
-/** Signed area of the projected triangle `a b c`: positive when the three turn counter-clockwise
-on screen as a box's top-left, top-right and bottom-left corners do when it faces the viewer. */
-pub fn orientation(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
-    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+/** The 3x3 determinant of the entries of `m` at the given rows and columns. */
+fn minor3(m: &Matrix4, [r0, r1, r2]: [usize; 3], [c0, c1, c2]: [usize; 3]) -> f64 {
+    let at = |r: usize, c: usize| m[c * 4 + r];
+    at(r0, c0) * (at(r1, c1) * at(r2, c2) - at(r1, c2) * at(r2, c1))
+        - at(r0, c1) * (at(r1, c0) * at(r2, c2) - at(r1, c2) * at(r2, c0))
+        + at(r0, c2) * (at(r1, c0) * at(r2, c1) - at(r1, c1) * at(r2, c0))
+}
+
+/** The three indices of `0..4` other than `skip`. */
+fn others(skip: usize) -> [usize; 3] {
+    let mut out = [0; 3];
+    for (slot, index) in (0..4).filter(|&index| index != skip).enumerate() {
+        out[slot] = index;
+    }
+    out
+}
+
+/** The determinant of `m`, expanded along its first column of minors. */
+pub fn determinant(m: &Matrix4) -> f64 {
+    (0..4)
+        .map(|column| {
+            let sign = if column % 2 == 0 { 1.0 } else { -1.0 };
+            sign * m[column * 4] * minor3(m, [1, 2, 3], others(column))
+        })
+        .sum()
+}
+
+/** Whether a box whose accumulated matrix is `m` shows its back. This is Blink's test
+(`Transform::IsBackFaceVisible`): the z-z entry of the inverse is negative, which is cofactor33
+times the determinant. A zero determinant is edge-on and counts as visible, as Chrome paints it. */
+pub fn is_back_facing(m: &Matrix4) -> bool {
+    minor3(m, [0, 1, 3], [0, 1, 3]) * determinant(m) < 0.0
 }
 
 /** `num / den`, or zero for an empty box, which has no edge direction to map. */
@@ -175,11 +203,26 @@ mod tests {
         }
     }
 
-    /** Orientation is positive for an upright box and flips when the box is mirrored. */
+    /** A mirror in x alone keeps the front toward the viewer; a mirror in z turns it away. */
     #[test]
-    fn mirrored_boxes_face_away() {
-        let upright = orientation([0.0, 0.0], [10.0, 0.0], [0.0, 10.0]);
-        let mirrored = orientation([10.0, 0.0], [0.0, 0.0], [10.0, 10.0]);
-        assert!(upright > 0.0 && mirrored < 0.0);
+    fn mirrors_face_away_only_when_z_flips() {
+        assert!(!is_back_facing(&from_affine([
+            -1.0, 0.0, 0.0, 1.0, 0.0, 0.0
+        ])));
+        assert!(is_back_facing(&multiply(&IDENTITY4, &scale_z(-1.0))));
+    }
+
+    /** A matrix whose z column is zero (edge-on) has no back to show. */
+    #[test]
+    fn edge_on_boxes_are_visible() {
+        let edge_on = multiply(&scale_z(0.0), &IDENTITY4);
+        assert!(!is_back_facing(&edge_on));
+    }
+
+    /** Scales a z axis, for the back-facing tests. */
+    fn scale_z(z: f64) -> Matrix4 {
+        let mut m = IDENTITY4;
+        m[10] = z;
+        m
     }
 }
