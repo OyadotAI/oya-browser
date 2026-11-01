@@ -5,7 +5,9 @@ mod choice_button;
 mod controls;
 mod editing;
 mod hit;
+mod lines;
 pub(crate) mod media;
+mod outline;
 mod paint;
 mod painted;
 mod push_button;
@@ -33,8 +35,6 @@ use std::{
 
 /// Document tags are offset from negative toolbar actions.
 pub(super) const NODE_TAG: isize = 100;
-/// Underlines sit this far below the baseline, as Chromium draws them at small sizes.
-const UNDERLINE_OFFSET: f64 = 1.5;
 /// Chromium's light-scheme LinkText; the system link color would follow the OS into dark mode.
 const LIGHT_LINK: &str = "#0000ee";
 /// UI event storage is bounded independently of engine admission.
@@ -620,6 +620,7 @@ impl Canvas {
             });
             painter.sides(&shape, item.border_widths, colors);
         }
+        outline::paint(item, painter, &shape, alpha);
         if item.tag == "video" || item.tag == "audio" {
             if let Some(page) = snapshot.inspection["page_id"].as_str() {
                 media::paint(page, item, &shape, painter, alpha);
@@ -802,32 +803,14 @@ fn paint_lines(
         }
     }
 }
-/** A run's underline and line-through, across its own width. */
+/** A run's underline and line-through, across its own width, in the item's decoration style. */
 fn decorate_line(
     item: &DisplayItem,
     line: &crate::document::PaintLine,
     color: &NSColor,
     (baseline, ascender): (f64, f64),
 ) {
-    let thickness = (item.font_size / 16.0).clamp(1.0, 2.5);
-    if item.underline {
-        color.setStroke();
-        let underline = NSBezierPath::bezierPath();
-        let y = baseline + UNDERLINE_OFFSET;
-        underline.moveToPoint(NSPoint::new(line.x, y));
-        underline.lineToPoint(NSPoint::new(line.x + line.width, y));
-        underline.setLineWidth(thickness);
-        underline.stroke();
-    }
-    if item.strikethrough {
-        color.setStroke();
-        let strike = NSBezierPath::bezierPath();
-        let y = baseline - ascender * 0.35;
-        strike.moveToPoint(NSPoint::new(line.x, y));
-        strike.lineToPoint(NSPoint::new(line.x + line.width, y));
-        strike.setLineWidth(thickness);
-        strike.stroke();
-    }
+    lines::decorate(item, line, color, (baseline, ascender));
 }
 /** A chained run (Eye's text_chains): its chain's joined text drawn from the chain's start,
 clipped to the columns this run owns, so its glyphs sit where one shaped string's would. False
