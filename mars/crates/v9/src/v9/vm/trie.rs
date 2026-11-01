@@ -51,10 +51,14 @@ impl<V> Node<V> {
     }
 }
 
-/** The map: a shared root and its entry count. */
+/** The map: a shared root, its entry count and its height. The root covers only as many levels
+as the largest key needs (`shift` is its level's shift), growing when a larger key arrives: a
+page's half-million objects take four hops per lookup instead of six, and every object access
+in the interpreter is one. */
 pub(in crate::v9) struct Trie<V> {
     root: Arc<Node<V>>,
     len: usize,
+    shift: u32,
 }
 
 impl<V> Clone for Trie<V> {
@@ -63,6 +67,7 @@ impl<V> Clone for Trie<V> {
         Self {
             root: Arc::clone(&self.root),
             len: self.len,
+            shift: self.shift,
         }
     }
 }
@@ -71,8 +76,9 @@ impl<V> Default for Trie<V> {
     /** No entries. */
     fn default() -> Self {
         Self {
-            root: Arc::new(Node::empty(ROOT_SHIFT)),
+            root: Arc::new(Node::empty(0)),
             len: 0,
+            shift: 0,
         }
     }
 }
@@ -89,10 +95,18 @@ impl<V: Clone> Trie<V> {
     pub fn len(&self) -> usize {
         self.len
     }
+    /** Whether the root's levels reach `key`. */
+    #[inline]
+    fn covers(&self, key: u32) -> bool {
+        self.shift >= ROOT_SHIFT || key >> (self.shift + BITS) == 0
+    }
     /** The value under `key`. */
     pub fn get(&self, key: &u32) -> Option<&V> {
+        if !self.covers(*key) {
+            return None;
+        }
         let mut node = &*self.root;
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -114,8 +128,11 @@ impl<V: Clone> Trie<V> {
     }
     /** The value under `key` for writing: the path and the value are copied if shared. */
     pub fn get_mut(&mut self, key: &u32) -> Option<&mut V> {
+        if !self.covers(*key) {
+            return None;
+        }
         let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -133,6 +150,17 @@ impl<V: Clone> Trie<V> {
             }
         }
     }
+    /** Add a level above the root: the old root becomes the new one's first child, holding
+    the same keys at the same paths below. */
+    fn grow(&mut self) {
+        let shift = self.shift + BITS;
+        let mut root = Node::empty(shift);
+        if let Node::Branch(children) = &mut root {
+            children[0] = Some(self.root.clone());
+        }
+        self.root = Arc::new(root);
+        self.shift = shift;
+    }
     /** Store `value` under `key`, returning what was there. */
     pub fn insert(&mut self, key: u32, value: V) -> Option<V> {
         self.insert_shared(key, Arc::new(value))
@@ -140,8 +168,11 @@ impl<V: Clone> Trie<V> {
     }
     /** Store an already shared value. */
     fn insert_shared(&mut self, key: u32, value: Arc<V>) -> Option<Arc<V>> {
+        while !self.covers(key) {
+            self.grow();
+        }
         let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -162,8 +193,11 @@ impl<V: Clone> Trie<V> {
     }
     /** Remove `key`, returning its value. Emptied nodes stay; a sweep rebuilds the tree. */
     pub fn remove(&mut self, key: &u32) -> Option<V> {
+        if !self.covers(*key) {
+            return None;
+        }
         let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -342,6 +376,28 @@ mod tests {
 
     /** A clone shares everything: a write to one leaves the other as it was, and the untouched
     values stay the same allocation. */
+    #[test]
+    fn the_root_grows_to_the_largest_key_and_keeps_every_entry() {
+        let mut trie = Trie::default();
+        trie.insert(5, "five");
+        let small = trie.clone();
+        assert_eq!(trie.get(&70), None, "a key past the root's reach is absent, not a panic");
+        for key in [70, 5_000, 1 << 20, 0x3fff_ffff] {
+            trie.insert(key, "big");
+        }
+        assert_eq!(trie.get(&5), Some(&"five"));
+        for key in [70, 5_000, 1 << 20, 0x3fff_ffff] {
+            assert_eq!(trie.get(&key), Some(&"big"));
+        }
+        assert_eq!(trie.len(), 5);
+        assert_eq!(small.get(&5), Some(&"five"));
+        assert_eq!(small.get(&5_000), None);
+        assert_eq!(trie.remove(&5_000), Some("big"));
+        assert_eq!(trie.get(&5_000), None);
+        let keys: Vec<u32> = trie.keys().copied().collect();
+        assert_eq!(keys, vec![5, 70, 1 << 20, 0x3fff_ffff]);
+    }
+
     #[test]
     fn clones_share_until_written() {
         let mut first: Trie<Vec<u8>> = (0..1000u32).map(|k| (k, vec![k as u8])).collect();
