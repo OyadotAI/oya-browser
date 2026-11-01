@@ -1,6 +1,6 @@
 /** Owned selector grammar: compounds, four combinators, attributes and a bounded pseudo-class set. */
 use super::constants::{SELECTOR_ARGUMENTS, SELECTOR_COMPOUNDS};
-use super::selector_names::{known_pseudo_element, never_pseudo_class};
+use super::selector_names::{chrome_pseudo_element, known_pseudo_element, never_pseudo_class};
 /// How a compound relates to the one on its left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Combinator {
@@ -82,8 +82,6 @@ pub(super) enum Pseudo {
     FocusWithin,
     /// `:focus-visible`: a focused text-entry element, the case a script's focus and typing reach.
     FocusVisible,
-    /// `:in-range` (true) or `:out-of-range` (false): a range input, which Blink keeps within its limits.
-    Range(bool),
     /// `:hover` and other user-state classes: the rule is kept and never matches.
     Never,
 }
@@ -572,6 +570,11 @@ impl<'a> Cursor<'a> {
         if !known_pseudo_element(&name) {
             return Err(INVALID);
         }
+        // Any pseudo-element that can reach a page's own text or elements stays unsupported, so a
+        // hiding rule on it masks rather than matching nothing.
+        if !chrome_pseudo_element(&name) {
+            return Err("pseudo-element");
+        }
         Ok(Simple::Pseudo(Pseudo::Never))
     }
     /** Pseudo-classes; pseudo-elements go to `pseudo_element_simple`, unknown names are unsupported. */
@@ -621,8 +624,6 @@ impl<'a> Cursor<'a> {
             "focus" => Pseudo::Focus,
             "focus-within" => Pseudo::FocusWithin,
             "focus-visible" => Pseudo::FocusVisible,
-            "in-range" => Pseudo::Range(true),
-            "out-of-range" => Pseudo::Range(false),
             // States a page reaches only through a person or a script call Eye has not made.
             "hover"
             | "active"

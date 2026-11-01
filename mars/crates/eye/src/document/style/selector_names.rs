@@ -71,3 +71,44 @@ pub(super) fn known_pseudo_element(name: &str) -> bool {
 pub(super) fn never_pseudo_class(name: &str) -> bool {
     NEVER_CLASSES.contains(&name)
 }
+
+/// Pseudo-elements that style only browser chrome (scrollbars, spin and picker buttons, view
+/// transition snapshots, backdrops, scroll markers) or only recolour selected or highlighted text
+/// (highlight pseudo-elements take no layout or display), never a page's own text or elements. Only these
+/// may parse as never matching: any other known pseudo-element can hide real content, such as
+/// `::first-line` or `::part()`, so a hiding rule on it must mask instead.
+const CHROME_ELEMENTS: [&str; 12] = [
+    "backdrop",
+    "selection",
+    "highlight",
+    "target-text",
+    "scroll-marker",
+    "scroll-marker-group",
+    "scroll-button",
+    "column",
+    "checkmark",
+    "picker-icon",
+    "spelling-error",
+    "grammar-error",
+];
+
+/// Prefixes of Blink's chrome pseudo-elements: scrollbar parts, form control buttons, and the view
+/// transition tree.
+const CHROME_PREFIXES: [&str; 8] = [
+    "-webkit-scrollbar",
+    "-webkit-slider-",
+    "-webkit-inner-spin-button",
+    "-webkit-outer-spin-button",
+    "-webkit-calendar-picker-indicator",
+    "-webkit-search-",
+    "-webkit-resizer",
+    "view-transition",
+];
+
+/** Whether a lowercase pseudo-element name styles only browser chrome, so it may never match. */
+pub(super) fn chrome_pseudo_element(name: &str) -> bool {
+    CHROME_ELEMENTS.contains(&name)
+        || CHROME_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}

@@ -174,23 +174,16 @@ fn focus_visible_does_not_match_an_unfocused_field() {
     assert_eq!(color(&document, "a"), None);
 }
 
+/** Eye edits number and date inputs as text and cannot tell when Blink would call one out of
+ * range, so a range state stays unsupported and its hiding rule masks rather than failing open. */
 #[test]
-fn in_range_matches_a_range_input_because_blink_clamps_its_value() {
+fn range_states_stay_unsupported() {
     let document = styled(
-        "<input id=a type=range min=1 max=5 value=9><input id=b type=range min=1 max=5>",
-        "input:in-range{color:red} input:out-of-range{color:blue}",
-    );
-    assert_eq!(color(&document, "a").as_deref(), Some("red"));
-    assert_eq!(color(&document, "b").as_deref(), Some("red"));
-}
-
-#[test]
-fn range_states_ignore_inputs_without_range_limits() {
-    let document = styled(
-        "<input id=a type=text min=1 max=5 value=99>",
-        "input:in-range{color:red} input:out-of-range{color:blue}",
+        "<input id=a type=number min=1 max=5 value=99>",
+        "input:out-of-range{color:blue}",
     );
     assert_eq!(color(&document, "a"), None);
+    assert!(reported(&document, "pseudo-class"));
 }
 
 #[test]
@@ -198,4 +191,25 @@ fn a_hover_rule_is_kept_and_never_matches() {
     let document = styled("<p id=a>a</p>", "p:hover{color:red} p:active{color:blue}");
     assert_eq!(color(&document, "a"), None);
     assert!(!reported(&document, "pseudo-class"));
+}
+
+/** Blink drops a whole rule when one selector in its list is invalid, so the valid ones do not apply. */
+#[test]
+fn one_invalid_selector_drops_the_whole_list() {
+    let document = styled("<p id=a>a</p>", "p, p::-moz-focus-inner{color:red}");
+    assert_eq!(color(&document, "a"), None);
+}
+
+/** `::part()` and `::slotted()` select real elements, so a hiding rule on one masks instead of matching nothing. */
+#[test]
+fn element_backed_pseudo_elements_stay_unsupported() {
+    let document = styled("<p id=a>a</p>", "p::part(x){display:none}");
+    assert!(reported(&document, "pseudo-element"));
+}
+
+/** `::first-line` can hide a page's own text, so out of place it stays unsupported and masks. */
+#[test]
+fn text_pseudo_elements_stay_unsupported() {
+    let document = styled("<p id=a>a</p>", "p::first-line:hover{display:none}");
+    assert!(reported(&document, "pseudo-element"));
 }

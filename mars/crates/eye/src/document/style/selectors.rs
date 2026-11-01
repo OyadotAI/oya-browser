@@ -572,11 +572,6 @@ fn pseudo_matches<'a>(tree: &Tree<'a>, element: Element<'a>, pseudo: Pseudo) -> 
             _ => !tree.focus_chain.is_empty(),
         },
         Pseudo::FocusVisible => node.is_some_and(|node| node.focused && read_write(node)),
-        // Eye edits number, date and time inputs as text, so only a range input has limits here. Blink
-        // clamps a range's value into its bounds, so a range input is always in range.
-        Pseudo::Range(in_range) => {
-            in_range && node.is_some_and(|node| node.tag == "input" && node.input_type() == "range")
-        }
         Pseudo::Never => false,
     }
 }

@@ -361,13 +361,28 @@ impl Parser<'_> {
         if block.declarations.is_empty() && !block.hiding {
             return Ok(());
         }
-        for text in selectors {
-            let (text, pseudo) = generated(text);
-            // Under `@namespace` a prefix (or the default namespace) changes what `*|E` means.
-            let parsed = match self.namespaced && prefixed(&text) {
-                true => Err("namespace selector"),
-                false => selector_parse::parse(&text),
-            };
+        let namespaced = self.namespaced;
+        let parsed: Vec<_> = selectors
+            .iter()
+            .map(|text| {
+                let (text, pseudo) = generated(text);
+                // Under `@namespace` a prefix (or the default namespace) changes what `*|E` means.
+                let parsed = match namespaced && prefixed(&text) {
+                    true => Err("namespace selector"),
+                    false => selector_parse::parse(&text),
+                };
+                (text, pseudo, parsed)
+            })
+            .collect();
+        // Blink drops the whole rule when one selector in its list is invalid, so none of the
+        // others may style or hide anything either.
+        if parsed
+            .iter()
+            .any(|(_, _, parsed)| parsed.as_ref().err() == Some(&selector_parse::INVALID))
+        {
+            return Ok(());
+        }
+        for (text, pseudo, parsed) in parsed {
             let rules: Vec<Rule> = match (parsed, mode) {
                 (Ok(selector), Mode::Apply) => vec![Rule {
                     specificity: selector_parse::specificity(&selector),
