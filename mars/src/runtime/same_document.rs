@@ -5,6 +5,7 @@
  * added an entry, so Back left the app entirely.
  */
 use super::navigation::HistoryEntry;
+use super::scripting::Settle;
 use super::supervisor::Runtime;
 use crate::constants::HISTORY_ENTRIES;
 use crate::protocol::EngineResult;
@@ -95,7 +96,7 @@ impl Runtime {
         let event = json!({"pop_state":{"state":state,"hash_changed":hash_changed}});
         self.script_step(&mut page, json!({"kind":"event","event":event}))?;
         let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
-        self.settle_after_load(&mut page, deadline)?;
+        self.settle_after_load(&mut page, deadline, Settle::Settled)?;
         page.scripting.wake();
         self.finish_mutation(page)
     }

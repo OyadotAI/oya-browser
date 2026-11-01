@@ -1,7 +1,9 @@
 /** Navigation publishes one candidate while history explicitly prevents POST replay. */
 use super::{
+    authority::Owner,
     page::{Empty, Page},
     resources::{Acquired, uncertain},
+    scripting::Settle,
     supervisor::{Runtime, perf},
 };
 use crate::{
@@ -216,7 +218,8 @@ impl Runtime {
         let is_post = request.method == Method::Post;
         let started = Instant::now();
         perf::begin("navigation");
-        let result = self.candidate(request, sensitive).and_then(|page| {
+        let settle = self.settle_for_navigation();
+        let result = self.candidate(request, sensitive, settle).and_then(|page| {
             perf::record("page.candidate", started, String::new);
             let started = Instant::now();
             let Some(mut page) = page else {
@@ -313,9 +316,27 @@ impl Runtime {
             "url":ready.url,"mime":ready.mime,"disposition":ready.disposition,"bytes":ready.bytes.len()
         }}))
     }
+    /** The person's navigation in the visible tab publishes at its load event, so the window is
+    not held for network answers. An agent's navigation settles first: its reply must show the
+    finished page. Decided by the permit the command runs under, never by a global switch. */
+    fn settle_for_navigation(&self) -> Settle {
+        let human = self
+            .permit
+            .is_some_and(|permit| permit.owner == Owner::Human);
+        if human && self.active_tab_id == self.selected_tab_id() {
+            Settle::Visible
+        } else {
+            Settle::Settled
+        }
+    }
     /** Required CSS is acquired before hidden content can gain native geometry. A response the
     network service marked as a download is held in `ready_download` and yields no page. */
-    fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Option<Page>> {
+    fn candidate(
+        &mut self,
+        request: WebRequest,
+        sensitive: bool,
+        settle: Settle,
+    ) -> EngineResult<Option<Page>> {
         let context = self.residency.reserve(self.page.is_some())?;
         // No fixed load time: each request fails only when it stalls (see WEB_STALL_TIMEOUT).
         let deadline = Instant::now() + crate::constants::WEB_REQUEST_CEILING;
@@ -383,7 +404,7 @@ impl Runtime {
         }
         let post = acquired.method == Method::Post;
         self.prefetched.clear();
-        let built = self.build_page(acquired, deadline, sensitive, None, context);
+        let built = self.build_page(acquired, deadline, sensitive, None, context, settle);
         self.prefetched.clear();
         built
             .map(Some)
@@ -398,6 +419,7 @@ impl Runtime {
         sensitive: bool,
         embedding: Option<&super::frames::Embedding>,
         context: std::sync::Arc<super::residency::Lease>,
+        settle: Settle,
     ) -> EngineResult<Page> {
         // XHTML and SVG documents take Eye's XML parser, as Blink picks XMLDocumentParser.
         let xml = crate::document::xml_mime(&acquired.response.mime);
@@ -597,7 +619,7 @@ impl Runtime {
             perf::record("page.first_paint", phase, String::new);
         }
         page.scripting.loading = true;
-        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps);
+        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps, settle);
         page.scripting.loading = false;
         let restyle = restyle?;
         self.flush_inserted_images(&mut page)?;
@@ -644,6 +666,7 @@ impl Runtime {
         resolved: &[Resolved],
         deadline: Instant,
         gaps: &mut Gaps,
+        settle: Settle,
     ) -> EngineResult<bool> {
         let loaded = match self.script_step(page, json!({"kind":"load"})) {
             Ok(step) => step,
@@ -693,7 +716,7 @@ impl Runtime {
         }
         // Where a browser fires `load`: scripts ran, DOMContentLoaded and load handlers ran.
         perf::since("navigation", "page.load_event");
-        Ok(self.settle_after_load(page, deadline)? || changed)
+        Ok(self.settle_after_load(page, deadline, settle)? || changed)
     }
     /** What a new page's `document.referrer` says: the page it came from, origin only when the
     origins differ or that page's address was sensitive, as Chrome's default policy does. */

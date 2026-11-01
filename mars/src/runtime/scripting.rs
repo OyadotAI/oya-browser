@@ -65,6 +65,21 @@ const INPUT_SETTLE_VIRTUAL_MS: f64 = 16.0;
 /// spent the whole first-paint budget on every click and key; a browser paints the handler's
 /// effect at once and runs later timers after, which the page's background ticks do here.
 const INPUT_SETTLE_WALL: Duration = Duration::from_millis(150);
+/// Real time a person's navigation spends after its load event before it publishes: the page's
+/// timers and tasks run, its network answers do not wait here.
+const VISIBLE_SETTLE_WALL: Duration = Duration::from_millis(150);
+
+/** How much of a navigation's script work its commit waits for. A person's navigation publishes
+once its load event has run, as a browser paints without waiting for fetches; an agent's waits
+for the page to settle, as it always has, so agents never act on a half-loaded page. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Settle {
+    /** Waits for the requests and timers the load started, within SETTLE_WALL. */
+    Settled,
+    /** Publishes after the load event and a short settle; requests the load started continue
+    on the loader, and the page's background ticks deliver each answer as it lands. */
+    Visible,
+}
 /// V9 round trips one settle may make (requests and timer runs together).
 const SETTLE_STEPS: usize = 12;
 /// Task sources the settle loop takes turns between (see `next_action`).
@@ -1170,10 +1185,15 @@ impl Runtime {
         &mut self,
         page: &mut Page,
         deadline: Instant,
+        settle: Settle,
     ) -> EngineResult<bool> {
-        let until = deadline.min(Instant::now() + SETTLE_WALL);
+        let (wall, wait_network) = match settle {
+            Settle::Settled => (SETTLE_WALL, true),
+            Settle::Visible => (VISIBLE_SETTLE_WALL, false),
+        };
+        let until = deadline.min(Instant::now() + wall);
         let end = page.scripting.clock_ms + SETTLE_VIRTUAL_MS;
-        self.settle(page, until, end, &mut || false, true)
+        self.settle(page, until, end, &mut || false, wait_network)
     }
 
     /** Settle what a person's input started for one frame before its commit; the rest runs on

@@ -15,6 +15,7 @@
 use super::frames::{Embedding, FRAME_COUNT, Frame, HTTP_OK, same_origin};
 use super::images::stops_loading;
 use super::page::Page;
+use super::scripting::Settle;
 use super::supervisor::Runtime;
 use crate::network::{Destination, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
@@ -127,7 +128,14 @@ impl Runtime {
         self.framed = true;
         self.scroll_y = 0.0;
         let partition = self.frame_partition.replace(parent.top_level_url.clone());
-        let built = self.build_page(acquired, deadline, false, Some(&embedding), context);
+        let built = self.build_page(
+            acquired,
+            deadline,
+            false,
+            Some(&embedding),
+            context,
+            Settle::Settled,
+        );
         self.frame_partition = partition;
         self.render_context = previous;
         self.framed = framed;

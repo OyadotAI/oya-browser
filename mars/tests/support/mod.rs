@@ -330,14 +330,16 @@ pub fn html(extra_headers: &str, body: &str) -> Vec<u8> {
 
 /** A desktop runtime over the owned engines, with only the fixture origin granted. */
 pub fn desktop(origin: &str) -> mars::runtime::Runtime {
-    use mars::runtime::{
-        EnginePrograms, Runtime,
-        authority::{Authority, Owner},
-    };
+    desktop_as(origin, mars::runtime::authority::Owner::Agent)
+}
+
+/** `desktop` with control initially held by `owner`: the person's window or a connected agent. */
+pub fn desktop_as(origin: &str, owner: mars::runtime::authority::Owner) -> mars::runtime::Runtime {
+    use mars::runtime::{EnginePrograms, Runtime, authority::Authority};
     Runtime::desktop(
         EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
         vec![origin.into()],
-        Authority::shared(Owner::Agent),
+        Authority::shared(owner),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap()
