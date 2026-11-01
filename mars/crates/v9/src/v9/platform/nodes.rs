@@ -183,6 +183,10 @@ impl Page<'_> {
         let position = *self.tree().index.get(&id)?;
         self.document.as_ref()?.nodes.get(position)
     }
+    /** A projected node's place in the document's order, or None when it is not in the projection. */
+    pub fn projected_position(&mut self, id: usize) -> Option<usize> {
+        self.tree().index.get(&id).copied()
+    }
     /** Whether a node exists. */
     pub fn exists(&mut self, id: usize) -> bool {
         matches!(id, HTML | HEAD | BODY)

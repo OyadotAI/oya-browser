@@ -3,7 +3,7 @@
  * disconnected callbacks for inserted and removed subtrees, attributeChangedCallback for
  * observed attributes, upgrades of created nodes, observer records and slotchange signals.
  */
-use super::{Mutation, REACTIONS, observer, registry, shadow, template};
+use super::{Mutation, REACTIONS, candidates, observer, registry, shadow, template};
 use crate::v9::platform::Page;
 use crate::v9::platform::dom::wrap;
 use crate::v9::value::JsValue;
@@ -61,6 +61,9 @@ fn react(vm: &mut Vm, mutation: Mutation) -> Res<()> {
             }
         }
         Mutation::Attribute { node, name, old } => {
+            if name == "is" {
+                candidates::track(vm, node);
+            }
             if name == "popover" {
                 super::super::interfaces::popover::attribute_changed(vm, node)?;
             }
@@ -112,6 +115,7 @@ fn connect_tree(vm: &mut Vm, root: usize) -> Res<()> {
             connected(vm, node)?;
         } else {
             registry::upgrade(vm, node)?;
+            candidates::track_connected(vm, node);
         }
     }
     Ok(())
@@ -119,6 +123,7 @@ fn connect_tree(vm: &mut Vm, root: usize) -> Res<()> {
 
 /** After a removal: custom elements that left the document get disconnectedCallback. */
 fn disconnect_tree(vm: &mut Vm, root: usize) -> Res<()> {
+    candidates::forget_tree(vm, root);
     if vm.page.state.components.connected.is_empty()
         || !vm.page.exists(root)
         || vm.page.connected(root)
@@ -142,6 +147,7 @@ pub(super) fn upgrade_tree(vm: &mut Vm, root: usize) -> Res<()> {
     for node in inclusive(&mut vm.page, root) {
         if vm.page.exists(node) && vm.page.tag(node) != "template" {
             registry::upgrade(vm, node)?;
+            candidates::track(vm, node);
         }
     }
     Ok(())

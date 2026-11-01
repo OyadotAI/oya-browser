@@ -209,3 +209,87 @@ fn elements_defined_after_many_nodes_upgrade_in_tree_order() {
         document.getElementById('u1') instanceof XT].join('|');";
     assert_eq!(eval(source, "r"), "200|t0|t199|true|false");
 }
+
+/** An element removed before its name is defined stays out of the upgrade until it connects again. */
+#[test]
+fn elements_removed_before_definition_upgrade_only_when_connected_again() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-rm id=rm></x-rm>';\
+        const gone=document.getElementById('rm');gone.remove();let runs=0;\
+        class XR extends HTMLElement{constructor(){super();runs++}}\
+        customElements.define('x-rm',XR);\
+        const before=[runs,gone instanceof XR].join(':');\
+        d.appendChild(gone);\
+        const r=[before,runs,gone instanceof XR].join('|');";
+    assert_eq!(eval(source, "r"), "0:false|1|true");
+}
+
+/** An element removed and re-inserted before its definition upgrades exactly once, in place. */
+#[test]
+fn elements_reinserted_before_definition_upgrade_once() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-ri id=a></x-ri><x-ri id=b></x-ri>';\
+        const a=document.getElementById('a');const b=document.getElementById('b');\
+        d.insertBefore(a,null);d.insertBefore(b,a);d.removeChild(b);d.appendChild(b);\
+        let runs=[];class XI extends HTMLElement{constructor(){super();runs.push(this.id)}}\
+        customElements.define('x-ri',XI);\
+        const r=[runs.join(','),d.lastElementChild===b,a instanceof XI].join('|');";
+    assert_eq!(eval(source, "r"), "a,b|true|true");
+}
+
+/** Elements in an open shadow tree of a connected host upgrade when their definition arrives. */
+#[test]
+fn shadow_tree_elements_upgrade_when_their_name_is_defined() {
+    let source = "const h=document.createElement('div');document.body.appendChild(h);\
+        const s=h.attachShadow({mode:'open'});s.innerHTML='<x-sh id=in></x-sh>';\
+        const detachedHost=document.createElement('div');const ds=detachedHost.attachShadow({mode:'open'});\
+        ds.innerHTML='<x-sh id=off></x-sh>';\
+        class XS extends HTMLElement{}\
+        customElements.define('x-sh',XS);\
+        const r=[s.getElementById('in') instanceof XS,ds.getElementById('off') instanceof XS].join('|');";
+    assert_eq!(eval(source, "r"), "true|false");
+}
+
+/** An element created but never inserted is not upgraded by a definition; it upgrades on connection. */
+#[test]
+fn created_elements_upgrade_only_once_connected() {
+    let source = "let runs=0;const made=document.createElement('x-cr');\
+        class XC extends HTMLElement{constructor(){super();runs++}}\
+        customElements.define('x-cr',XC);\
+        const before=[runs,made instanceof XC].join(':');\
+        document.getElementById('main').appendChild(made);\
+        const r=[before,runs,made instanceof XC].join('|');";
+    assert_eq!(eval(source, "r"), "0:false|1|true");
+}
+
+/** Elements inserted after an earlier definition are found by a later definition of their own name. */
+#[test]
+fn later_definitions_find_elements_inserted_after_earlier_ones() {
+    let source = "const d=document.getElementById('main');\
+        class XA extends HTMLElement{}customElements.define('x-early',XA);\
+        d.innerHTML='<x-late id=l1></x-late><x-late id=l2></x-late><x-early></x-early>';\
+        const order=[];class XL extends HTMLElement{constructor(){super();order.push(this.id)}}\
+        customElements.define('x-late',XL);\
+        const r=[order.join(','),document.getElementById('l2') instanceof XL,\
+        document.querySelector('x-early') instanceof XA].join('|');";
+    assert_eq!(eval(source, "r"), "l1,l2|true|true");
+}
+
+/** A customized built-in whose `is` is written after insertion upgrades when its definition arrives. */
+#[test]
+fn is_written_after_insertion_upgrades_at_definition() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<button id=bt></button>';\
+        const bt=document.getElementById('bt');bt.setAttribute('is','x-btn');\
+        class XB2 extends HTMLElement{}\
+        customElements.define('x-btn',XB2,{extends:'button'});\
+        const r=[bt instanceof XB2,document.createElement('button') instanceof XB2].join('|');";
+    assert_eq!(eval(source, "r"), "true|false");
+}
+
+/** A definition whose name matches no element upgrades nothing and leaves other elements alone. */
+#[test]
+fn definitions_without_matching_elements_leave_others_alone() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-keep id=k></x-keep>';\
+        const keep=document.getElementById('k');\
+        class XN extends HTMLElement{}customElements.define('x-none',XN);\
+        const r=[keep instanceof XN,keep.localName].join('|');";
+    assert_eq!(eval(source, "r"), "false|x-keep");
+}
