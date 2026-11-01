@@ -267,16 +267,20 @@ impl Vm<'_> {
     /** Pop the operand stack. */
     #[inline]
     pub(in crate::v9) fn pop(&mut self) -> JsValue {
-        self.frame().stack.pop().unwrap_or(JsValue::Undefined)
+        // A match, not unwrap_or: that builds the default and drops it on every pop.
+        match self.frame().stack.pop() {
+            Some(value) => value,
+            None => JsValue::Undefined,
+        }
     }
     /** Read the value `depth` below the top. */
     #[inline]
     fn peek(&mut self, depth: usize) -> JsValue {
         let stack = &self.frame().stack;
-        stack
-            .get(stack.len().wrapping_sub(depth + 1))
-            .cloned()
-            .unwrap_or(JsValue::Undefined)
+        match stack.get(stack.len().wrapping_sub(depth + 1)) {
+            Some(value) => value.clone(),
+            None => JsValue::Undefined,
+        }
     }
     /** The two plain numbers on top of the stack, read in place: the arithmetic and comparison
     fast paths neither clone nor drop operand values, which the generic peek-and-drop sequence
