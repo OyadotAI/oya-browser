@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
+
 - Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
 
 - Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
