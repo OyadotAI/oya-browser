@@ -127,7 +127,7 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         *value *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
     }
     let state = &vm.page.state.canvases[&node];
-    let layered = shadows::active(&state.drawing);
+    let layered = shadows::layered(&state.drawing);
     let plan = limits::plan_blit(
         dimensions,
         [state.bitmap.width, state.bitmap.height],

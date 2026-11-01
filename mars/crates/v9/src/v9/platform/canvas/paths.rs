@@ -136,7 +136,7 @@ fn paint(
     } else {
         limits::plan_fill(size, path, rule)?
     };
-    let layered = shadows::active(&state.drawing);
+    let layered = shadows::layered(&state.drawing);
     let plan = if layered {
         plan
     } else {

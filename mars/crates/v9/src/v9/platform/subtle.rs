@@ -41,7 +41,7 @@ const MEMBERS: [(&str, u32); 12] = [
 ];
 
 /** Install the SubtleCrypto interface, then the single `crypto.subtle` instance that the getter returns. */
-pub(super) fn install(b: &mut Builder, crypto: u32) {
+pub(super) fn install(b: &mut Builder, crypto_proto: u32, crypto: u32) {
     let proto = b.object(Some(b.ids.object_prototype));
     super::chrome_env::interface(b, "SubtleCrypto", proto);
     for (name, length) in MEMBERS {
@@ -59,7 +59,7 @@ pub(super) fn install(b: &mut Builder, crypto: u32) {
         Static::Value(JsValue::Object(subtle)),
         HIDDEN_ATTRS,
     );
-    b.getter(crypto, "subtle", subtle_get);
+    b.getter(crypto_proto, "subtle", subtle_get);
 }
 
 /** A member Mars does not implement: a promise rejected with NotSupportedError naming the member. */

@@ -58,7 +58,7 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     drawable(vm, node)?;
     let clearing = dom::native_name(call) == "clearRect";
     let state = &vm.page.state.canvases[&node];
-    let layered = !clearing && shadows::active(&state.drawing);
+    let layered = !clearing && shadows::layered(&state.drawing);
     let plan = limits::plan_rect(
         [state.bitmap.width, state.bitmap.height],
         values,
@@ -160,7 +160,7 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     } else {
         ink
     };
-    if shadows::active(&state.drawing) {
+    if shadows::layered(&state.drawing) {
         let painted = shadows::paint_layered(vm, node, clean, |layer| {
             paint_ink(
                 layer,

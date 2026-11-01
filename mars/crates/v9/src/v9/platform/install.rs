@@ -1124,16 +1124,18 @@ fn singletons(b: &mut Builder) {
     );
     super::chrome_env::performance(b, performance);
     b.global("performance", performance);
-    let crypto = b.object(Some(object_prototype));
-    methods(b, crypto, &["randomUUID"], window::window_method);
+    let crypto_proto = b.object(Some(object_prototype));
+    super::chrome_env::interface(b, "Crypto", crypto_proto);
+    methods(b, crypto_proto, &["randomUUID"], window::window_method);
     // getRandomValues fills from the operating system's CSPRNG, like randomUUID.
     b.host_method(
-        crypto,
+        crypto_proto,
         "getRandomValues",
         1,
         crate::v9::builtins::random_values,
     );
-    super::subtle::install(b, crypto);
+    let crypto = b.object(Some(crypto_proto));
+    super::subtle::install(b, crypto_proto, crypto);
     b.global("crypto", crypto);
 }
 

@@ -65,6 +65,9 @@ pub(in crate::v9) struct DrawingState {
     pub shadow_blur: f64,
     /** Shadow offset in device pixels, unaffected by the drawing transform. */
     pub shadow_offset: [f64; 2],
+    /** The parsed CSS filter list; an empty step list is the initial `none`. */
+    #[serde(default)]
+    pub filter: limits::Filter,
     /** Keyword properties are validated and reported; their effects are not rendered (see the canvas notes). */
     pub kerning: String,
     /** Font stretch keyword, stored for script readback. */
@@ -99,6 +102,7 @@ impl Default for DrawingState {
             shadow_color: [0, 0, 0, 0],
             shadow_blur: 0.0,
             shadow_offset: [0.0, 0.0],
+            filter: limits::Filter::default(),
             kerning: "auto".into(),
             stretch: "normal".into(),
             variant_caps: "normal".into(),

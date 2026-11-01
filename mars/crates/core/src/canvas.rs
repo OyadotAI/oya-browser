@@ -13,7 +13,10 @@ mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
 pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage, composite_layer};
-pub use effects::{blur_plane, blur_widths, outline_ring, shadow_layer, shadow_sigma};
+pub use effects::{
+    Filter, FilterStep, apply_filter, blur_plane, blur_widths, outline_ring, parse_filter,
+    shadow_layer, shadow_sigma,
+};
 pub use paint::{
     GRADIENT_STOPS, Geometry, Gradient, Paint, Pattern, Repeat, Shader, Stop, TRANSPARENT,
 };
