@@ -473,7 +473,8 @@ pub(super) fn is_solid_line(style: &crate::document::style::DecorationStyle) -> 
 /**
  * The narrowest line a decoration or outline paints, in points. A thinner authored width (0.01px)
  * would vanish at device resolution and make painters draw a stroke of near-zero size, so it is
- * raised to this; zero still means no line at all.
+ * raised to this. Zero is not special here: an outline of zero width paints nothing because its
+ * caller checks `outline_width > 0` first, while a zero decoration thickness is raised to this.
  */
 pub(super) const MIN_LINE_WIDTH: f64 = 0.5;
 
