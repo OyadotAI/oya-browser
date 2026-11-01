@@ -107,6 +107,8 @@ struct Window {
     zoom: std::collections::HashMap<String, f64>,
     /** Address text last completed, so suggestions update only when it changes. */
     typed: Option<String>,
+    /** The address text when editing began: suggestions open only once the person changes it. */
+    edit_start: Option<String>,
     /** A feature's status message and when it clears. */
     notice: Option<(String, std::time::Instant)>,
 }
@@ -216,7 +218,12 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     window.window.makeKeyAndOrderFront(None);
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
-    window.window.makeFirstResponder(Some(&window.mars.address));
+    // A window opened on a page puts the person in the page, as Chrome does; an empty one puts
+    // them in the address field to type where to go.
+    match window.navigation.requested.is_some() {
+        true => window.window.makeFirstResponder(Some(&window.canvas)),
+        false => window.window.makeFirstResponder(Some(&window.mars.address)),
+    };
     let mut failure = None;
     loop {
         if !window.window.isVisible() {
@@ -395,6 +402,7 @@ impl Window {
             recorded: VecDeque::new(),
             zoom: Default::default(),
             typed: None,
+            edit_start: None,
             notice: None,
         }
     }
@@ -505,7 +513,10 @@ impl Window {
         let owner = if human { Owner::Human } else { Owner::Agent };
         if self.last_owner != Some(owner) {
             if let Some(snapshot) = self.snapshot.clone() {
-                self.window.makeFirstResponder(Some(&self.mars.address));
+                // Only a change of hands moves focus; the first owner is where launch left it.
+                if self.last_owner.is_some() {
+                    self.window.makeFirstResponder(Some(&self.mars.address));
+                }
                 self.canvas.update(snapshot, human);
             }
             self.last_owner = Some(owner);
