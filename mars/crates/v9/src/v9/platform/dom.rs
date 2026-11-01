@@ -4020,6 +4020,12 @@ fn style_text_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** NodeList methods: item, forEach, entries, keys, values. */
 pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    // WebIDL gives NodeList the generic Array.prototype.forEach, which runs on any array-like
+    // receiver. Amazon's cards call it on a Proxy of a NodeList, which Chrome accepts, so it is
+    // handled before the brand check that refuses everything but a list.
+    if native_name(&call) == "forEach" {
+        return crate::v9::builtins::array::for_each(vm, call);
+    }
     let Some(data) = super::host_data(vm, &call.this) else {
         return Err(vm.type_error("Illegal invocation"));
     };
@@ -4031,18 +4037,6 @@ pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "namedItem" => {
             let key = vm.to_text(&call.arg(0))?;
             super::form_submit::named(vm, &nodes, &key)
-        }
-        "forEach" => {
-            let callback = call.arg(0);
-            for (index, node) in nodes.into_iter().enumerate() {
-                let element = wrap(vm, node)?;
-                vm.call(
-                    callback.clone(),
-                    call.arg(1),
-                    vec![element, JsValue::Number(index as f64), call.this.clone()],
-                )?;
-            }
-            Ok(JsValue::Undefined)
         }
         _ => {
             let mut values = Vec::new();

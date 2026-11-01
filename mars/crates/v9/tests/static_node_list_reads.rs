@@ -38,3 +38,11 @@ fn static_list_non_index_keys_other_than_length_are_undefined() {
     let source = "const list=document.querySelectorAll('html');const r=[list.nope===undefined,list[-1]===undefined].join('|');";
     assert_eq!(eval(source, "r"), "true|true");
 }
+
+/** NodeList's forEach is the generic Array one, so a Proxy of a NodeList can run it, as Chrome allows;
+its callback sees each node, its index and the receiver. */
+#[test]
+fn node_list_for_each_runs_on_a_proxy_of_a_node_list() {
+    let source = "const p=new Proxy(document.querySelectorAll('p'),{});let n=0;NodeList.prototype.forEach.call(p,(e,i,list)=>{n+=1+i;if(list!==p)n=-1000});const r=String(n);";
+    assert_eq!(common::eval(source, "r"), "3");
+}
