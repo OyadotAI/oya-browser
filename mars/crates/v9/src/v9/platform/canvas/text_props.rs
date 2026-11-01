@@ -30,6 +30,8 @@ const RENDERING: &[&str] = &[
     "geometricPrecision",
 ];
 const SMOOTHING: &[&str] = &["low", "medium", "high"];
+/** Spacing beyond the canvas edge in either direction can never be seen, so it is refused rather than stored. */
+pub(super) const SPACING_LIMIT: f64 = mars_core::canvas::EDGE as f64;
 
 /** Each property is a getter and setter pair that validates before it stores anything. */
 pub(super) fn install(b: &mut Builder, proto: u32) {
@@ -116,5 +118,6 @@ fn length(text: &str, font_size: f64) -> Option<f64> {
         (None, None) => return None,
     };
     let value: f64 = number.trim().parse().ok()?;
-    value.is_finite().then_some(value * scale)
+    let px = value * scale;
+    (px.is_finite() && px.abs() <= SPACING_LIMIT).then_some(px)
 }

@@ -155,3 +155,25 @@ fn focus_ring_needs_the_element_to_be_focused() {
     );
     assert_eq!(r, "0,0,0,0|0,0,0,0");
 }
+
+/** Absurd spacing lengths are ignored, so the previous finite value stays and measurement stays finite. */
+#[test]
+fn absurd_spacing_is_ignored_and_measurement_stays_finite() {
+    assert_eq!(
+        run(
+            "a.font='10px sans-serif';a.letterSpacing='2px';a.letterSpacing='1e308em';a.letterSpacing='1e300px';a.wordSpacing='-1e308px';const w=a.measureText('abc').width;const r=a.letterSpacing+'|'+a.wordSpacing+'|'+Number.isFinite(w)+'|'+w;"
+        ),
+        "2px|0px|true|21"
+    );
+}
+
+/** A huge line width clamps its stroke ring to the bitmap edge, so strokes complete or are refused by the quota, never wrap. */
+#[test]
+fn huge_line_width_strokes_complete_without_overflow() {
+    assert_eq!(
+        run(
+            "a.lineWidth=1e300;a.strokeText('x',0,0);a.lineWidth=Number.MAX_VALUE;a.strokeText('x',0,0);const r='ok';"
+        ),
+        "ok"
+    );
+}

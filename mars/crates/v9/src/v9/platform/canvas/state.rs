@@ -141,6 +141,13 @@ pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
     drawing.pen.validate()?;
     drawing.dash.validate()?;
     let font = &drawing.font;
+    let spacing = [drawing.font.letter_spacing, drawing.font.word_spacing];
+    if spacing
+        .iter()
+        .any(|px| !px.is_finite() || px.abs() > f64::from(limits::EDGE))
+    {
+        return Err(EngineError::invalid("Invalid canvas text spacing."));
+    }
     if !drawing.transform.finite()
         || !drawing.alpha.is_finite()
         || !(0.0..=1.0).contains(&drawing.alpha)

@@ -82,6 +82,9 @@ fn validate(font: &Font, text: &str) -> EngineResult<()> {
         || font.size <= 0.0
         || font.size > f64::from(mars_core::canvas::EDGE)
         || !["serif", "sans-serif", "monospace"].contains(&font.family.as_str())
+        || [font.letter_spacing, font.word_spacing]
+            .iter()
+            .any(|px| !px.is_finite() || px.abs() > f64::from(mars_core::canvas::EDGE))
     {
         return Err(EngineError::invalid("Invalid bounded canvas text."));
     }

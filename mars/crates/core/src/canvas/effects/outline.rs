@@ -63,8 +63,11 @@ fn separable(
 fn window(line: &[u8], out: &mut [u8], radius: usize, pick: fn(u8, u8) -> u8) {
     for (index, cell) in out.iter_mut().enumerate() {
         let start = index.saturating_sub(radius);
-        let end = (index + radius + 1).min(line.len());
-        let mut value = if index < radius || index + radius >= line.len() {
+        let end = index
+            .saturating_add(radius)
+            .saturating_add(1)
+            .min(line.len());
+        let mut value = if index < radius || index.saturating_add(radius) >= line.len() {
             EMPTY
         } else {
             line[index]

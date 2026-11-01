@@ -130,10 +130,9 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     let clip = clipping::current(&vm.page.state.canvases[&node])?.cloned();
     let pixels = vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS;
     let ring_work = if ring > 0 { (2 * ring + 1) * 2 } else { 0 };
-    work(
-        vm,
-        pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some()) + ring_work),
-    )?;
+    let per_pixel = limits::COMPOSITE_WORK + usize::from(clip.is_some()) + ring_work;
+    let charge = pixels.checked_mul(per_pixel).ok_or_else(|| quota(vm))?;
+    work(vm, charge)?;
     shadows::charge(vm, node, 0)?;
     let Some((shader, clean)) = paints::source(vm, node, stroke) else {
         return Ok(JsValue::Undefined);
@@ -190,9 +189,12 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
 
 /** Stroke radius is half the line width, rounded, and never less than one pixel. */
 fn ring_radius(state: &State) -> usize {
-    (state.drawing.pen.width / 2.0)
-        .round()
-        .max(MIN_RING_RADIUS as f64) as usize
+    let edge = state.bitmap.width.max(state.bitmap.height) as f64;
+    let half = (state.drawing.pen.width / 2.0).round();
+    if !half.is_finite() {
+        return edge as usize;
+    }
+    half.clamp(MIN_RING_RADIUS as f64, edge.max(MIN_RING_RADIUS as f64)) as usize
 }
 
 /** maxWidth shrinks overflowing glyphs horizontally about their anchor and never stretches them. */
