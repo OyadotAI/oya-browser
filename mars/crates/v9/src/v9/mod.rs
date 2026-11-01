@@ -3007,6 +3007,7 @@ mod near_bounds_collection_tests {
         let input = PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: ScriptDocument {
                 identity: "page-1".into(),
                 nodes: Vec::new(),
