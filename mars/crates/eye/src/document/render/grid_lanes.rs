@@ -882,7 +882,7 @@ fn row_lane_tracks<'a>(
                 &mut super::row_measure,
             )? {
                 Some(list) => contributions.extend(list),
-                None => contributions.push(super::row_contribution(&item, lane.4 + margins)),
+                None => contributions.push(super::row_contribution(&item, lane.4 + margins, true)),
             }
         }
     }

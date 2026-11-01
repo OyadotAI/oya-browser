@@ -171,7 +171,11 @@ pub(super) fn children(
             Some(list) => row_items.extend(list),
             None => {
                 own.push((row_items.len(), natural.len() - 1));
-                row_items.push(row_contribution(item, height));
+                row_items.push(row_contribution(
+                    item,
+                    height,
+                    content_based_minimum(spanned_tracks(&row_defs, item.row, item.rows)),
+                ));
             }
         }
     }
@@ -453,7 +457,7 @@ fn row_measure(
     let margins = kid.node.style.margin;
     let height =
         super::flex_layout::item_height(context, kid.node, width)? + margins[0] + margins[2];
-    Ok(row_contribution(kid, height))
+    Ok(row_contribution(kid, height, true))
 }
 /** A grid's column widths and used column gap at a `content` width for its `placed` items, as
  * `children` sizes them; a row subgrid's items are measured in them before it lays out. */
@@ -593,7 +597,7 @@ fn column_contribution(
         Some(width) => (width, width),
         None => (intrinsic.min_content, intrinsic.max_content),
     };
-    let spanned = &defs[item.column.min(defs.len())..(item.column + item.columns).min(defs.len())];
+    let spanned = spanned_tracks(defs, item.column, item.columns);
     let minimum = if node.style.min_width.is_some()
         || super::flex::scroll_container(node)
         || !content_based_minimum(spanned)
@@ -613,6 +617,15 @@ fn column_contribution(
         min_content: clamp(min_content),
         max_content: clamp(max_content),
     })
+}
+/** The tracks an item spans on one axis, clipped to the `defs` the grid built. */
+fn spanned_tracks(
+    defs: &[tracks::TrackSizing],
+    start: usize,
+    span: usize,
+) -> &[tracks::TrackSizing] {
+    let start = start.min(defs.len());
+    &defs[start..(start + span).min(defs.len())]
 }
 /** Whether an item's automatic minimum is its content-based minimum (css-grid-1 6.6): it spans
  * a track whose minimum is `auto`, and when it spans more than one track, none of them is
@@ -640,7 +653,7 @@ fn fixed_maxima(spanned: &[tracks::TrackSizing]) -> Option<f64> {
 }
 /** An item's row contributions from its outer height at its final width; a scroll container or
  * an authored `min-height` gives a smaller minimum contribution. */
-fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
+fn row_contribution(item: &Placed<'_>, height: f64, content_based: bool) -> tracks::Contribution {
     let node = item.node;
     let margins = node.style.margin[0] + node.style.margin[2];
     let minimum = match node
@@ -649,7 +662,7 @@ fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
         .and_then(|extent| extent.resolve_size(None))
     {
         Some(min) => super::sizing::border_height(node, min) + margins,
-        None if super::flex::scroll_container(node) => {
+        None if super::flex::scroll_container(node) || !content_based => {
             super::sizing::vertical_edges(node) + margins
         }
         None => height,

@@ -67,3 +67,17 @@ fn percentage_width_grid_in_auto_track_takes_its_area() {
     assert_width(rect(body, "g").2, 1100.0);
     assert_width(rect(body, "x").2, 821.0);
 }
+
+/** css-grid-1 6.6 for rows: an item spanning several flexible rows has a zero automatic minimum,
+so its 300px content does not open the `1fr` rows of a 200px grid past their share (Blink's
+special spanning criteria, as for columns). */
+#[test]
+fn item_spanning_flexible_rows_does_not_open_them_to_its_content() {
+    let (_, y, _, _) = rect(
+        "<div style='display:grid;grid-template-rows:1fr 1fr;height:200px'>\
+         <div style='grid-row:1 / span 2'><div style='height:300px'>x</div></div>\
+         <div id=c style='grid-column:2;grid-row:2'>c</div></div>",
+        "c",
+    );
+    assert_eq!(y, 100.0);
+}
