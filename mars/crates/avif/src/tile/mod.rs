@@ -10,7 +10,13 @@ mod grid;
 mod group;
 mod intra_info;
 mod intra_mode;
+mod intrabc;
+mod intrabc_pred;
+mod intrabc_valid;
 mod lr;
+mod mv_read;
+mod mv_scan;
+mod mv_stack;
 mod palette;
 mod partition;
 mod residual;
@@ -22,12 +28,16 @@ mod state;
 #[allow(dead_code)]
 mod tables;
 mod tx_size;
+mod tx_tree;
 mod tx_type;
+mod var_tx;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use constants::{MAX_LOOP_FILTER, MI_SIZE, SGRPROJ_PRJ_BITS};
+pub(crate) use constants::{
+    MAX_LOOP_FILTER, MI_SIZE, MV_COMPONENTS, MV_CONTEXTS, MV_OFFSET_BITS, SGRPROJ_PRJ_BITS,
+};
 pub(crate) use grid::MiInfo;
 pub(crate) use state::FrameState;
 pub(crate) use tables::{

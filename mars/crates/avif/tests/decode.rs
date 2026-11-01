@@ -1,5 +1,5 @@
 /** Decoding through the public API: the Airbnb picture against its JPEG in RGB, the 4:4:4 and clap-cropped fixtures, and the refusals the decoder still makes. */
-use mars_avif::{Error, decode};
+use mars_avif::decode;
 
 /** The real Airbnb AVIF, 240x180 8-bit 4:2:0, and the JPEG it was made from. */
 const AIRBNB: &[u8] = include_bytes!("fixtures/airbnb-240.avif");
@@ -65,9 +65,29 @@ fn a_clap_cropped_picture_decodes_to_the_cropped_size() {
     );
 }
 
-/** A stream that needs intra block copy is still refused by name, until that stage lands. */
+/** Luma of an RGBA buffer, from the BT.601 weights, one value per pixel. */
+fn luma_of(rgba: &[u8]) -> Vec<f64> {
+    rgba.chunks_exact(4)
+        .map(|p| 0.299 * f64::from(p[0]) + 0.587 * f64::from(p[1]) + 0.114 * f64::from(p[2]))
+        .collect()
+}
+
+/** The screen-content fixtures use intra block copy throughout. Each decodes at its declared size to a photograph: the mean luma is that of a bright scene, and only the white logo and a few edges saturate. The monochrome and still-picture files encode the same photograph, so their luma must agree closely (30.5 dB measured); a wrong copy would pull them apart. */
 #[test]
-fn intra_block_copy_is_refused_by_name() {
-    let monochrome = include_bytes!("fixtures/monochrome.avif");
-    assert!(matches!(decode(monochrome), Err(Error::Unsupported(_))));
+fn intra_block_copy_screen_content_decodes_to_a_photograph() {
+    let monochrome =
+        decode(include_bytes!("fixtures/monochrome.avif")).expect("monochrome decodes");
+    let still =
+        decode(include_bytes!("fixtures/still-picture.avif")).expect("still picture decodes");
+    for image in [&monochrome, &still] {
+        assert_eq!((image.width, image.height), (1280, 720));
+        let luma = luma_of(&image.rgba);
+        let mean = luma.iter().sum::<f64>() / luma.len() as f64;
+        let saturated = luma.iter().filter(|&&v| v <= 1.0 || v >= 254.0).count();
+        assert!((100.0..200.0).contains(&mean), "mean luma {mean:.1}");
+        assert!(saturated * 50 < luma.len(), "{saturated} saturated samples");
+    }
+    let score = psnr(&luma_of(&monochrome.rgba), &luma_of(&still.rgba));
+    eprintln!("monochrome against still-picture luma: {score:.2} dB");
+    assert!(score > 25.0, "luma PSNR {score:.2} dB");
 }

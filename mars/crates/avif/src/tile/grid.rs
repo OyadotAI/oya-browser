@@ -1,5 +1,5 @@
 /** Per-4x4 bookkeeping of a frame's tiles (the spec's YModes, Skips, MiSizes, SegmentIds, PaletteSizes, TxSizes and friends), and the above and left context arrays that the coefficient and partition contexts read. Writes past the frame edge are clipped, because nothing reads them. */
-use super::constants::{CONTEXT_MARGIN, FRAME_LF_COUNT};
+use super::constants::{CONTEXT_MARGIN, FRAME_LF_COUNT, INTRA_FRAME, NONE_FRAME};
 
 /** Everything the spec stores per 4x4 luma unit that a later block, a later context or the loop filter may read. */
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,7 +17,16 @@ pub(crate) struct MiInfo {
     pub(crate) palette_index: u32,
     pub(crate) delta_lf: [i8; FRAME_LF_COUNT],
     pub(crate) tx_type: u8,
+    /** The reference frames of the block: INTRA_FRAME and NONE_FRAME for intra blocks, INTRA_FRAME for an intra block copy. */
+    pub(crate) ref_frame: [i8; 2],
+    /** The motion vectors of the block's two lists, as (row, column) in 1/8 sample units. Only list 0 is written by intra block copy. */
+    pub(crate) mv: [[i16; 2]; 2],
+    /** Whether a block has been decoded at this position in this frame (the spec's "has been written" test for candidate positions). */
+    pub(crate) written: bool,
 }
+
+/** The reference frames an intra block records: the intra frame in list 0 and no second reference. */
+pub(crate) const INTRA_REFS: [i8; 2] = [INTRA_FRAME, NONE_FRAME];
 
 /** A frame-sized grid of MiInfo, one cell per 4x4 luma unit, stored row-major. */
 #[derive(Clone, Debug, PartialEq, Eq)]

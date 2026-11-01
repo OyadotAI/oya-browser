@@ -153,3 +153,69 @@ pub(crate) const SB128_MI: usize = 32;
 pub(crate) const CDEF_UNIT_MI: usize = 16;
 /** Extra mode-info columns and rows beyond the frame, so a block that overhangs the edge can write its contexts. */
 pub(crate) const CONTEXT_MARGIN: usize = 32;
+
+/** Transform sets of inter blocks, after the intra ones (spec TX_SET_INTER_1..3). */
+pub(crate) const TX_SET_INTER_1: usize = 1;
+pub(crate) const TX_SET_INTER_2: usize = 2;
+pub(crate) const TX_SET_INTER_3: usize = 3;
+/** Count of square transform sizes (TX_SIZES in the spec), and the largest variable transform tree depth. */
+pub(crate) const TX_SIZES: usize = 5;
+pub(crate) const MAX_VARTX_DEPTH: usize = 2;
+/** Reference frame of an intra block, and the none marker of its second reference. */
+pub(crate) const INTRA_FRAME: i8 = 0;
+pub(crate) const NONE_FRAME: i8 = -1;
+/** Motion vector joints: which components are nonzero (spec MV_JOINT_*). */
+pub(crate) const MV_JOINT_HNZVZ: usize = 1;
+pub(crate) const MV_JOINT_HZVNZ: usize = 2;
+pub(crate) const MV_JOINT_HNZVNZ: usize = 3;
+/** Motion vector contexts (intra block copy has its own), the component count, the class-0 size and the offset bits of a class. */
+pub(crate) const MV_CONTEXTS: usize = 2;
+pub(crate) const MV_INTRABC_CONTEXT: usize = 1;
+pub(crate) const MV_COMPONENTS: usize = 2;
+pub(crate) const CLASS0_SIZE: i32 = 2;
+pub(crate) const MV_OFFSET_BITS: usize = 10;
+/** The fraction and high-precision bits an integer-only vector codes as: fixed, so nothing is read for them. */
+pub(crate) const INTEGER_MV_FR: i32 = 3;
+pub(crate) const INTEGER_MV_HP: i32 = 1;
+/** Motion vectors are in 1/8 sample units, with three fractional bits, so one sample is MV_UNIT. A class of magnitude c starts at CLASS0_SIZE shifted by c plus CLASS_OFFSET_BASE. */
+pub(crate) const MV_FRAC_BITS: u32 = 3;
+pub(crate) const MV_UNIT: i32 = 1 << MV_FRAC_BITS;
+pub(crate) const CLASS_OFFSET_BASE: usize = 2;
+/** Chroma and luma positions in 1/16 sample units are twice the 1/8 vector, before the chroma subsampling shift. */
+pub(crate) const HALF_UNIT_SCALE: i32 = 2;
+/** The largest magnitude a motion vector component may take (spec is_mv_valid). */
+pub(crate) const MV_LIMIT: i32 = 1 << 14;
+/** Border beyond the frame edge that a candidate motion vector is clamped to, in 1/8 sample units. */
+pub(crate) const MV_BORDER: i32 = 128;
+/** Weight a neighbour found in the immediate row or column gets over the rest, and the stack's capacity. */
+pub(crate) const REF_CAT_LEVEL: u32 = 640;
+pub(crate) const MAX_REF_MV_STACK_SIZE: usize = 8;
+/** Candidate rows and columns the stack search looks at, from the block's edge (spec scan row and column deltas). */
+pub(crate) const MV_SCAN_NEAR: isize = -1;
+pub(crate) const MV_SCAN_FAR_ROW: isize = -3;
+pub(crate) const MV_SCAN_FARTHER_ROW: isize = -5;
+pub(crate) const MV_SCAN_FAR_COL: isize = -3;
+pub(crate) const MV_SCAN_FARTHER_COL: isize = -5;
+/** Weight of a candidate found at a single point, and the block size (in 4x4 units) above which the top-right point is skipped. */
+pub(crate) const POINT_WEIGHT: u32 = 4;
+pub(crate) const POINT_SKIP_MI: usize = 16;
+/** Intra block copy: the delay, in pixels and in 64-sample superblocks, a source must keep behind the block it predicts (spec INTRABC_DELAY_*). */
+pub(crate) const INTRABC_DELAY_PIXELS: i32 = 256;
+pub(crate) const INTRABC_DELAY_SB64: i32 = 4;
+/** Bilinear filter taps: the total weight of a filter, the taps per sub-sample position, and the fractional bits of a position. */
+pub(crate) const FILTER_TOTAL: i32 = 128;
+pub(crate) const SUBPEL_BITS: u32 = 4;
+pub(crate) const SUBPEL_MASK: i32 = (1 << SUBPEL_BITS) - 1;
+/** Rounding shifts of the two bilinear passes at 8, 10 and 12 bits, and the reduction 12-bit streams take on each. */
+pub(crate) const INTER_ROUND0: u32 = 3;
+pub(crate) const INTER_ROUND1: u32 = 11;
+pub(crate) const HIGH_BITDEPTH_ROUND: u32 = 2;
+/** Taps of the separable filter: the tap that sits at the sample itself and the one after it, and the rows of context above it. */
+pub(crate) const FILTER_TAP_SELF: usize = 3;
+pub(crate) const FILTER_TAP_NEXT: usize = 4;
+pub(crate) const FILTER_ROWS_ABOVE: usize = 3;
+pub(crate) const FILTER_ROWS_EXTRA: usize = 7;
+/** Bit depth at which the two bilinear passes round by the larger shifts. */
+pub(crate) const BITDEPTH_HIGH: u32 = 12;
+/** The rounding bias of a whole-sample candidate: half a sample less one, in 1/8 sample units. */
+pub(crate) const INTEGER_ROUND_BIAS: i32 = 3;

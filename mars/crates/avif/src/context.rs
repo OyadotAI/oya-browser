@@ -1,5 +1,6 @@
 /** Per-tile CDF context (spec init_non_coeff_cdfs and init_coeff_cdfs): the adaptive copies of every CDF an intra frame's tile reads. Each tile starts from the defaults; the context saved at context_update_tile_id is a clone taken at tile end. */
 use crate::cdf_tables::*;
+use crate::tile::{MV_COMPONENTS, MV_CONTEXTS, MV_OFFSET_BITS};
 
 /** Upper bounds of base_q_idx for the first three coefficient contexts; anything above falls in the last one. */
 const Q_CTX_LIMITS: [u8; 3] = [20, 60, 120];
@@ -52,6 +53,29 @@ const fn pad_row<const N: usize>(src: &[[u16; N]; 5]) -> [[u16; 9]; 5] {
     out
 }
 
+/** The adaptive CDFs of one motion vector context: the joint, and for each component its sign, class, class-0 bit and offset bits. */
+#[derive(Clone)]
+pub(crate) struct MvCdfs {
+    pub(crate) joint: [u16; 5],
+    pub(crate) sign: [[u16; 3]; MV_COMPONENTS],
+    pub(crate) class: [[u16; 12]; MV_COMPONENTS],
+    pub(crate) class0_bit: [[u16; 3]; MV_COMPONENTS],
+    pub(crate) bits: [[[u16; 3]; MV_OFFSET_BITS]; MV_COMPONENTS],
+}
+
+impl MvCdfs {
+    /** The defaults every motion vector context starts from (spec init_non_coeff_cdfs). */
+    fn new() -> Self {
+        Self {
+            joint: DEFAULT_MV_JOINT_CDF,
+            sign: [DEFAULT_MV_SIGN_CDF; MV_COMPONENTS],
+            class: DEFAULT_MV_CLASS_CDF,
+            class0_bit: [DEFAULT_MV_CLASS0_BIT_CDF; MV_COMPONENTS],
+            bits: [DEFAULT_MV_BIT_CDF; MV_COMPONENTS],
+        }
+    }
+}
+
 /** The adaptive CDFs an intra frame tile reads. Coefficient tables are stored already selected by the frame's quantizer context. */
 #[derive(Clone)]
 pub(crate) struct TileCdfs {
@@ -73,6 +97,12 @@ pub(crate) struct TileCdfs {
     pub(crate) tx_32x32: [[u16; 4]; 3],
     pub(crate) tx_64x64: [[u16; 4]; 3],
     pub(crate) txfm_split: [[u16; 3]; 21],
+    /** Motion vector CDFs by motion vector context (ordinary vectors and intra block copy). */
+    pub(crate) mv: [MvCdfs; MV_CONTEXTS],
+    /** Inter transform-type CDFs: set 1 and set 3 by square size, set 2 once. */
+    pub(crate) inter_tx_type_set1: [[u16; 17]; 2],
+    pub(crate) inter_tx_type_set2: [u16; 13],
+    pub(crate) inter_tx_type_set3: [[u16; 3]; 4],
     pub(crate) filter_intra_mode: [u16; 6],
     pub(crate) filter_intra: [[u16; 3]; 22],
     pub(crate) palette_uv_mode: [[u16; 3]; 2],
@@ -131,6 +161,10 @@ impl TileCdfs {
             tx_32x32: DEFAULT_TX_32X32_CDF,
             tx_64x64: DEFAULT_TX_64X64_CDF,
             txfm_split: DEFAULT_TXFM_SPLIT_CDF,
+            mv: [MvCdfs::new(), MvCdfs::new()],
+            inter_tx_type_set1: DEFAULT_INTER_TX_TYPE_SET1_CDF,
+            inter_tx_type_set2: DEFAULT_INTER_TX_TYPE_SET2_CDF,
+            inter_tx_type_set3: DEFAULT_INTER_TX_TYPE_SET3_CDF,
             filter_intra_mode: DEFAULT_FILTER_INTRA_MODE_CDF,
             filter_intra: DEFAULT_FILTER_INTRA_CDF,
             palette_uv_mode: DEFAULT_PALETTE_UV_MODE_CDF,

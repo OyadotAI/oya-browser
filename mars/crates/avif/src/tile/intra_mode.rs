@@ -13,7 +13,7 @@ const NO_SEGMENT: i32 = -1;
 const QINDEX_MIN: i32 = 1;
 
 impl<'a> TileDecoder<'a> {
-    /** intra_frame_mode_info(): everything read ahead of the prediction modes. An intra block copy block is refused, since its motion syntax is not read yet. */
+    /** intra_frame_mode_info(): everything read ahead of the prediction modes. A block that the use_intrabc flag selects takes the intra block copy path, which has its own mode info and motion vector. */
     pub(super) fn intra_frame_mode_info(&mut self) -> Result<()> {
         self.blk.skip = false;
         if self.hdr.seg.seg_id_pre_skip {
@@ -28,7 +28,7 @@ impl<'a> TileDecoder<'a> {
         self.read_delta_lf()?;
         self.dq.read_deltas = false;
         if self.hdr.allow_intrabc && self.sym.read_symbol(&mut self.cdf.intrabc)? == 1 {
-            return Err(Error::Unsupported("intra block copy"));
+            return self.intrabc_mode_info();
         }
         self.intra_modes()
     }

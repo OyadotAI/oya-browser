@@ -1,7 +1,7 @@
 /** One block's decoding (spec decode_block, 5.11.5): the geometry and availability of the block, its mode info and transform size, its residual, and the write of its results into the frame grid for the blocks that follow. */
 use super::constants::{BLOCK_8X8, MI_SIZE, PALETTE_COLORS, PALETTE_MAX_BLOCK_DIM};
 use super::decoder::TileDecoder;
-use super::grid::MiInfo;
+use super::grid::{INTRA_REFS, MiInfo};
 use super::lr::plane_subsampling;
 use super::state::PaletteInfo;
 use super::tables::NUM_4X4_BLOCKS_WIDE;
@@ -21,6 +21,12 @@ pub(crate) struct Block {
     pub(crate) avail_u_chroma: bool,
     pub(crate) avail_l_chroma: bool,
     pub(crate) skip: bool,
+    /** Whether the block is an inter block: an intra block copy block of an intra frame is one. */
+    pub(crate) is_inter: bool,
+    /** Whether the block predicts from the frame being decoded (intra block copy). */
+    pub(crate) use_intrabc: bool,
+    /** The block's motion vector (row, column) in 1/8 sample units, for intra block copy. */
+    pub(crate) mv: [i32; 2],
     pub(crate) segment_id: usize,
     pub(crate) lossless: bool,
     pub(crate) y_mode: u8,
@@ -67,6 +73,9 @@ impl<'a> TileDecoder<'a> {
         self.read_block_tx_size()?;
         if self.blk.skip {
             self.reset_block_context();
+        }
+        if self.blk.use_intrabc {
+            self.predict_intrabc();
         }
         self.residual()?;
         self.store_block();
@@ -141,6 +150,8 @@ impl<'a> TileDecoder<'a> {
         let blk = &self.blk;
         let delta_lf = self.dq.delta_lf.map(|v| v as i8);
         let has_chroma = blk.has_chroma;
+        let is_inter = blk.is_inter;
+        let mv = [blk.mv.map(|v| v as i16), [0, 0]];
         let info = (
             blk.mi_size as u8,
             blk.y_mode,
@@ -162,7 +173,10 @@ impl<'a> TileDecoder<'a> {
                     m.uv_mode = info.2;
                 }
                 m.skip = info.3;
-                m.is_inter = false;
+                m.is_inter = is_inter;
+                m.ref_frame = INTRA_REFS;
+                m.mv = mv;
+                m.written = true;
                 m.tx_size = info.4;
                 m.segment_id = info.5;
                 m.palette_size = info.6;

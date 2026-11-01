@@ -1,13 +1,16 @@
 use super::coeff_ctx::coeff_base_eob_ctx;
 /** Tile decoder tests: the fixtures' tiles must read to the end of their symbol streams with the padding in place, malformed tile bytes must fail rather than panic, the decoded modes and transforms must look like a photograph, and the helper tables and rules must hold on their own. */
 use super::constants::{
-    BLOCK_64X64, DCT_DCT, H_DCT, IDTX, PARTITION_SPLIT, TX_4X4, TX_16X16, TX_16X64, TX_32X32,
-    TX_64X16, TX_64X64, TX_SIZES_ALL, V_DCT,
+    BLOCK_64X64, DCT_DCT, H_DCT, IDTX, MAX_REF_MV_STACK_SIZE, PARTITION_SPLIT, TX_4X4, TX_16X16,
+    TX_16X64, TX_32X32, TX_64X16, TX_64X64, TX_SIZES_ALL, V_DCT,
 };
 use super::decode_frame;
+use super::decoder::TileBounds;
 use super::group::split_tiles;
 use super::intra_mode::{coded_segment, neg_deinterleave};
+use super::intrabc_valid;
 use super::lr::inverse_recenter;
+use super::mv_stack;
 use super::palette::{ceil_log2, merge_cache};
 use super::scan::get_scan;
 use super::state::FrameState;
@@ -15,6 +18,7 @@ use super::tables::{
     ADJUSTED_TX_SIZE, MAX_TX_SIZE_RECT, PARTITION_SUBSIZE, SPLIT_TX_SIZE, TX_HEIGHT,
     TX_SIZE_SQR_UP, TX_WIDTH,
 };
+use super::tx_tree;
 use crate::container;
 use crate::error::{Error, Result};
 use crate::frame::{FrameHeader, Parsed};
@@ -33,15 +37,14 @@ const MEXICO_444: &[u8] = include_bytes!("../../tests/fixtures/mexico-yuv444.avi
 const MONOCHROME: &[u8] = include_bytes!("../../tests/fixtures/monochrome.avif");
 const STILL: &[u8] = include_bytes!("../../tests/fixtures/still-picture.avif");
 
-/** The fixtures whose tiles use no intra block copy, so their symbol streams can be followed to the end. */
-const SYNCED: [(&str, &[u8]); 3] = [
+/** Every fixture's tiles, so their symbol streams can be followed to the end. The monochrome and still-picture fixtures enable screen content and intra block copy. */
+const SYNCED: [(&str, &[u8]); 5] = [
     ("airbnb-240", AIRBNB),
     ("chimera-8bit", CHIMERA_8BIT),
     ("mexico-yuv444", MEXICO_444),
+    ("monochrome", MONOCHROME),
+    ("still-picture", STILL),
 ];
-
-/** The fixtures that enable screen content and intra block copy, and so stop at their first intra block copy block. */
-const SCREEN_CONTENT: [(&str, &[u8]); 2] = [("monochrome", MONOCHROME), ("still-picture", STILL)];
 
 /** Run `f` on a fixture's sequence header, frame header and tile group payloads. */
 fn with_frame<R>(
@@ -64,26 +67,13 @@ fn decode_fixture(bytes: &[u8]) -> Result<FrameState> {
     with_frame(bytes, decode_frame)?
 }
 
-/** Each tile of the fixtures without intra block copy reads to the end of its symbol stream, and the padding after the trailing bit is zero. A pass proves the block syntax consumed exactly the bits the encoder wrote. */
+/** Each tile of every fixture, intra block copy included, reads to the end of its symbol stream, and the padding after the trailing bit is zero. A pass proves the block syntax consumed exactly the bits the encoder wrote. */
 #[test]
 fn every_tile_without_intra_block_copy_ends_in_step() {
     for (name, bytes) in SYNCED {
         if let Err(error) = decode_fixture(bytes) {
             panic!("{name}: tile syntax out of step: {error}");
         }
-    }
-}
-
-/** A screen-content frame reaches intra block copy, which is not decoded yet, so its tiles stop there with Unsupported rather than reading garbage. The blocks before it decode without error. */
-#[test]
-fn screen_content_tiles_stop_at_their_first_intra_block_copy() {
-    for (name, bytes) in SCREEN_CONTENT {
-        let result = decode_fixture(bytes);
-        assert_eq!(
-            result.err(),
-            Some(Error::Unsupported("intra block copy")),
-            "{name}"
-        );
     }
 }
 
@@ -344,4 +334,115 @@ fn reconstructed_planes_have_no_saturation_stripes() {
             assert!(!stripe, "{name}: saturated row {y}");
         }
     }
+}
+
+/** A block in the middle of a 64 by 64 tile, with no chroma, for the intra block copy validity rules. */
+fn dv_block(mv: [i32; 2]) -> intrabc_valid::DvBlock {
+    intrabc_valid::DvBlock {
+        mi_row: 16,
+        mi_col: 16,
+        width: 8,
+        height: 8,
+        chroma_sub: None,
+        tile: TileBounds {
+            mi_row_start: 0,
+            mi_row_end: 64,
+            mi_col_start: 0,
+            mi_col_end: 64,
+        },
+        sb128: false,
+        mv,
+    }
+}
+
+/** A vector must name whole samples: a fractional component is refused, the same vector whole is accepted. */
+#[test]
+fn an_intrabc_vector_must_be_whole_samples() {
+    assert!(intrabc_valid::dv_is_valid(&dv_block([
+        -(16 * 8),
+        -(16 * 8)
+    ])));
+    assert!(!intrabc_valid::dv_is_valid(&dv_block([
+        -(16 * 8) + 1,
+        -(16 * 8)
+    ])));
+    assert!(!intrabc_valid::dv_is_valid(&dv_block([
+        -(16 * 8),
+        -(16 * 8) - 3
+    ])));
+}
+
+/** A source that starts outside the tile is refused, as is a vector past the magnitude limit. */
+#[test]
+fn an_intrabc_source_outside_the_tile_is_refused() {
+    let mut block = dv_block([0, -(17 * 4 * 8)]);
+    assert!(!intrabc_valid::dv_is_valid(&block), "source left of tile");
+    block.mv = [-(17 * 4 * 8), 0];
+    assert!(!intrabc_valid::dv_is_valid(&block), "source above tile");
+    block.mv = [0, 1 << 14];
+    assert!(!intrabc_valid::dv_is_valid(&block), "magnitude limit");
+}
+
+/** A source one superblock row up is inside the delay the decoder keeps, so it is refused. */
+#[test]
+fn an_intrabc_source_inside_the_delay_is_refused() {
+    assert!(!intrabc_valid::dv_is_valid(&dv_block([-(16 * 8), 0])));
+}
+
+/** A source four superblocks back in raster order, inside the tile, satisfies the delay and is accepted. */
+#[test]
+fn an_intrabc_source_past_the_delay_is_accepted() {
+    let mut block = dv_block([-(96 * 8), 0]);
+    block.mi_row = 32;
+    block.mi_col = 32;
+    assert!(intrabc_valid::dv_is_valid(&block));
+}
+
+/** Whole-sample rounding of a candidate: the magnitude is rounded past half a sample and the sign kept. */
+#[test]
+fn a_candidate_rounds_to_the_nearest_whole_sample() {
+    assert_eq!(mv_stack::to_whole_sample(12), 8);
+    assert_eq!(mv_stack::to_whole_sample(-12), -8);
+    assert_eq!(mv_stack::to_whole_sample(13), 16);
+    assert_eq!(mv_stack::to_whole_sample(0), 0);
+}
+
+/** Candidates with the same vector merge their weights; a new vector is appended; a full stack ignores a new vector. */
+#[test]
+fn the_mv_stack_merges_weights_and_stops_at_capacity() {
+    let mut stack = mv_stack::MvStack::default();
+    stack.add([8, 8], 2);
+    stack.add([8, 8], 3);
+    assert_eq!(stack.len(), 1);
+    for i in 0..MAX_REF_MV_STACK_SIZE as i32 {
+        stack.add([16 * (i + 1), 0], 1);
+    }
+    assert_eq!(stack.len(), MAX_REF_MV_STACK_SIZE);
+    assert_eq!(stack.mv_or_zero(MAX_REF_MV_STACK_SIZE), [0, 0]);
+}
+
+/** The sort orders each range by descending weight and keeps equal weights in their order. */
+#[test]
+fn the_mv_stack_sort_is_by_weight_and_stable() {
+    let mut stack = mv_stack::MvStack::default();
+    stack.add([8, 0], 1);
+    stack.add([16, 0], 4);
+    stack.add([24, 0], 4);
+    stack.sort(0, stack.len());
+    assert_eq!(stack.mv_or_zero(0), [16, 0]);
+    assert_eq!(stack.mv_or_zero(1), [24, 0]);
+    assert_eq!(stack.mv_or_zero(2), [8, 0]);
+}
+
+/** A region splits along its longer side, and into quarters when square; a width and height no transform has is malformed. */
+#[test]
+fn a_transform_region_splits_along_its_longer_side() {
+    assert_eq!(
+        tx_tree::split_region(0, 0, 64, 16),
+        vec![(0, 0, 32, 16), (32, 0, 32, 16)]
+    );
+    assert_eq!(tx_tree::split_region(0, 0, 8, 16).len(), 2);
+    assert_eq!(tx_tree::split_region(0, 0, 16, 16).len(), 4);
+    assert!(tx_tree::find_tx_size(8, 64).is_err());
+    assert_eq!(tx_tree::find_tx_size(16, 64).unwrap(), TX_16X64);
 }

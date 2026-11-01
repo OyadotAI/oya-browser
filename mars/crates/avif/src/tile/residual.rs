@@ -34,10 +34,14 @@ impl<'a> TileDecoder<'a> {
         Ok(())
     }
 
-    /** One 64x64 chunk of the block: each plane's transform blocks that fall inside it. */
+    /** One 64x64 chunk of the block: each plane's transform blocks that fall inside it. An inter block's luma is walked as its transform tree instead. */
     fn residual_chunk(&mut self, chunk_size: usize, chunk_x: usize, chunk_y: usize) -> Result<()> {
         let planes = if self.blk.has_chroma { 3 } else { 1 };
         for plane in 0..planes {
+            if plane == 0 && self.blk.is_inter && !self.blk.lossless {
+                self.luma_tree_chunk(chunk_size, chunk_x, chunk_y)?;
+                continue;
+            }
             let tx_size = if self.blk.lossless {
                 TX_4X4
             } else {
@@ -62,8 +66,17 @@ impl<'a> TileDecoder<'a> {
         Ok(())
     }
 
-    /** transform_block(plane, baseX, baseY, txSz, x, y): one transform block at a 4x4 offset from the base. Blocks that start past the frame edge are skipped. The block is predicted, its residual is read and added, and its edges are recorded for the blocks after it. */
-    fn transform_block(
+    /** The luma of an inter block's chunk, walked as the transform tree its variable transform sizes name. */
+    fn luma_tree_chunk(&mut self, chunk_size: usize, chunk_x: usize, chunk_y: usize) -> Result<()> {
+        let x = (self.blk.mi_col + (chunk_x << CHUNK_MI_LOG2)) * MI_SIZE;
+        let y = (self.blk.mi_row + (chunk_y << CHUNK_MI_LOG2)) * MI_SIZE;
+        let w = NUM_4X4_BLOCKS_WIDE[chunk_size] as usize * MI_SIZE;
+        let h = NUM_4X4_BLOCKS_HIGH[chunk_size] as usize * MI_SIZE;
+        self.transform_tree(x, y, w, h)
+    }
+
+    /** transform_block(plane, baseX, baseY, txSz, x, y): one transform block at a 4x4 offset from the base. Blocks that start past the frame edge are skipped. An intra block is predicted first; then the block's residual is read and added, and its edges are recorded for the blocks after it. */
+    pub(super) fn transform_block(
         &mut self,
         plane: usize,
         base_x: usize,
@@ -88,10 +101,12 @@ impl<'a> TileDecoder<'a> {
             y,
             tx_size,
         };
-        self.predict_intra_tx(at);
-        if plane == 0 {
-            self.blk.max_luma_w = start_x + (TX_WIDTH[tx_size] as usize);
-            self.blk.max_luma_h = start_y + (TX_HEIGHT[tx_size] as usize);
+        if !self.blk.is_inter {
+            self.predict_intra_tx(at);
+            if plane == 0 {
+                self.blk.max_luma_w = start_x + (TX_WIDTH[tx_size] as usize);
+                self.blk.max_luma_h = start_y + (TX_HEIGHT[tx_size] as usize);
+            }
         }
         let coded = if self.blk.skip {
             None

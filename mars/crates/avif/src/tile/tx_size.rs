@@ -16,24 +16,28 @@ const DEPTH_FAMILY_32: usize = 3;
 const DEPTH_FAMILY_16: usize = 2;
 
 impl<'a> TileDecoder<'a> {
-    /** read_block_tx_size() for an intra block: read its transform size, then record that size for every 4x4 unit the block covers. */
+    /** read_block_tx_size(): an inter block of a select-mode frame reads a transform tree (see var_tx); any other block reads one size, then records it for every 4x4 unit the block covers. */
     pub(super) fn read_block_tx_size(&mut self) -> Result<()> {
-        self.read_tx_size()?;
+        if self.uses_var_tx() {
+            return self.read_var_tx_blocks();
+        }
+        let allow_select = !self.blk.skip || !self.blk.is_inter;
+        self.read_tx_size(allow_select)?;
         let size = self.blk.tx_size as u8;
         let (r, c, h, w) = (self.blk.mi_row, self.blk.mi_col, self.blk.bh4, self.blk.bw4);
         self.fs.mi.fill(r, c, h, w, |m| m.inter_tx_size = size);
         Ok(())
     }
 
-    /** read_tx_size(allowSelect = 1): a lossless block uses 4x4; otherwise the largest rectangle for the block, split tx_depth times when the frame selects per block. */
-    fn read_tx_size(&mut self) -> Result<()> {
+    /** read_tx_size(allowSelect): a lossless block uses 4x4; otherwise the largest rectangle for the block, split tx_depth times when the frame selects per block and the caller allows a choice. */
+    fn read_tx_size(&mut self, allow_select: bool) -> Result<()> {
         if self.blk.lossless {
             self.blk.tx_size = TX_4X4;
             return Ok(());
         }
         let max_rect = MAX_TX_SIZE_RECT[self.blk.mi_size] as usize;
         self.blk.tx_size = max_rect;
-        if self.blk.mi_size > BLOCK_4X4 && self.hdr.tx_mode == TX_MODE_SELECT {
+        if allow_select && self.blk.mi_size > BLOCK_4X4 && self.hdr.tx_mode == TX_MODE_SELECT {
             let max_depth = MAX_TX_DEPTH_BY_SIZE[self.blk.mi_size] as usize;
             let depth = self.read_tx_depth(max_rect, max_depth)?;
             for _ in 0..depth {
