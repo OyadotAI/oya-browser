@@ -93,27 +93,37 @@ impl Painted {
 
 /** Wrap actual RGBA pixels in an AppKit bitmap without encoding them or accessing a URL. */
 fn canvas_image(bitmap: &mars_core::canvas::Bitmap) -> Option<Retained<NSImage>> {
-    use objc2_app_kit::{NSBitmapImageRep, NSDeviceRGBColorSpace};
-    use objc2_foundation::NSSize;
     bitmap.validate().ok()?;
     if !bitmap.drawable() {
         return None;
     }
-    // SAFETY: validated dimensions bound the owned allocation and explicit RGBA stride.
+    rgba_image(bitmap.width, bitmap.height, &bitmap.pixels)
+}
+
+/** Straight-alpha RGBA pixels of `width` x `height` as an AppKit image. Decoded page images use
+this directly: the canvas `Bitmap` caps each edge at the <canvas> surface bound (512), so a 720px
+AVIF thumbnail sent through it came out empty and painted nothing. */
+fn rgba_image(width: u32, height: u32, pixels: &[u8]) -> Option<Retained<NSImage>> {
+    use objc2_app_kit::{NSBitmapImageRep, NSDeviceRGBColorSpace};
+    use objc2_foundation::NSSize;
+    let length = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(RGBA)?;
+    if width == 0 || height == 0 || pixels.len() != length {
+        return None;
+    }
+    // SAFETY: the checked dimensions bound the rep's own allocation and explicit RGBA stride.
     let rep = unsafe {
         NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
-        NSBitmapImageRep::alloc(),std::ptr::null_mut(),bitmap.width as isize,bitmap.height as isize,8,4,true,false,NSDeviceRGBColorSpace,(bitmap.width*4) as isize,32)
+        NSBitmapImageRep::alloc(),std::ptr::null_mut(),width as isize,height as isize,8,4,true,false,NSDeviceRGBColorSpace,(width as usize * RGBA) as isize,32)
     }?;
     let target = rep.bitmapData();
     if target.is_null() {
         return None;
     }
-    // SAFETY: the rep owns exactly the validated byte length until its retained image is dropped.
-    let target = unsafe { std::slice::from_raw_parts_mut(target, bitmap.pixels.len()) };
-    for (out, pixel) in target
-        .chunks_exact_mut(4)
-        .zip(bitmap.pixels.chunks_exact(4))
-    {
+    // SAFETY: the rep owns exactly `length` bytes until its retained image is dropped.
+    let target = unsafe { std::slice::from_raw_parts_mut(target, length) };
+    for (out, pixel) in target.chunks_exact_mut(RGBA).zip(pixels.chunks_exact(RGBA)) {
         out[3] = pixel[3];
         for channel in 0..3 {
             out[channel] = ((u32::from(pixel[channel]) * u32::from(pixel[3]) + 127) / 255) as u8;
@@ -121,7 +131,7 @@ fn canvas_image(bitmap: &mars_core::canvas::Bitmap) -> Option<Retained<NSImage>>
     }
     let image = NSImage::initWithSize(
         NSImage::alloc(),
-        NSSize::new(f64::from(bitmap.width), f64::from(bitmap.height)),
+        NSSize::new(f64::from(width), f64::from(height)),
     );
     image.addRepresentation(&rep);
     Some(image)
@@ -141,13 +151,15 @@ fn extent(item: &DisplayItem) -> Option<(usize, usize)> {
 fn band(y: f64) -> usize {
     (y.max(0.0) / BAND) as usize
 }
+/** Bytes per RGBA pixel. */
+const RGBA: usize = 4;
 /** One decode of fetched bytes; AppKit keeps the decoded bitmap with the image. */
 fn decode(bytes: &[u8]) -> Option<Retained<NSImage>> {
     // AVIF goes through Mars's own decoder: AppKit's ImageIO would decode it outside those bounds.
     if crate::runtime::images::avif::is_avif(bytes) {
-        return crate::runtime::images::avif::bitmap(bytes)
+        return crate::runtime::images::avif::decode(bytes)
             .ok()
-            .and_then(|bitmap| canvas_image(&bitmap));
+            .and_then(|image| rgba_image(image.width, image.height, &image.rgba));
     }
     // SAFETY: the bytes outlive the call and NSData copies them.
     let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len() as _) };
@@ -158,6 +170,16 @@ fn decode(bytes: &[u8]) -> Option<Retained<NSImage>> {
 mod tests {
     use super::*;
     use objc2_foundation::{NSPoint, NSSize};
+
+    /** A decoded image wider than the <canvas> surface bound still becomes an AppKit image, as
+    YouTube's 720px AVIF thumbnails need; a pixel count that does not match is refused. */
+    #[test]
+    fn decoded_images_past_the_canvas_edge_still_paint() {
+        let (width, height) = (720, 404);
+        let pixels = vec![u8::MAX; width as usize * height as usize * RGBA];
+        assert!(rgba_image(width, height, &pixels).is_some());
+        assert!(rgba_image(width, height, &pixels[RGBA..]).is_none());
+    }
 
     /** A dirty rect sees exactly the items whose bands it covers, in paint order. */
     #[test]
