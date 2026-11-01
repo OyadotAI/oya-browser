@@ -1,7 +1,6 @@
 /** Eye owns the bounded document, cascade and rendering model. */
 mod content;
 mod context;
-mod entities;
 mod forms;
 mod markup;
 pub(crate) mod matrix;

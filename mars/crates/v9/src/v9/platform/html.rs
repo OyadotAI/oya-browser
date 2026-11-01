@@ -456,13 +456,13 @@ fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
                 let body = &after[1..];
                 let end = body.find(quote).unwrap_or(body.len());
                 rest = body.get(end + 1..).unwrap_or("");
-                decode_entities(&body[..end], true)
+                mars_core::entities::decode(&body[..end], true)
             } else {
                 let end = after
                     .find(|c: char| c.is_whitespace() || c == '>')
                     .unwrap_or(after.len());
                 rest = &after[end..];
-                decode_entities(&after[..end], true)
+                mars_core::entities::decode(&after[..end], true)
             }
         } else {
             String::new()
@@ -472,61 +472,11 @@ fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
     (tag, attributes, closed, rest)
 }
 
-/** Decode the common character references. */
+/** Decode character references in text with the shared WHATWG decoder; raw text keeps them. */
 pub(in crate::v9) fn decode_entities(text: &str, decode: bool) -> String {
-    if !decode || !text.contains('&') {
-        return text.to_string();
+    if decode {
+        mars_core::entities::decode(text, false)
+    } else {
+        text.to_string()
     }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('&') {
-        out.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let end = rest.find(';').filter(|end| *end <= ENTITY_LENGTH);
-        let Some(end) = end else {
-            out.push('&');
-            rest = &rest[1..];
-            continue;
-        };
-        let name = &rest[1..end];
-        let decoded = match name {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            "nbsp" => Some('\u{a0}'),
-            "copy" => Some('©'),
-            "reg" => Some('®'),
-            "hellip" => Some('…'),
-            "mdash" => Some('\u{2014}'),
-            "ndash" => Some('–'),
-            "laquo" => Some('«'),
-            "raquo" => Some('»'),
-            _ => name
-                .strip_prefix("#x")
-                .or_else(|| name.strip_prefix("#X"))
-                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                .or_else(|| {
-                    name.strip_prefix('#')
-                        .and_then(|decimal| decimal.parse().ok())
-                })
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[end + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
-
-/** Longest entity reference recognized. */
-const ENTITY_LENGTH: usize = 10;

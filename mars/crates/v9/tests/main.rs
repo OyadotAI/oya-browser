@@ -155,6 +155,7 @@ mod global_eval_inherited_setters;
 mod grouping;
 mod handler_policy;
 mod history_popstate;
+mod html_entities;
 mod html_partial_updates;
 mod illegal_constructor_diagnostics;
 mod image_blob;

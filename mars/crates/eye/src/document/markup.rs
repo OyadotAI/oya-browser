@@ -132,9 +132,9 @@ pub(super) fn script_url(url: &str) -> bool {
     scheme.eq_ignore_ascii_case("javascript:")
 }
 
-/** Character references decode with the owned named table; decoding never grows text. */
+/** Character references decode with the shared WHATWG table, as RCDATA title and textarea text does. */
 pub(super) fn entities(source: &str) -> String {
-    super::entities::decode(source, false)
+    mars_core::entities::decode(source, false)
 }
 
 /** Unsupported syntax cannot create partially trusted native targets. */

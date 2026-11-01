@@ -369,6 +369,26 @@ fn attribute_references_keep_query_strings() {
     assert_eq!(link.attributes["title"], "\"q\"");
 }
 
+/** Text uses the full WHATWG table: `&copyright;` is `©right;`, and a bad scalar is U+FFFD. */
+#[test]
+fn named_references_use_the_full_table() {
+    let document =
+        parse("<p id=p>&eacute;&notin;&amp;amp; &copyright; &#xD800; &nGt;</p>").unwrap();
+    assert_eq!(
+        by_id(&document, "p").text,
+        "é∉&amp; ©right; \u{fffd} \u{226b}\u{20d2}"
+    );
+}
+
+/** RCDATA title and textarea text decode the same table, and their tags stay text. */
+#[test]
+fn rcdata_title_and_textarea_decode_references() {
+    let document =
+        parse("<title>&hellip;&lt;b&gt;</title><textarea id=t>&eacute;&copy</textarea>").unwrap();
+    assert_eq!(document.title, "…<b>");
+    assert_eq!(by_id(&document, "t").value, "é©");
+}
+
 /** Line breaks, word-break opportunities and rules are void, and `</br>` is a break. */
 #[test]
 fn void_breaks_and_rules_do_not_open() {

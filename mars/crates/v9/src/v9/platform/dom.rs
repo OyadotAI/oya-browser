@@ -2401,7 +2401,7 @@ pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res
         // The fragment parser runs these in RAWTEXT/RCDATA state: the markup is the element's
         // text. Modernizr writes `style.innerHTML = css`; refusing it stopped aa.com's scripts.
         let text = if RCDATA_ELEMENTS.contains(&vm.page.tag(node).as_str()) {
-            decode_basic_entities(html)
+            mars_core::entities::decode(html, false)
         } else {
             html.to_string()
         };
@@ -2437,16 +2437,6 @@ const RAW_TEXT_ELEMENTS: [&str; 9] = [
 ];
 /** Of those, the RCDATA ones decode character references. */
 const RCDATA_ELEMENTS: [&str; 2] = ["textarea", "title"];
-
-/** The character references RCDATA text commonly carries; others stay literal.
-ponytail: five named references, a full entity table when a page needs one. */
-fn decode_basic_entities(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-}
 
 /** Replace a node's children with parsed HTML in whichever store holds it. */
 fn replace_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
