@@ -253,6 +253,7 @@ mod proxy_invariants;
 mod range_live;
 mod range_offsets;
 mod range_receivers;
+mod raw_text_elements;
 mod real_bigint;
 mod real_dom;
 mod real_platform;

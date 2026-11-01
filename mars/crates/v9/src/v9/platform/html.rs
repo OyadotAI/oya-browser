@@ -14,8 +14,19 @@ const VOID: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
     "track", "wbr",
 ];
-/** Elements whose content is raw text. */
-pub(super) const RAW: [&str; 4] = ["script", "style", "textarea", "title"];
+/** Elements whose content is raw text (WHATWG RAWTEXT, script data and PLAINTEXT): no tags
+ * parse and no references decode, so `<xmp>&amp;</xmp>` keeps its literal `&amp;`. */
+pub(super) const RAW: [&str; 7] = [
+    "script",
+    "style",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "plaintext",
+];
+/** Elements whose content is RCDATA (WHATWG): no tags parse, but references decode. */
+const RCDATA: [&str; 2] = ["textarea", "title"];
 
 /** Escape text content. */
 fn escape_text(text: &str, out: &mut String) {
@@ -241,11 +252,11 @@ pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
             implied_close(&mut open, &tag);
             let index = push(&mut nodes, &open, &tag, attributes, None)?;
             rest = remaining;
-            if RAW.contains(&tag.as_str()) {
+            if RAW.contains(&tag.as_str()) || RCDATA.contains(&tag.as_str()) {
                 let close = format!("</{tag}");
                 let end = rest.to_ascii_lowercase().find(&close).unwrap_or(rest.len());
                 if end > 0 {
-                    let text = decode_entities(&rest[..end], tag != "script" && tag != "style");
+                    let text = decode_entities(&rest[..end], !RAW.contains(&tag.as_str()));
                     nodes.push(Parsed {
                         tag: "#text".into(),
                         attributes: BTreeMap::new(),
