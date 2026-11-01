@@ -411,6 +411,8 @@ pub(in crate::v9) struct Code {
     pub caches: crate::v9::vm::shape::SiteCaches,
     /// A stub's deferred compile: None for compiled code (see `lazy`).
     pub lazy: Option<Arc<lazy::Lazy>>,
+    /// Call and loop heat, and the compiled form once the JIT has produced one.
+    pub jit: crate::v9::jit::JitSlot,
 }
 
 impl Code {
@@ -517,6 +519,7 @@ impl Code {
                 .collect(),
             caches: crate::v9::vm::shape::SiteCaches::new(self.strings.len()),
             lazy: self.lazy.as_ref().map(|lazy| Arc::new(lazy.rebased(delta))),
+            jit: crate::v9::jit::JitSlot::default(),
         }
     }
     /** Bytes this code holds, for the process cache's bound. */
@@ -1206,6 +1209,7 @@ impl Compiler {
             env,
             arguments: state.arguments,
             caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
+            jit: crate::v9::jit::JitSlot::default(),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),
             templates: state.templates,

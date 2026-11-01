@@ -383,6 +383,8 @@ impl Vm<'_> {
         boundary: bool,
     ) -> Res<Invoked> {
         let code = self.runnable(site, "Invalid V9 function code site.")?;
+        // Each call warms the callee; the interpreter compiles it once its frame change is seen.
+        code.jit.warm();
         let flags = code.flags;
         if flags.constructor && construct.is_none() {
             let name = code.name.lossy();

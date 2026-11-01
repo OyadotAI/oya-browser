@@ -77,6 +77,16 @@ pub(super) const OP_FCMP_D: u32 = 0x1E60_2000;
 pub(super) const OP_FCMP_D_ZERO: u32 = 0x1E60_2008;
 /** Double register move. */
 pub(super) const OP_FMOV_D: u32 = 0x1E60_4000;
+/** Unsigned bitfield move, 64-bit: a logical shift right is this with immediate 63 in the top field. */
+pub(super) const OP_UBFM_64: u32 = 0xD340_0000;
+/** Top field of a logical shift right, the bit the shift amount ends at. */
+pub(super) const LSR_IMMS: u32 = 63;
+/** Shift of the immediate-r field in bitfield moves. */
+pub(super) const UBFM_IMMR_SHIFT: u32 = 16;
+/** Shift of the immediate-s field in bitfield moves. */
+pub(super) const UBFM_IMMS_SHIFT: u32 = 10;
+/** Register move, 32-bit: writes the low word and clears the high word. */
+pub(super) const OP_ORR_W: u32 = 0x2A00_03E0;
 
 /** Width of a general register field, in bits. */
 pub(super) const REG_BITS: u32 = 5;
@@ -138,6 +148,8 @@ pub(super) const ADR_HIGH_SHIFT: u32 = 5;
 /** Condition field of b.cond. */
 pub(super) const COND_BITS: u32 = 0xF;
 
+/** Bytes in one ARM64 instruction word. */
+pub(super) const INSTRUCTION_BYTES: usize = 4;
 /** Largest executable memory the JIT may hold across all compiled functions, in bytes. */
 pub(super) const MAX_CODE_BYTES: usize = 64 * 1024 * 1024;
 /** Page size the executable mappings round to. */
@@ -148,3 +160,11 @@ pub(super) const TIER_UP_THRESHOLD: u32 = 1_000;
 pub(super) const JIT_ENV: &str = "MARS_V9_JIT";
 /** Environment variable that overrides the tier-up threshold, used to force compilation in tests. */
 pub(super) const JIT_THRESHOLD_ENV: &str = "MARS_V9_JIT_THRESHOLD";
+/** Environment variable that reports each compilation on stderr when set to `1`. */
+pub(super) const JIT_TRACE_ENV: &str = "MARS_V9_JIT_TRACE";
+/** Value of `MARS_V9_JIT` that turns the JIT on. */
+pub(super) const JIT_VALUE_ON: &str = "1";
+/** Value of `MARS_V9_JIT` that turns the JIT off, even once it is the default. */
+pub(super) const JIT_VALUE_OFF: &str = "0";
+/** Whether the JIT compiles when `MARS_V9_JIT` is unset. Off until the full suite passes with it on. */
+pub(super) const DEFAULT_JIT_ENABLED: bool = false;

@@ -156,6 +156,7 @@ impl Code {
             callees: Vec::new(),
             caches: crate::v9::vm::shape::SiteCaches::new(0),
             lazy: None,
+            jit: crate::v9::jit::JitSlot::default(),
         }
     }
 }

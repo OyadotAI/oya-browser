@@ -5,7 +5,7 @@
  * before any branch can reach the new words. The total mapped size is bounded, and a region
  * unmaps when its owner drops. This module exists only on the target the JIT runs on.
  */
-use super::constants::{MAX_CODE_BYTES, PAGE_BYTES};
+use super::constants::{INSTRUCTION_BYTES, MAX_CODE_BYTES, PAGE_BYTES};
 use std::ffi::{c_int, c_void};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,8 +28,6 @@ const MAP_FAILED: *mut c_void = usize::MAX as *mut c_void;
 const JIT_WRITABLE: c_int = 0;
 /** `pthread_jit_write_protect_np` argument that makes the calling thread's JIT pages executable. */
 const JIT_EXECUTABLE: c_int = 1;
-/** Bytes per instruction word. */
-const WORD_BYTES: usize = 4;
 
 unsafe extern "C" {
     /** Maps anonymous memory; see mmap(2). */
@@ -101,7 +99,7 @@ impl ExecutableMemory {
     }
     /** Copies instruction words to the start of the region and makes them visible to fetch. */
     pub(in crate::v9) fn write(&mut self, words: &[u32]) -> Result<(), MemoryError> {
-        let bytes = words.len() * WORD_BYTES;
+        let bytes = words.len() * INSTRUCTION_BYTES;
         if bytes > self.length {
             return Err(MemoryError::TooLarge);
         }
@@ -202,7 +200,7 @@ mod tests {
     #[test]
     fn oversized_write_is_refused() {
         let mut region = ExecutableMemory::map(1).expect("map");
-        let words = vec![0xD503_201F; PAGE_BYTES / WORD_BYTES + 1];
+        let words = vec![0xD503_201F; PAGE_BYTES / INSTRUCTION_BYTES + 1];
         assert_eq!(region.write(&words), Err(MemoryError::TooLarge));
     }
 

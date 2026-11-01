@@ -99,6 +99,23 @@ pub(in crate::v9) fn mov_reg(rd: Reg, rm: Reg) -> Encoded<Word> {
     Ok(OP_MOV_REG | field(rm, RM_SHIFT)? | field(rd, 0)?)
 }
 
+/** `mov wd, wm`: copies the low 32 bits and zeroes the high 32, so a 64-bit index stays exact. */
+pub(in crate::v9) fn mov_reg_w(rd: Reg, rm: Reg) -> Encoded<Word> {
+    Ok(OP_ORR_W | field(rm, RM_SHIFT)? | field(rd, 0)?)
+}
+
+/** `lsr xd, xn, #shift`: a logical shift right by an immediate, as the unsigned bitfield move. */
+pub(in crate::v9) fn lsr_imm(rd: Reg, rn: Reg, shift: u32) -> Encoded<Word> {
+    if shift > LSR_IMMS {
+        return Err(EncodeError::OutOfRange);
+    }
+    Ok(OP_UBFM_64
+        | (shift << UBFM_IMMR_SHIFT)
+        | (LSR_IMMS << UBFM_IMMS_SHIFT)
+        | field(rn, RN_SHIFT)?
+        | field(rd, 0)?)
+}
+
 /** `add xd, xn, #imm12`. */
 pub(in crate::v9) fn add_imm(rd: Reg, rn: Reg, imm12: u32) -> Encoded<Word> {
     imm12_form(OP_ADD_IMM, rd, rn, imm12)
@@ -472,6 +489,9 @@ mod tests {
         assert_eq!(movn(1, 0, 0), Ok(0x9280_0001));
         assert_eq!(mov_reg(0, 1), Ok(0xaa01_03e0));
         assert_eq!(mov_reg(9, 30), Ok(0xaa1e_03e9));
+        assert_eq!(mov_reg_w(2, 0), Ok(0x2a00_03e2));
+        assert_eq!(lsr_imm(1, 0, 32), Ok(0xd360_fc01));
+        assert_eq!(lsr_imm(9, 20, 1), Ok(0xd341_fe89));
         assert_eq!(add_imm(0, 1, 16), Ok(0x9100_4020));
         assert_eq!(add_imm(2, SP, 32), Ok(0x9100_83e2));
         assert_eq!(sub_imm(0, 1, 0xfff), Ok(0xd13f_fc20));
