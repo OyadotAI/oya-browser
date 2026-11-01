@@ -8,7 +8,25 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
-- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; the 16,384-live-listener bound remains.
+- Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
+
+- Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
+
+- Added opt-in, privacy-limited script request diagnostics for native failure stages and HTTP response statuses, retaining the original POST failure before uncertainty wrapping without changing web-visible fetch behavior.
+
+- Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
+
+- Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
+
+- Added bounded listener-refusal counts and stages, with opt-in numeric startup logging, to distinguish registration pressure from restore or validation failures.
+
+- Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
+
+- Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
+
+- Scoped Mars intrinsic keyword width caches to each layout, publishing measured child constraints immediately and restoring enclosing widths after nested vertical layout. Earlier pages can no longer seed current-node measurements with stale widths.
+
+- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; listener storage remains bounded.
 
 - Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
 
