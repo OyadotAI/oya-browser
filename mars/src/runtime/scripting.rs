@@ -1848,9 +1848,9 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         .take(crate::network::network::constants::SCRIPT_REQUEST_HEADERS)
         .collect();
     let body = if method.is_safe() {
-        String::new()
+        Vec::new()
     } else if request.body_bytes.is_empty() {
-        request.body.clone().unwrap_or_default()
+        request.body.clone().unwrap_or_default().into_bytes()
     } else {
         identity_body(&request.body_bytes, &mut headers)?
     };
@@ -1871,18 +1871,21 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
 }
 
 /**
- * A binary body as the text Relay sends. Relay carries text bodies only, so a gzip or deflate
- * encoded body (YouTube gzips its Innertube JSON, the guide among it) goes out decoded, without
- * its Content-Encoding: the server reads the same JSON. Any other binary body, or one that does
- * not decode to UTF-8 within the body bound, cannot be sent and fails as a network error.
- * ponytail: decode-and-send until Relay's WebRequest body is bytes; then send them unchanged.
+ * A binary body as Relay sends it: byte for byte, as a browser does, so a protobuf or an
+ * arbitrary buffer reaches the server unchanged. A gzip or deflate encoded body (YouTube gzips
+ * its Innertube JSON, the guide among it) keeps going out decoded, without its Content-Encoding,
+ * as it always has: the server reads the same JSON. A body claiming another encoding, or one
+ * that does not decode within the body bound, cannot be sent and fails as a network error.
  */
-fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<String> {
+fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<Vec<u8>> {
     use std::io::Read;
-    let encoding = headers
+    let Some(encoding) = headers
         .iter()
         .find(|(name, _)| name == "content-encoding")
-        .map(|(_, value)| value.to_ascii_lowercase())?;
+        .map(|(_, value)| value.to_ascii_lowercase())
+    else {
+        return Some(bytes.to_vec());
+    };
     let limit = crate::constants::VM_REQUEST_BODY_BYTES as u64 + 1;
     let mut decoded = Vec::new();
     match encoding.as_str() {
@@ -1899,7 +1902,7 @@ fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<St
         return None;
     }
     headers.retain(|(name, _)| name != "content-encoding");
-    String::from_utf8(decoded).ok()
+    Some(decoded)
 }
 
 /** Admit exact fetch bytes or legacy decoded text within VM_RESPONSE_BYTES, exposing only

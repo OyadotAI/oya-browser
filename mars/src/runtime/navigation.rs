@@ -183,7 +183,7 @@ impl Runtime {
         if request.method == Method::Get {
             url.set_query(Some(&submission.encoded));
         } else {
-            request.body = submission.encoded;
+            request.body = submission.encoded.into_bytes();
         }
         url.set_fragment(None);
         request.url = url.into();

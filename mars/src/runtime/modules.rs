@@ -292,7 +292,7 @@ impl Runtime {
             worker_policy: None,
             url,
             method: Method::Get,
-            body: String::new(),
+            body: Vec::new(),
             headers: Vec::new(),
             mode: cors::Mode::Cors,
             credentials: Credentials::SameOrigin,

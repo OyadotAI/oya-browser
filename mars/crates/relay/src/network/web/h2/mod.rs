@@ -80,7 +80,7 @@ impl Session {
             state = self.wait(state, deadline).map_err(Failure::Final)?;
         }
         let head = request.method == crate::network::Method::Head;
-        let body = request.body.as_bytes();
+        let body = request.body.as_slice();
         let id = match state.open(&borrowed, weight, body, limit, head, deadline) {
             Ok(Some(id)) => id,
             Ok(None) => return Err(Failure::Retryable(state::reset_error())),
