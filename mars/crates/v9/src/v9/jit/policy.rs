@@ -5,8 +5,8 @@
  * compared without restarting the process.
  */
 use super::constants::{
-    DEFAULT_JIT_ENABLED, JIT_ENV, JIT_THRESHOLD_ENV, JIT_TRACE_ENV, JIT_VALUE_OFF, JIT_VALUE_ON,
-    TIER_UP_THRESHOLD,
+    DEFAULT_JIT_ENABLED, JIT_ENV, JIT_KILL_SWITCH_ENV, JIT_THRESHOLD_ENV, JIT_TRACE_ENV,
+    JIT_VALUE_OFF, JIT_VALUE_ON, TIER_UP_THRESHOLD,
 };
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -36,11 +36,21 @@ pub(in crate::v9) fn tracing() -> bool {
     settings().trace
 }
 
-/** Reads the on/off switch: `1` turns the JIT on, `0` turns it off, anything else keeps the default. */
+/** Reads the switches once: the kill switch wins, then `MARS_V9_JIT` (`1` on, `0` off), then the default. */
 fn env_enabled() -> bool {
-    match std::env::var(JIT_ENV).as_deref() {
-        Ok(JIT_VALUE_ON) => true,
-        Ok(JIT_VALUE_OFF) => false,
+    let kill = std::env::var(JIT_KILL_SWITCH_ENV).ok();
+    let switch = std::env::var(JIT_ENV).ok();
+    decide_enabled(kill.as_deref(), switch.as_deref())
+}
+
+/** The enable decision from the two raw environment values. Pure, so the precedence is testable. */
+fn decide_enabled(kill: Option<&str>, switch: Option<&str>) -> bool {
+    if kill == Some(JIT_VALUE_OFF) {
+        return false;
+    }
+    match switch {
+        Some(JIT_VALUE_ON) => true,
+        Some(JIT_VALUE_OFF) => false,
         _ => DEFAULT_JIT_ENABLED,
     }
 }
@@ -68,4 +78,26 @@ pub(in crate::v9) fn threshold() -> u32 {
 pub(in crate::v9) fn configure(enabled: bool, threshold: u32) {
     settings().enabled.store(enabled, Ordering::Relaxed);
     settings().threshold.store(threshold, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+mod tests {
+    /** The enable decision follows the kill switch first, then the switch, then the default. */
+    use super::*;
+
+    /** `MARS_JIT=0` turns the JIT off even when `MARS_V9_JIT=1` asks for it. */
+    #[test]
+    fn kill_switch_overrides_the_switch() {
+        assert!(!decide_enabled(Some("0"), Some("1")));
+        assert!(!decide_enabled(Some("0"), None));
+    }
+
+    /** Without the kill switch, `MARS_V9_JIT` decides, and anything else keeps the default. */
+    #[test]
+    fn switch_decides_when_the_kill_switch_is_not_set() {
+        assert!(decide_enabled(None, Some("1")));
+        assert!(!decide_enabled(None, Some("0")));
+        assert_eq!(decide_enabled(None, Some("yes")), DEFAULT_JIT_ENABLED);
+        assert_eq!(decide_enabled(Some("1"), None), DEFAULT_JIT_ENABLED);
+    }
 }

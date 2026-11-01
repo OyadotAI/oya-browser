@@ -160,6 +160,8 @@ pub(super) const TIER_UP_THRESHOLD: u32 = 1_000;
 pub(super) const JIT_ENV: &str = "MARS_V9_JIT";
 /** Environment variable that overrides the tier-up threshold, used to force compilation in tests. */
 pub(super) const JIT_THRESHOLD_ENV: &str = "MARS_V9_JIT_THRESHOLD";
+/** Kill switch: `MARS_JIT=0` turns tier-up off for the process, whatever `MARS_V9_JIT` says. */
+pub(super) const JIT_KILL_SWITCH_ENV: &str = "MARS_JIT";
 /** Environment variable that reports each compilation on stderr when set to `1`. */
 pub(super) const JIT_TRACE_ENV: &str = "MARS_V9_JIT_TRACE";
 /** Value of `MARS_V9_JIT` that turns the JIT on. */
