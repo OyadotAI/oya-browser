@@ -23,6 +23,8 @@ const SOURCE: &str = concat!(
     "\n",
     include_str!("performance_observer.js"),
     "\n",
+    include_str!("file_reader.js"),
+    "\n",
     include_str!("geometry.js"),
     "\n",
     include_str!("view_transitions.js"),

@@ -1130,6 +1130,7 @@ fn singletons(b: &mut Builder) {
         1,
         crate::v9::builtins::random_values,
     );
+    super::subtle::install(b, crypto);
     b.global("crypto", crypto);
 }
 
