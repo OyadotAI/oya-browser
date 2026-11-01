@@ -730,10 +730,21 @@ fn sync_send(vm: &mut Vm, id: ObjectId, request: HostRequest) -> Res<()> {
     if !payload_admitted(&vm.page.state, &request) {
         return xhr_request_error(vm, id, "error");
     }
-    let Some(mut response) = sync_answer(vm, &request) else {
+    let Some(response) = sync_answer(vm, &request) else {
         vm.page.effects.sync_requests.push(request);
         return Err(vm.unsupported_error("synchronous XMLHttpRequest"));
     };
+    if let Some(message) = &response.error {
+        return Err(vm.dom_exception(
+            "NetworkError",
+            &format!("Failed to execute 'send' on 'XMLHttpRequest': {message}."),
+        ));
+    }
+    deliver_sync(vm, id, response)
+}
+
+/** Delivers a synchronous answer's body, bounded as an async answer is, then its events. */
+fn deliver_sync(vm: &mut Vm, id: ObjectId, mut response: HostResponse) -> Res<()> {
     if !response.body_bytes.is_empty() {
         response.body = response_body::text(&response.body_bytes);
     }

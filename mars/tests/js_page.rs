@@ -982,3 +982,17 @@ fn synchronous_xhr_answers_before_the_next_statement() {
     assert!(texts(&page).contains("sync 200 hello"), "{page}");
     assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
 }
+
+/** A synchronous request a different origin refuses (no CORS grant) throws NetworkError at send(),
+which the page's own try/catch takes; the statements after it still run. */
+#[test]
+fn refused_synchronous_cross_origin_request_is_a_catchable_network_error() {
+    let other = Fixture::routes(vec![("/data", reply("text/plain", "", "secret"))]);
+    let body = format!(
+        "<p id=out>start</p><script>let r='';const x=new XMLHttpRequest();x.open('GET','{}/data',false);\
+         try{{x.send()}}catch(e){{r=e.name}}document.getElementById('out').textContent='after '+r;</script>",
+        other.url
+    );
+    let (_fixture, _runtime, page) = load(&body, vec![]);
+    assert!(texts(&page).contains("after NetworkError"), "{page}");
+}

@@ -113,3 +113,24 @@ fn oversized_synchronous_body_fails_the_request_without_recording_it() {
     assert!(common::failure(&execution).is_none());
     assert_eq!(common::global(&execution, "after"), "error");
 }
+
+/** A synchronous request the network refused throws NetworkError at send(), where the page's own
+try/catch can take it, and the script carries on after the catch. */
+#[test]
+fn failed_synchronous_request_throws_network_error_that_the_page_catches() {
+    let mut environment = common::environment();
+    environment.sync_answers.push(SyncAnswer {
+        request: get("https://other.example/a"),
+        response: HostResponse {
+            error: Some("Failed to fetch".into()),
+            ..HostResponse::default()
+        },
+    });
+    let execution = common::load_with(
+        "let r='';let after='no';const x=new XMLHttpRequest();x.open('GET','https://other.example/a',false);try{x.send()}catch(e){r=e.name}after='yes';",
+        &environment,
+    );
+    assert!(common::failure(&execution).is_none());
+    assert_eq!(common::global(&execution, "r"), "NetworkError");
+    assert_eq!(common::global(&execution, "after"), "yes");
+}

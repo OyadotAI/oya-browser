@@ -915,7 +915,11 @@ impl Runtime {
             for request in requests {
                 let deadline = Instant::now() + crate::constants::SYNC_XHR_WAIT;
                 let preflights = &mut page.scripting.preflights;
-                let response = self.script_request(&base, &request, preflights, deadline, None)?;
+                // A request that fails (unreachable, CORS-refused) answers as a network error, which
+                // V9's send() throws as NetworkError; it must not fail the whole step.
+                let response = self
+                    .script_request(&base, &request, preflights, deadline, None)
+                    .unwrap_or_else(|_| failed(request.id, FAILED_TO_FETCH));
                 environment
                     .sync_answers
                     .push(SyncAnswer { request, response });
