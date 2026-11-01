@@ -1,17 +1,20 @@
 /**
  * `document.styleSheets`, a style or link element's `sheet`, and form validity: the objects a
  * page reads to find the style sheet it just inserted or to check a field before submitting.
- * V9 has no cascade, so a sheet lists its rules by splitting the element's text, and
- * `insertRule` appends to that text (Eye picks the change up as a sheet change); every field
- * is valid, since V9 runs no constraint validation.
+ * V9 has no cascade, so a sheet keeps its rules as the element's text: `insertRule` and
+ * `deleteRule` edit that text at the boundaries of its top-level rules (Eye picks the change up
+ * as a sheet change), so a nested `@media` block survives an edit around it. Every field is
+ * valid, since V9 runs no constraint validation.
  */
 use super::dom::{self, DOCUMENT, wrap};
 use super::host_data;
+use super::sheet_rules::top_level_rules;
 use crate::v9::value::JsValue;
 use crate::v9::vm::data::{Class, HostData};
 use crate::v9::vm::heap::Object;
 use crate::v9::vm::realm::realm;
 use crate::v9::vm::{Call, Res, Vm};
+use std::ops::Range;
 
 /** The style-sheet-bearing elements of the document, in document order. */
 fn sheet_nodes(vm: &mut Vm) -> Vec<usize> {
@@ -106,17 +109,23 @@ fn sheet_node(vm: &mut Vm, call: &Call) -> Res<usize> {
     }
 }
 
-/** The sheet's rules as `{cssText, selectorText, style, type}` records, one per `}`-ended block. */
-fn rules(vm: &mut Vm, node: usize) -> Res<JsValue> {
+/** The sheet's text and the byte ranges of its top-level rules, in order.
+ponytail: every insertRule/deleteRule rescans the whole sheet text, so n edits cost O(n * text);
+keep the rule ranges beside the text, dropped on set_text, when a large sheet shows in a profile. */
+fn sheet_rule_ranges(vm: &mut Vm, node: usize) -> (String, Vec<Range<usize>>) {
     let text = vm.page.text_content(node);
+    let ranges = top_level_rules(&text);
+    (text, ranges)
+}
+
+/** The sheet's rules as `{cssText, selectorText, style, type}` records, one per top-level rule. */
+fn rules(vm: &mut Vm, node: usize) -> Res<JsValue> {
+    let (text, ranges) = sheet_rule_ranges(vm, node);
     let mut out = Vec::new();
-    for block in text.split('}') {
-        let block = block.trim();
-        if block.is_empty() {
-            continue;
-        }
+    for range in ranges {
+        let block = text.get(range).unwrap_or_default().trim();
         let rule = vm.new_object()?;
-        vm.put(rule, "cssText", JsValue::string(&format!("{block} }}"))?)?;
+        vm.put(rule, "cssText", JsValue::string(block)?)?;
         let selector = block.split('{').next().unwrap_or("").trim();
         vm.put(rule, "selectorText", JsValue::string(selector)?)?;
         vm.put(
@@ -168,25 +177,20 @@ pub(in crate::v9) fn sheet_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = sheet_node(vm, &call)?;
     match dom::native_name(&call) {
-        "insertRule" | "addRule" => {
-            let rule = if dom::native_name(&call) == "addRule" {
-                let selector = vm.to_text(&call.arg(0))?;
-                let body = vm.to_text(&call.arg(1))?;
-                format!("{selector} {{ {body} }}")
-            } else {
-                vm.to_text(&call.arg(0))?
+        "insertRule" => {
+            let rule = vm.to_text(&call.arg(0))?;
+            let index = vm.to_number(&call.arg(1))?;
+            insert_rule(vm, node, &rule, Some(index))
+        }
+        "addRule" => {
+            let selector = vm.to_text(&call.arg(0))?;
+            let body = vm.to_text(&call.arg(1))?;
+            let rule = format!("{selector} {{ {body} }}");
+            let index = match call.arg(2) {
+                JsValue::Undefined => None,
+                value => Some(vm.to_number(&value)?),
             };
-            let mut text = vm.page.text_content(node);
-            text.push('\n');
-            text.push_str(&rule);
-            vm.page
-                .set_text(node, &text)
-                .map_err(|error| dom::dom_error(vm, error))?;
-            let count = text
-                .split('}')
-                .filter(|block| !block.trim().is_empty())
-                .count();
-            Ok(JsValue::Number(count.saturating_sub(1) as f64))
+            insert_rule(vm, node, &rule, index)
         }
         "deleteRule" | "removeRule" => {
             let index =
@@ -209,28 +213,51 @@ pub(in crate::v9) fn sheet_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-/** Remove the rule at `index` from the sheet's text, as deleteRule does. Rules are the blocks
-between closing braces, as `rules` reads them, so the rest keep their order. An index outside the
-rules is an IndexSizeError, which a page's own cleanup code relies on to fail loudly.
-ponytail: nested at-rule blocks split like any other, the ceiling `insertRule` and `cssRules`
-already share; a real CSS rule parser is the upgrade. */
-fn delete_rule(vm: &mut Vm, node: usize, index: f64) -> Res<()> {
-    let text = vm.page.text_content(node);
-    let mut blocks: Vec<&str> = text
-        .split('}')
-        .map(str::trim)
-        .filter(|block| !block.is_empty())
-        .collect();
-    let position = (index >= 0.0 && index < blocks.len() as f64).then_some(index as usize);
-    let Some(position) = position else {
-        return Err(vm.dom_exception("IndexSizeError", "The index is outside the sheet's rules."));
+/** The rule index a sheet method's argument names, WebIDL style: NaN counts as 0 and fractions
+truncate. Returns None past `len`, which callers turn into an IndexSizeError. */
+fn sheet_index(index: f64, len: usize) -> Option<usize> {
+    let whole = if index.is_nan() { 0.0 } else { index.trunc() };
+    (whole >= 0.0 && whole <= len as f64).then_some(whole as usize)
+}
+
+/** Insert `rule` before the top-level rule at `index`, or append it when `index` is None or
+equals the rule count, and return the index it landed at. The text around the insertion point is
+kept as it was, so nested blocks and comments stay whole. An index past the rule count is an
+IndexSizeError. */
+fn insert_rule(vm: &mut Vm, node: usize, rule: &str, index: Option<f64>) -> Res<JsValue> {
+    let (text, ranges) = sheet_rule_ranges(vm, node);
+    let position = match index {
+        None => ranges.len(),
+        Some(index) => sheet_index(index, ranges.len()).ok_or_else(|| index_error(vm))?,
     };
-    blocks.remove(position);
-    let rebuilt: String = blocks.iter().map(|block| format!("{block} }}\n")).collect();
+    let edited = match ranges.get(position) {
+        Some(next) => format!("{}{rule}\n{}", &text[..next.start], &text[next.start..]),
+        None => format!("{text}\n{rule}"),
+    };
     vm.page
-        .set_text(node, &rebuilt)
+        .set_text(node, &edited)
+        .map_err(|error| dom::dom_error(vm, error))?;
+    Ok(JsValue::Number(position as f64))
+}
+
+/** Remove the top-level rule at `index`, keeping the text around it as it was. An index outside
+the rules is an IndexSizeError, which a page's own cleanup code relies on to fail loudly. */
+fn delete_rule(vm: &mut Vm, node: usize, index: f64) -> Res<()> {
+    let (text, ranges) = sheet_rule_ranges(vm, node);
+    let range = sheet_index(index, ranges.len())
+        .filter(|position| *position < ranges.len())
+        .map(|position| ranges[position].clone())
+        .ok_or_else(|| index_error(vm))?;
+    let edited = format!("{}{}", &text[..range.start], &text[range.end..]);
+    vm.page
+        .set_text(node, &edited)
         .map_err(|error| dom::dom_error(vm, error))?;
     Ok(())
+}
+
+/** The IndexSizeError a sheet method throws for an index outside its rules. */
+fn index_error(vm: &mut Vm) -> crate::v9::vm::Thrown {
+    vm.dom_exception("IndexSizeError", "The index is outside the sheet's rules.")
 }
 
 /** `element.validity`: a ValidityState in which every field is valid. */

@@ -72,6 +72,7 @@ pub(in crate::v9) use trusted_types::trusted_script_text;
 pub(in crate::v9) mod frame_directory;
 mod scrolling;
 mod selector;
+mod sheet_rules;
 mod sheets;
 pub(in crate::v9) use sheets::publish_local as publish_local_sheets;
 pub(in crate::v9) mod media;

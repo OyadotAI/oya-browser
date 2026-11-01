@@ -901,3 +901,19 @@ fn meta_refresh_chain_is_bounded() {
     assert_eq!(settled, later, "the refresh loop kept going");
     assert!(settled <= LOADS_PER_CHAIN, "{settled} page loads");
 }
+
+/** deleteRule on a sheet with a nested `@media` block leaves the rules after it in force, as
+styled-components' cleanup needs: the page's hidden drawer stays hidden instead of falling inside a
+media block whose closing brace was lost. */
+#[test]
+fn delete_rule_leaves_later_rules_in_force_after_a_media_block() {
+    let (_fixture, _runtime, page) = load(
+        "<style id=s>@media screen and (max-width: 599px){.m{color:red}}\n.gone{color:blue}\n\
+         .target{visibility:hidden}</style><div class=target id=t>x</div><p id=o></p>\
+         <script>const s=document.getElementById('s');s.sheet.deleteRule(1);\
+         document.getElementById('o').textContent='vis='+\
+         getComputedStyle(document.getElementById('t')).visibility;</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("vis=hidden"), "{page}");
+}
