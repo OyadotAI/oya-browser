@@ -5,9 +5,7 @@
  * compiled child must also report compilations on stderr, so the comparison cannot pass by the JIT
  * never running.
  */
-mod common;
-
-use common::eval;
+use crate::common::eval;
 use std::process::Command;
 
 /** Set to the results file's path in the child, so it runs the programs instead of spawning more. */
@@ -118,7 +116,7 @@ fn run_child(tier: &str, environment: &[(&str, &str)]) -> (Vec<String>, String) 
     let output = Command::new(executable)
         .args([
             "--exact",
-            "jit_matches_interpreter",
+            "jit_equivalence::jit_matches_interpreter",
             "--nocapture",
             "--test-threads=1",
         ])

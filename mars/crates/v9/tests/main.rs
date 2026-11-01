@@ -196,6 +196,7 @@ mod iterator_joint;
 mod iterator_lazy;
 mod iterator_pattern_close;
 mod iterator_protocol;
+mod jit_equivalence;
 mod jsfunc;
 mod json_coercion;
 mod json_raw;
