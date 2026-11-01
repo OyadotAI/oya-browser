@@ -2,14 +2,14 @@
  * Module graphs load in rounds: V9 names the module URLs a graph needs, the coordinator fetches
  * them the way a browser fetches module scripts (CORS mode, same-origin credentials, a
  * JavaScript media type, the page's Content-Security-Policy and any integrity metadata), and the
- * next V9 step continues the graph. A module that cannot be fetched, or would pass MODULES or
- * MODULE_BYTES, is delivered as failed, which fails only the graphs that import it.
+ * next V9 step continues the graph. A module that cannot be fetched, or would pass MODULE_SOURCES
+ * or MODULE_BYTES, is delivered as failed, which fails only the graphs that import it.
  */
 use super::page::Page;
 use super::resources::{Credentials, ScriptAnswer, ScriptRequest};
 use super::scripting::Step;
 use super::supervisor::Runtime;
-use crate::constants::{MODULE_BYTES, MODULES, SCRIPT_BYTES};
+use crate::constants::{MODULE_BYTES, MODULE_SOURCES, SCRIPT_BYTES, SCRIPT_LOADS};
 use crate::document::{ScriptKind, ScriptMode, ScriptResource};
 use crate::network::{Destination, Method, WebRequest, cors};
 use crate::protocol::{EngineError, EngineResult};
@@ -18,14 +18,15 @@ use crate::v9::{
     ScriptLoadRequest,
 };
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, Instant};
 use url::Url;
 
-/// Fetch rounds one step may make; each round fetches every module the last one found.
-/// github.com's graph is three deep, but bundler chunk graphs (nytimes.com) run past eight, and
-/// what is still pending when rounds run out fails its whole graph.
-const MODULE_ROUNDS: usize = 64;
+/// Fetch rounds one step may make; each round fetches every module the last one found. A chain
+/// of dynamic scripts, each inserted by the last one's load, needs one round per link, so the
+/// rounds match SCRIPT_LOADS, the most a page may start. MODULE_WALL still bounds the time; what
+/// is still pending when rounds run out fails its whole graph.
+const MODULE_ROUNDS: usize = SCRIPT_LOADS;
 /// Real time one step may spend loading module graphs, inside the navigation's own deadline.
 const MODULE_WALL: Duration = Duration::from_millis(15_000);
 
@@ -43,6 +44,9 @@ pub(super) struct Modules {
     pub pending_scripts: Vec<ScriptLoadRequest>,
     /// Bytes of delivered module sources, bounded by MODULE_BYTES.
     bytes: usize,
+    /// Every URL delivered to V9, as a module or a classic script: a set, so the check before
+    /// each fetch costs the same whether the page has ten scripts or a thousand.
+    delivered: HashSet<String>,
     /// Frame documents V9 asked for that the next round fetches.
     pub frame_requests: Vec<FrameRequest>,
     /// Bytes of frame documents delivered to the page, bounded by FRAME_BYTES_TOTAL.
@@ -91,26 +95,31 @@ impl Modules {
         }
         modules
     }
-    /** Hand one module or classic script (or its failure) to V9, refusing it past the page's
-    module bounds, which fetched classic scripts share. */
-    fn deliver(&mut self, url: String, source: Option<String>, classic: bool) {
-        if self.input.sources.len() >= MODULES {
-            return;
+    /**
+     * Hand one module or classic script to V9, or its failure when it has no source: a source
+     * over the byte bounds is delivered as failed, so its element still fires `error`. Returns
+     * false only when the source count is full, which V9's own caps make unreachable.
+     */
+    fn deliver(&mut self, url: String, source: Option<String>, classic: bool) -> bool {
+        if self.input.sources.len() >= MODULE_SOURCES {
+            return false;
         }
         let fits = |source: &String| {
             source.len() <= SCRIPT_BYTES && self.bytes + source.len() + url.len() <= MODULE_BYTES
         };
         let source = source.filter(fits);
         self.bytes += url.len() + source.as_ref().map_or(0, String::len);
+        self.delivered.insert(url.clone());
         self.input.sources.push(ModuleSource {
             url,
             source,
             classic,
         });
+        true
     }
     /** Whether a URL was delivered already, as a module or a classic script. */
     fn known(&self, url: &str) -> bool {
-        self.input.sources.iter().any(|module| module.url == url)
+        self.delivered.contains(url)
     }
 }
 
@@ -179,13 +188,12 @@ impl Runtime {
             if known(&request.url, page) {
                 continue;
             }
-            let full = page.scripting.modules.input.sources.len() >= MODULES;
-            let source = if give_up || full {
+            let source = if give_up {
                 None
             } else {
                 self.fetch_module(page, &base, &request, deadline)?
             };
-            page.scripting.modules.deliver(request.url, source, false);
+            hand_over(page, request.url, source, false);
         }
         Ok(())
     }
@@ -207,13 +215,12 @@ impl Runtime {
             if page.scripting.modules.known(&request.url) {
                 continue;
             }
-            let full = page.scripting.modules.input.sources.len() >= MODULES;
-            let source = if give_up || full {
+            let source = if give_up {
                 None
             } else {
                 self.fetch_script_load(page, &base, &request, deadline)?
             };
-            page.scripting.modules.deliver(request.url, source, true);
+            hand_over(page, request.url, source, true);
         }
         Ok(())
     }
@@ -294,6 +301,21 @@ impl Runtime {
         let javascript = mars_core::http::is_javascript_mime_essence(&response.mime);
         Ok((response.status == 200 && javascript && verified).then_some(response.source))
     }
+}
+
+/**
+ * Deliver one fetched source to V9 and, should V9's caps ever refuse it, say so in the console so
+ * the refusal is never silent.
+ */
+fn hand_over(page: &mut Page, url: String, source: Option<String>, classic: bool) {
+    if page.scripting.modules.deliver(url.clone(), source, classic) {
+        return;
+    }
+    let entry = crate::v9::ConsoleEntry {
+        level: "error".into(),
+        text: format!("Script {url} was not delivered: the page has too many sources."),
+    };
+    super::scripting::record_console(&mut page.scripting, vec![entry], 0);
 }
 
 /** The first hop `fetch_for_script` sends for a module, so a batch prefetch can answer it. */

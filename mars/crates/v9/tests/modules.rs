@@ -450,7 +450,7 @@ fn module_bounds_are_enforced() {
     let environment = environment();
     let sources = vec![String::new()];
     let mut input = ModuleInput::default();
-    for index in 0..=mars_v9::constants::MODULES {
+    for index in 0..=mars_v9::constants::MODULE_SOURCES {
         input.sources.push(ModuleSource {
             url: format!("{BASE}{index}.js"),
             source: Some(String::new()),

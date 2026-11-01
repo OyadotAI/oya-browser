@@ -116,6 +116,15 @@ pub const SCRIPT_TOTAL_BYTES: usize = 4 * SCRIPT_BYTES;
 /// JavaScript modules one page may load, statically imported and dynamically imported together;
 /// github.com's home page loads 77. A module past it fails its graph, never the page.
 pub const MODULES: usize = 256;
+/// Classic `<script src>` elements one page may start over its life, inline ones included. Real
+/// pages insert hundreds of dynamic scripts (YouTube's chunk loader does), so this sits well past
+/// them. It is cumulative per page, not per request: every V9 request re-supplies the page's
+/// sources, which compile at fixed offsets, so admitted loads cannot be pruned. An element past
+/// it fails at once with `error`; it never hangs.
+pub const SCRIPT_LOADS: usize = 1024;
+/// Sources the app may deliver to V9 for one page: its classic script loads plus its modules.
+/// Both are already bounded above, so every admitted source fits this count.
+pub const MODULE_SOURCES: usize = SCRIPT_LOADS + MODULES;
 /// Every fetched module's source crosses the V9 pipe beside the classic sources on each request,
 /// so they share this allowance (github.com's graph is 6.7 MB); one module stays under
 /// SCRIPT_BYTES. A module past either bound fails its graph.
@@ -490,7 +499,7 @@ const _: () = assert!(
         <= FRAME_BYTES
 );
 /* One module fits the per-script source bound, and the graph's sources fit their own total. */
-const _: () = assert!(SCRIPT_BYTES <= MODULE_BYTES && MODULES <= MODULE_BYTES);
+const _: () = assert!(SCRIPT_BYTES <= MODULE_BYTES && MODULE_SOURCES <= MODULE_BYTES);
 /* Each live closure can keep its own environment alive. */
 const _: () = assert!(VM_ENVIRONMENTS >= VM_FUNCTIONS);
 /* No single string can exceed what the live heap may hold. */

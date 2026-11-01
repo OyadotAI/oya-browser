@@ -1437,6 +1437,10 @@ pub(in crate::v9) struct PageState {
     /** Script elements scripts connected, in start order: each `<script src>` asks the app for
     its source once and runs once when it arrives; an inline one is recorded as done. */
     pub script_loads: Vec<ScriptLoad>,
+    /// Every script element that has started or been refused, by node identity: a set, so a
+    /// connected script is checked in constant time and never starts or fails twice.
+    #[serde(default)]
+    pub script_elements: std::collections::BTreeSet<usize>,
     /** Stable parser-created script identities survive module loading pauses. */
     #[serde(default)]
     pub parsed_scripts: Option<Vec<usize>>,
