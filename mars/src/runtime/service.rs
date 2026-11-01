@@ -633,6 +633,14 @@ pub(super) enum PageAction {
         #[serde(default)]
         value: Option<String>,
     },
+    /** Typed strokes into one field, each delivered as a person's keyboard would; `value` is the
+    field's text, absent for a secret field whose text never enters the engine. */
+    Typed {
+        target: usize,
+        strokes: Vec<v9::Stroke>,
+        #[serde(default)]
+        value: Option<String>,
+    },
     /** A native key dispatches trusted events and only its typed implemented default action. */
     Keyboard {
         key: v9::KeyboardKey,
@@ -812,6 +820,11 @@ fn run_action(
         PageAction::Event { event } => v9::page_event(input, state()?, event),
         PageAction::Click { target } => v9::click_page(input, state()?, target),
         PageAction::Input { target, value } => v9::input_page(input, state()?, target, value),
+        PageAction::Typed {
+            target,
+            strokes,
+            value,
+        } => v9::typed_page(input, state()?, target, strokes, value),
         PageAction::Keyboard { key, target } => v9::keyboard_page(input, state()?, key, target),
         PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
         PageAction::Observe => v9::observe_page(input, state()?),

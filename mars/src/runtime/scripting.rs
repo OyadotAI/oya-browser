@@ -225,6 +225,8 @@ pub(super) struct Scripting {
     pub submit_allowed: Option<usize>,
     /// The last native Enter went uncancelled, so its default action follows (`press_enter`).
     pub key_default: bool,
+    /// Per typed stroke of the last `typed` step, whether the page let its edit through.
+    pub typed_applied: Vec<bool>,
     /// A document scroll offset the page's scripts asked for and the runtime has not adopted.
     pub scroll_y: Option<f64>,
     /// The horizontal document scroll offset the page's scripts asked for, not yet adopted.
@@ -341,6 +343,7 @@ impl Default for Scripting {
             history_records: Vec::new(),
             submit_allowed: None,
             key_default: false,
+            typed_applied: Vec::new(),
             scroll_y: None,
             scroll_x: None,
             outbox: Vec::new(),
@@ -682,6 +685,7 @@ impl Runtime {
         apply_history(page, &effects.history);
         page.scripting.submit_allowed = effects.submit;
         page.scripting.key_default = effects.key_default;
+        page.scripting.typed_applied = std::mem::take(&mut effects.typed);
         super::supervisor::perf::record("script.step", started, || format!("{kind}\t{changed}"));
         page.scripting.modules.pending.extend(module_requests);
         page.scripting

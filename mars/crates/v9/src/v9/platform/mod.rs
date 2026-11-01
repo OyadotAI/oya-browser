@@ -44,7 +44,7 @@ pub(in crate::v9) mod messaging;
 pub(in crate::v9) mod resize_observers;
 mod xml_frames;
 mod xml_serializer;
-pub(in crate::v9) use keyboard::press_key;
+pub(in crate::v9) use keyboard::{press_key, type_strokes};
 mod attr;
 mod attr_dom;
 mod listener_store;
@@ -1020,6 +1020,10 @@ pub struct HostEffects {
     /// default (submit the field's form, or a newline in a textarea).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub key_default: bool,
+    /// Per typed stroke, whether the page let its edit through: no keydown, keypress or
+    /// beforeinput was cancelled. The app applies a secret field's edits itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub typed: Vec<bool>,
     /// pushState, replaceState and hash changes, in order.
     pub history: Vec<HistoryRecord>,
     /// Raw `document.cookie = ...` fields, in order, for `CookieJar::set_document_cookie`.

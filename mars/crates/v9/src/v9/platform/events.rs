@@ -894,15 +894,59 @@ pub(in crate::v9::platform) fn fire_keyboard(
 /** The Windows virtual key code browsers report as `keyCode` for the keys Mars delivers. */
 fn legacy_key_code(key: &str) -> f64 {
     match key {
+        "Backspace" => BACKSPACE_KEY_CODE,
         "Enter" => ENTER_KEY_CODE,
         "Escape" => ESCAPE_KEY_CODE,
         _ => 0.0,
     }
 }
+/** `keyCode` of Backspace. */
+const BACKSPACE_KEY_CODE: f64 = 8.0;
 /** `keyCode` of Enter. */
 const ENTER_KEY_CODE: f64 = 13.0;
 /** `keyCode` of Escape. */
 const ESCAPE_KEY_CODE: f64 = 27.0;
+
+/** The InputEvent intrinsic, which `beforeinput` and `input` events take. */
+static INPUT_PROTOTYPE: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
+
+/** Register the InputEvent intrinsic while the platform builds its deterministic native realm. */
+pub(in crate::v9::platform) fn input_prototype(id: ObjectId) {
+    let _ = INPUT_PROTOTYPE.set(id);
+}
+
+/** Dispatch a trusted `beforeinput` or `input` event, carrying the edit's `inputType` and the
+inserted `data` (null when the edit inserts none). Only `beforeinput` is cancelable. */
+pub(in crate::v9::platform) fn fire_input(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    input_type: &str,
+    data: Option<&str>,
+    cancelable: bool,
+) -> Res<bool> {
+    let event = create_event(vm, kind, true, cancelable)?;
+    let id = event.object().expect("native input event");
+    vm.pin(event);
+    let proto = vm.intrinsic_id(*INPUT_PROTOTYPE.get().expect("input prototype installed"));
+    vm.set_proto(id, Some(proto))?;
+    let data = match data {
+        Some(text) => JsValue::string(text)?,
+        None => JsValue::Null,
+    };
+    for (name, value) in [("inputType", JsValue::string(input_type)?), ("data", data)] {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(value),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
+    with_event(vm, id, |data| data.trusted = true);
+    dispatch(vm, target, id)
+}
 
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {

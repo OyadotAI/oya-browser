@@ -1,8 +1,10 @@
 /** Human and agent controls share native targeting, validation and V9 event execution. */
 mod activation;
+mod typing;
 use super::{page::Page, supervisor::Runtime};
 use crate::document::{DomChange, Node};
 use crate::protocol::{EngineError, EngineResult, parameters};
+use crate::v9::Stroke;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -90,7 +92,8 @@ impl Runtime {
         let result = self.finish_mutation(page)?;
         Ok(edit_result(result, &input.node_id))
     }
-    /** Native text entry replaces only an enabled input's literal value. */
+    /** Native text entry replaces only an enabled input's literal value, as a fill does: one
+    beforeinput and input at the field, then change. */
     pub(super) fn type_text(&mut self, params: Value) -> EngineResult<Value> {
         let input: Edit = parameters(params)?;
         let mut page = self.current()?.clone();
@@ -100,22 +103,15 @@ impl Runtime {
             &input.node_id,
             input.expected_revision,
         )?;
-        let value = self.call(
-            "document",
-            "document.value",
-            json!({"document":page.document,"local_id":node.local_id,"value":input.text}),
-        )?;
-        page.document = self.returned("document", value)?;
-        page.styled = false;
-        self.notify_input(&mut page, &node, &input.text)?;
+        self.type_strokes(&mut page, &node, vec![Stroke::Replace(input.text)])?;
         let result = self.finish_mutation(page)?;
         Ok(edit_result(result, &input.node_id))
     }
     /**
-     * Tell the page's scripts what was typed: a trusted `input` and `change` at the field, then
-     * a short settle so what the handlers start lands in the same commit. A secret field's value
-     * never reaches V9. A step V9 refuses leaves the typed value in place, as a browser keeps
-     * the text when a handler throws; authority and service failures still stop the operation.
+     * Tell the page's scripts a select's option changed: a trusted `input` and `change` at the
+     * field, then a short settle so what the handlers start lands in the same commit. A secret
+     * field's value never reaches V9. A step V9 refuses leaves the value in place; authority and
+     * service failures still stop the operation.
      */
     fn notify_input(&mut self, page: &mut Page, node: &Node, text: &str) -> EngineResult<()> {
         if !page.scripting.loaded {

@@ -8,7 +8,7 @@ mod builtins;
 mod compile;
 mod errors;
 mod keyboard;
-pub use keyboard::{KeyboardKey, keyboard_page};
+pub use keyboard::{KeyboardKey, Stroke, keyboard_page, typed_page};
 mod legacy_handlers;
 mod lexer;
 mod literals;

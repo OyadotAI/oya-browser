@@ -684,6 +684,9 @@ fn event_types(b: &mut Builder) {
         if name == "KeyboardEvent" {
             events::keyboard_prototype(sub);
         }
+        if name == "InputEvent" {
+            events::input_prototype(sub);
+        }
         if name == "CustomEvent" {
             b.ids.custom_event_prototype = sub;
             // Only CustomEvent reads `detail`; a plain Event takes it as an own property, as

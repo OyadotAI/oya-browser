@@ -5,6 +5,7 @@
 use super::super::supervisor::Runtime;
 use crate::document::Node;
 use crate::protocol::{EngineError, EngineResult, Request, parameters};
+use crate::v9::Stroke;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -261,15 +262,21 @@ impl Runtime {
             .iter()
             .any(|modifier| modifier == "Control" || modifier == "Meta");
         let typed = |value: String| Ok(("page.type", json!({"text":value})));
+        let keys = |strokes: Vec<Stroke>| Ok(("page.keys", json!({"strokes":strokes})));
+        let characters = |chars: &str| chars.chars().map(Stroke::Character).collect::<Vec<_>>();
         if let Some(appended) = &input.text {
             return if text {
-                typed(format!("{}{appended}", node.value))
+                keys(characters(appended))
             } else {
                 Err(not_text())
             };
         }
         match key {
             "Enter" if text && node.tag == "textarea" => typed(format!("{}\n", node.value)),
+            // Implicit submission needs a form: a field outside one does nothing, as in a browser.
+            "Enter" if text && crate::document::form_owner(&page.document, node).is_none() => {
+                keys(Vec::new())
+            }
             "Enter" if text => Ok(("page.submit", json!({}))),
             "Enter" if ["a", "button"].contains(&node.tag.as_str()) || button(node) => {
                 Ok(("page.click", json!({})))
@@ -279,12 +286,13 @@ impl Runtime {
                 "page.set_checked",
                 json!({"checked":node.input_type() == "radio" || !node.checked}),
             )),
-            "Space" | " " if text => typed(format!("{} ", node.value)),
+            "Space" | " " if text => keys(characters(" ")),
             "Space" | " " if node.tag == "button" || button(node) => Ok(("page.click", json!({}))),
-            "Backspace" if text => typed(erase(&node.value, command, &input.modifiers)),
-            single if text && !command && single.chars().count() == 1 => {
-                typed(format!("{}{single}", node.value))
+            "Backspace" if text && (command || word_erase(&input.modifiers)) => {
+                typed(erase(&node.value, command, &input.modifiers))
             }
+            "Backspace" if text => keys(vec![Stroke::Backspace]),
+            single if text && !command && single.chars().count() == 1 => keys(characters(single)),
             _ => Err(EngineError::new(
                 "unsupported_operation",
                 "This key has no native action on that node.",
@@ -299,6 +307,10 @@ fn button(node: &Node) -> bool {
     node.tag == "input" && ["submit", "button", "reset", "image"].contains(&node.input_type())
 }
 
+/** Alt+Backspace erases a word, which is a whole-text edit rather than one keystroke. */
+fn word_erase(modifiers: &[String]) -> bool {
+    modifiers.iter().any(|modifier| modifier == "Alt")
+}
 /**
  * Backspace with no caret model erases from the end: one character, the last word with Alt,
  * or everything with Control or Meta (select-all, then delete).
