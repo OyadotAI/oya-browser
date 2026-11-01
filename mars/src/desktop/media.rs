@@ -6,10 +6,10 @@
  */
 mod clock;
 mod decoder;
-mod stream_video;
 mod frames;
 mod loader;
 mod player;
+mod stream_video;
 mod types;
 
 use crate::runtime::media::hub::{self, PlayerKey, Status};
