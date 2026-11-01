@@ -139,11 +139,18 @@ fn without_env(value: &str) -> EngineResult<std::borrow::Cow<'_, str>> {
         let inner = &out[open + 1..close];
         let comma = super::syntax::find_top(inner, 0, b",");
         let fallback = inner.get(comma + 1..).map(str::trim).unwrap_or_default();
-        let fallback = if fallback.is_empty() { "0px" } else { fallback };
+        // A unitless zero is a length here: env() takes its fallback's type, and calc() rejects a
+        // bare number beside a length.
+        let fallback = match fallback {
+            "" | "0" => ZERO_LENGTH,
+            other => other,
+        };
         out = format!("{}{fallback}{}", &out[..start], &out[close + 1..]);
     }
     Err(unsupported())
 }
+/// The length an `env()` without a usable fallback resolves to.
+const ZERO_LENGTH: &str = "0px";
 /// CSS pixels per inch.
 const PX_PER_IN: f64 = 96.0;
 /// Centimetres per inch.
