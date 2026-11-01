@@ -267,26 +267,14 @@ impl Broker {
         let stop = Arc::clone(&cancel);
         let mut hub = None;
         let io = match transport {
-            Transport::Native => {
-                #[cfg(feature = "test-support")]
-                let io = super::io::start_with_events(
-                    commands.clone(),
-                    updates.clone(),
-                    output,
-                    authority.clone(),
-                    cancel.clone(),
-                    connected.clone(),
-                )?;
-                #[cfg(not(feature = "test-support"))]
-                let io = super::io::start(
-                    commands.clone(),
-                    output,
-                    authority.clone(),
-                    cancel.clone(),
-                    connected.clone(),
-                )?;
-                io
-            }
+            Transport::Native => super::io::start(
+                commands.clone(),
+                updates.clone(),
+                output,
+                authority.clone(),
+                cancel.clone(),
+                connected.clone(),
+            )?,
             Transport::Mcp => super::mcp_io::start(
                 commands.clone(),
                 output,

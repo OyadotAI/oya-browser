@@ -54,8 +54,17 @@ fn native_static_reading_reflows_and_paints_complete_source() {
     assert!(
         dark["layout_generation"].as_u64().unwrap() > before["layout_generation"].as_u64().unwrap()
     );
+    // A screenshot asked for at an older layout captures the frame on screen, as a browser does,
+    // and says which layout it asked for, so the caller can see the page moved on.
     let stale = window.request("page.screenshot", json!({"tab_id":before["tab_id"],"page_id":before["page_id"],"expected_revision":before["revision"],"layout_generation":before["layout_generation"]}));
-    assert_eq!(stale["error"]["code"], "invalid_request");
+    assert!(stale["error"].is_null(), "{stale}");
+    assert_eq!(
+        stale["result"]["requested_layout_generation"],
+        before["layout_generation"]
+    );
+    if let Some(shown) = stale["result"]["layout_generation"].as_u64() {
+        assert_ne!(Some(shown), before["layout_generation"].as_u64());
+    }
     capture_canvas(&mut window, 0x22);
     appearance(&mut window, "light");
     assert_styled(&mut window, &before, "light");

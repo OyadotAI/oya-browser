@@ -12,6 +12,7 @@ mod menus;
 mod navigation;
 mod page_menu;
 mod panels;
+mod pending;
 mod scroll;
 mod shell;
 use super::{
@@ -406,6 +407,17 @@ impl Window {
             notice: None,
         }
     }
+    /** Everything the worker has sent so far, and whether the worker has gone away. */
+    fn pending_events(&self) -> (Vec<Event>, bool) {
+        let mut pending = Vec::new();
+        loop {
+            match self.broker.events.try_recv() {
+                Ok(event) => pending.push(event),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return (pending, false),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return (pending, true),
+            }
+        }
+    }
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
         self.canvas.follow_viewport();
@@ -425,15 +437,15 @@ impl Window {
                 return;
             }
         }
-        loop {
-            match self.broker.events.try_recv() {
-                Ok(event) => self.event(event),
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.disconnected();
-                    break;
-                }
-            }
+        let (pending_events, closed) = self.pending_events();
+        for event in pending::order(pending_events, pending::lane) {
+            let timed = std::time::Instant::now();
+            let kind = event_kind(&event);
+            self.event(event);
+            crate::runtime::perf::record("ui.event", timed, || kind.to_owned());
+        }
+        if closed {
+            self.disconnected();
         }
         if self.poll_close() {
             self.mars.animate(true, false);
@@ -680,5 +692,16 @@ impl Window {
                 _ => self.canvas.setNeedsDisplayInRect(self.canvas.visibleRect()),
             }
         }
+    }
+}
+/** A short name for an event, for the perf log. */
+fn event_kind(event: &Event) -> &'static str {
+    match event {
+        Event::Window(..) => "window",
+        Event::Update {
+            background: true, ..
+        } => "background",
+        Event::Update { .. } => "update",
+        _ => "other",
     }
 }

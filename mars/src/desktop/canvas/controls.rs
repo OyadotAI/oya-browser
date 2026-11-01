@@ -54,6 +54,10 @@ fn text_color(item: &DisplayItem, styled: bool) -> Option<Retained<NSColor>> {
         .filter(|_| styled)
         .and_then(super::literal_color)
 }
+/** The tags that become native widgets; only these read an accessible name from the labels. */
+pub(super) fn is_control(tag: &str) -> bool {
+    ["input", "button", "a", "label", "select", "textarea"].contains(&tag)
+}
 /** What `sync` needs of a node beyond the node itself, indexed once per update by the caller. */
 pub(super) struct Facts<'a> {
     /// The node's accessible name, as inspection reports it.
@@ -70,9 +74,7 @@ impl Canvas {
         facts: Facts<'_>,
         human: bool,
     ) {
-        if !["input", "button", "a", "label", "select", "textarea"].contains(&item.tag.as_str())
-            || node.hidden()
-        {
+        if !is_control(&item.tag) || node.hidden() {
             return;
         }
         let mut widgets = self.ivars().widgets.borrow_mut();

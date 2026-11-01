@@ -388,10 +388,8 @@ impl Canvas {
         {
             // Labels and child facts are indexed once: a page has thousands of links, and
             // labeling each by a scan of every node took longer than the page's layout.
-            let timed = std::time::Instant::now();
             let nodes = nodes_by_id(snapshot);
-            let labels = document.labels();
-            crate::runtime::perf::record("ui.labels", timed, String::new);
+            let mut labels = document.labeler();
             let timed = std::time::Instant::now();
             let before = self.ivars().widgets.borrow().len();
             let positions: std::collections::HashMap<usize, usize> = document
@@ -414,11 +412,13 @@ impl Canvas {
                     {
                         continue;
                     }
-                    let name = positions
-                        .get(&item.local_id)
-                        .map_or(node.placeholder.as_str(), |index| labels[*index].as_str());
+                    // Only controls read a name, so only they are labeled.
+                    let name = match positions.get(&item.local_id) {
+                        Some(&index) if controls::is_control(&item.tag) => labels.label(index),
+                        _ => node.placeholder.clone(),
+                    };
                     let facts = controls::Facts {
-                        name,
+                        name: &name,
                         has_children: parents.contains(&item.local_id),
                     };
                     self.sync(item, node, facts, enabled);

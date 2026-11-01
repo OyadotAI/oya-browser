@@ -352,6 +352,25 @@ impl Document {
             .map(|index| labels.capped_label(index, TEXT_BYTES))
             .collect()
     }
+    /// A labeler that names only the nodes asked for. Painting a page's controls needs the names
+    /// of a few hundred of its thousands of nodes; `labels` names all of them, and that was the
+    /// bulk of every window update on a large page.
+    pub fn labeler(&self) -> Labeler<'_> {
+        Labeler {
+            labels: Labels::new(self),
+        }
+    }
+}
+/// Names single nodes of one document, sharing one index and one text memo across calls.
+pub struct Labeler<'a> {
+    /// The index and memo `labels` builds once for every node.
+    labels: Labels<'a>,
+}
+impl Labeler<'_> {
+    /// The node's `label` at `index`, cut to TEXT_BYTES; equal to `labels()[index]`.
+    pub fn label(&mut self, index: usize) -> String {
+        self.labels.capped_label(index, TEXT_BYTES)
+    }
 }
 /** Indexes built once so labeling every node costs nodes times depth, not nodes squared. */
 struct Labels<'a> {
