@@ -1354,6 +1354,7 @@ pub(super) fn box_item(
         backgrounds: Vec::new(),
         clip: None,
         transform: None,
+        quad: None,
         layout_origin: None,
         pin: None,
         z: 0,

@@ -255,6 +255,10 @@ pub struct DisplayItem {
     /// Absolute affine (a, b, c, d, e, f) applied after `clip`; pure translations are baked into geometry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<[f64; 6]>,
+    /// The exact projected corners (top-left, top-right, bottom-right, bottom-left) of a box in a
+    /// 3D context, where `transform` is only the affine that paints it. None for planar boxes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quad: Option<[[f64; 2]; 4]>,
     /// Where layout put the box when a transform (its own or an ancestor's) moved its paint
     /// away from there: layout APIs such as `offsetLeft` ignore transforms. None when the box
     /// paints where layout put it, at `x` and `y`.

@@ -50,8 +50,8 @@ pub(super) fn apply(
             style.background_geometry.slots = super::paint::slots(value, style, context);
         }
         "transform" => {
-            (style.transform, style.translate_percent) =
-                super::paint::transform(value, style.font_size, context)?;
+            let parsed = super::transform3d::parse(value, style.font_size, context)?;
+            super::transform3d::store(style, parsed);
             style.transform_animation_excluded = !super::paint::translation_only(value);
             style.rotation_radians = super::paint::rotation(value);
             style.scale_factors = super::paint::scale(value);
@@ -62,7 +62,34 @@ pub(super) fn apply(
         }
         "transform-origin" => {
             style.transform_origin =
+                Some(super::individual::origin(value, style.font_size, context)?);
+            style.transform_origin_z = super::individual::depth(value, style.font_size, context)?;
+        }
+        "perspective" => style.perspective = perspective(value, style.font_size, context)?,
+        "perspective-origin" => {
+            style.perspective_origin =
                 Some(super::individual::origin(value, style.font_size, context)?)
+        }
+        "transform-style" => {
+            style.preserve_3d = match value.trim() {
+                "preserve-3d" => true,
+                "flat" => false,
+                _ => return Err(unsupported()),
+            }
+        }
+        "backface-visibility" => {
+            style.backface_hidden = match value.trim() {
+                "hidden" => true,
+                "visible" => false,
+                _ => return Err(unsupported()),
+            }
+        }
+        // The reference box of a CSS box is its border box, which is the only one Eye paints
+        // against; the SVG reference boxes are accepted and paint as the border box does.
+        "transform-box" => {
+            if !TRANSFORM_BOXES.contains(&value.trim()) {
+                return Err(unsupported());
+            }
         }
         "text-decoration" | "text-decoration-line" => {
             let none = value.split_whitespace().any(|part| part == "none");
@@ -351,6 +378,28 @@ fn tab_size(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64
 }
 /** `none | [capitalize | uppercase | lowercase] || full-width || full-size-kana` as the case
 mapping and the full-width and full-size-kana flags; a keyword twice is invalid. */
+/** The keywords `transform-box` accepts; every one paints against the border box Eye lays out. */
+const TRANSFORM_BOXES: [&str; 5] = [
+    "border-box",
+    "content-box",
+    "fill-box",
+    "stroke-box",
+    "view-box",
+];
+
+/** `perspective`: `none` or a non-negative length in px. Zero means no perspective, as Chrome
+treats a zero distance as the identity; a percentage has no meaning here and is refused. */
+fn perspective(value: &str, font: f64, context: RenderContext) -> EngineResult<Option<f64>> {
+    if value.trim() == "none" {
+        return Ok(None);
+    }
+    let dim = dimension(value, font, context)?;
+    if dim.percent != 0.0 || !dim.px.is_finite() || dim.px < 0.0 {
+        return Err(unsupported());
+    }
+    Ok((dim.px > 0.0).then_some(dim.px.min(CSS_MAX_SCALAR)))
+}
+
 fn text_transform(value: &str) -> EngineResult<(TextTransform, bool, bool)> {
     if value == "none" {
         return Ok((TextTransform::None, false, false));

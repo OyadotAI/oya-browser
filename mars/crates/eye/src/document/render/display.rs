@@ -519,6 +519,7 @@ pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> 
         values.extend(clip.radius);
     }
     values.extend(item.transform.unwrap_or_default());
+    values.extend(item.quad.iter().flatten().flatten().copied());
     for value in values {
         bounded(value)?;
     }

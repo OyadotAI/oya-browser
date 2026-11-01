@@ -411,12 +411,21 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
         "text-shadow" => style.text_shadows = source.text_shadows.clone(),
         "transform" => {
             style.transform = source.transform;
+            style.transform_4 = source.transform_4;
             style.translate_percent = source.translate_percent;
+            style.translate_percent_cross = source.translate_percent_cross;
             style.transform_animation_excluded = source.transform_animation_excluded;
             style.rotation_radians = source.rotation_radians;
             style.scale_factors = source.scale_factors;
         }
-        "transform-origin" => style.transform_origin = source.transform_origin,
+        "transform-origin" => {
+            style.transform_origin = source.transform_origin;
+            style.transform_origin_z = source.transform_origin_z;
+        }
+        "perspective" => style.perspective = source.perspective,
+        "perspective-origin" => style.perspective_origin = source.perspective_origin,
+        "transform-style" => style.preserve_3d = source.preserve_3d,
+        "backface-visibility" => style.backface_hidden = source.backface_hidden,
         "object-fit" => style.object_fit = source.object_fit,
         "object-position" => style.object_position = source.object_position,
         "clip" => style.clip_rect = source.clip_rect,

@@ -21,10 +21,11 @@ pub(super) fn longhands() -> Vec<String> {
 const PARTS: [&str; 3] = ["width", "style", "color"];
 
 /// Properties `all` resets besides the per-side ones `longhands` adds.
-const ALL: [&str; 74] = [
+const ALL: [&str; 79] = [
     "align-items",
     "align-self",
     "aspect-ratio",
+    "backface-visibility",
     "background-attachment",
     "background-color",
     "background-image",
@@ -82,6 +83,8 @@ const ALL: [&str; 74] = [
     "object-position",
     "opacity",
     "order",
+    "perspective",
+    "perspective-origin",
     "overflow-x",
     "overflow-y",
     "position",
@@ -92,6 +95,8 @@ const ALL: [&str; 74] = [
     "text-indent",
     "text-transform",
     "transform",
+    "transform-origin",
+    "transform-style",
     "vertical-align",
     "white-space",
     "width",

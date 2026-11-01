@@ -160,7 +160,10 @@ fn box_value(style: &ComputedStyle, property: &str) -> Option<String> {
         }
         .into(),
         "order" => style.order.to_string(),
-        "transform" => style.transform.map_or("none".into(), matrix),
+        "transform" => match (style.transform_4, style.transform) {
+            (Some(full), _) => matrix3d(full),
+            (None, planar) => planar.map_or("none".into(), matrix),
+        },
         _ => return None,
     })
 }
@@ -240,6 +243,12 @@ fn px(value: f64) -> String {
 fn matrix(m: [f64; 6]) -> String {
     let parts: Vec<String> = m.iter().map(|value| number(*value)).collect();
     format!("matrix({})", parts.join(", "))
+}
+
+/** `matrix3d()` with the sixteen entries in CSS order, as a spatial `transform` computes to. */
+fn matrix3d(m: [f64; 16]) -> String {
+    let parts: Vec<String> = m.iter().map(|value| number(*value)).collect();
+    format!("matrix3d({})", parts.join(", "))
 }
 
 /** A painter color literal (`#rrggbb`, `#rrggbbaa`, `transparent`, a name) as `rgb()`/`rgba()`. */
@@ -404,6 +413,21 @@ mod tests {
         assert_eq!(
             matrix([1.0, 0.0, 0.0, 1.0, 10.0, 0.0]),
             "matrix(1, 0, 0, 1, 10, 0)"
+        );
+    }
+
+    /** A spatial transform serializes as the sixteen-entry `matrix3d()` a browser reports. */
+    #[test]
+    fn spatial_transforms_serialize_as_matrix3d() {
+        let mut m = [0.0; 16];
+        m[0] = 1.0;
+        m[5] = 1.0;
+        m[10] = 1.0;
+        m[11] = -0.01;
+        m[15] = 1.0;
+        assert_eq!(
+            matrix3d(m),
+            "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.01, 0, 0, 0, 1)"
         );
     }
 

@@ -67,6 +67,7 @@ mod shorthand;
 mod subjects;
 mod syntax;
 mod text_align;
+mod transform3d;
 mod transition;
 pub use animation::{RotationAnimation, RotationAnimations, RotationKeyframe};
 pub use animation::{ScaleAnimation, ScaleAnimations, ScaleKeyframe};

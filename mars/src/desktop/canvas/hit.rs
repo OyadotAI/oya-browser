@@ -78,7 +78,9 @@ pub(super) fn node_at_frames(
 /** Whether the point is inside the item's box and inside its ancestors' clip. */
 fn contains(item: &DisplayItem, point: NSPoint) -> bool {
     let point = [point.x, point.y];
-    let quad = mars_core::geometry::quad([item.x, item.y, item.width, item.height], item.transform);
+    let quad = item.quad.unwrap_or_else(|| {
+        mars_core::geometry::quad([item.x, item.y, item.width, item.height], item.transform)
+    });
     mars_core::geometry::contains_quad(&quad, point)
         && item.clip.is_none_or(|clip| {
             mars_core::geometry::contains_rect([clip.x, clip.y, clip.width, clip.height], point)

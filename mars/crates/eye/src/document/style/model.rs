@@ -225,6 +225,25 @@ pub struct ComputedStyle {
     /// Flattened matrices lose transform function identity; retain exclusions for bounded interpolation.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub transform_animation_excluded: bool,
+    /// The full 4x4 matrix (`matrix3d()` order) of a `transform` that leaves the plane; None
+    /// when the planar `transform` says everything, so 2D pages never pay for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform_4: Option<[f64; 16]>,
+    /// The z of `transform-origin` in px, its third value; 0 when absent.
+    #[serde(default, skip_serializing_if = "default")]
+    pub transform_origin_z: f64,
+    /// `perspective` in px: the distance from which this box's children are viewed; None for `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perspective: Option<f64>,
+    /// `perspective-origin` as [x px, x percent, y px, y percent]; None is the border box center.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perspective_origin: Option<[f64; 4]>,
+    /// `transform-style: preserve-3d`: children share this box's 3D rendering context.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preserve_3d: bool,
+    /// `backface-visibility: hidden`: the box paints nothing while its back faces the viewer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backface_hidden: bool,
     /// A single authored 2D rotate() keeps its unwrapped angle; matrices cannot recover full turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation_radians: Option<f64>,
@@ -661,6 +680,10 @@ pub struct ComputedStyle {
     /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
     #[serde(skip_serializing_if = "default")]
     pub translate_percent: [f64; 2],
+    /// The cross part of a percentage translation after a rotate or skew: `[y from width %,
+    /// x from height %]`. Zero for the common centering translate.
+    #[serde(default, skip_serializing_if = "default")]
+    pub translate_percent_cross: [f64; 2],
     /// `transform-origin` as [x px, x percent, y px, y percent] of the border box; None is
     /// the initial center.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -900,6 +923,12 @@ impl Default for ComputedStyle {
             backgrounds: Vec::new(),
             transform: None,
             transform_animation_excluded: false,
+            transform_4: None,
+            transform_origin_z: 0.0,
+            perspective: None,
+            perspective_origin: None,
+            preserve_3d: false,
+            backface_hidden: false,
             rotation_radians: None,
             scale_factors: None,
             text_decoration_none: false,
@@ -1032,6 +1061,7 @@ impl Default for ComputedStyle {
             radius_px: [0.0; 4],
             radius_y: [None; 4],
             translate_percent: [0.0; 2],
+            translate_percent_cross: [0.0; 2],
             transform_origin: None,
             width_offset: 0.0,
             width_stretch: false,

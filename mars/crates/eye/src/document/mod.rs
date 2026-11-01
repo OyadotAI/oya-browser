@@ -4,6 +4,7 @@ mod context;
 mod entities;
 mod forms;
 mod markup;
+pub(crate) mod matrix;
 mod mutation;
 mod parser;
 mod quirks;
