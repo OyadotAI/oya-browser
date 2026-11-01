@@ -295,7 +295,14 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
     if commands.is_empty() {
         return;
     }
-    let mut hub = hub::lock();
+    dispatch_into(&mut hub::lock(), page_id, initiator, commands);
+}
+
+/**
+ * Hand a page's commands to the hub. A Media Source load past the page's cap is recorded as failed and never reaches
+ * a native player, and appends to such a player are dropped here, so a refused source stores no bytes.
+ */
+fn dispatch_into(hub: &mut Hub, page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
     for mut command in commands {
         debug(|| {
             format!("command {page_id} {command:?}")
@@ -307,6 +314,9 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
             continue;
         }
         let key = (page_id.to_string(), command.player());
+        if matches!(command, MediaCommand::Append { .. }) && refused_stream(hub, &key) {
+            continue;
+        }
         match &mut command {
             MediaCommand::Load {
                 url,
@@ -324,11 +334,13 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
                     stream: *stream,
                     ..Shared::default()
                 };
-                if refused_load(&hub, &key, *stream) {
+                if refused_load(hub, &key, *stream) {
                     shared.bytes.failed = Some((
                         SOURCE_NOT_SUPPORTED,
                         "MEDIA_ELEMENT_ERROR: too many Media Sources on this page".into(),
                     ));
+                    hub.players.insert(key.clone(), shared);
+                    continue;
                 }
                 if let Some(source) = blob.take().filter(|source| source.validate(url).is_ok()) {
                     shared.bytes = bytes::Bytes::whole(source.bytes.to_vec(), &source.mime_type);
@@ -348,6 +360,13 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
         }
         hub.commands.push_back((key, command));
     }
+}
+
+/** Whether a player is a Media Source a page's cap refused: its record says so, and it has no native player to feed. */
+fn refused_stream(hub: &Hub, key: &PlayerKey) -> bool {
+    hub.players
+        .get(key)
+        .is_some_and(|shared| shared.stream && shared.bytes.failed.is_some())
 }
 
 /** Whether a load of a Media Source is refused: the page already holds the most, not counting this player's own record. */
@@ -499,5 +518,51 @@ mod tests {
         assert!(!refused_load(&hub, &own, true));
         let plain: PlayerKey = ("page-1".into(), 99);
         assert!(!refused_load(&hub, &plain, false));
+    }
+
+    /** Appends after a refused Media Source load are dropped at the store, and no native load or append is queued for it. */
+    #[test]
+    fn appends_after_a_refused_load_store_no_bytes() {
+        use super::{MediaCommand, dispatch_into};
+        use crate::v9::MediaSettings;
+        let mut hub = Hub::default();
+        let mut commands = Vec::new();
+        for player in 1..=(MAX_MSE_PLAYERS as u64 + 1) {
+            commands.push(MediaCommand::Load {
+                player,
+                node: 1,
+                url: String::new(),
+                stream: true,
+                blob: None,
+                settings: MediaSettings::default(),
+            });
+        }
+        let refused = MAX_MSE_PLAYERS as u64 + 1;
+        commands.push(MediaCommand::Append {
+            player: refused,
+            buffer: 1,
+            mime: "video/mp4".into(),
+            bytes: vec![1, 2, 3],
+            init_len: 0,
+            offset: 0.0,
+            window_start: 0.0,
+            window_end: None,
+        });
+        dispatch_into(&mut hub, "page-1", "https://example.test/", commands);
+        let key = ("page-1".to_string(), refused);
+        assert!(hub.players.get(&key).unwrap().bytes.failed.is_some());
+        let queued_for_refused = hub
+            .commands
+            .iter()
+            .filter(|(queued_key, _)| *queued_key == key)
+            .count();
+        assert_eq!(queued_for_refused, 0);
+        assert_eq!(
+            hub.commands
+                .iter()
+                .filter(|(_, command)| matches!(command, MediaCommand::Append { .. }))
+                .count(),
+            0
+        );
     }
 }
