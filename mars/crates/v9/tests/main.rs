@@ -20,6 +20,7 @@ mod body_forwarded_handlers;
 mod bounds;
 mod broadcast_channel;
 mod builtins_ports;
+mod call_argument_pool;
 mod callee_names;
 mod callsite_accessor_method;
 mod callsite_type_names;

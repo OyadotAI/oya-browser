@@ -211,8 +211,9 @@ impl Vm<'_> {
         match behavior {
             Behavior::Native(index) => {
                 let callee = function.object().expect("callable object");
-                self.call_native(index, callee, this, &args, construct)
-                    .map(Invoked::Value)
+                let result = self.call_native(index, callee, this, &args, construct);
+                self.recycle_args(args);
+                result.map(Invoked::Value)
             }
             Behavior::Bound(target, bound_this, bound_args) => {
                 self.charge(1)?;

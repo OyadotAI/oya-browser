@@ -303,6 +303,9 @@ pub(in crate::v9) struct Vm<'h> {
     call allocated two vectors and every return freed them, and calls are the most common
     operation in page scripts after property access. Bounded by FRAME_POOL. */
     pub frame_pool: Vec<(Vec<JsValue>, Vec<JsValue>)>,
+    /** Argument vectors of returned frames and native calls, reused by the next call (bounded by
+    FRAME_POOL), so a call with its arguments and return allocates nothing. */
+    pub arg_pool: Vec<Vec<JsValue>>,
     /** Selected native bodies retain their real position only during the active invocation. */
     pub native_activations: Vec<NativeActivation>,
     /** Native async drivers identify current output promises; committed continuations remain in the ordinary heap graph. */
@@ -820,6 +823,7 @@ impl<'h> Vm<'h> {
             number_source_hashes: FastMap::default(),
             frames: Vec::new(),
             frame_pool: Vec::new(),
+            arg_pool: Vec::new(),
             native_activations: Vec::new(),
             async_drivers: Vec::new(),
             formatting_stack: false,

@@ -1714,9 +1714,7 @@ impl Vm<'_> {
                 self.push(key);
             }
             Op::Call(count) => {
-                let stack = &mut self.frame().stack;
-                let start = stack.len().saturating_sub(count as usize);
-                let args: Vec<JsValue> = stack[start..].to_vec();
+                let args = self.take_args(count as usize);
                 let this = self.peek(count as usize);
                 let function = self.peek(count as usize + 1);
                 return self.call_op(function, this, args, count as usize + 2, None);
@@ -1729,9 +1727,7 @@ impl Vm<'_> {
                 return self.call_op(function, this, args, 3, None);
             }
             Op::New(count) => {
-                let stack = &mut self.frame().stack;
-                let start = stack.len().saturating_sub(count as usize);
-                let args: Vec<JsValue> = stack[start..].to_vec();
+                let args = self.take_args(count as usize);
                 let function = self.peek(count as usize);
                 return self.call_op(
                     function.clone(),
@@ -2487,6 +2483,7 @@ impl Vm<'_> {
     }
     /** Keep a returned frame's vectors for the next call, emptied so no value outlives its frame. */
     fn recycle_frame(&mut self, frame: super::Frame) {
+        self.recycle_args(frame.args);
         if self.frame_pool.len() >= super::FRAME_POOL {
             return;
         }
@@ -2494,6 +2491,23 @@ impl Vm<'_> {
         stack.clear();
         regs.clear();
         self.frame_pool.push((stack, regs));
+    }
+    /** The arguments of a call: the top `count` operands copied into a pooled vector, so the call
+    needs no allocation once the pool is warm. */
+    pub(in crate::v9) fn take_args(&mut self, count: usize) -> Vec<JsValue> {
+        let mut args = self.arg_pool.pop().unwrap_or_default();
+        let stack = &self.frame().stack;
+        let start = stack.len().saturating_sub(count);
+        args.extend_from_slice(&stack[start..]);
+        args
+    }
+    /** Keep an argument vector for a later call, emptied so no argument outlives its call. */
+    pub(in crate::v9) fn recycle_args(&mut self, mut args: Vec<JsValue>) {
+        if self.arg_pool.len() >= super::FRAME_POOL {
+            return;
+        }
+        args.clear();
+        self.arg_pool.push(args);
     }
     /** The innermost active derived constructor frame whose scope chain holds `env`, the
     environment that owns the `this` slot super() just filled. The frame may be inside a block
