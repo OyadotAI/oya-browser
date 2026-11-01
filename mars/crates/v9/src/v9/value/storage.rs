@@ -1154,6 +1154,50 @@ impl Storage {
         Self::flat(units.into())
     }
 
+    /** Each leaf's units in order, as slices of the leaves themselves: reading a rope through
+    `unit_at` clones and locks a path of nodes per character. `visit` returns false to stop. */
+    pub(super) fn for_each_chunk(&self, mut visit: impl FnMut(&[u16]) -> bool) {
+        let mut pending = vec![(self.clone(), 1usize)];
+        while let Some((storage, times)) = pending.pop() {
+            if times > 1 {
+                pending.push((storage.clone(), times - 1));
+            }
+            let keep = match storage {
+                Self::Flat(flat) => visit(&flat),
+                #[cfg(feature = "conformance")]
+                Self::Shared(flat) => visit(&flat),
+                #[cfg(feature = "conformance")]
+                Self::Slice(node) => {
+                    let units: Vec<u16> = (0..node.length)
+                        .filter_map(|index| node.parent.unit_at(node.start + index))
+                        .collect();
+                    visit(&units)
+                }
+                Self::Repeat(node) => match node.flat.get() {
+                    Some(flat) => visit(flat),
+                    None => {
+                        pending.push((node.child.clone(), node.count));
+                        true
+                    }
+                },
+                Self::Cons(node) => {
+                    if let Some(flat) = node.flat.get() {
+                        visit(flat)
+                    } else if let Some((left, right)) = node.children().clone() {
+                        pending.push((right, 1));
+                        pending.push((left, 1));
+                        true
+                    } else {
+                        visit(node.flat.get().expect("compacted UTF-16"))
+                    }
+                }
+            };
+            if !keep {
+                return;
+            }
+        }
+    }
+
     /** Flatten leaves iteratively; initializing every child cache would retain copies of every prefix. */
     fn append_to(&self, units: &mut Vec<u16>) {
         if let Self::Flat(flat) = self {

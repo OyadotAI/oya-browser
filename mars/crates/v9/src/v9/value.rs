@@ -105,10 +105,22 @@ impl PartialEq for JsString {
         if self.0.same(&other.0) {
             return true;
         }
-        if let (Some(left), Some(right)) = (self.flat_units(), other.flat_units()) {
-            return left == right;
-        }
-        (0..self.len()).all(|index| self.unit_at(index) == other.unit_at(index))
+        let (rope, flat) = match (self.flat_units(), other.flat_units()) {
+            (Some(left), Some(right)) => return left == right,
+            (Some(flat), None) => (other, flat),
+            (None, Some(flat)) => (self, flat),
+            (None, None) => {
+                return (0..self.len()).all(|index| self.unit_at(index) == other.unit_at(index));
+            }
+        };
+        let mut offset = 0;
+        let mut equal = true;
+        rope.0.for_each_chunk(|chunk| {
+            equal = flat[offset..offset + chunk.len()] == *chunk;
+            offset += chunk.len();
+            equal
+        });
+        equal
     }
 }
 impl Eq for JsString {}
@@ -212,6 +224,10 @@ impl JsString {
         Ok(self.as_units())
     }
     /** Borrow already contiguous units without forcing compact strings to flatten. */
+    /** Each piece of the string in order, without flattening it (see `Storage::for_each_chunk`). */
+    pub(in crate::v9) fn for_each_chunk(&self, visit: impl FnMut(&[u16]) -> bool) {
+        self.0.for_each_chunk(visit);
+    }
     pub(in crate::v9) fn flat_units(&self) -> Option<&[u16]> {
         self.0.flat_units()
     }

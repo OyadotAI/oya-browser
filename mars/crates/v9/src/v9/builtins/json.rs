@@ -366,37 +366,48 @@ impl Writer {
     /** Append a quoted JSON string. */
     fn quote(&mut self, text: &JsString) {
         self.out.push(0x22);
-        let mut index = 0;
-        let flat = text.flat_units();
-        let unit_at = |index| match flat {
-            Some(units) => units.get(index).copied(),
-            None => text.unit_at(index),
-        };
-        while index < text.len() {
-            let unit = unit_at(index).expect("valid string index");
-            match unit {
-                0x22 => self.ascii("\\\""),
-                0x5c => self.ascii("\\\\"),
-                0x08 => self.ascii("\\b"),
-                0x0c => self.ascii("\\f"),
-                0x0a => self.ascii("\\n"),
-                0x0d => self.ascii("\\r"),
-                0x09 => self.ascii("\\t"),
-                unit if unit < 0x20 => self.ascii(&format!("\\u{unit:04x}")),
-                0xd800..=0xdbff
-                    if unit_at(index + 1).is_some_and(|low| (0xdc00..=0xdfff).contains(&low)) =>
-                {
-                    self.out.push(unit);
-                    self.out
-                        .push(unit_at(index + 1).expect("checked low surrogate"));
-                    index += 1;
+        // Pieces in order; a surrogate pair may straddle two of them, so a high surrogate waits
+        // for the next unit before it is written whole or escaped alone.
+        let mut high: Option<u16> = None;
+        text.for_each_chunk(|chunk| {
+            for &unit in chunk {
+                if let Some(first) = high.take() {
+                    if (0xdc00..=0xdfff).contains(&unit) {
+                        self.out.push(first);
+                        self.out.push(unit);
+                        continue;
+                    }
+                    self.ascii(&format!("\\u{first:04x}"));
                 }
-                0xd800..=0xdfff => self.ascii(&format!("\\u{unit:04x}")),
-                unit => self.out.push(unit),
+                if (0xd800..=0xdbff).contains(&unit) {
+                    high = Some(unit);
+                } else {
+                    self.quote_unit(unit);
+                }
             }
-            index += 1;
+            true
+        });
+        if let Some(first) = high {
+            self.ascii(&format!("\\u{first:04x}"));
         }
         self.out.push(0x22);
+    }
+    /** One code unit of a quoted string, escaped as JSON.stringify requires; surrogates arrive
+    here only unpaired. */
+    fn quote_unit(&mut self, unit: u16) {
+        match unit {
+            0x22 => self.ascii("\\\""),
+            0x5c => self.ascii("\\\\"),
+            0x08 => self.ascii("\\b"),
+            0x0c => self.ascii("\\f"),
+            0x0a => self.ascii("\\n"),
+            0x0d => self.ascii("\\r"),
+            0x09 => self.ascii("\\t"),
+            unit if unit < 0x20 || (0xd800..=0xdfff).contains(&unit) => {
+                self.ascii(&format!("\\u{unit:04x}"))
+            }
+            unit => self.out.push(unit),
+        }
     }
     /** A newline plus indentation for nesting depth. */
     fn indent(&mut self) {
