@@ -6,7 +6,8 @@
  */
 use super::{Detached, DomLevel, Page};
 use crate::constants::{
-    FRAGMENT_BYTES, FRAGMENT_TOTAL_BYTES, SCRIPT_CHANGE_BYTES, STATEMENTS, VM_DETACHED_NODES,
+    FRAGMENT_BYTES, FRAGMENT_TOTAL_BYTES, HTML_BYTES, SCRIPT_CHANGE_BYTES, STATEMENTS,
+    VM_DETACHED_NODES,
 };
 use crate::document::{DomChange, InsertPosition, ScriptChange, ScriptNode};
 use crate::protocol::{EngineError, EngineResult};
@@ -1203,8 +1204,8 @@ impl Page<'_> {
     }
     /** Parse a fragment through the host parser with fresh identities. */
     pub fn parse_fragment(&mut self, context: &str, html: &str) -> EngineResult<Vec<ScriptNode>> {
-        if html.len() > FRAGMENT_BYTES {
-            return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES));
+        if html.len() > HTML_BYTES {
+            return Err(EngineError::limit("fragment bytes", HTML_BYTES));
         }
         if self.fragment_bytes + html.len() > FRAGMENT_TOTAL_BYTES {
             return Err(EngineError::limit(

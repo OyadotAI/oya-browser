@@ -462,8 +462,9 @@ pub const CSS_MAX_BORDER_WIDTH: f64 = CSS_MAX_SCALAR;
 pub const CSS_ROOT_FONT_SIZE: f64 = 16.0;
 /// ToLength clamps to ECMAScript's maximum safe integer before the smaller invocation cap applies.
 pub const VM_MAX_SAFE_LENGTH: f64 = 9_007_199_254_740_991.0;
-/** One script-inserted fragment keeps its own bound, independent of script sources: a node's
-text bound, since YouTube's component templates are tens of kilobytes of markup each. */
+/** Markup a script inserts in one piece is split at this size when it is a node moving into the
+page (appendChild of a large subtree), so each parse stays small. It refuses nothing: a single
+fragment is bounded by HTML_BYTES, the same bound as a document, and by the node budget. */
 pub const FRAGMENT_BYTES: usize = TEXT_BYTES;
 /** All fragments one execution inserts share a budget that still fits the reply frame; a
 component framework registers hundreds of templates while its bundle loads. */

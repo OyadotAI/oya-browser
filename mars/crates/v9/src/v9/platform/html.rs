@@ -5,7 +5,7 @@
  */
 use super::Page;
 use super::nodes::NodeView;
-use crate::constants::{DOCUMENT_DEPTH, FRAGMENT_BYTES};
+use crate::constants::{DOCUMENT_DEPTH, HTML_BYTES};
 use crate::protocol::{EngineError, EngineResult};
 use std::collections::BTreeMap;
 
@@ -221,8 +221,8 @@ fn normalize_newlines(html: &str) -> String {
 
 /** Parse HTML into a preorder node list. */
 pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
-    if html.len() > FRAGMENT_BYTES * 4 {
-        return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES * 4));
+    if html.len() > HTML_BYTES {
+        return Err(EngineError::limit("fragment bytes", HTML_BYTES));
     }
     let mut nodes: Vec<Parsed> = Vec::new();
     let mut open: Vec<(usize, String)> = Vec::new();

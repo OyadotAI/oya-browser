@@ -247,14 +247,15 @@ fn failure(
     run_with(source, page(), languages, fragments).unwrap_err()
 }
 
-/** A fragment over FRAGMENT_BYTES UTF-8 bytes is refused before parsing, though it has fewer
-characters than that: the bound is on bytes. */
+/** A fragment past the old 64 KiB per-fragment bound inserts: Chrome has no such limit, and a
+normal page's markup (Amazon's product grid) is larger, so only the document bound applies. */
 #[test]
-fn oversized_fragment_fails_explicitly() {
-    let characters = FRAGMENT_BYTES / EURO_BYTES + 1;
-    let source =
-        format!("var h='€'.repeat({characters});document.body.insertAdjacentHTML('beforeend',h)");
-    assert_eq!(failure(&source, &[], &Empty).code, "limit_exceeded");
+fn fragment_over_the_old_per_fragment_bound_inserts() {
+    let characters = FRAGMENT_BYTES / EURO_BYTES * 2;
+    let source = format!(
+        "document.body.insertAdjacentHTML('beforeend','<p>'+'€'.repeat({characters})+'</p>')"
+    );
+    assert!(run_with(&source, page(), &[], &Empty).is_ok());
 }
 
 /** Fragments one execution inserts share FRAGMENT_TOTAL_BYTES. */

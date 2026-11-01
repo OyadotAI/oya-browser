@@ -555,7 +555,7 @@ fn write(vm: &mut Vm, document: usize, text: &str) -> Res<()> {
     if !vm.page.state.writes.contains_key(&document) {
         open(vm, document)?;
     }
-    let limit = crate::constants::FRAGMENT_BYTES * 4;
+    let limit = crate::constants::HTML_BYTES;
     let buffer = vm.page.state.writes.entry(document).or_default();
     if buffer.len() + text.len() > limit {
         return Err(dom_error(

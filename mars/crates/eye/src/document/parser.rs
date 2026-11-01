@@ -11,8 +11,7 @@ use super::{
     xml::{Tokens, XmlTokenizer},
 };
 use crate::constants::{
-    DIAGNOSTICS, DOCUMENT_DEPTH, FRAGMENT_BYTES, HTML_BYTES, METADATA_BYTES, METADATA_ELEMENTS,
-    NODES, TEXT_BYTES,
+    DIAGNOSTICS, DOCUMENT_DEPTH, HTML_BYTES, METADATA_BYTES, METADATA_ELEMENTS, NODES, TEXT_BYTES,
 };
 use crate::protocol::{EngineError, EngineResult};
 use mars_core::charset::meta_name;
@@ -99,8 +98,8 @@ pub struct Fragment {
 /// elements stay containers, inline handlers are stripped and inserted scripts never run. Only
 /// raw-text contexts and the hard bounds refuse. Forms and tables are normalized as a page's are.
 pub fn parse_fragment(context: &str, html: &str, first_id: usize) -> EngineResult<Fragment> {
-    if html.len() > FRAGMENT_BYTES {
-        return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES));
+    if html.len() > HTML_BYTES {
+        return Err(EngineError::limit("fragment bytes", HTML_BYTES));
     }
     if CONTEXT_REFUSED.contains(&context) {
         return Err(EngineError::unsupported(

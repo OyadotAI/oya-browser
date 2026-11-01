@@ -1,8 +1,8 @@
 /** Fragment parsing and atomic change-log replay for example.com's frozen script. */
 mod support;
 use mars_eye::{
-    DomChange, InsertPosition, apply_changes, constants::FRAGMENT_BYTES, constants::STATEMENTS,
-    parse, parse_fragment, role, script_document,
+    DomChange, InsertPosition, apply_changes, constants::FRAGMENT_BYTES, constants::HTML_BYTES,
+    constants::STATEMENTS, parse, parse_fragment, role, script_document,
 };
 use support::{EXAMPLE_HTML, applied, change_log, fragments, projected_digest};
 
@@ -135,10 +135,17 @@ fn unsupported_contexts_are_refused() {
     }
 }
 
-/** One fragment larger than FRAGMENT_BYTES fails explicitly. */
+/** A fragment past the old 64 KiB bound parses: markup is bounded by the document, not a text node. */
+#[test]
+fn fragment_over_the_old_per_fragment_bound_parses() {
+    let html = format!("<p>{}</p>", "x".repeat(FRAGMENT_BYTES * 2));
+    assert!(parse_fragment("body", &html, 1).is_ok());
+}
+
+/** One fragment larger than HTML_BYTES, the document's own bound, fails explicitly. */
 #[test]
 fn fragment_bytes_limit_exceeded_fails_explicitly() {
-    let html = format!("<p>{}</p>", "x".repeat(FRAGMENT_BYTES));
+    let html = format!("<p>{}</p>", "x".repeat(HTML_BYTES));
     let error = parse_fragment("body", &html, 1).unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
     assert!(error.message.contains("fragment bytes"));
