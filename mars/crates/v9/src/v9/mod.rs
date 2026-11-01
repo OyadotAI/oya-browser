@@ -6,6 +6,7 @@
 mod binding;
 mod builtins;
 mod compile;
+mod encoded;
 mod errors;
 mod jit;
 mod keyboard;
@@ -520,6 +521,7 @@ impl VmState {
     /// resident in the V9 service. Sending a summary back as a step's state would lose the
     /// page's heap, so the app never does.
     pub fn summary(&self) -> Self {
+        self.page.keep_encodings();
         let page = {
             #[cfg(feature = "conformance")]
             {
@@ -588,7 +590,23 @@ impl VmState {
         let limits = Limits::default();
         self.validate_projection_bounds(&limits, false)?;
         self.validate_size(&limits)?;
+        #[cfg(debug_assertions)]
+        self.assert_kept_encodings_match();
         self.validate_document_references(document)
+    }
+    /** Debug builds: the bytes the size check counts from kept encodings must be exactly what a
+    fresh walk of every map encodes, so a missed invalidation fails the suites instead of
+    silently shifting the 64 MiB refusal. */
+    #[cfg(debug_assertions)]
+    fn assert_kept_encodings_match(&self) {
+        let kept = serde_json::to_vec(self).ok();
+        let mut fresh = self.clone();
+        fresh.page.forget_encodings();
+        debug_assert_eq!(
+            kept,
+            serde_json::to_vec(&fresh).ok(),
+            "a kept page encoding went stale"
+        );
     }
     /// Document identity and retained node ownership apply equally to full states and summaries.
     fn validate_document_references(&self, document: &ScriptDocument) -> EngineResult<()> {
@@ -2985,6 +3003,43 @@ mod near_bounds_collection_tests {
         assert!(
             near <= clean + SLACK,
             "{near} entries after garbage, {clean} without it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod summary_bound_tests {
+    //! The typed path's refusal point is the encoded size of the summary, counted from kept page
+    //! encodings; it must stay the exact byte count so the refusal happens at the same total.
+    use super::*;
+
+    #[test]
+    /** A typed summary is accepted at exactly the state ceiling and refused one byte past it, as a
+    state-bytes limit, whether or not its page maps still hold their kept encodings. */
+    fn a_typed_summary_past_the_state_bound_is_refused() {
+        let document = ScriptDocument {
+            identity: "page-1".into(),
+            nodes: Vec::new(),
+            charset: "UTF-8".into(),
+        };
+        let mut summary = VmState::default();
+        summary.page.texts.insert(0, String::new());
+        let limit = Limits::default().state_bytes;
+        let base = serde_json::to_vec(&summary).unwrap().len();
+        summary.page.texts.insert(0, "x".repeat(limit - base));
+        summary
+            .summary()
+            .validate_summary_document(&document)
+            .expect("exactly at the bound");
+        summary.page.texts.insert(0, "x".repeat(limit - base + 1));
+        let error = summary
+            .summary()
+            .validate_summary_document(&document)
+            .unwrap_err();
+        assert!(
+            error.message.contains("V9 state bytes"),
+            "{}",
+            error.message
         );
     }
 }

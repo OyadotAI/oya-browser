@@ -272,6 +272,7 @@ use super::vm::{GLOBAL, Res, Vm};
 use crate::constants::{VM_CONSOLE_BYTES, VM_CONSOLE_ENTRIES};
 use crate::document::{DomChange, FragmentParser, ScriptChange, ScriptDocument};
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
+use crate::v9::encoded::Encoded;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1296,6 +1297,9 @@ pub(in crate::v9) struct NumberConstantPool {
     pub values: BTreeMap<u64, JsValue>,
 }
 
+/** Stored name of each namespaced attribute, by node, then namespace, then local name. */
+pub(in crate::v9) type AttrIndex = BTreeMap<usize, BTreeMap<String, BTreeMap<String, String>>>;
+
 /** Page state that survives between requests, inside VmState. */
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -1400,24 +1404,24 @@ pub(in crate::v9) struct PageState {
     pub resize_cycle: Option<resize_observers::Cycle>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
-    pub listeners: listener_store::ListenerStore,
+    pub listeners: Encoded<listener_store::ListenerStore>,
     pub next_listener: u32,
     /** Node wrappers by node id, so identity survives requests. */
-    pub wrappers: BTreeMap<usize, ObjectId>,
-    pub detached: BTreeMap<usize, Detached>,
+    pub wrappers: Encoded<BTreeMap<usize, ObjectId>>,
+    pub detached: Encoded<BTreeMap<usize, Detached>>,
     pub next_detached: usize,
     /** Namespace, prefix and local name of each script-created element, by node. Projected
     elements have no record and take their namespace from their tag. */
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub element_ns: BTreeMap<usize, namespaces::ElementNs>,
+    #[serde(default, skip_serializing_if = "Encoded::is_empty_map")]
+    pub element_ns: Encoded<BTreeMap<usize, namespaces::ElementNs>>,
     /** Namespace of each attribute set through a namespace-aware method, by node and then by
     stored name. Null-namespace attributes have no record. */
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub attr_ns: BTreeMap<usize, BTreeMap<String, namespaces::AttrNs>>,
+    #[serde(default, skip_serializing_if = "Encoded::is_empty_map")]
+    pub attr_ns: Encoded<BTreeMap<usize, BTreeMap<String, namespaces::AttrNs>>>,
     /** Stored name of a namespaced attribute, by node, then namespace, then local name, so a
     namespace-aware read finds it without scanning the node's attributes. */
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub attr_index: BTreeMap<usize, BTreeMap<String, BTreeMap<String, String>>>,
+    #[serde(default, skip_serializing_if = "Encoded::is_empty_map")]
+    pub attr_index: Encoded<AttrIndex>,
     pub pending: Vec<Pending>,
     pub next_request: u32,
     /** When the last trusted input happened (`script_now`), for transient user activation;
@@ -1442,7 +1446,7 @@ pub(in crate::v9) struct PageState {
     pub cookie: String,
     pub title: Option<String>,
     /** Script-written text of nodes, until the app reports it back in `node_text`. */
-    pub texts: BTreeMap<usize, String>,
+    pub texts: Encoded<BTreeMap<usize, String>>,
     /** XMLHttpRequest objects and their state. */
     pub xhrs: BTreeMap<ObjectId, XhrState>,
     /** Field values scripts set. */
@@ -1502,7 +1506,7 @@ pub(in crate::v9) struct PageState {
     /** The focused element (`document.activeElement`), set by `focus()`, typing and clicks. */
     pub focused: Option<usize>,
     /** Custom element definitions, shadow and template bookkeeping, mutation observers. */
-    pub components: components::State,
+    pub components: Encoded<components::State>,
     /** Each same-origin iframe's document node, made on first `contentDocument`. */
     pub frames: BTreeMap<usize, usize>,
     /** Each iframe's contentWindow object. */
@@ -1542,10 +1546,10 @@ pub(in crate::v9) struct PageState {
     /** The reverse of `implementations`: a document's implementation object, kept so its
     identity holds across reads. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub implementation_of: BTreeMap<usize, ObjectId>,
+    pub implementation_of: Encoded<BTreeMap<usize, ObjectId>>,
     /** Attr records by id: each Attr object's owner, name, namespace and detached value. */
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub attr_nodes: BTreeMap<u64, attr::AttrNode>,
+    #[serde(default, skip_serializing_if = "Encoded::is_empty_map")]
+    pub attr_nodes: Encoded<BTreeMap<u64, attr::AttrNode>>,
     /** The attached Attr of each element attribute, by node and then by stored name, so one
     attribute has one Attr object. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1559,6 +1563,38 @@ pub(in crate::v9) struct PageState {
     /** DOMTokenList objects by node and then attribute, so classList reads return one object. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub token_lists: BTreeMap<usize, BTreeMap<String, ObjectId>>,
+}
+
+impl PageState {
+    /** Keep the compact JSON of every map a summary copies, so the next size check and encoding
+    reuse bytes for the maps this step did not touch. */
+    pub fn keep_encodings(&self) {
+        self.listeners.keep_encoding();
+        self.wrappers.keep_encoding();
+        self.detached.keep_encoding();
+        self.texts.keep_encoding();
+        self.components.keep_encoding();
+        self.implementation_of.keep_encoding();
+        self.element_ns.keep_encoding();
+        self.attr_ns.keep_encoding();
+        self.attr_index.keep_encoding();
+        self.attr_nodes.keep_encoding();
+    }
+    /** Drop every kept encoding, so each map is walked again: the reference a debug check
+    compares the kept bytes against. */
+    #[cfg(debug_assertions)]
+    pub fn forget_encodings(&mut self) {
+        self.listeners.forget_encoding();
+        self.wrappers.forget_encoding();
+        self.detached.forget_encoding();
+        self.texts.forget_encoding();
+        self.components.forget_encoding();
+        self.implementation_of.forget_encoding();
+        self.element_ns.forget_encoding();
+        self.attr_ns.forget_encoding();
+        self.attr_index.forget_encoding();
+        self.attr_nodes.forget_encoding();
+    }
 }
 
 /** Runtime platform state for one request. */
