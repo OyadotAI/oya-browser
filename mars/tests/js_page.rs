@@ -1026,6 +1026,19 @@ fn synchronous_xhr_answers_before_the_next_statement() {
     assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
 }
 
+/** A timer's synchronous request resumes with its original state and completes the task. */
+#[test]
+fn timer_synchronous_xhr_answers_before_the_next_statement() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>setTimeout(()=>{const x=new XMLHttpRequest();\
+         x.open('GET','/sync.txt',false);x.send();\
+         document.getElementById('out').textContent='sync '+x.status+' '+x.responseText},0)</script>",
+        vec![("/sync.txt", reply("text/plain", "", "hello"))],
+    );
+    assert!(texts(&page).contains("sync 200 hello"), "{page}");
+    assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
+}
+
 /** A synchronous request a different origin refuses (no CORS grant) throws NetworkError at send(),
 which the page's own try/catch takes; the statements after it still run. */
 #[test]

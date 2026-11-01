@@ -567,8 +567,11 @@ classic sources and module input by digest, and each page's script state (heap, 
 platform state) by token, so a step sends a token instead of the heap (25 MB on YouTube). Per
 page it keeps only the committed state, the last step's base and that step's result, for at most
 RESIDENT_PAGES pages; the coordinator keeps the state's summary (listeners, detached nodes,
-images) and the token. A state V9 built itself skips re-validation; one decoded from a frame is
-always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
+images) and the token. Encoded page maps and their compact JSON are shared by immutable snapshots;
+mutable access first discards that snapshot's encoding and copies a shared map. Unchanged maps
+therefore avoid deep copies between steps, while retries and abandoned candidates retain their
+original values and byte-size validation remains exact. A state V9 built itself skips re-validation;
+one decoded from a frame is always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
 coordinator reloads the page (a POST result is never replayed; its scripts stop). In the desktop, a
 navigation shows its parsed and styled page in the window before its scripts run (`window.inspect`
 reports it with `settling`); the committed page, history and the navigation's reply still wait
