@@ -196,7 +196,9 @@ impl Decoder {
         newest.map(|picture| picture.image)
     }
 
-    /** Drop every picture waiting to be shown: the frames they came from are gone, after a seek or a replacement. */
+    /** Drop every picture waiting to be shown. The player drops the whole decoder on a seek or a
+    replaced track (`StreamVideo::reset`); tests drain the queue in place to go on feeding. */
+    #[cfg(test)]
     pub fn clear(&self) {
         self.output.borrow_mut().clear();
     }

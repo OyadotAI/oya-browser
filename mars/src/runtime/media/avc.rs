@@ -3,7 +3,6 @@
  * units, and the sequence and picture parameter sets a decoder needs before its first sample. Parsed here, where it
  * is platform-neutral and tested, and handed to the native decoder that builds the format description from it.
  */
-
 /// The record's fixed header: version, profile, compatibility, level, the length-size byte and the SPS-count byte.
 const FIXED: usize = 6;
 /// The record version this parser reads; any other is refused rather than guessed at.
