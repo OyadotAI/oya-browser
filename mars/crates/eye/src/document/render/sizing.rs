@@ -1341,7 +1341,9 @@ fn row_basis_contribution(
     let basis = match child.style.flex_basis {
         crate::document::FlexBasis::Pixels(value) => Some(content_size(child, value, true)),
         crate::document::FlexBasis::Auto => preferred,
-        crate::document::FlexBasis::Percent(_) | crate::document::FlexBasis::Content => None,
+        crate::document::FlexBasis::Percent(_)
+        | crate::document::FlexBasis::Mixed { .. }
+        | crate::document::FlexBasis::Content => None,
     };
     let Some(base) = basis else {
         return;

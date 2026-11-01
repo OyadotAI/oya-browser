@@ -5,7 +5,7 @@
 use super::{
     constants::{CALC_DEPTH, CALC_TOKENS},
     unsupported,
-    values::{Dimension, signed_number, unit},
+    values::{Dimension, unit},
 };
 use crate::{document::RenderContext, protocol::EngineResult};
 /** One lexical piece of a math expression. */
@@ -330,7 +330,9 @@ fn sign_related(value: Value, apply: fn(f64) -> f64) -> EngineResult<Value> {
 }
 /** A unitless token is a number; anything else is a length. */
 fn leaf(text: &str, font: f64, context: RenderContext) -> EngineResult<Value> {
-    if let Ok(number) = signed_number(text) {
+    // A number keeps its full magnitude: `calc(1e30 * 1px)` saturates at the length's end, not
+    // here, as Blink's float math does.
+    if let Some(number) = text.parse::<f64>().ok().filter(|n| n.is_finite()) {
         return Ok(Value::Number(number));
     }
     unit(text, font, context).map(Value::Length)
@@ -348,10 +350,18 @@ fn add(left: Value, right: Value, sign: f64) -> EngineResult<Value> {
 }
 /** Scaling a length by a number, or dividing by a nonzero number. */
 fn multiply(left: Value, right: Value, divide: bool) -> EngineResult<Value> {
+    // A zero component stays zero even against an infinite factor (`0 * infinity` is NaN).
+    let times = |component: f64, factor: f64| {
+        if component == 0.0 {
+            0.0
+        } else {
+            component * factor
+        }
+    };
     let scale = |dimension: Dimension, factor: f64| {
         Value::Length(Dimension {
-            px: dimension.px * factor,
-            percent: dimension.percent * factor,
+            px: times(dimension.px, factor),
+            percent: times(dimension.percent, factor),
         })
     };
     Ok(match (left, right, divide) {

@@ -281,7 +281,8 @@ fn flex_values(value: &str) -> Option<Vec<(String, String)>> {
 /** Blink's factor-first ambiguity rule admits a basis before both factors or after their completed pair. */
 fn parse_flex(value: &str) -> Option<(String, String, String)> {
     let (mut grow, mut shrink, mut basis) = (None, None, None);
-    for token in value.split_whitespace() {
+    // Tokens split at top level only, so a `calc()` basis stays one token.
+    for token in tokens(value) {
         if let Ok(factor) = number(token) {
             if grow.is_none() {
                 grow = Some(token.to_owned());

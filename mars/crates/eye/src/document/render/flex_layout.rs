@@ -197,6 +197,7 @@ fn row_item(
         FlexBasis::Content => transferred.unwrap_or(intrinsic.max_content),
         FlexBasis::Pixels(value) => content_size(node, value, true),
         FlexBasis::Percent(value) => content_size(node, inner * value / 100.0, true),
+        FlexBasis::Mixed { px, percent } => content_size(node, px + inner * percent / 100.0, true),
     };
     let max = super::sizing::max_width(node, Some(inner));
     let automatic =

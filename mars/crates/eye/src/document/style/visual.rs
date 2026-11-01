@@ -567,8 +567,9 @@ fn radius(
         _ => RADIUS_PERCENT_BASIS,
     };
     let px = length.of(basis);
+    // A math radius saturates at the largest length: `calc(infinity * 1px)` is a full radius.
     let px = if super::values::is_math(first) {
-        px.max(0.0)
+        px.clamp(0.0, CSS_MAX_SCALAR)
     } else {
         px
     };
@@ -597,7 +598,11 @@ fn radius(
  * invalid; a `calc()` may mix signs, its sum clamped at zero at layout. */
 fn vertical_radius(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, f64)> {
     let length = dimension(value, font, context)?;
-    let (px, percent) = (length.px, length.percent);
+    // An infinite math term saturates, as a radius's does; NaN still fails the finite check.
+    let (px, percent) = (
+        length.px.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR),
+        length.percent.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR),
+    );
     let negative = px < 0.0 || percent < 0.0;
     if !(px.is_finite() && percent.is_finite()) || (negative && !super::values::is_math(value)) {
         return Err(unsupported());

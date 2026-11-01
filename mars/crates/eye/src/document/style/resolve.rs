@@ -45,6 +45,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         underline: parent.underline,
         strikethrough: parent.strikethrough,
         list_style: parent.list_style,
+        list_marker: parent.list_marker.clone(),
         border_spacing: parent.border_spacing,
         border_spacing_rows: parent.border_spacing_rows,
         border_collapse: parent.border_collapse,
@@ -370,7 +371,10 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.underline = source.underline;
             style.strikethrough = source.strikethrough;
         }
-        "list-style" | "list-style-type" => style.list_style = source.list_style,
+        "list-style" | "list-style-type" => {
+            style.list_style = source.list_style;
+            style.list_marker = source.list_marker.clone();
+        }
         "border-spacing" => {
             style.border_spacing = source.border_spacing;
             style.border_spacing_rows = source.border_spacing_rows;

@@ -130,6 +130,11 @@ pub(super) fn item(
             definite_height.unwrap_or_default() * value / 100.0,
             false,
         ),
+        FlexBasis::Mixed { px, percent } if definite_height.is_some() => content_size(
+            child,
+            px + definite_height.unwrap_or_default() * percent / 100.0,
+            false,
+        ),
         FlexBasis::Content => natural_content,
         _ => specified.unwrap_or(natural_content),
     };
@@ -524,7 +529,7 @@ fn indefinite_basis(child: &Node) -> bool {
             .height
             .and_then(|height| height.resolve_size(None))
             .is_none(),
-        FlexBasis::Content | FlexBasis::Percent(_) => true,
+        FlexBasis::Content | FlexBasis::Percent(_) | FlexBasis::Mixed { .. } => true,
     };
     indefinite && child.style.aspect_ratio.is_none()
 }

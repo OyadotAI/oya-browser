@@ -11,12 +11,13 @@ pub(super) fn marker(
     (content_x, top): (f64, f64),
     items: &[DisplayItem],
 ) -> EngineResult<Option<PaintLine>> {
-    let text = match node.style.list_style {
-        ListStyle::None => return Ok(None),
-        ListStyle::Disc => "\u{2022}".to_string(),
-        ListStyle::Circle => "\u{25e6}".to_string(),
-        ListStyle::Square => "\u{25aa}".to_string(),
-        ListStyle::Decimal => format!("{}. ", context.ordinal(node)?),
+    let text = match (&node.style.list_marker, node.style.list_style) {
+        (Some(text), _) => text.clone(),
+        (None, ListStyle::None) => return Ok(None),
+        (None, ListStyle::Disc) => "\u{2022}".to_string(),
+        (None, ListStyle::Circle) => "\u{25e6}".to_string(),
+        (None, ListStyle::Square) => "\u{25aa}".to_string(),
+        (None, ListStyle::Decimal) => format!("{}. ", context.ordinal(node)?),
     };
     let face = super::sizing::face(&node.style);
     let width = context.measure(&text, face)?;

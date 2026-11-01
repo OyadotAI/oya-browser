@@ -29,6 +29,7 @@ pub(super) fn apply(
         "font-feature-settings",
         "font-variation-settings",
         "view-transition-name",
+        "list-style-type",
     ]
     .contains(&key)
     {
@@ -261,7 +262,9 @@ fn text(
         "text-align" => {
             style.align = match value {
                 "left" | "center" | "right" | "start" | "end" | "justify" => value,
-                "match-parent" => super::text_align::matched(&style.align, style.parent_rtl),
+                "match-parent" | "-webkit-match-parent" => {
+                    super::text_align::matched(&style.align, style.parent_rtl)
+                }
                 "justify-all" => "start",
                 "-webkit-center" => "webkit-center",
                 _ => return Err(unsupported()),
@@ -411,6 +414,11 @@ fn display(
         "inline" | "inline flow" => set_display(style, true, false, false, false),
         "inline-block" | "inline flow-root" => set_display(style, true, true, false, false),
         // An inline-level table: atomic on its line, a table inside.
+        // An inline box whose principal box is a list item, so it gets a marker.
+        "inline-list-item" | "inline list-item" => {
+            set_display(style, true, false, false, false);
+            style.list_item = true;
+        }
         "inline-table" | "inline table" => {
             set_display(style, true, true, false, false);
             style.table_box = TableBox::Table;

@@ -354,6 +354,9 @@ pub struct ComputedStyle {
     /// Inherited marker kind.
     #[serde(skip_serializing_if = "default")]
     pub list_style: ListStyle,
+    /// A `list-style-type` string (`'*'`) drawn as the marker in place of `list_style`'s symbol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_marker: Option<String>,
     /// Grid container.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub display_grid: bool,
@@ -967,6 +970,7 @@ impl Default for ComputedStyle {
             vertical_align: VerticalAlign::Baseline,
             list_item: false,
             list_style: ListStyle::Disc,
+            list_marker: None,
             display_grid: false,
             display_contents: false,
             table_box: TableBox::None,
