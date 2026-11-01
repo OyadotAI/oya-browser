@@ -161,7 +161,6 @@ impl<V: Clone> Trie<V> {
         }
     }
     /** Remove `key`, returning its value. Emptied nodes stay; a sweep rebuilds the tree. */
-    #[cfg(test)]
     pub fn remove(&mut self, key: &u32) -> Option<V> {
         let mut node = Arc::make_mut(&mut self.root);
         let mut shift = ROOT_SHIFT;

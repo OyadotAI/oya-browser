@@ -578,6 +578,9 @@ enum Filing {
     /** The same source at the same offset, compiled again (after the process cache let the
     old unit go): its codes replace the old ones. */
     Recompiled,
+    /** Another source at an offset an earlier step's source held: the old source's codes go
+    first, then the new ones are filed as fresh. */
+    Replaced,
     /** Another source claims the site. */
     Conflict,
 }
@@ -611,20 +614,6 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
-        // A later step of the same page finds the script filed: a comparison, not a hash.
-        let site = super::syntax::site_of(super::syntax::Pos {
-            offset: offset as u32,
-            line: 1,
-            column: 1,
-        });
-        if let Some(code) = self.codes.get(&site)
-            && code
-                .source
-                .as_ref()
-                .is_some_and(|(text, base)| *base == offset && &**text == source)
-        {
-            return Ok(code.clone());
-        }
         self.script_keyed(source_key(source), source, offset, parse)
     }
     /** `script` for a source whose `source_key` the caller already holds: a service that keeps
@@ -717,6 +706,26 @@ impl Registry {
     pub fn begin_step(&mut self) {
         self.adopted.clear();
     }
+    /** The entry code at `site` when this step adopted it. */
+    pub fn adopted_this_step(&self, site: u32) -> Option<Arc<Code>> {
+        self.adopted
+            .contains(&site)
+            .then(|| self.codes.get(&site).cloned())
+            .flatten()
+    }
+    /** Drop every code filed for the source `entry` came from: a different source now
+    compiles at that offset, and none of the old one's functions may answer for the new one's
+    sites. Runs only when a later step reuses an offset (an unretained evaluation's). */
+    fn evict_source(&mut self, entry: &Code) {
+        let Some((text, base)) = &entry.source else {
+            self.codes.remove(&entry.site);
+            return;
+        };
+        let tags = super::syntax::SITE_TAGS as usize;
+        let range = base * tags..(base + text.len() + 1) * tags;
+        self.codes
+            .retain(|site, _| !range.contains(&(*site as usize)));
+    }
     /** Where `unit` stands: see `Filing`. */
     fn filing(&self, unit: &cache::Unit) -> Filing {
         let Some(filed) = self.codes.get(&unit.entry.site) else {
@@ -731,8 +740,10 @@ impl Registry {
             }
             _ => false,
         };
-        if same || !self.adopted.contains(&unit.entry.site) {
+        if same {
             Filing::Recompiled
+        } else if !self.adopted.contains(&unit.entry.site) {
+            Filing::Replaced
         } else {
             Filing::Conflict
         }
@@ -748,6 +759,12 @@ impl Registry {
             Filing::Conflict => return Err(EngineError::invalid("Duplicate V9 code site.")),
             Filing::Fresh => true,
             Filing::Recompiled => false,
+            Filing::Replaced => {
+                if let Some(old) = self.codes.get(&unit.entry.site).cloned() {
+                    self.evict_source(&old);
+                }
+                true
+            }
         };
         self.adopted.insert(unit.entry.site);
         for code in &unit.codes {
@@ -1423,10 +1440,22 @@ mod filing_tests {
                 .adopt(&unit("function g(){return 2}g();", 10))
                 .is_err()
         );
-        // The next step may compile another source where an earlier step's was.
+        // Only this step's adoptions answer a dynamic compile without the keyed cache.
+        let entry = first.entry.site;
+        assert!(registry.adopted_this_step(entry).is_some());
         registry.begin_step();
-        registry
-            .adopt(&unit("function g(){return 2}g();", 10))
-            .unwrap();
+        assert!(registry.adopted_this_step(entry).is_none());
+        // The next step may compile another source where an earlier step's was; none of the old
+        // source's functions survive to answer for the new source's sites.
+        let old: Vec<u32> = first.codes.iter().map(|code| code.site).collect();
+        assert!(!old.is_empty());
+        registry.adopt(&unit("var x=1;", 10)).unwrap();
+        for site in old {
+            assert!(
+                registry.codes.get(&site).is_none(),
+                "old function site {site} survived"
+            );
+        }
+        assert!(registry.codes.get(&entry).is_some());
     }
 }

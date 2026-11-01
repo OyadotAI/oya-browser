@@ -1184,8 +1184,11 @@ pub(in crate::v9) fn compile_dynamic(
         line: 1,
         column: 1,
     });
-    if let Some(code) = registry.get(site) {
-        return Ok(code.clone());
+    // Only code this step compiled here answers without a lookup: a carried registry may hold
+    // an earlier step's different source or context at this offset, which the keyed cache
+    // below tells apart.
+    if let Some(code) = registry.adopted_this_step(site) {
+        return Ok(code);
     }
     match context {
         Some(context) => registry.eval(source, base, context, |strict, private_names, grammar| {
