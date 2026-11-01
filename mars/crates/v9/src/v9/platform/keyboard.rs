@@ -85,7 +85,10 @@ fn type_stroke(vm: &mut Vm, target: usize, stroke: &Stroke, known: bool) -> Res<
     if edit {
         apply_edit(vm, target, stroke, known)?;
         events::fire_input(vm, node, "input", kind, inserted.as_deref(), false)?;
-        if matches!(stroke, Stroke::Replace(_)) {
+        if matches!(
+            stroke,
+            Stroke::Replace(_) | Stroke::Concealed { press: false }
+        ) {
             events::fire(vm, node, "change", true, false)?;
         }
     }
@@ -102,8 +105,10 @@ fn key_down(vm: &mut Vm, node: Target, stroke: &Stroke, name: &str) -> Res<bool>
         return Ok(false);
     }
     match stroke {
-        Stroke::Character(_) => events::fire_keyboard(vm, node, "keypress", name),
-        Stroke::Backspace | Stroke::Replace(_) => Ok(true),
+        Stroke::Character(_) | Stroke::Concealed { press: true } => {
+            events::fire_keyboard(vm, node, "keypress", name)
+        }
+        Stroke::Backspace | Stroke::Replace(_) | Stroke::Concealed { press: false } => Ok(true),
     }
 }
 
@@ -112,15 +117,19 @@ fn key_name(stroke: &Stroke) -> Option<String> {
     match stroke {
         Stroke::Character(character) => Some(character.to_string()),
         Stroke::Backspace => Some("Backspace".into()),
-        Stroke::Replace(_) => None,
+        Stroke::Concealed { press: true } => Some(CONCEALED_KEY.into()),
+        Stroke::Replace(_) | Stroke::Concealed { press: false } => None,
     }
 }
+
+/** The key name a withheld character reports: a key the page cannot read as text. */
+const CONCEALED_KEY: &str = "Unidentified";
 
 /** The `inputType` a stroke's edit reports, as browsers name it. */
 fn input_type(stroke: &Stroke) -> &'static str {
     match stroke {
         Stroke::Backspace => "deleteContentBackward",
-        Stroke::Character(_) | Stroke::Replace(_) => "insertText",
+        Stroke::Character(_) | Stroke::Replace(_) | Stroke::Concealed { .. } => "insertText",
     }
 }
 
@@ -128,7 +137,7 @@ fn input_type(stroke: &Stroke) -> &'static str {
 fn edit_data(stroke: &Stroke) -> Option<String> {
     match stroke {
         Stroke::Character(character) => Some(character.to_string()),
-        Stroke::Backspace => None,
+        Stroke::Backspace | Stroke::Concealed { .. } => None,
         Stroke::Replace(text) => Some(text.clone()),
     }
 }
@@ -172,5 +181,6 @@ fn edited(text: &str, stroke: &Stroke) -> String {
             next
         }
         Stroke::Replace(whole) => whole.clone(),
+        Stroke::Concealed { .. } => text.to_owned(),
     }
 }

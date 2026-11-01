@@ -25,6 +25,8 @@ pub enum Stroke {
     Backspace,
     /** A fill: the whole text replaced in one edit, with beforeinput and input, then change, and no key events. */
     Replace(String),
+    /** A secret field's stroke: the text is withheld, so the key is "Unidentified" and every edit reports no data. `press` says whether the stroke presses a key (a typed character) or only fills (a replacement). */
+    Concealed { press: bool },
 }
 
 /** Typed strokes into one field under one execution, each as a person's keyboard delivers it. `value` is the field's text, or None for a secret field whose text never enters the engine. The result says per stroke whether its edit went through. */

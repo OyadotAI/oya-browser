@@ -49,8 +49,14 @@ impl Runtime {
         if !page.scripting.loaded {
             return self.edit_natively(page, node, &strokes, None);
         }
+        // A secret field's characters never leave Rust: V9 gets only withheld strokes.
+        let sent = if node.secret() {
+            conceal(&strokes)
+        } else {
+            strokes.clone()
+        };
         let known = (!node.secret()).then(|| node.value.clone());
-        let action = json!({"kind":"typed","target":node.local_id,"strokes":strokes,"value":known});
+        let action = json!({"kind":"typed","target":node.local_id,"strokes":sent,"value":known});
         match self.script_step(page, action) {
             Ok(_) => {
                 let applied = std::mem::take(&mut page.scripting.typed_applied);
@@ -86,6 +92,18 @@ impl Runtime {
     }
 }
 
+/** The strokes a secret field sends to V9: each typed character or fill becomes a withheld stroke with the same cancelable events, and Backspace carries no text. */
+fn conceal(strokes: &[Stroke]) -> Vec<Stroke> {
+    strokes
+        .iter()
+        .map(|stroke| match stroke {
+            Stroke::Character(_) => Stroke::Concealed { press: true },
+            Stroke::Replace(_) => Stroke::Concealed { press: false },
+            Stroke::Backspace | Stroke::Concealed { .. } => stroke.clone(),
+        })
+        .collect()
+}
+
 /** The field's text after the strokes that were let through, applied in order. */
 fn edited_text(value: &str, strokes: &[Stroke], applied: Option<&[bool]>) -> String {
     let mut text = value.to_owned();
@@ -99,6 +117,8 @@ fn edited_text(value: &str, strokes: &[Stroke], applied: Option<&[bool]>) -> Str
                 text.pop();
             }
             Stroke::Replace(whole) => text = whole.clone(),
+            // Only V9 receives withheld strokes; Rust always applies the real ones.
+            Stroke::Concealed { .. } => {}
         }
     }
     text

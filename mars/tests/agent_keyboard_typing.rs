@@ -3,6 +3,7 @@ in order, the edit between beforeinput and input, and a cancelled keydown typing
 #[allow(dead_code)]
 mod support;
 use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 use support::{Fixture, agent_call, desktop, html};
 
 /** A field whose page records every key and edit event, with the field's value at the moment
@@ -188,20 +189,63 @@ fn typing_without_scripts_edits_the_value_natively() {
     assert_eq!(value(&mut runtime), "ab");
 }
 
-/** A secret field still fires each key's events, but its text never reaches the page's listeners. */
+/** A secret field's listeners record every key and edit event with the fields page script can read.
+Typed characters must not reach them: keys read "Unidentified", edits carry no data, the field reads
+empty, and the numeric codes stay zero. The real text lands in the field for the agent. */
 #[test]
-fn a_secret_field_fires_key_events_without_its_text() {
-    let page = "<!doctype html><input id=q type=password aria-label=Secret><script>\
+fn a_secret_field_fires_withheld_events_and_keeps_its_text_from_the_page() {
+    let page = "<!doctype html><form action='/done' method=get><input id=q name=pw type=password aria-label=Secret></form><script>\
 const q=document.getElementById('q');const log=[];window.log=log;\
-document.addEventListener('keydown',e=>log.push('down:'+e.key+':'+q.value));\
-document.addEventListener('input',e=>log.push('input:'+q.value));\
+const rec=(t,e)=>log.push(JSON.stringify({t:t,key:e.key,code:e.code,keyCode:e.keyCode,charCode:e.charCode,which:e.which,data:e.data===undefined?'undef':e.data,inputType:e.inputType,value:q.value}));\
+for(const k of ['keydown','keypress','keyup','change'])document.addEventListener(k,e=>rec(k,e));\
+for(const k of ['beforeinput','input'])document.addEventListener(k,e=>rec(k,e));\
 </script>";
-    let site = Fixture::raw(html("", page));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&requests);
+    let site = Fixture::start(
+        Box::new(move |request| {
+            seen.lock()
+                .unwrap()
+                .push(request.lines().next().unwrap_or_default().to_string());
+            html("", page)
+        }),
+        false,
+    );
     let mut runtime = desktop(&site.url);
     agent_call(&mut runtime, "page.navigate", json!({"url":site.url})).unwrap();
-    press(&mut runtime, "q", json!({"text":"hu"}));
-    assert_eq!(
-        log(&mut runtime),
-        ["down:h:", "input:", "down:u:", "input:"]
+    press(&mut runtime, "q", json!({"text":"hunter2"}));
+    let records = log(&mut runtime);
+    let joined = records.join("\n");
+    assert!(!joined.contains("hunter2"), "{joined}");
+    assert_eq!(records.len(), 7 * 5, "{joined}");
+    for record in &records {
+        let event: Value = serde_json::from_str(record).unwrap();
+        let kind = event["t"].as_str().unwrap();
+        assert_eq!(event["value"], json!(""), "{record}");
+        assert_eq!(event["keyCode"], json!(0), "{record}");
+        assert_eq!(event["charCode"], json!(0), "{record}");
+        assert_eq!(event["which"], json!(0), "{record}");
+        if kind.starts_with("key") {
+            assert_eq!(event["key"], json!("Unidentified"), "{record}");
+            assert_eq!(event["code"], json!("Unidentified"), "{record}");
+        }
+        if kind == "beforeinput" || kind == "input" {
+            assert_eq!(event["data"], Value::Null, "{record}");
+            assert_eq!(event["inputType"], json!("insertText"), "{record}");
+        }
+    }
+    // The real text leaves only in the submission the person sent: the server receives it, while
+    // the page's sensitive URL and every agent view stay withheld.
+    let (at, node) = field(&mut runtime, "q");
+    agent_call(
+        &mut runtime,
+        "page.submit",
+        json!({"page_id":at["page_id"],"expected_revision":at["revision"],"node_id":node}),
+    )
+    .unwrap();
+    let received = requests.lock().unwrap().clone();
+    assert!(
+        received.iter().any(|line| line.contains("pw=hunter2")),
+        "{received:?}"
     );
 }
