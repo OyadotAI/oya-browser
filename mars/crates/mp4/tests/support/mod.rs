@@ -81,6 +81,8 @@ fn mp4a_entry() -> Vec<u8> {
     let es = [vec![0, 1, 0], vec![0x04, config.len() as u8], config].concat();
     let esds = [vec![0x03, es.len() as u8], es].concat();
     let mut body = vec![0u8; 28];
+    body[16..18].copy_from_slice(&2u16.to_be_bytes());
+    body[24..28].copy_from_slice(&(48000u32 << 16).to_be_bytes());
     body.extend(fb(b"esds", 0, 0, &esds));
     bx(b"mp4a", &body)
 }

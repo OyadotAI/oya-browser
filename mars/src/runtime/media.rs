@@ -7,6 +7,7 @@
  */
 pub mod bytes;
 pub mod hub;
+pub mod stream;
 mod support;
 pub mod updates;
 

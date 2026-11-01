@@ -87,7 +87,9 @@ pub enum MediaCommand {
     },
     /// Seek to a media time in seconds; `fast` allows the nearest keyframe.
     Seek { player: u64, time: f64, fast: bool },
-    /// Media Source: append a segment to one source buffer of the given kind.
+    /// Media Source: a segment the script accepted, appended to one source buffer. The bytes are whole
+    /// boxes: the first `init_len` of them are an initialization segment, and the rest are media. The offset and
+    /// append window are the buffer's values when the append was processed.
     Append {
         player: u64,
         buffer: u32,
@@ -95,6 +97,14 @@ pub enum MediaCommand {
         mime: String,
         #[serde(default)]
         bytes: Vec<u8>,
+        #[serde(default)]
+        init_len: usize,
+        #[serde(default)]
+        offset: f64,
+        #[serde(default)]
+        window_start: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_end: Option<f64>,
     },
     /// Media Source: drop buffered media of one buffer between two times.
     Remove {
@@ -135,8 +145,21 @@ impl MediaCommand {
             Self::Load { url, settings, .. } => url.len() <= COMMAND_TEXT && settings_ok(settings),
             Self::Settings { settings, .. } => settings_ok(settings),
             Self::Seek { time, .. } => finite(*time) && *time >= 0.0,
-            Self::Append { mime, bytes, .. } => {
-                mime.len() <= COMMAND_TEXT && bytes.len() <= APPEND_BYTES
+            Self::Append {
+                mime,
+                bytes,
+                init_len,
+                offset,
+                window_start,
+                window_end,
+                ..
+            } => {
+                mime.len() <= COMMAND_TEXT
+                    && bytes.len() <= APPEND_BYTES
+                    && *init_len <= bytes.len()
+                    && finite(*offset)
+                    && finite(*window_start)
+                    && window_end.is_none_or(finite)
             }
             Self::Remove { start, end, .. } => finite(*start) && !end.is_nan(),
             Self::EndOfStream { duration, .. } => !duration.is_nan(),

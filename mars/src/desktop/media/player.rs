@@ -7,6 +7,7 @@
  */
 use super::loader::Loader;
 use crate::runtime::media::hub::{Shared, Status};
+use crate::runtime::media::stream::{Append, Stream};
 use crate::v9::MediaSettings;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, ProtocolObject};
@@ -59,6 +60,8 @@ pub(super) struct Native {
     pending_seek: Option<(f64, bool)>,
     /// A player for a Media Source stream, which has no fetchable URL.
     stream: bool,
+    /// The segments a Media Source stream has been given, per source buffer.
+    pub media: Stream,
 }
 
 impl Native {
@@ -78,6 +81,7 @@ impl Native {
             seek_time: 0.0,
             pending_seek: None,
             stream,
+            media: Stream::default(),
         };
         native.start_if_allowed(mtm);
         native
@@ -93,6 +97,12 @@ impl Native {
         self.apply();
         if let Some((time, fast)) = self.pending_seek.take() {
             self.seek(time, fast);
+        }
+    }
+    /** A segment the script accepted for one source buffer; a refused one is logged and buffers nothing. */
+    pub fn append(&mut self, buffer: u32, append: Append<'_>) {
+        if let Err(error) = self.media.append(buffer, append) {
+            crate::runtime::media::debug(|| format!("append refused: {error}"));
         }
     }
     /** New settings from the page. */

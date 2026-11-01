@@ -41,6 +41,9 @@ pub(crate) const VERSION_LARGE: u8 = 1;
 /// The fixed part of a VisualSampleEntry and an AudioSampleEntry before their child boxes.
 pub(crate) const VISUAL_ENTRY_FIELDS: usize = 78;
 pub(crate) const AUDIO_ENTRY_FIELDS: usize = 28;
+/// Offsets, within an audio sample entry's body, of its channel count (16 bits) and its sample rate (16.16 fixed).
+pub(crate) const AUDIO_CHANNELS_AT: usize = 16;
+pub(crate) const AUDIO_RATE_AT: usize = 24;
 
 /// tfhd flags: which optional fields follow the track id.
 pub(crate) const TFHD_BASE_OFFSET: u32 = 0x1;

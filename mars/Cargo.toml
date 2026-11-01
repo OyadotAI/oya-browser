@@ -23,6 +23,7 @@ mars-v9 = { path = "crates/v9" }
 mars-relay = { path = "crates/relay" }
 mars-link = { path = "crates/link" }
 mars-avif = { path = "crates/avif" }
+mars-mp4 = { path = "crates/mp4" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }

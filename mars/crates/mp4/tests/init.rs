@@ -99,3 +99,23 @@ fn init_reads_the_display_size_from_tkhd() {
     assert_eq!((tracks[0].width, tracks[0].height), (1280, 720));
     assert_eq!((tracks[1].width, tracks[1].height), (0, 0));
 }
+
+/** A video track keeps its avcC record as the decoder configuration, byte for byte. */
+#[test]
+fn init_keeps_the_avcc_record_as_the_video_decoder_config() {
+    let tracks = parse_init(&init_segment(&[TrackSpec::video(1)])).unwrap();
+    assert_eq!(
+        tracks[0].config,
+        vec![1, 0x64, 0x00, 0x1f, 0xff, 0xe1, 0, 0]
+    );
+    assert_eq!((tracks[0].channels, tracks[0].sample_rate), (0, 0));
+}
+
+/** An AAC track keeps its AudioSpecificConfig, and its channel count and sample rate from the sample entry. */
+#[test]
+fn init_reads_the_audio_config_channels_and_rate() {
+    let tracks = parse_init(&init_segment(&[TrackSpec::audio(2)])).unwrap();
+    assert_eq!(tracks[0].config, vec![0x11, 0x90]);
+    assert_eq!(tracks[0].channels, 2);
+    assert_eq!(tracks[0].sample_rate, 48000);
+}

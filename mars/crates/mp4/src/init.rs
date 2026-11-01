@@ -5,11 +5,11 @@
  */
 use crate::boxes::{Boxed, Cursor, children, find, full_box};
 use crate::constants::{
-    AOT_SHIFT, AUDIO_ENTRY_FIELDS, AVC1, AVC3, AVCC, DECODER_CONFIG_FIXED, DESC_DECODER_CONFIG,
-    DESC_DECODER_SPECIFIC, DESC_ES, EDTS, ELST, ES_FIXED, ES_OCR, ES_SKIP_BYTES,
-    ES_STREAM_DEPENDENCE, ES_URL, ESDS, FIXED_INTEGER_SHIFT, HDLR, Kind, LENGTH_BYTES_MAX,
-    LENGTH_MASK, LENGTH_MORE, MDHD, MDIA, MINF, MOOV, MP4A, MVEX, SOUN, STBL, STSD, TKHD, TRAK,
-    TREX, VERSION_LARGE, VIDE, VISUAL_ENTRY_FIELDS,
+    AOT_SHIFT, AUDIO_CHANNELS_AT, AUDIO_ENTRY_FIELDS, AUDIO_RATE_AT, AVC1, AVC3, AVCC,
+    DECODER_CONFIG_FIXED, DESC_DECODER_CONFIG, DESC_DECODER_SPECIFIC, DESC_ES, EDTS, ELST,
+    ES_FIXED, ES_OCR, ES_SKIP_BYTES, ES_STREAM_DEPENDENCE, ES_URL, ESDS, FIXED_INTEGER_SHIFT, HDLR,
+    Kind, LENGTH_BYTES_MAX, LENGTH_MASK, LENGTH_MORE, MDHD, MDIA, MINF, MOOV, MP4A, MVEX, SOUN,
+    STBL, STSD, TKHD, TRAK, TREX, VERSION_LARGE, VIDE, VISUAL_ENTRY_FIELDS,
 };
 use crate::error::{Error, Result};
 
@@ -35,6 +35,12 @@ pub struct Track {
     pub kind: TrackKind,
     /** The codec string: `avc1.PPCCLL`, `mp4a.40.N`, or the sample entry's four characters. */
     pub codec: String,
+    /** The decoder configuration: the avcC record for video, the AudioSpecificConfig for AAC, empty otherwise. */
+    pub config: Vec<u8>,
+    /** Audio channel count; zero for a track with no sound. */
+    pub channels: u16,
+    /** Audio sample rate in Hz; zero for a track with no sound. */
+    pub sample_rate: u32,
     /** The trex default duration, used when a fragment names none. */
     pub default_duration: u32,
     /** The trex default sample size. */
@@ -80,13 +86,16 @@ fn parse_trak(body: &[u8], trex: &[Boxed<'_>]) -> Result<Track> {
     let kind = handler(required(&mdia, HDLR)?.body)?;
     let minf = children(required(&mdia, MINF)?.body)?;
     let stbl = children(required(&minf, STBL)?.body)?;
-    let codec = codec(required(&stbl, STSD)?.body)?;
+    let entry = description(required(&stbl, STSD)?.body)?;
     let (default_duration, default_size, default_flags) = track_defaults(trex, id)?;
     Ok(Track {
         id,
         timescale,
         kind,
-        codec,
+        codec: entry.codec,
+        config: entry.config,
+        channels: entry.channels,
+        sample_rate: entry.sample_rate,
         default_duration,
         default_size,
         default_flags,
@@ -149,54 +158,93 @@ fn handler(body: &[u8]) -> Result<TrackKind> {
     })
 }
 
-/** The codec string of the first sample entry in stsd. */
-fn codec(body: &[u8]) -> Result<String> {
+/** What the first sample entry of stsd says about its track: codec, decoder configuration and audio layout. */
+struct Description {
+    codec: String,
+    config: Vec<u8>,
+    channels: u16,
+    sample_rate: u32,
+}
+
+impl Description {
+    /** A description with no decoder configuration or audio layout, for a sample entry Mars does not decode. */
+    fn bare(codec: String) -> Self {
+        Self {
+            codec,
+            config: Vec::new(),
+            channels: 0,
+            sample_rate: 0,
+        }
+    }
+}
+
+/** The description of the first sample entry in stsd. */
+fn description(body: &[u8]) -> Result<Description> {
     let (_, _, payload) = full_box(body)?;
     let mut cursor = Cursor::new(payload, "stsd");
     cursor.skip(4)?;
     let entries = children(cursor.rest())?;
     let entry = entries.first().ok_or(Error::Missing(STSD))?;
     match entry.kind {
-        AVC1 | AVC3 => avc_codec(entry),
-        MP4A => aac_codec(entry),
-        other => Ok(String::from_utf8_lossy(&other).into_owned()),
+        AVC1 | AVC3 => avc_description(entry),
+        MP4A => aac_description(entry),
+        other => Ok(Description::bare(
+            String::from_utf8_lossy(&other).into_owned(),
+        )),
     }
 }
 
-/** `avc1.PPCCLL` from the avcC record: profile, profile compatibility and level, in hex. */
-fn avc_codec(entry: &Boxed<'_>) -> Result<String> {
+/** A video entry: its avcC record is both the codec string's source and the decoder's configuration. */
+fn avc_description(entry: &Boxed<'_>) -> Result<Description> {
     let children = entry_children(entry, VISUAL_ENTRY_FIELDS)?;
-    let avcc = required(&children, AVCC)?;
-    let mut cursor = Cursor::new(avcc.body, "avcC");
+    let avcc = required(&children, AVCC)?.body;
+    let mut cursor = Cursor::new(avcc, "avcC");
     cursor.skip(1)?;
     let profile = cursor.u8()?;
     let compatibility = cursor.u8()?;
     let level = cursor.u8()?;
-    Ok(format!(
-        "{}.{profile:02X}{compatibility:02X}{level:02X}",
-        String::from_utf8_lossy(&entry.kind)
-    ))
+    Ok(Description {
+        codec: format!(
+            "{}.{profile:02X}{compatibility:02X}{level:02X}",
+            String::from_utf8_lossy(&entry.kind)
+        ),
+        config: avcc.to_vec(),
+        channels: 0,
+        sample_rate: 0,
+    })
 }
 
-/** `mp4a.40.N` from the esds box's AAC object type. */
-fn aac_codec(entry: &Boxed<'_>) -> Result<String> {
+/** An AAC entry: `mp4a.40.N` from the AudioSpecificConfig's object type, plus its channels and rate. */
+fn aac_description(entry: &Boxed<'_>) -> Result<Description> {
     let children = entry_children(entry, AUDIO_ENTRY_FIELDS)?;
     let esds = required(&children, ESDS)?;
     let (_, _, payload) = full_box(esds.body)?;
-    Ok(format!("mp4a.40.{}", aac_object_type(payload)?))
+    let config = specific_config(payload)?;
+    let first = config.first().ok_or(Error::Truncated("esds"))?;
+    Ok(Description {
+        codec: format!("mp4a.40.{}", first >> AOT_SHIFT),
+        config: config.to_vec(),
+        channels: u16::from_be_bytes(be_at(entry.body, AUDIO_CHANNELS_AT)?),
+        sample_rate: u32::from_be_bytes(be_at(entry.body, AUDIO_RATE_AT)?) >> FIXED_INTEGER_SHIFT,
+    })
 }
 
-/** The AAC object type: the high bits of the DecoderSpecificInfo's first byte. */
-fn aac_object_type(esds: &[u8]) -> Result<u8> {
+/** `N` bytes at `at` in a sample entry's body, or Truncated when the entry is too short for them. */
+fn be_at<const N: usize>(body: &[u8], at: usize) -> Result<[u8; N]> {
+    body.get(at..at + N)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(Error::Truncated("sample entry"))
+}
+
+/** The AudioSpecificConfig: the DecoderSpecificInfo inside an esds's decoder configuration. */
+fn specific_config(esds: &[u8]) -> Result<&[u8]> {
     let es = descriptor(esds, DESC_ES)?;
     let flags = *es.get(ES_FIXED - 1).ok_or(Error::Truncated("esds"))?;
     let config = descriptor(es_optionals(es, flags)?, DESC_DECODER_CONFIG)?;
     let specific_at = config
         .get(DECODER_CONFIG_FIXED..)
         .ok_or(Error::Truncated("esds"))?;
-    let specific = descriptor(specific_at, DESC_DECODER_SPECIFIC)?;
-    let first = specific.first().ok_or(Error::Truncated("esds"))?;
-    Ok(first >> AOT_SHIFT)
+    descriptor(specific_at, DESC_DECODER_SPECIFIC)
 }
 
 /** The bytes after an ES_Descriptor's fixed fields and whichever optional fields its flags name. */

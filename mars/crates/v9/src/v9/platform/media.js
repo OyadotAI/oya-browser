@@ -1640,8 +1640,6 @@
       if (m.readyState === 'ended') { m.readyState = 'open'; queueFire(b.source, 'sourceopen'); }
       b.updating = true;
       queueFire(this, 'updatestart');
-      const s = m.element && state(m.element);
-      if (s && s.player) post(s, { op: 'append', player: s.player, buffer: b.id, mime: b.type }, bytes);
       queueTask(() => { if (b.updating) finishAppend(this, b, processAppend(b, bytes)); });
     }
     abort() {
@@ -1772,7 +1770,21 @@
       b.tracks = result.tracks;
     }
     if (result.consumed < data.length) b.pending = data.slice(result.consumed);
+    forwardAccepted(b, data.slice(0, result.consumed), result.initLen || 0);
     return { error: null, ranges: result.ranges };
+  }
+  /** Hand the native player the whole boxes this append accepted, with the buffer's offset and window. Refused appends go nowhere. */
+  function forwardAccepted(b, accepted, initLen) {
+    if (!accepted.length) return;
+    const element = source(b.source).element;
+    if (!element) return;
+    const s = state(element);
+    if (!s.player) return;
+    post(s, {
+      op: 'append', player: s.player, buffer: b.id, mime: b.type, init_len: initLen,
+      offset: b.timestampOffset, window_start: b.appendWindowStart,
+      window_end: Number.isFinite(b.appendWindowEnd) ? b.appendWindowEnd : null,
+    }, accepted);
   }
   function joinBytes(first, second) {
     const joined = new Uint8Array(first.length + second.length);

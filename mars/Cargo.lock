@@ -518,6 +518,7 @@ dependencies = [
  "mars-core",
  "mars-eye",
  "mars-link",
+ "mars-mp4",
  "mars-relay",
  "mars-v9",
  "objc2",

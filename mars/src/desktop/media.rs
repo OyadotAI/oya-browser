@@ -10,6 +10,7 @@ mod player;
 mod types;
 
 use crate::runtime::media::hub::{self, PlayerKey, Status};
+use crate::runtime::media::stream::Append;
 use crate::v9::MediaCommand;
 use objc2::MainThreadMarker;
 use player::Native;
@@ -87,14 +88,31 @@ fn apply(
             native.start_if_allowed(mtm);
         }
         MediaCommand::Captions { lines, .. } => native.captions = lines,
+        MediaCommand::Append {
+            buffer,
+            bytes,
+            init_len,
+            offset,
+            window_start,
+            window_end,
+            ..
+        } => native.append(
+            buffer,
+            Append {
+                bytes: &bytes,
+                init_len,
+                offset,
+                window: (window_start, window_end),
+            },
+        ),
+        MediaCommand::Remove {
+            buffer, start, end, ..
+        } => native.media.remove(buffer, start, end),
         MediaCommand::Bind { node, .. } => native.node = node,
         MediaCommand::Unload { .. } => {
             players.remove(&key);
         }
-        MediaCommand::Load { .. }
-        | MediaCommand::Append { .. }
-        | MediaCommand::Remove { .. }
-        | MediaCommand::EndOfStream { .. } => {}
+        MediaCommand::Load { .. } | MediaCommand::EndOfStream { .. } => {}
     }
 }
 
