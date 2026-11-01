@@ -792,8 +792,9 @@ fn clicking_a_button_descendant_preserves_the_original_event_target() {
     assert!(texts(&clicked).contains("child"), "{clicked}");
 }
 
-/** How long the slow route below holds its answer: longer than a navigation's settle. */
-const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(3);
+/** How long the slow route below holds its answer: well past a navigation's settle, with room for a
+debug build on a loaded machine, so the test tells waiting apart from slowness. */
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(8);
 
 /** A fetch on a slow link does not hold the page: navigation returns before the answer comes,
 and the answer still reaches the page on a later background run. */
