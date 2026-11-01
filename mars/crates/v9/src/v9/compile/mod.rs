@@ -19,6 +19,7 @@ mod parameters;
 mod pattern;
 mod resources;
 mod scan;
+mod site_map;
 mod site_text;
 use pattern::Source;
 use site_text::{CATCH_VALUE, FOR_VALUE, YIELD_STAR_VALUE};
@@ -552,7 +553,7 @@ re-files the page's ~69,000 functions before it runs, and a retried step starts 
 state's registry. */
 #[derive(Clone, Default)]
 pub(in crate::v9) struct Registry {
-    pub codes: crate::v9::vm::trie::Trie<Arc<Code>>,
+    pub codes: site_map::SiteMap,
     /// Entry sites adopted during the current step (`begin_step` clears it). Two sources on one
     /// site within a step are a fault; a site filed by an earlier step belongs to whatever
     /// source is compiled there now (a later devtools evaluation reuses an offset, say).
@@ -718,7 +719,8 @@ impl Registry {
     sites. Runs only when a later step reuses an offset (an unretained evaluation's). */
     fn evict_source(&mut self, entry: &Code) {
         let Some((text, base)) = &entry.source else {
-            self.codes.remove(&entry.site);
+            let site = entry.site;
+            self.codes.retain(|filed, _| *filed != site);
             return;
         };
         let tags = super::syntax::SITE_TAGS as usize;
