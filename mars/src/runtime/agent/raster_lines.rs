@@ -28,6 +28,8 @@ const DOT: (f64, f64) = (1.0, 1.0);
 /// A wave's half period and crest height, in thicknesses.
 const WAVE_HALF_PERIOD: f64 = 2.0;
 const WAVE_CREST: f64 = 1.0;
+/// The most steps one band plans: one per point of the longest screenshot edge.
+const MAX_STEPS: f64 = 2048.0;
 /// A double outline is three equal bands: line, gap, line.
 const DOUBLE_THIRDS: f64 = 3.0;
 
@@ -201,11 +203,14 @@ impl Canvas {
     point of visible length, since both parts are at least `MIN_STROKE`. */
     fn dashes(&mut self, band: Band, (on, off): (f64, f64), item: &DisplayItem, ink: [u8; 4]) {
         let period = (on + off).max(2.0 * MIN_STROKE);
-        let mut from = band.span.0;
-        while from < band.span.1 {
+        // Counted, not accumulated: far from the origin `from += period` could stop moving.
+        for index in 0..steps(band, period) {
+            let from = band.span.0 + index as f64 * period;
             let to = (from + on.max(MIN_STROKE)).min(band.span.1);
+            if to <= from {
+                break;
+            }
             self.segment(band, (from, to), item, ink);
-            from += period;
         }
     }
 
@@ -213,16 +218,19 @@ impl Canvas {
     fn wave(&mut self, band: Band, item: &DisplayItem, ink: [u8; 4]) {
         let half = band.thick * WAVE_HALF_PERIOD;
         let crest = band.thick * WAVE_CREST;
-        let mut from = band.span.0.floor();
-        while from < band.span.1 {
-            let phase = ((from - band.span.0) / half).rem_euclid(2.0);
+        for index in 0..steps(band, 1.0) {
+            let from = band.span.0 + index as f64;
+            let to = (from + 1.0).min(band.span.1);
+            if to <= from {
+                break;
+            }
+            let phase = (index as f64 / half).rem_euclid(2.0);
             let rise = if phase < 1.0 { phase } else { 2.0 - phase };
             let shifted = Band {
                 at: band.at + crest * (2.0 * rise - 1.0),
                 ..band
             };
-            self.segment(shifted, (from, (from + 1.0).min(band.span.1)), item, ink);
-            from += 1.0;
+            self.segment(shifted, (from, to), item, ink);
         }
     }
 
@@ -234,6 +242,14 @@ impl Canvas {
         };
         self.fill(rect, item.clip.map(|c| [c.x, c.y, c.width, c.height]), ink);
     }
+}
+
+/** How many `period` steps cover the band's visible span. `visible` cut the span to the canvas,
+so this is at most the screenshot's edge divided by the period. */
+fn steps(band: Band, period: f64) -> usize {
+    ((band.span.1 - band.span.0) / period)
+        .ceil()
+        .clamp(0.0, MAX_STEPS) as usize
 }
 
 /** The authored thickness, else one derived from the font size, never under `MIN_STROKE`. */

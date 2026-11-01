@@ -86,3 +86,18 @@ fn a_zero_thickness_wavy_line_terminates() {
     );
     assert!(ink(&wavy, 0..40) > 0);
 }
+
+/** A box so far down the page that adding a point to its coordinate changes nothing still has its
+dashed outline planned in bounded steps. */
+#[test]
+fn a_far_away_dashed_line_terminates() {
+    let mut canvas = Canvas::new(1e17, 1e17, SIZE[0], SIZE[1], WHITE);
+    let mut boxed = item(
+        "<div id=t></div>",
+        "#t{width:100px;height:40px;outline:1px dashed red}",
+    );
+    (boxed.x, boxed.y) = (1e17, 1e17);
+    let started = std::time::Instant::now();
+    canvas.item(&boxed, BLACK, None);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
