@@ -549,6 +549,7 @@ fn eval_extended(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(mars_v9::PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: mars_v9::StorageState::default(),
         host: &host,

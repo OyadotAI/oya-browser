@@ -36,6 +36,7 @@ fn main() {
     let input = PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: ScriptDocument {
             identity: "page".into(),
             charset: "UTF-8".into(),

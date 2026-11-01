@@ -31,6 +31,7 @@ fn load_page(source: &str, nodes: Vec<ScriptNode>, texts: &[(usize, &str)]) -> E
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

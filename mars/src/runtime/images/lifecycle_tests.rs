@@ -32,6 +32,7 @@ fn decoded_events(source: &str) -> Vec<String> {
     let input = || PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: crate::document::ScriptDocument {
             identity: "decoded-image".into(),
             charset: "UTF-8".into(),

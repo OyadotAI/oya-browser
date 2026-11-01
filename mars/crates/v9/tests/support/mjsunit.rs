@@ -690,6 +690,7 @@ fn copy_input<'a>(input: &mars_v9::PageInput<'a>) -> mars_v9::PageInput<'a> {
     mars_v9::PageInput {
         sources: input.sources,
         source_keys: &[],
+        module_keys: &[],
         document: input.document.clone(),
         storage: input.storage.clone(),
         host: input.host,

@@ -22,6 +22,7 @@ fn run_host(source: &str, imports: Option<&dyn mars_v9::ImportScriptsHost>) -> E
     mars_v9::load_worker(PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,
@@ -128,6 +129,7 @@ fn worker_entry_refuses_document_capabilities() {
     let error = mars_v9::load_worker(PageInput {
         sources: &["throw 'must not execute'".into()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: StorageState::default(),
         host: &common::host(),

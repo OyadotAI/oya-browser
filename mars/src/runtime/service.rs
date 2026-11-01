@@ -735,6 +735,7 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         host: &host,
         environment: &call.environment,
         modules: &modules,
+        module_keys: &[],
     };
     let state = match call.state {
         Some(state) => Some(state),
@@ -794,6 +795,7 @@ fn run_page_host(
         host: &host,
         environment: &call.environment,
         modules: &modules,
+        module_keys: &[],
     };
     let state = || match (&call.state, call.base) {
         (Some(state), _) => Ok(state.clone()),
@@ -849,6 +851,8 @@ pub(super) struct TypedPage {
     pub sources: std::sync::Arc<ResidentSources>,
     /** Module scripts, import maps and fetched modules. */
     pub modules: std::sync::Arc<v9::ModuleInput>,
+    /** Each module source's key, aligned with `modules.sources`, so V9 does not hash them. */
+    pub module_keys: std::sync::Arc<Vec<v9::SourceKey>>,
     /** The step's projection of the candidate document. */
     pub document: document::ScriptDocument,
     /** Origin storage candidates. */
@@ -889,6 +893,7 @@ pub(super) fn run_typed_page(call: TypedPage) -> EngineResult<v9::Execution> {
         host: &host,
         environment: &call.environment,
         modules: &call.modules,
+        module_keys: call.module_keys.as_slice(),
     };
     let base = call.base;
     let state = || {

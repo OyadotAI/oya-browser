@@ -37,6 +37,9 @@ pub(super) struct Modules {
     /// by Arc so a step or a tick copies the page without copying its megabytes of module text;
     /// `deliver` appends through `Arc::make_mut`, which copies only while a step still holds it.
     pub input: std::sync::Arc<ModuleInput>,
+    /// The V9 key of each delivered source (`module_source_key`), in `input.sources` order, so a
+    /// step hands V9 keys instead of making it hash the page's module text again.
+    pub keys: std::sync::Arc<Vec<crate::v9::SourceKey>>,
     /// Integrity metadata of external module scripts, by URL.
     integrity: BTreeMap<String, String>,
     /// Modules V9 asked for that the next round fetches.
@@ -114,6 +117,8 @@ impl Modules {
         let source = source.filter(fits);
         self.bytes += url.len() + source.as_ref().map_or(0, String::len);
         self.delivered.insert(url.clone());
+        let key = crate::v9::module_source_key(source.as_deref().unwrap_or(""), classic);
+        std::sync::Arc::make_mut(&mut self.keys).push(key);
         std::sync::Arc::make_mut(&mut self.input)
             .sources
             .push(ModuleSource {

@@ -114,6 +114,7 @@ fn page_input<'a>(
     PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host,
@@ -424,6 +425,7 @@ fn module_closures_survive_later_requests() {
         PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: page(),
             storage: StorageState::default(),
             host: &host,
@@ -460,6 +462,7 @@ fn module_bounds_are_enforced() {
     let too_many = mars_v9::load_page(PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,
@@ -472,6 +475,7 @@ fn module_bounds_are_enforced() {
     let too_big = mars_v9::load_page(PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

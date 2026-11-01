@@ -1009,6 +1009,7 @@ impl Runtime {
         let call = super::service::TypedPage {
             sources: self.shared_sources_for(&page.scripts),
             modules: std::sync::Arc::clone(&page.scripting.modules.input),
+            module_keys: std::sync::Arc::clone(&page.scripting.modules.keys),
             document: projection.clone(),
             storage: page.storage.clone(),
             languages: self.languages.clone(),

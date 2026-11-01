@@ -17,6 +17,7 @@ fn run(source: &str) -> v9::Execution {
     let execution = v9::load_page(v9::PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document: document::script_document(&document, "svg-adoption").unwrap(),
         storage: Default::default(),
         host: &host,

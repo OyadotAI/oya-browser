@@ -215,6 +215,7 @@ fn input<'a>(
     PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document: document.clone(),
         storage: StorageState::default(),
         host,

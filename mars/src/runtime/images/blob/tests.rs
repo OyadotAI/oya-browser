@@ -81,6 +81,7 @@ fn admitted_then_revoked_blob_pixels_reach_draw_image_and_clean_readback() {
     let input = || PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: crate::document::ScriptDocument {
             identity: "blob-image".into(),
             charset: "UTF-8".into(),

@@ -599,6 +599,11 @@ pub(in crate::v9) fn source_key(source: &str) -> cache::Key {
     cache::text_key(cache::Grammar::Script, source)
 }
 
+/** SHA-256 of a module's text, the part of its cache key that does not depend on its offset. */
+pub(in crate::v9) fn module_source_key(source: &str) -> cache::Key {
+    cache::text_key(cache::Grammar::Module, source)
+}
+
 /** Native-fixture grammar has its own cache namespace, even for identical source bytes. */
 #[cfg(feature = "conformance")]
 pub(in crate::v9) fn native_fixture_key(source: &str) -> cache::Key {
@@ -693,7 +698,21 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
-        let key = cache::key(cache::Grammar::Module, offset, source);
+        self.module_keyed(module_source_key(source), source, offset, parse)
+    }
+    /**
+     * `module` for a source whose `module_source_key` the caller already holds: a service that
+     * keeps a page's modules resident hashes each once, not on every request, and the key at
+     * an offset is one cheap hash of that text key.
+     */
+    pub fn module_keyed(
+        &mut self,
+        text: cache::Key,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
+        let key = cache::at(&text, offset);
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {

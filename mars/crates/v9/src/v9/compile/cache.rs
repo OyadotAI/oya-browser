@@ -133,23 +133,6 @@ fn cache() -> std::sync::MutexGuard<'static, Cache> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/** The key of `source` compiled under `grammar` at page offset `offset`. */
-pub(super) fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-    context.update(&[match grammar {
-        Grammar::Script => 0,
-        Grammar::Module => 1,
-        #[cfg(feature = "conformance")]
-        Grammar::NativeFixture => 2,
-    }]);
-    context.update(&(offset as u64).to_le_bytes());
-    context.update(&(source.len() as u64).to_le_bytes());
-    context.update(source.as_bytes());
-    let mut key = Key::default();
-    key.copy_from_slice(context.finish().as_ref());
-    key
-}
-
 /** SHA-256 of `source` under `grammar`, wherever it sits on a page. */
 pub(super) fn text_key(grammar: Grammar, source: &str) -> Key {
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
@@ -271,6 +254,11 @@ fn units_are_shareable() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** The key a caller computes from a text key and an offset, as the registry does. */
+    fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
+        at(&text_key(grammar, source), offset)
+    }
 
     /** Keys separate grammar, offset and text, including texts that differ only in length. */
     #[test]

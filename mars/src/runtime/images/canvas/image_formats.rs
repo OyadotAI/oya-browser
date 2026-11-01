@@ -69,6 +69,7 @@ fn draw(mime: &str, bytes: &[u8], clean: bool) -> Vec<String> {
     let input = || PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: crate::document::ScriptDocument {
             identity: "native-canvas-source".into(),
             charset: "UTF-8".into(),

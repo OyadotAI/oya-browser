@@ -18,6 +18,7 @@ fn removed_nodes_keep_their_ids_across_requests() {
     let input = |document| PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

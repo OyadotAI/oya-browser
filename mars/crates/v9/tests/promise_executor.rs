@@ -26,6 +26,7 @@ fn worker(source: &str) -> mars_v9::protocol::EngineResult<mars_v9::Execution> {
     mars_v9::load_worker(PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

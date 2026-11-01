@@ -294,11 +294,12 @@ impl Modules {
     pub fn open(
         vm: &mut Vm,
         input: &ModuleInput,
+        keys: &[super::SourceKey],
         sources: &[String],
         starts: &[usize],
         state: ModuleState,
     ) -> EngineResult<()> {
-        validate(input, sources.len())?;
+        validate(input, keys, sources.len())?;
         state.validate(sources.len())?;
         let mut modules = Modules {
             state,
@@ -333,7 +334,7 @@ impl Modules {
             .map(|entry| entry.index)
             .collect();
         for index in inline {
-            let body = compile(vm, &sources[index], starts[index])?;
+            let body = compile(vm, &sources[index], starts[index], None)?;
             if let Some(base) = document.clone() {
                 modules
                     .compiled
@@ -341,7 +342,8 @@ impl Modules {
             }
         }
         let mut offset = MODULE_OFFSET;
-        for module in &input.sources {
+        for (position, module) in input.sources.iter().enumerate() {
+            let key = keys.get(position);
             let length = module.source.as_ref().map_or(0, String::len);
             modules.fetched.insert(module.url.clone());
             modules
@@ -349,7 +351,7 @@ impl Modules {
                 .push((offset, offset + length, module.url.clone()));
             if module.classic {
                 let code = match &module.source {
-                    Some(source) => compile_classic(vm, source, offset, &module.url),
+                    Some(source) => compile_classic(vm, source, offset, &module.url, key),
                     None => Err(unavailable(&module.url)),
                 };
                 modules.loaded.insert(module.url.clone(), code);
@@ -357,7 +359,7 @@ impl Modules {
                 continue;
             }
             let body = match &module.source {
-                Some(source) => compile(vm, source, offset)?,
+                Some(source) => compile(vm, source, offset, key)?,
                 None => Err(unavailable(&module.url)),
             };
             offset += length + 1;
@@ -521,9 +523,12 @@ fn unavailable(url: &str) -> EngineError {
 
 /** Input bounds: MODULES sources within MODULE_BYTES, none over SCRIPT_BYTES, entries that
 name real page sources once each. */
-fn validate(input: &ModuleInput, sources: usize) -> EngineResult<()> {
+fn validate(input: &ModuleInput, keys: &[super::SourceKey], sources: usize) -> EngineResult<()> {
     if input.sources.len() > MODULE_SOURCES {
         return Err(EngineError::limit("modules", MODULE_SOURCES));
+    }
+    if !keys.is_empty() && keys.len() != input.sources.len() {
+        return Err(EngineError::invalid("Invalid V9 module keys."));
     }
     let mut total = 0usize;
     for module in &input.sources {
@@ -559,6 +564,7 @@ fn compile_classic(
     source: &str,
     offset: usize,
     path: &str,
+    key: Option<&super::SourceKey>,
 ) -> EngineResult<Arc<Code>> {
     #[cfg(feature = "conformance")]
     if vm.page.environment.conformance_d8
@@ -578,15 +584,25 @@ fn compile_classic(
         );
     }
     let _ = path;
-    vm.registry
-        .script(source, offset, || super::parse_at(source, offset, None))
+    let parse = || super::parse_at(source, offset, None);
+    match key {
+        Some(text) => vm.registry.script_keyed(*text, source, offset, parse),
+        None => vm.registry.script(source, offset, parse),
+    }
 }
 
-/** Compile one module at its page offset; the outer error is a service failure. */
-fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompilation> {
-    Ok(vm.registry.module(source, offset, || {
-        super::lexer::tokenize_module_at(source, offset).and_then(syntax::parse_module)
-    }))
+/** Compile a module source at `offset`; `key` is its text key when the caller holds one. */
+fn compile(
+    vm: &mut Vm,
+    source: &str,
+    offset: usize,
+    key: Option<&super::SourceKey>,
+) -> EngineResult<ModuleCompilation> {
+    let parse = || super::lexer::tokenize_module_at(source, offset).and_then(syntax::parse_module);
+    Ok(match key {
+        Some(text) => vm.registry.module_keyed(*text, source, offset, parse),
+        None => vm.registry.module(source, offset, parse),
+    })
 }
 
 /** `import(specifier)`: a promise for the namespace, once the graph loads and evaluates. The

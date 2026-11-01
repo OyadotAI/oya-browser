@@ -1025,6 +1025,16 @@ pub fn source_key(source: &str) -> SourceKey {
     compile::source_key(source)
 }
 
+/// The key under which a module source's compiled code is cached, from `classic` telling a
+/// classic script delivered for a page element (keyed as `source_key`) from a module.
+pub fn module_source_key(source: &str, classic: bool) -> SourceKey {
+    if classic {
+        compile::source_key(source)
+    } else {
+        compile::module_source_key(source)
+    }
+}
+
 /// Everything one page request needs besides committed state.
 pub struct PageInput<'a> {
     /// The page's classic scripts in execution order. A failed script keeps its text, since its
@@ -1032,6 +1042,9 @@ pub struct PageInput<'a> {
     pub sources: &'a [String],
     /// Each source's `source_key`, or empty to hash them here.
     pub source_keys: &'a [SourceKey],
+    /// Each module source's `module_source_key`, aligned with `modules.sources`, or empty to
+    /// hash them here.
+    pub module_keys: &'a [SourceKey],
     /// The current projection.
     pub document: ScriptDocument,
     /// Origin storage candidates.
@@ -1304,6 +1317,7 @@ fn session<'h>(
     environment: &PageEnvironment,
     state: Option<VmState>,
     modules: &ModuleInput,
+    module_keys: &[SourceKey],
 ) -> EngineResult<(Vm<'h>, Compiled)> {
     #[allow(unused_mut)]
     let mut limits = limits;
@@ -1423,7 +1437,14 @@ fn session<'h>(
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
     initialize_page(&mut vm);
-    modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
+    modules::Modules::open(
+        &mut vm,
+        modules,
+        module_keys,
+        sources,
+        &offsets(sources),
+        state.modules,
+    )?;
     let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
     let mut imports = Vec::new();
     for (index, source) in state.dynamic.iter().enumerate() {
@@ -1846,6 +1867,7 @@ fn load_isolated(
         input.environment,
         state,
         input.modules,
+        input.module_keys,
     )?;
     // A page starts at the viewport it loaded at: a later step reports only what changed after.
     let current = viewport_of(&vm);
@@ -1882,6 +1904,7 @@ fn load_isolated(
             let empty = PageInput {
                 sources: &[],
                 source_keys: &[],
+                module_keys: &[],
                 document: initial.0,
                 storage: initial.1,
                 host: input.host,
@@ -1899,6 +1922,7 @@ fn load_isolated(
                 empty.environment,
                 None,
                 empty.modules,
+                empty.module_keys,
             )?;
             finish(vm)?
         }
@@ -2203,6 +2227,7 @@ fn open<'h>(
         input.environment,
         Some(state),
         input.modules,
+        input.module_keys,
     )?;
     report_resize(&mut vm)?;
     report_media_changes(&mut vm)?;
@@ -2500,6 +2525,7 @@ pub fn load_document_scripts(
             &environment,
             None,
             NO_MODULES,
+            &[],
         )?;
         let Compiled::All(codes) = compiled else {
             return Err(EngineError::invalid(
@@ -2534,6 +2560,7 @@ pub fn load_document_scripts_isolated(
     load_page(PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document,
         storage,
         host,
@@ -2574,6 +2601,7 @@ pub fn click_document_scripts_with(
         PageInput {
             sources,
             source_keys: &[],
+            module_keys: &[],
             document,
             storage,
             host,
@@ -2646,6 +2674,7 @@ fn legacy(
             &environment,
             state,
             NO_MODULES,
+            &[],
         )?;
         vm.page.legacy = true;
         let Compiled::All(codes) = compiled else {

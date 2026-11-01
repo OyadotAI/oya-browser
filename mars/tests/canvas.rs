@@ -19,6 +19,7 @@ fn draw(source: &str) -> (document::Document, v9::Execution) {
     let result = v9::load_page(v9::PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document: document::script_document(&document, "canvas-test").unwrap(),
         storage: Default::default(),
         host: &host,
@@ -139,6 +140,7 @@ fn head_canvas_publishes_only_after_body_adoption() {
         v9::PageInput {
             sources: &[source.into()],
             source_keys: &[],
+            module_keys: &[],
             document: document::script_document(&document, "canvas-test").unwrap(),
             storage: Default::default(),
             host: &host,
