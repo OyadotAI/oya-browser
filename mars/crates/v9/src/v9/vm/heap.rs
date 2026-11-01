@@ -740,15 +740,25 @@ impl Heap {
 
 /** Hash content without flattening ropes; exact comparisons resolve collisions in the accounting set. */
 fn string_content_hash(string: &JsString) -> u64 {
+    // Four units per word, and a rope piece by piece: the same content hashes the same
+    // whatever its pieces, since the words are cut from the whole string, not from each piece.
     let mut hash = FastHasher::default();
-    if let Some(units) = string.flat_units() {
-        for unit in units {
-            hash.write_u16(*unit);
+    let mut word = 0u64;
+    let mut held = 0u32;
+    string.for_each_chunk(|chunk| {
+        for unit in chunk {
+            word |= u64::from(*unit) << (held * 16);
+            held += 1;
+            if held == 4 {
+                hash.write_u64(word);
+                word = 0;
+                held = 0;
+            }
         }
-        return hash.finish();
-    }
-    for index in 0..string.len() {
-        hash.write_u16(string.unit_at(index).expect("valid string index"));
+        true
+    });
+    if held > 0 {
+        hash.write_u64(word | (u64::from(held) << 62));
     }
     hash.finish()
 }
