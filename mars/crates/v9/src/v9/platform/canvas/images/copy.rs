@@ -119,9 +119,9 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         return Ok(JsValue::Undefined);
     }
     let dimensions = [source.bitmap.width, source.bitmap.height];
-    for index in 0..crop.len() {
+    for (index, value) in crop.iter_mut().enumerate() {
         let axis = index % 2;
-        crop[index] *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
+        *value *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
     }
     let state = &vm.page.state.canvases[&node];
     let plan = limits::plan_blit(

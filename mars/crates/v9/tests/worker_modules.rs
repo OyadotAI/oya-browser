@@ -27,7 +27,6 @@ fn modules(source: &str) -> ModuleInput {
             source: Some(source.into()),
             classic: false,
         }],
-        ..ModuleInput::default()
     }
 }
 
