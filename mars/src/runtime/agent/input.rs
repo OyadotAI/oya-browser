@@ -89,19 +89,23 @@ impl Runtime {
     pub(super) fn click_at(&mut self, params: Value) -> EngineResult<Value> {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
-        let page = self.current()?;
+        let page = self.current()?.clone();
         let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
         let report = page.point_node(base, hit);
         let owner = page.owner_document(base);
         if let Some(field) = crate::document::focus_field(owner, hit)
             .filter(|field| !crate::document::agent_hidden(owner, field))
+            .cloned()
         {
             let focused = page.node_id(base + field.local_id);
-            return Ok(
-                json!({"page_id":page.id(),"revision":page.revision,"focused":focused,"hit":report}),
-            );
+            let clicked = self.focus_field_by_click(page.clone(), &field)?;
+            let mut result =
+                clicked.unwrap_or_else(|| json!({"page_id":page.id(),"revision":page.revision}));
+            result["focused"] = json!(focused);
+            result["hit"] = report;
+            return Ok(result);
         }
-        if !self.click_has_effect(page, hit)? {
+        if !self.click_has_effect(&page, hit)? {
             return Ok(
                 json!({"page_id":page.id(),"revision":page.revision,"activated":false,"hit":report}),
             );

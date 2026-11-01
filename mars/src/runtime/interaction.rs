@@ -198,6 +198,21 @@ impl Runtime {
             .state
             .click_reaches_listener(&projection, node.local_id))
     }
+    /**
+     * A click on a text field, as a person's pointer gives it: a trusted click through V9 that focuses
+     * the field and runs its focus and click listeners. Airbnb's search opens on that focus. A page
+     * without script has no listener to run, so it keeps only the agent's focus record.
+     */
+    pub(super) fn focus_field_by_click(
+        &mut self,
+        page: Page,
+        field: &Node,
+    ) -> EngineResult<Option<Value>> {
+        if !page.scripting.loaded {
+            return Ok(None);
+        }
+        self.script_click(page, field)
+    }
     /** A click whose page code V9 refused falls back to the native default (following the
     link), as in a browser; authority and service failures still stop it. */
     fn script_click(&mut self, page: Page, node: &Node) -> EngineResult<Option<Value>> {
