@@ -242,6 +242,21 @@ pub(super) struct Concat {
 
 impl Storage {
     /** Register this node by allocation identity without retaining its backing. */
+    /** The registration identity alone, without taking a weak reference: a kind tag and the
+        backing allocation's address. */
+    pub(super) fn identity(&self) -> (u8, usize) {
+        match self {
+            Self::Flat(value) => (0, Arc::as_ptr(value) as *const () as usize),
+            #[cfg(feature = "conformance")]
+            Self::Shared(value) => (1, Arc::as_ptr(value) as usize),
+            Self::Cons(value) => (2, Arc::as_ptr(value) as usize),
+            Self::Repeat(value) => (3, Arc::as_ptr(value) as usize),
+            #[cfg(feature = "conformance")]
+            Self::Slice(value) => (4, Arc::as_ptr(value) as usize),
+            #[allow(unreachable_patterns)]
+            _ => self.downgrade().0,
+        }
+    }
     pub(super) fn downgrade(&self) -> ((u8, usize), WeakStorage) {
         match self {
             Self::Flat(value) => (

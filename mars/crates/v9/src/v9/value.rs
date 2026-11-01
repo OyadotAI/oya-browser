@@ -161,6 +161,10 @@ impl std::fmt::Debug for JsString {
 
 impl JsString {
     /** Retain a non-owning allocation identity for VM resident tracking. */
+    /** The identity `weak_registration` would report, without taking a weak reference. */
+    pub(in crate::v9) fn registration_identity(&self) -> (u8, usize) {
+        self.0.identity()
+    }
     pub(in crate::v9) fn weak_registration(&self) -> ((u8, usize), WeakString) {
         let (identity, weak) = self.0.downgrade();
         (identity, WeakString(weak))

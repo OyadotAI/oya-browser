@@ -7,10 +7,31 @@ const PRUNE_INTERVAL: usize = 4096;
 /** Headers, string metadata and alignment for temporary and final backing allocations. */
 const MATERIALIZATION_OVERHEAD_UNITS: usize = 128;
 
+/** Slots in the recently registered identity cache. */
+const RECENT_SLOTS: usize = 64;
+/** Address bits below allocation alignment, skipped when picking a slot. */
+const RECENT_SHIFT: u32 = 4;
+
+/** The recently registered identities, by slot. */
+#[derive(Clone, Debug)]
+struct Recent([Option<(u8, usize)>; RECENT_SLOTS]);
+
+impl Default for Recent {
+    /** Nothing seen yet. */
+    fn default() -> Self {
+        Self([None; RECENT_SLOTS])
+    }
+}
+
 /** Registrations are derived runtime state and are never persisted in a page snapshot. */
 #[derive(Clone, Debug, Default)]
 pub(in crate::v9) struct StringBudget {
     nodes: FastMap<(u8, usize), WeakString>,
+    /** Identities registered recently, direct-mapped by address: most pushes repeat a few
+    strings (constants, property names), and this answers them without hashing. An entry is
+    only ever a registered identity, and registrations keep their allocations reserved, so a
+    hit can never be a different string; a prune clears it. */
+    recent: Recent,
     added: usize,
     observed_epoch: u64,
     upper_units: usize,
@@ -103,6 +124,19 @@ impl StringBudget {
     }
     /** Track a root node by identity; duplicate aliases keep one non-owning entry. */
     pub(in crate::v9) fn register(&mut self, text: &JsString) {
+        // Every string the interpreter pushes comes through here, almost always one already
+        // registered. A registered weak reference keeps its allocation reserved, so a matching
+        // identity is this same live string: a lookup answers it without the weak reference's
+        // two atomic operations and map write (most of this function's cost on YouTube).
+        let identity = text.registration_identity();
+        let slot = (identity.1 >> RECENT_SHIFT) % RECENT_SLOTS;
+        if self.recent.0[slot] == Some(identity) {
+            return;
+        }
+        if self.nodes.contains_key(&identity) {
+            self.recent.0[slot] = Some(identity);
+            return;
+        }
         let (identity, weak) = text.weak_registration();
         if self.nodes.insert(identity, weak).is_none() {
             self.added += 1;
@@ -117,6 +151,7 @@ impl StringBudget {
 
     /** Remove dead registrations without keeping their backing allocations alive. */
     fn prune(&mut self) {
+        self.recent = Recent::default();
         self.nodes.retain(|_, weak| weak.is_alive());
         self.added = 0;
     }
@@ -126,6 +161,8 @@ impl StringBudget {
         let epoch = crate::v9::value::materialization_epoch();
         let mut seen = FastSet::default();
         let mut bytes = 0usize;
+        // Removing dead registrations frees their reserved addresses for new strings.
+        self.recent = Recent::default();
         self.nodes.retain(|_, weak| {
             weak.allocations(|node, identity, _, upper| {
                 if seen.insert((node, identity)) {
