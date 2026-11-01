@@ -7,6 +7,7 @@
  */
 use super::clock::Clock;
 use super::loader::Loader;
+use super::stream_video::{StreamVideo, video_lane};
 use crate::runtime::media::hub::{Shared, Status};
 use crate::runtime::media::stream::{Append, Stream};
 use crate::v9::MediaSettings;
@@ -65,6 +66,8 @@ pub(super) struct Native {
     pub media: Stream,
     /// The playhead of a Media Source stream.
     clock: Clock,
+    /// The video decoder of a Media Source stream.
+    video: StreamVideo,
 }
 
 impl Native {
@@ -86,6 +89,7 @@ impl Native {
             stream,
             media: Stream::default(),
             clock: Clock::default(),
+            video: StreamVideo::default(),
         };
         native.start_if_allowed(mtm);
         native
@@ -144,6 +148,7 @@ impl Native {
             self.seeks += 1;
             self.seek_time = time;
             self.clock.seek(time, super::host_seconds());
+            self.video.reset();
             return;
         }
         let Some(engine) = &self.engine else {
@@ -221,6 +226,13 @@ impl Native {
         self.clock.set_running(!self.settings.paused, host_time);
         let playhead = self.clock.time(host_time);
         self.media.evict_behind(playhead);
+        if let Some(picture) = self.video.step(&self.media, playhead) {
+            self.frame = Some(picture);
+            self.fresh = true;
+            self.frames += 1;
+        }
+        let size = video_lane(&self.media).map(|lane| (lane.track.width, lane.track.height));
+        let (width, height) = size.unwrap_or((0, 0));
         shared.status = Status {
             time: playhead,
             playing: self.clock.running(),
@@ -228,6 +240,9 @@ impl Native {
             seek_time: self.seek_time,
             frames: self.frames,
             stored: self.media.buffers(),
+            video: width > 0 && height > 0,
+            width,
+            height,
             ..Status::default()
         };
     }

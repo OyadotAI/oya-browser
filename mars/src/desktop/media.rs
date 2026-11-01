@@ -5,6 +5,8 @@
  * painter reads frames, controls state and captions from here.
  */
 mod clock;
+mod decoder;
+mod stream_video;
 mod frames;
 mod loader;
 mod player;
