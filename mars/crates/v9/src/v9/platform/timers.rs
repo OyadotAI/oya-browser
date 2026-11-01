@@ -1,6 +1,7 @@
 /** Timers on the virtual clock: setTimeout, setInterval, requestAnimationFrame, queueMicrotask. */
 use super::Timer;
 use super::dom::native_name;
+use super::is_time_limit;
 use crate::constants::{ANIMATION_FRAME_MS, TIMER_MIN_DELAY_MS, TIMER_SLICE, VM_TIMERS};
 use crate::protocol::EngineError;
 use crate::v9::value::JsValue;
@@ -174,12 +175,20 @@ impl Vm<'_> {
         let mut ran = 0;
         while ran < budget && (ran == 0 || started.elapsed() < TIMER_SLICE) {
             if last_frame.elapsed() >= FRAME_INTERVAL {
-                let frames = self.run_frame_batch(now)?;
+                let (frames, spent) = self.run_frame_batch(now)?;
                 last_frame = std::time::Instant::now();
+                ran += frames;
+                if spent {
+                    break;
+                }
                 if frames > 0 {
-                    ran += frames;
                     continue;
                 }
+            }
+            // Once this run has started a task, the spent deadline ends it: queued tasks that never
+            // started keep their place for the next step instead of being dropped unrun.
+            if ran > 0 && self.expired() {
+                break;
             }
             let due = self
                 .page
@@ -205,11 +214,29 @@ impl Vm<'_> {
             self.page.timer_nesting = timer.nesting;
             let fired = self.fire_timer(&timer).and_then(|()| self.drain_jobs());
             self.page.timer_nesting = 0;
-            fired?;
             ran += 1;
+            match fired {
+                Ok(()) => {}
+                Err(Thrown::Fatal(error)) if is_time_limit(&error) => {
+                    // The deadline is spent for this run: later tasks wait for the next step.
+                    self.drop_timed_out_task();
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
         }
         self.page.state.clock = self.page.state.clock.max(now);
         Ok(ran)
+    }
+    /**
+     * A task that ran out of wall-clock time is dropped as an uncaught exception drops its task:
+     * the effects it made before the limit stay (the run returns them), its queued microtasks go
+     * with it, and the console says why. Nothing else is dropped: other timers stay queued.
+     */
+    pub(in crate::v9) fn drop_timed_out_task(&mut self) {
+        self.jobs.clear();
+        self.page.console("error", super::TIME_LIMIT_MESSAGE.into());
+        self.page.effects.time_limited_tasks += 1;
     }
     /**
      * One rendering opportunity: every animation frame callback queued and due by `now`, in the
@@ -218,7 +245,8 @@ impl Vm<'_> {
      * stream of zero-delay timeouts on a slow step starve them (YouTube's scheduler waited on
      * a frame forever). Callbacks a frame callback requests wait for the next opportunity.
      */
-    fn run_frame_batch(&mut self, now: f64) -> Res<usize> {
+    /// Runs the due frame callbacks; the flag says the deadline is spent and the run must end.
+    fn run_frame_batch(&mut self, now: f64) -> Res<(usize, bool)> {
         let mut batch: Vec<Timer> = Vec::new();
         let timers = std::mem::take(&mut self.page.state.timers);
         for timer in timers {
@@ -230,14 +258,32 @@ impl Vm<'_> {
         }
         batch.sort_by_key(|timer| timer.order);
         let Some(frame_time) = batch.iter().map(|timer| timer.due).reduce(f64::max) else {
-            return Ok(0);
+            return Ok((0, false));
         };
         self.page.state.clock = self.page.state.clock.max(frame_time);
-        for timer in &batch {
-            self.fire_timer(timer)?;
-            self.drain_jobs()?;
+        let mut frames = batch.into_iter();
+        let mut ran = 0;
+        while let Some(timer) = frames.next() {
+            if ran > 0 && self.expired() {
+                // Frames not yet started keep their place for the next step.
+                self.page.state.timers.push(timer);
+                self.page.state.timers.extend(frames);
+                return Ok((ran, true));
+            }
+            let fired = self.fire_timer(&timer).and_then(|()| self.drain_jobs());
+            ran += 1;
+            match fired {
+                Ok(()) => {}
+                Err(Thrown::Fatal(error)) if is_time_limit(&error) => {
+                    // Frames not yet run keep their place for the next step.
+                    self.page.state.timers.extend(frames);
+                    self.drop_timed_out_task();
+                    return Ok((ran, true));
+                }
+                Err(error) => return Err(error),
+            }
         }
-        Ok(batch.len())
+        Ok((ran, false))
     }
     /** Shell callbacks report thrown values while their actual creation context is entered. */
     #[cfg(feature = "conformance")]

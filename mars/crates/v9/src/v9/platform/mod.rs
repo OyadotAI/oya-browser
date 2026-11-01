@@ -1025,6 +1025,10 @@ pub struct HostEffects {
     pub console: Vec<ConsoleEntry>,
     /// Console entries dropped past the bound.
     pub console_dropped: usize,
+    /// Tasks (timers, frame callbacks, observer deliveries) dropped at the time limit. What they
+    /// did before the limit stays; the rest of the run waits for the next step.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub time_limited_tasks: usize,
     /// Actual CPU markers share the console diagnostic entry allowance and never represent sampled profiler data.
     #[cfg(feature = "conformance")]
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1804,13 +1808,26 @@ impl<'h> Page<'h> {
     }
 }
 
+/** Serde skip rule for counters that stay out of the wire form while zero. */
+fn is_zero(count: &usize) -> bool {
+    *count == 0
+}
+
+/** The message of the time-limit error; `is_time_limit` recognises it by this text. */
+pub(in crate::v9) const TIME_LIMIT_MESSAGE: &str = "Script execution stopped: time limit exceeded.";
+
 /** The error a request gets when it runs out of wall-clock time. */
 pub(in crate::v9) fn timeout() -> EngineError {
     EngineError::new(
         "limit_exceeded",
-        "Script execution stopped: time limit exceeded.",
+        TIME_LIMIT_MESSAGE,
         "Reduce the script work; what it did before it stopped stays, as in browsers.",
     )
+}
+
+/** Whether an error is the wall-clock time limit, not a heap or count limit with the same code. */
+pub fn is_time_limit(error: &EngineError) -> bool {
+    error.code == "limit_exceeded" && error.message == TIME_LIMIT_MESSAGE
 }
 
 impl Vm<'_> {

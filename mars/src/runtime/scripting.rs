@@ -14,7 +14,7 @@ use crate::network::Method;
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
     ConsoleEntry, DomLevel, Execution, HostRequest, HostResponse, NavigationRequest,
-    PageEnvironment, ScriptFailure, VmState,
+    PageEnvironment, ScriptFailure, VmState, is_time_limit,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -104,6 +104,10 @@ const TICK_WALL: Duration = Duration::from_millis(400);
 /// An app such as YouTube boots over many background runs, each a bounded slice of virtual
 /// time, so the window spans what a slow boot needs.
 pub(super) const TICK_WINDOW: Duration = Duration::from_secs(20);
+/// Consecutive steps that ran out of wall-clock time before the page's scripts are stopped. A
+/// single overrun drops one task, as an uncaught exception does; a page that overruns every step
+/// is not making progress and is stopped instead.
+pub(super) const SCRIPT_TIME_LIMIT_STRIKES: u8 = 3;
 /// Virtual milliseconds one background run may advance, however long the page sat idle.
 const TICK_MAX_VIRTUAL_MS: f64 = 1000.0;
 /// Console entries the page keeps for page.console; older ones are dropped first.
@@ -158,6 +162,9 @@ pub(super) struct Scripting {
     pub clock_ms: f64,
     /// When V9 next has a timer or animation frame due, in virtual milliseconds.
     pub next_timer_ms: Option<f64>,
+    /// Steps in a row that ran out of time (a dropped task each). Reaching
+    /// SCRIPT_TIME_LIMIT_STRIKES stops the scripts; any step that finishes in time resets it.
+    pub time_limit_strikes: u8,
     /// Requests the page made that have not been answered yet.
     pub requests: Vec<HostRequest>,
     /// Platform requests a handler parked (a lock not yet granted, an event not yet queued).
@@ -298,6 +305,7 @@ impl Default for Scripting {
             clock_ms: 0.0,
             workers: Default::default(),
             next_timer_ms: None,
+            time_limit_strikes: 0,
             requests: Vec::new(),
             parked: Default::default(),
             ready: Vec::new(),
@@ -398,6 +406,8 @@ fn is_classic(modules: &&crate::v9::ModuleInput) -> bool {
 pub(super) struct Step {
     /// Whether the document changed (it then needs restyling and layout).
     pub changed: bool,
+    /// Whether the step dropped a task at the time limit (its effects before the limit kept).
+    pub timed_out: bool,
     /// Scripts the load rolled back, for the load's diagnostics.
     pub failed: Vec<ScriptFailure>,
 }
@@ -515,6 +525,7 @@ impl Runtime {
             ));
         }
         validate_script_state(&execution.state, execution.state_token, &after)?;
+        let timed_out_task = execution.effects.time_limited_tasks > 0;
         let Execution {
             state,
             state_token,
@@ -648,7 +659,11 @@ impl Runtime {
         if let Some(error) = load_failure {
             record_load_failure(page, &error);
         }
-        let mut step = Step { changed, failed };
+        let mut step = Step {
+            changed,
+            timed_out: timed_out_task,
+            failed,
+        };
         if observer_turn {
             page.scripting.observer_resources |= !page.scripting.deferred_stylesheets.is_empty()
                 || !changes.is_empty()
@@ -1156,12 +1171,28 @@ impl Runtime {
                 break;
             };
             match self.script_step(page, action) {
-                Ok(step) => changed |= step.changed,
+                Ok(step) => {
+                    changed |= step.changed;
+                    page.scripting.time_limit_strikes = if step.timed_out {
+                        page.scripting.time_limit_strikes.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
                 Err(error) if stops_navigation(&error) || lost_state(&error) => return Err(error),
+                // A step that ran out of time was rolled back whole and its action is dropped.
+                Err(error) if is_time_limit(&error) => {
+                    page.scripting.time_limit_strikes =
+                        page.scripting.time_limit_strikes.saturating_add(1);
+                }
                 Err(error) => {
                     stop_scripts(page, &error);
                     break;
                 }
+            }
+            if page.scripting.time_limit_strikes >= SCRIPT_TIME_LIMIT_STRIKES {
+                stop_scripts(page, &crate::v9::time_limit_error());
+                break;
             }
         }
         page.scripting.clock_ms = page.scripting.clock_ms.max(virtual_end);
@@ -1596,6 +1627,7 @@ impl Runtime {
         self.flush_inserted_images(page)?;
         let mut step = Step {
             changed,
+            timed_out: false,
             failed: Vec::new(),
         };
         self.follow_modules(page, &mut step)?;

@@ -54,6 +54,7 @@ pub use platform::indexed_db::{
     INDEXED_DB_RESPONSE_BYTES, IndexedDbCommit, IndexedDbDatabase, IndexedDbOperation,
     IndexedDbOrigin, IndexedDbStore,
 };
+pub use platform::is_time_limit;
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
@@ -2336,6 +2337,11 @@ fn click_page_with(
     finish(vm)
 }
 
+/// The error a step fails with when it runs out of wall-clock time (see `is_time_limit`).
+pub fn time_limit_error() -> EngineError {
+    platform::timeout()
+}
+
 /// Advance the virtual clock to `now_ms`, running due timers and animation frames (earliest
 /// first, at most `budget` callbacks, each followed by its microtasks). `effects.next_timer_ms`
 /// says when to call again.
@@ -2361,8 +2367,14 @@ fn run_timers_with(
         return Err(EngineError::invalid("Invalid V9 timer clock."));
     }
     vm.remaining = vm.limits.operations;
-    platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
-    vm.run_due_timers(now_ms, budget).map_err(fatal)?;
+    match platform::intersection_observers::deliver_all(&mut vm) {
+        Ok(()) => {
+            vm.run_due_timers(now_ms, budget).map_err(fatal)?;
+        }
+        // An observer delivery that ran out of time is dropped like any task; the timers wait.
+        Err(Thrown::Fatal(error)) if platform::is_time_limit(&error) => vm.drop_timed_out_task(),
+        Err(thrown) => return Err(fatal(thrown)),
+    }
     finish(vm)
 }
 
