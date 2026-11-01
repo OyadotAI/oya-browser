@@ -137,14 +137,56 @@ fn an_unknown_pseudo_class_still_masks_its_hiding_rule() {
 }
 
 #[test]
-fn valid_window_and_scrollbar_states_parse_without_a_diagnostic() {
-    let document = styled(
-        "<p id=a>a</p><p id=b>b</p>",
-        "#a:window-inactive, #b:horizontal{color:red}",
-    );
-    assert_eq!(color(&document, "a"), None);
-    assert_eq!(color(&document, "b"), None);
+fn window_inactive_is_valid_everywhere_and_never_matches() {
+    let document = styled("<p id=a>a</p>", "#a:window-inactive, #a{color:red}");
+    assert_eq!(color(&document, "a").as_deref(), Some("red"));
     assert!(!reported(&document, "pseudo-class"));
+}
+
+/** Blink takes the scrollbar states only after a scrollbar pseudo-element; elsewhere the selector
+is invalid, so its whole rule drops and the list's other selectors with it. */
+#[test]
+fn scrollbar_states_are_invalid_outside_a_scrollbar() {
+    for sheet in [
+        "#a:horizontal{color:red}",
+        "#a:start{color:red}",
+        "#a::selection:end{color:red}",
+        "#a, #a:corner-present{color:red}",
+    ] {
+        let document = styled("<p id=a>a</p>", sheet);
+        assert_eq!(color(&document, "a"), None, "{sheet}");
+        assert!(!reported(&document, "pseudo-class"), "{sheet}");
+    }
+}
+
+#[test]
+fn scrollbar_states_are_valid_after_a_scrollbar_pseudo_element() {
+    let document = styled(
+        "<p id=a>a</p>",
+        "#a::-webkit-scrollbar-thumb:horizontal, #a{color:red}",
+    );
+    assert_eq!(color(&document, "a").as_deref(), Some("red"));
+    assert!(!reported(&document, "pseudo"));
+}
+
+/** Blink accepts `::column::scroll-marker` as a chain, so a hiding rule on it keeps the rest of
+its list: `.x` stays hidden instead of the whole rule being dropped. */
+#[test]
+fn a_column_scroll_marker_chain_is_valid_and_keeps_its_list() {
+    let document = styled(
+        "<p id=x class=x>x</p><p id=c class=c>c</p>",
+        ".x, .c::column::scroll-marker:target-current{display:none}",
+    );
+    assert!(style(&document, "x").display_none);
+}
+
+/** Blink rejects any other chain of pseudo-elements, so the selector is invalid, drops its whole
+rule silently, and the selectors beside it in the list go with it. */
+#[test]
+fn other_pseudo_element_chains_are_invalid() {
+    let document = styled("<p id=a>a</p>", "#a, #a::selection::backdrop{color:red}");
+    assert_eq!(color(&document, "a"), None);
+    assert!(!reported(&document, "pseudo"));
 }
 
 #[test]

@@ -43,13 +43,13 @@ const KNOWN_ELEMENTS: [&str; 30] = [
 /// The vendor prefix of Blink's own pseudo-elements, such as `::-webkit-scrollbar-thumb`.
 const WEBKIT_PREFIX: &str = "-webkit-";
 
-/// Pseudo-classes Blink accepts that Eye has no state for, so they never match: window focus,
-/// viewport and media states, and the scrollbar states that only follow a scrollbar pseudo-element.
-const NEVER_CLASSES: [&str; 14] = [
-    "window-inactive",
-    "current",
-    "past",
-    "future",
+/// Pseudo-classes Blink accepts that Eye has no state for, so they never match: window focus and
+/// the search and cue states.
+const NEVER_CLASSES: [&str; 4] = ["window-inactive", "current", "past", "future"];
+
+/// Scrollbar states. Blink accepts them only after a scrollbar pseudo-element; anywhere else the
+/// selector is invalid, so the parser refuses them there.
+const SCROLLBAR_STATES: [&str; 10] = [
     "horizontal",
     "vertical",
     "decrement",
@@ -62,6 +62,9 @@ const NEVER_CLASSES: [&str; 14] = [
     "corner-present",
 ];
 
+/// Prefixes of the pseudo-elements a scrollbar state may follow: scrollbar parts and the resizer.
+const SCROLLBAR_ELEMENT_PREFIXES: [&str; 2] = ["-webkit-scrollbar", "-webkit-resizer"];
+
 /** Whether a lowercase pseudo-element name is one Blink accepts, with or without a prefix. */
 pub(super) fn known_pseudo_element(name: &str) -> bool {
     name.starts_with(WEBKIT_PREFIX) || KNOWN_ELEMENTS.contains(&name)
@@ -69,7 +72,19 @@ pub(super) fn known_pseudo_element(name: &str) -> bool {
 
 /** Whether a lowercase pseudo-class name is a Blink state Eye keeps but never matches. */
 pub(super) fn never_pseudo_class(name: &str) -> bool {
-    NEVER_CLASSES.contains(&name)
+    NEVER_CLASSES.contains(&name) || SCROLLBAR_STATES.contains(&name)
+}
+
+/** Whether a lowercase pseudo-class name is a scrollbar state, valid only after a scrollbar. */
+pub(super) fn scrollbar_state(name: &str) -> bool {
+    SCROLLBAR_STATES.contains(&name)
+}
+
+/** Whether a lowercase pseudo-element name is one a scrollbar state may follow. */
+pub(super) fn scrollbar_element(name: &str) -> bool {
+    SCROLLBAR_ELEMENT_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 /// Pseudo-elements that style only browser chrome (scrollbars, spin and picker buttons, view

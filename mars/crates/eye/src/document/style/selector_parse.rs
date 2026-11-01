@@ -1,6 +1,9 @@
 /** Owned selector grammar: compounds, four combinators, attributes and a bounded pseudo-class set. */
 use super::constants::{SELECTOR_ARGUMENTS, SELECTOR_COMPOUNDS};
-use super::selector_names::{chrome_pseudo_element, known_pseudo_element, never_pseudo_class};
+use super::selector_names::{
+    chrome_pseudo_element, known_pseudo_element, never_pseudo_class, scrollbar_element,
+    scrollbar_state,
+};
 /// How a compound relates to the one on its left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Combinator {
@@ -238,8 +241,9 @@ struct Cursor<'a> {
     in_has: bool,
     /// Selector functions enclosing this selector.
     depth: usize,
-    /// A pseudo-element was read in the current compound, so only pseudo-classes may follow it.
-    element: bool,
+    /// The pseudo-element read in the current compound, if any: only pseudo-classes may follow it,
+    /// save for the chains Blink accepts.
+    element: Option<String>,
 }
 impl<'a> Cursor<'a> {
     /** Starts at the beginning. */
@@ -249,7 +253,7 @@ impl<'a> Cursor<'a> {
             index: 0,
             in_has: false,
             depth: 0,
-            element: false,
+            element: None,
         }
     }
     /** Remaining bytes. */
@@ -285,7 +289,7 @@ impl<'a> Cursor<'a> {
             Some(_) => return Err("selector syntax"),
         };
         // Blink: a pseudo-element is the last compound, so a combinator after it is invalid.
-        if self.element {
+        if self.element.is_some() {
             return Err(INVALID);
         }
         self.index += 1;
@@ -330,7 +334,7 @@ impl<'a> Cursor<'a> {
     }
     /** A compound must contain at least one selector. */
     fn compound(&mut self) -> Result<Compound, Unsupported> {
-        self.element = false;
+        self.element = None;
         let mut compound = Compound::default();
         let mut typed = self.type_selector();
         if self.peek() == Some(b'|') {
@@ -350,7 +354,7 @@ impl<'a> Cursor<'a> {
     /** One `#id`, `.class`, `[attr]` or `:pseudo`; None at a compound boundary. */
     fn simple(&mut self) -> Result<Option<Simple>, Unsupported> {
         // After a pseudo-element only pseudo-classes may follow in its compound (`::before.a` is invalid).
-        if self.element && matches!(self.peek(), Some(b'#' | b'.' | b'[')) {
+        if self.element.is_some() && matches!(self.peek(), Some(b'#' | b'.' | b'[')) {
             return Err(INVALID);
         }
         let simple = match self.peek() {
@@ -557,7 +561,7 @@ impl<'a> Cursor<'a> {
      * and other-engine names, or one out of place, make the selector invalid.
      */
     fn pseudo_element_simple(&mut self) -> Result<Simple, Unsupported> {
-        if self.depth > 0 || self.in_has || self.element {
+        if self.depth > 0 || self.in_has {
             return Err(INVALID);
         }
         let legacy = self.rest().starts_with(b":") && !self.rest().starts_with(b"::");
@@ -566,7 +570,10 @@ impl<'a> Cursor<'a> {
         if self.peek() == Some(b'(') {
             self.index = self.closing(b')');
         }
-        self.element = true;
+        if !chains_after(self.element.as_deref(), &name) {
+            return Err(INVALID);
+        }
+        self.element = Some(name.clone());
         if !known_pseudo_element(&name) {
             return Err(INVALID);
         }
@@ -647,10 +654,19 @@ impl<'a> Cursor<'a> {
             | "muted"
             | "volume-locked"
             | "closed" => Pseudo::Never,
-            _ if never_pseudo_class(&name) => Pseudo::Never,
+            _ if never_pseudo_class(&name) => self.never_class(&name)?,
             _ => return Err(refusal(&name)),
         };
         Ok(Simple::Pseudo(pseudo))
+    }
+    /** A never-matching state. A scrollbar state is valid only after a scrollbar pseudo-element,
+    as Blink's parser requires; anywhere else it makes the selector invalid. */
+    fn never_class(&self, name: &str) -> Result<Pseudo, Unsupported> {
+        let after_scrollbar = self.element.as_deref().is_some_and(scrollbar_element);
+        if scrollbar_state(name) && !after_scrollbar {
+            return Err(INVALID);
+        }
+        Ok(Pseudo::Never)
     }
     /** `:nth-child()`, `:nth-last-child()`, `:not()`, `:is()` and `:where()`. */
     fn functional(&mut self, name: &str) -> Result<Simple, Unsupported> {
@@ -921,4 +937,13 @@ fn compound_specificity(compound: &Compound) -> (usize, usize, usize) {
 /** A scalar specificity back as its (ids, classes, types) triple. */
 fn split(n: usize) -> (usize, usize, usize) {
     (n / 1_000_000, n / 1000 % 1000, n % 1000)
+}
+
+/** Whether a pseudo-element named `name` may follow `previous` in the same compound. Blink accepts
+only `::column::scroll-marker` as a chain; every other pseudo-element after one is invalid. */
+fn chains_after(previous: Option<&str>, name: &str) -> bool {
+    match previous {
+        None => true,
+        Some(previous) => previous == "column" && name == "scroll-marker",
+    }
 }
