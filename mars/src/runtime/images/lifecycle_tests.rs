@@ -62,6 +62,7 @@ fn decoded_events(source: &str) -> Vec<String> {
             dimensions,
             bitmap: None,
             origin_clean: false,
+            current_src: String::new(),
         }],
     )
     .unwrap();

@@ -111,6 +111,7 @@ fn admitted_then_revoked_blob_pixels_reach_draw_image_and_clean_readback() {
             dimensions: Some((2, 1)),
             bitmap: Some(bitmap),
             origin_clean: true,
+            current_src: String::new(),
         }],
     )
     .unwrap();

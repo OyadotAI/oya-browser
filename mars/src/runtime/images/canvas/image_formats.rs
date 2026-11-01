@@ -90,6 +90,7 @@ fn draw(mime: &str, bytes: &[u8], clean: bool) -> Vec<String> {
             dimensions: Some((2, 2)),
             bitmap,
             origin_clean,
+            current_src: String::new(),
         }],
     )
     .unwrap();

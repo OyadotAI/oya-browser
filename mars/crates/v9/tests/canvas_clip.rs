@@ -178,6 +178,7 @@ fn fully_clipped_cross_origin_image_still_taints_the_canvas() {
         dimensions: Some((1, 1)),
         bitmap: Some(bitmap),
         origin_clean: false,
+        current_src: String::new(),
     };
     let resumed = mars_v9::resume_images(
         common::input(&sources, &host, &environment),

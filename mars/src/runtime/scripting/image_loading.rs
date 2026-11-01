@@ -413,6 +413,7 @@ impl Runtime {
             } else {
                 super::super::images::canvas::source(asset, used)
             };
+            let current_src = self.current_source(page, request.node);
             let mut request = request;
             request.blob_source = None;
             responses.push(ImageResponse {
@@ -420,9 +421,21 @@ impl Runtime {
                 dimensions,
                 bitmap,
                 origin_clean,
+                current_src,
             });
         }
         Ok(responses)
+    }
+
+    /** The URL the page's current src, srcset or picture selection names for an image; empty when none. */
+    fn current_source(&self, page: &Page, node: usize) -> String {
+        page.document
+            .nodes
+            .iter()
+            .find(|entry| entry.local_id == node && entry.tag == "img")
+            .and_then(|entry| source(page, entry, self.render_context.width))
+            .map(|selected| selected.url)
+            .unwrap_or_default()
     }
 
     /** Fetch the batch's in-document images in parallel; reads then find the answers waiting. */

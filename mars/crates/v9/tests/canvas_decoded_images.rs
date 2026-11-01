@@ -47,6 +47,7 @@ fn run(
         dimensions,
         bitmap: pixels,
         origin_clean: clean,
+        current_src: String::new(),
     };
     let execution = mars_v9::resume_images(
         common::input(&sources, &host, &environment),
