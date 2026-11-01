@@ -10,6 +10,7 @@ pub(crate) mod media;
 mod outline;
 mod paint;
 mod painted;
+mod pattern;
 mod push_button;
 mod vector;
 use crate::{document::DisplayItem, platform, runtime::BrowserSnapshot};

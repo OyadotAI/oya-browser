@@ -2,6 +2,7 @@
 use super::{
     faded, literal_color,
     paint::{Painter, Shape},
+    pattern::{dash_pattern, stroke_width},
 };
 use crate::document::{BorderStyle, DisplayItem, DisplayOutline};
 use objc2_app_kit::NSColor;
@@ -22,22 +23,25 @@ pub(super) fn paint(item: &DisplayItem, painter: &Painter, shape: &Shape, alpha:
         return;
     };
     let color = faded(&ring_color(item, ring), alpha);
+    let width = stroke_width(ring.width);
+    // A dash pattern of a ring's perimeter; None (solid) when it would need too many dashes.
+    let perimeter = 2.0 * (shape.width + shape.height);
     match ring.style {
         BorderStyle::Double => {
-            let part = ring.width / DOUBLE_PARTS;
-            ring_at(painter, shape, ring.offset + 2.0 * part, part, &color, &[]);
-            ring_at(painter, shape, ring.offset, part, &color, &[]);
+            let part = width / DOUBLE_PARTS;
+            ring_at(painter, shape, ring.offset + 2.0 * part, part, &color, None);
+            ring_at(painter, shape, ring.offset, part, &color, None);
         }
         BorderStyle::Dashed => {
-            let dashes = DASH_PATTERN.map(|part| part * ring.width);
-            ring_at(painter, shape, ring.offset, ring.width, &color, &dashes);
+            let dashes = dash_pattern(&DASH_PATTERN.map(|part| part * width), perimeter);
+            ring_at(painter, shape, ring.offset, width, &color, dashes);
         }
         BorderStyle::Dotted => {
-            let dashes = DOT_PATTERN.map(|part| part * ring.width);
-            ring_at(painter, shape, ring.offset, ring.width, &color, &dashes);
+            let dashes = dash_pattern(&DOT_PATTERN.map(|part| part * width), perimeter);
+            ring_at(painter, shape, ring.offset, width, &color, dashes);
         }
         // ponytail: groove, ridge, inset and outset paint solid; add their light and dark bands when a page needs them.
-        _ => ring_at(painter, shape, ring.offset, ring.width, &color, &[]),
+        _ => ring_at(painter, shape, ring.offset, width, &color, None),
     }
 }
 
@@ -61,12 +65,11 @@ fn ring_at(
     start: f64,
     width: f64,
     color: &NSColor,
-    dashes: &[f64],
+    dashes: Option<Vec<f64>>,
 ) {
     let grown = shape.outset(start + width);
-    if dashes.is_empty() {
-        painter.stroke(&grown, width, color);
-    } else {
-        painter.stroke_dashed(&grown, width, color, dashes);
+    match dashes {
+        Some(dashes) => painter.stroke_dashed(&grown, width, color, &dashes),
+        None => painter.stroke(&grown, width, color),
     }
 }

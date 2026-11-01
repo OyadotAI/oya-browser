@@ -1,4 +1,5 @@
 /** Text decoration lines: an underline or line-through in the shape, thickness and offset its text item carries. */
+use super::pattern::{MIN_STROKE, dash_pattern, stroke_width, wave_halves};
 use crate::document::{DecorationStyle, DisplayItem, PaintLine};
 use objc2_app_kit::{NSBezierPath, NSColor, NSLineCapStyle};
 use objc2_foundation::NSPoint;
@@ -15,6 +16,8 @@ const THICKNESS_RANGE: (f64, f64) = (1.0, 2.5);
 const DOUBLE_SPACING: f64 = 2.0;
 /// Dashes and their gaps, in thicknesses.
 const DASH_PATTERN: [f64; 2] = [3.0, 2.0];
+/// Dots and their gaps, in thicknesses: a zero-length dot is drawn as a round cap.
+const DOT_PATTERN: [f64; 2] = [0.0, 2.0];
 /// A wave's half period and crest height, in thicknesses.
 const WAVE_HALF_PERIOD: f64 = 2.0;
 const WAVE_CREST: f64 = 1.0;
@@ -56,44 +59,55 @@ pub(super) fn decorate(
     }
 }
 
-/** The line's width in points: the authored thickness, else one derived from the font size. */
+/**
+ * The line's width in points: the authored thickness, else one derived from the font size. Either
+ * way it is raised to `MIN_STROKE`, so a zero thickness from page CSS still paints and plans.
+ */
 fn thickness(item: &DisplayItem) -> f64 {
-    item.decoration
-        .and_then(|decoration| decoration.thickness)
-        .unwrap_or_else(|| {
-            (item.font_size / FONT_PER_THICKNESS).clamp(THICKNESS_RANGE.0, THICKNESS_RANGE.1)
-        })
+    line_width(
+        item.decoration.and_then(|decoration| decoration.thickness),
+        item.font_size,
+    )
 }
 
-/** Strokes one decoration line of `shape` from `(start, end)` at height `y`. */
+/** The clamped width of a decoration line with `authored` thickness on a font of `font_size`. */
+fn line_width(authored: Option<f64>, font_size: f64) -> f64 {
+    stroke_width(authored.unwrap_or_else(|| {
+        (font_size / FONT_PER_THICKNESS).clamp(THICKNESS_RANGE.0, THICKNESS_RANGE.1)
+    }))
+}
+
+/**
+ * Strokes one decoration line of `shape` from `(start, end)` at height `y`. A dash or wave that
+ * would need too many segments falls back to the solid band, so the cost stays bounded.
+ */
 fn stroke(shape: DecorationStyle, (start, end): (f64, f64), y: f64, thick: f64, color: &NSColor) {
+    let length = end - start;
     match shape {
-        DecorationStyle::Solid => band(start, end, y, thick, color, &[], NSLineCapStyle::Butt),
+        DecorationStyle::Solid => band(start, end, y, thick, color, None, NSLineCapStyle::Butt),
         DecorationStyle::Double => {
-            band(start, end, y, thick, color, &[], NSLineCapStyle::Butt);
+            band(start, end, y, thick, color, None, NSLineCapStyle::Butt);
             let second = y + thick * DOUBLE_SPACING;
-            band(start, end, second, thick, color, &[], NSLineCapStyle::Butt);
+            band(start, end, second, thick, color, None, NSLineCapStyle::Butt);
         }
-        DecorationStyle::Dotted => band(
-            start,
-            end,
-            y,
-            thick,
-            color,
-            &[0.0, thick * 2.0],
-            NSLineCapStyle::Round,
-        ),
+        DecorationStyle::Dotted => {
+            let dots = dash_pattern(&DOT_PATTERN.map(|part| part * thick), length);
+            band(start, end, y, thick, color, dots, NSLineCapStyle::Round);
+        }
         DecorationStyle::Dashed => {
-            let dashes = DASH_PATTERN.map(|part| part * thick);
-            band(start, end, y, thick, color, &dashes, NSLineCapStyle::Butt);
+            let dashes = dash_pattern(&DASH_PATTERN.map(|part| part * thick), length);
+            band(start, end, y, thick, color, dashes, NSLineCapStyle::Butt);
         }
-        DecorationStyle::Wavy => wave(start, end, y, thick, color),
+        DecorationStyle::Wavy => match wave_halves(length, thick * WAVE_HALF_PERIOD) {
+            Some(halves) => wave(start, end, y, thick, halves, color),
+            None => band(start, end, y, thick, color, None, NSLineCapStyle::Butt),
+        },
     }
 }
 
 /**
- * One straight band. A non-empty `dashes` pattern sets AppKit's dash, and a round cap turns a
- * zero-length dash into a dot (Blink's dotted decoration).
+ * One straight band. A planned `dashes` pattern sets AppKit's dash, and a round cap turns a
+ * zero-length dash into a dot (Blink's dotted decoration). `None` paints solid.
  */
 fn band(
     start: f64,
@@ -101,16 +115,16 @@ fn band(
     y: f64,
     thick: f64,
     color: &NSColor,
-    dashes: &[f64],
+    dashes: Option<Vec<f64>>,
     cap: NSLineCapStyle,
 ) {
     color.setStroke();
     let path = NSBezierPath::bezierPath();
     path.moveToPoint(NSPoint::new(start, y));
     path.lineToPoint(NSPoint::new(end, y));
-    path.setLineWidth(thick);
+    path.setLineWidth(thick.max(MIN_STROKE));
     path.setLineCapStyle(cap);
-    if !dashes.is_empty() {
+    if let Some(dashes) = dashes.filter(|dashes| !dashes.is_empty()) {
         // SAFETY: the pattern outlives the call, and AppKit copies it into the path.
         unsafe { path.setLineDash_count_phase(dashes.as_ptr(), dashes.len() as isize, 0.0) };
     }
@@ -118,19 +132,24 @@ fn band(
 }
 
 /**
- * A wave of half periods from `start` to `end`. Each half is a cubic whose control polygon peaks
- * at twice the crest, so the curve's apex lands one crest above or below the line. The last half
- * is shortened, with its crest scaled to match, so the wave ends exactly at `end`.
+ * `halves` half periods from `start` towards `end`. Each half is a cubic whose control polygon
+ * peaks at twice the crest, so the apex lands one crest above or below the line. The last half is
+ * shortened, with its crest scaled to match, so the wave ends at `end`. The loop count is fixed by
+ * `wave_halves`, so it always terminates.
  */
-fn wave(start: f64, end: f64, y: f64, thick: f64, color: &NSColor) {
+fn wave(start: f64, end: f64, y: f64, thick: f64, halves: usize, color: &NSColor) {
     color.setStroke();
     let half = thick * WAVE_HALF_PERIOD;
     let crest = thick * WAVE_CREST;
     let path = NSBezierPath::bezierPath();
     path.moveToPoint(NSPoint::new(start, y));
     let (mut x, mut sign) = (start, -1.0);
-    while x < end {
-        let next = (x + half).min(end);
+    for index in 0..halves {
+        let next = if index + 1 == halves {
+            end
+        } else {
+            (start + half * (index + 1) as f64).min(end)
+        };
         let scale = (next - x) / half;
         let (mid, control_y) = ((x + next) / 2.0, y + sign * 2.0 * crest * scale);
         // Cubic handles at two thirds of the way to the quadratic's control point.
@@ -143,6 +162,6 @@ fn wave(start: f64, end: f64, y: f64, thick: f64, color: &NSColor) {
         );
         (x, sign) = (next, -sign);
     }
-    path.setLineWidth(thick);
+    path.setLineWidth(thick.max(MIN_STROKE));
     path.stroke();
 }

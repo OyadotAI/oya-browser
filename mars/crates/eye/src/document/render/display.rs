@@ -470,11 +470,18 @@ pub(super) fn is_solid_line(style: &crate::document::style::DecorationStyle) -> 
     *style == crate::document::style::DecorationStyle::Solid
 }
 
+/**
+ * The narrowest line a decoration or outline paints, in points. A thinner authored width (0.01px)
+ * would vanish at device resolution and make painters draw a stroke of near-zero size, so it is
+ * raised to this; zero still means no line at all.
+ */
+pub(super) const MIN_LINE_WIDTH: f64 = 0.5;
+
 /** The decoration line's paint when it differs from the solid default; None keeps the painter's own. */
 pub(super) fn decoration_line(style: &crate::document::ComputedStyle) -> Option<DecorationLine> {
     let line = DecorationLine {
         style: style.decoration_style,
-        thickness: style.decoration_thickness,
+        thickness: style.decoration_thickness.map(|t| t.max(MIN_LINE_WIDTH)),
         offset: style.underline_offset,
     };
     (line != DecorationLine::default()).then_some(line)
@@ -485,7 +492,7 @@ pub(super) fn outline(style: &crate::document::ComputedStyle) -> Option<DisplayO
     let kind = style.outline_style?;
     (style.outline_width > 0.0).then(|| DisplayOutline {
         style: kind,
-        width: style.outline_width,
+        width: style.outline_width.max(MIN_LINE_WIDTH),
         color: style.outline_color.clone(),
         offset: style.outline_offset,
     })

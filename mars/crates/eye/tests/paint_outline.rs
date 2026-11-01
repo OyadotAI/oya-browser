@@ -116,3 +116,9 @@ fn outline_properties_are_no_longer_diagnostics() {
         document.diagnostics
     );
 }
+
+/** A width too thin to see is raised to the minimum line, so painters never stroke a vanishing ring. */
+#[test]
+fn thin_outline_width_is_raised_to_the_minimum_line() {
+    assert_eq!(outline("#b{outline:0.01px solid}").width, 0.5);
+}

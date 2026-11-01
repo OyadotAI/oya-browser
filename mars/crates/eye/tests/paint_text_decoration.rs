@@ -104,3 +104,16 @@ fn decoration_properties_are_no_longer_diagnostics() {
         document.diagnostics
     );
 }
+
+/** A decoration thickness of zero or below a visible line is raised to the minimum, never painted empty. */
+#[test]
+fn thin_thickness_is_raised_to_the_minimum_line() {
+    assert_eq!(
+        line("p{text-decoration:underline;text-decoration-thickness:0.01px}").thickness,
+        Some(0.5)
+    );
+    assert_eq!(
+        line("p{text-decoration:underline wavy;text-decoration-thickness:0px}").thickness,
+        Some(0.5)
+    );
+}
