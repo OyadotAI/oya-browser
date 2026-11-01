@@ -58,6 +58,8 @@ pub struct Shared {
     pub initiator: String,
     /// An `<audio>` element (Sec-Fetch-Dest: audio) rather than `<video>`.
     pub audio: bool,
+    /// A Media Source player, which counts toward the page's cap on them.
+    pub stream: bool,
     /// The element's node, where its frames and controls paint.
     pub node: usize,
     /// Fetched bytes, filled by the coordinator, read by the native loader.

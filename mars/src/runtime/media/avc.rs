@@ -102,8 +102,14 @@ mod tests {
     fn avcc_refuses_another_version_and_a_record_without_sps() {
         let mut version_two = FIXTURE_AVCC.to_vec();
         version_two[0] = 2;
-        assert_eq!(super::parse_avcc(&version_two), Err(super::AvcError::Unsupported));
+        assert_eq!(
+            super::parse_avcc(&version_two),
+            Err(super::AvcError::Unsupported)
+        );
         let no_sps = [1, 0x42, 0xc0, 0x0a, 0xff, 0xe0, 0];
-        assert_eq!(super::parse_avcc(&no_sps), Err(super::AvcError::Unsupported));
+        assert_eq!(
+            super::parse_avcc(&no_sps),
+            Err(super::AvcError::Unsupported)
+        );
     }
 }

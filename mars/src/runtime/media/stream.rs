@@ -188,6 +188,7 @@ impl Stream {
             }
             collect_frames(&tracks, media, &append)?
         };
+        self.kinds_unchanged(buffer, &tracks)?;
         self.admit(buffer, &tracks, &frames)?;
         let target = self.buffers.entry(buffer).or_default();
         if !init.is_empty() {
@@ -207,6 +208,23 @@ impl Stream {
         self.buffers
             .get(&buffer)
             .map_or_else(Vec::new, |found| found.tracks.clone())
+    }
+
+    /** Refuse an init segment that gives a track id a different kind than the lane it already has, so every byte stays in its bucket. */
+    fn kinds_unchanged(&self, buffer: u32, tracks: &[Track]) -> Result<(), Refusal> {
+        let Some(found) = self.buffers.get(&buffer) else {
+            return Ok(());
+        };
+        for track in tracks {
+            if found
+                .lanes
+                .get(&track.id)
+                .is_some_and(|lane| lane.kind() != track.kind)
+            {
+                return Err(Error::Malformed("track id changed kind").into());
+            }
+        }
+        Ok(())
     }
 
     /** Refuse the append when its bytes would take the buffer or the stream past a quota; nothing is changed. */
@@ -311,6 +329,11 @@ fn collect_frames(
         if track.timescale == 0 {
             return Err(Error::Malformed("timescale"));
         }
+        if track.kind == TrackKind::Other {
+            return Err(Error::Malformed(
+                "samples of a track kind MSE does not play",
+            ));
+        }
         let scale = f64::from(track.timescale);
         let pts = sample.pts as f64 / scale + append.offset;
         let duration = f64::from(sample.duration) / scale;
@@ -384,6 +407,11 @@ mod tests {
 
     /** A moov with one video track: id 1, timescale 1000, 320 by 240, and an avc1 entry with a short avcC. */
     fn init() -> Vec<u8> {
+        init_with(b"vide")
+    }
+
+    /** A moov with one track of the given handler type, id 1, carrying the same avc1 entry as `init`. */
+    fn init_with(handler: &[u8; 4]) -> Vec<u8> {
         let mut tkhd = vec![0u8; 8];
         tkhd.extend(1u32.to_be_bytes());
         tkhd.extend([0u8; 68]);
@@ -392,7 +420,7 @@ mod tests {
         let mut mdhd = vec![0u8; 8];
         mdhd.extend(1000u32.to_be_bytes());
         mdhd.extend([0u8; 4]);
-        let hdlr = [&[0u8; 4][..], b"vide", &[0u8; 13][..]].concat();
+        let hdlr = [&[0u8; 4][..], &handler[..], &[0u8; 13][..]].concat();
         let avcc = bx(b"avcC", &[1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0, 0]);
         let avc1 = bx(b"avc1", &[&[0u8; 78][..], &avcc].concat());
         let stsd = fb(b"stsd", 0, &[1u32.to_be_bytes().as_slice(), &avc1].concat());
@@ -657,5 +685,35 @@ mod tests {
             stream.lanes().flat_map(|lane| lane.frames.iter()).count(),
             0
         );
+    }
+
+    /** Samples of a track whose kind MSE does not play are an append error, so no byte is stored outside the quotas. */
+    #[test]
+    fn samples_of_an_unplayed_track_kind_are_refused() {
+        let init = init_with(b"subt");
+        let segment = media(0, &[(1000, 1, true)], &[9]);
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        let outcome = stream.append(1, first(&bytes, init.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(stream.total(), 0);
+    }
+
+    /** An init segment that gives an existing track id another kind is refused, and the lane keeps its kind and bytes. */
+    #[test]
+    fn a_track_id_that_changes_kind_is_refused() {
+        let video = init();
+        let segment = media(0, &[(1000, 1, true)], &[9]);
+        let bytes = [video.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream.append(1, first(&bytes, video.len())).unwrap();
+        let audio = init_with(b"soun");
+        let outcome = stream.append(1, first(&audio, audio.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(
+            stream.lanes().next().unwrap().kind(),
+            mars_mp4::TrackKind::Video
+        );
+        assert_eq!(stream.stored(1), [1, 0]);
     }
 }

@@ -6,8 +6,8 @@
  * updates the page's media script fires as events. Players outlive a step but not their page.
  */
 pub mod avc;
-pub mod constants;
 pub mod bytes;
+pub mod constants;
 pub mod hub;
 pub mod stream;
 mod support;
@@ -19,7 +19,7 @@ use super::Runtime;
 use crate::network::{Destination, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::MediaCommand;
-use hub::{PlayerKey, Shared};
+use hub::{Hub, PlayerKey, Shared};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -35,6 +35,8 @@ const OK: u16 = 200;
 const PARTIAL: u16 = 206;
 /// MediaError codes the page sees.
 const NETWORK_ERROR: u16 = 2;
+/// MediaError code for a source the player will not play: here, a Media Source past the page's cap.
+const SOURCE_NOT_SUPPORTED: u16 = 4;
 
 /// Per-page media queues: part of the page candidate, so a step that is rolled back sends nothing.
 #[derive(Clone, Debug, Default)]
@@ -311,6 +313,7 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
                 blob,
                 settings,
                 node,
+                stream,
                 ..
             } => {
                 let mut shared = Shared {
@@ -318,8 +321,15 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
                     initiator: initiator.into(),
                     audio: !settings.video,
                     node: *node,
+                    stream: *stream,
                     ..Shared::default()
                 };
+                if refused_load(&hub, &key, *stream) {
+                    shared.bytes.failed = Some((
+                        SOURCE_NOT_SUPPORTED,
+                        "MEDIA_ELEMENT_ERROR: too many Media Sources on this page".into(),
+                    ));
+                }
                 if let Some(source) = blob.take().filter(|source| source.validate(url).is_ok()) {
                     shared.bytes = bytes::Bytes::whole(source.bytes.to_vec(), &source.mime_type);
                     shared.url.clear();
@@ -340,6 +350,16 @@ fn dispatch(page_id: &str, initiator: &str, commands: Vec<MediaCommand>) {
     }
 }
 
+/** Whether a load of a Media Source is refused: the page already holds the most, not counting this player's own record. */
+fn refused_load(hub: &Hub, key: &PlayerKey, stream: bool) -> bool {
+    let others = hub
+        .players
+        .iter()
+        .filter(|((page, player), shared)| page == &key.0 && *player != key.1 && shared.stream)
+        .count();
+    stream && others >= constants::MAX_MSE_PLAYERS
+}
+
 /** Updates for every player of one page, and whether any of them is playing. */
 fn collect(page_id: &str, now: Instant) -> (Vec<Value>, bool) {
     let mut hub = hub::lock();
@@ -348,6 +368,9 @@ fn collect(page_id: &str, now: Instant) -> (Vec<Value>, bool) {
     for ((id, player), shared) in hub.players.iter_mut() {
         if id != page_id {
             continue;
+        }
+        if shared.bytes.failed.is_some() && shared.status.error.is_none() {
+            shared.status.error = shared.bytes.failed.clone();
         }
         playing |= shared.status.playing;
         let updates = updates::diff(*player, &shared.status, &mut shared.reported, now);
@@ -420,5 +443,61 @@ fn release(live: &BTreeSet<String>) {
         let player = key.1;
         hub.commands
             .push_back((key, MediaCommand::Unload { player }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /**
+     * The per-page cap on Media Source players: the rule is checked on a hub of its own, so the tests share no state.
+     */
+    use super::{Hub, PlayerKey, Shared, refused_load};
+    use crate::runtime::media::constants::MAX_MSE_PLAYERS;
+
+    /** A hub holding `count` Media Source players of `page`, numbered from one. */
+    fn hub_with_streams(page: &str, count: usize) -> Hub {
+        let mut hub = Hub::default();
+        for player in 1..=count as u64 {
+            let shared = Shared {
+                stream: true,
+                ..Shared::default()
+            };
+            hub.players.insert((page.to_string(), player), shared);
+        }
+        hub
+    }
+
+    /** A new Media Source past the page's cap is refused. */
+    #[test]
+    fn a_media_source_past_the_page_cap_is_refused() {
+        let hub = hub_with_streams("page-1", MAX_MSE_PLAYERS);
+        let key: PlayerKey = ("page-1".into(), 99);
+        assert!(refused_load(&hub, &key, true));
+    }
+
+    /** A Media Source below the cap is admitted. */
+    #[test]
+    fn a_media_source_below_the_page_cap_is_admitted() {
+        let hub = hub_with_streams("page-1", MAX_MSE_PLAYERS - 1);
+        let key: PlayerKey = ("page-1".into(), 99);
+        assert!(!refused_load(&hub, &key, true));
+    }
+
+    /** Players of another page do not use this page's allowance. */
+    #[test]
+    fn other_pages_players_do_not_count_toward_this_page() {
+        let hub = hub_with_streams("page-2", MAX_MSE_PLAYERS);
+        let key: PlayerKey = ("page-1".into(), 99);
+        assert!(!refused_load(&hub, &key, true));
+    }
+
+    /** An element that reloads its own Media Source is not counted against itself, and plain media is never refused. */
+    #[test]
+    fn a_reload_and_a_plain_load_are_never_refused_by_the_cap() {
+        let hub = hub_with_streams("page-1", MAX_MSE_PLAYERS);
+        let own: PlayerKey = ("page-1".into(), 1);
+        assert!(!refused_load(&hub, &own, true));
+        let plain: PlayerKey = ("page-1".into(), 99);
+        assert!(!refused_load(&hub, &plain, false));
     }
 }

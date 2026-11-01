@@ -182,14 +182,30 @@ impl Decoder {
         }
     }
 
-    /** The newest decoded picture at or before `time`; pictures older than it are dropped. None when nothing new is due. */
-    pub fn picture_at(&mut self, time: f64) -> Option<Retained<NSImage>> {
+    /**
+     * The newest decoded picture at or before `time`; pictures older than it are dropped, and so are pictures more than
+     * `horizon` seconds past it, which only a broken timeline produces. None when nothing new is due.
+     */
+    pub fn picture_at(&mut self, time: f64, horizon: f64) -> Option<Retained<NSImage>> {
         let mut queue = self.output.borrow_mut();
         let mut newest = None;
         while queue.front().is_some_and(|picture| picture.pts <= time) {
             newest = queue.pop_front();
         }
+        queue.retain(|picture| picture.pts <= time + horizon);
         newest.map(|picture| picture.image)
+    }
+
+    /** Drop every picture waiting to be shown: the frames they came from are gone, after a seek or a replacement. */
+    pub fn clear(&self) {
+        self.output.borrow_mut().clear();
+    }
+
+    /** Drop the pictures before `cut`, which eviction has removed the frames of. */
+    pub fn forget_before(&self, cut: f64) {
+        self.output
+            .borrow_mut()
+            .retain(|picture| picture.pts >= cut);
     }
 
     /** The pictures waiting to be shown. */
@@ -228,9 +244,12 @@ extern "C" fn deliver(
     let output = unsafe { &*(refcon as *const RefCell<VecDeque<Decoded>>) };
     // SAFETY: VideoToolbox passes a live image buffer for the duration of the callback.
     let buffer = unsafe { &*(image as *const CVPixelBuffer) };
+    // SAFETY: a CMTime from VideoToolbox is valid to read as seconds.
+    let pts = unsafe { pts.seconds() };
+    if !pts.is_finite() {
+        return;
+    }
     if let Some(picture) = frames::image(buffer) {
-        // SAFETY: a CMTime from VideoToolbox is valid to read as seconds.
-        let pts = unsafe { pts.seconds() };
         output.borrow_mut().push_back(Decoded {
             pts,
             image: picture,
@@ -397,8 +416,25 @@ mod tests {
         for frame in &lane.frames {
             decoder.decode(frame).unwrap();
         }
-        assert!(decoder.picture_at(-1.0).is_none());
-        assert!(decoder.picture_at(0.05).is_some());
+        assert!(decoder.picture_at(-1.0, 1.0).is_none());
+        assert!(decoder.picture_at(0.05, 1.0).is_some());
         assert!(decoder.pending() < lane.frames.len());
+    }
+
+    /** Clearing drops every picture waiting to be shown, so a seek or a replaced track never shows stale frames. */
+    #[test]
+    fn clearing_drops_every_pending_picture() {
+        let stream = fixture_stream();
+        let lane = stream
+            .lanes()
+            .find(|lane| lane.track.codec.starts_with("avc1"))
+            .unwrap();
+        let mut decoder = Decoder::new(&parse_avcc(&lane.track.config).unwrap()).unwrap();
+        for frame in &lane.frames {
+            decoder.decode(frame).unwrap();
+        }
+        assert!(decoder.pending() > 0);
+        decoder.clear();
+        assert_eq!(decoder.pending(), 0);
     }
 }

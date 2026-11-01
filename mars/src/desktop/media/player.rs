@@ -8,6 +8,7 @@
 use super::clock::Clock;
 use super::loader::Loader;
 use super::stream_video::{StreamVideo, video_lane};
+use crate::runtime::media::constants::KEEP_BEHIND;
 use crate::runtime::media::hub::{Shared, Status};
 use crate::runtime::media::stream::{Append, Stream};
 use crate::v9::MediaSettings;
@@ -226,6 +227,7 @@ impl Native {
         self.clock.set_running(!self.settings.paused, host_time);
         let playhead = self.clock.time(host_time);
         self.media.evict_behind(playhead);
+        self.video.forget_before(playhead - KEEP_BEHIND);
         if let Some(picture) = self.video.step(&self.media, playhead) {
             self.frame = Some(picture);
             self.fresh = true;
@@ -235,6 +237,7 @@ impl Native {
         let (width, height) = size.unwrap_or((0, 0));
         shared.status = Status {
             time: playhead,
+            error: shared.status.error.clone(),
             playing: self.clock.running(),
             seeks: self.seeks,
             seek_time: self.seek_time,
