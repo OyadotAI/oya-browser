@@ -43,6 +43,8 @@ pub struct Status {
     pub frames: u64,
     /// A Media Source's stored bytes per source buffer, as video and audio: the script's quota check reads them.
     pub stored: Vec<(u32, [usize; 2])>,
+    /// The player streams a Media Source, whose duration the page owns: metadata leaves it out.
+    pub media_source: bool,
     /// The player predicts playback will not stall.
     pub likely: bool,
     /// Every byte of the resource is fetched.

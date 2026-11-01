@@ -33,6 +33,11 @@ impl StreamVideo {
         self.fed = None;
     }
 
+    /** Whether a decoder is open, so the player can report that its video is ready. */
+    pub fn ready(&self) -> bool {
+        self.decoder.is_some()
+    }
+
     /** Drop the pictures before `cut`, after eviction removed the frames they came from. */
     pub fn forget_before(&self, cut: f64) {
         if let Some(decoder) = &self.decoder {

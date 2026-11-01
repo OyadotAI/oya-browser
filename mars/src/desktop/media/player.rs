@@ -244,6 +244,9 @@ impl Native {
             frames: self.frames,
             stored: self.media.buffers(),
             video: width > 0 && height > 0,
+            ready: self.video.ready(),
+            likely: self.video.ready(),
+            media_source: true,
             width,
             height,
             ..Status::default()

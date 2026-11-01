@@ -1106,7 +1106,7 @@
     const first = s.readyState === HAVE_NOTHING;
     if (first) {
       addMediaTracks(s, u);
-      if (!Number.isNaN(u.duration) && u.duration !== s.duration) {
+      if (u.duration !== undefined && !Number.isNaN(u.duration) && u.duration !== s.duration) {
         s.duration = u.duration === null ? Infinity : u.duration;
         queueFire(element, 'durationchange');
       }
