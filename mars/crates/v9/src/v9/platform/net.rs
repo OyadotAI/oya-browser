@@ -71,6 +71,9 @@ pub(in crate::v9) struct XhrState {
     pub response_type: String,
     pub with_credentials: bool,
     pub sent: bool,
+    /// Opened with async false: send() completes from a recorded answer, not an event loop turn.
+    #[serde(default)]
+    pub sync: bool,
     /// Bumped by open() and abort(): a delivery whose handlers reopened or aborted the request
     /// stops firing the old request's events (XHR's "terminate the fetch").
     pub generation: u32,
@@ -87,13 +90,7 @@ fn record(
     if vm.page.state.pending.len() >= VM_HOST_REQUESTS {
         return Ok(false);
     }
-    if !blob_fetch::admits(&vm.page.state, &request) {
-        return Ok(false);
-    }
-    if request.body.as_ref().map_or(0, String::len) + request.body_bytes.len()
-        > VM_REQUEST_BODY_BYTES
-    {
-        // An oversized body fails this request like a network error; it must not stop the page.
+    if !payload_admitted(&vm.page.state, &request) {
         return Ok(false);
     }
     let next = vm
@@ -707,6 +704,45 @@ fn status_text(status: u16, given: String) -> String {
     given
 }
 
+/** Whether a request's payload fits the bounds every send enforces: a body within VM_REQUEST_BODY_BYTES
+and Blob snapshots within the page's budget. A refused payload fails its request like a network error
+(the request must not stop the page), so sync and async sends share this check. */
+fn payload_admitted(state: &super::PageState, request: &HostRequest) -> bool {
+    let body = request.body.as_ref().map_or(0, String::len) + request.body_bytes.len();
+    body <= VM_REQUEST_BODY_BYTES && blob_fetch::admits(state, request)
+}
+
+/** The answer for this step's next synchronous send, when it answers this same request. Answers
+are kept in the order the step reached them, so each send consumes the answer at its own turn: a
+page that sends one URL twice gets two requests, never the first answer twice. */
+fn sync_answer(vm: &mut Vm, request: &HostRequest) -> Option<HostResponse> {
+    let turn = vm.page.effects.sync_turn;
+    vm.page.effects.sync_turn += 1;
+    let answer = vm.page.environment.sync_answers.get(turn)?;
+    (answer.request == *request).then(|| answer.response.clone())
+}
+
+/** A synchronous XMLHttpRequest. When the step's answers hold this request, it completes now, as
+a blocked send would have. Otherwise the script stops here (uncatchably) and the request goes to
+the effects: the app answers it and runs the step again, so the script resumes with the answer in
+hand. A step that runs out of answers reports the feature as unsupported, its earlier behavior. */
+fn sync_send(vm: &mut Vm, id: ObjectId, request: HostRequest) -> Res<()> {
+    if !payload_admitted(&vm.page.state, &request) {
+        return xhr_request_error(vm, id, "error");
+    }
+    let Some(mut response) = sync_answer(vm, &request) else {
+        vm.page.effects.sync_requests.push(request);
+        return Err(vm.unsupported_error("synchronous XMLHttpRequest"));
+    };
+    if !response.body_bytes.is_empty() {
+        response.body = response_body::text(&response.body_bytes);
+    }
+    if response.body.len() > VM_RESPONSE_BYTES {
+        return Err(EngineError::limit("response body bytes", VM_RESPONSE_BYTES).into());
+    }
+    vm.deliver_xhr(id, response)
+}
+
 /** XHR's "request error steps": DONE, no response, readystatechange, then `kind` (error,
 abort or timeout) and loadend as ProgressEvents of zero bytes. */
 fn xhr_request_error(vm: &mut Vm, xhr: ObjectId, kind: &str) -> Res<()> {
@@ -789,9 +825,7 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     "Failed to execute 'open' on 'XMLHttpRequest': Invalid URL",
                 ));
             };
-            if call.args.len() > 2 && !call.arg(2).truthy() {
-                return Err(vm.unsupported_error("synchronous XMLHttpRequest"));
-            }
+            let asynchronous = call.args.len() <= 2 || call.arg(2).truthy();
             // Terminate any ongoing fetch, then fire readystatechange only when the state was
             // not OPENED already (XHR open() steps 13 and 14).
             vm.page.state.pending.retain(|pending| pending.owner != id);
@@ -805,6 +839,7 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                     response_type: state.response_type.clone(),
                     with_credentials: state.with_credentials,
                     generation: state.generation.wrapping_add(1),
+                    sync: !asynchronous,
                     ..XhrState::default()
                 };
             }
@@ -842,6 +877,7 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             } else {
                 "same-origin"
             };
+            let sync = state.sync;
             let request = HostRequest {
                 id: 0,
                 kind: "xhr".into(),
@@ -854,6 +890,9 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 credentials: credentials.into(),
                 mode: "cors".into(),
             };
+            if sync {
+                return sync_send(vm, id, request).map(|()| JsValue::Undefined);
+            }
             let generation = state.generation;
             if !record(vm, request, id, true, None)? {
                 return xhr_request_error(vm, id, "error").map(|()| JsValue::Undefined);

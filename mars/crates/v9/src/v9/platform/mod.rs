@@ -289,6 +289,10 @@ pub enum DomLevel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PageEnvironment {
+    /// Answers to this step's synchronous XMLHttpRequests, from an earlier run of the same step:
+    /// a matching request completes at once with its answer, as a browser's blocked send would.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync_answers: Vec<SyncAnswer>,
     /// A dedicated worker has its own global profile, with no Window or document capabilities.
     pub worker_name: Option<String>,
     /// Native worker nesting level; zero retains the legacy first-level worker profile.
@@ -861,6 +865,7 @@ impl Default for PageEnvironment {
             conformance_enable_tracing: false,
             #[cfg(feature = "conformance")]
             conformance_log: false,
+            sync_answers: Vec::new(),
         }
     }
 }
@@ -904,6 +909,17 @@ pub struct HostRequest {
     /// The app decides what a cross-origin answer may show from it.
     #[serde(default)]
     pub mode: String,
+}
+
+/// The app's answer to a synchronous XMLHttpRequest, kept with the request it answers so a replay
+/// of the step can match them. Only a request equal to `request` (method, URL and body) takes it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncAnswer {
+    /// The request as V9 recorded it.
+    pub request: HostRequest,
+    /// What the app got for it.
+    pub response: HostResponse,
 }
 
 /// The app's answer to one `HostRequest`.
@@ -1003,6 +1019,14 @@ pub struct HostEffects {
     /// Superseded generations release queued native captures before admitting replacement sources.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_cancellations: Vec<ImageCancellation>,
+    /// Synchronous XMLHttpRequests this step reached without an answer. The app answers each
+    /// through `PageEnvironment::sync_answers` and runs the step again; nothing is committed here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync_requests: Vec<HostRequest>,
+    /// How many synchronous sends this execution has reached: the index of the next send's answer.
+    /// Per execution, so a replay of the step starts again at the first answer.
+    #[serde(skip)]
+    pub sync_turn: usize,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
     /// IndexedDB transactions committed during this execution, in commit order; the coordinator persists them for the context's storage partition.

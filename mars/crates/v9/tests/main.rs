@@ -313,6 +313,7 @@ mod subtle_digest;
 mod subtle_interface;
 mod super_updates;
 mod svg_prototypes;
+mod sync_xhr;
 mod template_escape_boundaries;
 mod template_objects;
 mod temporal_iso;

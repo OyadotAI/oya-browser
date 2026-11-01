@@ -62,7 +62,7 @@ pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
     ImageRequest, ImageResponse, MediaCommand, MediaSettings, MediaSupport, NavigationRequest,
-    OpacityEffect, PageEnvironment, SimpleFragmentParser,
+    OpacityEffect, PageEnvironment, SimpleFragmentParser, SyncAnswer,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub use platform::{LAYOUT_CALLS, LayoutAnswer, LayoutHook, LayoutHost};

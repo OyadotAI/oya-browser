@@ -259,6 +259,12 @@ pub const WEB_RPC_TIMEOUT: Duration = Duration::from_secs(630);
 pub const WEB_PREPARE_RPC_TIMEOUT: Duration = Duration::from_secs(35);
 /// Redirects must revalidate destinations and cannot create an unbounded chain.
 pub const REDIRECTS: usize = 5;
+/// A synchronous XMLHttpRequest blocks its page's script until the answer comes, so the tab waits
+/// at most this long for it; a slower answer is a network error, and the other tabs keep running.
+pub const SYNC_XHR_WAIT: Duration = Duration::from_secs(10);
+/// A step runs again once per synchronous request it reached, so this bounds those replays: a
+/// page that blocks on more requests than this in one step reports the feature as unsupported.
+pub const SYNC_XHR_REPLAYS: usize = 4;
 /// Excessive or mixed DNS answer sets are rejected rather than partially trusted.
 pub const DNS_ANSWERS: usize = 16;
 /// Explicit supported markup depth prevents recursive parser/layout exhaustion. Real apps nest

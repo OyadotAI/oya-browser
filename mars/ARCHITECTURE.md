@@ -773,6 +773,9 @@ and top-level GET navigations whose URL a registration matches become FetchEvent
 synchronously until answered or ten seconds pass, with navigation preload when enabled.
 Requests the parser and native loaders make (stylesheets, classic scripts, images, fonts) do
 not pass through service workers yet.
+Synchronous XHR (`open` with async false) is answered by the step's own fetch, not by a service
+worker, so a controlled page's blocking request skips its worker for now. Each one waits at most
+`SYNC_XHR_WAIT` and the step replays at most `SYNC_XHR_REPLAYS` times.
 
 The Clear Key key store (`platform/clearkey.rs`) is the only interface the media pipeline uses
 for decryption: `Runtime::decrypt_clear_key(identity, key_id, iv, subsamples, sample)` decrypts

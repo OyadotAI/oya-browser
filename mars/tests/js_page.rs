@@ -969,3 +969,16 @@ fn split_or_nested_raw_text_closers_add_no_element() {
     );
     assert!(texts(&page).contains("still working"), "{page}");
 }
+
+/** A synchronous XMLHttpRequest (Akamai's interstitial does one) gets its answer before the
+script's next line: the step replays with the answer, so the text is there after the send. */
+#[test]
+fn synchronous_xhr_answers_before_the_next_statement() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const x=new XMLHttpRequest();x.open('GET','/sync.txt',false);\
+         x.send();document.getElementById('out').textContent='sync '+x.status+' '+x.responseText</script>",
+        vec![("/sync.txt", reply("text/plain", "", "hello"))],
+    );
+    assert!(texts(&page).contains("sync 200 hello"), "{page}");
+    assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
+}

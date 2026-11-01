@@ -14,7 +14,7 @@ use crate::network::Method;
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
     ConsoleEntry, DomLevel, Execution, HostRequest, HostResponse, NavigationRequest,
-    PageEnvironment, ScriptFailure, VmState, is_time_limit,
+    PageEnvironment, ScriptFailure, SyncAnswer, VmState, is_time_limit,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -511,6 +511,8 @@ impl Runtime {
             environment.metadata.clone_from(&page.document.metadata);
         }
         let mut execution = self.execute(page, &projection, &environment, &action)?;
+        execution =
+            self.answer_sync_requests(page, &projection, &mut environment, &action, execution)?;
         let wants_styles = !execution.effects.style_requests.is_empty();
         if (execution.effects.stale_geometry || wants_styles)
             && let Ok(geometry) = self.forced_geometry(page, &execution)
@@ -881,6 +883,40 @@ impl Runtime {
         self.page
             .as_ref()
             .and_then(|committed| committed.context_token(&page.script_identity))
+    }
+
+    /**
+     * Answer a step's synchronous XMLHttpRequests and run the step again with the answers. V9 stops
+     * a script at a synchronous request, so the answer is in hand before the script's next line,
+     * which is what a browser's blocked send gives it. Each answer is fetched with a bounded wait,
+     * and the replays stop at SYNC_XHR_REPLAYS, so a page that keeps asking ends with the feature
+     * reported as unsupported rather than looping.
+     */
+    fn answer_sync_requests(
+        &mut self,
+        page: &mut Page,
+        projection: &crate::document::ScriptDocument,
+        environment: &mut PageEnvironment,
+        action: &Value,
+        mut execution: Execution,
+    ) -> EngineResult<Execution> {
+        let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
+        for _ in 0..crate::constants::SYNC_XHR_REPLAYS {
+            let requests = std::mem::take(&mut execution.effects.sync_requests);
+            if requests.is_empty() {
+                break;
+            }
+            for request in requests {
+                let deadline = Instant::now() + crate::constants::SYNC_XHR_WAIT;
+                let preflights = &mut page.scripting.preflights;
+                let response = self.script_request(&base, &request, preflights, deadline, None)?;
+                environment
+                    .sync_answers
+                    .push(SyncAnswer { request, response });
+            }
+            execution = self.execute(page, projection, environment, action)?;
+        }
+        Ok(execution)
     }
 
     /** One V9 page step over `projection`, sending the sources only when V9 does not hold them. */

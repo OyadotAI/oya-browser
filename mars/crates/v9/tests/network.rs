@@ -131,10 +131,11 @@ fn xhr_fires_readystate_and_load() {
     );
 }
 
-/** Synchronous XMLHttpRequest is refused as unsupported. */
+/** Opening synchronously is accepted; send() stops the script until the app answers the request. */
 #[test]
-fn synchronous_xhr_is_unsupported() {
-    let execution = common::load("const x=new XMLHttpRequest();x.open('GET','/a',false);");
+fn synchronous_xhr_open_is_accepted_and_send_waits_for_an_answer() {
+    let execution = common::load("const x=new XMLHttpRequest();x.open('GET','/a',false);x.send();");
+    assert_eq!(execution.effects.sync_requests.len(), 1);
     assert!(
         common::failure(&execution)
             .unwrap()
