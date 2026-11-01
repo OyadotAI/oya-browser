@@ -5,16 +5,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 /** Completed cache publications invalidate weak VM allocation observations. */
-static MATERIALIZATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+static MATERIALIZED_UNITS: AtomicU64 = AtomicU64::new(0);
 
-/** Read the epoch after observing allocations to detect concurrent publication. */
-pub(in crate::v9) fn materialization_epoch() -> u64 {
-    MATERIALIZATION_EPOCH.load(Ordering::Acquire)
+/** UTF-16 units of backing every flattening and external publication in this process has
+allocated so far. String budgets add what grew since they last looked to their upper bound:
+recounting every registration on each publication (as an epoch change used to force) made
+string concatenation O(registered strings) per operation. */
+pub(in crate::v9) fn materialized_units() -> u64 {
+    MATERIALIZED_UNITS.load(Ordering::Acquire)
 }
 
-/** Publish a new epoch only after the backing resource is visible. */
-fn materialized() {
-    MATERIALIZATION_EPOCH.fetch_add(1, Ordering::Release);
+/** Publish `units` of new backing, only after the resource is visible. Releases and shared
+copies publish zero: the bound may only overestimate. */
+fn materialized(units: usize) {
+    MATERIALIZED_UNITS.fetch_add(units as u64, Ordering::Release);
 }
 
 /** Short strings keep their original single flat allocation and efficient bulk-copy concatenation. */
@@ -243,8 +247,8 @@ pub(super) struct Concat {
 impl Storage {
     /** Register this node by allocation identity without retaining its backing. */
     /** The registration identity alone, without taking a weak reference: a kind tag and the
-        backing allocation's address. */
-    pub(super) fn identity(&self) -> (u8, usize) {
+            backing allocation's address. */
+    pub(super) fn registration_identity(&self) -> (u8, usize) {
         match self {
             Self::Flat(value) => (0, Arc::as_ptr(value) as *const () as usize),
             #[cfg(feature = "conformance")]
@@ -430,7 +434,7 @@ impl Storage {
                 Self::Shared(_) => return false,
             };
             if external.take().is_some() {
-                materialized();
+                materialized(0);
             }
         }
         published
@@ -607,10 +611,12 @@ impl Storage {
         if slot.is_some() {
             return Ok(());
         }
-        let resource = External::new(self.units(), one_byte)?;
+        let units = self.units();
+        let length = units.len();
+        let resource = External::new(units, one_byte)?;
         *slot = Some(Arc::new(resource));
         drop(slot);
-        materialized();
+        materialized(length);
         if let Some(target) = self.forwarding_target() {
             target.externalize(target.one_byte_representation())?;
         }
@@ -791,7 +797,7 @@ impl Storage {
                         .into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 flat
             }
@@ -807,7 +813,7 @@ impl Storage {
                     units.into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 flat
             }
@@ -819,7 +825,7 @@ impl Storage {
                     units.into()
                 });
                 if missing {
-                    materialized();
+                    materialized(node.length);
                 }
                 // OnceLock publishes first. Any competing traversal that finds no children
                 // can therefore read flat; no guard or child borrow escapes this statement.
@@ -1044,7 +1050,7 @@ impl Storage {
             return false;
         }
         node.children().take();
-        materialized();
+        materialized(0);
         true
     }
     #[cfg(feature = "conformance")]
@@ -1069,7 +1075,7 @@ impl Storage {
         {
             return false;
         }
-        materialized();
+        materialized(0);
         true
     }
     /** Flatten indirect strings to their stable first child without changing direct or sliced identity. */
@@ -1107,7 +1113,7 @@ impl Storage {
             })
         });
         if missing {
-            materialized();
+            materialized(0);
         }
         Self::Flat(flat.clone())
     }

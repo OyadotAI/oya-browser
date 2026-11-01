@@ -33,7 +33,8 @@ pub(in crate::v9) struct StringBudget {
     hit can never be a different string; a prune clears it. */
     recent: Recent,
     added: usize,
-    observed_epoch: u64,
+    /** `materialized_units()` when this budget last accounted for it. */
+    observed_units: u64,
     upper_units: usize,
     reserved_units: usize,
 }
@@ -144,7 +145,9 @@ impl StringBudget {
             text.resident_allocations(|_, _, _, upper| bytes = bytes.saturating_add(upper));
             self.upper_units = self.upper_units.saturating_add(bytes.div_ceil(2));
         }
-        if self.added >= PRUNE_INTERVAL {
+        // Proportional, so each prune's walk over every registration is paid for by as many
+        // new ones: a fixed interval made pruning quadratic as a page's strings grew.
+        if self.added >= PRUNE_INTERVAL.max(self.nodes.len() / 2) {
             self.prune();
         }
     }
@@ -158,7 +161,7 @@ impl StringBudget {
 
     /** Re-observe live nodes, including flat and external caches created since registration. */
     pub(super) fn resident_units(&mut self) -> usize {
-        let epoch = crate::v9::value::materialization_epoch();
+        let observed = crate::v9::value::materialized_units();
         let mut seen = FastSet::default();
         let mut bytes = 0usize;
         // Removing dead registrations frees their reserved addresses for new strings.
@@ -171,15 +174,22 @@ impl StringBudget {
             })
         });
         self.added = 0;
-        self.observed_epoch = epoch;
+        self.observed_units = observed;
         self.upper_units = bytes.div_ceil(2);
         self.upper_units
     }
 
-    /** Recount after any cache publication; a concurrent later publication remains observable. */
+    /** Add the backing that flattening and external publications allocated since this budget
+    last looked: an upper bound in O(1). The exact recount runs only when that bound would
+    refuse a reservation (`reserve_against`) or the heap's own bound check asks for it. */
     pub(super) fn refresh_materialization(&mut self) -> Option<usize> {
-        (self.observed_epoch != crate::v9::value::materialization_epoch())
-            .then(|| self.resident_units())
+        let now = crate::v9::value::materialized_units();
+        let grown = now
+            .checked_sub(self.observed_units)
+            .filter(|grown| *grown > 0)?;
+        self.observed_units = now;
+        self.upper_units = self.upper_units.saturating_add(grown as usize);
+        Some(self.upper_units)
     }
 
     /** Whether nothing is registered yet: a decoded heap, or one that never held a string. */

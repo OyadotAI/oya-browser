@@ -18,7 +18,7 @@ pub(super) use number::{
     literal, number_to_string, radix_string, string_number, to_int32, to_uint32,
 };
 use storage::Storage;
-pub(in crate::v9) use storage::materialization_epoch;
+pub(in crate::v9) use storage::materialized_units;
 pub use string::CodePointCursor;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wire::{
@@ -135,6 +135,12 @@ impl Ord for JsString {
 impl std::hash::Hash for JsString {
     /** Equal UTF-16 contents hash identically without materializing compact storage. */
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // A flat string hashes as its unit slice does, in one write: property keys are hashed on
+        // every lookup, and the unit-by-unit walk below was a large share of V9's execution.
+        if let Some(units) = self.flat_units() {
+            units.hash(state);
+            return;
+        }
         state.write_usize(self.len());
         let mut bytes = [0u8; HASH_CHUNK_BYTES];
         let mut used = 0;
@@ -163,7 +169,7 @@ impl JsString {
     /** Retain a non-owning allocation identity for VM resident tracking. */
     /** The identity `weak_registration` would report, without taking a weak reference. */
     pub(in crate::v9) fn registration_identity(&self) -> (u8, usize) {
-        self.0.identity()
+        self.0.registration_identity()
     }
     pub(in crate::v9) fn weak_registration(&self) -> ((u8, usize), WeakString) {
         let (identity, weak) = self.0.downgrade();
