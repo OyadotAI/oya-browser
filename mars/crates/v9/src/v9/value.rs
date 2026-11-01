@@ -31,8 +31,6 @@ pub type ObjectId = u32;
 
 /// Code units at or below this value are Latin-1, the widest unit a one-byte string can hold.
 const LATIN1_MAX_UNIT: u16 = 0xFF;
-/** Keep streaming hash writes bounded while avoiding one hasher call per code unit. */
-const HASH_CHUNK_BYTES: usize = 256;
 
 /// JavaScript strings keep UTF-16 code units, including lone surrogates, and share their buffer.
 /// The second field records the one-byte representation; it is computed at construction,
@@ -145,28 +143,11 @@ impl Ord for JsString {
     }
 }
 impl std::hash::Hash for JsString {
-    /** Equal UTF-16 contents hash identically without materializing compact storage. */
+    /** Equal UTF-16 contents hash identically, whatever their storage: a flat string, a rope
+    and a two-byte copy feed the same length and content digest. Ropes cache that digest. */
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // A flat string hashes as its unit slice does, in one write: property keys are hashed on
-        // every lookup, and the unit-by-unit walk below was a large share of V9's execution.
-        if let Some(units) = self.flat_units() {
-            units.hash(state);
-            return;
-        }
         state.write_usize(self.len());
-        let mut bytes = [0u8; HASH_CHUNK_BYTES];
-        let mut used = 0;
-        for unit in self.code_units() {
-            bytes[used..used + 2].copy_from_slice(&unit.to_le_bytes());
-            used += 2;
-            if used == bytes.len() {
-                state.write(&bytes);
-                used = 0;
-            }
-        }
-        if used != 0 {
-            state.write(&bytes[..used]);
-        }
+        state.write_u64(self.0.content_digest());
     }
 }
 
@@ -977,4 +958,97 @@ impl JsValue {
 /// Whether a BigInt and a Number denote the same mathematical value (`1n == 1`).
 pub(in crate::v9) fn bigint_equals_number(big: i128, number: f64) -> bool {
     BigInteger::from_f64(number).and_then(|value| value.to_i128()) == Some(big)
+}
+
+#[cfg(test)]
+mod tests {
+    //! The content hash that keys property and Map lookups: equal text must hash equal whatever
+    //! its representation, and different text must not collapse to one digest.
+    use super::*;
+    use crate::v9::vm::data::Table;
+    use crate::v9::vm::heap::FastHasher;
+    use std::hash::{Hash, Hasher};
+
+    /** The hash a lookup table computes for a string. */
+    fn hash_of(text: &JsString) -> u64 {
+        let mut hasher = FastHasher::default();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /** `count` units starting at `first`, cycling through a small alphabet. */
+    fn units(first: u16, count: usize) -> Vec<u16> {
+        (0..count).map(|n| first + (n % 7) as u16).collect()
+    }
+
+    /** A rope of two flat parts; longer than the flattening threshold, so it stays a rope. */
+    fn rope(left: &[u16], right: &[u16]) -> JsString {
+        let left = JsString::from_units(left.to_vec()).unwrap();
+        let right = JsString::from_units(right.to_vec()).unwrap();
+        left.concat(&right).unwrap()
+    }
+
+    /** A rope and a flat string with equal text hash identically and compare equal, so a Map
+    or a property key finds one by the other. */
+    #[test]
+    fn rope_and_flat_text_hash_the_same() {
+        let (left, right) = (units(0x61, 700), units(0x41, 701));
+        let joined = rope(&left, &right);
+        let flat = JsString::from_units([left, right].concat()).unwrap();
+        assert!(
+            joined.flat_units().is_none(),
+            "the test needs an unflattened rope"
+        );
+        assert_eq!(joined, flat);
+        assert_eq!(hash_of(&joined), hash_of(&flat));
+        let mut table = Table::default();
+        table.set(JsValue::String(flat), JsValue::Number(2.0));
+        assert_eq!(
+            table.get(&JsValue::String(joined)),
+            Some(&JsValue::Number(2.0))
+        );
+    }
+
+    /** A rope's digest does not depend on how its parts were split: units pack in order. */
+    #[test]
+    fn rope_digest_ignores_where_its_parts_split() {
+        let text = units(0x100, 1500);
+        let uneven = rope(&text[..3], &text[3..]);
+        let flat = JsString::from_units(text).unwrap();
+        assert_eq!(uneven, flat);
+        assert_eq!(hash_of(&uneven), hash_of(&flat));
+    }
+
+    /** Equal text in Latin-1 and in UTF-16 storage is one Map key. Only the conformance build
+    can keep a two-byte copy of Latin-1 text, so this runs under that feature. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn latin1_and_utf16_text_are_one_map_key() {
+        use crate::v9::vm::data::TableKey;
+        let latin1 = JsString::from_units(vec![0xe9, 0x61]).unwrap();
+        let utf16 = JsString::from_units_two_byte(vec![0xe9, 0x61]).unwrap();
+        assert!(
+            latin1.1 && !utf16.1,
+            "the two copies must use different encodings"
+        );
+        assert_eq!(
+            TableKey::String(latin1.clone()),
+            TableKey::String(utf16.clone())
+        );
+        assert_eq!(hash_of(&latin1), hash_of(&utf16));
+        let mut table = Table::default();
+        table.set(JsValue::String(latin1), JsValue::Number(1.0));
+        assert_eq!(
+            table.get(&JsValue::String(utf16)),
+            Some(&JsValue::Number(1.0))
+        );
+    }
+
+    /** Same length but different text gives a different digest. */
+    #[test]
+    fn same_length_different_text_hashes_differently() {
+        let a = JsString::from_units(vec![1, 2, 3, 4, 5]).unwrap();
+        let b = JsString::from_units(vec![1, 2, 3, 4, 6]).unwrap();
+        assert_ne!(hash_of(&a), hash_of(&b));
+    }
 }

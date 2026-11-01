@@ -242,6 +242,16 @@ pub(super) struct Concat {
     #[cfg(feature = "conformance")]
     forward: OnceLock<Storage>,
     children: Mutex<Option<(Storage, Storage)>>,
+    /** The content digest, computed once: a rope used as a property key would otherwise walk
+    its tree on every lookup. Content never changes, so the digest never goes stale. */
+    digest: OnceLock<u64>,
+}
+
+/** Feed UTF-16 units to a hasher in order; chunk boundaries do not change the result. */
+fn fold_units(hasher: &mut crate::v9::vm::heap::FastHasher, units: &[u16]) {
+    for unit in units {
+        std::hash::Hasher::write_u16(hasher, *unit);
+    }
 }
 
 impl Storage {
@@ -507,6 +517,28 @@ impl Storage {
             ),
         }
     }
+    /** A digest of the UTF-16 content alone; ropes cache it, flat storage recomputes it. */
+    pub(super) fn content_digest(&self) -> u64 {
+        match self {
+            Self::Cons(node) => *node.digest.get_or_init(|| self.compute_digest()),
+            _ => self.compute_digest(),
+        }
+    }
+
+    /** Fold the units of whichever representation holds them, one hasher step per unit: a
+    multiply per unit is fewer instructions than packing units into words first. */
+    fn compute_digest(&self) -> u64 {
+        let mut hasher = crate::v9::vm::heap::FastHasher::default();
+        match self.flat_units() {
+            Some(units) => fold_units(&mut hasher, units),
+            None => self.for_each_chunk(|chunk| {
+                fold_units(&mut hasher, chunk);
+                true
+            }),
+        }
+        std::hash::Hasher::finish(&hasher)
+    }
+
     /** Expose contiguous data without flattening a compact rope. */
     pub(super) fn flat_units(&self) -> Option<&[u16]> {
         match self {
@@ -890,6 +922,7 @@ impl Storage {
             #[cfg(feature = "conformance")]
             forward: OnceLock::new(),
             children: Mutex::new(Some((left, right))),
+            digest: OnceLock::new(),
         }))
     }
 

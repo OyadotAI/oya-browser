@@ -94,7 +94,7 @@ fn concatenation_survives_state_transport_without_mutating_aliases() {
     assert_eq!(common::console(&clicked), ["2 55296 3 65536 true"]);
 }
 
-/** Different concat trees keep the former slice-based hashes, equality and raw UTF-16 ordering. */
+/** Different concat trees hash by content, equal under the same hasher, with raw UTF-16 ordering. */
 #[test]
 fn deferred_concatenations_have_content_hash_equality_and_order() {
     eprintln!(
@@ -116,9 +116,9 @@ fn deferred_concatenations_have_content_hash_equality_and_order() {
     let flat = mars_v9::JsString::from_units(expected.clone()).unwrap();
     let mut actual_hash = DefaultHasher::new();
     deferred.hash(&mut actual_hash);
-    let mut old_slice_hash = DefaultHasher::new();
-    expected.as_slice().hash(&mut old_slice_hash);
-    assert_eq!(actual_hash.finish(), old_slice_hash.finish());
+    let mut flat_hash = DefaultHasher::new();
+    flat.hash(&mut flat_hash);
+    assert_eq!(actual_hash.finish(), flat_hash.finish());
     assert_eq!(deferred, flat);
     assert_eq!(HashSet::from([deferred.clone()]).get(&flat), Some(&flat));
     let later = flat
@@ -264,9 +264,10 @@ fn concurrent_appends_and_flattening_keep_content_hashes() {
                         .unwrap();
                     let mut before = DefaultHasher::new();
                     text.hash(&mut before);
-                    let units = text.as_units();
                     let mut after = DefaultHasher::new();
-                    units.hash(&mut after);
+                    mars_v9::JsString::from_slice(text.as_units())
+                        .unwrap()
+                        .hash(&mut after);
                     assert_eq!(before.finish(), after.finish());
                 }
                 text
