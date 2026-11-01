@@ -105,6 +105,8 @@ pub(super) const ASPECT_RATIO_MAX: f64 = 4096.0;
 pub(super) const MARKER_BYTES: usize = 16;
 /** A `linear()` timing function keeps at most this many points. */
 pub(super) const LINEAR_POINTS: usize = 256;
+/** A `linear()` timing function needs at least two points to describe a progression. */
+pub(super) const LINEAR_MIN_POINTS: usize = 2;
 /** `env()` functions one value may substitute before it is refused. */
 pub(super) const ENV_FUNCTIONS: usize = 8;
 /** A `font-feature-settings` or `font-variation-settings` tag is exactly this many bytes. */

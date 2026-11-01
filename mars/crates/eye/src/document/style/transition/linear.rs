@@ -4,7 +4,11 @@
  * and inputs never decrease, so the curve is a function of time. Overshoot (outputs past 0 or
  * 1) is kept, as the spec allows.
  */
-use crate::document::style::{constants::LINEAR_POINTS, syntax::split_top, syntax::tokens};
+use crate::document::style::{
+    constants::{LINEAR_MIN_POINTS, LINEAR_POINTS},
+    syntax::split_top,
+    syntax::tokens,
+};
 
 /** One authored point: its input (progress, when given) and its output value. */
 type Stop = (Option<f64>, f64);
@@ -19,7 +23,7 @@ pub(super) fn parse(arguments: &str) -> Option<Vec<(f64, f64)>> {
     for item in items {
         stops.extend(stop(item.trim())?);
     }
-    if stops.is_empty() || stops.len() > LINEAR_POINTS {
+    if stops.len() < LINEAR_MIN_POINTS || stops.len() > LINEAR_POINTS {
         return None;
     }
     Some(resolve(stops))
@@ -133,5 +137,8 @@ mod tests {
         assert!(super::parse("").is_none());
         assert!(super::parse("0 10% 20% 30%").is_none());
         assert!(super::parse("0, nope").is_none());
+        // A single point is no curve: `linear()` needs at least two.
+        assert!(super::parse("0.5").is_none());
+        assert!(super::parse("0, 1").is_some());
     }
 }
