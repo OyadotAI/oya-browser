@@ -90,9 +90,10 @@ impl Runtime {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?.clone();
-        // The point was read from one page revision; a click aimed at it must not land on whatever
-        // replaced it, so a stale page or revision is refused before anything runs.
-        observed(&page, &input.page_id, input.expected_revision)?;
+        // A click at a point lands on whatever is painted there now, as a person's does; it is
+        // refused only when the page itself changed (a navigation), not when a busy page (YouTube
+        // re-renders constantly) moved on a revision since the agent looked.
+        observed(&page, &input.page_id)?;
         let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
         let report = page.point_node(base, hit);
         let owner = page.owner_document(base);
@@ -368,19 +369,12 @@ fn not_text() -> EngineError {
     )
 }
 
-/** Refuses an action read from another page or an older revision, as `page.click` does. */
-fn observed(page: &super::super::page::Page, page_id: &str, revision: u64) -> EngineResult<()> {
+/** Refuses a point read from another page: after a navigation the coordinates mean nothing. */
+fn observed(page: &super::super::page::Page, page_id: &str) -> EngineResult<()> {
     if page.id() != page_id {
         return Err(EngineError::new(
             "invalid_target",
             "The page has changed since it was observed.",
-            "Inspect the current page before changing it.",
-        ));
-    }
-    if page.revision != revision {
-        return Err(EngineError::new(
-            "revision_conflict",
-            "The document revision has changed.",
             "Inspect the current page before changing it.",
         ));
     }

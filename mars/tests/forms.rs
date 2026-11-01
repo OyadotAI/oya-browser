@@ -646,20 +646,27 @@ fn an_invisible_field_over_its_covered_label_is_refused() {
     assert_eq!(node(&after, "buy")["checked"], false);
 }
 
-/** A point read from an older revision is refused before anything runs, so a click aimed at a
-field cannot land on what replaced it. */
+/** A click at a point on the same page lands even when a busy page moved on a revision since it was
+observed, as a person's click does; only a different page refuses it. */
 #[test]
-fn a_click_at_from_an_old_revision_is_refused() {
+fn a_click_at_from_an_older_revision_of_the_same_page_still_lands() {
     let fixture = serve(r#"<html><body><input id="name"></body></html>"#);
     let mut runtime = fixture.runtime();
     call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
     let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
     let (x, y) = centre(&page, "name");
-    let stale = page["revision"].as_u64().unwrap() + 1;
-    let result = call(
+    let older = page["revision"].as_u64().unwrap().saturating_sub(1);
+    let landed = call(
         &mut runtime,
         "page.click_at",
-        json!({"page_id":page["page_id"],"expected_revision":stale,"x":x,"y":y}),
+        json!({"page_id":page["page_id"],"expected_revision":older,"x":x,"y":y}),
+    )
+    .unwrap();
+    assert_eq!(landed["focused"], node(&page, "name")["node_id"]);
+    let elsewhere = call(
+        &mut runtime,
+        "page.click_at",
+        json!({"page_id":"page-other","expected_revision":older,"x":x,"y":y}),
     );
-    assert_eq!(result.unwrap_err().code, "revision_conflict");
+    assert_eq!(elsewhere.unwrap_err().code, "invalid_target");
 }
