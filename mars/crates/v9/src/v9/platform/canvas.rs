@@ -23,6 +23,7 @@ pub(in crate::v9) mod path2d;
 mod paths;
 mod placement;
 mod results;
+mod shadows;
 mod state;
 use lifecycle::{admit, size};
 pub(in crate::v9) use lifecycle::{prepare_resize, publish, resized, validate, validate_targets};
@@ -84,6 +85,7 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     paths::install(b, proto);
     clipping::install(b, proto);
     paints::install(b, proto);
+    shadows::install(b, proto);
     let _ = PROTO.set(proto);
 }
 

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 mod affine;
 mod clip;
 mod composite;
+mod effects;
 mod paint;
 mod path;
 mod pixels;
@@ -11,7 +12,8 @@ mod raster;
 mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
-pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage};
+pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage, composite_layer};
+pub use effects::{blur_plane, blur_widths, shadow_layer, shadow_sigma};
 pub use paint::{
     GRADIENT_STOPS, Geometry, Gradient, Paint, Pattern, Repeat, Shader, Stop, TRANSPARENT,
 };

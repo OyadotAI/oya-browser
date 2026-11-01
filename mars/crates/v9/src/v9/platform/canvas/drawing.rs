@@ -53,18 +53,23 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     drawable(vm, node)?;
     let clearing = dom::native_name(call) == "clearRect";
     let state = &vm.page.state.canvases[&node];
+    let layered = !clearing && shadows::active(&state.drawing);
     let plan = limits::plan_rect(
         [state.bitmap.width, state.bitmap.height],
         values,
         state.drawing.transform,
-    )?
-    .with_clip(clipping::current(state)?)?
-    .with_composite(if clearing {
-        limits::Composite::SourceOver
+    )?;
+    let plan = if layered {
+        plan
     } else {
-        state.drawing.composite
-    });
-    work(vm, plan.work())?;
+        plan.with_clip(clipping::current(state)?)?
+            .with_composite(if clearing {
+                limits::Composite::SourceOver
+            } else {
+                state.drawing.composite
+            })
+    };
+    shadows::charge(vm, node, plan.work())?;
     if clearing {
         let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
         limits::clear_rect(&mut state.bitmap, &plan)?;
@@ -74,6 +79,12 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     let Some((shader, clean)) = paints::source(vm, node, false) else {
         return Ok(JsValue::Undefined);
     };
+    if layered {
+        let painted = shadows::paint_layered(vm, node, clean, |layer| {
+            limits::fill_rect_with(layer, &plan, &shader, 1.0)
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     limits::fill_rect_with(&mut state.bitmap, &plan, &shader, state.drawing.alpha)?;
     if !plan.is_empty() {
@@ -111,6 +122,7 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         vm,
         pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some())),
     )?;
+    shadows::charge(vm, node, 0)?;
     let origin = placement::origin(vm, node, &value, at)?;
     let Some((shader, clean)) = paints::source(vm, node, false) else {
         return Ok(JsValue::Undefined);
@@ -131,22 +143,52 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     if ink.width != state.bitmap.width || ink.height != state.bitmap.height {
         return Err(EngineError::invalid("Invalid native canvas text dimensions.").into());
     }
+    if shadows::active(&state.drawing) {
+        let painted = shadows::paint_layered(vm, node, clean, |layer| {
+            paint_ink(
+                layer,
+                &ink,
+                &shader,
+                1.0,
+                limits::Composite::SourceOver,
+                None,
+            )
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    let (alpha, composite, width) = (
-        state.drawing.alpha,
-        state.drawing.composite,
-        state.bitmap.width as usize,
-    );
-    for (index, (pixel, glyph)) in state
-        .bitmap
-        .pixels
-        .make_mut()?
-        .chunks_exact_mut(4)
-        .zip(ink.pixels.chunks_exact(4))
+    let (alpha, composite) = (state.drawing.alpha, state.drawing.composite);
+    paint_ink(
+        &mut state.bitmap,
+        &ink,
+        &shader,
+        alpha,
+        composite,
+        clip.as_ref(),
+    )?;
+    state.origin_clean &= clean;
+    state.dirty = true;
+    Ok(JsValue::Undefined)
+}
+
+/** Glyph coverage composites through the paint source, one pixel at a time, and clip coverage bounds where ink may land. */
+fn paint_ink(
+    target: &mut Bitmap,
+    ink: &Bitmap,
+    shader: &limits::Shader,
+    alpha: f64,
+    composite: limits::Composite,
+    clip: Option<&limits::ClipMask>,
+) -> EngineResult<()> {
+    let width = target.width as usize;
+    let pixels = target.pixels.make_mut()?;
+    for (index, (pixel, glyph)) in pixels
+        .chunks_exact_mut(limits::CHANNELS)
+        .zip(ink.pixels.chunks_exact(limits::CHANNELS))
         .enumerate()
     {
         let (x, y) = ((index % width) as u32, (index / width) as u32);
-        let clip_coverage = clip.as_ref().map_or(1.0, |clip| clip.coverage(x, y));
+        let clip_coverage = clip.map_or(1.0, |clip| clip.coverage(x, y));
         if clip_coverage == 0.0 {
             continue;
         }
@@ -154,10 +196,9 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         let covered = f64::from(glyph[3]) / f64::from(u8::MAX);
         limits::composite_coverage(pixel, color, alpha, composite, covered, clip_coverage);
     }
-    state.dirty = true;
-    state.origin_clean &= clean;
-    Ok(JsValue::Undefined)
+    Ok(())
 }
+
 /** Readback returns a detached typed copy, with transparent padding outside the canvas. */
 fn readback(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     let mut values = [0.0; 4];

@@ -127,6 +127,7 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         *value *= f64::from(dimensions[axis]) / f64::from(source.dimensions[axis]);
     }
     let state = &vm.page.state.canvases[&node];
+    let layered = shadows::active(&state.drawing);
     let plan = limits::plan_blit(
         dimensions,
         [state.bitmap.width, state.bitmap.height],
@@ -134,15 +135,26 @@ fn copy(vm: &mut Vm, node: usize, source: Source, values: &[f64]) -> Res<JsValue
         placement,
         state.drawing.transform,
         state.drawing.smoothing,
-    )?
-    .with_clip(clipping::current(state)?)?
-    .with_composite(state.drawing.composite);
-    work(vm, plan.work())?;
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    )?;
+    let plan = if layered {
+        plan
+    } else {
+        plan.with_clip(clipping::current(state)?)?
+            .with_composite(state.drawing.composite)
+    };
+    shadows::charge(vm, node, plan.work())?;
     if plan.is_empty() {
+        let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
         state.origin_clean &= source.origin_clean;
         return Ok(JsValue::Undefined);
     }
+    if layered {
+        let painted = shadows::paint_layered(vm, node, source.origin_clean, |layer| {
+            limits::blit(layer, &source.bitmap, &plan, 1.0)
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     limits::blit(
         &mut state.bitmap,
         &source.bitmap,

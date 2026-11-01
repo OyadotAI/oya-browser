@@ -59,6 +59,12 @@ pub(in crate::v9) struct DrawingState {
     pub align: limits::Align,
     /** Direction used to resolve start and end; inherit reads the canvas element. */
     pub direction: limits::Direction,
+    /** Straight-alpha shadow color; a transparent shadow color disables shadows entirely. */
+    pub shadow_color: [u8; 4],
+    /** Shadow blur in CSS pixels; the Gaussian sigma is half of this value. */
+    pub shadow_blur: f64,
+    /** Shadow offset in device pixels, unaffected by the drawing transform. */
+    pub shadow_offset: [f64; 2],
 }
 
 impl Default for DrawingState {
@@ -78,6 +84,9 @@ impl Default for DrawingState {
             baseline: limits::Baseline::default(),
             align: limits::Align::default(),
             direction: limits::Direction::default(),
+            shadow_color: [0, 0, 0, 0],
+            shadow_blur: 0.0,
+            shadow_offset: [0.0, 0.0],
         }
     }
 }

@@ -39,6 +39,7 @@ mod canvas_images;
 mod canvas_path2d;
 mod canvas_paths;
 mod canvas_round_rect;
+mod canvas_shadows;
 mod canvas_state;
 mod canvas_text_placement;
 mod chained_iteration_labels;

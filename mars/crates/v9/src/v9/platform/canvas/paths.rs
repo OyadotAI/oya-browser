@@ -135,13 +135,24 @@ fn paint(
         )?
     } else {
         limits::plan_fill(size, path, rule)?
-    }
-    .with_clip(clipping::current(state)?)?
-    .with_composite(state.drawing.composite);
-    work(vm, plan.work())?;
+    };
+    let layered = shadows::active(&state.drawing);
+    let plan = if layered {
+        plan
+    } else {
+        plan.with_clip(clipping::current(state)?)?
+            .with_composite(state.drawing.composite)
+    };
+    shadows::charge(vm, node, plan.work())?;
     let Some((shader, clean)) = paints::source(vm, node, stroke) else {
         return Ok(JsValue::Undefined);
     };
+    if layered {
+        let painted = shadows::paint_layered(vm, node, clean, |layer| {
+            limits::paint_path_with(layer, &plan, &shader, 1.0)
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
     limits::paint_path_with(&mut state.bitmap, &plan, &shader, state.drawing.alpha)?;
     if !plan.is_empty() {
