@@ -73,15 +73,14 @@ pub(super) fn never_pseudo_class(name: &str) -> bool {
 }
 
 /// Pseudo-elements that style only browser chrome (scrollbars, spin and picker buttons, view
-/// transition snapshots, backdrops, scroll markers) or only recolour selected or highlighted text
-/// (highlight pseudo-elements take no layout or display), never a page's own text or elements. Only these
+/// transition snapshots, backdrops, scroll markers) or only recolour text the person selected
+/// (`::selection`; `::highlight()` and `::target-text` can be applied by a script or a link, so
+/// they mask), never a page's own text or elements. Only these
 /// may parse as never matching: any other known pseudo-element can hide real content, such as
 /// `::first-line` or `::part()`, so a hiding rule on it must mask instead.
-const CHROME_ELEMENTS: [&str; 12] = [
+const CHROME_ELEMENTS: [&str; 10] = [
     "backdrop",
     "selection",
-    "highlight",
-    "target-text",
     "scroll-marker",
     "scroll-marker-group",
     "scroll-button",

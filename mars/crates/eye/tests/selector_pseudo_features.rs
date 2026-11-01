@@ -213,3 +213,16 @@ fn text_pseudo_elements_stay_unsupported() {
     let document = styled("<p id=a>a</p>", "p::first-line:hover{display:none}");
     assert!(reported(&document, "pseudo-element"));
 }
+
+/** A script or a link can apply `::highlight()` and `::target-text` with no person involved, so a
+hiding rule on them stays unsupported and masks. */
+#[test]
+fn script_applied_highlights_stay_unsupported() {
+    for rule in [
+        "p::highlight(x):hover{color:red}",
+        "p::target-text:hover{color:red}",
+    ] {
+        let document = styled("<p id=a>a</p>", rule);
+        assert!(reported(&document, "pseudo-element"), "{rule}");
+    }
+}
