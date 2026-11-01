@@ -166,6 +166,9 @@ impl Window {
                         .clone()
                         .unwrap_or_else(|| self.mars.committed_url())
                 } else {
+                    // Enter ends address editing and puts focus on the page, as Chrome does, so a
+                    // refused navigation can show the committed address again.
+                    self.window.makeFirstResponder(Some(&self.canvas));
                     self.typed_address()
                 };
                 self.failed_url = Some(url.clone());
