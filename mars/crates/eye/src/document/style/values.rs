@@ -563,11 +563,15 @@ const INTEGER: [&str; 7] = [
 ];
 /** `value` with a numeric math function rounded to an integer for `<integer>` properties. */
 pub(super) fn integer_math<'v>(key: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
+    if !INTEGER.contains(&key) {
+        return value.into();
+    }
     let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
     let math = ["calc(", "min(", "max(", "clamp(", "round("]
         .iter()
-        .any(|function| trimmed.to_ascii_lowercase().starts_with(function));
-    if !INTEGER.contains(&key) || !math {
+        .any(|function| lower.starts_with(function));
+    if !math {
         return value.into();
     }
     super::calc::tokens(trimmed)
