@@ -62,6 +62,8 @@ pub struct Lane {
     pub frames: VecDeque<Frame>,
     /** The sum of the frames' byte lengths, kept in step with `frames`. */
     pub bytes: usize,
+    /** Where the lane's media ends: the latest frame end, kept in step with `frames`; zero when empty. */
+    pub end: f64,
 }
 
 impl Lane {
@@ -71,15 +73,21 @@ impl Lane {
             track,
             frames: VecDeque::new(),
             bytes: 0,
+            end: 0.0,
         }
     }
     /** The track's kind, which decides whether its frames are pictures or sound. */
     pub fn kind(&self) -> TrackKind {
         self.track.kind
     }
-    /** Recount the bytes after frames were removed. */
+    /** Recount the bytes and the end after frames were removed. */
     fn recount(&mut self) {
         self.bytes = self.frames.iter().map(|frame| frame.data.len()).sum();
+        self.end = self
+            .frames
+            .iter()
+            .map(|frame| frame.pts + frame.duration)
+            .fold(0.0, f64::max);
     }
 }
 
@@ -200,6 +208,7 @@ impl Stream {
         for (track, frame) in frames {
             if let Some(lane) = target.lanes.get_mut(&track) {
                 lane.bytes += frame.data.len();
+                lane.end = lane.end.max(frame.pts + frame.duration);
                 lane.frames.push_back(frame);
             }
         }
@@ -294,6 +303,17 @@ impl Stream {
             .keys()
             .map(|id| (*id, self.stored(*id)))
             .collect()
+    }
+
+    /**
+     * Where the buffered media ends for playback: the earliest end among the lanes, since the playhead must stall
+     * when any track runs dry. None while there is no lane or a lane holds no frames.
+     */
+    pub fn buffered_end(&self) -> Option<f64> {
+        self.lanes()
+            .map(|lane| (!lane.frames.is_empty()).then_some(lane.end))
+            .try_fold(f64::INFINITY, |end, lane| lane.map(|lane| end.min(lane)))
+            .filter(|end| end.is_finite())
     }
 
     /** Bytes held across every buffer. */
@@ -717,6 +737,40 @@ mod tests {
         let outcome = stream.append(1, first(&bytes, init.len()));
         assert!(matches!(outcome, Err(Refusal::Container(_))));
         assert_eq!(stream.total(), 0);
+    }
+
+    /** The buffered end is the earliest lane end, and nothing while a lane holds no frames. */
+    #[test]
+    fn buffered_end_is_the_earliest_lane_end() {
+        let video = init();
+        let three = media(
+            0,
+            &[(1000, 1, true), (1000, 1, true), (1000, 1, true)],
+            &[1, 2, 3],
+        );
+        let mut stream = Stream::default();
+        stream
+            .append(1, first(&[video.clone(), three].concat(), video.len()))
+            .unwrap();
+        assert_eq!(stream.buffered_end(), Some(3.0));
+        let audio = init_with(b"soun");
+        stream.append(2, first(&audio, audio.len())).unwrap();
+        assert_eq!(stream.buffered_end(), None);
+        let two = media(0, &[(1000, 1, true), (1000, 1, true)], &[4, 5]);
+        stream
+            .append(
+                2,
+                Append {
+                    bytes: &two,
+                    init_len: 0,
+                    offset: 0.0,
+                    window: (0.0, None),
+                },
+            )
+            .unwrap();
+        assert_eq!(stream.buffered_end(), Some(2.0));
+        stream.remove(2, 0.0, 5.0);
+        assert_eq!(stream.buffered_end(), None);
     }
 
     /** An init segment whose video is larger than the decoder's ceiling is refused, so no picture of it is ever decoded. */

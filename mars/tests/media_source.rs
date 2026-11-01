@@ -7,8 +7,12 @@
 #[allow(dead_code)]
 mod support;
 use serde_json::{Value, json};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use support::{Fixture, agent_call, html};
+
+/// The players' hub is process-wide and every test's page is `page-1`, so the tests take turns.
+static SERIAL: Mutex<()> = Mutex::new(());
 
 /// The fixtures, made with ffmpeg (the commands are in the decoder's and the audio renderer's tests).
 const VIDEO: &[u8] = include_bytes!("fixtures/tiny-h264.mp4");
@@ -43,6 +47,39 @@ ms.addEventListener('sourceopen', async () => {
   } catch (e) { state = 'failed:' + e; }
 });
 </script>"#;
+
+/// Where the video fixture's second fragment (its second moof) starts, so it can be appended in two halves.
+const SECOND_FRAGMENT: usize = 2663;
+/// Where the first half of the fixture ends in media time: the first fragment holds five frames at ten per second.
+const FIRST_HALF_END: f64 = 0.5;
+/// How far a reported time may sit from the expected one.
+const TIME_EPSILON: f64 = 0.05;
+
+/// The page for the stall test: half the video fixture, play, the rest on `waiting`, then endOfStream.
+fn halves_page() -> String {
+    format!(
+        r#"<video id="v" muted></video><script>
+const v = document.getElementById('v'); window.events = []; window.state = 'start'; let rest = null;
+for (const name of ['waiting', 'playing', 'ended']) v.addEventListener(name, () => {{
+  events.push(name + '@' + v.readyState + '@' + v.currentTime.toFixed(2));
+  if (name === 'waiting' && rest) {{ const run = rest; rest = null; run(); }}
+}});
+const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
+ms.addEventListener('sourceopen', async () => {{
+  try {{
+    const bytes = await (await fetch('/video.mp4')).arrayBuffer();
+    const sb = ms.addSourceBuffer('video/mp4; codecs="avc1.42C00A"');
+    const append = chunk => new Promise(done => {{ sb.addEventListener('updateend', done, {{ once: true }}); sb.appendBuffer(chunk); }});
+    await append(bytes.slice(0, {SECOND_FRAGMENT}));
+    rest = () => append(bytes.slice({SECOND_FRAGMENT})).then(() => {{ ms.endOfStream(); state = 'ended-stream'; }});
+    state = 'half';
+    await v.play();
+    state = 'playing';
+  }} catch (e) {{ state = 'failed:' + e; }}
+}});
+</script>"#
+    )
+}
 
 /** A 200 response carrying one fixture. */
 fn media(mime: &str, body: &[u8]) -> Vec<u8> {
@@ -90,6 +127,9 @@ fn report(runtime: &mut mars::runtime::Runtime) -> Value {
 #[cfg(target_os = "macos")]
 #[test]
 fn a_media_source_with_video_and_audio_plays_through_the_native_player() {
+    let _turn = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let fixture = Fixture::routes(vec![
         ("/", html("", PAGE)),
         ("/video.mp4", media("video/mp4", VIDEO)),
@@ -116,5 +156,62 @@ fn a_media_source_with_video_and_audio_plays_through_the_native_player() {
     assert!(
         pixels.chunks(PIXEL).any(|pixel| pixel != first),
         "the picture is not one flat color"
+    );
+}
+
+/**
+ * Play runs into the end of what is buffered: the element fires `waiting` at HAVE_CURRENT_DATA with its time held at
+ * the buffered end, resumes with `playing` once the rest arrives, and ends only at the duration endOfStream set.
+ */
+#[cfg(target_os = "macos")]
+#[test]
+fn playback_stalls_at_the_buffered_end_and_resumes_when_more_arrives() {
+    let _turn = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let page: &'static str = Box::leak(halves_page().into_boxed_str());
+    let fixture = Fixture::routes(vec![
+        ("/", html("", page)),
+        ("/video.mp4", media("video/mp4", VIDEO)),
+    ]);
+    let mut runtime = support::desktop(&fixture.url);
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let ended = until(&mut runtime, |runtime| {
+        peek(runtime, "events.some(e => e.startsWith('ended@'))") == json!(true)
+    });
+    let events = peek(&mut runtime, "events.join(' ')");
+    assert!(
+        ended,
+        "the stream ends: {} {}",
+        report(&mut runtime),
+        events
+    );
+    let events = events.as_str().unwrap().to_string();
+    let names: Vec<&str> = events.split(' ').collect();
+    let waiting = names
+        .iter()
+        .find(|event| event.starts_with("waiting@"))
+        .unwrap_or_else(|| panic!("a waiting event: {events}"));
+    let mut parts = waiting.split('@').skip(1);
+    assert_eq!(parts.next(), Some("2"), "HAVE_CURRENT_DATA: {events}");
+    let held: f64 = parts.next().unwrap().parse().unwrap();
+    assert!((held - FIRST_HALF_END).abs() < TIME_EPSILON, "{events}");
+    let stalled = names
+        .iter()
+        .position(|event| event.starts_with("waiting@"))
+        .unwrap();
+    let resumed = names
+        .iter()
+        .skip(stalled + 1)
+        .any(|event| event.starts_with("playing@4"));
+    assert!(resumed, "playing follows waiting: {events}");
+    assert_eq!(
+        peek(&mut runtime, "[v.ended, v.paused, state].join('|')"),
+        json!("true|true|ended-stream")
+    );
+    let end: f64 = peek(&mut runtime, "v.currentTime").as_f64().unwrap();
+    assert!(
+        (end - 1.0).abs() < TIME_EPSILON,
+        "ended at the duration: {end} {events}"
     );
 }

@@ -115,10 +115,11 @@ fn apply(
             buffer, start, end, ..
         } => native.media.remove(buffer, start, end),
         MediaCommand::Bind { node, .. } => native.node = node,
+        MediaCommand::EndOfStream { .. } => native.end_of_stream(),
         MediaCommand::Unload { .. } => {
             players.remove(&key);
         }
-        MediaCommand::Load { .. } | MediaCommand::EndOfStream { .. } => {}
+        MediaCommand::Load { .. } => {}
     }
 }
 
