@@ -9,22 +9,33 @@ const DEFAULT_TAGS: &[&str] = &["a", "button", "label", "input"];
 
 /** Resolve within this document only; an inert supported ancestor cannot authorize a child activation. */
 pub(super) fn target(document: &Document, hit: &Node) -> EngineResult<Node> {
+    let Some(node) = nearest_default(document, hit) else {
+        return Ok(hit.clone());
+    };
+    if node.hidden() || node.disabled || !node.style.interactive || node.secret() {
+        return Err(super::invalid_target());
+    }
+    Ok(node.clone())
+}
+
+/** Whether a click on this node has a default control to act for it, whatever that control's state. */
+pub(super) fn has_default(document: &Document, hit: &Node) -> bool {
+    nearest_default(document, hit).is_some()
+}
+
+/** The nearest supported default control at or above the hit, walking parents in this document. */
+fn nearest_default<'a>(document: &'a Document, hit: &'a Node) -> Option<&'a Node> {
     let mut current = Some(hit);
     for _ in 0..crate::constants::DOCUMENT_DEPTH {
-        let Some(node) = current else {
-            return Ok(hit.clone());
-        };
+        let node = current?;
         if DEFAULT_TAGS.contains(&node.tag.as_str()) {
-            if node.hidden() || node.disabled || !node.style.interactive || node.secret() {
-                return Err(super::invalid_target());
-            }
-            return Ok(node.clone());
+            return Some(node);
         }
         current = node
             .parent
             .and_then(|id| document.nodes.iter().find(|node| node.local_id == id));
     }
-    Err(super::invalid_target())
+    None
 }
 
 /** Inline handlers participate in the same bubbling path as registered listeners; V9 still enforces CSP. */

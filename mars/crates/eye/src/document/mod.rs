@@ -7,6 +7,7 @@ mod markup;
 pub(crate) mod matrix;
 mod mutation;
 mod parser;
+mod pointer;
 mod quirks;
 mod recovery;
 mod render;
@@ -31,6 +32,9 @@ pub use mars_core::dom::{
 };
 pub use mutation::{apply_changes, apply_script_changes};
 pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml};
+pub use pointer::{
+    focus_field, is_text_field, item_contains, labeled_control, pointer_target, takes_pointer,
+};
 pub use render::vertical::{WRITING_CCW, WRITING_LR, WRITING_RL};
 pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 pub use render::{

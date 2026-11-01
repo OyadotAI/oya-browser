@@ -204,56 +204,45 @@ fn options(document: &Document, select: usize) -> impl Iterator<Item = &Node> {
     crate::document::select_options(document, select).into_iter()
 }
 
-/** Tags a pointer click reaches: what page.click accepts, plus text areas a click focuses. */
-const CLICKABLE: &[&str] = &["a", "button", "label", "input", "textarea"];
-
 impl Page {
     /**
-     * The topmost painted node under a document point, and the nearest node a click there would
-     * activate. Items are in paint order, so the last one containing the point is on top.
+     * The topmost box under a document point whose node takes pointer events, and the frame base
+     * and node it belongs to. The point goes to that node, and the runtime's activation rules pick
+     * the link, button, label or field that acts for it. Transparent boxes are hit, as in Chrome;
+     * an agent still never acts on a node aria-hidden, which refuses the point. `top` is the
+     * viewport's scroll offset.
      */
-    pub(super) fn hit(&self, x: f64, y: f64) -> Option<(usize, &Node, Option<&Node>)> {
-        let inside = |left: f64, top: f64, width: f64, height: f64| {
-            x >= left && x < left + width && y >= top && y < top + height
-        };
-        let item = self.display.as_ref()?.items.iter().rev().find(|item| {
-            crate::document::agent_visible(item)
-                && inside(item.x, item.y, item.width, item.height)
-                && item
-                    .clip
-                    .is_none_or(|clip| inside(clip.x, clip.y, clip.width, clip.height))
-        })?;
-        let frame = self
-            .frames
+    pub(super) fn hit(&self, x: f64, y: f64, top: f64) -> Option<(usize, &Node)> {
+        let display = self.display.as_ref()?;
+        let (base, node) =
+            crate::document::pointer_target(display, [x, y], top, |item| self.painted_node(item))?;
+        (!agent_hidden(self.owner_document(base), node)).then_some((base, node))
+    }
+    /** The node a painted item belongs to, read from the frame that owns its identity range. */
+    fn painted_node(&self, item: &crate::document::DisplayItem) -> Option<(usize, &Node)> {
+        let (base, document) = self.frame_of(item.local_id);
+        let index = local_position(&document.nodes, item.local_id - base, |node| node.local_id)?;
+        Some((base, &document.nodes[index]))
+    }
+    /** The frame base and document that own a painted identity; the page's own document has base 0. */
+    fn frame_of(&self, painted: usize) -> (usize, &Document) {
+        self.frames
             .iter()
-            .find(|frame| frame.node(item.local_id).is_some());
-        let (base, document) = frame.map_or((0, &self.document), |frame| {
-            (frame.id_base(), frame.document())
-        });
-        let position = |id: usize| local_position(&document.nodes, id, |node| node.local_id);
-        let node = &document.nodes[position(item.local_id - base)?];
-        if !agent_visible(document, node) {
-            return None;
-        }
-        let mut current = Some(node);
-        while let Some(candidate) = current {
-            if CLICKABLE.contains(&candidate.tag.as_str()) {
-                return Some((base, node, Some(candidate)));
-            }
-            current = candidate
-                .parent
-                .and_then(position)
-                .map(|index| &document.nodes[index]);
-        }
-        Some((base, node, None))
+            .find(|frame| frame.node(painted).is_some())
+            .map_or((0, &self.document), |frame| {
+                (frame.id_base(), frame.document())
+            })
+    }
+    /** The document a frame base belongs to, so a node's ancestors and labels resolve in its own frame. */
+    pub(super) fn owner_document(&self, base: usize) -> &Document {
+        self.frames
+            .iter()
+            .find(|frame| frame.id_base() == base)
+            .map_or(&self.document, |frame| frame.document())
     }
     /** What a point lookup reports about a node: identity, role and name, never a secret value. */
     pub(super) fn point_node(&self, base: usize, node: &Node) -> Value {
-        let document = self
-            .frames
-            .iter()
-            .find(|frame| frame.id_base() == base)
-            .map_or(&self.document, |frame| frame.document());
+        let document = self.owner_document(base);
         let labels = super::names::names(document);
         let name = local_position(&document.nodes, node.local_id, |node| node.local_id)
             .and_then(|index| labels.get(index))

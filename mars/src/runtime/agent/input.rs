@@ -12,10 +12,6 @@ use serde_json::{Value, json};
 const PAGE_STEP: f64 = 0.9;
 /// Modifier names a press may carry, in the spelling the DOM uses.
 const MODIFIERS: &[&str] = &["Shift", "Control", "Alt", "Meta"];
-/// Input types that are buttons or choices, not text an agent can edit.
-const NOT_TEXT: &[&str] = &[
-    "checkbox", "radio", "submit", "button", "reset", "file", "image", "hidden", "color", "range",
-];
 
 /** A point in viewport coordinates on one observed page revision. */
 #[derive(Deserialize)]
@@ -85,29 +81,35 @@ impl Runtime {
     }
 
     /**
-     * page.click_at: click whatever a person would click at this point. A text field has no click
-     * action; it is reported as `focused` so the agent can type into it with page.press.
+     * page.click_at: a click at this point reaches what is painted there, as a person's would. A text
+     * field under the point, or a label's field, is focused and reported so the agent can type with
+     * page.press. A point where nothing reacts reports the hit and no effect, rather than refusing.
      */
     pub(super) fn click_at(&mut self, params: Value) -> EngineResult<Value> {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?;
-        let (base, hit, target) = page.hit(x, y).ok_or_else(nothing_here)?;
-        let hit = page.point_node(base, hit);
-        let target = target.ok_or_else(nothing_here)?;
-        let node_id = page.node_id(base + target.local_id);
-        if editable(target) {
+        let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
+        let report = page.point_node(base, hit);
+        if let Some(field) = crate::document::focus_field(page.owner_document(base), hit) {
+            let focused = page.node_id(base + field.local_id);
             return Ok(
-                json!({"page_id":page.id(),"revision":page.revision,"focused":node_id,"hit":hit}),
+                json!({"page_id":page.id(),"revision":page.revision,"focused":focused,"hit":report}),
             );
         }
+        if !self.click_has_effect(page, hit)? {
+            return Ok(
+                json!({"page_id":page.id(),"revision":page.revision,"activated":false,"hit":report}),
+            );
+        }
+        let node_id = page.node_id(base + hit.local_id);
         let request = Request::new(
             "click_at",
             "page.click",
             json!({"page_id":input.page_id,"node_id":node_id,"expected_revision":input.expected_revision}),
         );
         let mut result = self.dispatch_active(request)?;
-        result["hit"] = hit;
+        result["hit"] = report;
         Ok(result)
     }
 
@@ -120,10 +122,10 @@ impl Runtime {
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?;
         let mut result = json!({"page_id":page.id(),"revision":page.revision,"events":"none"});
-        if let Some((base, hit, target)) = page.hit(x, y) {
+        if let Some((base, hit)) = page.hit(x, y, self.scroll_y) {
             result["hit"] = page.point_node(base, hit);
-            if let Some(target) = target {
-                result["clickable"] = json!(page.node_id(base + target.local_id));
+            if self.click_has_effect(page, hit)? {
+                result["clickable"] = json!(page.node_id(base + hit.local_id));
             }
         }
         Ok(result)
@@ -250,7 +252,7 @@ impl Runtime {
             .iter()
             .find(|node| page.node_id(node.local_id) == node_id)
             .ok_or_else(stale)?;
-        let text = editable(node);
+        let text = crate::document::is_text_field(node);
         let command = input
             .modifiers
             .iter()
@@ -292,11 +294,6 @@ impl Runtime {
 /** Inputs that act as buttons, which Enter and Space activate. */
 fn button(node: &Node) -> bool {
     node.tag == "input" && ["submit", "button", "reset", "image"].contains(&node.input_type())
-}
-
-/** Fields whose value is text an agent can type into. */
-fn editable(node: &Node) -> bool {
-    node.tag == "textarea" || node.tag == "input" && !NOT_TEXT.contains(&node.input_type())
 }
 
 /**

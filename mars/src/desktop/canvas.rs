@@ -103,6 +103,9 @@ define_class!(
         /** Native keyboard navigation can enter the owned document viewport. */
         #[unsafe(method(acceptsFirstResponder))]
         fn accepts_focus(&self)->bool {true}
+        /** A press in an inactive window is the page's click too, as in Chrome, not only an activation. */
+        #[unsafe(method(acceptsFirstMouse:))]
+        fn accepts_first_mouse(&self,_event:&objc2_app_kit::NSEvent)->bool {true}
         /** Engine geometry uses a top-left document origin. */
         #[unsafe(method(isFlipped))]
         fn flipped(&self)->bool {true}
@@ -121,7 +124,7 @@ define_class!(
             let point=self.convertPoint_fromView(event.locationInWindow(),None);
             let node=self.node_at(point);
             self.ivars().pressed.set(node.map(|node|(node,point)));
-            if let Some(node)=node && self.ivars().human.get() {self.focus_input(node);}
+            if let Some(node)=node && self.ivars().human.get() {self.focus_input(self.field_at(point).unwrap_or(node));}
             unsafe {let _:()=msg_send![super(self),mouseDown:event];}
         }
         /** A release on the node that was pressed, without dragging, is a click on that node. */
@@ -191,6 +194,18 @@ impl Canvas {
             objc2_app_kit::NSViewLayerContentsRedrawPolicy::OnSetNeedsDisplay,
         );
         this
+    }
+    /** The text field a press at this canvas point focuses: a label's field, or the field itself. */
+    fn field_at(&self, point: NSPoint) -> Option<usize> {
+        let snapshot = self.ivars().snapshot.borrow();
+        let snapshot = snapshot.as_ref()?;
+        hit::field_at_frames(
+            snapshot.display.as_ref()?,
+            snapshot.document.as_ref()?,
+            &snapshot.frame_documents,
+            point,
+            self.visibleRect().origin.y,
+        )
     }
     /** The page node under a canvas point, when the current page has one there. */
     fn node_at(&self, point: NSPoint) -> Option<usize> {

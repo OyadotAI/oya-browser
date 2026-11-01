@@ -413,3 +413,170 @@ fn an_uncertain_submission_is_not_replayed_by_a_queued_stale_action() {
         1
     );
 }
+
+/** A page whose every path serves the same markup, so each pointer test names its own geometry. */
+fn serve(page: &'static str) -> Fixture {
+    Fixture::start(move |_| reply("200 OK", "text/html", "", page))
+}
+/** The inspected node with this HTML id, as an agent reads it from page.inspect. */
+fn node<'a>(page: &'a Value, html_id: &str) -> &'a Value {
+    page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["html_id"] == html_id)
+        .unwrap_or_else(|| panic!("no #{html_id} on the page: {page}"))
+}
+/** The centre of a node's painted box, in viewport points at the top of the page. */
+fn centre(page: &Value, html_id: &str) -> (f64, f64) {
+    let bounds = &node(page, html_id)["bounds"];
+    (
+        bounds["x"].as_f64().unwrap() + bounds["width"].as_f64().unwrap() / 2.0,
+        bounds["y"].as_f64().unwrap() + bounds["height"].as_f64().unwrap() / 2.0,
+    )
+}
+/** A click at a viewport point on the page as it is now. */
+fn click_at(runtime: &mut Runtime, page: &Value, (x, y): (f64, f64)) -> Result<Value, EngineError> {
+    call(
+        runtime,
+        "page.click_at",
+        json!({"page_id":page["page_id"],"expected_revision":page["revision"],"x":x,"y":y}),
+    )
+}
+
+/** A cover with pointer-events:none lets a click reach the field painted beneath it, as in Chrome. */
+#[test]
+fn pointer_events_none_cover_lets_the_click_reach_the_field() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><label id="lab" style="position:absolute;left:10px;top:10px;width:200px;height:40px"><span id="cap">Where</span><input id="where" style="margin-left:60px"></label><div id="cover" style="position:absolute;left:10px;top:10px;width:200px;height:40px;pointer-events:none"></div></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let at = click_at(&mut runtime, &page, centre(&page, "cap")).unwrap();
+    assert_eq!(at["focused"], node(&page, "where")["node_id"], "{at}");
+}
+
+/** A pointer-events:auto child of a pointer-events:none parent is the click's target. */
+#[test]
+fn pointer_events_auto_child_is_hit_under_a_pointer_events_none_parent() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><div id="outer" style="pointer-events:none;position:absolute;left:0;top:0;width:300px;height:100px"><a id="inner" href="/hit" style="pointer-events:auto;position:absolute;left:10px;top:10px;width:100px;height:30px">Go</a></div></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, centre(&page, "inner")).unwrap();
+    assert!(
+        result["url"].as_str().unwrap().ends_with("/hit"),
+        "{result}"
+    );
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let empty = click_at(&mut runtime, &page, (250.0, 90.0));
+    assert_eq!(empty.unwrap_err().code, "invalid_target");
+}
+
+/** A click on a label focuses the input it names. */
+#[test]
+fn a_click_on_a_label_focuses_its_input() {
+    let fixture = serve(
+        r#"<html><body><label id="lab" for="name">Your name</label> <input id="name"></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let at = click_at(&mut runtime, &page, centre(&page, "lab")).unwrap();
+    assert_eq!(at["focused"], node(&page, "name")["node_id"], "{at}");
+}
+
+/** A click on a span inside a label activates the label's checkbox. */
+#[test]
+fn a_click_on_a_span_in_a_label_activates_its_control() {
+    let fixture = serve(
+        r#"<html><body><label id="lab"><span id="text">Get news</span> <input id="news" type="checkbox"></label></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert_eq!(node(&page, "news")["checked"], false);
+    click_at(&mut runtime, &page, centre(&page, "text")).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert_eq!(node(&page, "news")["checked"], true);
+}
+
+/** A plain div with only a script listener is a click target, and the listener runs. */
+#[test]
+fn a_div_with_only_a_click_listener_receives_the_click() {
+    let fixture = serve(
+        r#"<html><body><div id="d" style="width:200px;height:40px;background:#eee">Tap me</div><p id="log">none</p><script>document.getElementById('d').addEventListener('click',function(){document.getElementById('log').textContent='div'})</script></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    click_at(&mut runtime, &page, centre(&page, "d")).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert_eq!(node(&page, "log")["text"], "div");
+}
+
+/** A point on a plain div nothing listens to reports the hit with no effect, rather than refusing. */
+#[test]
+fn a_click_on_a_plain_div_reports_the_hit_without_effect() {
+    let fixture = serve(
+        r#"<html><body><div id="plain" style="width:200px;height:40px">Plain</div></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let at = click_at(&mut runtime, &page, centre(&page, "plain")).unwrap();
+    assert_eq!(at["activated"], false, "{at}");
+    assert_eq!(
+        at["hit"]["node_id"],
+        node(&page, "plain")["node_id"],
+        "{at}"
+    );
+}
+
+/** A visibility:hidden box is never hit; the click reaches what is visible beneath it. */
+#[test]
+fn visibility_hidden_boxes_are_not_hit() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><a id="under" href="/under" style="position:absolute;left:0;top:0;width:200px;height:100px">Under</a><div id="ghost" style="position:absolute;left:0;top:0;width:200px;height:100px;visibility:hidden"><a href="/ghost">Ghost</a></div></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, (50.0, 50.0)).unwrap();
+    assert!(
+        result["url"].as_str().unwrap().ends_with("/under"),
+        "{result}"
+    );
+}
+
+/** An inert subtree is never hit; the click reaches the link beneath it. */
+#[test]
+fn inert_subtrees_are_not_hit() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><a id="under" href="/under" style="position:absolute;left:0;top:0;width:200px;height:100px">Under</a><div id="sealed" inert style="position:absolute;left:0;top:0;width:200px;height:100px"><a href="/sealed">Sealed</a></div></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, (50.0, 50.0)).unwrap();
+    assert!(
+        result["url"].as_str().unwrap().ends_with("/under"),
+        "{result}"
+    );
+}
+
+/** A transparent field painted over its visible label takes the click, as in Chrome: it is focused. */
+#[test]
+fn a_transparent_field_over_its_label_takes_the_click() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><label id="lab" style="position:absolute;left:10px;top:10px;width:200px;height:40px"><span id="cap">Where</span></label><input id="where" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0;border:0"></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let at = click_at(&mut runtime, &page, centre(&page, "cap")).unwrap();
+    assert_eq!(at["focused"], node(&page, "where")["node_id"], "{at}");
+}

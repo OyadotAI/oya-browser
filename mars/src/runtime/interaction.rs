@@ -168,15 +168,7 @@ impl Runtime {
             return self.follow(control.href.as_deref().ok_or_else(invalid_target)?);
         }
         if control.tag == "label" {
-            let input = page
-                .document
-                .nodes
-                .iter()
-                .find(|candidate| {
-                    control.attributes.get("for") == Some(&candidate.html_id)
-                        || candidate.parent == Some(control.local_id)
-                            && ["input", "select", "textarea"].contains(&candidate.tag.as_str())
-                })
+            let input = crate::document::labeled_control(&page.document, &control)
                 .cloned()
                 .ok_or_else(invalid_target)?;
             if input.disabled || input.hidden() {
@@ -191,6 +183,10 @@ impl Runtime {
             return Err(invalid_target());
         }
         self.button(page, control, &node)
+    }
+    /** Whether a click on this node does anything: a default control acts for it, or page code listens. */
+    pub(super) fn click_has_effect(&self, page: &Page, node: &Node) -> EngineResult<bool> {
+        Ok(activation::has_default(&page.document, node) || self.click_listened(page, node)?)
     }
     /** Whether a click on this node reaches page code: an inline handler, or a listener on the
     node, an ancestor, the document or the window. */

@@ -1,44 +1,14 @@
 /** Which page node a point on the canvas lands on, for clicks that no native control took:
 a div with a click listener, a span with role=button, or a link whose widget has not been
-created yet. The topmost painted item wins, as in a browser; the runtime then decides whether
-anything listens to the click. */
-use crate::document::{DisplayItem, DisplayList, Document};
+created yet. The shared pointer model decides the target, so the window and the agent channel
+agree on what a click reaches. */
+use crate::document::{DisplayItem, DisplayList, Document, Node, focus_field, pointer_target};
 use objc2_foundation::NSPoint;
 
 /// A press and release this close together is a click rather than a drag selection.
 pub(super) const CLICK_SLOP: f64 = 4.0;
 
-/** The topmost visible, interactive item containing the point, by node identity. */
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn node_at(display: &DisplayList, document: &Document, point: NSPoint) -> Option<usize> {
-    node_at_scrolled(display, document, point, 0.0)
-}
-/** As `node_at` with the viewport scrolled to `top`, where sticky and fixed boxes have moved. */
-pub(super) fn node_at_scrolled(
-    display: &DisplayList,
-    document: &Document,
-    point: NSPoint,
-    top: f64,
-) -> Option<usize> {
-    display
-        .items
-        .iter()
-        .rev()
-        .filter(|item| {
-            let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
-            contains(item, NSPoint::new(point.x, point.y - shift))
-        })
-        .find(|item| {
-            document
-                .nodes
-                .iter()
-                .find(|node| node.local_id == item.local_id)
-                .is_some_and(|node| !node.hidden() && node.style.interactive && !node.disabled)
-        })
-        .map(|item| item.local_id)
-}
-
-/** A frame's painted IDs resolve against its own document before the embedder underneath. */
+/** The node a click at this canvas point reaches, by its global identity, with the viewport at `top`. */
 pub(super) fn node_at_frames(
     display: &DisplayList,
     document: &Document,
@@ -46,45 +16,60 @@ pub(super) fn node_at_frames(
     point: NSPoint,
     top: f64,
 ) -> Option<usize> {
-    display
-        .items
-        .iter()
-        .rev()
-        .filter(|item| {
-            let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
-            contains(item, NSPoint::new(point.x, point.y - shift))
-        })
-        .find_map(|item| {
-            let frame = frames
-                .iter()
-                .find(|(base, end, _)| item.local_id >= *base && item.local_id < *end);
-            if let Some((base, _, frame)) = frame {
-                let node = frame
-                    .nodes
-                    .iter()
-                    .find(|node| node.local_id == item.local_id - base)?;
-                return (!node.hidden() && node.style.interactive && !node.disabled)
-                    .then_some(item.local_id);
-            }
-            document
-                .nodes
-                .iter()
-                .find(|node| node.local_id == item.local_id)
-                .filter(|node| !node.hidden() && node.style.interactive && !node.disabled)
-                .map(|_| item.local_id)
-        })
+    let (base, node) = target(display, document, frames, point, top)?;
+    Some(base + node.local_id)
 }
 
-/** Whether the point is inside the item's box and inside its ancestors' clip. */
-fn contains(item: &DisplayItem, point: NSPoint) -> bool {
-    let point = [point.x, point.y];
-    let quad = item.quad.unwrap_or_else(|| {
-        mars_core::geometry::quad([item.x, item.y, item.width, item.height], item.transform)
-    });
-    mars_core::geometry::contains_quad(&quad, point)
-        && item.clip.is_none_or(|clip| {
-            mars_core::geometry::contains_rect([clip.x, clip.y, clip.width, clip.height], point)
-        })
+/** The text field a click at this point focuses, when the point lands on a label or field. */
+pub(super) fn field_at_frames(
+    display: &DisplayList,
+    document: &Document,
+    frames: &[(usize, usize, Document)],
+    point: NSPoint,
+    top: f64,
+) -> Option<usize> {
+    let (base, node) = target(display, document, frames, point, top)?;
+    let owner = frames
+        .iter()
+        .find(|(frame_base, _, _)| *frame_base == base)
+        .map_or(document, |(_, _, frame)| frame);
+    focus_field(owner, node).map(|field| base + field.local_id)
+}
+
+/** The frame base and the node under the point, from the shared pointer model. */
+fn target<'a>(
+    display: &DisplayList,
+    document: &'a Document,
+    frames: &'a [(usize, usize, Document)],
+    point: NSPoint,
+    top: f64,
+) -> Option<(usize, &'a Node)> {
+    pointer_target(display, [point.x, point.y], top, |item| {
+        resolve(document, frames, item)
+    })
+}
+
+/** An item's node in the frame that owns its identity range, else in the embedder's document. */
+fn resolve<'a>(
+    document: &'a Document,
+    frames: &'a [(usize, usize, Document)],
+    item: &DisplayItem,
+) -> Option<(usize, &'a Node)> {
+    match frames
+        .iter()
+        .find(|(base, end, _)| item.local_id >= *base && item.local_id < *end)
+    {
+        Some((base, _, frame)) => frame
+            .nodes
+            .iter()
+            .find(|node| node.local_id == item.local_id - base)
+            .map(|node| (*base, node)),
+        None => document
+            .nodes
+            .iter()
+            .find(|node| node.local_id == item.local_id)
+            .map(|node| (0, node)),
+    }
 }
 
 /** Whether a release at `up` after a press at `down` is a click rather than a drag. */
@@ -95,15 +80,20 @@ pub(super) fn is_click(down: NSPoint, up: NSPoint) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::Node;
+    use crate::document::{DisplayList, Node, item_contains};
+
+    /** The node a point lands on in a single document, with no frames. */
+    fn node_at(display: &DisplayList, document: &Document, point: NSPoint) -> Option<usize> {
+        node_at_frames(display, document, &[], point, 0.0)
+    }
 
     /** Native targeting follows the same transformed rectangle and pre-transform clip as painting. */
     #[test]
     fn rotated_click_targets_reject_empty_aabb_corners_and_obey_clips() {
         let mut target = item(1, 0.0, 0.0, 100.0, 100.0);
         target.transform = Some([0.5, 0.5, -0.5, 0.5, 50.0, 0.0]);
-        assert!(contains(&target, NSPoint::new(50.0, 50.0)));
-        assert!(!contains(&target, NSPoint::new(5.0, 5.0)));
+        assert!(item_contains(&target, [50.0, 50.0], 0.0));
+        assert!(!item_contains(&target, [5.0, 5.0], 0.0));
         target.clip = Some(crate::document::ClipRect {
             x: 0.0,
             y: 0.0,
@@ -111,10 +101,10 @@ mod tests {
             height: 20.0,
             radius: [0.0; 4],
         });
-        assert!(!contains(&target, NSPoint::new(50.0, 50.0)));
+        assert!(!item_contains(&target, [50.0, 50.0], 0.0));
         target.clip = None;
         target.transform = Some([0.0; 6]);
-        assert!(!contains(&target, NSPoint::new(0.0, 0.0)));
+        assert!(!item_contains(&target, [0.0, 0.0], 0.0));
     }
 
     /** A node whose style accepts input. */
@@ -187,19 +177,31 @@ mod tests {
         );
     }
 
-    /** Hidden, disabled and pointer-events:none nodes let the click fall through to what is under them. */
+    /** A pointer-events:none node lets the click fall through to what is under it. */
     #[test]
-    fn inert_nodes_fall_through() {
+    fn pointer_events_none_nodes_fall_through() {
         let (display, mut document) = page(vec![
             item(1, 0.0, 0.0, 200.0, 100.0),
             item(2, 0.0, 0.0, 200.0, 100.0),
-            item(3, 0.0, 0.0, 200.0, 100.0),
         ]);
-        document.nodes[1].disabled = true;
-        document.nodes[2].style.interactive = false;
+        document.nodes[1].style.interactive = false;
         assert_eq!(
             node_at(&display, &document, NSPoint::new(20.0, 20.0)),
             Some(1)
+        );
+    }
+
+    /** A disabled control still takes the click, so the click never falls through to a link beneath it. */
+    #[test]
+    fn disabled_controls_keep_the_click() {
+        let (display, mut document) = page(vec![
+            item(1, 0.0, 0.0, 200.0, 100.0),
+            item(2, 0.0, 0.0, 200.0, 100.0),
+        ]);
+        document.nodes[1].disabled = true;
+        assert_eq!(
+            node_at(&display, &document, NSPoint::new(20.0, 20.0)),
+            Some(2)
         );
     }
 
