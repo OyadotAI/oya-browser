@@ -127,6 +127,8 @@ struct Parser<'a> {
     layer: usize,
     /// `@property` registrations, shared by every sheet.
     properties: &'a mut Registrations,
+    /// The `@media` conditions evaluated so far, shared by every sheet.
+    media_seen: &'a mut media::MediaSeen,
     /// The sheet declared `@namespace`, which Eye does not resolve: prefixed selectors drop.
     namespaced: bool,
 }
@@ -134,13 +136,14 @@ struct Parser<'a> {
 pub(super) fn parse_sheet(
     sheet: &str,
     context: RenderContext,
-    (rules, budget, keyframes, font_faces, layers, properties): (
+    (rules, budget, keyframes, font_faces, layers, properties, media_seen): (
         &mut Vec<Rc<Rule>>,
         &mut Budget,
         &mut Keyframes,
         &mut FontFaces,
         &mut Layers,
         &mut Registrations,
+        &mut media::MediaSeen,
     ),
     diagnostics: &mut Vec<String>,
     skipped: bool,
@@ -170,6 +173,7 @@ pub(super) fn parse_sheet(
         layers,
         layer: layer::OUTER,
         properties,
+        media_seen,
         namespaced: false,
     };
     parser.list(&source, None, Mode::Apply, 0)
@@ -254,7 +258,11 @@ impl Parser<'_> {
         let name = at_name(prelude);
         let condition = prelude[1 + name.len().min(prelude.len() - 1)..].trim();
         let truth = match name.as_str() {
-            "media" => media::media(condition, self.context),
+            "media" => {
+                let truth = media::media(condition, self.context);
+                self.media_seen.record(condition, truth);
+                truth
+            }
             "supports" => match media::supports(condition) {
                 Truth::False => Truth::Unknown,
                 truth => truth,
