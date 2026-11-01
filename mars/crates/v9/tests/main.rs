@@ -204,6 +204,7 @@ mod load_failure_contract;
 mod math_stability;
 mod math_sum;
 mod media_elements;
+mod media_queries;
 mod modules;
 mod modules_conformance;
 mod named_arguments_binding;

@@ -46,6 +46,12 @@ pub(crate) mod layer_urls;
 mod layout_props;
 mod logical;
 mod media;
+/** Whether a media query list holds under `context`, as `@media` rules evaluate it: the one
+evaluator script `matchMedia` must agree with, so a page's layout code and its stylesheets
+never disagree about the viewport. Unknown features are false, as in a browser. */
+pub fn evaluate_media(query: &str, context: crate::document::RenderContext) -> bool {
+    media::media(query, context) == media::Truth::True
+}
 mod model;
 mod multicol;
 mod paint;

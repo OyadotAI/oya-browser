@@ -587,6 +587,7 @@ impl Runtime {
 
     /** Cancellation owns startup as well as post-readiness RPC work. */
     fn start_cancel(programs: EnginePrograms, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
+        crate::v9::set_media_evaluator(eye_media);
         let mut runtime = Self {
             services: Vec::new(),
             loader: super::loader::Loader::start(&programs.network),
@@ -1646,5 +1647,18 @@ fn storage_unavailable() -> EngineError {
         "web_storage_unavailable",
         "Mars cannot access secure site storage.",
         "Allow secure storage access and restart the browser before relying on saved site state.",
+    )
+}
+
+/** Script `matchMedia` answers through Eye's evaluator, the one the page's stylesheets use, so
+layout code and CSS agree on every query (heights, ranges, units, `not`, `or`). */
+fn eye_media(query: &str, viewport: crate::v9::MediaViewport) -> bool {
+    crate::document::evaluate_media(
+        query,
+        crate::document::RenderContext {
+            width: viewport.width,
+            height: viewport.height,
+            ..crate::document::RenderContext::default()
+        },
     )
 }

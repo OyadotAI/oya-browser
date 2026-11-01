@@ -65,6 +65,7 @@ pub use platform::{
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
 pub use platform::{LAYOUT_CALLS, LayoutAnswer, LayoutHook, LayoutHost};
+pub use platform::{MediaEvaluator, MediaViewport, set_media_evaluator};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{

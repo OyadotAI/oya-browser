@@ -874,9 +874,45 @@ const UUID_VERSION_BYTE: usize = 6;
 /** The byte holding the RFC 4122 variant bits. */
 const UUID_VARIANT_BYTE: usize = 8;
 
-/** Evaluate simple width and color-scheme media queries against the viewport. */
+/** The viewport a media query is asked about. */
+#[derive(Clone, Copy, Debug)]
+pub struct MediaViewport {
+    /// Layout viewport width in CSS pixels.
+    pub width: f64,
+    /// Layout viewport height in CSS pixels.
+    pub height: f64,
+}
+
+/** A host's full media query evaluator (the app's is Eye's, which its stylesheets use). */
+pub type MediaEvaluator = fn(&str, MediaViewport) -> bool;
+
+/** The process's media evaluator, registered once by the host. */
+static MEDIA_EVALUATOR: std::sync::OnceLock<MediaEvaluator> = std::sync::OnceLock::new();
+
+/** Register the host's media evaluator, so `matchMedia` answers exactly as the page's CSS does
+(Airbnb's `(min-width: 744px) and (min-height: 480px)` decides its whole layout). The first
+registration wins; standalone V9 without one keeps its own small evaluator. */
+pub fn set_media_evaluator(evaluator: MediaEvaluator) {
+    let _ = MEDIA_EVALUATOR.set(evaluator);
+}
+
+/** Whether `query` holds for this page's viewport: the host's evaluator when it registered
+one, else the built-in subset. */
 pub(super) fn media_matches(vm: &Vm, query: &str) -> bool {
-    let width = vm.page.environment.viewport_width;
+    let viewport = MediaViewport {
+        width: vm.page.environment.viewport_width,
+        height: vm.page.environment.viewport_height,
+    };
+    match MEDIA_EVALUATOR.get() {
+        Some(evaluate) => evaluate(query, viewport),
+        None => builtin_media_matches(viewport, query),
+    }
+}
+
+/** Width, height, color-scheme and input media queries, without a host: the subset standalone
+V9 needs. */
+fn builtin_media_matches(viewport: MediaViewport, query: &str) -> bool {
+    let (width, height) = (viewport.width, viewport.height);
     let query = query.to_ascii_lowercase();
     query.split(" and ").all(|part| {
         let part = part
@@ -899,6 +935,8 @@ pub(super) fn media_matches(vm: &Vm, query: &str) -> bool {
         match feature.trim() {
             "min-width" => width >= number,
             "max-width" => width <= number,
+            "min-height" => height >= number,
+            "max-height" => height <= number,
             "prefers-color-scheme" => value.trim() == "light",
             "prefers-reduced-motion" => value.trim() == "no-preference",
             "hover" => value.trim() == "hover",

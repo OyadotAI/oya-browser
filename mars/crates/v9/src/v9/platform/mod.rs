@@ -81,6 +81,7 @@ mod token_set;
 mod url_bindings;
 mod url_parser;
 mod window;
+pub use window::{MediaEvaluator, MediaViewport, set_media_evaluator};
 pub(in crate::v9) mod worker_global;
 pub(in crate::v9) mod workers;
 
