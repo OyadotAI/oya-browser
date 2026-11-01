@@ -284,6 +284,10 @@ impl Vm<'_> {
                 marker.object(id);
             }
         }
+        // A MediaQueryList with a change listener is retained by the document, as the spec requires.
+        for id in self.page.state.media_lists.keys() {
+            marker.object(*id);
+        }
         let pending: Vec<ObjectId> = self.page.state.xhrs.keys().copied().collect();
         for id in pending {
             if self

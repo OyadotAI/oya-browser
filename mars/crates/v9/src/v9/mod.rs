@@ -2159,13 +2159,14 @@ fn page_event_with(
     }
 }
 
-/** Open a session over committed state for an event, timer or response. */
+/** Open a session over committed state for an event, timer or response. Media query changes the
+viewport made since the last step are reported first, as a browser does before its next task. */
 fn open<'h>(
     input: &PageInput<'h>,
     state: VmState,
     limits: Limits,
 ) -> EngineResult<(Vm<'h>, Compiled)> {
-    session(
+    let (mut vm, compiled) = session(
         limits,
         input.sources,
         input.source_keys,
@@ -2176,7 +2177,19 @@ fn open<'h>(
         input.environment,
         Some(state),
         input.modules,
-    )
+    )?;
+    report_media_changes(&mut vm)?;
+    Ok((vm, compiled))
+}
+
+/** Fire `change` on the media query lists whose result the viewport flipped. A listener's failure
+goes to the console; only a fatal error ends the step. */
+fn report_media_changes(vm: &mut Vm) -> EngineResult<()> {
+    if vm.page.state.media_lists.is_empty() {
+        return Ok(());
+    }
+    let result = platform::match_media::report(vm).and_then(|()| vm.drain_jobs());
+    report_thrown(vm, result)
 }
 
 /** Fire one lifecycle event and drain microtasks; script errors go to the console. */
@@ -2249,6 +2262,15 @@ pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execut
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
         platform::resize_observers::advance(&mut vm, true).map_err(fatal)?;
+        finish(vm)
+    })
+}
+
+/// Report media query changes for a viewport the page has not yet seen (a resize while idle):
+/// `open` does the reporting, so the step itself has nothing else to run.
+pub fn report_media(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (vm, _) = open(&input, state, Limits::default())?;
         finish(vm)
     })
 }

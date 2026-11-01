@@ -176,6 +176,8 @@ pub(in crate::v9) struct Ids {
     pub event_prototype: ObjectId,
     pub custom_event_prototype: ObjectId,
     pub style_prototype: ObjectId,
+    /** MediaQueryList instances: `matches` and `media` are live reads, not snapshots. */
+    pub media_query_list_prototype: ObjectId,
     pub class_list_prototype: ObjectId,
     pub dataset_prototype: ObjectId,
     pub node_list_prototype: ObjectId,

@@ -171,6 +171,7 @@ fn add_listener(
     }
     vm.charge(kind.len().saturating_add(1))?;
     admit_listener(vm, &kind, options.signal.as_ref())?;
+    super::match_media::watch(vm, target, &kind)?;
     let passive = options
         .passive
         .unwrap_or_else(|| passive_by_default(target, &kind));
@@ -186,6 +187,32 @@ fn add_listener(
         signal: options.signal,
     })?;
     Ok(())
+}
+
+/** The legacy `addListener` and `removeListener` of a MediaQueryList: the `change` registration under its older name. */
+pub(in crate::v9) fn media_listener(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(target) = target_of(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    let callback = call.arg(0);
+    if callback.nullish() {
+        return Ok(JsValue::Undefined);
+    }
+    let Some(callback) = callback.object() else {
+        return Err(vm.type_error("parameter 1 is not of type 'Object'."));
+    };
+    if native_name(&call) == "addListener" {
+        let options = ListenerOptions {
+            capture: false,
+            once: false,
+            passive: None,
+            signal: None,
+        };
+        add_listener(vm, target, "change".to_string(), callback, options)?;
+    } else {
+        remove_listener(vm, target, "change", callback, false);
+    }
+    Ok(JsValue::Undefined)
 }
 
 /** Storage pressure collects unreachable targets before refusing a new registration. The
@@ -825,17 +852,29 @@ pub(in crate::v9) fn fire_with_state(
     kind: &str,
     state: JsValue,
 ) -> Res<bool> {
+    fire_with_fields(vm, target, kind, &[("state", state)])
+}
+
+/** Dispatch a trusted, non-bubbling event carrying extra enumerable members, as a MediaQueryListEvent carries `matches`. */
+pub(in crate::v9) fn fire_with_fields(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    fields: &[(&str, JsValue)],
+) -> Res<bool> {
     let event = create_event(vm, kind, false, false)?;
     let id = event.object().expect("event object");
     vm.pin(event);
-    vm.heap.put(
-        id,
-        Key::from("state"),
-        crate::v9::vm::heap::Prop {
-            slot: crate::v9::vm::heap::Slot::Data(state),
-            attrs: crate::v9::vm::heap::ENUMERABLE,
-        },
-    );
+    for (name, value) in fields {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(value.clone()),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
     with_event(vm, id, |data| data.trusted = true);
     dispatch(vm, target, id)
 }

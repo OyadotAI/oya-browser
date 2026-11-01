@@ -48,6 +48,7 @@ pub(in crate::v9) use keyboard::{press_key, type_strokes};
 mod attr;
 mod attr_dom;
 mod listener_store;
+pub(in crate::v9) mod match_media;
 mod namespaces;
 mod net;
 pub use blob_urls::BlobUrlSource;
@@ -1301,6 +1302,9 @@ pub(in crate::v9) struct PageState {
     pub blob_urls: BTreeMap<String, blob_urls::BlobUrlSource>,
     /// Handles root their event targets until the owning document is destroyed.
     pub workers: BTreeMap<u32, workers::Handle>,
+    /// MediaQueryLists that have a `change` listener, with the result their listeners last heard.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub media_lists: BTreeMap<ObjectId, bool>,
     /// close() prevents future owner posts while allowing the current synchronous task to finish.
     pub worker_closed: bool,
     /// Imported Script offsets retain their governed source URL for later stack traces.

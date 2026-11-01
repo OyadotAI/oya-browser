@@ -1,7 +1,7 @@
 /** Builds the platform's intrinsic prototypes and singletons, and the global object's prototype. */
 use super::attr_dom;
 use super::dom::{self, REFLECTED};
-use super::{console, events, interfaces, net, timers, url_bindings, window};
+use super::{console, events, interfaces, match_media, net, timers, url_bindings, window};
 use crate::v9::value::JsValue;
 use crate::v9::vm::heap::Key;
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS};
@@ -464,6 +464,16 @@ fn collections(b: &mut Builder) {
         "value",
         Some(dom::class_list),
         Some(dom::class_list_value_set),
+    );
+    let media_list = b.object(Some(b.ids.event_target_prototype));
+    b.ids.media_query_list_prototype = media_list;
+    b.getter(media_list, "matches", match_media::matches);
+    b.getter(media_list, "media", match_media::media);
+    methods(
+        b,
+        media_list,
+        &["addListener", "removeListener"],
+        events::media_listener,
     );
     let style = b.object(Some(object_prototype));
     b.ids.style_prototype = style;

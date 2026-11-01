@@ -651,6 +651,8 @@ pub(super) enum PageAction {
     Timers { now_ms: f64, budget: usize },
     /** Sample layout and deliver intersection records without firing unrelated author timers. */
     Observe,
+    /** The viewport changed while the page was idle: media query listeners hear it. */
+    Media,
     /** Fresh layout resumes a depth-gated resize cycle; complete ends it at the host deadline. */
     Resize { complete: bool },
     /** Hand back responses to the page's requests. */
@@ -828,6 +830,7 @@ fn run_action(
         PageAction::Keyboard { key, target } => v9::keyboard_page(input, state()?, key, target),
         PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
         PageAction::Observe => v9::observe_page(input, state()?),
+        PageAction::Media => v9::report_media(input, state()?),
         PageAction::Resize { complete } => v9::continue_resize_observers(input, state()?, complete),
         PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
         PageAction::Images { responses } => v9::resume_images(input, state()?, responses),

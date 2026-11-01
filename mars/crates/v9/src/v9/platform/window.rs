@@ -805,16 +805,7 @@ pub(in crate::v9) fn window_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "matchMedia" => {
             let query = vm.to_text(&call.arg(0))?;
-            let matches = media_matches(vm, &query);
-            let id = vm.alloc(Object::new(
-                Class::Plain,
-                Some(realm().ids.event_target_prototype),
-            ))?;
-            vm.put(id, "matches", JsValue::Boolean(matches))?;
-            vm.put(id, "media", JsValue::string(&query)?)?;
-            let noop = JsValue::Object(realm().ids.fields_dummy);
-            vm.put(id, "addListener", noop.clone())?;
-            vm.put(id, "removeListener", noop)?;
+            let id = super::match_media::create(vm, &query)?;
             Ok(JsValue::Object(id))
         }
         "getComputedStyle" => {

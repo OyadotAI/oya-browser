@@ -203,6 +203,9 @@ pub(super) struct Scripting {
     pub last_wake: Instant,
     /// The last background run, which sets how far the virtual clock moves next.
     pub last_tick: Instant,
+    /// The viewport the page's last step ran at. A resize that changes it gets a media step
+    /// while the page is idle, so its media query listeners hear the change.
+    pub media_viewport: Option<(f64, f64)>,
     /// CORS preflights this page's requests already passed, so they are not repeated.
     pub preflights: crate::network::cors::PreflightCache,
     /// Wall time the last background run took. The next waits at least this long, so a page
@@ -334,6 +337,7 @@ impl Default for Scripting {
             awake_until: now + TICK_WINDOW,
             last_wake: now,
             last_tick: now,
+            media_viewport: None,
             preflights: crate::network::cors::PreflightCache::default(),
             tick_cost: Duration::ZERO,
             modules: super::modules::Modules::default(),
@@ -506,6 +510,8 @@ impl Runtime {
         page.inspection = None;
         super::frame_pages::prune_routes(page);
         let mut environment = self.step_environment(page)?;
+        page.scripting.media_viewport =
+            Some((environment.viewport_width, environment.viewport_height));
         if load {
             // V9 builds the head records once, at load; later steps would only resend them.
             environment.metadata.clone_from(&page.document.metadata);
@@ -1516,6 +1522,7 @@ impl Runtime {
             ((page.scripting.pending() || page.frames_pending()) && page.scripting.awake_at(now)
                 || super::animations::next_sample(&page.scripting).is_some()
                 || page.scripting.loaded && page.scripting.intersections.ready()
+                || page.scripting.loaded && self.viewport_moved(page)
                 || page.frame_observations_pending()
                 || page.scripting.loaded && page.scripting.parked.wakes(self.platform.version)
                 || page.scripting.refresh.is_some()
@@ -1553,20 +1560,23 @@ impl Runtime {
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
         super::meta_refresh::fire_due(&mut page.scripting, end);
-        let changed = if page.scripting.awake_at(now) {
-            self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
-        } else {
-            let previous = super::animations::paint_effects(&page.scripting);
-            page.scripting.clock_ms = end;
-            let animated = previous != super::animations::paint_effects(&page.scripting);
-            let observed = if page.scripting.loaded && page.scripting.intersections.ready() {
-                self.observe_intersections(&mut page)?
+        // A viewport change is reported on every tick, awake or idle, before the page's own work.
+        let media = self.media_turn(&mut page)?;
+        let changed = media
+            || if page.scripting.awake_at(now) {
+                self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
             } else {
-                false
+                let previous = super::animations::paint_effects(&page.scripting);
+                page.scripting.clock_ms = end;
+                let animated = previous != super::animations::paint_effects(&page.scripting);
+                let observed = if page.scripting.loaded && page.scripting.intersections.ready() {
+                    self.observe_intersections(&mut page)?
+                } else {
+                    false
+                };
+                let descendants = self.run_frame_observers(&mut page, now + TICK_WALL)?;
+                animated || observed || descendants
             };
-            let descendants = self.run_frame_observers(&mut page, now + TICK_WALL)?;
-            animated || observed || descendants
-        };
         page.scripting.tick_cost = now.elapsed();
         if changed {
             self.commit_mutation(page)?;
@@ -1580,6 +1590,20 @@ impl Runtime {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /** Whether the viewport differs from the one the page's last step ran at. */
+    fn viewport_moved(&self, page: &Page) -> bool {
+        page.scripting.media_viewport
+            != Some((self.render_context.width, self.render_context.height))
+    }
+
+    /** A viewport change with no step of its own gets one media step, so listeners hear it. */
+    fn media_turn(&mut self, page: &mut Page) -> EngineResult<bool> {
+        if !page.scripting.loaded || !self.viewport_moved(page) {
+            return Ok(false);
+        }
+        Ok(self.script_step(page, json!({"kind":"media"}))?.changed)
     }
 
     /** A refused observer turn follows ordinary script failure handling rather than retrying forever. */
