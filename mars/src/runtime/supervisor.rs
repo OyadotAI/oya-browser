@@ -238,7 +238,7 @@ impl Runtime {
             .filter_map(|tab| {
                 let page = tab.page.as_ref()?;
                 (page.scripting.broadcast_awake
-                    && now < page.scripting.awake_until
+                    && page.scripting.awake_at(now)
                     && (page.scripting.pending() || page.frames_pending())
                     && now >= page.scripting.last_tick + page.scripting.tick_interval())
                 .then_some((page.scripting.last_tick, tab.id.clone()))

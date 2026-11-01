@@ -647,10 +647,11 @@ fn node_by_html_id(page: &Value, html_id: &str) -> Value {
         .clone()
 }
 
-/** A page that changes itself in the background (YouTube) does not keep its own timers awake:
-otherwise it runs scripts forever and every click waits behind them. */
+/** A page that changes itself in the background keeps its timers awake only as long as the
+changes are progress, and never past AGENT_AWAKE_CAP after the agent's last action (the window
+past TICK_WINDOW is proven in tests/agent_progress_window.rs): clicks are not starved for ever. */
 #[test]
-fn background_change_does_not_extend_awake_window() {
+fn background_change_extends_awake_window_within_its_cap() {
     let (_fixture, mut runtime, _page) = load(
         "<p id=out>0</p><script>let n=0;setInterval(()=>{\
          document.getElementById('out').textContent=String(++n)},50)</script>",
@@ -663,7 +664,12 @@ fn background_change_does_not_extend_awake_window() {
         published |= runtime.run_page_scripts();
     }
     assert!(published);
-    assert_eq!(runtime.script_awake_until(), Some(awake));
+    let extended = runtime.script_awake_until().unwrap();
+    assert!(extended >= awake, "progress must not shorten the window");
+    assert!(
+        extended <= std::time::Instant::now() + std::time::Duration::from_secs(180),
+        "progress extended the window past the agent cap"
+    );
 }
 
 /** A person's or agent's input keeps the page's timers running for another window. */

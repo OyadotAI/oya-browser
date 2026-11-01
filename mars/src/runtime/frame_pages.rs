@@ -418,7 +418,7 @@ impl Runtime {
         }
         if child.scripting.loaded {
             let end = child.scripting.clock_ms + advance_ms;
-            let result = if observe_only || Instant::now() >= child.scripting.awake_until {
+            let result = if observe_only || !child.scripting.awake_at(Instant::now()) {
                 if child.scripting.intersections.ready() {
                     self.observe_intersections(child)
                 } else {

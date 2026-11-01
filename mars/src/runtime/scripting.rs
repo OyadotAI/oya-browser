@@ -99,11 +99,17 @@ const TEXT_BODY_TYPE: &str = "text/plain;charset=UTF-8";
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// Real time one background run may spend, so the coordinator keeps answering people promptly.
 const TICK_WALL: Duration = Duration::from_millis(400);
-/// Background timers keep running this long after the page's last commit or interaction, then
-/// wait for the next one, so an animation loop cannot churn revisions under an agent forever.
-/// An app such as YouTube boots over many background runs, each a bounded slice of virtual
-/// time, so the window spans what a slow boot needs.
+/// Background timers keep running this long after the page's last quiet point, then wait for the
+/// next one. The window restarts on each interaction or commit, and on each run whose scripts
+/// changed the document (progress), so a page that is still booting keeps running as a browser
+/// keeps its timers and requests going. A person's page never sleeps; an agent's page sleeps
+/// once it stops making progress, and never runs past AGENT_AWAKE_CAP after the agent's last
+/// action, so an endless animation loop cannot churn the revision an agent acts on forever.
 pub(super) const TICK_WINDOW: Duration = Duration::from_secs(20);
+/// The longest an agent-controlled page keeps running background work after the agent's last
+/// action (wake). Progress extends the window only up to this cap: a page still loading or
+/// changing the document after it is capped and sleeps, and the next agent action wakes it.
+pub(super) const AGENT_AWAKE_CAP: Duration = Duration::from_secs(180);
 /// Consecutive steps that ran out of wall-clock time before the page's scripts are stopped. A
 /// single overrun drops one task, as an uncaught exception does; a page that overruns every step
 /// is not making progress and is stopped instead.
@@ -188,8 +194,11 @@ pub(super) struct Scripting {
     pub style_interest: std::collections::BTreeSet<usize>,
     /** The task source the last settle step came from, so the next one starts after it. */
     pub last_source: usize,
-    /// Background timers run until this instant; interactions move it forward.
+    /// Background timers run until this instant; interactions and progress move it forward.
     pub awake_until: Instant,
+    /// When the agent last acted on this page (a wake); bounds how far progress may extend
+    /// `awake_until` (AGENT_AWAKE_CAP).
+    pub last_wake: Instant,
     /// The last background run, which sets how far the virtual clock moves next.
     pub last_tick: Instant,
     /// CORS preflights this page's requests already passed, so they are not repeated.
@@ -318,6 +327,7 @@ impl Default for Scripting {
             style_interest: Default::default(),
             last_source: 0,
             awake_until: now + TICK_WINDOW,
+            last_wake: now,
             last_tick: now,
             preflights: crate::network::cors::PreflightCache::default(),
             tick_cost: Duration::ZERO,
@@ -343,13 +353,32 @@ impl Scripting {
     pub fn wake(&mut self) {
         let now = Instant::now();
         self.awake_until = now + TICK_WINDOW;
+        self.last_wake = now;
         self.last_tick = now;
+    }
+    /** Extend the window after progress (a run that changed the document), within the agent cap. */
+    pub(super) fn extend_awake(&mut self, now: Instant) {
+        let cap = self.last_wake + AGENT_AWAKE_CAP;
+        self.awake_until = self.awake_until.max((now + TICK_WINDOW).min(cap));
+    }
+    /** Whether the page runs background work now: inside its window, or still loading (requests
+    or images in flight) within the agent cap. */
+    pub(super) fn awake_at(&self, now: Instant) -> bool {
+        now < self.awake_until || (self.loaded_work() && now < self.last_wake + AGENT_AWAKE_CAP)
+    }
+    /** Work the page is waiting on from the network or image pipeline. */
+    fn loaded_work(&self) -> bool {
+        !self.in_flight.is_empty()
+            || !self.requests.is_empty()
+            || !self.ready.is_empty()
+            || !self.image_loading.pending.is_empty()
     }
     /** Whether the page has script work waiting. */
     pub(super) fn pending(&self) -> bool {
         super::animations::next_sample(self).is_some()
             || self.loaded
                 && (self.scroll_pending
+                    || !self.in_flight.is_empty()
                     || !self.media.inbox.is_empty()
                     || self.intersections.ready()
                     || self.observer_resources
@@ -1173,6 +1202,9 @@ impl Runtime {
             match self.script_step(page, action) {
                 Ok(step) => {
                     changed |= step.changed;
+                    if step.changed {
+                        page.scripting.extend_awake(Instant::now());
+                    }
                     page.scripting.time_limit_strikes = if step.timed_out {
                         page.scripting.time_limit_strikes.saturating_add(1)
                     } else {
@@ -1437,8 +1469,7 @@ impl Runtime {
             page.scripting.awake_until = page.scripting.awake_until.max(now + TICK_WINDOW);
         }
         let due = self.page.as_ref().is_some_and(|page| {
-            ((page.scripting.pending() || page.frames_pending())
-                && now < page.scripting.awake_until
+            ((page.scripting.pending() || page.frames_pending()) && page.scripting.awake_at(now)
                 || super::animations::next_sample(&page.scripting).is_some()
                 || page.scripting.loaded && page.scripting.intersections.ready()
                 || page.frame_observations_pending()
@@ -1476,7 +1507,7 @@ impl Runtime {
             * MS_PER_SECOND;
         page.scripting.last_tick = now;
         let end = page.scripting.clock_ms + elapsed.min(TICK_MAX_VIRTUAL_MS);
-        let changed = if now < page.scripting.awake_until {
+        let changed = if page.scripting.awake_at(now) {
             self.settle_scripts_yielding(&mut page, now + TICK_WALL, end, yield_now)?
         } else {
             let previous = super::animations::paint_effects(&page.scripting);
