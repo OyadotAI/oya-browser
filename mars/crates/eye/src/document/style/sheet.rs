@@ -387,6 +387,8 @@ impl Parser<'_> {
                         .into_iter()
                         .collect()
                 }
+                // Blink drops an invalid selector without a word, and it matches nothing to hide.
+                (Err(selector_parse::INVALID), _) => Vec::new(),
                 (Err(feature), _) => {
                     note(
                         self.diagnostics,

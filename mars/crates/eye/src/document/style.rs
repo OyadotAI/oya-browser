@@ -59,6 +59,7 @@ mod parsed;
 mod resolve;
 mod scroll_button;
 mod scroll_marker;
+mod selector_names;
 mod selector_parse;
 mod selectors;
 mod sheet;

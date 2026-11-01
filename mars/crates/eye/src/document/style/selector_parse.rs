@@ -1,5 +1,6 @@
 /** Owned selector grammar: compounds, four combinators, attributes and a bounded pseudo-class set. */
 use super::constants::{SELECTOR_ARGUMENTS, SELECTOR_COMPOUNDS};
+use super::selector_names::{known_pseudo_element, never_pseudo_class};
 /// How a compound relates to the one on its left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Combinator {
@@ -79,6 +80,10 @@ pub(super) enum Pseudo {
     Focus,
     /// `:focus-within`: the focused element or one of its flat-tree ancestors.
     FocusWithin,
+    /// `:focus-visible`: a focused text-entry element, the case a script's focus and typing reach.
+    FocusVisible,
+    /// `:in-range` (true) or `:out-of-range` (false): a range input, which Blink keeps within its limits.
+    Range(bool),
     /// `:hover` and other user-state classes: the rule is kept and never matches.
     Never,
 }
@@ -133,6 +138,11 @@ pub(super) struct Selector {
 }
 /** A parse failure names the unsupported feature for diagnostics, never the author's text. */
 pub(super) type Unsupported = &'static str;
+/**
+ * The failure of a selector Blink itself rejects (an unknown or other-engine pseudo, a pseudo-element
+ * out of place). Blink drops such a rule silently, so Eye neither logs it nor masks anything for it.
+ */
+pub(super) const INVALID: Unsupported = "invalid selector";
 /** Parses one complex selector, or names the first unsupported feature. */
 pub(super) fn parse(source: &str) -> Result<Selector, Unsupported> {
     parse_in(source, false)
@@ -230,6 +240,8 @@ struct Cursor<'a> {
     in_has: bool,
     /// Selector functions enclosing this selector.
     depth: usize,
+    /// A pseudo-element was read in the current compound, so only pseudo-classes may follow it.
+    element: bool,
 }
 impl<'a> Cursor<'a> {
     /** Starts at the beginning. */
@@ -239,6 +251,7 @@ impl<'a> Cursor<'a> {
             index: 0,
             in_has: false,
             depth: 0,
+            element: false,
         }
     }
     /** Remaining bytes. */
@@ -273,6 +286,10 @@ impl<'a> Cursor<'a> {
             Some(_) if spaced => return Ok(Some(Combinator::Descendant)),
             Some(_) => return Err("selector syntax"),
         };
+        // Blink: a pseudo-element is the last compound, so a combinator after it is invalid.
+        if self.element {
+            return Err(INVALID);
+        }
         self.index += 1;
         self.spaces();
         if self.done() {
@@ -315,6 +332,7 @@ impl<'a> Cursor<'a> {
     }
     /** A compound must contain at least one selector. */
     fn compound(&mut self) -> Result<Compound, Unsupported> {
+        self.element = false;
         let mut compound = Compound::default();
         let mut typed = self.type_selector();
         if self.peek() == Some(b'|') {
@@ -333,6 +351,10 @@ impl<'a> Cursor<'a> {
     }
     /** One `#id`, `.class`, `[attr]` or `:pseudo`; None at a compound boundary. */
     fn simple(&mut self) -> Result<Option<Simple>, Unsupported> {
+        // After a pseudo-element only pseudo-classes may follow in its compound (`::before.a` is invalid).
+        if self.element && matches!(self.peek(), Some(b'#' | b'.' | b'[')) {
+            return Err(INVALID);
+        }
         let simple = match self.peek() {
             Some(b'#') => {
                 self.index += 1;
@@ -531,10 +553,31 @@ impl<'a> Cursor<'a> {
         }
         bytes.len()
     }
-    /** Pseudo-classes; pseudo-elements and unknown names are unsupported. */
+    /**
+     * A pseudo-element. Blink accepts the known ones anywhere they end a complex selector and
+     * matches none of them against an element, so Eye keeps the rule and it never applies. Unknown
+     * and other-engine names, or one out of place, make the selector invalid.
+     */
+    fn pseudo_element_simple(&mut self) -> Result<Simple, Unsupported> {
+        if self.depth > 0 || self.in_has || self.element {
+            return Err(INVALID);
+        }
+        let legacy = self.rest().starts_with(b":") && !self.rest().starts_with(b"::");
+        self.index += if legacy { 1 } else { 2 };
+        let name = self.ident().to_ascii_lowercase();
+        if self.peek() == Some(b'(') {
+            self.index = self.closing(b')');
+        }
+        self.element = true;
+        if !known_pseudo_element(&name) {
+            return Err(INVALID);
+        }
+        Ok(Simple::Pseudo(Pseudo::Never))
+    }
+    /** Pseudo-classes; pseudo-elements go to `pseudo_element_simple`, unknown names are unsupported. */
     fn pseudo(&mut self) -> Result<Simple, Unsupported> {
         if self.pseudo_element() {
-            return Err("pseudo-element");
+            return self.pseudo_element_simple();
         }
         self.index += 1;
         let name = self.required_ident()?.to_ascii_lowercase();
@@ -577,11 +620,13 @@ impl<'a> Cursor<'a> {
             "open" => Pseudo::Open,
             "focus" => Pseudo::Focus,
             "focus-within" => Pseudo::FocusWithin,
+            "focus-visible" => Pseudo::FocusVisible,
+            "in-range" => Pseudo::Range(true),
+            "out-of-range" => Pseudo::Range(false),
             // States a page reaches only through a person or a script call Eye has not made.
             "hover"
             | "active"
             | "visited"
-            | "focus-visible"
             | "target"
             | "autofill"
             | "-webkit-autofill"
@@ -601,7 +646,8 @@ impl<'a> Cursor<'a> {
             | "muted"
             | "volume-locked"
             | "closed" => Pseudo::Never,
-            _ => return Err(pseudo_name(&name)),
+            _ if never_pseudo_class(&name) => Pseudo::Never,
+            _ => return Err(refusal(&name)),
         };
         Ok(Simple::Pseudo(pseudo))
     }
@@ -656,7 +702,7 @@ impl<'a> Cursor<'a> {
             // The name is escape-decoded and lowercased, so `:HAS(` and `:h\61s(` land here too.
             "has" if self.in_has => Err(":has"),
             "has" => Ok(Simple::Has(relative(inner)?)),
-            _ => Err(pseudo_name(name)),
+            _ => Err(refusal(name)),
         }
     }
 }
@@ -680,20 +726,20 @@ fn relative(source: &str) -> Result<Vec<(Combinator, Selector)>, Unsupported> {
         })
         .collect()
 }
-/** Whether a selector names another engine's prefixed pseudo-class or pseudo-element, which
- * Blink never parses. */
-fn foreign(selector: &str) -> bool {
-    let lower = selector.to_ascii_lowercase();
-    [":-moz-", ":-ms-", ":-o-"]
+/** Another engine's prefixed name (`-moz-`, `-ms-`, `-o-`), which Blink never accepts. */
+fn foreign_name(name: &str) -> bool {
+    ["-moz-", "-ms-", "-o-"]
         .iter()
-        .any(|prefix| lower.contains(prefix))
+        .any(|prefix| name.starts_with(prefix))
 }
-/**
- * A comma list of complex selectors, as Selectors 4 and Blink parse `:is()`, `:where()` and
- * `:not()`. `:is()` and `:where()` take a forgiving list: an argument that does not parse is
- * dropped and the rest still match (an empty list matches nothing); in `:not()` it fails.
- * Eye only forgives what Blink itself rejects (see `foreign`), so masks stay fail-closed.
- */
+/** The refusal for a pseudo-class Eye does not know: invalid when Blink never accepts it. */
+fn refusal(name: &str) -> Unsupported {
+    if foreign_name(name) {
+        INVALID
+    } else {
+        pseudo_name(name)
+    }
+}
 /**
  * Whether a selector holds `:nth-child(of S)` anywhere inside it. Each such argument scans every
  * sibling of every candidate, so nesting one in another multiplies the work by the sibling count
@@ -711,6 +757,12 @@ fn nests_nth_of(selector: &Selector) -> bool {
             _ => false,
         })
 }
+/**
+ * A comma list of complex selectors, as Selectors 4 and Blink parse `:is()`, `:where()` and
+ * `:not()`. `:is()` and `:where()` take a forgiving list: an invalid argument is dropped and the
+ * rest still match (an empty list matches nothing); in `:not()` it invalidates the selector.
+ * Other arguments Eye cannot parse fail the rule, so masks stay fail-closed.
+ */
 fn arguments(
     source: &str,
     in_has: bool,
@@ -725,9 +777,9 @@ fn arguments(
     for part in parts {
         match parse_nested(part, in_has, depth + 1) {
             Ok(selector) => out.push(selector),
-            // Blink drops other engines' prefixed pseudos from a forgiving list too. Anything
-            // else Eye cannot parse fails the rule, so a hiding rule falls back to its mask.
-            Err(_) if forgiving && foreign(part) => {}
+            // Blink drops an invalid argument from a forgiving list and keeps the rest. Anything
+            // Eye cannot parse fails the rule, so a hiding rule falls back to its mask.
+            Err(INVALID) if forgiving => {}
             Err(feature) => return Err(feature),
         }
     }
