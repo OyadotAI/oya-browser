@@ -14,6 +14,7 @@ pub(super) fn boxes(display: &DisplayList) -> Vec<NodeBox> {
             let visual = mars_core::geometry::bounds(&quad);
             let [x, y, width, height] = visual.unwrap_or_default();
             NodeBox {
+                pointer_excluded: item.pointer_excluded,
                 node: item.local_id,
                 x,
                 y,

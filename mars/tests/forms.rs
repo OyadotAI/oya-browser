@@ -552,6 +552,53 @@ fn visibility_hidden_boxes_are_not_hit() {
     );
 }
 
+/** A closed fixed drawer keeps its layout box but cannot veto a link's DOM-routed click. */
+#[test]
+fn fixed_hidden_drawer_does_not_block_dom_routed_clicks() {
+    dom_routed_overlay_click("visibility:hidden", "under");
+}
+
+/** An explicitly visible child remains a target even inside a hidden fixed drawer. */
+#[test]
+fn visible_child_of_hidden_drawer_receives_dom_routed_clicks() {
+    dom_routed_overlay_click("visibility:hidden", "child");
+}
+
+/** A pointer-transparent drawer falls through in DOM queries as well as native targeting. */
+#[test]
+fn pointer_transparent_drawer_does_not_block_dom_routed_clicks() {
+    dom_routed_overlay_click("pointer-events:none", "under");
+}
+
+/** Exercise native targeting and both DOM hit APIs against the same fixed overlay and point. */
+fn dom_routed_overlay_click(style: &str, expected: &str) {
+    let child = if expected == "child" {
+        "<a id=child href=/child style='visibility:visible;position:absolute;left:0;top:0;width:200px;height:100px'>Child</a>"
+    } else {
+        ""
+    };
+    let body = format!(
+        "<html><body style='margin:0'><a id=under href=/under style='position:absolute;left:0;top:0;width:200px;height:100px'>Under</a>\
+         <div id=drawer style='position:fixed;inset:0;{style}'>{child}</div>\
+         <script>document.getElementById('{expected}').addEventListener('click',e=>{{\
+         const hit=document.elementFromPoint(50,50);\
+         const hits=document.elementsFromPoint(50,50);\
+         if(!hit||hit.id!=='{expected}'||hits.some(n=>n.id==='drawer'))e.preventDefault();\
+         }});</script></body></html>"
+    );
+    let fixture = Fixture::start(move |_| reply("200 OK", "text/html", "", &body));
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, (50.0, 50.0)).unwrap();
+    assert!(
+        result["url"]
+            .as_str()
+            .is_some_and(|url| url.ends_with(&format!("/{expected}"))),
+        "{result}"
+    );
+}
+
 /** An inert subtree is never hit; the click reaches the link beneath it. */
 #[test]
 fn inert_subtrees_are_not_hit() {

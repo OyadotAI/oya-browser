@@ -673,6 +673,9 @@ fn media_support_empty(support: &MediaSupport) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NodeBox {
+    /// Native pointer eligibility excludes hits without discarding hidden boxes' layout metrics.
+    #[serde(default)]
+    pub pointer_excluded: bool,
     /// The node's local identity.
     pub node: usize,
     pub x: f64,

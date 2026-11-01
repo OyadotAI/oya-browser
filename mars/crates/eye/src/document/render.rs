@@ -209,6 +209,9 @@ pub struct DisplayOutline {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayItem {
+    /// Pointer eligibility from the styled node, kept separate from opacity and layout extent.
+    #[serde(default)]
+    pub pointer_excluded: bool,
     /// Measured content and border boxes for layout observers, independent from paint transforms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resize_box: Option<mars_core::geometry::BoxMetrics>,
