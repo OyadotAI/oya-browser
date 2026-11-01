@@ -129,6 +129,10 @@ pub struct VmState {
     heap on the next step (about 170 ms on YouTube) while every state from outside is checked. */
     #[cfg_attr(not(feature = "conformance"), serde(skip))]
     verified: bool,
+    /** The page's compiled code, carried to the next step so it is not filed again; never
+    serialized: a decoded state compiles its sources afresh. */
+    #[cfg_attr(not(feature = "conformance"), serde(skip))]
+    registry: compile::Registry,
 }
 
 #[cfg(feature = "conformance")]
@@ -438,6 +442,7 @@ impl<'de> serde::de::Visitor<'de> for StateVisitor {
             templates: wire.templates,
             modules: wire.modules,
             verified: false,
+            registry: compile::Registry::default(),
         })
     }
 }
@@ -1345,6 +1350,8 @@ fn session<'h>(
     page.imports = host.imports;
     page.inline_scripts = inline_sources(sources, &environment.scripts);
     let mut vm = Vm::new(state.heap, page, limits);
+    vm.registry = state.registry;
+    vm.registry.begin_step();
     builtins::initialize_shared(&mut vm)?;
     builtins::initialize_shared_gc(&mut vm)?;
     #[cfg(feature = "conformance")]
@@ -1759,6 +1766,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         templates: vm.templates,
         modules: std::mem::take(&mut vm.modules.state),
         verified: true,
+        registry: std::mem::take(&mut vm.registry),
     };
     state.validate_bounds(&vm.limits)?;
     storage.validate()?;

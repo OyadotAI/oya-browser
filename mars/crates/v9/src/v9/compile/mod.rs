@@ -546,10 +546,40 @@ impl Code {
     }
 }
 
-/** Every code of one page, keyed by site. */
-#[derive(Default)]
+/** Every code of one page, keyed by site. A persistent map: the registry travels with the
+page's state from step to step (cloning it is O(1) and shares structure), so a step no longer
+re-files the page's ~69,000 functions before it runs, and a retried step starts from its base
+state's registry. */
+#[derive(Clone, Default)]
 pub(in crate::v9) struct Registry {
-    pub codes: FastMap<u32, Arc<Code>>,
+    pub codes: crate::v9::vm::trie::Trie<Arc<Code>>,
+    /// Entry sites adopted during the current step (`begin_step` clears it). Two sources on one
+    /// site within a step are a fault; a site filed by an earlier step belongs to whatever
+    /// source is compiled there now (a later devtools evaluation reuses an offset, say).
+    adopted: crate::v9::vm::heap::FastSet<u32>,
+}
+
+impl std::fmt::Debug for Registry {
+    /** The count of filed codes; the codes themselves are large and printed nowhere. */
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Registry")
+            .field("codes", &self.codes.len())
+            .finish()
+    }
+}
+
+/** How a unit stands against what the registry already holds at its entry site. */
+enum Filing {
+    /** Nothing there yet: file every code, refusing any site already taken. */
+    Fresh,
+    /** This very unit: a later step re-adopting its scripts, nothing to do. */
+    Filed,
+    /** The same source at the same offset, compiled again (after the process cache let the
+    old unit go): its codes replace the old ones. */
+    Recompiled,
+    /** Another source claims the site. */
+    Conflict,
 }
 
 /** The content key of a classic script, wherever it sits on a page. */
@@ -581,6 +611,20 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
+        // A later step of the same page finds the script filed: a comparison, not a hash.
+        let site = super::syntax::site_of(super::syntax::Pos {
+            offset: offset as u32,
+            line: 1,
+            column: 1,
+        });
+        if let Some(code) = self.codes.get(&site)
+            && code
+                .source
+                .as_ref()
+                .is_some_and(|(text, base)| *base == offset && &**text == source)
+        {
+            return Ok(code.clone());
+        }
         self.script_keyed(source_key(source), source, offset, parse)
     }
     /** `script` for a source whose `source_key` the caller already holds: a service that keeps
@@ -659,7 +703,7 @@ impl Registry {
                 unit
             }
         };
-        if self.codes.contains_key(&unit.entry.site) {
+        if matches!(self.filing(&unit), Filing::Conflict) {
             return Err(EngineError::invalid("Duplicate V9 module site."));
         }
         self.adopt(&unit)?;
@@ -669,10 +713,45 @@ impl Registry {
             .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
         Ok((unit.entry.clone(), info))
     }
-    /** Files a unit's codes under their sites; a site compiled twice in one page is refused. */
+    /** Start a step: what earlier steps filed stays, but no longer counts as this step's. */
+    pub fn begin_step(&mut self) {
+        self.adopted.clear();
+    }
+    /** Where `unit` stands: see `Filing`. */
+    fn filing(&self, unit: &cache::Unit) -> Filing {
+        let Some(filed) = self.codes.get(&unit.entry.site) else {
+            return Filing::Fresh;
+        };
+        if Arc::ptr_eq(filed, &unit.entry) {
+            return Filing::Filed;
+        }
+        let same = match (&filed.source, &unit.entry.source) {
+            (Some((old, at)), Some((new, base))) => {
+                at == base && (Arc::ptr_eq(old, new) || old == new)
+            }
+            _ => false,
+        };
+        if same || !self.adopted.contains(&unit.entry.site) {
+            Filing::Recompiled
+        } else {
+            Filing::Conflict
+        }
+    }
+    /** Files a unit's codes under their sites; two sources on one site in a step are refused.
+    A unit already filed (a later step of the same page) costs one lookup. */
     fn adopt(&mut self, unit: &cache::Unit) -> EngineResult<()> {
+        let fresh = match self.filing(unit) {
+            Filing::Filed => {
+                self.adopted.insert(unit.entry.site);
+                return Ok(());
+            }
+            Filing::Conflict => return Err(EngineError::invalid("Duplicate V9 code site.")),
+            Filing::Fresh => true,
+            Filing::Recompiled => false,
+        };
+        self.adopted.insert(unit.entry.site);
         for code in &unit.codes {
-            if self.codes.contains_key(&code.site) {
+            if fresh && self.codes.contains_key(&code.site) {
                 return Err(EngineError::invalid("Duplicate V9 code site."));
             }
             self.file(code);
@@ -1311,5 +1390,43 @@ mod rebase_real_page {
                 "script {index} differs"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod filing_tests {
+    use super::{Registry, compile_script};
+
+    /** A script compiled at `offset`, as its own unit. */
+    fn unit(source: &str, offset: usize) -> std::sync::Arc<super::cache::Unit> {
+        let program = crate::v9::parse_at(source, offset, Some(0)).unwrap();
+        compile_script(&program, Some((source, offset))).unwrap()
+    }
+
+    /** A later step re-adopting the same unit, or the same source compiled again, files it
+    without a duplicate-site refusal; another source on the same site is refused within a
+    step and takes the site over in the next one. */
+    #[test]
+    fn a_registry_carried_across_steps_refiles_only_what_changed() {
+        let mut registry = Registry::default();
+        let first = unit("function f(){return 1}f();", 10);
+        registry.adopt(&first).unwrap();
+        let filed = registry.codes.len();
+        registry.adopt(&first).unwrap();
+        assert_eq!(registry.codes.len(), filed);
+        registry
+            .adopt(&unit("function f(){return 1}f();", 10))
+            .unwrap();
+        assert_eq!(registry.codes.len(), filed);
+        assert!(
+            registry
+                .adopt(&unit("function g(){return 2}g();", 10))
+                .is_err()
+        );
+        // The next step may compile another source where an earlier step's was.
+        registry.begin_step();
+        registry
+            .adopt(&unit("function g(){return 2}g();", 10))
+            .unwrap();
     }
 }
