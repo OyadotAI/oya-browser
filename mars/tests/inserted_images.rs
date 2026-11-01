@@ -277,3 +277,106 @@ fn background_revealed_by_an_ancestor_class_change_loads() {
     scripts_ran(&page);
     assert_eq!(runtime.snapshot().images.len(), 1, "{page}");
 }
+
+/** The Airbnb picture as the AVIF its CDN sends, 240x180, decoded by Mars's own decoder. */
+const AIRBNB_AVIF: &[u8] = include_bytes!("fixtures/airbnb-240.avif");
+/** A quarter-turned AVIF: its size reads fine, but the decoder refuses the rotation as Unsupported. */
+const ROTATED_AVIF: &[u8] = include_bytes!("fixtures/avif-rotated-64x32.avif");
+
+/** The Accept of each request for /a.avif, true when the request offered AVIF. */
+type Offers = std::sync::Arc<std::sync::Mutex<Vec<bool>>>;
+
+/** A 200 response of the given media type. */
+fn response(mime: &str, body: &[u8]) -> Vec<u8> {
+    let mut bytes = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    bytes.extend_from_slice(body);
+    bytes
+}
+
+/** A server whose /a.avif answers `avif` to a request that offers AVIF, and the PNG to one that does not. */
+fn negotiated(page: &str, avif: Vec<u8>) -> (Fixture, Offers) {
+    let offers: Offers = Default::default();
+    let seen = std::sync::Arc::clone(&offers);
+    let page = html("", page);
+    let fixture = Fixture::start(
+        Box::new(move |request| {
+            let path = request.split_whitespace().nth(1).unwrap_or_default();
+            match path {
+                "/" => page.clone(),
+                "/a.avif" => {
+                    let offered = request.contains("image/avif");
+                    seen.lock().unwrap().push(offered);
+                    if offered {
+                        response("image/avif", &avif)
+                    } else {
+                        image()
+                    }
+                }
+                _ => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .to_vec(),
+            }
+        }),
+        false,
+    );
+    (fixture, offers)
+}
+
+/** Navigates the negotiated page and returns its inspected form with the Accept log. */
+fn load_negotiated(page: &str, avif: Vec<u8>) -> (Fixture, Offers, mars::runtime::Runtime, Value) {
+    let (fixture, offers) = negotiated(page, avif);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    (fixture, offers, runtime, page)
+}
+
+/** Creates the image at /a.avif with an onload that writes its natural size into #out. */
+const AVIF_IMAGE_PAGE: &str = "<p id=out></p><script>const i=new Image();i.id='pic';\
+     i.onload=()=>document.getElementById('out').textContent=i.naturalWidth+'x'+i.naturalHeight;\
+     i.src='/a.avif';document.body.appendChild(i);</script>";
+
+/** An AVIF the decoder finishes is offered first, decoded to its container size, and never re-requested. */
+#[test]
+fn avif_image_decodes_to_its_natural_size_on_the_first_request() {
+    let (_fixture, offers, _runtime, page) = load_negotiated(AVIF_IMAGE_PAGE, AIRBNB_AVIF.to_vec());
+    scripts_ran(&page);
+    assert_eq!(node(&page, "out")["text"], "240x180", "{page}");
+    assert_eq!(node(&page, "pic")["bounds"]["width"], 240.0, "{page}");
+    assert_eq!(
+        *offers.lock().unwrap(),
+        vec![true],
+        "one request, AVIF offered"
+    );
+}
+
+/** An AVIF feature Mars does not build is asked for again without AVIF, so the page shows the PNG. */
+#[test]
+fn unsupported_avif_falls_back_to_a_retry_without_avif() {
+    let (_fixture, offers, _runtime, page) =
+        load_negotiated(AVIF_IMAGE_PAGE, ROTATED_AVIF.to_vec());
+    scripts_ran(&page);
+    assert_eq!(node(&page, "out")["text"], "2x1", "{page}");
+    assert_eq!(
+        *offers.lock().unwrap(),
+        vec![true, false],
+        "AVIF offered, then the retry"
+    );
+}
+
+/** A broken AVIF is not an Unsupported one, so no request leaves AVIF out of its Accept. The runtime's
+existing undecodable-bytes retry (as SVG) may still ask again, but it offers AVIF as the first request did. */
+#[test]
+fn malformed_avif_is_not_retried() {
+    let mut broken = vec![0, 0, 0, 0x14];
+    broken.extend_from_slice(b"ftypavif");
+    broken.extend_from_slice(&[0; 4]);
+    broken.extend_from_slice(b"avif");
+    let (_fixture, offers, _runtime, _page) = load_negotiated(AVIF_IMAGE_PAGE, broken);
+    assert!(
+        !offers.lock().unwrap().contains(&false),
+        "a broken file gets no AVIF-free retry"
+    );
+}

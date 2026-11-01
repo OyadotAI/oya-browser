@@ -289,7 +289,14 @@ impl Prepared {
  * DELETE, OPTIONS) always connects afresh and never shares, so it is never retried as reused.
  */
 /** Raster formats the native painter decodes; CDNs negotiate WebP from our Accept header. */
-const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+/** Bitmap types Relay admits for an image request; AVIF is decoded by mars-avif in the runtime. */
+const IMAGE_TYPES: [&str; 5] = [
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/avif",
+];
 
 fn acquire(
     url: &Url,
@@ -431,16 +438,9 @@ fn finish(
         .unwrap_or_default();
     // A redirect carries no image: its caller follows it and checks the image it leads to.
     let redirect = REDIRECT_STATUSES.contains(&status);
-    if request.image && !redirect && mime == "image/avif" {
-        return Err(EngineError::new(
-            super::constants::IMAGE_AVIF_REFUSED,
-            "The image arrived as AVIF, which Mars does not decode yet.",
-            "Mars asks the server again without offering AVIF.",
-        ));
-    }
     if request.image && !redirect && !IMAGE_TYPES.contains(&mime.as_str()) {
         return Err(EngineError::unsupported(
-            "Only PNG, JPEG, WebP and GIF images are supported.",
+            "Only PNG, JPEG, WebP, GIF and AVIF images are supported.",
         ));
     }
     if request.destination == Destination::Document
@@ -671,4 +671,46 @@ pub fn redirect_url(url: &Url, location: &str, grants: &[String]) -> EngineResul
         return Err(super::policy::denied());
     }
     Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** An AVIF image is admitted like the other bitmap types: Relay passes the bytes on and the
+    runtime's decoder decides whether it can show them. */
+    #[test]
+    fn avif_image_responses_are_admitted() {
+        let url = Url::parse("https://a.example/p.avif").expect("url");
+        let request = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get(url.as_str())
+        };
+        let headers = BTreeMap::from([("content-type".to_string(), "image/avif".to_string())]);
+        let response = finish(
+            url,
+            HTTP_OK,
+            headers,
+            b"ftyp".to_vec(),
+            Vec::new(),
+            &request,
+        )
+        .expect("avif admitted");
+        assert_eq!(response.mime, "image/avif");
+        assert!(response.image_data);
+    }
+
+    /** A type outside the image list stays refused, so admitting AVIF widens nothing else. */
+    #[test]
+    fn other_image_types_remain_refused() {
+        let url = Url::parse("https://a.example/p.tiff").expect("url");
+        let request = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get(url.as_str())
+        };
+        let headers = BTreeMap::from([("content-type".to_string(), "image/tiff".to_string())]);
+        assert!(finish(url, HTTP_OK, headers, b"II*".to_vec(), Vec::new(), &request).is_err());
+    }
 }

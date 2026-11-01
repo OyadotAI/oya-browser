@@ -986,12 +986,20 @@ struct Bitmap {
     rgba: Vec<u8>,
 }
 impl Bitmap {
-    /** Decode PNG or JPEG bytes by their signature; other formats keep the placeholder. */
+    /** Decode PNG, JPEG or AVIF bytes by their signature; other formats keep the placeholder. */
     fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.starts_with(b"\x89PNG") {
             Self::png(bytes)
         } else if bytes.starts_with(&[0xff, 0xd8]) {
             Self::jpeg(bytes)
+        } else if crate::runtime::images::avif::is_avif(bytes) {
+            crate::runtime::images::avif::decode(bytes)
+                .ok()
+                .map(|image| Self {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.rgba,
+                })
         } else {
             None
         }

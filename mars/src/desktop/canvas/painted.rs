@@ -143,6 +143,12 @@ fn band(y: f64) -> usize {
 }
 /** One decode of fetched bytes; AppKit keeps the decoded bitmap with the image. */
 fn decode(bytes: &[u8]) -> Option<Retained<NSImage>> {
+    // AVIF goes through Mars's own decoder: AppKit's ImageIO would decode it outside those bounds.
+    if crate::runtime::images::avif::is_avif(bytes) {
+        return crate::runtime::images::avif::bitmap(bytes)
+            .ok()
+            .and_then(|bitmap| canvas_image(&bitmap));
+    }
     // SAFETY: the bytes outlive the call and NSData copies them.
     let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len() as _) };
     NSImage::initWithData(NSImage::alloc(), &data)

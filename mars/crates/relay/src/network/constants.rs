@@ -7,13 +7,9 @@ use std::time::Duration;
 /// hung (and restarts the engine) instead of receiving an ordinary, degradable timeout.
 pub const REPLY_MARGIN: Duration = Duration::from_millis(300);
 
-/// The error code of an image a server sent as AVIF, which the painter does not decode yet.
-/// Chrome's image Accept offers AVIF first, so CDNs that negotiate (Airbnb's) send it; the
-/// caller asks once more with `ACCEPT_IMAGE_WITHOUT_AVIF` instead of showing nothing.
-pub const IMAGE_AVIF_REFUSED: &str = "image_avif_unsupported";
-
-/// Chrome's image Accept without AVIF, for the one retry after `IMAGE_AVIF_REFUSED`; the
-/// first request keeps Chrome's exact header.
+/// Chrome's image Accept without AVIF, for the one retry after the runtime's AVIF decoder reports
+/// an AVIF feature it does not build (intra block copy, superres, rotation); the first request
+/// keeps Chrome's exact header, which offers AVIF first.
 pub const ACCEPT_IMAGE_WITHOUT_AVIF: &str = "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
 
 /// One socket read. Large enough that a 2 MiB body is not thousands of system calls, small

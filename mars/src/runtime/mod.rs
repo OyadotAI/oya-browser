@@ -23,7 +23,7 @@ mod framing;
 /** Committed pages the person visited and address-field completion. */
 pub mod history;
 mod horizontal;
-mod images;
+pub(crate) mod images;
 mod indexed_db;
 mod integrity;
 mod interaction;

@@ -32,6 +32,7 @@ const FONT_TABLES: usize = 64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+pub(crate) mod avif;
 mod blob;
 pub(super) mod canvas;
 pub(in crate::runtime) use blob::{is_blob, snapshot_bytes};
@@ -70,6 +71,7 @@ pub(super) fn dimensions(mime: &str, bytes: &[u8]) -> EngineResult<DecodedImage>
         "image/jpeg" => jpeg(bytes)?,
         "image/webp" => webp(bytes)?,
         "image/gif" => gif(bytes)?,
+        "image/avif" => avif_size(bytes)?,
         _ => return Err(invalid()),
     };
     if image.width == 0
@@ -93,6 +95,8 @@ pub(super) fn sniffed(bytes: &[u8]) -> Option<&'static str> {
         Some("image/jpeg")
     } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Some("image/webp")
+    } else if avif::is_avif(bytes) {
+        Some("image/avif")
     } else {
         None
     }
@@ -170,6 +174,12 @@ fn gif(bytes: &[u8]) -> EngineResult<DecodedImage> {
         u32::from(u16::from_le_bytes([bytes[6], bytes[7]])),
         u32::from(u16::from_le_bytes([bytes[8], bytes[9]])),
     )
+}
+
+/** AVIF's size comes from its container; the whole picture is decoded at admission (see `raster`). */
+fn avif_size(bytes: &[u8]) -> EngineResult<DecodedImage> {
+    let (width, height) = avif::dimensions(bytes)?;
+    checked(width, height)
 }
 
 /** One shared check prevents multiplication overflow and oversized decoded surfaces. */
@@ -1109,7 +1119,26 @@ impl super::supervisor::Runtime {
         cors: ImageCors,
         deadline: std::time::Instant,
     ) -> EngineResult<Fetched> {
-        let (response, origin_clean) = canvas::fetch(self, base, url, bitmap, cors, deadline)?;
+        match self.fetch_image_offering(base, url, bitmap, cors, deadline, true) {
+            Err(error) if error.code == avif::UNSUPPORTED => {
+                self.fetch_image_offering(base, url, bitmap, cors, deadline, false)
+            }
+            fetched => fetched,
+        }
+    }
+    /** One image request, with AVIF offered or left out of its Accept. Only an AVIF that Mars's
+    decoder cannot build leads to the retry without it: that is the one answer a second request can change. */
+    fn fetch_image_offering(
+        &mut self,
+        base: &url::Url,
+        url: &url::Url,
+        bitmap: bool,
+        cors: ImageCors,
+        deadline: std::time::Instant,
+        avif: bool,
+    ) -> EngineResult<Fetched> {
+        let (response, origin_clean) =
+            canvas::fetch(self, base, url, bitmap, cors, deadline, avif)?;
         if response.status != HTTP_OK {
             return Err(EngineError::unsupported("The image could not be loaded."));
         }
@@ -1262,6 +1291,11 @@ pub(super) fn raster(mime: String, bytes: Vec<u8>) -> EngineResult<Fetched> {
     // placeholder is PNG data labeled image/gif, and every one of them failed to decode.
     let mime = sniffed(&bytes).map_or(mime, str::to_owned);
     let size = dimensions(&mime, &bytes)?;
+    // An AVIF the decoder cannot finish is refused here, before the page commits it, so the fetch
+    // can ask again for a format it can show. Painters decode the same bytes again when they paint.
+    if mime == "image/avif" {
+        avif::decode(&bytes)?;
+    }
     Ok(Fetched::Raster(
         ImageAsset {
             mime,
@@ -1632,6 +1666,19 @@ mod tests {
     }
 
     /** One header's decoded size. */
+    /** AVIF is recognised by its brand and sized from its container; other HEIF brands are not images here. */
+    #[test]
+    fn avif_is_sniffed_and_sized_from_its_container() {
+        let airbnb = include_bytes!("../../tests/fixtures/airbnb-240.avif");
+        assert_eq!(sniffed(airbnb), Some("image/avif"));
+        assert_eq!(size("image/avif", airbnb), Some((240, 180)));
+        assert_eq!(
+            sniffed(b"\0\0\0\x14ftypavis\0\0\0\0avif"),
+            Some("image/avif")
+        );
+        assert_eq!(sniffed(b"\0\0\0\x14ftypheic\0\0\0\0mif1"), None);
+    }
+
     fn size(mime: &str, bytes: &[u8]) -> Option<(u32, u32)> {
         dimensions(mime, bytes).ok().map(|d| (d.width, d.height))
     }

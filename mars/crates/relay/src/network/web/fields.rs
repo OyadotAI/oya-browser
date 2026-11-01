@@ -440,8 +440,9 @@ mod tests {
         assert_eq!(sent(&post, "cache-control"), "max-age=0");
     }
 
-    /** An image asks with Chrome's exact Accept, AVIF first; only the retry after an AVIF
-    answer leaves AVIF out, and its cache entry is kept apart from the first request's. */
+    /** An image asks with Chrome's exact Accept, AVIF first; only the retry, which the runtime
+    asks for when its AVIF decoder cannot build a file, leaves AVIF out, and its cache entry is
+    kept apart from the first request's. */
     #[test]
     fn image_accept_offers_avif_except_on_the_retry() {
         let image = WebRequest {
