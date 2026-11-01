@@ -7,7 +7,7 @@ CARGO = CARGO_TARGET_DIR=$(TARGET) cargo
 FEATURES = --features mars/test-support
 QUIET = --offline -q
 
-.PHONY: help fmt fmt-check clippy test-v9 test-eye test-relay test-avif test-core test-mars test-window test gate app run clean-incremental
+.PHONY: help fmt fmt-check clippy test-v9 test-eye test-relay test-avif test-mp4 test-core test-mars test-window test gate app run clean-incremental
 
 help: ## List the targets.
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
@@ -33,6 +33,9 @@ test-relay: ## Network.
 test-avif: ## The AVIF decoder.
 	$(CARGO) test $(QUIET) -p mars-avif
 
+test-mp4: ## The fragmented MP4 demuxer.
+	$(CARGO) test $(QUIET) -p mars-mp4
+
 test-core: ## Shared types.
 	$(CARGO) test $(QUIET) -p mars-core
 
@@ -42,7 +45,7 @@ test-mars: ## The runtime and desktop suites that need no window.
 test-window: ## Real-window tests: they open windows, so leave the screen alone while they run.
 	$(CARGO) test $(QUIET) -p mars $(FEATURES) --test window -- --ignored --test-threads=1
 
-test: test-core test-v9 test-eye test-relay test-avif test-mars ## Every suite except the real-window one.
+test: test-core test-v9 test-eye test-relay test-avif test-mp4 test-mars ## Every suite except the real-window one.
 
 gate: fmt-check clippy test ## What must be green before a commit.
 

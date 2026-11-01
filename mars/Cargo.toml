@@ -2,7 +2,7 @@
 [workspace]
 # vendor/rustls is its own package: a patched copy of the registry crate, see vendor/rustls/MARS.md.
 exclude = ["vendor/rustls"]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp", "crates/xml", "crates/avif", "crates/mp4"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
