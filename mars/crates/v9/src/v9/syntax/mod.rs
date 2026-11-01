@@ -331,7 +331,7 @@ impl Parser {
     }
     /** Exclusive end of the last consumed token, without following trivia. */
     fn consumed_end(&self) -> u32 {
-        self.tokens[self.position.saturating_sub(1)].end as u32
+        self.tokens[self.position.saturating_sub(1)].end
     }
     /** Position of the current token. */
     fn pos(&self) -> Pos {

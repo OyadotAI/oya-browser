@@ -268,7 +268,7 @@ fn vtt_cues_enter_and_exit_with_playback_time() {
          const cue = new VTTCue(1, 2, 'Hello <b>world</b>'); cue.id = 'c1'; cue.line = 3; cue.align = 'start';\
          const track = v.addTextTrack('subtitles', 'English', 'en'); track.mode = 'showing'; track.addCue(cue);\
          let cues = [cue instanceof TextTrackCue, cue.startTime, cue.endTime, cue.text, cue.line, cue.align, cue.size, cue.position, track.cues.length, track.cues.getCueById('c1') === cue, cue.track === track, v.textTracks.length, cue.getCueAsHTML().childNodes.length].join(',');\
-         cue.onenter = () => log.push('enter'); cue.onexit = () => log.push('exit'); track.oncuechange = () => log.push('cuechange');"
+         let seen = ''; cue.onenter = () => seen += 'enter;'; cue.onexit = () => seen += 'exit;'; track.oncuechange = () => seen += 'cuechange;';"
     ));
     assert_eq!(
         page.global("cues"),
@@ -276,7 +276,7 @@ fn vtt_cues_enter_and_exit_with_playback_time() {
     );
     page.update(r#"[{"player":1,"kind":"metadata","duration":5,"width":320,"height":240,"video":true,"enough":true}]"#);
     page.update(r#"[{"player":1,"kind":"time","time":1.5,"rate":1,"playing":false}]"#);
-    assert!(page.global("log").is_empty() || true);
+    assert_eq!(page.global("seen"), "enter;cuechange;");
     let captions: Vec<_> = page
         .sent
         .iter()
@@ -292,6 +292,7 @@ fn vtt_cues_enter_and_exit_with_playback_time() {
         page.sent
     );
     page.update(r#"[{"player":1,"kind":"time","time":2.5,"rate":1,"playing":false}]"#);
+    assert_eq!(page.global("seen"), "enter;cuechange;exit;cuechange;");
     assert!(
         page.global("r").contains("timeupdate"),
         "{}",
