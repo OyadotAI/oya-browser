@@ -23,6 +23,10 @@ pub struct WebRequest {
     /// Selects the smaller binary resource budget for explicitly requested images.
     #[serde(default)]
     pub image: bool,
+    /// An image request that leaves AVIF out of its Accept: the one retry after a server sent
+    /// AVIF, which the painter does not decode yet (see `constants::IMAGE_AVIF_REFUSED`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_avif: bool,
     /// Fetch body readers need exact decoded bytes, independently of declared text charset.
     #[serde(default)]
     pub raw_response: bool,

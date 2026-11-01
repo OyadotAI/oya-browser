@@ -30,6 +30,10 @@ pub(super) struct Key {
     /// sends no `Vary: Origin` (BBC, nytimes) must not have its no-Origin copy answer a CORS fetch.
     #[serde(default)]
     origin: Option<String>,
+    /// The image Accept left AVIF out: a CDN that negotiates the format without `Vary: Accept`
+    /// (Airbnb's) must not answer the WebP retry from its AVIF copy.
+    #[serde(default)]
+    no_avif: bool,
 }
 
 impl Key {
@@ -49,6 +53,7 @@ impl Key {
             fixture,
             image: request.image,
             origin: request.origin.clone(),
+            no_avif: request.no_avif,
         })
     }
 }
@@ -371,6 +376,7 @@ mod tests {
             fixture: false,
             image: false,
             origin: None,
+            no_avif: false,
         };
         for index in 0..entries {
             remember(Stored {

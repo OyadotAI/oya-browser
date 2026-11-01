@@ -95,7 +95,13 @@ pub(super) fn fields(
     }
     fields.push(("user-agent", USER_AGENT.into()));
     if !set_by_page(request, "accept") {
-        fields.push(("accept", accept(destination).into()));
+        let accept = match destination {
+            Destination::Image if request.no_avif => {
+                super::super::constants::ACCEPT_IMAGE_WITHOUT_AVIF
+            }
+            destination => accept(destination),
+        };
+        fields.push(("accept", accept.into()));
     }
     if secure {
         fetch_metadata(&mut fields, url, initiator.as_ref(), request);
@@ -432,6 +438,38 @@ mod tests {
         post.initiator = Some("https://a.example/form".into());
         assert_eq!(sent(&post, "origin"), "https://a.example");
         assert_eq!(sent(&post, "cache-control"), "max-age=0");
+    }
+
+    /** An image asks with Chrome's exact Accept, AVIF first; only the retry after an AVIF
+    answer leaves AVIF out, and its cache entry is kept apart from the first request's. */
+    #[test]
+    fn image_accept_offers_avif_except_on_the_retry() {
+        let image = WebRequest {
+            destination: Destination::Image,
+            image: true,
+            ..WebRequest::get("https://a.example/p.jpg")
+        };
+        assert_eq!(sent(&image, "accept"), ACCEPT_IMAGE);
+        let retry = WebRequest {
+            no_avif: true,
+            ..image.clone()
+        };
+        assert_eq!(
+            sent(&retry, "accept"),
+            crate::network::constants::ACCEPT_IMAGE_WITHOUT_AVIF
+        );
+        let url = Url::parse(&image.url).expect("url");
+        let keyed = |request: &WebRequest| super::super::cache::Key::of(request, &url, false);
+        let page = WebRequest {
+            top_level: Some("https://a.example/".into()),
+            ..image.clone()
+        };
+        let page_retry = WebRequest {
+            no_avif: true,
+            ..page.clone()
+        };
+        assert!(keyed(&page).is_some());
+        assert_ne!(keyed(&page), keyed(&page_retry));
     }
 
     #[test]

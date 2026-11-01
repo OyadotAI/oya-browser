@@ -431,6 +431,13 @@ fn finish(
         .unwrap_or_default();
     // A redirect carries no image: its caller follows it and checks the image it leads to.
     let redirect = REDIRECT_STATUSES.contains(&status);
+    if request.image && !redirect && mime == "image/avif" {
+        return Err(EngineError::new(
+            super::constants::IMAGE_AVIF_REFUSED,
+            "The image arrived as AVIF, which Mars does not decode yet.",
+            "Mars asks the server again without offering AVIF.",
+        ));
+    }
     if request.image && !redirect && !IMAGE_TYPES.contains(&mime.as_str()) {
         return Err(EngineError::unsupported(
             "Only PNG, JPEG, WebP and GIF images are supported.",
