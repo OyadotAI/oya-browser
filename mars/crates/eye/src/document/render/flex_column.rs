@@ -125,14 +125,15 @@ pub(super) fn item(
     };
     let base = match child.style.flex_basis {
         FlexBasis::Pixels(value) => content_size(child, value, false),
+        // A basis resolving below zero is clamped to zero (css-values-4 range checking).
         FlexBasis::Percent(value) if definite_height.is_some() => content_size(
             child,
-            definite_height.unwrap_or_default() * value / 100.0,
+            (definite_height.unwrap_or_default() * value / 100.0).max(0.0),
             false,
         ),
         FlexBasis::Mixed { px, percent } if definite_height.is_some() => content_size(
             child,
-            px + definite_height.unwrap_or_default() * percent / 100.0,
+            (px + definite_height.unwrap_or_default() * percent / 100.0).max(0.0),
             false,
         ),
         FlexBasis::Content => natural_content,
