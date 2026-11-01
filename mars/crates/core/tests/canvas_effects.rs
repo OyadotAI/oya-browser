@@ -87,3 +87,24 @@ fn mismatched_layer_size_is_refused() {
     let layer = Bitmap::new(2, 2).unwrap();
     assert!(composite_layer(&mut target, &layer, None, 1.0, Composite::SourceOver).is_err());
 }
+
+/** A stroke ring is the band between the grown and shrunk glyph coverage: edges are inked and the interior is not. */
+#[test]
+fn stroke_ring_inks_the_glyph_edge_and_leaves_the_interior_empty() {
+    let mut glyph = Bitmap::new(8, 8).unwrap();
+    for (index, pixel) in glyph
+        .pixels
+        .make_mut()
+        .unwrap()
+        .chunks_exact_mut(4)
+        .enumerate()
+    {
+        if index % 8 < 4 && index / 8 < 4 {
+            pixel[3] = 255;
+        }
+    }
+    let ring = mars_core::canvas::outline_ring(&glyph, 1).unwrap();
+    assert_eq!(pixel(&ring, (0, 0))[3], 255);
+    assert_eq!(pixel(&ring, (4, 4))[3], 255);
+    assert_eq!(pixel(&ring, (1, 1))[3], 0);
+}

@@ -14,6 +14,7 @@ mod attributes;
 mod clipping;
 mod colors;
 mod drawing;
+mod focus;
 mod font;
 mod hit;
 mod images;
@@ -25,6 +26,7 @@ mod placement;
 mod results;
 mod shadows;
 mod state;
+mod text_props;
 use lifecycle::{admit, size};
 pub(in crate::v9) use lifecycle::{prepare_resize, publish, resized, validate, validate_targets};
 static PROTO: OnceLock<u32> = OnceLock::new();
@@ -72,6 +74,7 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
         ("fillRect", 4),
         ("clearRect", 4),
         ("fillText", 3),
+        ("strokeText", 3),
         ("measureText", 1),
         ("getImageData", 4),
     ] {
@@ -86,6 +89,8 @@ pub(super) fn install(b: &mut Builder, canvas: u32) {
     clipping::install(b, proto);
     paints::install(b, proto);
     shadows::install(b, proto);
+    focus::install(b, proto);
+    text_props::install(b, proto);
     let _ = PROTO.set(proto);
 }
 
@@ -210,7 +215,9 @@ fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let parent = font_size(vm, node);
     let font = font::parse(&value, parent);
     let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    if let Some(font) = font {
+    if let Some(mut font) = font {
+        font.letter_spacing = state.drawing.font.letter_spacing;
+        font.word_spacing = state.drawing.font.word_spacing;
         state.drawing.font = font;
     }
     Ok(JsValue::Undefined)

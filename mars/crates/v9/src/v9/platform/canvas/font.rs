@@ -147,6 +147,8 @@ pub(super) fn parse(text: &str, parent: f64) -> Option<Font> {
         weight: prefix.weight,
         italic: prefix.style.is_some(),
         text: canonical(&prefix, size, &families),
+        letter_spacing: 0.0,
+        word_spacing: 0.0,
     })
 }
 

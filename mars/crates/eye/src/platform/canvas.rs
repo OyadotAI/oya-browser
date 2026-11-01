@@ -19,7 +19,7 @@ impl CanvasHost for NativeCanvas {
     /// Both calls resolve through Eye's shared generic font selection.
     fn measure(&self, font: &Font, text: &str) -> EngineResult<f64> {
         validate(font, text)?;
-        Ok(super::measure(text, face(font)))
+        Ok(advance(text, font))
     }
     /// Rasterize glyphs into transparent pixels; the caller composites those pixels transactionally.
     fn text(
@@ -102,8 +102,17 @@ fn face(font: &Font) -> super::Face {
         family,
         weight: font.weight,
         italic: font.italic,
+        spacing: font.letter_spacing,
         ..super::Face::system(font.size, false)
     }
+}
+/** Width of a run as painted: AppKit's letter spacing is inside the face, CSS word spacing is added per separator. */
+fn advance(text: &str, font: &Font) -> f64 {
+    let separators = text
+        .encode_utf16()
+        .filter(|unit| *unit == 0x20 || *unit == 0xa0)
+        .count();
+    super::measure(text, face(font)) + font.word_spacing * separators as f64
 }
 /** Native allocation/encoding refusal is observable, never represented as successful blank ink. */
 fn drawing_error() -> EngineError {
@@ -156,11 +165,11 @@ fn raster(
             f64::from(color[2]) / 255.0,
             f64::from(color[3]) / 255.0,
         );
-        let run = super::styled(text, face(font), &ink, false);
+        let run = super::spaced(text, face(font), &ink, false, font.word_spacing);
         run.drawWithRect_options_context(
             NSRect::new(
                 NSPoint::new(at[0], f64::from(bitmap.height) - at[1]),
-                NSSize::new(super::measure(text, face(font)) + font.size, font.size),
+                NSSize::new(advance(text, font) + font.size, font.size),
             ),
             NSStringDrawingOptions(0),
             None,

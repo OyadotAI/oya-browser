@@ -13,7 +13,7 @@ mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
 pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage, composite_layer};
-pub use effects::{blur_plane, blur_widths, shadow_layer, shadow_sigma};
+pub use effects::{blur_plane, blur_widths, outline_ring, shadow_layer, shadow_sigma};
 pub use paint::{
     GRADIENT_STOPS, Geometry, Gradient, Paint, Pattern, Repeat, Shader, Stop, TRANSPARENT,
 };
@@ -129,6 +129,12 @@ pub struct Font {
     pub italic: bool,
     /// Canonical CSS serialization, such as "bold 11px Arial", that the getter returns verbatim.
     pub text: String,
+    /// Extra advance after every character, in CSS pixels; negative values tighten the text.
+    #[serde(default)]
+    pub letter_spacing: f64,
+    /// Extra advance after every word separator, in CSS pixels.
+    #[serde(default)]
+    pub word_spacing: f64,
 }
 impl Default for Font {
     /// Canvas starts with the web platform's default font.
@@ -139,6 +145,8 @@ impl Default for Font {
             weight: 400,
             italic: false,
             text: "10px sans-serif".into(),
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
         }
     }
 }

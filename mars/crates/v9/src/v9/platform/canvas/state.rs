@@ -65,6 +65,18 @@ pub(in crate::v9) struct DrawingState {
     pub shadow_blur: f64,
     /** Shadow offset in device pixels, unaffected by the drawing transform. */
     pub shadow_offset: [f64; 2],
+    /** Keyword properties are validated and reported; their effects are not rendered (see the canvas notes). */
+    pub kerning: String,
+    /** Font stretch keyword, stored for script readback. */
+    pub stretch: String,
+    /** Small-caps keyword, stored for script readback. */
+    pub variant_caps: String,
+    /** Text rendering keyword, stored for script readback. */
+    pub rendering: String,
+    /** Image smoothing quality keyword, stored for script readback. */
+    pub smoothing_quality: String,
+    /** Language tag, stored for script readback. */
+    pub lang: String,
 }
 
 impl Default for DrawingState {
@@ -87,6 +99,12 @@ impl Default for DrawingState {
             shadow_color: [0, 0, 0, 0],
             shadow_blur: 0.0,
             shadow_offset: [0.0, 0.0],
+            kerning: "auto".into(),
+            stretch: "normal".into(),
+            variant_caps: "normal".into(),
+            rendering: "auto".into(),
+            smoothing_quality: "low".into(),
+            lang: "inherit".into(),
         }
     }
 }
