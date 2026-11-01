@@ -580,3 +580,35 @@ fn a_transparent_field_over_its_label_takes_the_click() {
     let at = click_at(&mut runtime, &page, centre(&page, "cap")).unwrap();
     assert_eq!(at["focused"], node(&page, "where")["node_id"], "{at}");
 }
+
+/** An invisible link laid over a visible button does not take an agent's click: the agent acts on
+what it is shown, so a transparent overlay is refused and the page is left unchanged. */
+#[test]
+fn an_invisible_overlay_does_not_take_an_agents_click() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><button id="ok" style="position:absolute;left:10px;top:10px;width:200px;height:40px">Cancel</button><a id="trap" href="/trap" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0">x</a></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, centre(&page, "ok"));
+    assert_eq!(result.unwrap_err().code, "invalid_target");
+    let after = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert!(!after["url"].as_str().unwrap().ends_with("/trap"));
+}
+
+/** A label naming a disabled field does not focus it. */
+#[test]
+fn a_label_for_a_disabled_field_does_not_focus_it() {
+    let fixture = serve(
+        r#"<html><body><label id="lab" for="name">Your name</label> <input id="name" disabled></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    // Refusing the click or answering without a focus both keep the disabled field untouched.
+    let focused = click_at(&mut runtime, &page, centre(&page, "lab"))
+        .map(|at| at["focused"].clone())
+        .unwrap_or(serde_json::Value::Null);
+    assert!(focused.is_null(), "{focused}");
+}

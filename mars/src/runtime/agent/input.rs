@@ -91,7 +91,10 @@ impl Runtime {
         let page = self.current()?;
         let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
         let report = page.point_node(base, hit);
-        if let Some(field) = crate::document::focus_field(page.owner_document(base), hit) {
+        let owner = page.owner_document(base);
+        if let Some(field) = crate::document::focus_field(owner, hit)
+            .filter(|field| !crate::document::agent_hidden(owner, field))
+        {
             let focused = page.node_id(base + field.local_id);
             return Ok(
                 json!({"page_id":page.id(),"revision":page.revision,"focused":focused,"hit":report}),

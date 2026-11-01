@@ -70,10 +70,18 @@ pub fn is_text_field(node: &Node) -> bool {
  */
 pub fn focus_field<'a>(document: &'a Document, hit: &Node) -> Option<&'a Node> {
     let control = nearest_control(document, hit)?;
-    match control.tag.as_str() {
-        "label" => labeled_control(document, control).filter(|field| is_text_field(field)),
-        _ => Some(control).filter(|field| is_text_field(field)),
-    }
+    let field = match control.tag.as_str() {
+        "label" => labeled_control(document, control)?,
+        _ => control,
+    };
+    (is_text_field(field) && usable(field)).then_some(field)
+}
+
+/** Whether a field a click resolved to may take focus: a label can name a field that is hidden,
+inert, pointer-events:none or disabled, and focusing that one would type into something the
+person cannot see or use. */
+fn usable(field: &Node) -> bool {
+    takes_pointer(field) && !field.attributes.contains_key("disabled")
 }
 
 /**

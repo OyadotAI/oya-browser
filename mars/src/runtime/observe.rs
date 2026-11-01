@@ -214,9 +214,17 @@ impl Page {
      */
     pub(super) fn hit(&self, x: f64, y: f64, top: f64) -> Option<(usize, &Node)> {
         let display = self.display.as_ref()?;
-        let (base, node) =
-            crate::document::pointer_target(display, [x, y], top, |item| self.painted_node(item))?;
-        (!agent_hidden(self.owner_document(base), node)).then_some((base, node))
+        // Whether the item last resolved (the one pointer_target settles on) is painted visibly.
+        let shown = std::cell::Cell::new(true);
+        let (base, node) = crate::document::pointer_target(display, [x, y], top, |item| {
+            shown.set(crate::document::agent_visible(item));
+            self.painted_node(item)
+        })?;
+        // An invisible box on top (opacity 0, clipped away) is refused rather than clicked: an agent
+        // acts on what it is shown, so a transparent overlay must not take its click. A transparent
+        // form field over its own visible label is ordinary custom styling and keeps the click.
+        let allowed = shown.get() || transparent_field(node);
+        (allowed && !agent_hidden(self.owner_document(base), node)).then_some((base, node))
     }
     /** The node a painted item belongs to, read from the frame that owns its identity range. */
     fn painted_node(&self, item: &crate::document::DisplayItem) -> Option<(usize, &Node)> {
@@ -828,5 +836,18 @@ impl Runtime {
         Ok(
             json!({"satisfied":satisfied,"page_id":page.id(),"revision":page.revision,"url":safe_url(&page.url,page.sensitive)}),
         )
+    }
+}
+
+/// Input types that act as buttons: an invisible one is a clickjacking surface, not a styled field.
+const BUTTON_INPUTS: [&str; 4] = ["submit", "button", "image", "reset"];
+
+/** Whether an invisible hit may still take an agent's click: a field (text input, checkbox, radio,
+select, textarea) a page styles by hiding it over its visible label, never a button or link. */
+fn transparent_field(node: &Node) -> bool {
+    match node.tag.as_str() {
+        "select" | "textarea" => true,
+        "input" => !BUTTON_INPUTS.contains(&node.input_type()),
+        _ => false,
     }
 }
