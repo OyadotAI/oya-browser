@@ -138,3 +138,187 @@ fn long_control_labels_are_capped() {
     let input = document.nodes.iter().find(|n| n.tag == "input").unwrap();
     assert!(mars_eye::label(&document, input).len() <= mars_eye::constants::TEXT_BYTES);
 }
+
+/** Controls and options in the scale fixtures below, named so the fixtures state their sizes. */
+const INPUTS: usize = 1000;
+const SELECTS: usize = 50;
+const OPTIONS_PER_SELECT: usize = 20;
+const FORMS: usize = 40;
+const SCALE_OPTIONS: usize = 5000;
+const SCALE_FILLER: usize = 20_000;
+
+/** Controls are nodes, so a page past 256 of them parses and every one submits like any other. */
+#[test]
+fn a_page_with_more_than_256_controls_parses_and_each_control_submits() {
+    let mut html = String::from("<form action=\"/s\">");
+    for index in 0..INPUTS {
+        html.push_str(&format!("<input name=\"i{index}\">"));
+    }
+    for index in 0..SELECTS {
+        html.push_str(&format!("<select name=\"s{index}\">"));
+        for option in 0..OPTIONS_PER_SELECT {
+            html.push_str(&format!("<option value=\"{option}\">o{option}</option>"));
+        }
+        html.push_str("</select>");
+    }
+    html.push_str("</form>");
+    let document = parse(&html).unwrap();
+    let submitted = submission(&document, form_index(&document), None).unwrap();
+    for index in 0..INPUTS {
+        assert!(
+            submitted.encoded.contains(&format!("i{index}=")),
+            "i{index}"
+        );
+    }
+    for index in 0..SELECTS {
+        let name = format!("s{index}");
+        let select = document
+            .nodes
+            .iter()
+            .find(|n| n.attributes.get("name") == Some(&name))
+            .unwrap();
+        let last = select_options_of(&document, select.local_id)
+            .last()
+            .unwrap()
+            .local_id;
+        let edited = mars_eye::select(&document, select.local_id, last).unwrap();
+        assert!(edited.nodes[last].selected, "{name}");
+    }
+}
+
+/** A page past 32 forms parses too; forms are nodes, and the node budget already bounds them. */
+#[test]
+fn a_page_with_more_than_32_forms_parses() {
+    let html: String = (0..FORMS)
+        .map(|index| format!("<form action=\"/f{index}\"><input name=\"n{index}\"></form>"))
+        .collect();
+    let document = parse(&html).unwrap();
+    assert_eq!(
+        document.nodes.iter().filter(|n| n.tag == "form").count(),
+        FORMS
+    );
+}
+
+/** The first form in the document, the one the submission test submits. */
+fn form_index(document: &Document) -> usize {
+    document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "form")
+        .unwrap()
+        .local_id
+}
+
+/** A select's options in source order, through the public scoping rule. */
+fn select_options_of(document: &Document, select: usize) -> Vec<&Node> {
+    mars_eye::select_options(document, select)
+}
+
+/** Options are grouped per select in one pass, so 5000 options under one select (with the
+node budget filled around them) still parse and select in time linear in the page. */
+#[test]
+fn five_thousand_options_under_one_select_scale_linearly() {
+    let mut html = String::from("<select name=\"big\">");
+    for option in 0..SCALE_OPTIONS {
+        html.push_str(&format!("<option>choice {option}</option>"));
+    }
+    html.push_str("</select>");
+    html.push_str(&"<p>filler</p>".repeat(SCALE_FILLER));
+    let started = std::time::Instant::now();
+    let document = parse(&html).unwrap();
+    let select = document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "select")
+        .unwrap()
+        .local_id;
+    let last = select_options_of(&document, select)
+        .last()
+        .unwrap()
+        .local_id;
+    let edited = mars_eye::select(&document, select, last).unwrap();
+    let elapsed = started.elapsed();
+    assert!(edited.nodes[last].selected);
+    assert!(elapsed < SCALE_BUDGET, "{elapsed:?}");
+}
+
+/** Generous for a debug build; a quadratic option scan takes many times longer at this size. */
+const SCALE_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+
+/** Identities that differ from vector positions (a node removed after parse, so every later
+position shifts) still address the right controls in submission and option selection. */
+#[test]
+fn identities_that_differ_from_positions_address_the_right_controls() {
+    let mut document = parse(
+        "<i></i><form action=\"/s\"><input name=\"a\" value=\"1\"><select name=\"c\">\
+         <option value=\"x\">x</option><option value=\"y\" selected>y</option></select>\
+         <input type=\"checkbox\" name=\"k\" value=\"v\" checked></form>",
+    )
+    .unwrap();
+    let leaf = document.nodes.iter().position(|n| n.tag == "i").unwrap();
+    document.nodes.remove(leaf);
+    assert_ne!(document.nodes[leaf].local_id, leaf);
+    let form = document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "form")
+        .unwrap()
+        .local_id;
+    assert_eq!(
+        submission(&document, form, None).unwrap().encoded,
+        "a=1&c=y&k=v"
+    );
+    let select = document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "select")
+        .unwrap()
+        .local_id;
+    let option = document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "option" && n.attributes.get("value").map(String::as_str) == Some("x"))
+        .unwrap()
+        .local_id;
+    let picked = mars_eye::select(&document, select, option).unwrap();
+    assert_eq!(
+        submission(&picked, form, None).unwrap().encoded,
+        "a=1&c=x&k=v"
+    );
+}
+
+/** Controls that name their form by attribute resolve owners through the index, so 20 forms of
+500 controls validate and submit in time linear in the page, not forms times nodes. */
+#[test]
+fn twenty_forms_of_five_hundred_controls_validate_and_submit_quickly() {
+    let mut html = String::new();
+    for form in 0..FORM_COUNT {
+        html.push_str(&format!("<form id=\"f{form}\" action=\"/s{form}\"></form>"));
+    }
+    for form in 0..FORM_COUNT {
+        for control in 0..CONTROLS_PER_FORM {
+            html.push_str(&format!(
+                "<input form=\"f{form}\" name=\"n{control}\" value=\"v{control}\" required>"
+            ));
+        }
+    }
+    let started = std::time::Instant::now();
+    let document = parse(&html).unwrap();
+    let forms: Vec<usize> = document
+        .nodes
+        .iter()
+        .filter(|n| n.tag == "form")
+        .map(|n| n.local_id)
+        .collect();
+    for form in forms {
+        let submitted = submission(&document, form, None).unwrap();
+        assert!(submitted.encoded.contains("n499=v499"));
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed < SCALE_BUDGET, "{elapsed:?}");
+}
+
+/** Forms in the scaling fixture. */
+const FORM_COUNT: usize = 20;
+/** Controls in each form of the scaling fixture. */
+const CONTROLS_PER_FORM: usize = 500;

@@ -46,6 +46,8 @@ pub(super) struct LayoutContext<'a> {
     pub document: &'a Document,
     /** Identity to vector position, built once so no lookup rescans the tree. */
     positions: Vec<Option<usize>>,
+    /** Select options by identity, built once so a select's title never rescans the document. */
+    pub controls: crate::document::ControlIndex,
     /** Child positions per parent identity in vector order, hidden or not. */
     kids: Vec<Vec<usize>>,
     work: usize,
@@ -109,6 +111,7 @@ impl<'a> LayoutContext<'a> {
         }
         let mut context = Self {
             document,
+            controls: crate::document::ControlIndex::new(document),
             positions,
             kids,
             work: LAYOUT_WORK,

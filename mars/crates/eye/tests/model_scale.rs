@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 /** A third of the private call deadline, so one stage leaves room for the others in the same call. */
 const STAGE_BUDGET: Duration = Duration::from_secs(RPC_TIMEOUT.as_secs() / 3);
-/** Labeled inputs in the large fixture; the form-control cap keeps it below 256. */
+/** Labeled inputs in the large fixture, all of them controls the node budget already bounds. */
 const LABELED: usize = 120;
 
 /** A NODES-node page with labeled inputs, wrapping labels and duplicate author IDs. */
