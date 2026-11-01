@@ -327,3 +327,56 @@ fn many_dirty_registries_do_not_consume_one_timer_each() {
         "let calls = 0; const registries = []; const cleanup = () => { calls++; }; for (let index = 0; index < 5000; index++) { const registry = new FinalizationRegistry(cleanup); registry.register({}, index); registries.push(registry); } (async () => { await gc({execution:'async'}); setTimeout(() => { if (calls !== 5000) throw Error('cleanup batch dropped registrations'); }, 0); })();",
     );
 }
+
+#[test]
+/** Garbage a page makes between collections stays within the allocation budget, and a
+collection takes all of it back: the live count never passes the survivors plus the budget. */
+fn growth_between_collections_is_bounded_by_the_budget() {
+    use mars_v9::constants::{GC_GROWTH_DIVISOR, GC_GROWTH_MIN};
+    /** Objects each timer step discards. */
+    const STEP_GARBAGE: usize = 1_000;
+    /** Timer steps the page runs, each passing its state on without a wire round trip. */
+    const STEPS: usize = 60;
+    /** Objects the page keeps alive for the whole run. */
+    const SURVIVORS: usize = 5_000;
+    /** Entries a step may add beyond its garbage: timer records and the call frames. */
+    const STEP_SLACK: usize = 64;
+    let sources = [format!(
+        "let kept=[];for(let i=0;i<{SURVIVORS};i++)kept.push({{i}});function churn(){{for(let i=0;i<{STEP_GARBAGE};i++)({{i}});setTimeout(churn,0);}}churn();"
+    )];
+    let host = common::host();
+    let environment = common::environment();
+    let mut execution = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    let mut counts = Vec::new();
+    for _ in 0..STEPS {
+        let due = execution
+            .effects
+            .next_timer_ms
+            .expect("churn keeps a timer");
+        execution = mars_v9::run_timers(
+            common::input(&sources, &host, &environment),
+            execution.state,
+            due,
+            1,
+        )
+        .unwrap();
+        counts.push(live_entries(&execution.state));
+    }
+    let survivors = *counts.iter().min().unwrap();
+    let budget = GC_GROWTH_MIN.max(survivors / GC_GROWTH_DIVISOR);
+    let peak = *counts.iter().max().unwrap();
+    assert!(
+        peak <= survivors + budget + STEP_GARBAGE + STEP_SLACK,
+        "peak {peak} over survivors {survivors} and budget {budget}"
+    );
+    assert!(
+        counts.windows(2).any(|pair| pair[1] < pair[0]),
+        "a collection never reclaimed the garbage: {counts:?}"
+    );
+}
+
+/** Objects and environments in a state's heap, read from its encoded form. */
+fn live_entries(state: &mars_v9::VmState) -> usize {
+    let wire = serde_json::to_value(state).unwrap();
+    wire["heap"][0].as_array().unwrap().len() + wire["heap"][1].as_array().unwrap().len()
+}

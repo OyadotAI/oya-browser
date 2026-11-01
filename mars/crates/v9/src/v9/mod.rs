@@ -2924,3 +2924,67 @@ pub fn replay(
 /** Keep the unused host data import referenced for documentation of the wrapper model. */
 #[allow(dead_code)]
 fn _host(_: HostData, _: Class, _: SourceLocation) {}
+
+#[cfg(test)]
+mod near_bounds_collection_tests {
+    //! A heap at 95% of an object bound collects at the end of its step, so garbage the page
+    //! made is not counted toward a refusal (`near_bounds` in `finish`).
+    use super::*;
+
+    /** Objects a page keeps alive for the whole test. */
+    const SURVIVORS: usize = 2_000;
+    /** A small object bound so the test runs fast; the default is `VM_OBJECTS`. */
+    const OBJECT_BOUND: usize = 4_000;
+    /** Garbage that takes the heap past 95% of the bound but not over it. */
+    const GARBAGE: usize = 500;
+    /** Entries a step may add beyond the survivors' own, for its bookkeeping. */
+    const SLACK: usize = 64;
+
+    /** Load a page that keeps `SURVIVORS` objects and drops `garbage` more; the entries its
+    heap holds at the end of the step. */
+    fn entries_after_load(garbage: usize) -> usize {
+        let limits = Limits {
+            objects: OBJECT_BOUND,
+            ..Limits::default()
+        };
+        let sources = [format!(
+            "var kept = []; for (var i = 0; i < {SURVIVORS}; i++) kept.push({{ i }}); for (var j = 0; j < {garbage}; j++) ({{ j }});"
+        )];
+        let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment::default();
+        let input = PageInput {
+            sources: &sources,
+            source_keys: &[],
+            document: ScriptDocument {
+                identity: "page-1".into(),
+                nodes: Vec::new(),
+                charset: "UTF-8".into(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: ModuleInput::NONE,
+        };
+        let execution = load_isolated(input, None, limits, false)
+            .expect("garbage near the object bound is collected, not refused");
+        let wire = serde_json::to_value(&execution.state).unwrap();
+        wire["heap"][0].as_array().unwrap().len() + wire["heap"][1].as_array().unwrap().len()
+    }
+
+    #[test]
+    /** A heap near its object bound collects before the bound is checked: the step succeeds and
+    ends with what it would hold had it made no garbage, not with the garbage counted. */
+    fn a_heap_near_its_bound_still_collects_before_refusing() {
+        let clean = entries_after_load(0);
+        let near = entries_after_load(GARBAGE);
+        assert!(
+            near <= clean + SLACK,
+            "{near} entries after garbage, {clean} without it"
+        );
+    }
+}

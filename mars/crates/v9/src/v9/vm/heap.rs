@@ -406,9 +406,9 @@ impl Heap {
             self.track_string(text);
         }
     }
-    /** Whether the heap grew enough since its last collection to be worth collecting again:
-    GC_GROWTH_MIN entries, or a GC_GROWTH_DIVISOR-th of what was alive. Collecting after every
-    request of a large app (YouTube's half a million objects) costs a tenth of its time. */
+    /** Whether the page allocated enough since its last collection to be worth collecting again.
+    Between collections nothing is swept, so the growth in live entries is the allocation since
+    then: it must pass GC_GROWTH_MIN entries or a GC_GROWTH_DIVISOR-th of what survived. */
     pub fn grew_since_collection(&self) -> bool {
         use crate::constants::{GC_GROWTH_DIVISOR, GC_GROWTH_MIN};
         let live = self.objects.len() + self.envs.len();
