@@ -38,8 +38,8 @@ pub(in crate::runtime) struct Inputs {
 
 /** The last layout of this step and what it was computed from. */
 struct Last {
-    /** Lengths of the two change logs it applied: logs only grow within a step. */
-    applied: (usize, usize),
+    /** Exact changes it applied; attribute coalescing can replace an entry without growing a log. */
+    changes: Arc<Changes>,
     /** The V9-only style texts it used, when the step had changed them. */
     local: Option<Vec<String>>,
     /** The full sheet list it cascaded with. */
@@ -48,6 +48,21 @@ struct Last {
     styled: Document,
     /** Its layout. */
     display: DisplayList,
+}
+
+/** Immutable inputs shared with Eye while retaining exact cache identity without another copy. */
+struct Changes {
+    /** Original structural changes, in replay order. */
+    dom: Vec<DomChange>,
+    /** Extended mutations, including the latest value of every coalesced attribute. */
+    script: Vec<ScriptChange>,
+}
+
+impl Changes {
+    /** Equal lengths alone cannot distinguish two writes to the same attribute. */
+    fn matches(&self, dom: &[DomChange], script: &[ScriptChange]) -> bool {
+        self.dom == dom && self.script == script
+    }
 }
 
 /** The step's layout host. */
@@ -87,16 +102,18 @@ impl crate::v9::LayoutHost for SyncLayout {
             .last
             .lock()
             .map_err(|_| EngineError::invalid("Layout host poisoned."))?;
-        let applied = (changes.len(), script_changes.len());
-        let fresh = last
-            .as_ref()
-            .is_some_and(|last| last.applied == applied && last.local.as_deref() == local_sheets);
+        let fresh = last.as_ref().is_some_and(|last| {
+            last.changes.matches(changes, script_changes) && last.local.as_deref() == local_sheets
+        });
         if !fresh {
             let local = local_sheets.map(<[String]>::to_vec);
-            let (styled, display, sheets) =
-                self.compute(changes.to_vec(), script_changes.to_vec(), local.clone())?;
+            let changes = Arc::new(Changes {
+                dom: changes.to_vec(),
+                script: script_changes.to_vec(),
+            });
+            let (styled, display, sheets) = self.compute(Arc::clone(&changes), local.clone())?;
             *last = Some(Last {
-                applied,
+                changes,
                 local,
                 sheets,
                 styled,
@@ -116,33 +133,40 @@ impl crate::v9::LayoutHost for SyncLayout {
 
 impl SyncLayout {
     /** The step's final document already styled, with the sheets it was styled with, when the
-    last layout applied exactly `applied` (the step's whole change logs): the coordinator then
+    last layout applied exactly the step's final change logs: the coordinator then
     takes it instead of applying and restyling the same changes again. */
     pub(in crate::runtime) fn finished(
         &self,
-        applied: (usize, usize),
+        changes: &[DomChange],
+        script_changes: &[ScriptChange],
     ) -> Option<(Document, Vec<String>)> {
         let last = self.last.lock().ok()?.take()?;
-        (last.applied == applied).then_some((last.styled, last.sheets))
+        last.changes
+            .matches(changes, script_changes)
+            .then_some((last.styled, last.sheets))
     }
 
     /** Style and lay out on Eye's thread when there is one, else here. */
     fn compute(
         &self,
-        changes: Vec<DomChange>,
-        script_changes: Vec<ScriptChange>,
+        changes: Arc<Changes>,
         local: Option<Vec<String>>,
     ) -> EngineResult<(Document, DisplayList, Vec<String>)> {
         let Some(engine) = &self.engine else {
-            return lay_out(&self.inputs, &changes, &script_changes, local.as_deref());
+            return lay_out(
+                &self.inputs,
+                &changes.dom,
+                &changes.script,
+                local.as_deref(),
+            );
         };
         let inputs = Arc::clone(&self.inputs);
         let (answer, result) = mpsc::sync_channel(1);
         let job: Job = Box::new(move || {
             let _ = answer.send(lay_out(
                 &inputs,
-                &changes,
-                &script_changes,
+                &changes.dom,
+                &changes.script,
                 local.as_deref(),
             ));
         });

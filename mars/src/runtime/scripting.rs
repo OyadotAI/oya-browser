@@ -542,9 +542,10 @@ impl Runtime {
         // much as styling the page. The structure check still runs.
         // When the step's last mid-script layout applied all its changes, its styled document is
         // this step's result: no second apply, and no restyle if the sheets end up the same.
-        let finished = self.sync_layout.take().and_then(|host| {
-            host.finished((execution.changes.len(), execution.script_changes.len()))
-        });
+        let finished = self
+            .sync_layout
+            .take()
+            .and_then(|host| host.finished(&execution.changes, &execution.script_changes));
         let mut styled_with = None;
         let applied = changed
             .then(|| match finished {

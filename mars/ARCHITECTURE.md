@@ -495,6 +495,12 @@ registrations and last-delivered sizes, with one cycle per settle and a renderin
 cooldown preventing immediate restart. Callback-created resource work waits for
 ordinary processing; unrelated timers/fetch/worker turns never run inside cycles.
 
+Synchronous layout caches retain the exact DOM and extended change logs used by
+Eye. V9 coalesces repeated attribute writes in place, so matching log lengths do
+not establish freshness. Both mid-task geometry reuse and final styled-document
+reuse compare the actual edits. Immutable log snapshots are shared with Eye's
+job through Arc, keeping unchanged reads cached without duplicating input logs.
+
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
 an independent child page. Runtime supplies bounded owner IDs to V9, which selects

@@ -502,6 +502,42 @@ fn measuring_an_inserted_node_sees_its_layout() {
     assert!(texts(&clicked).contains(&expected), "{clicked}");
 }
 
+/** A new computed-style request must refresh layout after an earlier attribute entry changes. */
+#[test]
+fn coalesced_attribute_writes_refresh_forced_layout() {
+    let (_fixture, _, page) = load(
+        "<div id=box></div><p id=out></p><script>const box=document.getElementById('box');\
+         box.style.width='200px';getComputedStyle(box).display;const first=box.getBoundingClientRect().width;\
+         box.style.width='300px';getComputedStyle(document.getElementById('out')).display;\
+         const second=box.getBoundingClientRect().width;\
+         document.getElementById('out').textContent=first+','+second</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("200,300"), "{page}");
+}
+
+/** A final coalesced write after a layout read commits its own document, not the cached one. */
+#[test]
+fn coalesced_attribute_writes_after_layout_commit_the_final_value() {
+    let (_fixture, mut runtime, page) = load(
+        "<div id=box></div><script>const box=document.getElementById('box');\
+         box.style.width='200px';box.getBoundingClientRect();box.style.width='300px'</script>",
+        vec![],
+    );
+    let box_node = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "box")
+        .unwrap();
+    assert_eq!(box_node["bounds"]["width"].as_f64(), Some(300.0), "{page}");
+    let console = agent_call(&mut runtime, "page.console", json!({})).unwrap();
+    assert!(
+        !console.to_string().contains("scripts stopped"),
+        "{console}"
+    );
+}
+
 /** The names page.find reports for links, in document order. */
 fn link_names(runtime: &mut mars::runtime::Runtime, visible_only: bool) -> Vec<String> {
     let found = agent_call(
