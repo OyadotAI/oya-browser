@@ -347,9 +347,17 @@ impl<'a> Cursor<'a> {
             compound.simples.push(simple);
         }
         if typed.is_none() && compound.simples.is_empty() {
-            return Err("selector syntax");
+            return Err(self.empty_compound());
         }
         Ok(compound)
+    }
+    /** Why a compound has no selector: a digit can never start one (`.a 744`), so Blink drops the
+    rule silently and it hides nothing; any other start is a syntax Eye does not model. */
+    fn empty_compound(&self) -> Unsupported {
+        match self.peek() {
+            Some(b'0'..=b'9') => INVALID,
+            _ => "selector syntax",
+        }
     }
     /** One `#id`, `.class`, `[attr]` or `:pseudo`; None at a compound boundary. */
     fn simple(&mut self) -> Result<Option<Simple>, Unsupported> {
