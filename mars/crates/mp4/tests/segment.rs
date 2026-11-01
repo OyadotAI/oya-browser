@@ -317,3 +317,56 @@ fn segment_without_a_moof_has_no_samples() {
             .is_empty()
     );
 }
+
+/** A trun of `count` samples with no per-sample fields: a tfhd default size of one byte, every sample at `offset`'s data. */
+fn repeated_run(count: u32, offset: i32) -> Vec<u8> {
+    let mut payload = u32s(&[count]);
+    payload.extend_from_slice(&offset.to_be_bytes());
+    [
+        tfhd(1, TFHD_DEFAULT_SIZE, &[1]),
+        tfdt(0, 0),
+        fb(b"trun", 0, DATA_OFFSET, &payload),
+    ]
+    .concat()
+}
+
+/** Each trun re-reads the same bytes, so three runs of a thousand samples each exceed a segment of about 1.2 KB. */
+#[test]
+fn segment_refuses_runs_that_repeat_their_data_beyond_the_budget() {
+    let bytes = media_segment(&[7; 1000], |offset| {
+        (0..3).map(|_| repeated_run(1000, offset)).collect()
+    });
+    assert_eq!(
+        parse_segment(&bytes, &video_tracks(None)),
+        Err(Error::Malformed("sample count"))
+    );
+}
+
+/** A single run within the budget is accepted: the budget bounds the total, it does not ban large runs. */
+#[test]
+fn segment_accepts_one_run_within_the_budget() {
+    let bytes = media_segment(&[7; 1000], |offset| vec![repeated_run(1000, offset)]);
+    assert_eq!(
+        parse_segment(&bytes, &video_tracks(None)).unwrap().len(),
+        1000
+    );
+}
+
+/** A zero-size sample names no bytes, so it is refused: a hostile run could otherwise repeat it without cost. */
+#[test]
+fn segment_refuses_a_zero_size_sample() {
+    let bytes = media_segment(&[7; 10], |offset| {
+        vec![
+            [
+                tfhd(1, 0, &[]),
+                tfdt(0, 0),
+                trun(0, SIZE | DATA_OFFSET, offset, None, &[[0, 0, 0, 0]]),
+            ]
+            .concat(),
+        ]
+    });
+    assert_eq!(
+        parse_segment(&bytes, &video_tracks(None)),
+        Err(Error::Malformed("zero-size sample"))
+    );
+}

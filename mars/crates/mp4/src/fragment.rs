@@ -5,10 +5,10 @@
  */
 use crate::boxes::{Boxed, Cursor, children, find, full_box, split};
 use crate::constants::{
-    MOOF, SAMPLE_LIMIT, SAMPLE_NON_SYNC, TFDT, TFHD, TFHD_BASE_IS_MOOF, TFHD_BASE_OFFSET,
-    TFHD_DEFAULT_DURATION, TFHD_DEFAULT_FLAGS, TFHD_DEFAULT_SIZE, TFHD_SAMPLE_DESCRIPTION, TRAF,
-    TRUN, TRUN_COMPOSITION, TRUN_DATA_OFFSET, TRUN_DURATION, TRUN_FIRST_FLAGS, TRUN_FLAGS,
-    TRUN_SIZE, VERSION_LARGE,
+    MOOF, SAMPLE_LIMIT, SAMPLE_NON_SYNC, SAMPLES_PER_SEGMENT, TFDT, TFHD, TFHD_BASE_IS_MOOF,
+    TFHD_BASE_OFFSET, TFHD_DEFAULT_DURATION, TFHD_DEFAULT_FLAGS, TFHD_DEFAULT_SIZE,
+    TFHD_SAMPLE_DESCRIPTION, TRAF, TRUN, TRUN_COMPOSITION, TRUN_DATA_OFFSET, TRUN_DURATION,
+    TRUN_FIRST_FLAGS, TRUN_FLAGS, TRUN_SIZE, VERSION_LARGE,
 };
 use crate::error::{Error, Result};
 use crate::init::Track;
@@ -32,15 +32,21 @@ pub struct Sample {
     pub sync: bool,
 }
 
-/** The samples of every fragment in a media segment, in file order. `tracks` comes from the init segment. */
+/**
+ * The samples of every fragment in a media segment, in file order. `tracks` comes from the init segment. A segment
+ * yields at most `min(bytes.len(), SAMPLES_PER_SEGMENT)` samples: every sample must name at least one byte of the
+ * segment, so a count beyond the segment's own length is hostile, and the cap bounds the rest. Refusal is an error.
+ */
 pub fn parse_segment(bytes: &[u8], tracks: &[Track]) -> Result<Vec<Sample>> {
+    let budget = bytes.len().min(SAMPLES_PER_SEGMENT);
     let mut samples = Vec::new();
     let mut rest = bytes;
     while !rest.is_empty() {
         let moof_start = bytes.len() - rest.len();
         let (boxed, after) = split(rest)?;
         if boxed.kind == MOOF {
-            samples.extend(parse_moof(bytes, boxed, moof_start, tracks)?);
+            let room = budget - samples.len();
+            samples.extend(parse_moof(bytes, boxed, moof_start, tracks, room)?);
         }
         rest = after;
     }
@@ -53,6 +59,7 @@ fn parse_moof(
     moof: Boxed<'_>,
     moof_start: usize,
     tracks: &[Track],
+    room: usize,
 ) -> Result<Vec<Sample>> {
     let mut samples = Vec::new();
     let mut previous_end = None;
@@ -60,7 +67,14 @@ fn parse_moof(
         .iter()
         .filter(|boxed| boxed.kind == TRAF)
     {
-        let (run, end) = parse_traf(bytes, traf, moof_start, previous_end, tracks)?;
+        let (run, end) = parse_traf(
+            bytes,
+            traf,
+            moof_start,
+            previous_end,
+            tracks,
+            room - samples.len(),
+        )?;
         previous_end = Some(end);
         samples.extend(run);
     }
@@ -74,6 +88,7 @@ fn parse_traf(
     moof_start: usize,
     previous_end: Option<usize>,
     tracks: &[Track],
+    room: usize,
 ) -> Result<(Vec<Sample>, usize)> {
     let kids = children(traf.body)?;
     let header = find(&kids, TFHD).ok_or(Error::Missing(TFHD))?;
@@ -96,6 +111,7 @@ fn parse_traf(
         decode_time,
         end: base,
         samples: Vec::new(),
+        room,
     };
     for run in kids.iter().filter(|boxed| boxed.kind == TRUN) {
         reader.run(bytes, run.body, &fields, track, moof_start)?;
@@ -171,6 +187,8 @@ struct RunReader {
     decode_time: u64,
     end: usize,
     samples: Vec<Sample>,
+    /// How many more samples the segment's budget allows this traf to yield.
+    room: usize,
 }
 
 impl RunReader {
@@ -216,6 +234,12 @@ impl RunReader {
     }
     /** Place one sample at the data position, advance the clocks, and keep it. */
     fn push(&mut self, bytes: &[u8], raw: RawSample) -> Result<()> {
+        if self.samples.len() >= self.room {
+            return Err(Error::Malformed("sample count"));
+        }
+        if raw.size == 0 {
+            return Err(Error::Malformed("zero-size sample"));
+        }
         let end = self
             .data_pos
             .checked_add(raw.size)

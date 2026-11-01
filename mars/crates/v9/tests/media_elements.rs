@@ -372,8 +372,8 @@ fn media_source_buffers_appended_fragments() {
     );
 }
 
-/** A tiny fragmented MP4 built in the page: moov with one 320x240 video track at timescale 1000,
-then one moof whose trun holds two samples of 1000 ticks from tfdt 0, so it buffers [0, 2). */
+/** A tiny fragmented MP4 built in the page: moov with one 320x240 video track at timescale 1000, then one moof
+whose trun holds two 2-byte samples of 1000 ticks from tfdt 0, and an mdat that holds their bytes, so it buffers [0, 2). */
 const SEGMENT: &str = "(() => {\
   const u32 = n => [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255];\
   const box = (type, ...parts) => { const body = [].concat(...parts); return [...u32(body.length + 8), ...[...type].map(c => c.charCodeAt(0)), ...body]; };\
@@ -382,10 +382,11 @@ const SEGMENT: &str = "(() => {\
   const mdhd = box('mdhd', u32(0), u32(0), u32(0), u32(1000), u32(0), zeros(4));\
   const hdlr = box('hdlr', u32(0), u32(0), [...'vide'].map(c => c.charCodeAt(0)), zeros(12), [0]);\
   const avc1 = box('avc1', zeros(78), box('avcC', [1, 0x42, 0xE0, 0x1E, 0xFF, 0xE1, 0, 0]));
-  const minf = box('minf', box('stbl', box('stsd', u32(0), u32(1), avc1)));
+  const minf = box('minf', box('stbl', box('stsd', u32(0), u32(1), avc1)));\
   const moov = box('moov', box('trak', tkhd, box('mdia', mdhd, hdlr, minf)));\
-  const traf = box('traf', box('tfhd', u32(0), u32(1)), box('tfdt', u32(0), u32(0)), box('trun', u32(0x100), u32(2), u32(1000), u32(1000)));\
-  return [...moov, ...box('moof', traf)];\
+  const moofWith = off => box('moof', box('traf', box('tfhd', u32(0), u32(1)), box('tfdt', u32(0), u32(0)), box('trun', u32(0x301), u32(2), u32(off), u32(1000), u32(2), u32(1000), u32(2))));\
+  const moofSize = moofWith(0).length;\
+  return [...moov, ...moofWith(moofSize + 8), ...box('mdat', [1, 2, 3, 4])];\
 })()";
 
 /** The page for one Media Source test: the recorder, a source attached to a video, and `body` run once it opens. */
@@ -575,4 +576,31 @@ fn end_of_stream_ends_the_source() {
          ms.endOfStream();",
     ));
     assert_eq!(page.global("m"), "ended:ended");
+}
+
+/** A hostile trun that declares four billion samples is an append error: nothing buffers and the page keeps running. */
+#[test]
+fn a_hostile_sample_count_is_an_append_error_not_a_crash() {
+    let hostile = "const u = n => [n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255];\
+        const box = (t, ...p) => { const b = [].concat(...p); return [...u(b.length + 8), ...[...t].map(c => c.charCodeAt(0)), ...b]; };\
+        const moof = box('moof', box('traf', box('tfhd', u(0), u(1)), box('tfdt', u(0), u(0)), box('trun', u(0x100), u(0xFFFFFFFF), u(1000))));";
+    let page = Page::load(&open(&format!(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         {hostile} sb.appendBuffer(new Uint8Array([...seg.slice(0, moovSize), ...moof]));"
+    )));
+    assert_eq!(page.global("m"), "error;end:0;");
+}
+
+/** A box claiming u32::MAX bytes is only ever incomplete: the append consumes nothing and buffers nothing, with no panic. */
+#[test]
+fn a_box_claiming_u32_max_bytes_waits_without_crashing() {
+    let page = Page::load(&open(
+        "const sb = ms.addSourceBuffer('video/mp4; codecs=\"avc1.42E01E\"');\
+         sb.addEventListener('error', () => m += 'error;');\
+         sb.addEventListener('updateend', () => m += 'end:' + sb.buffered.length + ';');\
+         sb.appendBuffer(new Uint8Array([...seg.slice(0, moovSize), 0xFF, 0xFF, 0xFF, 0xFF, 0x6d, 0x64, 0x61, 0x74, 1, 2, 3]));",
+    ));
+    assert_eq!(page.global("m"), "end:0;");
 }

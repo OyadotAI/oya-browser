@@ -50,23 +50,22 @@ pub fn complete_boxes(input: &[u8]) -> Result<Vec<BoxSpan>> {
     let mut start = 0;
     while start < input.len() {
         let rest = &input[start..];
-        let Some(span) = header_span(rest)? else {
+        let Some((_, total)) = header_span(rest)? else {
             break;
         };
-        if start + span.1 > input.len() {
-            break;
-        }
+        // `total` is at most `rest.len()` (header_span guarantees it), so this sum cannot overflow.
+        let end = start + total;
         spans.push(BoxSpan {
             kind: [rest[4], rest[5], rest[6], rest[7]],
             start,
-            end: start + span.1,
+            end,
         });
-        start += span.1;
+        start = end;
     }
     Ok(spans)
 }
 
-/** A box's header size, or None when the header itself is still incomplete. A type that is not printable ASCII is refused: it means the bytes are not ISO BMFF at all. */
+/** A box's header length and total size, or None when the header or the box is still incomplete. A type that is not printable ASCII is refused: it means the bytes are not ISO BMFF at all. A total larger than the input is incomplete, never arithmetic on the hostile size. */
 fn header_span(rest: &[u8]) -> Result<Option<(usize, usize)>> {
     if rest.len() < HEADER {
         return Ok(None);
@@ -91,6 +90,9 @@ fn header_span(rest: &[u8]) -> Result<Option<(usize, usize)>> {
     };
     if total < header {
         return Err(Error::Malformed("box size"));
+    }
+    if total > rest.len() {
+        return Ok(None);
     }
     Ok(Some((header, total)))
 }

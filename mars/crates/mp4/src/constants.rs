@@ -65,6 +65,10 @@ pub(crate) const SAMPLE_NON_SYNC: u32 = 0x0001_0000;
 /// The most samples one run may declare; a larger count is refused rather than allocated.
 pub(crate) const SAMPLE_LIMIT: u32 = 1 << 20;
 
+/// The most samples one media segment may yield in total, across all its moofs, trafs and truns. Each run is
+/// bounded by SAMPLE_LIMIT alone, so without this a segment of many small truns could still allocate without end.
+pub(crate) const SAMPLES_PER_SEGMENT: usize = 1 << 20;
+
 /// The descriptor tags inside an esds box.
 pub(crate) const DESC_ES: u8 = 0x03;
 pub(crate) const DESC_DECODER_CONFIG: u8 = 0x04;
