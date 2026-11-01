@@ -90,6 +90,9 @@ impl Runtime {
         let input: Point = parameters(params)?;
         let (x, y) = self.document_point(input.x, input.y)?;
         let page = self.current()?.clone();
+        // The point was read from one page revision; a click aimed at it must not land on whatever
+        // replaced it, so a stale page or revision is refused before anything runs.
+        observed(&page, &input.page_id, input.expected_revision)?;
         let (base, hit) = page.hit(x, y, self.scroll_y).ok_or_else(nothing_here)?;
         let report = page.point_node(base, hit);
         let owner = page.owner_document(base);
@@ -98,7 +101,13 @@ impl Runtime {
             .cloned()
         {
             let focused = page.node_id(base + field.local_id);
-            let clicked = self.focus_field_by_click(page.clone(), &field)?;
+            // A field in a subframe belongs to that frame's own script context; until clicks are
+            // routed there, it keeps only the agent's focus record rather than running the top
+            // page's handlers against a node of another document.
+            let clicked = match base {
+                0 => self.focus_field_by_click(page.clone(), &field)?,
+                _ => None,
+            };
             let mut result =
                 clicked.unwrap_or_else(|| json!({"page_id":page.id(),"revision":page.revision}));
             result["focused"] = json!(focused);
@@ -357,6 +366,25 @@ fn not_text() -> EngineError {
         "That node does not take typed text.",
         "Target a text field from page_summary.",
     )
+}
+
+/** Refuses an action read from another page or an older revision, as `page.click` does. */
+fn observed(page: &super::super::page::Page, page_id: &str, revision: u64) -> EngineResult<()> {
+    if page.id() != page_id {
+        return Err(EngineError::new(
+            "invalid_target",
+            "The page has changed since it was observed.",
+            "Inspect the current page before changing it.",
+        ));
+    }
+    if page.revision != revision {
+        return Err(EngineError::new(
+            "revision_conflict",
+            "The document revision has changed.",
+            "Inspect the current page before changing it.",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

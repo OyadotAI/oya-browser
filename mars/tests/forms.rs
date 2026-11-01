@@ -645,3 +645,21 @@ fn an_invisible_field_over_its_covered_label_is_refused() {
     let after = call(&mut runtime, "page.inspect", json!({})).unwrap();
     assert_eq!(node(&after, "buy")["checked"], false);
 }
+
+/** A point read from an older revision is refused before anything runs, so a click aimed at a
+field cannot land on what replaced it. */
+#[test]
+fn a_click_at_from_an_old_revision_is_refused() {
+    let fixture = serve(r#"<html><body><input id="name"></body></html>"#);
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let (x, y) = centre(&page, "name");
+    let stale = page["revision"].as_u64().unwrap() + 1;
+    let result = call(
+        &mut runtime,
+        "page.click_at",
+        json!({"page_id":page["page_id"],"expected_revision":stale,"x":x,"y":y}),
+    );
+    assert_eq!(result.unwrap_err().code, "revision_conflict");
+}
