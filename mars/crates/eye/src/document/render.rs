@@ -152,6 +152,12 @@ pub struct DisplayList {
     pub viewport_locked: bool,
 }
 
+/**
+ * The widest outline offset a box may carry, in points. Past this a ring is drawn far outside its
+ * box, and its painted path (and any dash plan over it) grows with the offset for no visible use.
+ */
+pub const MAX_OUTLINE_OFFSET: f64 = 1024.0;
+
 /// A formatting box can paint author decoration without inventing a DOM or agent identity.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]

@@ -36,10 +36,10 @@ pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_c
 pub use render::{
     ClipRect, DecorationLine, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList,
     DisplayOutline, DisplayShadow, FillRule, GradientStop, GradientTile, ImageSize, LineCap,
-    LineJoin, OpacityGroup, PaintLine, PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath,
-    agent_hidden, agent_visible, embed_frame, frame_viewport, painted_bounds, render, render_frame,
-    render_frame_scrolled, render_scrolled, render_with_context, role, sliced_shadow,
-    spread_radius, wheel_target,
+    LineJoin, MAX_OUTLINE_OFFSET, OpacityGroup, PaintLine, PathCommand, Pin, ScrollArea,
+    ScrollOffsets, VectorPath, agent_hidden, agent_visible, embed_frame, frame_viewport,
+    painted_bounds, render, render_frame, render_frame_scrolled, render_scrolled,
+    render_with_context, role, sliced_shadow, spread_radius, wheel_target,
 };
 pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
 pub use script::{DomFragments, Fragments, normalize_document_text, script_document};

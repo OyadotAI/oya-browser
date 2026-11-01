@@ -122,3 +122,16 @@ fn outline_properties_are_no_longer_diagnostics() {
 fn thin_outline_width_is_raised_to_the_minimum_line() {
     assert_eq!(outline("#b{outline:0.01px solid}").width, 0.5);
 }
+
+/** A huge outline offset is clamped to the widest a box may carry, so its ring stays near the box. */
+#[test]
+fn huge_outline_offset_is_clamped() {
+    assert_eq!(
+        outline("#b{outline:2px dotted;outline-offset:1000000px}").offset,
+        mars_eye::MAX_OUTLINE_OFFSET
+    );
+    assert_eq!(
+        outline("#b{outline:2px dotted;outline-offset:-1000000px}").offset,
+        -mars_eye::MAX_OUTLINE_OFFSET
+    );
+}

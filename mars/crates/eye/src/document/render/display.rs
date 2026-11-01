@@ -1,5 +1,5 @@
 /** Resolved paint values carried by display items: clips, shadows, gradients and opacity groups. */
-use super::{DecorationLine, DisplayItem, DisplayOutline};
+use super::{DecorationLine, DisplayItem, DisplayOutline, MAX_OUTLINE_OFFSET};
 use serde::{Deserialize, Serialize};
 
 /// An absolute clip rectangle in document points, rounded when any radius is positive.
@@ -494,7 +494,9 @@ pub(super) fn outline(style: &crate::document::ComputedStyle) -> Option<DisplayO
         style: kind,
         width: style.outline_width.max(MIN_LINE_WIDTH),
         color: style.outline_color.clone(),
-        offset: style.outline_offset,
+        offset: style
+            .outline_offset
+            .clamp(-MAX_OUTLINE_OFFSET, MAX_OUTLINE_OFFSET),
     })
 }
 
