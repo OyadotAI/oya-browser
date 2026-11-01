@@ -10,6 +10,7 @@
  */
 use super::dom;
 use super::subtle_aes::{self, Fault};
+use super::subtle_cbc;
 use crate::v9::builtins::typed;
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::PromiseState;
@@ -23,6 +24,8 @@ const SLOT: &str = "subtle";
 const KEY_PROTO: &str = "cryptoKeyPrototype";
 /** The private slot on a CryptoKey holding its raw key bytes, which no script can read. */
 const KEY_BYTES: &str = "keyBytes";
+/** The private slot on a CryptoKey holding the canonical name of its algorithm, AES-GCM or AES-CBC. */
+const KEY_MODE: &str = "keyMode";
 /** The algorithm names digest accepts, compared after ASCII upper-casing as Web Crypto normalizes them. */
 const SHA1: &str = "SHA-1";
 const SHA256: &str = "SHA-256";
@@ -30,6 +33,8 @@ const SHA384: &str = "SHA-384";
 const SHA512: &str = "SHA-512";
 /** The one AES mode importKey, encrypt and decrypt implement. */
 const AES_GCM: &str = "AES-GCM";
+/** The AES mode whose PKCS#7-padded CBC importKey, encrypt and decrypt implement. */
+const AES_CBC: &str = "AES-CBC";
 /** The tag length Web Crypto defaults to, and the only one ring produces. */
 const DEFAULT_TAG_BITS: f64 = 128.0;
 /** Bits in a byte, to report a key's length in bits as a CryptoKey does. */
@@ -157,9 +162,22 @@ fn algorithm_name(vm: &mut Vm, value: &JsValue) -> Res<Option<String>> {
     }
 }
 
-/** Whether an algorithm argument names AES-GCM, as Web Crypto's case-insensitive lookup does. */
-fn is_aes_gcm(vm: &mut Vm, value: &JsValue) -> Res<bool> {
-    Ok(algorithm_name(vm, value)?.is_some_and(|name| name.eq_ignore_ascii_case(AES_GCM)))
+/** The canonical AES algorithm name an argument names (AES-GCM or AES-CBC, in any case), or None for another. */
+fn aes_mode(vm: &mut Vm, value: &JsValue) -> Res<Option<&'static str>> {
+    let Some(name) = algorithm_name(vm, value)? else {
+        return Ok(None);
+    };
+    Ok([AES_GCM, AES_CBC]
+        .into_iter()
+        .find(|mode| name.eq_ignore_ascii_case(mode)))
+}
+
+/** Whether `bytes` is a key length the mode accepts: the block cipher decides, and ring and aes agree on the sizes. */
+fn valid_key(mode: &str, bytes: &[u8]) -> bool {
+    match mode {
+        AES_CBC => subtle_cbc::Key::raw(bytes).is_ok(),
+        _ => subtle_aes::Key::raw(bytes).is_ok(),
+    }
 }
 
 /** A JavaScript string value. */
@@ -206,39 +224,47 @@ fn import_key(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** The CryptoKey an import makes, or the error the rejection carries. Usages are not enforced: a key may run any operation it is asked for. */
 fn import_key_outcome(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     let format = vm.to_text(&call.arg(0))?;
-    if format != "raw" || !is_aes_gcm(vm, &call.arg(2))? {
+    let mode = aes_mode(vm, &call.arg(2))?;
+    let Some(mode) = mode.filter(|_| format == "raw") else {
         return Err(not_supported(
             vm,
             "importKey",
             "this key format or algorithm",
         ));
-    }
+    };
     let Some(bytes) = typed::source_bytes(vm, &call.arg(1)) else {
         return Err(vm.type_error(
             "Failed to execute 'importKey' on 'SubtleCrypto': parameter 2 is not of type 'BufferSource'.",
         ));
     };
-    if subtle_aes::Key::raw(&bytes).is_err() {
+    if !valid_key(mode, &bytes) {
         return Err(vm.dom_exception(
             "DataError",
-            "Failed to execute 'importKey' on 'SubtleCrypto': AES keys are 128 or 256 bits.",
+            &format!("Failed to execute 'importKey' on 'SubtleCrypto': the {mode} key length is not supported."),
         ));
     }
     let extractable = call.arg(3).truthy();
-    make_key(vm, &call.this, bytes, extractable)
+    make_key(vm, &call.this, bytes, extractable, mode)
 }
 
-/** A CryptoKey whose raw bytes sit in a private slot, with its type, extractability and algorithm. */
-fn make_key(vm: &mut Vm, subtle: &JsValue, bytes: Vec<u8>, extractable: bool) -> Res<JsValue> {
+/** A CryptoKey whose raw bytes and algorithm sit in private slots, with its type, extractability and algorithm. */
+fn make_key(
+    vm: &mut Vm,
+    subtle: &JsValue,
+    bytes: Vec<u8>,
+    extractable: bool,
+    mode: &str,
+) -> Res<JsValue> {
     let bits = bytes.len() * BITS_PER_BYTE;
     let proto = key_prototype(vm, subtle)?;
     let view = typed::new_uint8(vm, bytes)?;
     let id = vm.new_object()?;
     vm.set_proto(id, Some(proto))?;
     vm.put_key(id, Key::private(KEY_BYTES), JsValue::Object(view))?;
+    let mode_value = text(mode)?;
+    vm.put_key(id, Key::private(KEY_MODE), mode_value.clone())?;
     let algorithm = vm.new_object()?;
-    let name = text(AES_GCM)?;
-    vm.put(algorithm, "name", name)?;
+    vm.put(algorithm, "name", mode_value)?;
     vm.put(algorithm, "length", JsValue::Number(bits as f64))?;
     let kind = text("secret")?;
     vm.put(id, "type", kind)?;
@@ -261,46 +287,103 @@ fn key_prototype(vm: &mut Vm, subtle: &JsValue) -> Res<ObjectId> {
     }
 }
 
-/** `crypto.subtle.encrypt(algorithm, key, data)`: a promise of the AES-GCM ciphertext followed by its tag. */
+/** `crypto.subtle.encrypt(algorithm, key, data)`: a promise of the ciphertext (AES-GCM with its tag, or AES-CBC padded). */
 fn encrypt(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let outcome = cipher_outcome(vm, &call, true);
     settled(vm, outcome)
 }
 
-/** `crypto.subtle.decrypt(algorithm, key, data)`: a promise of the plaintext, or OperationError when authentication fails. */
+/** `crypto.subtle.decrypt(algorithm, key, data)`: a promise of the plaintext, or OperationError when it fails to open. */
 fn decrypt(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let outcome = cipher_outcome(vm, &call, false);
     settled(vm, outcome)
 }
 
-/** The AES-GCM seal or open of the call's data as an ArrayBuffer, or the error the rejection carries. */
+/** The AES-GCM or AES-CBC seal or open of the call's data as an ArrayBuffer, or the error the rejection carries. */
 fn cipher_outcome(vm: &mut Vm, call: &Call, seal: bool) -> Res<JsValue> {
     let method = if seal { "encrypt" } else { "decrypt" };
     let algorithm = call.arg(0);
-    if !is_aes_gcm(vm, &algorithm)? {
+    let Some(mode) = aes_mode(vm, &algorithm)? else {
         return Err(not_supported(vm, method, "this algorithm"));
+    };
+    let (key, key_mode) = key_material(vm, &call.arg(1), method)?;
+    if key_mode != mode {
+        return Err(vm.dom_exception(
+            "InvalidAccessError",
+            &format!(
+                "Failed to execute '{method}' on 'SubtleCrypto': the key is not an {mode} key."
+            ),
+        ));
     }
-    check_tag_length(vm, &algorithm, method)?;
     let iv = required_bytes(vm, &algorithm, "iv", method)?;
-    let aad = optional_bytes(vm, &algorithm, "additionalData")?;
-    let key = key_material(vm, &call.arg(1), method)?;
     let Some(data) = typed::source_bytes(vm, &call.arg(2)) else {
         return Err(vm.type_error(&format!(
             "Failed to execute '{method}' on 'SubtleCrypto': parameter 3 is not of type 'BufferSource'."
         )));
     };
-    let output = run_cipher(
+    let output = if mode == AES_CBC {
+        run_cbc(vm, &key, &iv, &data, seal, method)?
+    } else {
+        gcm_output(vm, &algorithm, &key, &iv, &data, seal, method)?
+    };
+    array_buffer(vm, output)
+}
+
+/** The AES-GCM seal or open of `data` with its tag and additional data, as the call's algorithm names them. */
+fn gcm_output(
+    vm: &mut Vm,
+    algorithm: &JsValue,
+    key: &[u8],
+    iv: &[u8],
+    data: &[u8],
+    seal: bool,
+    method: &str,
+) -> Res<Vec<u8>> {
+    check_tag_length(vm, algorithm, method)?;
+    let aad = optional_bytes(vm, algorithm, "additionalData")?;
+    run_cipher(
         vm,
         &Sealing {
-            key: &key,
-            iv: &iv,
+            key,
+            iv,
             aad: &aad,
-            data: &data,
+            data,
             seal,
         },
         method,
-    )?;
-    array_buffer(vm, output)
+    )
+}
+
+/** The AES-CBC seal or open of `data` under `iv`; a fault becomes the DOMException Web Crypto names. */
+fn run_cbc(
+    vm: &mut Vm,
+    key: &[u8],
+    iv: &[u8],
+    data: &[u8],
+    seal: bool,
+    method: &str,
+) -> Res<Vec<u8>> {
+    let outcome = subtle_cbc::Key::raw(key).and_then(|key| {
+        if seal {
+            key.seal(iv, data)
+        } else {
+            key.open(iv, data)
+        }
+    });
+    outcome.map_err(|fault| cbc_fault_error(vm, fault, method))
+}
+
+/** The DOMException an AES-CBC fault rejects with. Every padding failure gets one message and name, so the error reveals nothing about which check failed. */
+fn cbc_fault_error(vm: &mut Vm, fault: subtle_cbc::Fault, method: &str) -> Thrown {
+    let message = match fault {
+        subtle_cbc::Fault::KeyLength => "the key is not an AES-CBC key",
+        subtle_cbc::Fault::IvLength => "the iv must be 16 bytes",
+        subtle_cbc::Fault::Padding => "the data failed to decrypt",
+    };
+    vm.dom_exception(
+        "OperationError",
+        &format!("Failed to execute '{method}' on 'SubtleCrypto': {message}."),
+    )
 }
 
 /** One AES-GCM operation's inputs: the key bytes, IV, additional data, the data and the direction. */
@@ -347,20 +430,30 @@ fn fault_error(vm: &mut Vm, fault: Fault, method: &str) -> Thrown {
     }
 }
 
-/** The raw key bytes a CryptoKey argument holds, or a TypeError when the argument is not a CryptoKey. */
-fn key_material(vm: &mut Vm, value: &JsValue, method: &str) -> Res<Vec<u8>> {
+/** The raw key bytes and algorithm name a CryptoKey argument holds, or a TypeError when it is not a CryptoKey. */
+fn key_material(vm: &mut Vm, value: &JsValue, method: &str) -> Res<(Vec<u8>, String)> {
     let JsValue::Object(id) = value else {
         return Err(not_a_key(vm, method));
     };
-    let Some(prop) = vm.own(*id, &Key::private(KEY_BYTES))? else {
-        return Err(not_a_key(vm, method));
-    };
-    let Slot::Data(bytes) = prop.slot else {
+    let bytes = private_value(vm, *id, KEY_BYTES)?;
+    let mode = private_value(vm, *id, KEY_MODE)?;
+    let (Some(bytes), Some(JsValue::String(mode))) = (bytes, mode) else {
         return Err(not_a_key(vm, method));
     };
     match typed::source_bytes(vm, &bytes) {
-        Some(bytes) => Ok(bytes),
+        Some(bytes) => Ok((bytes, mode.lossy())),
         None => Err(not_a_key(vm, method)),
+    }
+}
+
+/** A data slot of the object under the private key `name`, or None when the object does not hold it. */
+fn private_value(vm: &mut Vm, id: ObjectId, name: &str) -> Res<Option<JsValue>> {
+    match vm.own(id, &Key::private(name))? {
+        Some(prop) => match prop.slot {
+            Slot::Data(value) => Ok(Some(value)),
+            _ => Ok(None),
+        },
+        None => Ok(None),
     }
 }
 
