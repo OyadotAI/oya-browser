@@ -7,6 +7,7 @@ mod binding;
 mod builtins;
 mod compile;
 mod errors;
+mod jit;
 mod keyboard;
 pub use keyboard::{KeyboardKey, Stroke, keyboard_page, typed_page};
 mod legacy_handlers;
