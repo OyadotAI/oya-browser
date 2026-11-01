@@ -68,6 +68,36 @@ pub const COMPUTED_PROPERTIES: &[&str] = &[
     "letter-spacing",
     "word-spacing",
     "order",
+    "appearance",
+    "background-blend-mode",
+    "font-feature-settings",
+    "font-synthesis",
+    "font-variation-settings",
+    "forced-color-adjust",
+    "list-style-position",
+    "mask-composite",
+    "overscroll-behavior-block",
+    "overscroll-behavior-inline",
+    "overscroll-behavior-x",
+    "overscroll-behavior-y",
+    "resize",
+    "scroll-padding-block-end",
+    "scroll-padding-block-start",
+    "scroll-padding-bottom",
+    "scroll-padding-inline-end",
+    "scroll-padding-inline-start",
+    "scroll-padding-left",
+    "scroll-padding-right",
+    "scroll-padding-top",
+    "scroll-snap-align",
+    "scroll-snap-stop",
+    "scrollbar-color",
+    "scrollbar-gutter",
+    "scrollbar-width",
+    "text-size-adjust",
+    "touch-action",
+    "user-select",
+    "view-transition-name",
 ];
 
 /** A property's resolved value, or None when this serializer does not cover it. */
@@ -86,7 +116,11 @@ pub fn computed_value(style: &ComputedStyle, property: &str) -> Option<String> {
         "overflow-y" => overflow(style.overflow_y).into(),
         "color" => css_color(style.color.as_deref().unwrap_or("#000000")),
         "background-color" => css_color(style.background.as_deref().unwrap_or("transparent")),
-        _ => return text_value(style, property).or_else(|| box_value(style, property)),
+        _ => {
+            return text_value(style, property)
+                .or_else(|| box_value(style, property))
+                .or_else(|| super::kept_values::computed(style, property));
+        }
     })
 }
 
@@ -174,7 +208,14 @@ fn side_value(style: &ComputedStyle, property: &str) -> Option<String> {
         .iter()
         .enumerate()
         .find_map(|(index, side)| {
-            let prefix = property.strip_suffix(side)?.strip_suffix('-').unwrap_or("");
+            // The side must be the whole name or follow a dash: `scroll-snap-stop` ends in
+            // `top` but is not a side property.
+            let rest = property.strip_suffix(side)?;
+            let prefix = if rest.is_empty() {
+                ""
+            } else {
+                rest.strip_suffix('-')?
+            };
             Some((prefix, index))
         })
         .or_else(|| border_side(property))?;

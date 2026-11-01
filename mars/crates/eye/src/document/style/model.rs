@@ -762,6 +762,10 @@ pub struct ComputedStyle {
     /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub svg_paint: std::collections::BTreeMap<String, String>,
+    /// Canonical values of the kept properties (`kept_values.rs`) the author declared; absent
+    /// names read as their initial value in `getComputedStyle`.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub kept_values: std::collections::BTreeMap<String, String>,
     /// Bits of the grouping properties that make this box a stacking context in Blink without
     /// positioning (`filter`, `backdrop-filter`, `mix-blend-mode`, `isolation`, `will-change`,
     /// `contain`, a shaped `clip-path`); see `visual::STACKING_*`. Paint order reads it.
@@ -1080,6 +1084,7 @@ impl Default for ComputedStyle {
             central_baseline: false,
             counter_rotate: 0,
             svg_paint: std::collections::BTreeMap::new(),
+            kept_values: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,
             overflow_clip_margin: 0.0,

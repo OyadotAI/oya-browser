@@ -55,6 +55,7 @@ pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         writing_sideways: parent.writing_sideways,
         text_orientation: parent.text_orientation,
         text_box_edge: parent.text_box_edge,
+        kept_values: super::kept_values::inherited(parent),
         ..ComputedStyle::default()
     }
 }
@@ -91,6 +92,7 @@ fn inherits(key: &str) -> bool {
             "text-box-edge",
         ]
         .contains(&key)
+        || super::kept_values::inherits(key)
 }
 /**
  * Resolves `inherit`, `initial`, `unset` and `revert` for one property by copying the parent's
@@ -109,7 +111,9 @@ pub(super) fn keyword(style: &mut ComputedStyle, parent: &ComputedStyle, key: &s
  * `visibility`, which never un-hides an inherited hidden subtree, keep their current value.
  */
 fn copy(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
-    if super::transition::copy(&mut style.transition, &source.transition, key) {
+    if super::transition::copy(&mut style.transition, &source.transition, key)
+        || super::kept_values::copy(style, source, key)
+    {
         return;
     }
     if let Some(index) = super::calc_size::KEYS.iter().position(|name| *name == key) {

@@ -98,3 +98,11 @@ pub(super) const CONTAINER_NAMES: usize = 8;
 pub(super) const ASPECT_RATIO_MAX: f64 = 4096.0;
 /** `env()` functions one value may substitute before it is refused. */
 pub(super) const ENV_FUNCTIONS: usize = 8;
+/** A `font-feature-settings` or `font-variation-settings` tag is exactly this many bytes. */
+pub(super) const FONT_TAG_BYTES: usize = 4;
+/** The first printable ASCII byte a font tag may hold (space). */
+pub(super) const FONT_TAG_FIRST_BYTE: u8 = 0x20;
+/** The last printable ASCII byte a font tag may hold (tilde). */
+pub(super) const FONT_TAG_LAST_BYTE: u8 = 0x7e;
+/** `scroll-snap-align` takes one or two alignments, one per axis. */
+pub(super) const SNAP_ALIGN_WORDS: usize = 2;

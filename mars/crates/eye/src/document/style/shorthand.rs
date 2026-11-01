@@ -12,6 +12,17 @@ const CORNERS: [&str; 4] = ["top-left", "top-right", "bottom-right", "bottom-lef
 pub(super) const BORDER_STYLES: [&str; 10] = [
     "none", "hidden", "dotted", "dashed", "solid", "double", "groove", "ridge", "inset", "outset",
 ];
+/** One or two values for a pair shorthand: the second repeats the first when it is absent. */
+fn named_pair(value: &str, first: &str, second: &str) -> Option<Vec<(String, String)>> {
+    let values = tokens(value);
+    let (a, b) = match values.as_slice() {
+        [a] => (*a, *a),
+        [a, b] => (*a, *b),
+        _ => return None,
+    };
+    Some(vec![(first.into(), a.into()), (second.into(), b.into())])
+}
+
 /** Longhand list of a shorthand, for CSS-wide keywords; None when `key` is not a shorthand. */
 pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
     let sides = |format: &dyn Fn(&str) -> String| Some(SIDES.iter().map(|s| format(s)).collect());
@@ -51,6 +62,21 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
         "contain-intrinsic-size" => Some(super::containment::LONGHANDS.map(Into::into).into()),
         "grid-template" | "grid" => Some(GRID_TEMPLATE.map(Into::into).into()),
         "list-style" => Some(vec!["list-style-type".into()]),
+        "overscroll-behavior" => Some(vec![
+            "overscroll-behavior-x".into(),
+            "overscroll-behavior-y".into(),
+        ]),
+        "scroll-padding" => sides(&|side| format!("scroll-padding-{side}")),
+        "scroll-padding-inline" => Some(
+            ["scroll-padding-inline-start", "scroll-padding-inline-end"]
+                .map(Into::into)
+                .into(),
+        ),
+        "scroll-padding-block" => Some(
+            ["scroll-padding-block-start", "scroll-padding-block-end"]
+                .map(Into::into)
+                .into(),
+        ),
         "gap" => Some(vec!["row-gap".into(), "column-gap".into()]),
         "flex" => Some(
             ["flex-grow", "flex-shrink", "flex-basis"]
@@ -132,6 +158,20 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
         "border-radius" => radius(value),
         "overflow" => overflow(value),
         "list-style" => list_style(value),
+        "overscroll-behavior" => {
+            named_pair(value, "overscroll-behavior-x", "overscroll-behavior-y")
+        }
+        "scroll-padding" => four(value).map(|v| sided(&|side| format!("scroll-padding-{side}"), v)),
+        "scroll-padding-inline" => named_pair(
+            value,
+            "scroll-padding-inline-start",
+            "scroll-padding-inline-end",
+        ),
+        "scroll-padding-block" => named_pair(
+            value,
+            "scroll-padding-block-start",
+            "scroll-padding-block-end",
+        ),
         "background" => background(raw),
         "animation" => super::animation::shorthand(raw),
         "transition" => super::transition::shorthand(raw),

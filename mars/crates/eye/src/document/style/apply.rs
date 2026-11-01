@@ -20,7 +20,18 @@ pub(super) fn apply(
 ) -> EngineResult<bool> {
     let raw = value.trim();
     let lower = raw.to_ascii_lowercase();
-    let value = if ["background-image", "mask-image", "border-image-source"].contains(&key) {
+    // Font tags, custom identifiers and image URLs keep their case; every other keyword is
+    // matched lowercased.
+    let value = if [
+        "background-image",
+        "mask-image",
+        "border-image-source",
+        "font-feature-settings",
+        "font-variation-settings",
+        "view-transition-name",
+    ]
+    .contains(&key)
+    {
         raw
     } else {
         lower.as_str()
@@ -95,6 +106,7 @@ pub(super) fn apply(
         || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
         || super::border_image::apply(style, key, value, context)?
+        || super::kept_values::apply(style, key, value, context)?
     {
         return Ok(true);
     }
