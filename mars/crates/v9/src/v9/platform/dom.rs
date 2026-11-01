@@ -388,8 +388,8 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             let attribute = format!("data-{}", kebab(&name.lossy()));
             let value = vm
                 .page
-                .view(*node)
-                .and_then(|view| view.attributes.get(&attribute).cloned());
+                .with_element(*node, |_, attributes| attributes.get(&attribute).cloned())
+                .flatten();
             match value {
                 Some(value) => Ok(Some(Prop::data(JsValue::string(&value)?))),
                 None => Ok(None),
