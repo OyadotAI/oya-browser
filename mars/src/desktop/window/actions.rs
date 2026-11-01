@@ -213,10 +213,12 @@ impl Window {
     }
     /// Native tab buttons and shortcuts submit only explicit tab identities through the worker.
     pub(super) fn tab_action(&mut self, tag: isize) {
-        let Ok(permit) = self.broker.local_tab_permit() else {
+        // Closing revokes the tab's agent access first, which advances the authority epoch, so the
+        // permit is issued only after the operation; an earlier permit would be stale at dispatch.
+        let Some((op, params)) = self.tab_operation(tag) else {
             return;
         };
-        let Some((op, params)) = self.tab_operation(tag) else {
+        let Ok(permit) = self.broker.local_tab_permit() else {
             return;
         };
         let command_id = self.next_command();
