@@ -41,6 +41,8 @@ unsafe extern "C" {
     ) -> *mut c_void;
     /** Unmaps a region returned by `mmap`. */
     fn munmap(address: *mut c_void, length: usize) -> c_int;
+    /** Changes the protection of a mapped range; see mprotect(2). */
+    fn mprotect(address: *mut c_void, length: usize, protection: c_int) -> c_int;
     /** Toggles the calling thread's write protection on `MAP_JIT` pages. */
     fn pthread_jit_write_protect_np(enabled: c_int);
     /** Makes instruction-cache contents of a range match its data. */
@@ -57,6 +59,8 @@ pub(in crate::v9) enum MemoryError {
     Budget,
     /** The kernel refused the mapping. */
     Map,
+    /** The kernel refused a protection change, so the region was left as it was. */
+    Protect,
     /** The words do not fit the region.*/
     TooLarge,
 }
@@ -74,7 +78,8 @@ unsafe impl Send for ExecutableMemory {}
 unsafe impl Sync for ExecutableMemory {}
 
 impl ExecutableMemory {
-    /** Maps a region of at least `bytes` bytes, rounded up to whole pages, within the budget. */
+    /** Maps a region of at least `bytes` bytes, rounded up to whole pages, within the budget. The
+    region starts read-write and not executable: W^X holds from the first instant. */
     pub(in crate::v9) fn map(bytes: usize) -> Result<Self, MemoryError> {
         let length = round_up(bytes.max(PAGE_BYTES), PAGE_BYTES);
         reserve(length)?;
@@ -84,7 +89,7 @@ impl ExecutableMemory {
             mmap(
                 std::ptr::null_mut(),
                 length,
-                PROT_READ | PROT_WRITE | PROT_EXEC,
+                PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANON | MAP_JIT,
                 -1,
                 0,
@@ -97,22 +102,36 @@ impl ExecutableMemory {
         let base = NonNull::new(address.cast::<u8>()).ok_or(MemoryError::Map)?;
         Ok(Self { base, length })
     }
-    /** Copies instruction words to the start of the region and makes them visible to fetch. */
+    /** Copies instruction words to the start of the region and makes them visible to fetch. The
+    region is writable (not executable) for the copy and executable (not writable) after it; a
+    failed protection change refuses the write, so the region is never both. */
     pub(in crate::v9) fn write(&mut self, words: &[u32]) -> Result<(), MemoryError> {
         let bytes = words.len() * INSTRUCTION_BYTES;
         if bytes > self.length {
             return Err(MemoryError::TooLarge);
         }
-        // SAFETY: the thread's JIT pages are made writable for this copy only; the destination
-        // is inside the region we mapped, which is at least `bytes` long, and the source is a
-        // valid slice. Protection is restored and the icache invalidated before returning.
+        self.protect(PROT_READ | PROT_WRITE)?;
+        // SAFETY: the region is ours and not executable while the copy runs; the destination is
+        // inside it and at least `bytes` long, and the source is a valid slice. The thread's JIT
+        // write protection is restored right after the copy.
         unsafe {
             pthread_jit_write_protect_np(JIT_WRITABLE);
             std::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), self.base.as_ptr(), bytes);
             pthread_jit_write_protect_np(JIT_EXECUTABLE);
-            sys_icache_invalidate(self.base.as_ptr().cast(), bytes);
         }
+        self.protect(PROT_READ | PROT_EXEC)?;
+        // SAFETY: the range is the region we just wrote, so the instruction cache is made to
+        // match it before any branch can reach the new words.
+        unsafe { sys_icache_invalidate(self.base.as_ptr().cast(), bytes) };
         Ok(())
+    }
+    /** Changes the protection of the whole region; a refusal leaves the old protection in place. */
+    fn protect(&mut self, protection: c_int) -> Result<(), MemoryError> {
+        // SAFETY: `base` and `length` are the exact range `mmap` returned for this region.
+        match unsafe { mprotect(self.base.as_ptr().cast(), self.length, protection) } {
+            0 => Ok(()),
+            _ => Err(MemoryError::Protect),
+        }
     }
     /** The first byte of the region, the entry point of the code written at its start. */
     pub(in crate::v9) fn base(&self) -> *const u8 {

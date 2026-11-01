@@ -6,10 +6,10 @@
  * interpreter hand a running frame to compiled code mid-function.
  */
 use super::encoder::{
-    Assembler, EncodeError, Encoded, FP, LR, Label, Reg, SP, Word, add_imm, br, ldp_off, ldp_post,
-    ldr_reg_lsl3, lsr_imm, mov_reg, mov_reg_w, ret, stp_off, stp_pre,
+    Assembler, Cond, EncodeError, Encoded, FP, LR, Label, Reg, SP, Word, add_imm, br, cmp_reg,
+    ldp_off, ldp_post, ldr_reg_lsl3, lsr_imm, mov_reg, mov_reg_w, ret, stp_off, stp_pre,
 };
-use super::helpers::{STATUS_SHIFT, jit_step};
+use super::helpers::{STATUS_SHIFT, STATUS_SWITCH, jit_step};
 use crate::v9::compile::{Code, Op};
 
 /** The register that holds the `Vm` pointer for the whole compiled activation. */
@@ -26,6 +26,8 @@ const STATUS_REG: Reg = 1;
 const RESULT_REG: Reg = 0;
 /** Argument register for the instruction index passed to the helper. */
 const HELPER_INDEX_REG: Reg = 1;
+/** Status word the out-of-range path hands back: the interpreter takes the frame over from its pc. */
+const SWITCH_WORD: u64 = STATUS_SWITCH << STATUS_SHIFT;
 /** Bytes the prologue reserves for the frame record and the two saved registers. */
 const FRAME_BYTES: i32 = 32;
 /** Offset of the second saved pair inside the prologue's reserved bytes. */
@@ -39,22 +41,39 @@ pub(super) struct Unit {
     pub blocks: Vec<usize>,
 }
 
-/** Assembles a whole function, or `None` when some branch or immediate cannot be encoded. */
+/** The labels every block can branch to: one per block, the exit, and the out-of-range hand-back. */
+struct Labels {
+    /** One label per instruction, plus one for the end of the code. */
+    blocks: Vec<Label>,
+    /** The epilogue that returns the status word to the interpreter. */
+    exit: Label,
+    /** Hands the frame back to the interpreter when a returned index is outside the block table. */
+    out_of_range: Label,
+}
+
+/** Assembles a whole function, or `None` when some branch, offset or immediate cannot be encoded,
+or a block would not start inside the words written. Refusing keeps the function interpreted. */
 pub(super) fn assemble(code: &Code) -> Option<Unit> {
     let end = code.ops.len();
     let mut asm = Assembler::new();
-    let exit = asm.label();
-    let blocks: Vec<Label> = (0..=end).map(|_| asm.label()).collect();
+    let labels = Labels {
+        blocks: (0..=end).map(|_| asm.label()).collect(),
+        exit: asm.label(),
+        out_of_range: asm.label(),
+    };
     emit_prologue(&mut asm).ok()?;
-    emit_epilogue(&mut asm, exit).ok()?;
+    emit_epilogue(&mut asm, labels.exit).ok()?;
+    emit_out_of_range(&mut asm, &labels).ok()?;
     let mut offsets = Vec::with_capacity(end + 1);
-    for (index, label) in blocks.iter().enumerate() {
+    for (index, label) in labels.blocks.iter().enumerate() {
         asm.bind(*label);
         offsets.push(asm.position());
-        emit_block(&mut asm, index, code.ops.get(index), &blocks, exit).ok()?;
+        emit_block(&mut asm, index, code.ops.get(index), &labels).ok()?;
     }
-    Some(Unit {
-        words: asm.finish().ok()?,
+    let words = asm.finish().ok()?;
+    let inside = offsets.iter().all(|&word| word < words.len());
+    inside.then_some(Unit {
+        words,
         blocks: offsets,
     })
 }
@@ -78,37 +97,44 @@ fn emit_epilogue(asm: &mut Assembler, exit: Label) -> Encoded<()> {
     asm.emit(ret(LR))
 }
 
+/** Hands the interpreter a switch when a dispatched index is past the block table. The table
+holds one entry per block, so this is never reached by a helper that keeps its contract; it is
+the check that stops a wrong index from reading past the table. */
+fn emit_out_of_range(asm: &mut Assembler, labels: &Labels) -> Encoded<()> {
+    asm.bind(labels.out_of_range);
+    asm.load_imm64(RESULT_REG, SWITCH_WORD)?;
+    asm.b(labels.exit)
+}
+
 /** One instruction's block: a direct branch for a forward jump, otherwise a helper call. */
-fn emit_block(
-    asm: &mut Assembler,
-    index: usize,
-    op: Option<&Op>,
-    blocks: &[Label],
-    exit: Label,
-) -> Encoded<()> {
+fn emit_block(asm: &mut Assembler, index: usize, op: Option<&Op>, labels: &Labels) -> Encoded<()> {
     match op {
         Some(Op::Jump(target)) if (*target as usize) > index => {
-            let label = blocks
+            let label = labels
+                .blocks
                 .get(*target as usize)
                 .ok_or(EncodeError::OutOfRange)?;
             asm.b(*label)
         }
-        _ => emit_step(asm, index, exit),
+        _ => emit_step(asm, index, labels),
     }
 }
 
 /** Calls the helper for one instruction, leaves on any status but continue, and otherwise
-dispatches to the block of the index the helper returned. */
-fn emit_step(asm: &mut Assembler, index: usize, exit: Label) -> Encoded<()> {
+dispatches to the block of the index the helper returned, after checking that index is in the table. */
+fn emit_step(asm: &mut Assembler, index: usize, labels: &Labels) -> Encoded<()> {
     asm.emit(mov_reg(0, VM_REG))?;
     asm.load_imm64(HELPER_INDEX_REG, index as u64)?;
     asm.call_absolute(jit_step as *const () as usize as u64)?;
     asm.emit(lsr_imm(STATUS_REG, RESULT_REG, STATUS_SHIFT))?;
     let next = asm.label();
     asm.cbz(STATUS_REG, next)?;
-    asm.b(exit)?;
+    asm.b(labels.exit)?;
     asm.bind(next);
     asm.emit(mov_reg_w(INDEX_REG, RESULT_REG))?;
+    asm.load_imm64(TARGET_REG, labels.blocks.len() as u64)?;
+    asm.emit(cmp_reg(INDEX_REG, TARGET_REG))?;
+    asm.b_cond(Cond::Cs, labels.out_of_range)?;
     asm.emit(ldr_reg_lsl3(TARGET_REG, TABLE_REG, INDEX_REG))?;
     asm.emit(br(TARGET_REG))
 }

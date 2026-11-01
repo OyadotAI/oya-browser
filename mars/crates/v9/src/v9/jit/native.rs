@@ -10,6 +10,7 @@ use super::constants::INSTRUCTION_BYTES;
 use super::helpers::{STATUS_SHIFT, STATUS_SWITCH, take_parked};
 use super::memory::ExecutableMemory;
 use super::policy;
+use crate::protocol::EngineError;
 use crate::v9::compile::Code;
 use crate::v9::vm::Vm;
 use std::ffi::c_void;
@@ -28,7 +29,12 @@ pub(in crate::v9) struct CompiledCode {
 impl CompiledCode {
     /** Runs the frame on top of `vm` from its current instruction until the code hands back. */
     pub(in crate::v9) fn enter(&self, vm: &mut Vm<'_>) -> Outcome {
-        let pc = vm.frames.last().map_or(0, |frame| frame.pc) as u64;
+        let pc = vm.frames.last().map_or(0, |frame| frame.pc);
+        // The prologue indexes the table with the entry pc, so an entry past it is refused here.
+        if pc >= self.table.len() {
+            return Outcome::Error(EngineError::invalid("V9 JIT entry is out of range.").into());
+        }
+        let pc = pc as u64;
         let word = (self.entry())(std::ptr::from_mut(vm).cast(), self.table.as_ptr(), pc);
         match word >> STATUS_SHIFT {
             STATUS_SWITCH => Outcome::Switch,
@@ -47,6 +53,8 @@ impl CompiledCode {
 pub(in crate::v9) fn compile(code: &Code) -> Option<CompiledCode> {
     let unit = assemble(code)?;
     let mut memory = ExecutableMemory::map(unit.words.len() * INSTRUCTION_BYTES).ok()?;
+    // The region is writable and not executable until the words are in; `write` then makes it
+    // executable and never writable again, so no page is ever both at once.
     memory.write(&unit.words).ok()?;
     let base = memory.base() as usize;
     let table: Box<[usize]> = unit
