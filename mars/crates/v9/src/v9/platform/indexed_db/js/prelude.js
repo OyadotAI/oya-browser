@@ -19,7 +19,6 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const objectKeys = Object.keys;
   const hasOwn = Object.prototype.hasOwnProperty;
-  const objectToString = Object.prototype.toString;
   const apply = Reflect.apply;
   const construct = Reflect.construct;
   const isArray = Array.isArray;

@@ -3,6 +3,52 @@ use crate::common;
 use crate::indexed_db;
 use indexed_db::run;
 
+/** Persistence keeps graph identity and native brands without consulting inherited display tags. */
+#[test]
+fn stored_graphs_preserve_brands_aliases_holes_and_special_numbers() {
+    let mut origin = mars_v9::IndexedDbOrigin::default();
+    let write = r#"
+        let result = '';
+        const open = indexedDB.open('graph');
+        open.onupgradeneeded = () => open.result.createObjectStore('s');
+        open.onsuccess = () => {
+            const shared = { value: 7 };
+            const sparse = new Array(3); sparse[2] = shared; sparse.extra = shared;
+            const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+            const value = { shared, sparse, map: new Map([[shared, shared]]), set: new Set([shared]),
+                date: new Date(NaN), re: /x/gi, number: Object(-0), boolean: Object(false),
+                string: Object('text'), big: Object(123n), error: new TypeError('bad'),
+                view: new DataView(buffer, 1, 2), bytes: new Uint8Array(buffer),
+                numbers: [NaN, Infinity, -Infinity, -0, undefined] };
+            value.self = value;
+            Object.prototype[Symbol.toStringTag] = 'Map';
+            const tx = open.result.transaction('s', 'readwrite');
+            tx.objectStore('s').put(value, 'k');
+            tx.oncomplete = () => { result = 'written'; };
+        };
+    "#;
+    assert_eq!(indexed_db::run_with(write, &mut origin), "written");
+    let read = r#"
+        let result = '';
+        const open = indexedDB.open('graph');
+        open.onsuccess = () => {
+            open.result.transaction('s').objectStore('s').get('k').onsuccess = e => {
+                const v = e.target.result;
+                result = [v.self === v, v.sparse.length === 3, !(0 in v.sparse),
+                    v.sparse[2] === v.shared, v.sparse.extra === v.shared,
+                    v.map.get(v.shared) === v.shared, v.set.has(v.shared),
+                    Number.isNaN(v.date.getTime()), v.re.flags === 'gi', Object.is(+v.number, -0),
+                    v.boolean.valueOf() === false, v.string.valueOf() === 'text', v.big.valueOf() === 123n,
+                    v.error.name === 'TypeError' && v.error.message === 'bad',
+                    v.view.buffer === v.bytes.buffer, v.view.byteOffset === 1, v.view.getUint8(0) === 2,
+                    Number.isNaN(v.numbers[0]), v.numbers[1] === Infinity, v.numbers[2] === -Infinity,
+                    Object.is(v.numbers[3], -0), v.numbers[4] === undefined].every(Boolean) ? 'preserved' : 'changed';
+            };
+        };
+    "#;
+    assert_eq!(indexed_db::run_with(read, &mut origin), "preserved");
+}
+
 /** Open creates the database in an upgrade, then succeeds with a connection at the requested version. */
 #[test]
 fn open_runs_upgradeneeded_then_success_in_order() {

@@ -8,6 +8,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
+
+- Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
+
 - Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
 
 - Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.

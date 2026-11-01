@@ -117,6 +117,12 @@ profile vault under a digest name; ephemeral profiles keep them in memory. Clear
 site storage removes them. A database is bounded at 4 MiB of keys and values, an origin at
 32 MiB; contexts see other pages' commits on their next open of a database.
 
+Persistence encoder selection uses the stored value's native Rust brand, with shared
+encoder functions for every graph node. Ordinary records do not throw Date/ArrayBuffer
+brand errors or allocate a fresh dispatch table while serializing. The tagged graph wire
+format is unchanged, including aliases, cycles, sparse arrays, typed views and special
+numbers; Blob classification reads its private brand without copying payload bytes.
+
 The Runtime broker captures recipients at Post, excludes only the sender endpoint,
 and isolates authoritative exact origins plus schemeful registrable-domain sites.
 The site helper reuses Relay's Public Suffix List logic; paths, queries and ports
@@ -434,6 +440,13 @@ Independent dynamic classic-script requests use the existing bounded parallel pr
 path before ordered delivery. Prefetch and final acquisition share URL/CSP admission;
 JavaScript MIME and integrity checks still govern execution. Request keys include the
 shaped credentials and headers, and batch duplicate detection uses an ordered set.
+
+The asynchronous network loader keeps waiting hops in one pool queue instead of assigning
+them behind busy workers. Each completion admits the next waiting hop directly on a free
+worker, even while the coordinator is executing JavaScript. Idle workers retain URL cache
+affinity; cache-maintenance commands keep their per-worker FIFO ordering. The queue lock
+covers admission only, never network I/O, and workers hold weak scheduler references so
+runtime shutdown can close the queues under the existing cancellation flag.
 
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally

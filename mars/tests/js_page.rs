@@ -96,6 +96,102 @@ fn dynamic_script_prefetch_preserves_csp_admission() {
     assert!(!counts.contains_key("/a.js") && !counts.contains_key("/b.js"));
 }
 
+/** The loader's six active hops fill the pool before a seventh request can make progress. */
+const FETCH_WORKERS: usize = 6;
+/** A broken queue releases its fixture after a bounded wait, so the regression cannot hang. */
+const FETCH_RENDEZVOUS: std::time::Duration = std::time::Duration::from_secs(5);
+/** Active arrivals and the seventh request's arrival are coordinated independently of page timers. */
+type FetchArrival = Arc<(std::sync::Mutex<(usize, bool)>, std::sync::Condvar)>;
+
+/** Hold the first request until the seventh arrives; other workers finish when the pool is full. */
+fn held_fetch(state: FetchArrival, slow: bool, advanced: Arc<AtomicBool>) -> Fixture {
+    Fixture::start(
+        Box::new(move |request| {
+            let (lock, wake) = state.as_ref();
+            let mut state = lock.lock().unwrap();
+            if request
+                .split_whitespace()
+                .nth(1)
+                .is_some_and(|path| path.starts_with("/extra"))
+            {
+                state.1 = true;
+                wake.notify_all();
+            } else {
+                state.0 += 1;
+                wake.notify_all();
+                let (finished, _) = wake
+                    .wait_timeout_while(state, FETCH_RENDEZVOUS, |state| {
+                        if slow {
+                            !state.1
+                        } else {
+                            state.0 < FETCH_WORKERS
+                        }
+                    })
+                    .unwrap();
+                if slow {
+                    advanced.store(finished.1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            reply("text/plain", "Access-Control-Allow-Origin: *\r\n", "ok")
+        }),
+        false,
+    )
+}
+
+/** Match the stable affinity hash so the waiting request would previously sit behind the slow hop. */
+fn fetch_worker(url: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    hasher.finish() % FETCH_WORKERS as u64
+}
+
+/** A saturated network pool keeps delivering queued work while one active request is held open. */
+#[test]
+fn queued_fetches_use_a_free_worker_while_their_preferred_worker_is_blocked() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let state = FetchArrival::default();
+    let advanced = Arc::new(AtomicBool::new(false));
+    let servers: Vec<_> = (0..FETCH_WORKERS)
+        .map(|index| held_fetch(Arc::clone(&state), index == 0, Arc::clone(&advanced)))
+        .collect();
+    let mut urls: Vec<_> = servers
+        .iter()
+        .map(|server| format!("{}/held", server.url))
+        .collect();
+    let preferred = fetch_worker(&urls[0]);
+    let extra = (0..)
+        .map(|index| format!("{}/extra{index}", servers[1].url))
+        .find(|url| fetch_worker(url) == preferred)
+        .unwrap();
+    urls.push(extra);
+    let body = format!(
+        "<p id=out>waiting</p><script>Promise.all({}.map(url=>fetch(url))).then(()=>document.getElementById('out').textContent='done')</script>",
+        serde_json::to_string(&urls).unwrap()
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let origins = std::iter::once(fixture.url.clone())
+        .chain(servers.iter().map(|server| server.url.clone()))
+        .collect();
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        origins,
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let page = run_until(&mut runtime, 200, |page| texts(page).contains("done"));
+    assert!(texts(&page).contains("done"), "{page}");
+    assert!(
+        advanced.load(std::sync::atomic::Ordering::SeqCst),
+        "the queued request waited for the blocked worker"
+    );
+}
+
 /** A 200 response of `mime` with any extra header lines. */
 fn reply(mime: &str, headers: &str, body: &str) -> Vec<u8> {
     format!(
