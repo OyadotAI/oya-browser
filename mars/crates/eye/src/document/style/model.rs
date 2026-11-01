@@ -567,7 +567,7 @@ pub struct ComputedStyle {
     /// unlike `break-word`, its breaks count toward min-content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_wrap_anywhere: Option<bool>,
-    /// Declared `word-break`: Some(true) for `break-all` or `break-word`, None when inherited.
+    /// Declared `word-break: break-all` (Some(true)) or another value, None when inherited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_all: Option<bool>,
     /// Declared `word-break: break-all` (Some(true)) or another value (Some(false)), None when

@@ -103,10 +103,15 @@ pub(super) fn apply(
             style.overflow_wrap_anywhere = breaking(value, &["anywhere"]);
         }
         "word-break" => {
-            style.word_break_all = breaking(value, &["break-all", "break-word"]);
+            style.word_break_all = breaking(value, &["break-all"]);
             style.word_break_fill = breaking(value, &["break-all"]);
             style.word_break_keep_all = breaking(value, &["keep-all"]);
             style.word_break_auto_phrase = breaking(value, &["auto-phrase"]);
+            // CSS Text 3: `break-word` is the deprecated `normal` plus `overflow-wrap: anywhere`.
+            if value.trim() == "break-word" {
+                style.overflow_wrap_break = Some(true);
+                style.overflow_wrap_anywhere = Some(true);
+            }
         }
         "line-break" => {
             style.line_break_anywhere = breaking(value, &["anywhere"]);
