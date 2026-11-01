@@ -157,7 +157,7 @@ pub(super) fn size_tracks(
         .iter()
         .map(|sizing| initialize(*sizing))
         .collect::<Vec<_>>();
-    resolve_intrinsic(&mut tracks, items, gap);
+    resolve_intrinsic(&mut tracks, items, gap, space != Space::MinContent);
     for track in &mut tracks {
         if track.limit.is_none() {
             track.limit = Some(track.base);
@@ -212,7 +212,7 @@ fn spans_flexible(tracks: &[Track], item: &Contribution) -> bool {
 
 /** Step 2: items not spanning a flexible track in groups of increasing span, then every item
  * that does, together, distributing only into the flexible tracks by flex factor. */
-fn resolve_intrinsic(tracks: &mut [Track], items: &[Contribution], gap: f64) {
+fn resolve_intrinsic(tracks: &mut [Track], items: &[Contribution], gap: f64, max_content: bool) {
     let mut ordered = items
         .iter()
         .filter(|item| item.span > 0 && item.start + item.span <= tracks.len())
@@ -233,28 +233,48 @@ fn resolve_intrinsic(tracks: &mut [Track], items: &[Contribution], gap: f64) {
         {
             end += 1;
         }
-        for kind in [
-            Kind::IntrinsicMinimums,
-            Kind::ContentBasedMinimums,
-            Kind::MaxContentMinimums,
-            Kind::IntrinsicMaximums,
-            Kind::MaxContentMaximums,
-        ] {
-            accommodate(tracks, &ordered[begin..end], kind, false, gap);
+        for kind in maxima_kinds(max_content) {
+            accommodate(tracks, &ordered[begin..end], *kind, false, gap);
         }
         begin = end;
     }
     if begin < ordered.len() {
-        for kind in [
-            Kind::IntrinsicMinimums,
-            Kind::ContentBasedMinimums,
-            Kind::MaxContentMinimums,
-        ] {
+        for kind in minimums_kinds() {
             accommodate(tracks, &ordered[begin..], kind, true, gap);
         }
     }
 }
 
+/** The growth-limit kinds of step 2, in order. `auto` maxima take max-content contributions
+ * only under a max-content constraint (CSS Grid 1 12.5): with the min-content constraint they
+ * take min-content contributions, as `IntrinsicMaximums` does, so an implicit `auto` column
+ * holding a long headline stays as wide as its min-content size, not the headline's width. */
+fn maxima_kinds(max_content: bool) -> &'static [Kind] {
+    if max_content {
+        &[
+            Kind::IntrinsicMinimums,
+            Kind::ContentBasedMinimums,
+            Kind::MaxContentMinimums,
+            Kind::IntrinsicMaximums,
+            Kind::MaxContentMaximums,
+        ]
+    } else {
+        &[
+            Kind::IntrinsicMinimums,
+            Kind::ContentBasedMinimums,
+            Kind::MaxContentMinimums,
+            Kind::IntrinsicMaximums,
+        ]
+    }
+}
+/** The base-size kinds of the flexible pass, in order. */
+fn minimums_kinds() -> [Kind; 3] {
+    [
+        Kind::IntrinsicMinimums,
+        Kind::ContentBasedMinimums,
+        Kind::MaxContentMinimums,
+    ]
+}
 /** The size of a track a contribution kind grows: the base size, or the growth limit. */
 fn affected(track: &Track, kind: Kind) -> f64 {
     if for_base(kind) {
