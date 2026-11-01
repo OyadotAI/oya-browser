@@ -568,11 +568,12 @@ fn inert_subtrees_are_not_hit() {
     );
 }
 
-/** A transparent field painted over its visible label takes the click, as in Chrome: it is focused. */
+/** A transparent field painted over its own visible label (the label names it) takes the click, as
+in Chrome: it is focused. */
 #[test]
 fn a_transparent_field_over_its_label_takes_the_click() {
     let fixture = serve(
-        r#"<html><body style="margin:0"><label id="lab" style="position:absolute;left:10px;top:10px;width:200px;height:40px"><span id="cap">Where</span></label><input id="where" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0;border:0"></body></html>"#,
+        r#"<html><body style="margin:0"><label id="lab" for="where" style="position:absolute;left:10px;top:10px;width:200px;height:40px"><span id="cap">Where</span></label><input id="where" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0;border:0"></body></html>"#,
     );
     let mut runtime = fixture.runtime();
     call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
@@ -611,4 +612,20 @@ fn a_label_for_a_disabled_field_does_not_focus_it() {
         .map(|at| at["focused"].clone())
         .unwrap_or(serde_json::Value::Null);
     assert!(focused.is_null(), "{focused}");
+}
+
+/** An invisible checkbox laid over unrelated visible text does not take an agent's click: only a
+field hidden over its own label keeps it. */
+#[test]
+fn an_invisible_field_over_unrelated_text_is_refused() {
+    let fixture = serve(
+        r#"<html><body style="margin:0"><button id="cancel" style="position:absolute;left:10px;top:10px;width:200px;height:40px">Cancel</button><input id="buy" type="checkbox" style="position:absolute;left:10px;top:10px;width:200px;height:40px;opacity:0;margin:0"></body></html>"#,
+    );
+    let mut runtime = fixture.runtime();
+    call(&mut runtime, "page.navigate", json!({"url":fixture.origin})).unwrap();
+    let page = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    let result = click_at(&mut runtime, &page, centre(&page, "cancel"));
+    assert_eq!(result.unwrap_err().code, "invalid_target");
+    let after = call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert_eq!(node(&after, "buy")["checked"], false);
 }

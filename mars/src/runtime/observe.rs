@@ -223,8 +223,29 @@ impl Page {
         // An invisible box on top (opacity 0, clipped away) is refused rather than clicked: an agent
         // acts on what it is shown, so a transparent overlay must not take its click. A transparent
         // form field over its own visible label is ordinary custom styling and keeps the click.
-        let allowed = shown.get() || transparent_field(node);
+        let allowed = shown.get()
+            || transparent_field(node) && self.own_label_under(display, [x, y], top, (base, node));
         (allowed && !agent_hidden(self.owner_document(base), node)).then_some((base, node))
+    }
+    /** Whether a visibly painted box under the point belongs to a label that names `field`: the
+    custom-control case, where a page hides a field over its own label. An invisible field over
+    anything else (a "Cancel" button's text) is a clickjacking surface and is refused. */
+    fn own_label_under(
+        &self,
+        display: &crate::document::DisplayList,
+        point: [f64; 2],
+        top: f64,
+        (base, field): (usize, &Node),
+    ) -> bool {
+        let document = self.owner_document(base);
+        display
+            .items
+            .iter()
+            .rev()
+            .filter(|item| crate::document::item_contains(item, point, top))
+            .filter(|item| crate::document::agent_visible(item))
+            .filter_map(|item| self.painted_node(item))
+            .any(|(owner, node)| owner == base && names_field(document, node, field))
     }
     /** The node a painted item belongs to, read from the frame that owns its identity range. */
     fn painted_node(&self, item: &crate::document::DisplayItem) -> Option<(usize, &Node)> {
@@ -837,6 +858,25 @@ impl Runtime {
             json!({"satisfied":satisfied,"page_id":page.id(),"revision":page.revision,"url":safe_url(&page.url,page.sensitive)}),
         )
     }
+}
+
+/** Whether `node` is, or sits inside, a label whose control is `field`. */
+fn names_field(document: &Document, node: &Node, field: &Node) -> bool {
+    let mut current = Some(node);
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(at) = current else {
+            return false;
+        };
+        if at.tag == "label" {
+            return crate::document::labeled_control(document, at)
+                .is_some_and(|control| control.local_id == field.local_id);
+        }
+        current = at.parent.and_then(|parent| {
+            local_position(&document.nodes, parent, |node| node.local_id)
+                .map(|index| &document.nodes[index])
+        });
+    }
+    false
 }
 
 /// Input types that act as buttons: an invisible one is a clickjacking surface, not a styled field.
