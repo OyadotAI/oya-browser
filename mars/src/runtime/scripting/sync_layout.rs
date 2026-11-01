@@ -25,9 +25,9 @@ use std::sync::{Arc, Mutex};
 /** What every layout of one step starts from. */
 pub(in crate::runtime) struct Inputs {
     /** The candidate document the step started from. */
-    pub base: Document,
-    /** The page's resolved sheets, with its V9-only block at `local_block`. */
-    pub sheets: Vec<String>,
+    pub base: Arc<Document>,
+    /** The page's resolved sheets, with its V9-only block at `local_block`; shared with the page. */
+    pub sheets: Arc<Vec<String>>,
     /** Where the page's V9-only style block sits in `sheets`. */
     pub local_block: (usize, usize),
     /** The viewport and appearance to lay out under. */
@@ -175,7 +175,7 @@ fn lay_out(
 /** The sheets to cascade with: the page's own, the V9-only block replaced when the step changed
 it, then any `<style>` the step inserted into the document. */
 fn sheets_for(inputs: &Inputs, applied: &Document, local: Option<&[String]>) -> Vec<String> {
-    let mut sheets = inputs.sheets.clone();
+    let mut sheets = inputs.sheets.as_ref().clone();
     if let Some(texts) = local {
         local_sheets::replace(&mut sheets, inputs.local_block, texts);
     }

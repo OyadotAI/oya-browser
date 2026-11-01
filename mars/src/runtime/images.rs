@@ -641,8 +641,7 @@ impl super::supervisor::Runtime {
             Fetched::Raster(_, size) => css_size(*size, density),
             Fetched::Vector(_, size) => *size,
         };
-        let Some(node) = page
-            .document
+        let Some(node) = std::sync::Arc::make_mut(&mut page.document)
             .nodes
             .iter_mut()
             .find(|node| node.local_id == id)
@@ -661,7 +660,7 @@ impl super::supervisor::Runtime {
         if let Fetched::Vector(markup, _) = &fetched {
             node.image_src = Some(svg_url(markup));
         }
-        page.images.remove(&id);
+        std::sync::Arc::make_mut(&mut page.images).remove(&id);
         let hidden = node.hidden();
         if hidden {
             page.scripting
@@ -670,7 +669,7 @@ impl super::supervisor::Runtime {
                 .insert(id, fetched.into_asset());
         } else {
             page.scripting.image_loading.hidden.remove(&id);
-            page.images.insert(id, fetched.into_asset());
+            std::sync::Arc::make_mut(&mut page.images).insert(id, fetched.into_asset());
         }
         size
     }
@@ -683,11 +682,11 @@ impl super::supervisor::Runtime {
                 continue;
             }
             if node.hidden() {
-                if let Some(asset) = page.images.remove(&id) {
+                if let Some(asset) = std::sync::Arc::make_mut(&mut page.images).remove(&id) {
                     page.scripting.image_loading.hidden.insert(id, asset);
                 }
             } else if let Some(asset) = page.scripting.image_loading.hidden.remove(&id) {
-                page.images.insert(id, asset);
+                std::sync::Arc::make_mut(&mut page.images).insert(id, asset);
             }
         }
     }

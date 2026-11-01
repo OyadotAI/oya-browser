@@ -566,13 +566,15 @@ impl Runtime {
             generation,
             script_identity,
             revision: 1,
-            document,
+            document: std::sync::Arc::new(document),
             source_bytes: acquired.response.source.len(),
-            scripts: resolved
-                .iter()
-                .map(|script| script.source.clone())
-                .collect(),
-            resolved_stylesheets: sheets,
+            scripts: std::sync::Arc::new(
+                resolved
+                    .iter()
+                    .map(|script| script.source.clone())
+                    .collect(),
+            ),
+            resolved_stylesheets: std::sync::Arc::new(sheets),
             local_sheets: (0, 0),
             top_level_url: embedding
                 .map(|embedding| embedding.top_level_url.clone())
@@ -592,7 +594,7 @@ impl Runtime {
             status: acquired.response.status,
             state: Default::default(),
             state_token: None,
-            images,
+            images: std::sync::Arc::new(images),
             frames: std::sync::Arc::new(frames),
             frame_tree,
             display: None,
@@ -641,7 +643,7 @@ impl Runtime {
         self.flush_inserted_images(&mut page)?;
         perf::record("page.scripts", phase, || restyle.to_string());
         phase = Instant::now();
-        gaps.record(&mut page.document);
+        gaps.record(std::sync::Arc::make_mut(&mut page.document));
         // Script steps already noted what they inserted and could not apply (sheets, images);
         // the load's own gaps join them rather than replace them.
         for feature in std::mem::replace(&mut page.degraded, gaps.degraded) {
@@ -690,7 +692,7 @@ impl Runtime {
             Err(error) => {
                 record_listener_refusal(&error);
                 gaps.note("scripts", load_failure_note(resolved, &error));
-                page.scripts.clear();
+                std::sync::Arc::make_mut(&mut page.scripts).clear();
                 page.scripting.modules = Default::default();
                 self.script_step(page, json!({"kind":"load"}))?
             }

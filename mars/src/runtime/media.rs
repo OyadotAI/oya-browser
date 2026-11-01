@@ -371,8 +371,7 @@ fn video_sizes(page_id: &str) -> Vec<(usize, (u32, u32))> {
 fn apply_video_sizes(page: &mut super::page::Page, sizes: &[(usize, (u32, u32))]) -> bool {
     let mut changed = false;
     for (node, size) in sizes {
-        let element = page
-            .document
+        let element = std::sync::Arc::make_mut(&mut page.document)
             .nodes
             .iter_mut()
             .find(|candidate| candidate.local_id == *node && candidate.tag == "video");

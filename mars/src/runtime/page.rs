@@ -46,14 +46,15 @@ pub(super) struct Page {
     pub script_identity: String,
     /** Advances once per committed document mutation. */
     pub revision: u64,
-    /** Fully validated owned document. */
-    pub document: Document,
+    /** Fully validated document. Candidates share it with the committed page, so a step copies
+    it only when it writes (`Arc::make_mut`); a discarded candidate never touches the shared one. */
+    pub document: std::sync::Arc<Document>,
     /** Immutable acquired HTML byte count keeps frame quotas independent of later DOM mutations. */
     pub source_bytes: usize,
     /** Resolved page scripts stay coordinator-owned and never enter document rendering. */
-    pub scripts: Vec<String>,
+    pub scripts: std::sync::Arc<Vec<String>>,
     /** Already-governed source supports resize/theme restyling without refetch or script execution. */
-    pub resolved_stylesheets: Vec<String>,
+    pub resolved_stylesheets: std::sync::Arc<Vec<String>>,
     /** Where V9's script-only `<style>` texts sit in `resolved_stylesheets`: start and length. */
     pub local_sheets: (usize, usize),
     /** Final URL after policy-checked redirects. */
@@ -81,7 +82,7 @@ pub(super) struct Page {
     token instead of the heap (25 MB on YouTube); `state` is then only its summary. */
     pub state_token: Option<u64>,
     /** Encoded image bytes remain page-owned and never cross the document service. */
-    pub images: BTreeMap<usize, super::images::ImageAsset>,
+    pub images: std::sync::Arc<BTreeMap<usize, super::images::ImageAsset>>,
     /** Documents the page's frames show, laid out into every display of the page. */
     pub frames: super::frames::Frames,
     /** Context directory and queued frame deliveries publish with this candidate. */
@@ -421,7 +422,7 @@ impl Runtime {
     fn snapshot_of(&self, page: Option<&Page>, inspection: Value) -> BrowserSnapshot {
         BrowserSnapshot {
             inspection,
-            document: page.map(|page| page.document.clone()),
+            document: page.map(|page| Document::clone(&page.document)),
             frame_documents: page
                 .map(|page| {
                     super::frames::documents(&page.frames)
@@ -430,7 +431,7 @@ impl Runtime {
                         .collect()
                 })
                 .unwrap_or_default(),
-            images: page.map(|page| page.images.clone()).unwrap_or_default(),
+            images: page.map(|page| (*page.images).clone()).unwrap_or_default(),
             display: page.and_then(|page| page.display.clone()),
             failed: self.failed,
             can_back: self.history_cursor.is_some_and(|index| index > 0),
@@ -503,7 +504,11 @@ impl Runtime {
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
         self.validate_context(context)?;
-        page.document = self.styled(&page.document, &page.resolved_stylesheets, context)?;
+        page.document = std::sync::Arc::new(self.styled(
+            &page.document,
+            &page.resolved_stylesheets,
+            context,
+        )?);
         page.styled = true;
         self.prepare_styled(page, context)
     }
@@ -592,7 +597,7 @@ impl Runtime {
     ) -> EngineResult<()> {
         self.validate_context(context)?;
         if page.untrusted_styles {
-            untrusted(&mut page.document);
+            untrusted(std::sync::Arc::make_mut(&mut page.document));
         }
         super::animations::refresh_timelines(page)?;
         crate::document::validate_content(&page.document)?;

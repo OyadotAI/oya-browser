@@ -978,7 +978,7 @@ fn update_at(
     };
     let changed = update_at(child, rest, operation)?;
     if changed {
-        frame.follow_page(&mut page.images);
+        frame.follow_page(std::sync::Arc::make_mut(&mut page.images));
     }
     Ok(changed)
 }

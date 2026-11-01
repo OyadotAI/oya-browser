@@ -79,7 +79,7 @@ impl Runtime {
         let (request, appended) = place_source(&mut page, request)?;
         let mut outcome = self.devtools_step(&mut page, &request, commit)?;
         if appended && !outcome.retain {
-            page.scripts.pop();
+            std::sync::Arc::make_mut(&mut page.scripts).pop();
         }
         let mut changed = outcome.changed;
         let mut rounds = 0;
@@ -235,9 +235,9 @@ impl Runtime {
         }
         if let Some(applied) = applied {
             let before = page.document.styles.len();
-            page.resolved_stylesheets
+            std::sync::Arc::make_mut(&mut page.resolved_stylesheets)
                 .extend(scripting::inserted_sheets(&applied, before));
-            page.document = applied;
+            page.document = std::sync::Arc::new(applied);
             super::super::frame_pages::prune_routes(page);
             page.styled = false;
         }
@@ -283,7 +283,7 @@ impl Runtime {
             execution.effects.console_dropped,
         );
         if let Some(title) = execution.effects.title {
-            page.document.title = title;
+            std::sync::Arc::make_mut(&mut page.document).title = title;
         }
         // Scrolls an evaluation makes (scrollIntoView, scrollTo) move the view as a step's do.
         changed |= !execution.effects.element_scroll.is_empty()
@@ -392,7 +392,7 @@ fn place_source(page: &mut Page, mut request: Value) -> EngineResult<(Value, boo
     let (index, appended) = match page.scripts.iter().position(|known| *known == text) {
         Some(index) => (index, false),
         None => {
-            page.scripts.push(text);
+            std::sync::Arc::make_mut(&mut page.scripts).push(text);
             (page.scripts.len() - 1, true)
         }
     };

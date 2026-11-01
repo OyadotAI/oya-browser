@@ -154,7 +154,7 @@ impl Runtime {
                 if let Some(child) = frame.page.as_mut() {
                     super::broadcast::retire_page(child, &mut page.scripting.broadcast);
                 }
-                frame.remove_images(&mut page.images);
+                frame.remove_images(std::sync::Arc::make_mut(&mut page.images));
             }
             keep
         });

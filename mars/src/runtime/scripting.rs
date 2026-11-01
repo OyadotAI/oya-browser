@@ -592,9 +592,9 @@ impl Runtime {
         changed |= apply_local_sheets(page, effects.local_sheets.take());
         if let Some(applied) = applied {
             let before = page.document.styles.len();
-            page.resolved_stylesheets
+            std::sync::Arc::make_mut(&mut page.resolved_stylesheets)
                 .extend(inserted_sheets(&applied, before));
-            page.document = applied;
+            page.document = std::sync::Arc::new(applied);
             super::frame_pages::prune_routes(page);
             page.styled = false;
         }
@@ -688,7 +688,7 @@ impl Runtime {
             page.scripting.scroll_x = effects.scroll_x;
         }
         if let Some(title) = effects.title {
-            page.document.title = title;
+            std::sync::Arc::make_mut(&mut page.document).title = title;
         }
         apply_history(page, &effects.history);
         page.scripting.submit_allowed = effects.submit;
@@ -775,11 +775,11 @@ impl Runtime {
             crate::document::background_urls(&page.document, &page.url)
                 .into_iter()
                 .collect();
-        page.document = self.styled(
+        page.document = std::sync::Arc::new(self.styled(
             &page.document,
             &page.resolved_stylesheets,
             self.render_context,
-        )?;
+        )?);
         page.styled = true;
         super::animations::refresh_timelines(page)?;
         self.refresh_image_visibility(page);
@@ -814,7 +814,7 @@ impl Runtime {
             )
             .and_then(|()| {
                 self.load_images_skipping(
-                    &mut page.document,
+                    std::sync::Arc::make_mut(&mut page.document),
                     &base,
                     deadline,
                     &mut budget,
@@ -841,14 +841,16 @@ impl Runtime {
                     .managed
                     .contains(&node.local_id)
         }) {
-            page.images.remove(&node.local_id);
+            std::sync::Arc::make_mut(&mut page.images).remove(&node.local_id);
         }
-        page.images.extend(images);
+        std::sync::Arc::make_mut(&mut page.images).extend(images);
         for note in notes {
             if page.document.diagnostics.len() < DIAGNOSTICS
                 && !page.document.diagnostics.contains(&note)
             {
-                page.document.diagnostics.push(note);
+                std::sync::Arc::make_mut(&mut page.document)
+                    .diagnostics
+                    .push(note);
             }
             if page.degraded.len() < DIAGNOSTICS && !page.degraded.iter().any(|f| f == "images") {
                 page.degraded.push("images".into());
@@ -876,7 +878,7 @@ impl Runtime {
                 page.untrusted_styles = true;
                 continue;
             }
-            page.resolved_stylesheets.push(css);
+            std::sync::Arc::make_mut(&mut page.resolved_stylesheets).push(css);
             page.styled = false;
             added = true;
         }
@@ -1025,7 +1027,7 @@ impl Runtime {
 
     /** The step's environment with a layout host, so a read of a box or style the last layout
     cannot answer lays out at once on V9's thread instead of running the step twice.
-    ponytail: copies the document and sheets per step; share them by Arc if it shows. */
+    The base document and sheets are shared with the page by Arc, so this copies nothing. */
     fn with_sync_layout(&mut self, page: &Page, environment: &PageEnvironment) -> PageEnvironment {
         let mut environment = environment.clone();
         let inputs = sync_layout::Inputs {
@@ -1085,7 +1087,7 @@ impl Runtime {
             &execution.changes,
             &execution.script_changes,
         )?;
-        let mut sheets = page.resolved_stylesheets.clone();
+        let mut sheets = page.resolved_stylesheets.as_ref().clone();
         if let Some(texts) = &execution.effects.local_sheets {
             local_sheets::replace(&mut sheets, page.local_sheets, texts);
         }
@@ -2010,9 +2012,13 @@ pub(super) fn stop_scripts(page: &mut Page, error: &EngineError) {
     if !page.document.diagnostics.contains(&message) {
         // A terminal failure must remain explainable even when CSS warnings filled the list.
         if page.document.diagnostics.len() >= DIAGNOSTICS {
-            page.document.diagnostics.pop();
+            std::sync::Arc::make_mut(&mut page.document)
+                .diagnostics
+                .pop();
         }
-        page.document.diagnostics.push(message);
+        std::sync::Arc::make_mut(&mut page.document)
+            .diagnostics
+            .push(message);
     }
     if page.degraded.len() < DIAGNOSTICS
         && !page.degraded.iter().any(|feature| feature == "scripts")
@@ -2030,9 +2036,13 @@ fn record_load_failure(page: &mut Page, error: &EngineError) {
     let message = format!("Page script state could not be retained ({code}): {reason}");
     if !page.document.diagnostics.contains(&message) {
         if page.document.diagnostics.len() >= DIAGNOSTICS {
-            page.document.diagnostics.pop();
+            std::sync::Arc::make_mut(&mut page.document)
+                .diagnostics
+                .pop();
         }
-        page.document.diagnostics.push(message.clone());
+        std::sync::Arc::make_mut(&mut page.document)
+            .diagnostics
+            .push(message.clone());
         record_console(
             &mut page.scripting,
             vec![ConsoleEntry {
@@ -2180,8 +2190,11 @@ pub(super) fn apply_local_sheets(page: &mut Page, texts: Option<Vec<String>>) ->
     let Some(texts) = texts else {
         return false;
     };
-    page.local_sheets =
-        local_sheets::replace(&mut page.resolved_stylesheets, page.local_sheets, &texts);
+    page.local_sheets = local_sheets::replace(
+        std::sync::Arc::make_mut(&mut page.resolved_stylesheets),
+        page.local_sheets,
+        &texts,
+    );
     page.styled = false;
     true
 }

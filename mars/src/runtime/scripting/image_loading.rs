@@ -203,7 +203,7 @@ impl Runtime {
             if let Some(asset) = state.hidden.remove(&row.from) {
                 state.hidden.insert(row.to, asset);
             }
-            if let Some(asset) = page.images.remove(&row.from) {
+            if let Some(asset) = std::sync::Arc::make_mut(&mut page.images).remove(&row.from) {
                 state.hidden.insert(row.to, asset);
             }
             self.attach_adopted_image(page, row.to);
@@ -233,8 +233,7 @@ impl Runtime {
             .filter(|a| a.mime == "image/svg+xml")
             .and_then(|a| std::str::from_utf8(&a.bytes).ok())
             .map(super::super::images::svg_url);
-        let node = page
-            .document
+        let node = std::sync::Arc::make_mut(&mut page.document)
             .nodes
             .iter_mut()
             .find(|node| node.local_id == id)
@@ -336,11 +335,11 @@ impl Runtime {
     ) -> EngineResult<Vec<ImageResponse>> {
         // Restyle only after a change: an unconditional restyle cost GitHub 600 ms per image turn.
         if !page.styled {
-            page.document = self.styled(
+            page.document = std::sync::Arc::new(self.styled(
                 &page.document,
                 &page.resolved_stylesheets,
                 self.render_context,
-            )?;
+            )?);
             page.styled = true;
         }
         let mut budget = page
@@ -572,11 +571,10 @@ impl Runtime {
 
     /** A failed replacement must not leave the previous image painted or report its old dimensions. */
     fn clear_failed_image(&self, page: &mut Page, node: usize) {
-        page.images.remove(&node);
+        std::sync::Arc::make_mut(&mut page.images).remove(&node);
         page.scripting.image_loading.hidden.remove(&node);
         page.scripting.image_loading.decoded.remove(&node);
-        if let Some(node) = page
-            .document
+        if let Some(node) = std::sync::Arc::make_mut(&mut page.document)
             .nodes
             .iter_mut()
             .find(|entry| entry.local_id == node)

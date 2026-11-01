@@ -86,7 +86,7 @@ impl Runtime {
             "document.value",
             json!({"document":page.document,"local_id":node.local_id,"value":value}),
         )?;
-        page.document = self.returned("document", value_call)?;
+        page.document = std::sync::Arc::new(self.returned("document", value_call)?);
         page.styled = false;
         Ok(())
     }
