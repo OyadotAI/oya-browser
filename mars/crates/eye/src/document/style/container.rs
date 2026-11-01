@@ -46,14 +46,15 @@ pub(super) struct Ancestor {
 type Resolved<'a> = (usize, Option<&'a Ancestor>);
 impl Query {
     /**
-     * Parses a prelude such as `card (min-width: 400px)` or `style(--theme: dark)`. None when
-     * the condition reads anything Eye cannot evaluate, so the caller keeps treating the block
-     * as undecidable and masks its hiding rules.
+     * Parses a prelude such as `card (min-width: 400px)` or `style(--theme: dark)`. A condition Eye
+     * cannot evaluate, such as `scroll-state()` or a standard property, still parses: it is Unknown
+     * for every element, so its rules do not apply and their hiding rules mask. None only when the
+     * prelude has no condition or names an invalid container, which Blink drops as well.
      */
     pub(super) fn parse(prelude: &str) -> Option<Self> {
         let prelude = prelude.trim();
         let lower = prelude.to_ascii_lowercase();
-        let bare = ["(", "not ", "style("]
+        let bare = ["(", "not ", "style(", "scroll-state("]
             .iter()
             .any(|head| lower.starts_with(head));
         let end = if bare {
@@ -69,18 +70,8 @@ impl Query {
             return None;
         }
         let condition = prelude[end..].trim().to_string();
-        let decidable = [0.0, crate::constants::CSS_MAX_SCALAR]
-            .iter()
-            .all(|extent| {
-                let probe = Probe {
-                    width: Some(*extent),
-                    height: Some(*extent),
-                    custom: &|_| None,
-                };
-                container_query::truth(&condition, &probe) != Truth::Unknown
-            });
         let size = container_query::reads_size(&condition);
-        (!condition.is_empty() && decidable).then_some(Self {
+        (!condition.is_empty()).then_some(Self {
             name,
             condition,
             size,
