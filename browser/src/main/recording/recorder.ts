@@ -208,7 +208,7 @@ export class Recorder {
     this.starter.rememberPausedPages();
     this.emitRecording();
     // The person has the tabs back: pages in another language are offered again.
-    void this.deps.translation?.sync();
+    void this.deps.translation?.sync().catch(() => console.warn('[translation] original page restoration required'));
   }
 
   /** Stops refreshing the shell's step list. */
