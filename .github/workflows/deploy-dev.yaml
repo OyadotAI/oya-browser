@@ -57,6 +57,7 @@ jobs:
             - 'browser/src/page/**'
             - 'browser/src/anonymity/**'
             - 'browser/package.json'
+            - 'browser/build/minimatch-compat.cjs'
             - 'Dockerfile'
           browser:
             - 'browser/**'
