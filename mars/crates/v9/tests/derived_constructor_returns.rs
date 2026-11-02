@@ -1,5 +1,5 @@
 /** A derived constructor's `return` is judged when its frame exits, after finally blocks and iterator closes. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A `finally` block may still call super() after a `return` in the try or catch, and the object is the result. */

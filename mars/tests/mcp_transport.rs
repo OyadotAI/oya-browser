@@ -62,20 +62,29 @@ impl Pipes {
         let authority = Authority::shared(Owner::Agent);
         let cancel = Arc::new(AtomicBool::new(false));
         let connected = Arc::new(AtomicBool::new(true));
-        let start = if mcp {
-            mcp_io::start_descriptors
+        let input_fd = io::Descriptor::new(server_input.as_raw_fd()).unwrap();
+        let output_fd = io::Descriptor::new(server_output.as_raw_fd()).unwrap();
+        let workers = if mcp {
+            mcp_io::start_descriptors(
+                input_fd,
+                output_fd,
+                admit.clone(),
+                replies,
+                authority.clone(),
+                cancel.clone(),
+                connected.clone(),
+            )
         } else {
-            io::start_descriptors
+            io::start_descriptors(
+                input_fd,
+                output_fd,
+                (admit.clone(), None),
+                replies,
+                authority.clone(),
+                cancel.clone(),
+                connected.clone(),
+            )
         };
-        let workers = start(
-            io::Descriptor::new(server_input.as_raw_fd()).unwrap(),
-            io::Descriptor::new(server_output.as_raw_fd()).unwrap(),
-            admit.clone(),
-            replies,
-            authority.clone(),
-            cancel.clone(),
-            connected.clone(),
-        );
         Self {
             input,
             output: BufReader::new(output),

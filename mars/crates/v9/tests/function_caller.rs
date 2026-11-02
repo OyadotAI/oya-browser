@@ -1,5 +1,5 @@
 /** Legacy function.caller follows active invocations without revealing strict or native callers. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A function's immediate caller stays visible through deeper helper calls inspecting it. */

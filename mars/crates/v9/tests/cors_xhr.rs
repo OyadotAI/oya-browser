@@ -1,7 +1,7 @@
 /** Round-2 "cors" owner ports: XMLHttpRequest's open, setRequestHeader, withCredentials and
 response-header rules from the XHR standard as Blink's XMLHttpRequest implements them (WPT
 cors/request-headers.htm and xhr/). */
-mod common;
+use crate::common;
 use common::{console, input};
 use mars_v9::HostResponse;
 

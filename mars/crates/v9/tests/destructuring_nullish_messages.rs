@@ -1,5 +1,5 @@
 /** Destructuring null or undefined throws a TypeError that names the pattern's first key when it has one, as V8 does. */
-mod common;
+use crate::common;
 
 /** An object pattern with a first key names that key and the nullish value. */
 #[test]

@@ -1,6 +1,7 @@
 /** Bounded opacity transitions keep authored cascade values apart from sampled presentation. */
 mod easing;
 mod interpolation;
+mod linear;
 mod model;
 mod parse;
 mod rotation;

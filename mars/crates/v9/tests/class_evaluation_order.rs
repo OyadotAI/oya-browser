@@ -1,5 +1,5 @@
 /** Class evaluation preserves definition failures, repeated-super effects and distinct static-block environments. */
-mod common;
+use crate::common;
 
 /** Repeated super calls evaluate arguments and construct the parent before rejecting rebinding this. */
 #[test]

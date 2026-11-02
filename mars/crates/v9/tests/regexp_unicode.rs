@@ -1,5 +1,5 @@
 /** Unicode properties use exact UCD categories, aliases and script extensions across the full code-point range. */
-mod common;
+use crate::common;
 
 /** Unicode folding includes every simple equivalent while legacy mode preserves its ASCII and expansion restrictions. */
 #[test]

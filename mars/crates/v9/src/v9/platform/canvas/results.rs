@@ -7,7 +7,9 @@ static IMAGE: OnceLock<u32> = OnceLock::new();
 pub(super) fn install(b: &mut Builder) {
     let metrics = b.object(Some(b.ids.object_prototype));
     super::super::chrome_env::interface(b, "TextMetrics", metrics);
-    b.getter(metrics, "width", metrics_get);
+    for name in super::placement::MEASURE_FIELDS {
+        b.getter(metrics, name, metrics_get);
+    }
     let _ = METRICS.set(metrics);
     let image = b.object(Some(b.ids.object_prototype));
     let constructor = b.constructor("ImageData", 2, super::images::construct, image, None);
@@ -51,16 +53,15 @@ fn record(vm: &mut Vm, prototype: u32, fields: Vec<(&str, JsValue)>) -> Res<JsVa
     }
     Ok(JsValue::Object(id))
 }
-/** Native width is reported without inventing unimplemented font metrics. */
-pub(super) fn metrics(vm: &mut Vm, width: f64) -> Res<JsValue> {
-    record(
-        vm,
-        *METRICS.get().expect("metrics interface"),
-        vec![
-            ("kind", JsValue::string("metrics")?),
-            ("width", JsValue::Number(width)),
-        ],
-    )
+/** Each measured member is an own slot of the immutable record, so getters read exactly what was measured. */
+pub(super) fn metrics(vm: &mut Vm, fields: &[(&str, f64)]) -> Res<JsValue> {
+    let mut slots = vec![("kind", JsValue::string("metrics")?)];
+    slots.extend(
+        fields
+            .iter()
+            .map(|(name, value)| (*name, JsValue::Number(*value))),
+    );
+    record(vm, *METRICS.get().expect("metrics interface"), slots)
 }
 /** Readback owns a new typed array, never a view of the mutable canvas backing. */
 pub(super) fn image(vm: &mut Vm, width: usize, height: usize, data: ObjectId) -> Res<JsValue> {

@@ -82,7 +82,7 @@ impl<'a> Phase<'a> {
     }
     /** Canonical even indices paint while odd indices leave gaps. */
     fn ink(&self) -> bool {
-        self.index % 2 == 0
+        self.index.is_multiple_of(2)
     }
 }
 

@@ -150,7 +150,7 @@ fn json(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** WebIDL converts dictionary members in lexical order before checking conflicting aliases. */
-pub(super) fn dictionary(vm: &mut Vm, value: &JsValue) -> Res<Affine> {
+pub(in crate::v9::platform::canvas) fn dictionary(vm: &mut Vm, value: &JsValue) -> Res<Affine> {
     dictionary_members(vm, value)?.resolve(vm)
 }
 

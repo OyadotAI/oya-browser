@@ -45,7 +45,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     {
         let name = "CDATASection";
         // Pages patch these interfaces' prototypes; V9 creates no such nodes.
-        let proto = b.object(Some(b.ids.text_prototype));
+        let proto = b.object(Some(b.ids.text_node_prototype));
         let ctor = b.constructor(name, 0, dom::illegal_constructor, proto, None);
         b.global(name, ctor);
     }
@@ -102,6 +102,8 @@ fn fragments(b: &mut Builder) -> u32 {
         dom::element_method,
     );
     b.host_method(proto, "getElementById", 1, shadow::fragment_method);
+    // Object.prototype.toString names a fragment by this tag, not as an element (template.content).
+    tag_as(b, proto, "DocumentFragment");
     let ctor = b.constructor("DocumentFragment", 0, construct_fragment, proto, None);
     b.global("DocumentFragment", ctor);
     proto

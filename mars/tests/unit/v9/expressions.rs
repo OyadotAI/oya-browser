@@ -5,6 +5,10 @@ use mars::{
 };
 use serde_json::json;
 
+/** An object identity no page heap reaches: below the intrinsic range, far past any allocation,
+so a forged reference stays dangling however much the platform bootstrap allocates. */
+const DANGLING: u32 = 0x3FFF_FFF0;
+
 /** DOM conversion is observable without adding a test-only evaluate API. */
 fn evaluate(expression: &str) -> String {
     execute(&format!(
@@ -247,7 +251,7 @@ fn dangling_heap_references_are_rejected_at_the_state_boundary() {
     let loaded = load(source, &[]).unwrap();
     let mut wire = serde_json::to_value(&loaded.state).unwrap();
     let id = crate::v9::wire_global_object(&wire, "state");
-    crate::v9::wire_object(&mut wire, id)["k"][0][1] = json!({"o": 999});
+    crate::v9::wire_object(&mut wire, id)["k"][0][1] = json!({"o": DANGLING});
     let state: VmState = serde_json::from_value(wire).unwrap();
     assert_eq!(
         event(source, "show()", state, &[]).unwrap_err().code,

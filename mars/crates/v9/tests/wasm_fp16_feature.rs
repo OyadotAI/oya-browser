@@ -1,6 +1,6 @@
 /* Binary16 memory operations follow the shell flag and real Wasm bounds. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Half-float loads and stores retain IEEE values and trap on invalid addresses. */
 #[test]

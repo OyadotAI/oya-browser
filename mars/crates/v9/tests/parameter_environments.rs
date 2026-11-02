@@ -1,5 +1,5 @@
 /** Parameter expression closures retain their own cells while body declarations get distinct bindings. */
-mod common;
+use crate::common;
 
 /** A body var copies the initial argument without overwriting the parameter closure's cell. */
 #[test]

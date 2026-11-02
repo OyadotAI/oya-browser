@@ -1,5 +1,5 @@
 /** Markup admission is host policy on each request, never an eval permission or saved-state grant. */
-mod common;
+use crate::common;
 use mars_v9::{HandlerHash, HandlerPolicy, HandlerRestriction, PageEnvironment};
 
 /** A current request with both compilation surfaces independently constrained. */
@@ -79,19 +79,16 @@ fn restored_tasks_recheck_markup_policy_without_blocking_listeners() {
     assert_eq!(common::global(&result, "r"), "listener");
 }
 
-/** The existing DOM mutation refusal for handler attributes remains stricter than CSP. */
+/** A handler attribute a script writes compiles under the same inline policy as markup: it runs
+when the policy allows inline handlers and is never compiled when it does not, as in Chrome. */
 #[test]
-fn dynamic_handler_attribute_mutation_remains_explicitly_unsupported() {
-    let result = common::load_with(
-        "document.getElementById('go').setAttribute('onclick','throw 1')",
-        &environment(true),
-    );
-    assert!(result.failed.iter().any(|failure| {
-        failure
-            .error
-            .message
-            .contains("Scripts may not write event handler")
-    }));
+fn script_written_handler_attributes_obey_the_inline_policy() {
+    let source = "let r='';window.hit=0;const go=document.getElementById('go');go.setAttribute('onclick','window.hit++');go.click();r=String(window.hit)";
+    for (allowed, expected) in [(false, "0"), (true, "1")] {
+        let result = common::load_with(source, &environment(allowed));
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+        assert_eq!(common::global(&result, "r"), expected);
+    }
 }
 
 /** A permitted handler cannot make string timers bypass the dynamic-code gate. */

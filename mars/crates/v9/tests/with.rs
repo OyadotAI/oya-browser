@@ -1,5 +1,5 @@
 /** The `with` statement (spec 14.11) and its object environment record (spec 9.1.1.2). */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Names in a with body read and write the object's properties first, else the outer scope. */

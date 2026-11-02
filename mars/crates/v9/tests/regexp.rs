@@ -1,6 +1,6 @@
 /** RegExp semantics ported from V8's builtins-regexp and irregexp parser, through the public page
 API. Each test pins one spec algorithm that V9 used to shortcut. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Run `body` and read back `r`. */

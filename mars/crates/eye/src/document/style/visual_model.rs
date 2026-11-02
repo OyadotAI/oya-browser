@@ -669,3 +669,20 @@ pub enum ObjectFit {
     /// The smaller of `none` and `contain`.
     ScaleDown,
 }
+/// `text-decoration-style`: the shape of underlines, overlines and line-throughs. Painters draw
+/// each as Blink's `DecorationPainter` does, so the default `solid` is one band of the thickness.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecorationStyle {
+    /// One band, the initial style.
+    #[default]
+    Solid,
+    /// Two bands one thickness apart.
+    Double,
+    /// Round dots spaced one thickness apart.
+    Dotted,
+    /// Dashes about three thicknesses long.
+    Dashed,
+    /// A wave whose crests are about one thickness high.
+    Wavy,
+}

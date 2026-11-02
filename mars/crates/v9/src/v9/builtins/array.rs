@@ -459,8 +459,8 @@ fn every(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn some(vm: &mut Vm, call: Call) -> Res<JsValue> {
     walk(vm, call, "Array.prototype.some", Walk::Some, false)
 }
-/** Array.prototype.forEach. */
-fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
+/** Array.prototype.forEach, which NodeList also uses: it runs on any array-like receiver, a Proxy included. */
+pub(in crate::v9) fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
     walk(vm, call, "Array.prototype.forEach", Walk::ForEach, false)
 }
 /** Array.prototype.map. */

@@ -4,19 +4,35 @@ use serde::{Deserialize, Serialize};
 mod affine;
 mod clip;
 mod composite;
+mod effects;
+mod paint;
 mod path;
 mod pixels;
 mod raster;
+mod text;
 pub use affine::Affine;
 pub use clip::ClipMask;
-pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage};
+pub use composite::{COMPOSITE_WORK, Composite, composite, composite_coverage, composite_layer};
+pub use effects::{
+    Filter, FilterStep, apply_filter, blur_plane, blur_widths, outline_ring, parse_filter,
+    shadow_layer, shadow_sigma,
+};
+pub use paint::{
+    GRADIENT_STOPS, Geometry, Gradient, Paint, Pattern, Repeat, Shader, Stop, TRANSPARENT,
+};
 pub use path::{
     DASH_INPUTS, DASH_VALUES, DashStyle, FillRule, LineCap, LineJoin, Path, PathPlan, StrokeStyle,
-    paint_path, plan_fill, plan_stroke, plan_stroke_dashed,
+    paint_path, paint_path_with, plan_fill, plan_stroke, plan_stroke_dashed,
 };
 pub use pixels::Pixels;
 pub use pixels::Reservation as Allocation;
-pub use raster::{RasterPlan, blend, blit, clear_rect, fill_rect, plan_blit, plan_rect};
+pub use raster::{
+    RasterPlan, blend, blit, clear_rect, fill_rect, fill_rect_with, plan_blit, plan_rect,
+};
+pub use text::{
+    ALIGNS, Align, BASELINES, Baseline, DIRECTIONS, Direction, FontMetrics, TextMeasure,
+    align_shift, baseline_offset, keyword, lookup, measure as text_measure,
+};
 
 /// Conservative initial edge limit; this is a Mars resource limit, not a web standard limit.
 pub const EDGE: u32 = 512;
@@ -36,6 +52,10 @@ pub const WORK: usize = 8_000_000;
 pub const TEXT_UNITS: usize = 2048;
 /// PNG exports cannot consume an unbounded script string.
 pub const PNG_BYTES: usize = 2 * 1024 * 1024;
+/// The canonical font text a script reads back is bounded like any other script-supplied string.
+pub const FONT_TEXT_BYTES: usize = 1024;
+/// CSS numeric font weights run from 1 to 1000; 400 is normal.
+pub const WEIGHT_RANGE: std::ops::RangeInclusive<u16> = 1..=1000;
 /// HTML's default bitmap dimensions.
 pub const DEFAULT_SIZE: [u32; 2] = [300, 150];
 
@@ -97,14 +117,27 @@ impl Bitmap {
     }
 }
 
-/// A bounded resolved font description shared by native measurement and rasterization.
+/// A resolved font: the shorthand's size, weight and posture, the generic family hosts draw with,
+/// and the canonical text the font getter reports.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, default)]
 pub struct Font {
     /// CSS pixel size.
     pub size: f64,
-    /// Initial implementation admits the three generic families.
+    /// Generic family: serif, sans-serif or monospace. Unknown families map to the closest one.
     pub family: String,
+    /// CSS numeric weight; 400 is normal and 700 is bold.
+    pub weight: u16,
+    /// Italic or oblique posture.
+    pub italic: bool,
+    /// Canonical CSS serialization, such as "bold 11px Arial", that the getter returns verbatim.
+    pub text: String,
+    /// Extra advance after every character, in CSS pixels; negative values tighten the text.
+    #[serde(default)]
+    pub letter_spacing: f64,
+    /// Extra advance after every word separator, in CSS pixels.
+    #[serde(default)]
+    pub word_spacing: f64,
 }
 impl Default for Font {
     /// Canvas starts with the web platform's default font.
@@ -112,6 +145,11 @@ impl Default for Font {
         Self {
             size: 10.0,
             family: "sans-serif".into(),
+            weight: 400,
+            italic: false,
+            text: "10px sans-serif".into(),
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
         }
     }
 }
@@ -121,6 +159,10 @@ pub trait CanvasHost: Sync {
     /// False means 2D context creation must return null rather than promise drawing support.
     fn available(&self) -> bool {
         false
+    }
+    /// Ascent and descent of the font box for the same resolution drawing uses.
+    fn font_metrics(&self, _font: &Font) -> EngineResult<FontMetrics> {
+        Err(unavailable())
     }
     /// Measure through the same font resolution as drawing.
     fn measure(&self, _font: &Font, _text: &str) -> EngineResult<f64> {

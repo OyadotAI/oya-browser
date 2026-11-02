@@ -1,5 +1,5 @@
 /** Port closure and route-domain refusals exercise public VM turns and serialized retained state. */
-mod common;
+use crate::common;
 use mars_v9::{Execution, MessageData, PageEnvironment, PageEvent};
 
 /** External posting uses a real parent proxy while keeping the fixture independent of a browser. */

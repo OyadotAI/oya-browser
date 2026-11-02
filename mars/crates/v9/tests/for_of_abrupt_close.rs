@@ -1,5 +1,5 @@
 /** IteratorClose runs for abrupt loop-body exits while preserving completion precedence and cleanup order. */
-mod common;
+use crate::common;
 
 /** Return and throw close the iterator exactly once; ordinary exhaustion never calls return. */
 #[test]

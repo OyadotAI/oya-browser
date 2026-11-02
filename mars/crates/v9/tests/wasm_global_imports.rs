@@ -1,5 +1,5 @@
 /** Wasm globals distinguish JavaScript constructor defaults from strict binary import types. */
-mod common;
+use crate::common;
 
 /** Undefined numeric initializers use zero while omitted externref remains undefined. */
 #[test]

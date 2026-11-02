@@ -1,6 +1,6 @@
 /** A timer run gives way once its time slice is spent, so one uninterruptible request cannot
 run every due callback of a busy page (YouTube) while a person's click waits. */
-mod common;
+use crate::common;
 
 /** Three due callbacks that each outlast the slice run one per request, in order, none lost. */
 #[test]

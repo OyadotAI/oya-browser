@@ -3,19 +3,40 @@ use super::*;
 use mars_core::canvas::Affine;
 mod composite;
 mod matrix;
+pub(super) use matrix::dictionary as matrix_dictionary;
 pub(super) use matrix::dictionary_members as path_matrix;
 
 /** A bounded stack prevents save-only scripts from retaining unbounded native drawing state. */
 pub(super) const SAVED_STATES: usize = 64;
+
+/** A fill or stroke is a plain color, or a gradient or pattern object referenced by identity so later edits apply. */
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::v9) enum Style {
+    /** Straight-alpha color from a string assignment. */
+    Color([u8; 4]),
+    /** A CanvasGradient or CanvasPattern wrapper whose paint lives in the page's paint table. */
+    Object(ObjectId),
+}
+
+impl Style {
+    /** The paint object this style names, if any; garbage collection keeps those objects alive. */
+    pub(in crate::v9) fn object(&self) -> Option<ObjectId> {
+        match self {
+            Self::Object(id) => Some(*id),
+            Self::Color(_) => None,
+        }
+    }
+}
 
 /** Only implemented drawing properties participate in save, restore and reset. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct DrawingState {
     /** Straight-alpha paint is combined with global alpha only when rasterizing. */
-    pub fill: [u8; 4],
+    pub fill: Style,
     /** Stroke paint is separate from fill paint and shares the same global alpha. */
-    pub stroke: [u8; 4],
+    pub stroke: Style,
     /** Pen dimensions, caps and joins are saved independently from the current path. */
     pub pen: limits::StrokeStyle,
     /** Canonical dash lists and offset follow save/restore and reset with the rest of the pen state. */
@@ -32,14 +53,41 @@ pub(in crate::v9) struct DrawingState {
     pub smoothing: bool,
     /** None is the initial unbounded clip; saved references retain one immutable mask-pool entry. */
     pub clip: Option<u8>,
+    /** Vertical anchor of text: the alphabetic baseline unless a script names another line. */
+    pub baseline: limits::Baseline,
+    /** Horizontal anchor of text, resolved against the direction at draw time. */
+    pub align: limits::Align,
+    /** Direction used to resolve start and end; inherit reads the canvas element. */
+    pub direction: limits::Direction,
+    /** Straight-alpha shadow color; a transparent shadow color disables shadows entirely. */
+    pub shadow_color: [u8; 4],
+    /** Shadow blur in CSS pixels; the Gaussian sigma is half of this value. */
+    pub shadow_blur: f64,
+    /** Shadow offset in device pixels, unaffected by the drawing transform. */
+    pub shadow_offset: [f64; 2],
+    /** The parsed CSS filter list; an empty step list is the initial `none`. */
+    #[serde(default)]
+    pub filter: limits::Filter,
+    /** Keyword properties are validated and reported; their effects are not rendered (see the canvas notes). */
+    pub kerning: String,
+    /** Font stretch keyword, stored for script readback. */
+    pub stretch: String,
+    /** Small-caps keyword, stored for script readback. */
+    pub variant_caps: String,
+    /** Text rendering keyword, stored for script readback. */
+    pub rendering: String,
+    /** Image smoothing quality keyword, stored for script readback. */
+    pub smoothing_quality: String,
+    /** Language tag, stored for script readback. */
+    pub lang: String,
 }
 
 impl Default for DrawingState {
     /** Defaults match a newly created CanvasRenderingContext2D. */
     fn default() -> Self {
         Self {
-            fill: [0, 0, 0, 255],
-            stroke: [0, 0, 0, 255],
+            fill: Style::Color([0, 0, 0, 255]),
+            stroke: Style::Color([0, 0, 0, 255]),
             pen: limits::StrokeStyle::default(),
             dash: limits::DashStyle::default(),
             font: Font::default(),
@@ -48,6 +96,19 @@ impl Default for DrawingState {
             composite: limits::Composite::default(),
             smoothing: true,
             clip: None,
+            baseline: limits::Baseline::default(),
+            align: limits::Align::default(),
+            direction: limits::Direction::default(),
+            shadow_color: [0, 0, 0, 0],
+            shadow_blur: 0.0,
+            shadow_offset: [0.0, 0.0],
+            filter: limits::Filter::default(),
+            kerning: "auto".into(),
+            stretch: "normal".into(),
+            variant_caps: "normal".into(),
+            rendering: "auto".into(),
+            smoothing_quality: "low".into(),
+            lang: "inherit".into(),
         }
     }
 }
@@ -80,6 +141,13 @@ pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
     drawing.pen.validate()?;
     drawing.dash.validate()?;
     let font = &drawing.font;
+    let spacing = [drawing.font.letter_spacing, drawing.font.word_spacing];
+    if spacing
+        .iter()
+        .any(|px| !px.is_finite() || px.abs() > f64::from(limits::EDGE))
+    {
+        return Err(EngineError::invalid("Invalid canvas text spacing."));
+    }
     if !drawing.transform.finite()
         || !drawing.alpha.is_finite()
         || !(0.0..=1.0).contains(&drawing.alpha)
@@ -87,6 +155,8 @@ pub(super) fn validate(drawing: &DrawingState) -> EngineResult<()> {
         || font.size <= 0.0
         || font.size > f64::from(limits::EDGE)
         || !["serif", "sans-serif", "monospace"].contains(&font.family.as_str())
+        || !limits::WEIGHT_RANGE.contains(&font.weight)
+        || font.text.len() > limits::FONT_TEXT_BYTES
     {
         return Err(EngineError::invalid("Invalid canvas drawing state."));
     }

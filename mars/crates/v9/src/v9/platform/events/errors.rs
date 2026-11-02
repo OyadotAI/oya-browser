@@ -1,6 +1,6 @@
 /** Native window errors use intrinsic ErrorEvent identity and cancellation-aware default reporting. */
 use super::*;
-use crate::v9::vm::heap::{Prop, Slot, ENUMERABLE};
+use crate::v9::vm::heap::{ENUMERABLE, Prop, Slot};
 
 /** Native errors retain their prototype even if the author replaces the global constructor. */
 static ERROR_PROTOTYPE: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
@@ -24,7 +24,14 @@ pub(in crate::v9) fn report_window_error(vm: &mut Vm, message: &str) -> Res<()> 
         ("colno", JsValue::Number(0.0)),
         ("error", JsValue::Null),
     ] {
-        vm.heap.put(id, Key::from(name), Prop { slot: Slot::Data(value), attrs: ENUMERABLE });
+        vm.heap.put(
+            id,
+            Key::from(name),
+            Prop {
+                slot: Slot::Data(value),
+                attrs: ENUMERABLE,
+            },
+        );
     }
     with_event(vm, id, |data| data.trusted = true);
     if dispatch(vm, Target::Window, id)? {
@@ -38,8 +45,12 @@ pub(super) fn is_error_event(vm: &Vm, event: ObjectId) -> bool {
     let expected = vm.intrinsic_id(*ERROR_PROTOTYPE.get().expect("error prototype installed"));
     let mut current = Some(event);
     for _ in 0..crate::constants::VM_NESTING_DEPTH {
-        let Some(id) = current else { return false; };
-        if id == expected { return true; }
+        let Some(id) = current else {
+            return false;
+        };
+        if id == expected {
+            return true;
+        }
         current = vm.heap.get(id).and_then(|object| object.proto);
     }
     false

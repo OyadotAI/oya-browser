@@ -1,5 +1,5 @@
 /** Bulk-memory validation reports reserved numeric opcodes as malformed binaries. */
-mod common;
+use crate::common;
 
 /** Unknown prefixed opcodes throw CompileError without marking a supported instruction unavailable. */
 #[test]

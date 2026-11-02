@@ -33,7 +33,7 @@ pub(super) fn natural(node: &Node) -> Natural {
         return svg(&|name| node.attributes.get(name).map(String::as_str));
     }
     if let Some(header) = svg_image_header(node) {
-        return svg(&|name| attribute(&header, name));
+        return image_drawing(svg(&|name| attribute(&header, name)));
     }
     node.image_size
         .filter(|(w, h)| *w > 0 && *h > 0)
@@ -43,6 +43,26 @@ pub(super) fn natural(node: &Node) -> Natural {
             height: Some(height),
             ratio: Some(width / height),
         })
+}
+
+/** A drawing an img shows with a ratio but no width or height has no natural size; CSS Images 3
+ * sizes that box as the default object size, 300 by 150, contained by the ratio. Other natural
+ * sizes pass through unchanged. */
+fn image_drawing(natural: Natural) -> Natural {
+    let (default_width, default_height) = super::replaced::DEFAULT_NATURAL;
+    match (natural.width, natural.height, natural.ratio) {
+        (None, None, Some(ratio)) if ratio >= default_width / default_height => Natural {
+            width: Some(default_width),
+            height: Some(default_width / ratio),
+            ratio: Some(ratio),
+        },
+        (None, None, Some(ratio)) => Natural {
+            width: Some(default_height * ratio),
+            height: Some(default_height),
+            ratio: Some(ratio),
+        },
+        _ => natural,
+    }
 }
 
 /** An svg drawing: absolute `width` and `height` attributes (a percentage, or none, gives no

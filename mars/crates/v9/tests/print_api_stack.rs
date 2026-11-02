@@ -1,6 +1,6 @@
 /* Shell print API entries stay active during actual argument conversion without changing output or exception behavior. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The explicit shell flag controls native metadata independently of source spellings or filenames. */
 fn run(source: &str, enabled: bool) -> mars_v9::Execution {

@@ -1,6 +1,6 @@
 /* Shell callable microtasks enter the callback's actual realm and report through that realm's real onerror. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{Execution, PageEnvironment};
 
 /** Browser behavior is separate; these tests explicitly opt into the native shell contract. */

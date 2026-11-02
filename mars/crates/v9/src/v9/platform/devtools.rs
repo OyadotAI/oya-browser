@@ -155,6 +155,7 @@ pub fn run(
             input.environment,
             state,
             input.modules,
+            input.module_keys,
         )?;
         let Compiled::Each(codes) = compiled else {
             return Err(EngineError::invalid(

@@ -1,5 +1,5 @@
 /** Wasm call traps distinguish null references from signature mismatches. */
-mod common;
+use crate::common;
 
 /** call_ref on null reports the reference dereference trap. */
 #[test]

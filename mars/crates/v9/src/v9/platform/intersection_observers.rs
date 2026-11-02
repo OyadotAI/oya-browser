@@ -1,4 +1,4 @@
-/** Persistent viewport observations use measured boxes and context-owned, branded registrations. */
+/** Persistent viewport and element-root observations use measured boxes and context-owned, branded registrations. */
 mod budget;
 mod options;
 mod sampling;
@@ -64,6 +64,28 @@ pub(in crate::v9) struct State {
     options: options::Options,
     targets: Vec<Observation>,
     queued: Vec<Entry>,
+}
+
+/** Document adoption renumbers script-created nodes; observed targets and queued records follow
+them, or their stale ids fail validation and stop every script on the page (YouTube). */
+pub(super) fn adopt(page: &mut super::Page, old: usize, new: usize) {
+    for state in page.state.intersection_observers.values_mut() {
+        if let Some(root) = &mut state.options.root
+            && root.node == old
+        {
+            root.node = new;
+        }
+        for target in &mut state.targets {
+            if target.node == old {
+                target.node = new;
+            }
+        }
+        for record in &mut state.queued {
+            if record.node == old {
+                record.node = new;
+            }
+        }
+    }
 }
 
 /** Only this constructor creates brands; replacing a prototype or constructor name grants nothing. */
@@ -236,7 +258,9 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = identity(vm, &call.this)?;
     let options = vm.page.state.intersection_observers[&id].options.clone();
     match dom::native_name(&call) {
-        "root" => Ok(JsValue::Null),
+        "root" => Ok(options
+            .root
+            .map_or(JsValue::Null, |root| JsValue::Object(root.object))),
         "rootMargin" => Ok(JsValue::string(&options.margin_text())?),
         "scrollMargin" => Ok(JsValue::string("0px 0px 0px 0px")?),
         "delay" => Ok(JsValue::Number(0.0)),

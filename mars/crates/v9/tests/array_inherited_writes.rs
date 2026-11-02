@@ -1,5 +1,5 @@
 /** Numeric array writes preserve inherited setters and readonly properties without reordering key coercion. */
-mod common;
+use crate::common;
 
 /** Creating an index calls the inherited setter without creating an own element or extending length. */
 #[test]

@@ -55,6 +55,10 @@ pub struct ImageResponse {
     /// Only the host's actual acquisition provenance can grant clean canvas readback.
     #[serde(default)]
     pub origin_clean: bool,
+    /// The absolute URL the host selected from the page's src, srcset or picture sources; it is
+    /// what `currentSrc` reports, empty when the host selected none.
+    #[serde(default)]
+    pub current_src: String,
 }
 
 /** Source and decode state contains no heap references and needs no additional GC roots. */
@@ -83,11 +87,14 @@ pub(in crate::v9) struct State {
     pub origin_clean: bool,
     /** Native pending captures remain charged until cancellation or matching completion. */
     pub blob_bytes: usize,
+    /** The URL the host selected for the last completed request, which `currentSrc` reports. */
+    #[serde(default)]
+    pub current_src: String,
 }
 
 /** Only actual HTML images own these getters; unrelated elements do not acquire image state. */
 pub(super) fn install(b: &mut Builder, prototype: u32) {
-    for name in ["complete", "naturalWidth", "naturalHeight"] {
+    for name in ["complete", "naturalWidth", "naturalHeight", "currentSrc"] {
         b.getter(prototype, name, get);
     }
     b.host_method(prototype, "decode", 0, decode);
@@ -154,6 +161,9 @@ fn get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "complete" => Ok(JsValue::Boolean(
             state.map_or(initial_complete, |s| s.complete),
         )),
+        "currentSrc" => Ok(JsValue::string(
+            state.map_or("", |s| s.current_src.as_str()),
+        )?),
         name => Ok(JsValue::Number(
             state.and_then(|s| s.dimensions).map_or(0.0, |(w, h)| {
                 f64::from(if name == "naturalWidth" { w } else { h })
@@ -320,6 +330,7 @@ pub(in crate::v9) fn deliver(vm: &mut Vm, responses: Vec<ImageResponse>) -> Engi
     let text_bytes = responses.iter().fold(0usize, |used, response| {
         used.saturating_add(response.request.source.len())
             .saturating_add(response.request.url.len())
+            .saturating_add(response.current_src.len())
     });
     if text_bytes > REQUEST_TEXT_BYTES {
         return Err(EngineError::limit(
@@ -328,7 +339,10 @@ pub(in crate::v9) fn deliver(vm: &mut Vm, responses: Vec<ImageResponse>) -> Engi
         ));
     }
     for response in &responses {
-        if !valid_request(&response.request) || !valid_dimensions(response.dimensions) {
+        if !valid_request(&response.request)
+            || !valid_dimensions(response.dimensions)
+            || !valid_url_text(&response.current_src)
+        {
             return Err(EngineError::invalid("Invalid image completion."));
         }
         validate_bitmap(response.dimensions, response.bitmap.as_ref())?;
@@ -359,6 +373,7 @@ fn complete(vm: &mut Vm, response: ImageResponse) -> EngineResult<()> {
     state.dimensions = response.dimensions;
     state.bitmap = response.bitmap;
     state.origin_clean = response.origin_clean;
+    state.current_src = response.current_src;
     validate_pixels(&vm.page.state.images)?;
     let kind = if response.dimensions.is_some() {
         "load"
@@ -401,6 +416,7 @@ pub(in crate::v9) fn validate(states: &BTreeMap<usize, State>) -> EngineResult<(
     if states.values().any(|s| {
         s.generation == 0
             || !valid_url_text(&s.source)
+            || !valid_url_text(&s.current_src)
             || s.source_rejected && (!s.source.is_empty() || s.dimensions.is_some())
             || !valid_dimensions(s.dimensions)
             || s.dimensions.is_some() && (!s.complete || !s.requested)

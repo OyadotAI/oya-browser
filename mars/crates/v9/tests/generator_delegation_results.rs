@@ -1,5 +1,5 @@
 /** Delegated generator results preserve authored identity, observable getter order and saved-state ownership. */
-mod common;
+use crate::common;
 
 /** Repeated return resumptions expose the delegate's exact unfinished result instead of a replacement record. */
 #[test]

@@ -1,7 +1,7 @@
 /** Module grammar: import and export declarations at a module's top level. */
 use super::stmt::infer_name;
 use super::*;
-use std::rc::Rc;
+use std::sync::Arc;
 
 impl Parser {
     /** Whether the cursor starts an import or export declaration: a module's top level only,
@@ -171,7 +171,7 @@ impl Parser {
             let mut func = self.function_rest(at, is_async, false)?;
             if func.name.is_none() {
                 *func.display.borrow_mut() = Name::from("default");
-                Rc::get_mut(&mut func)
+                Arc::get_mut(&mut func)
                     .ok_or_else(|| self.error_at(at, "Unexpected token 'export'"))?
                     .name = Some(Name::from(DEFAULT_BINDING));
             }

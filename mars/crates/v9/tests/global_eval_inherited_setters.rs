@@ -1,6 +1,6 @@
 //! Global eval declarations create own bindings before initialization, even over inherited setters.
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 #[test]
 fn global_eval_var_shadows_inherited_setter() {

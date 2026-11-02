@@ -31,6 +31,7 @@ fn run(payload: &str, refused: bool) -> v9::Execution {
     let execution = v9::load_page(v9::PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: document::script_document(&document, "parsed-scripts").unwrap(),
         storage: Default::default(),
         host: &host,
@@ -104,6 +105,7 @@ fn resume_scripts(corrupt: Option<Vec<usize>>) -> mars::protocol::EngineResult<v
     let initial = v9::load_page(v9::PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: document::script_document(&document, "parsed-resume").unwrap(),
         storage: Default::default(),
         host: &host,
@@ -128,6 +130,7 @@ fn resume_scripts(corrupt: Option<Vec<usize>>) -> mars::protocol::EngineResult<v
         v9::PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: document::script_document(&document, "parsed-resume").unwrap(),
             storage: Default::default(),
             host: &host,

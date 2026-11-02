@@ -1,6 +1,6 @@
 /* D8 native callback tests count real slow calls and never claim an optimized C ABI exists. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 /** Native helper exposure is an explicit owning-environment capability, not a global test override. */
 fn environment() -> PageEnvironment {

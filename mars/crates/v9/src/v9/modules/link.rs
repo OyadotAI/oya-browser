@@ -563,7 +563,7 @@ pub(in crate::v9) fn discover(vm: &mut Vm, indexes: std::ops::Range<usize>) {
 fn evaluate_entry(vm: &mut Vm, key: &str, keys: &[String]) -> Res<Option<EngineError>> {
     if let Err(message) = link(vm, keys)? {
         return Ok(Some(crate::v9::errors::syntax(
-            Default::default(),
+            crate::protocol::SourceLocation::default(),
             &message,
         )));
     }

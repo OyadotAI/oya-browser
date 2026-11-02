@@ -136,6 +136,8 @@ impl<'de> Deserialize<'de> for ArrayElements {
 }
 
 /** Reconstruct canonical content and reject forged roots, offsets and missing source data. */
+// Outside conformance builds no root is read-only, so the root check refuses on its first element.
+#[cfg_attr(not(feature = "conformance"), allow(clippy::never_loop))]
 fn decode_characters(wire: CharactersWire) -> Option<ArrayElements> {
     let span = wire.span as usize;
     if span == 0 || wire.span > wire.length || wire.roots.len() != 256 {

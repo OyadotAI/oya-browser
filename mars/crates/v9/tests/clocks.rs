@@ -1,5 +1,5 @@
 /** Native script clocks advance within tasks while serialized state preserves scheduler determinism. */
-mod common;
+use crate::common;
 use mars_v9::{PageEnvironment, VmState};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};

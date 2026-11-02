@@ -1,6 +1,6 @@
 /** Page state the document engine styles from: writes to `<html>` and `<body>` attributes and
 focus moves travel in the extended change log, and element ids answer bare global names. */
-mod common;
+use crate::common;
 
 use common::{environment, failure, global, load_with};
 use mars_v9::{DomLevel, Execution, document::ScriptChange};

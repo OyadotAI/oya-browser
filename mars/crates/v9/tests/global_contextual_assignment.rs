@@ -1,5 +1,5 @@
 /** Contextual global stores preserve V8's prototype and strict-assignment behavior. */
-mod common;
+use crate::common;
 
 /** Strict inherited writable data is readable but cannot become a new global binding. */
 #[test]

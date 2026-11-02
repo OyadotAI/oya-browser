@@ -1,5 +1,5 @@
 /** Reflect invocation validates callable/constructor targets and genuine array-like lists before reading their elements. */
-mod common;
+use crate::common;
 
 /** Reflect rejects null argument lists while Function.apply explicitly accepts them as empty lists. */
 #[test]

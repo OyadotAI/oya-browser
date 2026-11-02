@@ -1,6 +1,6 @@
 /** Frames: same-origin iframe documents, Document::open/write/close and createHTMLDocument,
 ported from Blink's HTMLFrameOwnerElement, Document and DOMImplementation. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** The html5lib serializer test.js runs, over any document. */

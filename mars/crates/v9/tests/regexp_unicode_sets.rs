@@ -1,5 +1,5 @@
 /** RegExp v-flag (ES2024 unicodeSets): set operators, nested classes, \q{} string alternatives and their early errors. */
-mod common;
+use crate::common;
 
 /** Every Unicode string-property family matches real sequences and rejects unrelated text. */
 #[test]
@@ -189,6 +189,7 @@ fn deeply_nested_v_mode_classes_fail_as_a_limit() {
     let input = mars_v9::PageInput {
         sources: &[source],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: mars_v9::StorageState::default(),
         host: &host,

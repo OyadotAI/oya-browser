@@ -1,6 +1,6 @@
 /** DOM tree semantics ported from Blink: pre-insertion validity, the ChildNode and ParentNode
 steps, CharacterData, document.createEvent and the event dispatch flags. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Each rejected insertion throws the DOMException the DOM standard names. */

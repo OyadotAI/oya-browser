@@ -40,7 +40,7 @@ pub enum BorderStyle {
 }
 impl BorderStyle {
     /** The painted style a keyword names; `none`, `hidden` and anything unknown paint solid. */
-    fn of(keyword: &str) -> Self {
+    pub(super) fn of(keyword: &str) -> Self {
         match keyword {
             "dotted" => Self::Dotted,
             "dashed" => Self::Dashed,
@@ -58,7 +58,7 @@ pub(super) fn width(value: &str) -> EngineResult<f64> {
     width_in(value, CSS_ROOT_FONT_SIZE, RenderContext::default())
 }
 /** Width keywords or a nonnegative length against the element font. */
-fn width_in(value: &str, font: f64, context: RenderContext) -> EngineResult<f64> {
+pub(super) fn width_in(value: &str, font: f64, context: RenderContext) -> EngineResult<f64> {
     match value {
         "thin" => Ok(BORDER_THIN),
         "medium" => Ok(BORDER_MEDIUM),

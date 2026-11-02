@@ -4,7 +4,7 @@
  * Single-page apps send their forms with fetch from this handler, and client validation refuses
  * bad input here.
  */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::PageEvent;

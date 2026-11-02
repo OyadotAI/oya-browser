@@ -36,3 +36,19 @@ fn typed_responses_read_both_shapes() {
     assert_eq!(reply.result, Some(vec![1, 2]));
     assert_eq!(reply.id.as_deref(), Some("3"));
 }
+
+/** V9 and document execution requests match their expected wire envelopes without intermediate Value trees. */
+#[test]
+fn typed_v9_and_document_operations_match_wire_envelopes() {
+    let source_params = json!({"source":"1 + 2"});
+    let request = Request::new("9", "v9.execute", source_params.clone());
+    assert_eq!(
+        encode_request("9", "v9.execute", &source_params).unwrap(),
+        encode(&request).unwrap()
+    );
+    let execution_result = json!({"result":"3","changes":[]});
+    assert_eq!(
+        encode_reply("9", &execution_result).unwrap(),
+        encode(&Response::new(Some("9".into()), Ok(execution_result))).unwrap()
+    );
+}

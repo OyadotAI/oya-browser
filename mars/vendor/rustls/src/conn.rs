@@ -327,6 +327,10 @@ https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof"
         /// TLS handshake completes, and sends it as soon
         /// as it can.  See [`ConnectionCommon::set_buffer_limit`] to control
         /// the size of this buffer.
+        ///
+        /// If the connection previously encountered a fatal error (for example, while
+        /// processing received data in [`Connection::process_new_packets`]), this returns
+        /// that error, even if `buf` is empty.
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.sink.write(buf)
         }
@@ -335,6 +339,8 @@ https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof"
             self.sink.write_vectored(bufs)
         }
 
+        /// This does not do any I/O, but returns the fatal error the connection previously
+        /// encountered, if any.
         fn flush(&mut self) -> io::Result<()> {
             self.sink.flush()
         }
@@ -351,17 +357,40 @@ https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof"
         fn flush(&mut self) -> io::Result<()>;
     }
 
+    impl<T> ConnectionCommon<T> {
+        /// Return the fatal error this connection previously encountered, if any.
+        fn check_error(&self) -> io::Result<()> {
+            match &self.core.state {
+                Ok(_) => Ok(()),
+                Err(err) => Err(io::Error::new(io::ErrorKind::InvalidData, err.clone())),
+            }
+        }
+
+        /// Send or buffer as much of `payload` as possible.
+        ///
+        /// This updates the TLS 1.3 traffic keys as needed between records.
+        fn send_plaintext(&mut self, payload: OutboundChunks<'_>) -> usize {
+            let mut len = 0;
+            loop {
+                len += self
+                    .core
+                    .common_state
+                    .buffer_plaintext(payload.split_at(len).1, &mut self.sendable_plaintext);
+                if !self.core.maybe_refresh_traffic_keys() || len == payload.len() {
+                    return len;
+                }
+            }
+        }
+    }
+
     impl<T> PlaintextSink for ConnectionCommon<T> {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let len = self
-                .core
-                .common_state
-                .buffer_plaintext(buf.into(), &mut self.sendable_plaintext);
-            self.core.maybe_refresh_traffic_keys();
-            Ok(len)
+            self.check_error()?;
+            Ok(self.send_plaintext(buf.into()))
         }
 
         fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+            self.check_error()?;
             let payload_owner: Vec<&[u8]>;
             let payload = match bufs.len() {
                 0 => return Ok(0),
@@ -375,16 +404,11 @@ https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof"
                     OutboundChunks::new(&payload_owner)
                 }
             };
-            let len = self
-                .core
-                .common_state
-                .buffer_plaintext(payload, &mut self.sendable_plaintext);
-            self.core.maybe_refresh_traffic_keys();
-            Ok(len)
+            Ok(self.send_plaintext(payload))
         }
 
         fn flush(&mut self) -> io::Result<()> {
-            Ok(())
+            self.check_error()
         }
     }
 }
@@ -1135,6 +1159,9 @@ impl<Data> ConnectionCore<Data> {
                 self.common_state
                     .send_fatal_alert(AlertDescription::BadRecordMac, error)
             }
+            Error::PeerMisbehaved(PeerMisbehaved::IllegalMiddleboxChangeCipherSpec) => self
+                .common_state
+                .send_fatal_alert(AlertDescription::UnexpectedMessage, error),
 
             error => error,
         }
@@ -1256,14 +1283,14 @@ impl<Data> ConnectionCore<Data> {
     }
 
     /// Trigger a `refresh_traffic_keys` if required by `CommonState`.
-    fn maybe_refresh_traffic_keys(&mut self) {
-        if mem::take(
+    ///
+    /// Returns whether the traffic keys were updated.
+    fn maybe_refresh_traffic_keys(&mut self) -> bool {
+        mem::take(
             &mut self
                 .common_state
                 .refresh_traffic_keys_pending,
-        ) {
-            let _ = self.refresh_traffic_keys();
-        }
+        ) && self.refresh_traffic_keys().is_ok()
     }
 
     fn refresh_traffic_keys(&mut self) -> Result<(), Error> {

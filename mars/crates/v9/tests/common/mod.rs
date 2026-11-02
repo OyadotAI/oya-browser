@@ -71,6 +71,7 @@ pub fn load_with(source: &str, environment: &PageEnvironment) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,
@@ -83,6 +84,28 @@ pub fn load_with(source: &str, environment: &PageEnvironment) -> Execution {
 /** Load one script with the default test environment. */
 pub fn load(source: &str) -> Execution {
     load_with(source, &environment())
+}
+
+/** The serialized state of a page that ran no script of its own: what the platform bootstrap
+(Observable, the Geometry Interfaces, media and the other JavaScript-defined interfaces) leaves
+in every page. Size checks measure what a script adds on top of it. */
+pub fn empty_state_bytes() -> usize {
+    static BYTES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BYTES.get_or_init(|| serde_json::to_string(&load("").state).unwrap().len())
+}
+
+/** Function objects an empty page already holds (the platform bootstrap's closures), so a test
+that fills the heap to VM_FUNCTIONS leaves the headroom it means to. */
+pub fn empty_page_functions() -> usize {
+    static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *COUNT.get_or_init(|| {
+        let state = serde_json::to_value(load("").state).unwrap();
+        let objects = state["heap"][0].as_array().cloned().unwrap_or_default();
+        objects
+            .iter()
+            .filter(|object| object[1]["c"].get("function").is_some())
+            .count()
+    })
 }
 
 /** The first failure message, if the script failed. */
@@ -123,6 +146,7 @@ pub fn input<'a>(
     PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host,

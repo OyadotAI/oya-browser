@@ -1,5 +1,5 @@
 /** Array destructuring protects live iterators during binding work and preserves abrupt-completion precedence. */
-mod common;
+use crate::common;
 
 /** Setter, default and nested-pattern failures close every acquired outer iterator exactly once. */
 #[test]

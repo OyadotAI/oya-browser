@@ -1,5 +1,5 @@
 /** Annex B leading-zero decimals validate their integer prefix before fraction and exponent separators. */
-mod common;
+use crate::common;
 
 /** A nonoctal leading-zero number keeps the standard fraction and exponent separator grammar. */
 #[test]

@@ -1,5 +1,5 @@
 /** `getComputedStyle(el).position` answers the app's cascade, not only inline declarations. */
-mod common;
+use crate::common;
 
 /** The cascaded position the app supplies is what script reads; an inline declaration set since
 wins, and an element the cascade left static reads `static` (GitHub sizes its fixed header only

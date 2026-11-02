@@ -1,5 +1,5 @@
 /** Current dropdown state remains distinct from default markup and exact duplicate values. */
-mod common;
+use crate::common;
 
 #[test]
 fn value_index_and_option_selection_agree_without_rewriting_defaults() {

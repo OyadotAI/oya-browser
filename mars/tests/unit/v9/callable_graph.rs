@@ -2,6 +2,10 @@
 use mars::v9::{VmState, event, load};
 use serde_json::{Value, json};
 
+/** An object identity no page heap reaches: below the intrinsic range, far past any allocation,
+so a forged reference stays dangling however much the platform bootstrap allocates. */
+const DANGLING: u32 = 0x3FFF_FFF0;
+
 /** Every event crosses the same serialized state boundary used by the V9 service. */
 fn next(source: &str, state: VmState) -> mars::v9::Execution {
     event(
@@ -33,9 +37,9 @@ fn bound_cycles_and_dangling_owned_values_are_rejected_before_execution() {
     let id = original["globals"]["bound"]["value"]["o"].as_u64().unwrap();
     for (field, forged) in [
         ("target", json!(id)),
-        ("target", json!(999)),
-        ("this", json!({"o": 999})),
-        ("args", json!([{"o": 999}])),
+        ("target", json!(DANGLING)),
+        ("this", json!({"o": DANGLING})),
+        ("args", json!([{"o": DANGLING}])),
     ] {
         let mut value = original.clone();
         let objects = value["heap"][0].as_array_mut().unwrap();

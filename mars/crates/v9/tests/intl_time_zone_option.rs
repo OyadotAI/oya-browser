@@ -1,5 +1,5 @@
 /** The timeZone option must name a zone: values that are not zone names throw a RangeError, while UTC, offsets and Area/Location names are accepted. */
-mod common;
+use crate::common;
 
 /** A number is not a zone name, so the constructor throws a RangeError naming it. */
 #[test]

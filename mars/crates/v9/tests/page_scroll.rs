@@ -4,7 +4,7 @@
  * window with capture and loads `data-delayed-url` images once `getBoundingClientRect` puts them
  * in view, so without these its images below the first screen never loaded.
  */
-mod common;
+use crate::common;
 
 use common::{failure, host, input, load_with, round_trip};
 use mars_v9::PageEvent;

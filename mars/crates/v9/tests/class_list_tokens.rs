@@ -1,6 +1,6 @@
 /** DOMTokenList in V9 over the token set: order, duplicates, toggle and replace follow the DOM rules,
 and a write made outside classList is seen by the next call, so the kept set never goes stale. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 
@@ -12,6 +12,7 @@ fn eval(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

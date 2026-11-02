@@ -3,8 +3,8 @@
  * gained the same keys in the same order share one immutable `Shape` that maps each key to a slot
  * index, so a property-load or store site can remember "shape N keeps this key in slot S" and
  * answer the next object of that shape with one integer compare and an indexed read. Objects with
- * many properties or a deleted one drop to dictionary mode, as V8's slow properties do, and are
- * never cached.
+ * many properties or a deleted one use a dictionary with a versioned layout identity, so repeated
+ * own-property accesses still use slots without sharing a growing chain of shapes.
  */
 use super::heap::{FastMap, Key, Prop};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -96,8 +96,8 @@ enum Layout {
     Empty,
     /** Fast mode: a shared shape. */
     Shaped(Arc<Shape>),
-    /** Dictionary mode: the object's own key list, indexed once it grows. */
-    Dictionary(Vec<Key>, Option<FastMap<Key, usize>>),
+    /** Dictionary keys and index; the identity changes whenever a mutation can change slots. */
+    Dictionary(Vec<Key>, Option<FastMap<Key, usize>>, u64),
 }
 
 /** Own properties in insertion order: a layout naming the keys and the slots holding them. */
@@ -123,7 +123,7 @@ impl Props {
     pub fn memory_bounds(&self) -> (usize, usize) {
         let mut lower = self.slots.capacity() * std::mem::size_of::<Prop>();
         let mut upper = lower;
-        if let Layout::Dictionary(keys, index) = &self.layout {
+        if let Layout::Dictionary(keys, index, _) = &self.layout {
             lower += keys.capacity() * std::mem::size_of::<Key>();
             upper = lower;
             if let Some(index) = index {
@@ -142,11 +142,12 @@ impl Props {
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
-    /** The shape identity inline caches key on; zero in dictionary mode, which is never cached. */
+    /** The layout identity inline caches key on; cloned dictionaries share it until either changes. */
     pub fn shape_id(&self) -> u64 {
         match &self.layout {
             Layout::Shaped(shape) => shape.id,
-            Layout::Empty | Layout::Dictionary(..) => 0,
+            Layout::Dictionary(_, _, identity) => *identity,
+            Layout::Empty => 0,
         }
     }
     /** The slot holding a key. */
@@ -154,8 +155,8 @@ impl Props {
         match &self.layout {
             Layout::Empty => None,
             Layout::Shaped(shape) => shape.position(key),
-            Layout::Dictionary(_, Some(index)) => index.get(key).copied(),
-            Layout::Dictionary(keys, None) => keys.iter().position(|found| found == key),
+            Layout::Dictionary(_, Some(index), _) => index.get(key).copied(),
+            Layout::Dictionary(keys, None, _) => keys.iter().position(|found| found == key),
         }
     }
     /** The property in a slot, for a cache hit. */
@@ -188,9 +189,11 @@ impl Props {
                 let mut keys = shape.keys.clone();
                 keys.push(key);
                 let index = Some(index_of(&keys));
-                self.layout = Layout::Dictionary(keys, index);
+                self.layout =
+                    Layout::Dictionary(keys, index, NEXT_SHAPE.fetch_add(1, Ordering::Relaxed));
             }
-            Layout::Dictionary(keys, index) => {
+            Layout::Dictionary(keys, index, identity) => {
+                *identity = NEXT_SHAPE.fetch_add(1, Ordering::Relaxed);
                 if let Some(index) = index {
                     index.insert(key.clone(), keys.len());
                 }
@@ -218,14 +221,14 @@ impl Props {
             }
             Layout::Shaped(shape) => shape.keys.clone(),
             Layout::Empty => Vec::new(),
-            Layout::Dictionary(keys, _) => keys.clone(),
+            Layout::Dictionary(keys, _, _) => keys.clone(),
         };
         let mut keys = keys;
         if slot < keys.len() {
             keys.remove(slot);
         }
         let index = (keys.len() > INDEX_THRESHOLD).then(|| index_of(&keys));
-        self.layout = Layout::Dictionary(keys, index);
+        self.layout = Layout::Dictionary(keys, index, NEXT_SHAPE.fetch_add(1, Ordering::Relaxed));
         Some(prop)
     }
     /** The keys in insertion order. */
@@ -233,7 +236,7 @@ impl Props {
         match &self.layout {
             Layout::Empty => &[],
             Layout::Shaped(shape) => &shape.keys,
-            Layout::Dictionary(keys, _) => keys,
+            Layout::Dictionary(keys, _, _) => keys,
         }
     }
     /** Entries in insertion order. */
@@ -279,16 +282,27 @@ impl SiteCaches {
         std::mem::size_of_val(&*self.0)
     }
     /** The slot cached for `shape` at constant `site`. */
+    #[inline]
     pub fn lookup(&self, site: u32, shape: u64) -> Option<usize> {
         if shape == 0 {
             return None;
         }
-        self.0.get(site as usize)?.iter().find_map(|entry| {
-            let entry = entry.load(Ordering::Relaxed);
-            (entry >> SLOT_BITS == shape).then_some((entry & ((1 << SLOT_BITS) - 1)) as usize)
-        })
+        let ways = self.0.get(site as usize)?;
+        let mask = (1 << SLOT_BITS) - 1;
+        let first = ways[0].load(Ordering::Relaxed);
+        if first >> SLOT_BITS == shape {
+            return Some((first & mask) as usize);
+        }
+        for entry in &ways[1..] {
+            let val = entry.load(Ordering::Relaxed);
+            if val >> SLOT_BITS == shape {
+                return Some((val & mask) as usize);
+            }
+        }
+        None
     }
     /** Remember a slot: in an empty way, else replacing one picked by the shape. */
+    #[inline]
     pub fn record(&self, site: u32, shape: u64, slot: usize) {
         let Some(ways) = self.0.get(site as usize) else {
             return;
@@ -308,7 +322,7 @@ impl SiteCaches {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v9::value::JsValue;
+    use crate::v9::value::{JsString, JsValue};
     use crate::v9::vm::heap::Prop;
 
     /** A numbered data property. */
@@ -349,7 +363,7 @@ mod tests {
         a.insert(Key::from("y"), prop(2.0));
         a.insert(Key::from("z"), prop(3.0));
         a.remove(&Key::from("x"));
-        assert_eq!(a.shape_id(), 0);
+        assert_ne!(a.shape_id(), 0);
         let keys: Vec<Key> = a.iter().map(|(key, _)| key.clone()).collect();
         assert_eq!(keys, [Key::from("y"), Key::from("z")]);
         assert_eq!(a.get(&Key::from("z")), Some(&prop(3.0)));
@@ -362,14 +376,54 @@ mod tests {
         for n in 0..=FAST_LIMIT {
             a.insert(Key::from(&format!("k{n}")), prop(n as f64));
         }
-        assert_eq!(a.shape_id(), 0);
+        assert_ne!(a.shape_id(), 0);
         for n in 0..=FAST_LIMIT {
             assert_eq!(a.get(&Key::from(&format!("k{n}"))), Some(&prop(n as f64)));
         }
     }
 
+    /** Mutating one snapshot must never make its cached slots usable on another layout. */
+    #[test]
+    fn dictionary_forks_invalidate_slots_independently() {
+        let mut original = Props::default();
+        for n in 0..=FAST_LIMIT {
+            original.insert(Key::from(&format!("k{n}")), prop(n as f64));
+        }
+        let mut fork = original.clone();
+        let caches = SiteCaches::new(1);
+        let key = Key::from("k20");
+        let identity = original.shape_id();
+        caches.record(0, identity, original.position(&key).unwrap());
+        assert_eq!(caches.lookup(0, fork.shape_id()), Some(20));
+        fork.remove(&Key::from("k0"));
+        assert_eq!(caches.lookup(0, fork.shape_id()), None);
+        assert_eq!(original.shape_id(), identity);
+        assert_eq!(original.position(&key), Some(20));
+        assert_eq!(fork.position(&key), Some(19));
+        caches.record(0, fork.shape_id(), fork.position(&key).unwrap());
+        fork.insert(Key::from("k0"), prop(99.0));
+        assert_eq!(caches.lookup(0, fork.shape_id()), None);
+        assert_eq!(caches.lookup(0, original.shape_id()), Some(20));
+    }
+
+    /** Value replacement keeps a dictionary layout, while adding a key separates cloned versions. */
+    #[test]
+    fn dictionary_values_keep_their_layout_identity() {
+        let mut props = Props::default();
+        for n in 0..=FAST_LIMIT {
+            props.insert(Key::from(&format!("k{n}")), prop(n as f64));
+        }
+        let original = props.clone();
+        props.insert(Key::from("k0"), prop(99.0));
+        assert_eq!(props.shape_id(), original.shape_id());
+        assert_eq!(props.get(&Key::from("k0")), Some(&prop(99.0)));
+        assert_eq!(original.get(&Key::from("k0")), Some(&prop(0.0)));
+        props.insert(Key::from("extra"), prop(1.0));
+        assert_ne!(props.shape_id(), original.shape_id());
+    }
+
     /** A site keeps up to WAYS shapes, never answers for a shape it was not told, and ignores
-    dictionary objects. */
+    empty layouts. */
     #[test]
     fn caches_are_polymorphic_and_exact() {
         let caches = SiteCaches::new(2);
@@ -384,5 +438,31 @@ mod tests {
         caches.record(1, 0, 3);
         assert_eq!(caches.lookup(1, 0), None);
         caches.record(5, 1, 1);
+    }
+
+    /** A rope key finds the slot of a flat key with the same text in an indexed shape, and a
+    rope with other text finds nothing: the index hashes content, not the representation. */
+    #[test]
+    fn rope_key_finds_flat_key_in_indexed_shape() {
+        let text: Vec<u16> = (0..1100).map(|n| 0x61 + (n % 26) as u16).collect();
+        let rope_of = |units: &[u16]| {
+            let (head, tail) = units.split_at(550);
+            let head = JsString::from_units(head.to_vec()).unwrap();
+            let tail = JsString::from_units(tail.to_vec()).unwrap();
+            Key::Str(head.concat(&tail).unwrap())
+        };
+        let mut props = Props::default();
+        for n in 0..INDEX_THRESHOLD + 1 {
+            props.insert(Key::from(&format!("k{n}")), prop(n as f64));
+        }
+        let slot = INDEX_THRESHOLD + 1;
+        props.insert(
+            Key::Str(JsString::from_units(text.clone()).unwrap()),
+            prop(9.0),
+        );
+        assert_eq!(props.position(&rope_of(&text)), Some(slot));
+        let mut other = text.clone();
+        other[1099] ^= 1;
+        assert_eq!(props.position(&rope_of(&other)), None);
     }
 }

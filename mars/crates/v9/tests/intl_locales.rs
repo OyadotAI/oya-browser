@@ -1,6 +1,6 @@
 /** Intl.NumberFormat and Intl.PluralRules read CLDR locale data: separators and grouping sizes,
 currency and percent patterns, compact names, range collapsing and plural rules per locale. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Omitted Intl locales use the page's host locale across formatter families. */

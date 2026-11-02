@@ -1,6 +1,6 @@
 /* Hermetic d8 worker tests execute real isolated V9 threads and typed graph messages. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::{ConformanceWorkerSession, PageEnvironment};
 
 /** A worker GC cannot promote the sender's unshared string allocation. */

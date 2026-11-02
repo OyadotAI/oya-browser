@@ -1,6 +1,6 @@
 /** Interpreter speed: hermetic checks that the fast paths keep behaviour, plus an ignored
 micro-benchmark (`cargo test --release -p mars-v9 --test perf -- --ignored --nocapture bench`). */
-mod common;
+use crate::common;
 use common::eval;
 use std::time::Instant;
 
@@ -122,6 +122,20 @@ fn cached_sites_follow_dictionary_objects_and_redefinitions() {
         Object.defineProperty(b,'v',{get(){return 'g'},set(x){seen.push('s'+x)}});\
         seen.push(get(b));put(b,9);const r=seen.join();";
     assert_eq!(eval(source, "r"), "1,1,1,1,5,7,8,g,s9");
+}
+
+/** Cached dictionary slots follow shifts and still honor accessors and non-writable properties. */
+#[test]
+fn dictionary_caches_follow_deletion_reinsertion_and_attributes() {
+    let source = "'use strict';function get(o){return o.k20}function put(o,v){o.k20=v}\
+        const o={};for(let i=0;i<60;i++)o['k'+i]=i;const seen=[get(o),get(o)];\
+        delete o.k0;seen.push(get(o));delete o.k20;o.k20=70;seen.push(get(o));\
+        put(o,80);seen.push(get(o));\
+        Object.defineProperty(o,'k20',{get(){return 90},set(v){seen.push(v)},configurable:true});\
+        seen.push(get(o));put(o,100);\
+        Object.defineProperty(o,'k20',{value:110,writable:false});seen.push(get(o));\
+        try{put(o,120)}catch(e){seen.push(e instanceof TypeError)}const r=seen.join();";
+    assert_eq!(eval(source, "r"), "20,20,20,70,80,90,100,110,true");
 }
 
 /** A read of a lexical global before its declaration still throws, now that the found-binding

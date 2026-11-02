@@ -1,5 +1,5 @@
 /** Array.prototype is an array before materialization and retains exotic semantics afterward. */
-mod common;
+use crate::common;
 
 /** The initial intrinsic length is writable but cannot enumerate or disappear. */
 #[test]

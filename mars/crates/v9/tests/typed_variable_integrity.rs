@@ -1,5 +1,5 @@
 /** Variable-length typed views reject fixed-layout integrity changes before mutating extensibility or descriptors. */
-mod common;
+use crate::common;
 
 /** The public Object/Reflect surfaces exercise the actual typed-array internal method. */
 fn eval(source: &str) -> String {

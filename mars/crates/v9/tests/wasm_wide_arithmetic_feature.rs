@@ -1,6 +1,6 @@
 /* Wide arithmetic opcodes follow the shell's proposal feature state. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** A valid wide multiply is rejected without the flag and executes when enabled. */
 #[test]

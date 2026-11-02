@@ -1,7 +1,8 @@
 /** Static reasons and structured locations prevent source/secret leakage in VM errors. */
 use crate::protocol::{EngineError, SourceLocation};
 /** Malformed supported grammar is distinct from recognized unimplemented JavaScript. */
-pub(super) fn syntax(location: SourceLocation, reason: &str) -> EngineError {
+pub(super) fn syntax(location: impl Into<SourceLocation>, reason: &str) -> EngineError {
+    let location: SourceLocation = location.into();
     located(
         EngineError::new(
             "script_syntax_error",
@@ -64,11 +65,11 @@ pub(super) fn reason(error: &EngineError) -> &str {
 /** Budget and DOM failures retain their stable error classification. */
 pub(super) fn located(
     mut error: EngineError,
-    location: SourceLocation,
+    location: impl Into<SourceLocation>,
     phase: &str,
 ) -> EngineError {
     if error.location.is_none() {
-        error.location = Some(Box::new(location));
+        error.location = Some(Box::new(location.into()));
         error.phase = Some(phase.into());
         error.input_kind = Some("script".into());
     }

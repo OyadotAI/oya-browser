@@ -177,7 +177,6 @@ DOMQuad||M:fromQuad M:fromRect m:getBounds m:toJSON g:p1 g:p2 g:p3 g:p4
 DOMRect|DOMRectReadOnly|a:height a:width a:x a:y
 DOMRectList||i m:item g:length
 DOMRectReadOnly||M:fromRect m:toJSON g:bottom g:height g:left g:right g:top g:width g:x g:y
-DOMStringList||i m:contains m:item g:length
 DOMStringMap||
 DOMTokenList||i m:add m:contains m:entries m:forEach m:item m:keys m:remove m:replace m:supports m:toString m:toggle m:values g:length a:value
 DataTransfer||m:clearData m:getData m:setData m:setDragImage a:dropEffect a:effectAllowed g:files g:items g:types
@@ -370,18 +369,6 @@ Headers||i m:append m:delete m:entries m:forEach m:get m:getSetCookie m:has m:ke
 Highlight||i m:add m:clear m:delete m:entries m:forEach m:has m:keys m:values a:priority g:size a:type
 HighlightRegistry||i m:clear m:delete m:entries m:forEach m:get m:has m:highlightsFromPoint m:keys m:set m:values g:size
 History||m:back m:forward m:go m:pushState m:replaceState g:length a:scrollRestoration g:state
-IDBCursor||m:advance m:continue m:continuePrimaryKey m:delete m:update g:direction g:key g:primaryKey g:request g:source
-IDBCursorWithValue|IDBCursor|g:value
-IDBDatabase|EventTarget|m:close m:createObjectStore m:deleteObjectStore m:transaction g:name g:objectStoreNames a:onabort a:onclose a:onerror a:onversionchange g:version
-IDBFactory||m:cmp m:databases m:deleteDatabase m:open
-IDBIndex||m:count m:get m:getAll m:getAllKeys m:getAllRecords m:getKey m:openCursor m:openKeyCursor g:keyPath g:multiEntry a:name g:objectStore g:unique
-IDBKeyRange||M:bound M:lowerBound M:only M:upperBound m:includes g:lower g:lowerOpen g:upper g:upperOpen
-IDBObjectStore||m:add m:clear m:count m:createIndex m:delete m:deleteIndex m:get m:getAll m:getAllKeys m:getAllRecords m:getKey m:index m:openCursor m:openKeyCursor m:put g:autoIncrement g:indexNames g:keyPath a:name g:transaction
-IDBOpenDBRequest|IDBRequest|a:onblocked a:onupgradeneeded
-IDBRecord||g:key g:primaryKey g:value
-IDBRequest|EventTarget|g:error a:onerror a:onsuccess g:readyState g:result g:source g:transaction
-IDBTransaction|EventTarget|m:abort m:commit m:objectStore g:db g:durability g:error g:mode g:objectStoreNames a:onabort a:oncomplete a:onerror
-IDBVersionChangeEvent|Event|g:dataLoss g:dataLossMessage g:newVersion g:oldVersion
 IIRFilterNode|AudioNode|m:getFrequencyResponse
 IdentityCredential|Credential|M:disconnect g:configURL g:isAutoSelected g:token
 IdentityCredentialError|DOMException|g:code g:error g:url

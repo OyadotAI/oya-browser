@@ -2,8 +2,7 @@
 use super::expr::{Cover, INVALID_TARGET};
 use super::stmt::infer_name;
 use super::*;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 impl Parser {
     /** After `function`: optional `*`, a name (required for declarations), parameters and body. */
@@ -12,7 +11,7 @@ impl Parser {
         pos: Pos,
         is_async: bool,
         declaration: bool,
-    ) -> EngineResult<Rc<Func>> {
+    ) -> EngineResult<Arc<Func>> {
         let generator = self.eat("*");
         let source_available = self.pos().offset.saturating_sub(pos.offset) <= u32::from(u16::MAX);
         let name = if self.at("(") {
@@ -53,7 +52,7 @@ impl Parser {
         is_async: bool,
         generator: bool,
         accessor: Option<bool>,
-    ) -> EngineResult<Rc<Func>> {
+    ) -> EngineResult<Arc<Func>> {
         let flags = FuncFlags {
             asynchronous: is_async,
             generator,
@@ -101,7 +100,7 @@ impl Parser {
         name: Option<Name>,
         display: Name,
         flags: FuncFlags,
-    ) -> EngineResult<Rc<Func>> {
+    ) -> EngineResult<Arc<Func>> {
         self.nest(pos)?;
         let saved = (self.context, self.strict, std::mem::take(&mut self.labels));
         self.context = Context {
@@ -128,11 +127,11 @@ impl Parser {
         {
             return Err(self.error_at(pos, reason));
         }
-        Ok(Rc::new(Func {
-            source_span: RefCell::new(Some((pos.offset, self.consumed_end()))),
+        Ok(Arc::new(Func {
+            source_span: Late::new(Some((pos.offset, self.consumed_end()))),
             site,
             name,
-            display: RefCell::new(display),
+            display: Late::new(display),
             length: length(&params),
             params,
             rest,
@@ -283,11 +282,11 @@ impl Parser {
         self.labels = saved.2;
         self.unnest();
         let (params, rest, body) = result?;
-        let func = Rc::new(Func {
-            source_span: RefCell::new(Some((pos.offset, self.consumed_end()))),
+        let func = Arc::new(Func {
+            source_span: Late::new(Some((pos.offset, self.consumed_end()))),
             site: site(pos, SITE_SOURCE),
             name: None,
-            display: RefCell::new(Name::from("")),
+            display: Late::new(Name::from("")),
             length: length(&params),
             params,
             rest,
@@ -485,7 +484,7 @@ impl Parser {
         Ok(Pattern::Default(Box::new(target), Box::new(value)))
     }
     /** A class declaration or expression; class bodies are always strict. */
-    pub(super) fn class(&mut self, declaration: bool) -> EngineResult<Rc<Class>> {
+    pub(super) fn class(&mut self, declaration: bool) -> EngineResult<Arc<Class>> {
         let pos = self.pos();
         self.expect_name("class")?;
         let saved_strict = self.strict;
@@ -495,7 +494,7 @@ impl Parser {
         result
     }
     /** Name, heritage and body. */
-    fn class_rest(&mut self, pos: Pos, declaration: bool) -> EngineResult<Rc<Class>> {
+    fn class_rest(&mut self, pos: Pos, declaration: bool) -> EngineResult<Arc<Class>> {
         let name = if self.at_identifier() && !self.at_name("extends") {
             let name = self.identifier()?;
             if matches!(&*name, "eval" | "arguments") {
@@ -524,11 +523,11 @@ impl Parser {
                 *func.display.borrow_mut() = display;
                 func
             }
-            None => Rc::new(Func {
-                source_span: RefCell::new(None),
+            None => Arc::new(Func {
+                source_span: Late::new(None),
                 site: site(pos, SITE_CONSTRUCTOR),
                 name: None,
-                display: RefCell::new(display),
+                display: Late::new(display),
                 params: Vec::new(),
                 rest: None,
                 body: Body::Block(Vec::new()),
@@ -544,7 +543,7 @@ impl Parser {
             }),
         };
         *constructor.source_span.borrow_mut() = Some((pos.offset, self.consumed_end()));
-        Ok(Rc::new(Class {
+        Ok(Arc::new(Class {
             name,
             superclass,
             constructor,
@@ -560,7 +559,7 @@ impl Parser {
     fn class_body(
         &mut self,
         derived: bool,
-    ) -> EngineResult<(Vec<ClassMember>, Option<Rc<Func>>, Vec<Stmt>, Vec<Stmt>)> {
+    ) -> EngineResult<(Vec<ClassMember>, Option<Arc<Func>>, Vec<Stmt>, Vec<Stmt>)> {
         self.expect("{")?;
         let mut members = Vec::new();
         let mut constructor = None;
@@ -589,7 +588,7 @@ impl Parser {
         &mut self,
         derived: bool,
         members: &mut Vec<ClassMember>,
-        constructor: &mut Option<Rc<Func>>,
+        constructor: &mut Option<Arc<Func>>,
         fields: &mut Vec<Stmt>,
         statics: &mut Vec<Stmt>,
     ) -> EngineResult<()> {
@@ -602,7 +601,7 @@ impl Parser {
                 let body = self.static_block(pos)?;
                 if let Some(mut function) = initializer(pos, SITE_SOURCE, body) {
                     // Each static block owns its vars while retaining lexical this and super.
-                    Rc::get_mut(&mut function)
+                    Arc::get_mut(&mut function)
                         .expect("new static block")
                         .flags
                         .arrow = true;
@@ -901,15 +900,15 @@ fn initializer_name(tag: u32) -> &'static str {
 }
 
 /** A synthesized class initializer running field definitions and static blocks in order. */
-fn initializer(pos: Pos, tag: u32, body: Vec<Stmt>) -> Option<Rc<Func>> {
+fn initializer(pos: Pos, tag: u32, body: Vec<Stmt>) -> Option<Arc<Func>> {
     if body.is_empty() {
         return None;
     }
-    Some(Rc::new(Func {
-        source_span: RefCell::new(None),
+    Some(Arc::new(Func {
+        source_span: Late::new(None),
         site: site(pos, tag),
         name: None,
-        display: RefCell::new(Name::from(initializer_name(tag))),
+        display: Late::new(Name::from(initializer_name(tag))),
         params: Vec::new(),
         rest: None,
         body: Body::Block(body),

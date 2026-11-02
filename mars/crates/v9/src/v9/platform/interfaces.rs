@@ -6,6 +6,8 @@
  * have, which blanked every `data` and `text` binding while all elements shared one prototype.
  */
 use super::dom;
+mod svg;
+pub(super) use svg::{install_shapes as install_svg_shapes, prototype_for as svg_prototype_for};
 #[path = "popover.rs"]
 pub(super) mod popover;
 #[path = "reflect.rs"]
@@ -59,11 +61,18 @@ const fn interface(name: &'static str, tags: &'static [&'static str]) -> Interfa
     }
 }
 
-/// Every interface with members of its own. Tags not listed use HTMLElement.prototype.
+/// Every interface with its own prototype. Tags not listed use HTMLElement.prototype.
 const INTERFACES: &[Interface] = &[
     // Its window-forwarded handler accessors are added in `install`, beside the other members.
     interface("HTMLBodyElement", &["body"]),
     interface("HTMLHeadElement", &["head"]),
+    // Interfaces with no members of their own still need their own prototype: pages patch them
+    // (React Aria replaces HTMLTemplateElement.prototype.appendChild), and a shared
+    // HTMLElement.prototype carried the patch onto every element.
+    interface("HTMLDivElement", &["div"]),
+    interface("HTMLSpanElement", &["span"]),
+    interface("HTMLHtmlElement", &["html"]),
+    interface("HTMLTemplateElement", &["template"]),
     Interface {
         reflected: &["href", "name", "type", "rel", "target"],
         getters: &[
@@ -436,21 +445,50 @@ const INTERFACES: &[Interface] = &[
         table: reflect::TABLE_ROW,
         ..interface("HTMLTableRowElement", &["tr"])
     },
-    // SVG keeps the width and height it had on the shared prototype, so `svg.width` reads stay.
+    // SVG prototypes must never alias HTMLElement: shape completion adds readonly SVG members.
     Interface {
+        parent: Some("Element"),
+        methods: &["focus", "blur"],
+        ..interface("SVGElement", &[])
+    },
+    Interface {
+        parent: Some("SVGElement"),
+        ..interface("SVGGraphicsElement", &[])
+    },
+    Interface {
+        parent: Some("SVGGraphicsElement"),
         reflected: &["width", "height"],
-        ..interface("SVGSVGElement", &["svg"])
+        ..interface("SVGSVGElement", &[])
     },
 ];
 
-/// Every member some interface owns; HTMLElement.prototype leaves these out.
+/// Every member some HTMLElement-derived interface owns; HTMLElement.prototype leaves these
+/// out. SVG interfaces derive from Element, so their members (focus, blur) must not remove
+/// HTMLElement's own: that left every HTML element with a no-op `focus()`.
 pub(super) fn specific(name: &str) -> bool {
-    INTERFACES.iter().any(|interface| {
-        interface.reflected.contains(&name)
-            || interface.getters.contains(&name)
-            || interface.accessors.contains(&name)
-            || interface.methods.contains(&name)
-    }) || VALIDATION.contains(&name)
+    INTERFACES
+        .iter()
+        .filter(|interface| html_derived(interface))
+        .any(|interface| {
+            interface.reflected.contains(&name)
+                || interface.getters.contains(&name)
+                || interface.accessors.contains(&name)
+                || interface.methods.contains(&name)
+        })
+        || VALIDATION.contains(&name)
+}
+
+/** Whether an interface inherits from HTMLElement (no parent means it does) rather than from
+Element through an SVG interface. */
+fn html_derived(interface: &Interface) -> bool {
+    match interface.parent {
+        None => true,
+        Some("Element") => false,
+        Some(parent) => INTERFACES
+            .iter()
+            .find(|candidate| candidate.name == parent)
+            .is_none_or(html_derived),
+    }
 }
 
 /// Tag to interface prototype, set once while the realm is built.
@@ -464,7 +502,8 @@ pub(super) fn prototype_for(tag: &str) -> Option<u32> {
 
 /** Build each interface's prototype, inheriting HTMLElement.prototype, and its constructor. */
 pub(super) fn install(b: &mut Builder, html: u32) {
-    let mut made: BTreeMap<&'static str, u32> = BTreeMap::new();
+    let mut made: BTreeMap<&'static str, u32> =
+        BTreeMap::from([("Element", b.ids.element_prototype)]);
     let mut tags = BTreeMap::new();
     let mut registry = reflect::Registry::default();
     registry.define(b, html, reflect::HTML_ELEMENT);

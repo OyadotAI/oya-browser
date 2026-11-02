@@ -3,7 +3,7 @@ use super::*;
 use crate::v9::builtins::typed;
 use crate::v9::vm::data::ElementKind;
 use crate::v9::vm::heap::Key;
-mod copy;
+pub(super) mod copy;
 mod data;
 mod put;
 

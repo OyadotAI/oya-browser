@@ -34,6 +34,9 @@ fn direction(argument: &str) -> Option<u8> {
 /** A trailing `::scroll-button(...)` on a lowercased selector: the suffix's byte length and the
 button it styles. */
 pub(super) fn suffix(lower: &str) -> Option<(usize, PseudoBox)> {
+    if !lower.ends_with(')') {
+        return None;
+    }
     let start = lower.rfind(OPEN)?;
     let argument = lower[start + OPEN.len()..].strip_suffix(')')?;
     let button = direction(argument)?;

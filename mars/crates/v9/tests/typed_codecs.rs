@@ -1,5 +1,5 @@
 /** Uint8Array codecs preserve exact bytes, option order and observable writes before syntax failures. */
-mod common;
+use crate::common;
 
 /** Encoding and decoding use distinct standard and URL alphabets and precise optional padding. */
 #[test]

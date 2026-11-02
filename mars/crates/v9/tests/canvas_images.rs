@@ -1,5 +1,5 @@
 /** Canvas image APIs must copy actual pixels with WebIDL conversions and branded storage. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, PageInput, StorageState};
 
@@ -22,6 +22,7 @@ fn run(source: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: StorageState::default(),
         host: &host,

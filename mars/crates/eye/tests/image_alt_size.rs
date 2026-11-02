@@ -48,3 +48,39 @@ fn unloaded_flex_item_image_with_only_a_height_takes_its_alt_width() {
         "flex {flex} text {block}"
     );
 }
+
+/** The painted (width, height) of the element with `id` when every img still shows its alt text. */
+fn size(markup: &str, id: &str) -> (f64, f64) {
+    let mut document = parse(markup).unwrap();
+    for node in document.nodes.iter_mut().filter(|n| n.tag == "img") {
+        node.text = node.image_alt.clone();
+    }
+    let document = compute_styles(&document, &[]).unwrap();
+    let display = render(&document, 800.0).unwrap();
+    let local = document
+        .nodes
+        .iter()
+        .find(|n| n.html_id == id)
+        .unwrap()
+        .local_id;
+    let item = display.items.iter().find(|i| i.local_id == local).unwrap();
+    (item.width, item.height)
+}
+
+/** An unloaded img with a percentage width fills its block at that width, not at its alt text's
+ * width: Chrome sizes it by its CSS width and shows the alt text inline within that box. */
+#[test]
+fn unloaded_block_image_with_percent_width_fills_its_container() {
+    let markup = "<div style='width:526px'><img id=i alt='z' style='width:100%'></div>";
+    let (width, height) = size(markup, "i");
+    assert!((width - 526.0).abs() < 0.05, "width {width}");
+    assert!(height > 0.0 && height < 40.0, "height {height}");
+}
+
+/** A broken img with an authored px width keeps that width, whatever its alt text measures. */
+#[test]
+fn unloaded_block_image_with_px_width_keeps_its_css_width() {
+    let markup = "<div><img id=i alt='a much longer alt text than fits' style='width:200px'></div>";
+    let (width, _) = size(markup, "i");
+    assert!((width - 200.0).abs() < 0.05, "width {width}");
+}

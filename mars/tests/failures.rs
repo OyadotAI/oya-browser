@@ -1,7 +1,7 @@
 /** Explicit injected executables verify service deadlines and session retirement. */
 #[allow(dead_code)]
 mod support;
-use mars::constants::{RPC_TIMEOUT, WEB_TIMEOUT};
+use mars::constants::{RPC_TIMEOUT, WEB_PREPARE_RPC_TIMEOUT};
 use mars::protocol::Request;
 use mars::runtime::{
     EnginePrograms, Runtime,
@@ -17,6 +17,9 @@ use std::time::{Duration, Instant};
 static DIRECTORY_ID: AtomicUsize = AtomicUsize::new(0);
 /** Allows process reap overhead without extending the actual child RPC deadline. */
 const REAP_MARGIN: Duration = Duration::from_secs(2);
+/// How long the script_blocked fault service (tests/support/service.rs) takes over first.js
+/// before it stalls on stall.js.
+const FIRST_SCRIPT_DELAY: Duration = Duration::from_secs(6);
 
 /** A copied fault binary is reachable only through an explicit injected path. */
 struct Fault {
@@ -217,7 +220,7 @@ fn stalled_external_script_uses_the_remaining_navigation_deadline() {
     assert!(error.previous_page_retained);
     assert!(!error.retryable);
     assert!(!error.message.contains("private-secret"));
-    assert!(started.elapsed() < WEB_TIMEOUT + REAP_MARGIN);
+    assert!(started.elapsed() < FIRST_SCRIPT_DELAY + WEB_PREPARE_RPC_TIMEOUT + REAP_MARGIN);
     let snapshot = runtime.snapshot();
     assert!(!snapshot.failed);
     assert_eq!(snapshot.inspection["page_id"], old["page_id"]);

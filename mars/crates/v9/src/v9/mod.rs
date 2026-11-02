@@ -6,9 +6,11 @@
 mod binding;
 mod builtins;
 mod compile;
+mod encoded;
 mod errors;
+mod jit;
 mod keyboard;
-pub use keyboard::{KeyboardKey, keyboard_page};
+pub use keyboard::{KeyboardKey, Stroke, keyboard_page, typed_page};
 mod legacy_handlers;
 mod lexer;
 mod literals;
@@ -39,26 +41,39 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::blob_urls::BlobUrlSource;
+pub use platform::broadcast::{
+    BROADCAST_CHANNELS, BROADCAST_COMMANDS, BROADCAST_EFFECT_BYTES, BROADCAST_NAME_UNITS,
+    BroadcastCommand, BroadcastEndpoint,
+};
 pub use platform::channel::PortMessage;
 pub use platform::devtools;
 pub use platform::frame_directory::{
     FrameContext, FrameDetach, FrameRoute, MAX_FRAME_WINDOW_ID, sibling_target, sibling_window,
 };
+pub use platform::indexed_db::{
+    INDEXED_DB_DATABASE_BYTES, INDEXED_DB_EFFECT_BYTES, INDEXED_DB_KIND, INDEXED_DB_LIST,
+    INDEXED_DB_OPEN, INDEXED_DB_ORIGIN_BYTES, INDEXED_DB_ORIGIN_RECORD_BYTES,
+    INDEXED_DB_RESPONSE_BYTES, IndexedDbCommit, IndexedDbDatabase, IndexedDbOperation,
+    IndexedDbOrigin, IndexedDbStore,
+};
+pub use platform::is_time_limit;
 pub use platform::messaging::QueuedPortMessage;
 pub use platform::messaging::{FrameMessage, MessageData, PARENT as MESSAGE_PARENT};
 pub use platform::resize_observers::{RESIZE_BROADCAST_LIMIT, ResizeTurn};
 pub use platform::{
     AnimationTarget, ConsoleEntry, DomLevel, FrameDocument, FrameRequest, HistoryRecord,
     HostEffects, HostRequest, HostResponse, ImageAdoption, ImageCancellation, ImageCors,
-    ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
-    SimpleFragmentParser,
+    ImageRequest, ImageResponse, MediaCommand, MediaSettings, MediaSupport, NavigationRequest,
+    OpacityEffect, PageEnvironment, SimpleFragmentParser, SyncAnswer,
 };
 pub use platform::{HANDLER_POLICY_LIMIT, HandlerHash, HandlerPolicy, HandlerRestriction};
+pub use platform::{LAYOUT_CALLS, LayoutAnswer, LayoutHook, LayoutHost};
+pub use platform::{MediaEvaluator, MediaViewport, set_media_evaluator};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
-    NEAR_BOUNDS_FRACTION, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES,
-    STORAGE_ENTRIES, STORAGE_VALUE_BYTES, TEXT_BYTES, script_deadline,
+    SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES, STORAGE_ENTRIES,
+    STORAGE_VALUE_BYTES, TEXT_BYTES, script_deadline,
 };
 use crate::document::{
     DomChange, FragmentParser, ScriptChange, ScriptDocument, ScriptNode, TextChange,
@@ -66,6 +81,11 @@ use crate::document::{
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
 use compile::{Code, Registry};
 use serde::{Deserialize, Serialize};
+mod execution_thread;
+pub use execution_thread::spawn_execution_thread;
+mod live;
+pub use live::{LiveAction, LiveInput, LiveVm};
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vm::data::{Class, HostData, Job};
@@ -118,6 +138,10 @@ pub struct VmState {
     heap on the next step (about 170 ms on YouTube) while every state from outside is checked. */
     #[cfg_attr(not(feature = "conformance"), serde(skip))]
     verified: bool,
+    /** The page's compiled code, carried to the next step so it is not filed again; never
+    serialized: a decoded state compiles its sources afresh. */
+    #[cfg_attr(not(feature = "conformance"), serde(skip))]
+    registry: compile::Registry,
 }
 
 #[cfg(feature = "conformance")]
@@ -427,6 +451,7 @@ impl<'de> serde::de::Visitor<'de> for StateVisitor {
             templates: wire.templates,
             modules: wire.modules,
             verified: false,
+            registry: compile::Registry::default(),
         })
     }
 }
@@ -485,6 +510,21 @@ impl VmState {
     pub fn globals(&self) -> &Globals {
         &self.globals
     }
+
+    /** Object, function, environment and binding charges, without walking or encoding the heap.
+    Counts are exact after collection and conservative between collections. */
+    pub fn allocation_counts(&self) -> [usize; 4] {
+        let counts = self.heap.counts;
+        let bindings = counts.bindings + self.globals.len();
+        #[cfg(feature = "conformance")]
+        let bindings = bindings + self.realms.bindings();
+        [
+            counts.objects,
+            counts.functions,
+            counts.environments,
+            bindings,
+        ]
+    }
     /// A state holding only lexical globals (used by tests and legacy callers).
     pub fn from_globals(globals: Globals) -> Self {
         Self {
@@ -501,6 +541,7 @@ impl VmState {
     /// resident in the V9 service. Sending a summary back as a step's state would lose the
     /// page's heap, so the app never does.
     pub fn summary(&self) -> Self {
+        self.page.keep_encodings();
         let page = {
             #[cfg(feature = "conformance")]
             {
@@ -569,7 +610,23 @@ impl VmState {
         let limits = Limits::default();
         self.validate_projection_bounds(&limits, false)?;
         self.validate_size(&limits)?;
+        #[cfg(debug_assertions)]
+        self.assert_kept_encodings_match();
         self.validate_document_references(document)
+    }
+    /** Debug builds: the bytes the size check counts from kept encodings must be exactly what a
+    fresh walk of every map encodes, so a missed invalidation fails the suites instead of
+    silently shifting the 64 MiB refusal. */
+    #[cfg(debug_assertions)]
+    fn assert_kept_encodings_match(&self) {
+        let kept = serde_json::to_vec(self).ok();
+        let mut fresh = self.clone();
+        fresh.page.forget_encodings();
+        debug_assert_eq!(
+            kept,
+            serde_json::to_vec(&fresh).ok(),
+            "a kept page encoding went stale"
+        );
     }
     /// Document identity and retained node ownership apply equally to full states and summaries.
     fn validate_document_references(&self, document: &ScriptDocument) -> EngineResult<()> {
@@ -633,8 +690,11 @@ impl VmState {
     /// property, string and binding counts bound its memory, and measuring its size means
     /// encoding it whole (13% of V9's time on YouTube). A state that later crosses a pipe is
     /// measured by the frame bound, and one decoded from a frame gets the full `validate`.
+    /// The heap-wide branding walks (abort signals, response bodies, observers) re-check what V9's
+    /// own code just established, at O(heap) per step; release builds keep the page summaries
+    /// and every count bound, and debug builds (the tests) still walk the whole heap.
     fn validate_bounds(&self, limits: &Limits) -> EngineResult<()> {
-        self.validate_projection_bounds(limits, true)
+        self.validate_projection_bounds(limits, cfg!(debug_assertions))
     }
     /// Page bounds are always checked; heap-linked identities require the complete resident state.
     fn validate_projection_bounds(&self, limits: &Limits, full_heap: bool) -> EngineResult<()> {
@@ -707,6 +767,7 @@ impl VmState {
         platform::blob_urls::validate(&self.page.blob_urls)?;
         platform::canvas::validate(&self.page.canvases)?;
         platform::canvas::path2d::validate(&self.page.path2d)?;
+        platform::canvas::paints::validate(&self.page.canvas_paints)?;
         platform::frame_directory::validate_state(&self.page)?;
         platform::channel::validate_bounds(&self.page)?;
         builtins::validate_shared(&self.heap)?;
@@ -778,14 +839,20 @@ impl VmState {
         if self
             .heap
             .objects
-            .keys()
-            .any(|id| *id >= self.heap.next_object && *id < vm::heap::INTRINSIC_BASE)
-            || self.heap.envs.keys().any(|id| *id >= self.heap.next_env)
+            .first_key_at_or_after(self.heap.next_object)
+            .is_some_and(|id| id < vm::heap::INTRINSIC_BASE)
+            || self
+                .heap
+                .envs
+                .first_key_at_or_after(self.heap.next_env)
+                .is_some()
         {
             return Err(EngineError::invalid("Invalid V9 heap identities."));
         }
+        self.page.listeners.validate(self.page.next_listener)?;
+        platform::broadcast::validate(&self.page.broadcast, full_heap.then_some(&self.heap))?;
         if self.page.timers.len() > crate::constants::VM_TIMERS
-            || self.page.listeners.len() > platform::events::LISTENERS
+            || !platform::host_bridge::validate(&self.page)
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self
                 .page
@@ -982,6 +1049,38 @@ pub fn source_key(source: &str) -> SourceKey {
     compile::source_key(source)
 }
 
+/// Compile a classic page script into the process code cache before its page's load step asks
+/// for it, so the load only adopts and runs the code. On YouTube, parsing 12 MB of script was
+/// 0.4 s of the load step that the stylesheet and image phases before it could have hidden.
+/// Runs inline on an execution thread, else on a scoped thread with the parser's stack. A
+/// script that does not parse is not cached; the load step reports it as before.
+pub fn precompile_script(source: &str, offset: usize) -> EngineResult<()> {
+    on_v9_stack(|| {
+        let text = compile::source_key(source);
+        compile::precompile(text, source, offset, || parse_at(source, offset, None))
+    })
+}
+
+/// Compile the deferred functions of a page script already in the process cache on `workers`
+/// threads, in source order, while the page's load runs on its own thread: YouTube's bundle
+/// declares 69,000 functions and compiles each on its first call, 0.4 s of the load step on one
+/// core when every other core is idle. A function the load reaches first compiles there and the
+/// pool finds it done; one the pool reaches first is ready when the load calls it. Returns the
+/// number of functions handed to the pool.
+pub fn precompile_deferred(source: &str, offset: usize, workers: usize) -> usize {
+    compile::precompile_deferred(&compile::source_key(source), offset, workers)
+}
+
+/// The key under which a module source's compiled code is cached, from `classic` telling a
+/// classic script delivered for a page element (keyed as `source_key`) from a module.
+pub fn module_source_key(source: &str, classic: bool) -> SourceKey {
+    if classic {
+        compile::source_key(source)
+    } else {
+        compile::module_source_key(source)
+    }
+}
+
 /// Everything one page request needs besides committed state.
 pub struct PageInput<'a> {
     /// The page's classic scripts in execution order. A failed script keeps its text, since its
@@ -989,6 +1088,9 @@ pub struct PageInput<'a> {
     pub sources: &'a [String],
     /// Each source's `source_key`, or empty to hash them here.
     pub source_keys: &'a [SourceKey],
+    /// Each module source's `module_source_key`, aligned with `modules.sources`, or empty to
+    /// hash them here.
+    pub module_keys: &'a [SourceKey],
     /// The current projection.
     pub document: ScriptDocument,
     /// Origin storage candidates.
@@ -1056,8 +1158,19 @@ pub enum PageEvent {
         #[serde(default)]
         queued_port_messages: Vec<QueuedPortMessage>,
     },
-    /// A message posted on the far end of a port linked into this document: `message` fires at
-    /// the port bound to `link`.
+    /// A fenced native task delivers one structured packet to an exact local channel identity.
+    BroadcastMessage {
+        /// A never-reused channel identity within the task's owning context incarnation.
+        id: u64,
+        /// An immutable graph captured before the sender returned from postMessage.
+        data: WorkerData,
+        /// Sender origin is assigned by the native broker, never by page script.
+        origin: String,
+    },
+    /// Media players changed: JSON updates (metadata, time, buffering, seeks, ends, errors and
+    /// control clicks) for the platform's media script, which fires the element events.
+    Media { updates: String },
+    /// A native router retired the far end of one linked port.
     PortClose {
         /// A native router retired this link; clear the local endpoint without firing script.
         link: u64,
@@ -1071,20 +1184,9 @@ pub enum PageEvent {
     },
 }
 
-/**
- * Parsing and evaluation recurse along the syntax tree, so every entry point runs on its own
- * thread with V9_STACK_BYTES of stack. A panic stays on that thread and becomes an error.
- */
+/** Persistent engine executors already own V9's stack; standalone calls acquire one per request. */
 fn on_v9_stack<T: Send>(work: impl FnOnce() -> EngineResult<T> + Send) -> EngineResult<T> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("v9".into())
-            .stack_size(crate::constants::V9_STACK_BYTES)
-            .spawn_scoped(scope, work)
-            .map_err(|_| EngineError::unsupported("V9 could not start its execution thread."))?
-            .join()
-            .unwrap_or_else(|_| Err(EngineError::invalid("V9 stopped on an internal error.")))
-    })
+    execution_thread::run(work)
 }
 
 /** Tokenize and parse one source whose bytes start at `offset` of the page. */
@@ -1116,17 +1218,12 @@ fn parse_with_mode(
     grammar: u8,
     native_fixture: bool,
 ) -> EngineResult<syntax::Program> {
-    let mut tokens = lexer::tokenize(source).map_err(|mut error| {
+    let tokens = lexer::tokenize_at(source, offset).map_err(|mut error| {
         if let Some(location) = error.location.as_deref_mut() {
-            location.byte_offset += offset;
             location.script_index = index.map(|index| index + 1);
         }
         error
     })?;
-    for token in &mut tokens {
-        token.location.byte_offset += offset;
-        token.end += offset;
-    }
     let result = if !private_names.is_empty() || grammar != 0 || native_fixture {
         syntax::parse_eval(tokens, strict, private_names, grammar, native_fixture)
     } else if strict {
@@ -1157,8 +1254,15 @@ pub(in crate::v9) fn compile_dynamic(
         line: 1,
         column: 1,
     });
-    if let Some(code) = registry.get(site) {
-        return Ok(code.clone());
+    // Only code this step compiled here answers without a lookup: a carried registry may hold
+    // an earlier step's different source or context at this offset, which the keyed cache
+    // below tells apart.
+    if let Some(code) = registry.adopted_this_step(site) {
+        return Ok(code);
+    }
+    // A retained source filed by an earlier step answers before any parsing or hashing.
+    if let Some(code) = registry.refiled(site, source, base, context) {
+        return Ok(code);
     }
     match context {
         Some(context) => registry.eval(source, base, context, |strict, private_names, grammar| {
@@ -1219,6 +1323,19 @@ enum Compiled {
     Each(Vec<EngineResult<Arc<Code>>>),
 }
 
+/** The text of each inline page script by source index; external scripts read as empty, since a
+`<script src>` element's text is its children, not the fetched source. */
+fn inline_sources(sources: &[String], urls: &[String]) -> Vec<String> {
+    sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| match urls.get(index) {
+            Some(url) if url.is_empty() => source.clone(),
+            _ => String::new(),
+        })
+        .collect()
+}
+
 /** Open a VM for a request: restore state, compile sources, set the clock and deadline. The
 deadline is armed once compilation is done: scanning and parsing are already bounded by
 SCRIPT_BYTES, TOKENS and STATEMENTS, and a max-token script takes several times the script deadline
@@ -1235,6 +1352,7 @@ fn session<'h>(
     environment: &PageEnvironment,
     state: Option<VmState>,
     modules: &ModuleInput,
+    module_keys: &[SourceKey],
 ) -> EngineResult<(Vm<'h>, Compiled)> {
     #[allow(unused_mut)]
     let mut limits = limits;
@@ -1308,7 +1426,10 @@ fn session<'h>(
     );
     page.canvas_host = host.canvas;
     page.imports = host.imports;
+    page.inline_scripts = inline_sources(sources, &environment.scripts);
     let mut vm = Vm::new(state.heap, page, limits);
+    vm.registry = state.registry;
+    vm.registry.begin_step();
     builtins::initialize_shared(&mut vm)?;
     builtins::initialize_shared_gc(&mut vm)?;
     #[cfg(feature = "conformance")]
@@ -1351,7 +1472,14 @@ fn session<'h>(
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
     initialize_page(&mut vm);
-    modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
+    modules::Modules::open(
+        &mut vm,
+        modules,
+        module_keys,
+        sources,
+        &offsets(sources),
+        state.modules,
+    )?;
     let compiled = compile_sources(&mut vm, sources, keys, isolated)?;
     let mut imports = Vec::new();
     for (index, source) in state.dynamic.iter().enumerate() {
@@ -1377,12 +1505,15 @@ fn session<'h>(
     vm.templates = state.templates;
     // The platform bootstrap is not a dynamic source: every step compiles it at its fixed offset, so the heap's closures always find their code.
     let bootstrap = platform::observable::compile(&mut vm)?;
+    let indexed_db = platform::indexed_db::compile(&mut vm)?;
     if !verified {
         vm.validate_graph()?;
     }
     platform::images::validate_targets(&vm.page)?;
+    platform::media::validate(&vm)?;
     platform::canvas::validate_targets(&mut vm)?;
     platform::canvas::path2d::validate_targets(&mut vm)?;
+    platform::canvas::paints::validate_targets(&mut vm)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),
@@ -1397,6 +1528,7 @@ fn session<'h>(
     vm.deadline = Some(std::time::Instant::now() + script_deadline());
     if fresh {
         platform::observable::run(&mut vm, bootstrap)?;
+        platform::indexed_db::run(&mut vm, indexed_db)?;
     }
     Ok((vm, compiled))
 }
@@ -1505,9 +1637,19 @@ fn compile_page_script(
 fn run_one(vm: &mut Vm, code: Arc<Code>, index: usize) -> EngineResult<()> {
     vm.remaining = vm.limits.operations;
     vm.page.throw_location = None;
-    let result = vm.run_script(code).and_then(|_| vm.drain_jobs());
-    result.map(|_| ()).map_err(|thrown| {
-        let location = vm.page.throw_location.unwrap_or_default();
+    let ran = vm.run_script(code).map(|_| ());
+    let location = vm.page.throw_location.unwrap_or_default();
+    // As in browsers, the microtask checkpoint follows every script, one that threw included:
+    // skipping it left that script's promise reactions (and unhandled rejections) unreported.
+    let drained = match &ran {
+        Err(Thrown::Fatal(_)) => Ok(()),
+        _ => vm.drain_jobs(),
+    };
+    let result = match (ran, drained) {
+        (_, Err(fatal @ Thrown::Fatal(_))) | (Err(fatal), _) => Err(fatal),
+        (Ok(()), result) => result,
+    };
+    result.map_err(|thrown| {
         #[cfg(feature = "conformance")]
         let mut error = if vm.page.environment.conformance_d8 {
             builtins::report_terminal_exception(vm, thrown, location)
@@ -1592,11 +1734,14 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.effects.image_requests = saved.effects.image_requests;
     vm.page.effects.image_cancellations = saved.effects.image_cancellations;
     vm.page.effects.image_adoptions = saved.effects.image_adoptions;
+    vm.page.effects.media = saved.effects.media;
     vm.page.effects.worker_commands = saved.effects.worker_commands;
     vm.page.effects.worker_errors = saved.effects.worker_errors;
     vm.page.effects.messages = saved.effects.messages;
     vm.page.effects.port_messages = saved.effects.port_messages;
     vm.page.effects.port_closes = saved.effects.port_closes;
+    vm.page.effects.broadcast_commands = saved.effects.broadcast_commands;
+    vm.page.effects.broadcast_channels = saved.effects.broadcast_channels;
     vm.page.effects.navigation = saved.effects.navigation;
     vm.page.effects.history = saved.effects.history;
     vm.page.effects.cookies = saved.effects.cookies;
@@ -1614,20 +1759,22 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.pinning = false;
 }
 
-/** Whether any count has reached three quarters of its bound. Counts are exact when a request
-starts (every one ends collected or recounted), so this only collects garbage before a script
-could run into a bound mid-request; at half, YouTube's 525,000 live properties of 1,048,576
-collected on every request. */
-fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
-    past_fraction(counts, limits, NEAR_BOUNDS_FRACTION)
-}
-
-/** Whether any count has reached `numerator / denominator` of its bound. */
-fn past_fraction(
-    counts: &vm::heap::Counts,
-    limits: &Limits,
-    (numerator, denominator): (usize, usize),
-) -> bool {
+/** Recount at an actual bound; a large stable heap must not trigger collection after every task. */
+fn at_bounds(vm: &Vm<'_>) -> bool {
+    let mut counts = vm.heap.counts;
+    let limits = &vm.limits;
+    counts.bindings += vm.globals.len();
+    counts.units += vm
+        .globals
+        .values()
+        .filter_map(|binding| binding.value.as_ref())
+        .map(JsValue::string_units)
+        .sum::<usize>();
+    #[cfg(feature = "conformance")]
+    {
+        counts.units += vm.page.state.cpu_profile.units() + vm.realms.units();
+        counts.bindings += vm.realms.bindings();
+    }
     [
         (counts.objects, limits.objects),
         (counts.functions, limits.functions),
@@ -1637,35 +1784,50 @@ fn past_fraction(
         (counts.bindings, limits.bindings),
     ]
     .iter()
-    .any(|(count, limit)| count.saturating_mul(denominator) >= limit.saturating_mul(numerator))
+    .any(|(count, limit)| count >= limit)
 }
 
-/** Collect, validate and package the request's outcome. */
+/** Collect, validate and package the request's outcome; the VM is spent. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
+    finish_live(&mut vm)
+}
+
+/**
+ * As `finish`, leaving the VM able to run the next task: the state packaged is a copy (the heap
+ * is persistent, so the copy shares every object the next task does not write, as a resident
+ * step's copy did), and the page's per-task fields are drained for the next task to fill.
+ */
+fn finish_live(vm: &mut Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
     if vm.page.environment.worker_name.is_some() {
-        vm.page.effects.worker_ready = Some(modules::worker_ready(&vm));
+        vm.page.effects.worker_ready = Some(modules::worker_ready(&*vm));
     }
     platform::canvas::publish(&mut vm.page)?;
-    platform::images::requests(&mut vm)?;
+    platform::images::requests(vm)?;
     if !vm.page.sampled_observer_turn {
-        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
-        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+        platform::intersection_observers::sample(vm).map_err(fatal)?;
+        platform::resize_observers::sample(vm).map_err(fatal)?;
     }
-    vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
+    vm.page.effects.opacity_effects = platform::animations::snapshot(vm);
     vm.frames.clear();
     vm.pins.clear();
     #[cfg(feature = "conformance")]
     vm.prune_number_constants();
-    // Counts only overestimate between collections, so a heap near any bound is collected
+    // Counts only overestimate between collections, so a heap reaching any bound is collected
     // (and counted exactly) before its bounds are checked. Elsewhere the running counts stand:
     // a bound reached mid-script collects there (`collect_if_needed`), so an overestimate
     // carried into the next request can only cause a collection, never a refusal.
-    if vm.heap.grew_since_collection() || near_bounds(&vm.heap.counts, &vm.limits) {
-        vm.collect_snapshot().map_err(fatal)?;
+    if vm.heap.grew_since_collection() || at_bounds(&*vm) {
+        if vm.page.environment.live_gc {
+            vm.collect_now().map_err(fatal)?;
+        } else {
+            vm.collect_snapshot().map_err(fatal)?;
+        }
     }
     #[cfg(feature = "conformance")]
     vm.save_interned_strings();
+    platform::broadcast::publish(&mut vm.page);
+    platform::publish_local_sheets(vm);
     let effects_timer = vm.next_timer();
     let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
@@ -1682,29 +1844,27 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         })
         .collect();
     vm.page.retain_clock();
-    let platform::Page {
-        state: page,
-        storage,
-        document,
-        changes,
-        script_changes,
-        mut effects,
-        ..
-    } = vm.page;
+    let page = vm.page.state.clone();
+    let storage = vm.page.storage.clone();
+    let document = vm.page.document.take();
+    let changes = std::mem::take(&mut vm.page.changes);
+    let script_changes = std::mem::take(&mut vm.page.script_changes);
+    let mut effects = std::mem::take(&mut vm.page.effects);
     effects.next_timer_ms = effects_timer;
     let module_requests = std::mem::take(&mut vm.modules.requests);
     let state = VmState {
         #[cfg(feature = "conformance")]
-        realms: vm.realms,
-        globals: vm.globals,
-        heap: vm.heap,
-        symbols: vm.symbols,
-        jobs: vm.jobs.into(),
+        realms: vm.realms.clone(),
+        globals: vm.globals.clone(),
+        heap: vm.heap.export(),
+        symbols: vm.symbols.clone(),
+        jobs: std::mem::take(&mut vm.jobs).into(),
         page,
-        dynamic: vm.dynamic,
-        templates: vm.templates,
-        modules: std::mem::take(&mut vm.modules.state),
+        dynamic: vm.dynamic.clone(),
+        templates: vm.templates.clone(),
+        modules: vm.modules.state.clone(),
         verified: true,
+        registry: vm.registry.clone(),
     };
     state.validate_bounds(&vm.limits)?;
     storage.validate()?;
@@ -1754,7 +1914,11 @@ fn load_isolated(
         input.environment,
         state,
         input.modules,
+        input.module_keys,
     )?;
+    // A page starts at the viewport it loaded at: a later step reports only what changed after.
+    let current = viewport_of(&vm);
+    vm.page.state.viewport.get_or_insert(current);
     let Compiled::Each(codes) = compiled else {
         return Err(EngineError::invalid(
             "V9 compiled scripts in the wrong mode.",
@@ -1787,6 +1951,7 @@ fn load_isolated(
             let empty = PageInput {
                 sources: &[],
                 source_keys: &[],
+                module_keys: &[],
                 document: initial.0,
                 storage: initial.1,
                 host: input.host,
@@ -1804,6 +1969,7 @@ fn load_isolated(
                 empty.environment,
                 None,
                 empty.modules,
+                empty.module_keys,
             )?;
             finish(vm)?
         }
@@ -2001,53 +2167,45 @@ fn page_event_with(
     event: PageEvent,
     limits: Limits,
 ) -> EngineResult<Execution> {
+    let (mut vm, _) = open(&input, state, limits)?;
+    event_body(&mut vm, event)?;
+    finish(vm)
+}
+
+/** One page event against an open VM: the task of `page_event`. */
+pub(in crate::v9) fn event_body(vm: &mut Vm, event: PageEvent) -> EngineResult<()> {
     {
-        let (mut vm, _) = open(&input, state, limits)?;
+        let vm = &mut *vm;
         match event {
             PageEvent::WorkerMessage { id, data, ports } => {
-                let result = platform::workers::receive(&mut vm, id, &data, &ports)
+                let result = platform::workers::receive(vm, id, &data, &ports)
                     .and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                report_thrown(vm, result)?;
             }
             PageEvent::WorkerError { id, message } => {
                 let result =
-                    platform::workers::error(&mut vm, id, &message).and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                    platform::workers::error(vm, id, &message).and_then(|()| vm.drain_jobs());
+                report_thrown(vm, result)?;
             }
             PageEvent::DomContentLoaded => {
                 vm.page.state.ready = platform::ReadyState::Interactive;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "readystatechange",
-                    false,
-                )?;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "DOMContentLoaded",
-                    true,
-                )?;
+                fire_lifecycle(vm, platform::Target::Document, "readystatechange", false)?;
+                fire_lifecycle(vm, platform::Target::Document, "DOMContentLoaded", true)?;
             }
             PageEvent::Load => {
                 vm.page.state.ready = platform::ReadyState::Complete;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "readystatechange",
-                    false,
-                )?;
-                fire_lifecycle(&mut vm, platform::Target::Window, "load", false)?;
-                fire_lifecycle(&mut vm, platform::Target::Window, "pageshow", false)?;
+                fire_lifecycle(vm, platform::Target::Document, "readystatechange", false)?;
+                fire_lifecycle(vm, platform::Target::Window, "load", false)?;
+                fire_lifecycle(vm, platform::Target::Window, "pageshow", false)?;
             }
             PageEvent::Scroll => {
-                fire_lifecycle(&mut vm, platform::Target::Document, "scroll", true)?;
+                fire_lifecycle(vm, platform::Target::Document, "scroll", true)?;
             }
             PageEvent::PopState {
                 state,
                 hash_changed,
-            } => pop_state(&mut vm, state.as_deref(), hash_changed)?,
-            PageEvent::Submit { form } => submit_event(&mut vm, form)?,
+            } => pop_state(vm, state.as_deref(), hash_changed)?,
+            PageEvent::Submit { form } => submit_event(vm, form)?,
             PageEvent::Message {
                 data,
                 origin,
@@ -2057,7 +2215,7 @@ fn page_event_with(
             } => {
                 vm.remaining = vm.limits.operations;
                 let received = platform::messaging::receive(
-                    &mut vm,
+                    vm,
                     &data,
                     &origin,
                     source,
@@ -2065,27 +2223,38 @@ fn page_event_with(
                     &queued_port_messages,
                 )
                 .and_then(|_| vm.drain_jobs());
-                report_thrown(&mut vm, received)?;
+                report_thrown(vm, received)?;
             }
-            PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
+            PageEvent::BroadcastMessage { id, data, origin } => {
+                let result = platform::broadcast::receive(vm, id, &data, &origin)
+                    .and_then(|()| vm.drain_jobs());
+                report_thrown(vm, result)?;
+            }
+            PageEvent::PortClose { link } => platform::channel::remote_close(vm, link),
+            PageEvent::Media { updates } => {
+                vm.remaining = vm.limits.operations;
+                let result = platform::media::deliver(vm, &updates).and_then(|()| vm.drain_jobs());
+                report_thrown(vm, result)?;
+            }
             PageEvent::PortMessage { link, data } => {
                 vm.remaining = vm.limits.operations;
-                let received = platform::messaging::receive_on_port(&mut vm, link, &data)
+                let received = platform::messaging::receive_on_port(&mut *vm, link, &data)
                     .and_then(|_| vm.drain_jobs());
-                report_thrown(&mut vm, received)?;
+                report_thrown(&mut *vm, received)?;
             }
         }
-        finish(vm)
+        Ok(())
     }
 }
 
-/** Open a session over committed state for an event, timer or response. */
+/** Open a session over committed state for an event, timer or response. Media query changes the
+viewport made since the last step are reported first, as a browser does before its next task. */
 fn open<'h>(
     input: &PageInput<'h>,
     state: VmState,
     limits: Limits,
 ) -> EngineResult<(Vm<'h>, Compiled)> {
-    session(
+    let (mut vm, compiled) = session(
         limits,
         input.sources,
         input.source_keys,
@@ -2096,7 +2265,40 @@ fn open<'h>(
         input.environment,
         Some(state),
         input.modules,
-    )
+        input.module_keys,
+    )?;
+    report_resize(&mut vm)?;
+    report_media_changes(&mut vm)?;
+    Ok((vm, compiled))
+}
+
+/** The viewport the environment gives the page now. */
+fn viewport_of(vm: &Vm) -> (f64, f64) {
+    let environment = &vm.page.environment;
+    (environment.viewport_width, environment.viewport_height)
+}
+
+/** Fire `resize` at the window when the viewport differs from the one the last step reported. It
+runs before the media query report, as the HTML rendering steps run the resize steps first, so a
+handler already reads the new innerWidth and a media listener hears a flip after it. */
+fn report_resize(vm: &mut Vm) -> EngineResult<()> {
+    let now = viewport_of(vm);
+    match vm.page.state.viewport.replace(now) {
+        Some(previous) if previous != now => {
+            fire_lifecycle(vm, platform::Target::Window, "resize", false)
+        }
+        _ => Ok(()),
+    }
+}
+
+/** Fire `change` on the media query lists whose result the viewport flipped. A listener's failure
+goes to the console; only a fatal error ends the step. */
+fn report_media_changes(vm: &mut Vm) -> EngineResult<()> {
+    if vm.page.state.media_lists.is_empty() {
+        return Ok(());
+    }
+    let result = platform::match_media::report(vm).and_then(|()| vm.drain_jobs());
+    report_thrown(vm, result)
 }
 
 /** Fire one lifecycle event and drain microtasks; script errors go to the console. */
@@ -2168,7 +2370,21 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
 pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        platform::resize_observers::advance(&mut vm, true).map_err(fatal)?;
+        observe_body(&mut vm)?;
+        finish(vm)
+    })
+}
+
+/** The task of `observe_page`. */
+pub(in crate::v9) fn observe_body(vm: &mut Vm) -> EngineResult<()> {
+    platform::resize_observers::advance(vm, true).map_err(fatal)
+}
+
+/// Report media query changes for a viewport the page has not yet seen (a resize while idle):
+/// `open` does the reporting, so the step itself has nothing else to run.
+pub fn report_media(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (vm, _) = open(&input, state, Limits::default())?;
         finish(vm)
     })
 }
@@ -2181,13 +2397,18 @@ pub fn continue_resize_observers(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        if complete {
-            platform::resize_observers::complete(&mut vm).map_err(fatal)?;
-        } else {
-            platform::resize_observers::advance(&mut vm, false).map_err(fatal)?;
-        }
+        resize_body(&mut vm, complete)?;
         finish(vm)
     })
+}
+
+/** The task of `continue_resize_observers`. */
+pub(in crate::v9) fn resize_body(vm: &mut Vm, complete: bool) -> EngineResult<()> {
+    if complete {
+        platform::resize_observers::complete(vm).map_err(fatal)
+    } else {
+        platform::resize_observers::advance(vm, false).map_err(fatal)
+    }
 }
 
 /// A person typed into a field the app already updated: V9 records the value (None for a
@@ -2201,26 +2422,38 @@ pub fn input_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        if !vm.page.exists(target) {
-            return Err(EngineError::invalid("Invalid projected input target."));
-        }
-        if vm.page.tag(target) == "select" {
-            for option in vm.page.select_options(target) {
-                vm.page.state.selected_options.remove(&option);
-                vm.page.state.dirty_options.insert(option);
-            }
-        } else if let Some(value) = value {
-            vm.page.state.values.insert(target, value);
-        }
-        vm.remaining = vm.limits.operations;
-        if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
-            return Err(error);
-        }
-        for kind in ["input", "change"] {
-            fire_lifecycle(&mut vm, platform::Target::Node(target), kind, true)?;
-        }
+        input_body(&mut vm, target, value)?;
         finish(vm)
     })
+}
+
+/** The task of `input_page`. */
+pub(in crate::v9) fn input_body(
+    vm: &mut Vm,
+    target: usize,
+    value: Option<String>,
+) -> EngineResult<()> {
+    if !vm.page.exists(target) {
+        return Err(EngineError::invalid("Invalid projected input target."));
+    }
+    if vm.page.tag(target) == "select" {
+        for option in vm.page.select_options(target) {
+            vm.page.state.selected_options.remove(&option);
+            vm.page.state.dirty_options.insert(option);
+        }
+    } else if let Some(value) = value {
+        vm.page.state.values.insert(target, value);
+    }
+    vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(vm);
+    platform::media::activate(&mut vm.page);
+    if let Err(Thrown::Fatal(error)) = platform::focus(vm, target) {
+        return Err(error);
+    }
+    for kind in ["input", "change"] {
+        fire_lifecycle(vm, platform::Target::Node(target), kind, true)?;
+    }
+    Ok(())
 }
 
 /// Dispatch a trusted click at a projected node (bubbling to the document and window), then
@@ -2237,29 +2470,35 @@ fn click_page_with(
     limits: Limits,
 ) -> EngineResult<Execution> {
     let (mut vm, _) = open(&input, state, limits)?;
+    click_body(&mut vm, target)?;
+    finish(vm)
+}
+
+/** The task of `click_page`. */
+pub(in crate::v9) fn click_body(vm: &mut Vm, target: usize) -> EngineResult<()> {
     if !vm.page.exists(target) {
         return Err(EngineError::invalid("Invalid projected click target."));
     }
     vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(vm);
+    platform::media::activate(&mut vm.page);
     // A press focuses what it lands on before the click, as a pointer's mousedown does.
-    if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
+    if let Err(Thrown::Fatal(error)) = platform::focus(vm, target) {
         return Err(error);
     }
-    let proceed = match platform::fire(&mut vm, platform::Target::Node(target), "click", true)
-        .and_then(|proceed| vm.drain_jobs().map(|()| proceed))
-    {
-        Ok(proceed) => proceed,
-        Err(thrown) => {
-            let location = vm.page.throw_location.unwrap_or_default();
-            let mut error = vm.uncaught(thrown, location);
-            error.input_kind = Some("handler".into());
-            return Err(error);
-        }
-    };
+    let fired = platform::fire(vm, platform::Target::Node(target), "click", true);
+    let proceed = !matches!(fired, Ok(false));
+    let drained = fired.map(|_| ()).and_then(|_| vm.drain_jobs());
+    report_thrown(vm, drained)?;
     if proceed {
-        platform::follow_link(&mut vm, target);
+        platform::follow_link(vm, target);
     }
-    finish(vm)
+    Ok(())
+}
+
+/// The error a step fails with when it runs out of wall-clock time (see `is_time_limit`).
+pub fn time_limit_error() -> EngineError {
+    platform::timeout()
 }
 
 /// Advance the virtual clock to `now_ms`, running due timers and animation frames (earliest
@@ -2283,13 +2522,25 @@ fn run_timers_with(
     limits: Limits,
 ) -> EngineResult<Execution> {
     let (mut vm, _) = open(&input, state, limits)?;
+    timers_body(&mut vm, now_ms, budget)?;
+    finish(vm)
+}
+
+/** The task of `run_timers`. */
+pub(in crate::v9) fn timers_body(vm: &mut Vm, now_ms: f64, budget: usize) -> EngineResult<()> {
     if !now_ms.is_finite() {
         return Err(EngineError::invalid("Invalid V9 timer clock."));
     }
     vm.remaining = vm.limits.operations;
-    platform::intersection_observers::deliver_all(&mut vm).map_err(fatal)?;
-    vm.run_due_timers(now_ms, budget).map_err(fatal)?;
-    finish(vm)
+    match platform::intersection_observers::deliver_all(vm) {
+        Ok(()) => {
+            vm.run_due_timers(now_ms, budget).map_err(fatal)?;
+        }
+        // An observer delivery that ran out of time is dropped like any task; the timers wait.
+        Err(Thrown::Fatal(error)) if platform::is_time_limit(&error) => vm.drop_timed_out_task(),
+        Err(thrown) => return Err(fatal(thrown)),
+    }
+    Ok(())
 }
 
 /// Hand back responses to `effects.requests`; fetch promises settle and XMLHttpRequests fire.
@@ -2300,10 +2551,15 @@ pub fn resume_requests(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        vm.remaining = vm.limits.operations;
-        vm.deliver(responses).map_err(fatal)?;
+        resume_body(&mut vm, responses)?;
         finish(vm)
     })
+}
+
+/** The task of `resume_requests`. */
+pub(in crate::v9) fn resume_body(vm: &mut Vm, responses: Vec<HostResponse>) -> EngineResult<()> {
+    vm.remaining = vm.limits.operations;
+    vm.deliver(responses).map_err(fatal)
 }
 
 /// Deliver actual host image fetch/decode outcomes in a later task, ignoring stale source generations.
@@ -2317,6 +2573,11 @@ pub fn resume_images(
         platform::images::deliver(&mut vm, responses)?;
         finish(vm)
     })
+}
+
+/** The task of `resume_images`. */
+pub(in crate::v9) fn images_body(vm: &mut Vm, responses: Vec<ImageResponse>) -> EngineResult<()> {
+    platform::images::deliver(vm, responses)
 }
 
 /** The default environment for entry points that predate PageEnvironment. */
@@ -2344,6 +2605,7 @@ pub fn load_document_scripts(
             &environment,
             None,
             NO_MODULES,
+            &[],
         )?;
         let Compiled::All(codes) = compiled else {
             return Err(EngineError::invalid(
@@ -2378,6 +2640,7 @@ pub fn load_document_scripts_isolated(
     load_page(PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         document,
         storage,
         host,
@@ -2418,6 +2681,7 @@ pub fn click_document_scripts_with(
         PageInput {
             sources,
             source_keys: &[],
+            module_keys: &[],
             document,
             storage,
             host,
@@ -2490,6 +2754,7 @@ fn legacy(
             &environment,
             state,
             NO_MODULES,
+            &[],
         )?;
         vm.page.legacy = true;
         let Compiled::All(codes) = compiled else {
@@ -2786,3 +3051,149 @@ pub fn replay(
 /** Keep the unused host data import referenced for documentation of the wrapper model. */
 #[allow(dead_code)]
 fn _host(_: HostData, _: Class, _: SourceLocation) {}
+
+#[cfg(test)]
+mod near_bounds_collection_tests {
+    //! A heap at 95% of an object bound collects at the end of its step, so garbage the page
+    //! made is not counted toward a refusal; later steps collect only when growth warrants it.
+    use super::*;
+
+    /** Objects a page keeps alive for the whole test. */
+    const SURVIVORS: usize = 2_000;
+    /** A small object bound so the test runs fast; the default is `VM_OBJECTS`. */
+    const OBJECT_BOUND: usize = 4_000;
+    /** Garbage that takes the heap past 95% of the bound but not over it. */
+    const GARBAGE: usize = 500;
+    /** Entries a step may add beyond the survivors' own, for its bookkeeping. */
+    const SLACK: usize = 64;
+
+    /** Small allocations near a bound do not repeatedly traverse a stable page's entire heap. */
+    #[test]
+    fn a_stable_heap_near_a_bound_waits_for_allocation_pressure() {
+        let sources = ["setInterval(()=>{(()=>1)()},1);".to_owned()];
+        let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment {
+            live_gc: true,
+            ..PageEnvironment::default()
+        };
+        let input = || PageInput {
+            sources: &sources,
+            source_keys: &[],
+            module_keys: &[],
+            document: ScriptDocument {
+                identity: "gc-cadence".into(),
+                nodes: Vec::new(),
+                charset: "UTF-8".into(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: ModuleInput::NONE,
+        };
+        let initial = load_page(input()).unwrap();
+        let due = initial.effects.next_timer_ms.unwrap();
+        let before = initial.state.heap.counts.functions;
+        let limits = Limits {
+            functions: before + SLACK / 2,
+            ..Limits::default()
+        };
+        let after =
+            on_v9_stack(|| run_timers_with(input(), initial.state, due, 1, limits)).unwrap();
+        assert!(
+            after.state.heap.counts.functions > before,
+            "a small task collected the stable heap merely because it was near a bound: {before} -> {}",
+            after.state.heap.counts.functions
+        );
+    }
+
+    /** Load a page that keeps `SURVIVORS` objects and drops `garbage` more; the entries its
+    heap holds at the end of the step. */
+    fn entries_after_load(garbage: usize) -> usize {
+        let limits = Limits {
+            objects: OBJECT_BOUND,
+            ..Limits::default()
+        };
+        let sources = [format!(
+            "var kept = []; for (var i = 0; i < {SURVIVORS}; i++) kept.push({{ i }}); for (var j = 0; j < {garbage}; j++) ({{ j }});"
+        )];
+        let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment::default();
+        let input = PageInput {
+            sources: &sources,
+            source_keys: &[],
+            module_keys: &[],
+            document: ScriptDocument {
+                identity: "page-1".into(),
+                nodes: Vec::new(),
+                charset: "UTF-8".into(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: ModuleInput::NONE,
+        };
+        let execution = load_isolated(input, None, limits, false)
+            .expect("garbage near the object bound is collected, not refused");
+        let wire = serde_json::to_value(&execution.state).unwrap();
+        wire["heap"][0].as_array().unwrap().len() + wire["heap"][1].as_array().unwrap().len()
+    }
+
+    #[test]
+    /** A heap near its object bound collects before the bound is checked: the step succeeds and
+    ends with what it would hold had it made no garbage, not with the garbage counted. */
+    fn a_heap_near_its_bound_still_collects_before_refusing() {
+        let clean = entries_after_load(0);
+        let near = entries_after_load(GARBAGE);
+        assert!(
+            near <= clean + SLACK,
+            "{near} entries after garbage, {clean} without it"
+        );
+    }
+}
+
+#[cfg(test)]
+mod summary_bound_tests {
+    //! The typed path's refusal point is the encoded size of the summary, counted from kept page
+    //! encodings; it must stay the exact byte count so the refusal happens at the same total.
+    use super::*;
+
+    #[test]
+    /** A typed summary is accepted at exactly the state ceiling and refused one byte past it, as a
+    state-bytes limit, whether or not its page maps still hold their kept encodings. */
+    fn a_typed_summary_past_the_state_bound_is_refused() {
+        let document = ScriptDocument {
+            identity: "page-1".into(),
+            nodes: Vec::new(),
+            charset: "UTF-8".into(),
+        };
+        let mut summary = VmState::default();
+        summary.page.texts.insert(0, String::new());
+        let limit = Limits::default().state_bytes;
+        let base = serde_json::to_vec(&summary).unwrap().len();
+        summary.page.texts.insert(0, "x".repeat(limit - base));
+        summary
+            .summary()
+            .validate_summary_document(&document)
+            .expect("exactly at the bound");
+        summary.page.texts.insert(0, "x".repeat(limit - base + 1));
+        let error = summary
+            .summary()
+            .validate_summary_document(&document)
+            .unwrap_err();
+        assert!(
+            error.message.contains("V9 state bytes"),
+            "{}",
+            error.message
+        );
+    }
+}

@@ -126,7 +126,7 @@ pub struct CompressionFailed;
 #[cfg(feature = "zlib")]
 mod feat_zlib_rs {
     use zlib_rs::{
-        DeflateConfig, InflateConfig, ReturnCode, compress_bound, compress_slice, decompress_slice,
+        DeflateConfig, Inflate, InflateFlush, ReturnCode, Status, compress_bound, compress_slice,
     };
 
     use super::*;
@@ -139,10 +139,17 @@ mod feat_zlib_rs {
 
     impl CertDecompressor for ZlibRsDecompressor {
         fn decompress(&self, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionFailed> {
-            let output_len = output.len();
-            match decompress_slice(output, input, InflateConfig::default()) {
-                (output_filled, ReturnCode::Ok) if output_filled.len() == output_len => Ok(()),
-                (_, _) => Err(DecompressionFailed),
+            // `Inflate` rather than `decompress_slice()`, because the latter does not
+            // report how much of `input` the stream used: see `total_in()` below.
+            let mut state = Inflate::new(true, ZLIB_WINDOW_BITS);
+            match state.decompress(input, output, InflateFlush::Finish) {
+                Ok(Status::StreamEnd)
+                    if state.total_in() == input.len() as u64
+                        && state.total_out() == output.len() as u64 =>
+                {
+                    Ok(())
+                }
+                _ => Err(DecompressionFailed),
             }
         }
 
@@ -182,6 +189,9 @@ mod feat_zlib_rs {
             CertificateCompressionAlgorithm::Zlib
         }
     }
+
+    /// Largest LZ77 window, matching `InflateConfig::default()`.
+    const ZLIB_WINDOW_BITS: u8 = 15;
 }
 
 #[cfg(feature = "zlib")]
@@ -191,6 +201,8 @@ pub use feat_zlib_rs::{ZLIB_COMPRESSOR, ZLIB_DECOMPRESSOR};
 #[cfg(feature = "brotli")]
 mod feat_brotli {
     use std::io::{Cursor, Write};
+
+    use brotli_decompressor::{BrotliDecompressStream, BrotliResult, BrotliState, StandardAlloc};
 
     use super::*;
 
@@ -202,17 +214,27 @@ mod feat_brotli {
 
     impl CertDecompressor for BrotliDecompressor {
         fn decompress(&self, input: &[u8], output: &mut [u8]) -> Result<(), DecompressionFailed> {
-            let mut in_cursor = Cursor::new(input);
-            let mut out_cursor = Cursor::new(output);
+            let mut state = BrotliState::new_strict(
+                StandardAlloc::default(),
+                StandardAlloc::default(),
+                StandardAlloc::default(),
+            );
+            let (mut available_in, mut input_offset) = (input.len(), 0);
+            let (mut available_out, mut output_offset, mut total_out) = (output.len(), 0, 0);
 
-            brotli::BrotliDecompress(&mut in_cursor, &mut out_cursor)
-                .map_err(|_| DecompressionFailed)?;
-
-            if out_cursor.position() as usize != out_cursor.into_inner().len() {
-                return Err(DecompressionFailed);
+            match BrotliDecompressStream(
+                &mut available_in,
+                &mut input_offset,
+                input,
+                &mut available_out,
+                &mut output_offset,
+                output,
+                &mut total_out,
+                &mut state,
+            ) {
+                BrotliResult::ResultSuccess if available_out == 0 && available_in == 0 => Ok(()),
+                _ => Err(DecompressionFailed),
             }
-
-            Ok(())
         }
 
         fn algorithm(&self) -> CertificateCompressionAlgorithm {
@@ -464,12 +486,23 @@ mod tests {
         test_compressor(BROTLI_COMPRESSOR, BROTLI_DECOMPRESSOR);
     }
 
+    #[test]
+    #[cfg(feature = "brotli")]
+    fn test_brotli_rejects_large_window() {
+        let large_window_empty = [0x11, 0xd0];
+        brotli::BrotliDecompress(&mut &large_window_empty[..], &mut Vec::new()).unwrap();
+        BROTLI_DECOMPRESSOR
+            .decompress(&large_window_empty, &mut [])
+            .unwrap_err();
+    }
+
     fn test_compressor(comp: &dyn CertCompressor, decomp: &dyn CertDecompressor) {
         assert_eq!(comp.algorithm(), decomp.algorithm());
         for sz in [16, 64, 512, 2048, 8192, 16384] {
             test_trivial_pairwise(comp, decomp, sz);
         }
         test_decompress_wrong_len(comp, decomp);
+        test_decompress_trailing_data(comp, decomp);
         test_decompress_garbage(decomp);
     }
 
@@ -514,6 +547,19 @@ mod tests {
 
         // too small
         let mut recovered = vec![0xffu8; original.len() - 1];
+        decomp
+            .decompress(&compressed, &mut recovered)
+            .unwrap_err();
+    }
+
+    fn test_decompress_trailing_data(comp: &dyn CertCompressor, decomp: &dyn CertDecompressor) {
+        let original = vec![0u8; 2048];
+        let mut compressed = comp
+            .compress(original.clone(), CompressionLevel::Interactive)
+            .unwrap();
+        compressed.extend_from_slice(b"trailing data");
+
+        let mut recovered = vec![0xffu8; original.len()];
         decomp
             .decompress(&compressed, &mut recovered)
             .unwrap_err();

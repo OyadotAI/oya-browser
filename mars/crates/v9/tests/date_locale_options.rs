@@ -1,5 +1,5 @@
 /** Date locale formatting coerces its options argument before formatting, as ToDateTimeOptions does: null throws, while an invalid date returns "Invalid Date" first. */
-mod common;
+use crate::common;
 
 /** The options coercion is observable through a thrown TypeError, and never runs for an invalid date. */
 #[test]

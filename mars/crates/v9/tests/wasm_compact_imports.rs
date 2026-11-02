@@ -1,6 +1,6 @@
 /* Compact Wasm imports expand into real ordered declarations under an explicit feature gate. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Both compact forms preserve import names, types and JavaScript lookup order. */
 #[test]

@@ -1,5 +1,5 @@
 /** Public dash bindings preserve conversion, saved state, actual pixels and atomic resource failures. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::{DocumentHost, Execution};
 

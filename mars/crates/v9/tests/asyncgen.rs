@@ -1,5 +1,5 @@
 /** Async generators, for await and AsyncFromSyncIterator through the public page API. */
-mod common;
+use crate::common;
 
 /** The console lines a script logs once its microtasks drain. */
 fn logged(source: &str) -> Vec<String> {

@@ -1,5 +1,5 @@
 /** Resident summaries validate retained document references without becoming executable heap snapshots. */
-mod common;
+use crate::common;
 use mars_v9::{Execution, HostResponse, NodeBox, PageEnvironment, VmState};
 
 /** Pending network state keeps heap references which summary validation must intentionally avoid resolving. */
@@ -102,9 +102,11 @@ fn summary_validation_rejects_foreign_documents_and_removed_referenced_nodes() {
     assert!(summary.validate_summary_document(&removed).is_err());
 }
 
-/** A failed isolated script cannot cancel a request whose signal mutation was rolled back. */
+/** As in browsers, a script that throws keeps what it did before the throw: its abort stands,
+the later script sees the aborted signal, and a request aborted within the same step never
+reaches the host at all. */
 #[test]
-fn failed_script_restores_request_cancellation_effects() {
+fn failed_script_keeps_its_request_cancellation() {
     let sources = vec![
         "const controller=new AbortController();fetch('/pending',{signal:controller.signal});"
             .into(),
@@ -115,8 +117,28 @@ fn failed_script_restores_request_cancellation_effects() {
     let environment = common::environment();
     let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
     assert_eq!(loaded.failed.len(), 1);
-    assert_eq!(common::console(&loaded), ["false"]);
-    assert_eq!(loaded.effects.requests.len(), 1);
+    assert_eq!(
+        common::console(&loaded),
+        ["Uncaught (in promise) cancelled", "true"]
+    );
+    assert!(loaded.effects.requests.is_empty());
     assert!(loaded.effects.cancelled_requests.is_empty());
     loaded.state.validate_document(&common::page()).unwrap();
+}
+
+/** The microtask checkpoint runs after a script that threw, so its rejected fetch is reported
+even when no later script runs. */
+#[test]
+fn a_throwing_script_still_runs_its_microtask_checkpoint() {
+    let sources = vec![
+        "const controller=new AbortController();fetch('/pending',{signal:controller.signal});controller.abort('cancelled');throw new Error('stop');".into(),
+    ];
+    let host = common::host();
+    let environment = common::environment();
+    let loaded = mars_v9::load_page(common::input(&sources, &host, &environment)).unwrap();
+    assert_eq!(loaded.failed.len(), 1);
+    assert_eq!(
+        common::console(&loaded),
+        ["Uncaught (in promise) cancelled"]
+    );
 }

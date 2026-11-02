@@ -329,6 +329,8 @@ pub(in crate::v9) struct Heap {
     pub next_object: ObjectId,
     pub next_env: EnvId,
     pub counts: Counts,
+    /** Conservative proxy presence avoids rescanning a restored heap on every task. */
+    pub has_proxies: bool,
     /** Deduplicated resident string units found at the last GC, including active VM roots. */
     pub last_marked_string_units: usize,
     /** Conservative weakly registered string units, refreshed after cache publication and GC. */
@@ -365,6 +367,26 @@ impl Heap {
     pub(super) fn track_string(&mut self, text: &JsString) {
         self.string_budget.register(text);
         self.last_registered_string_units = self.string_budget.upper_units();
+    }
+    /** The heap as a kept state: the persistent trees shared (O(1)), the derived string
+    registrations left out, since a restore registers the strings it finds (`register_existing_strings`)
+    and cloning the registration map was the whole cost of keeping a task's state. */
+    pub fn export(&self) -> Self {
+        Self {
+            objects: self.objects.clone(),
+            envs: self.envs.clone(),
+            next_object: self.next_object,
+            next_env: self.next_env,
+            counts: self.counts,
+            has_proxies: self.has_proxies,
+            last_marked_string_units: self.last_marked_string_units,
+            last_registered_string_units: self.last_registered_string_units,
+            string_budget: Default::default(),
+            shared_stores: self.shared_stores.clone(),
+            shared_gc_units: self.shared_gc_units.clone(),
+            collected: self.collected,
+            shared: self.shared.clone(),
+        }
     }
     /** Restore weak registrations for strings already present in a decoded or copied heap. */
     pub(super) fn register_existing_strings(&mut self) {
@@ -406,9 +428,9 @@ impl Heap {
             self.track_string(text);
         }
     }
-    /** Whether the heap grew enough since its last collection to be worth collecting again:
-    GC_GROWTH_MIN entries, or a GC_GROWTH_DIVISOR-th of what was alive. Collecting after every
-    request of a large app (YouTube's half a million objects) costs a tenth of its time. */
+    /** Whether the page allocated enough since its last collection to be worth collecting again.
+    Between collections nothing is swept, so the growth in live entries is the allocation since
+    then: it must pass GC_GROWTH_MIN entries or a GC_GROWTH_DIVISOR-th of what survived. */
     pub fn grew_since_collection(&self) -> bool {
         use crate::constants::{GC_GROWTH_DIVISOR, GC_GROWTH_MIN};
         let live = self.objects.len() + self.envs.len();
@@ -447,6 +469,7 @@ impl Heap {
     /** Add or remove an object's contribution to the counts and the shared index. */
     fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
         if add {
+            self.has_proxies |= matches!(object.class, Class::Proxy(_));
             for (key, prop) in object.props.iter() {
                 if let Key::Str(text) | Key::Private(text) = key {
                     self.track_string(text);
@@ -634,10 +657,12 @@ impl Heap {
     counts between collections count every reference and so only ever overestimate. */
     pub fn recount(&mut self) {
         let mut counts = Counts::default();
+        self.has_proxies = false;
         self.shared_stores.clear();
         self.shared_gc_units.clear();
         self.shared.clear();
         for (id, object) in &self.objects {
+            self.has_proxies |= matches!(object.class, Class::Proxy(_));
             if shared_candidate(object) {
                 self.shared.insert(*id);
             }
@@ -740,15 +765,25 @@ impl Heap {
 
 /** Hash content without flattening ropes; exact comparisons resolve collisions in the accounting set. */
 fn string_content_hash(string: &JsString) -> u64 {
+    // Four units per word, and a rope piece by piece: the same content hashes the same
+    // whatever its pieces, since the words are cut from the whole string, not from each piece.
     let mut hash = FastHasher::default();
-    if let Some(units) = string.flat_units() {
-        for unit in units {
-            hash.write_u16(*unit);
+    let mut word = 0u64;
+    let mut held = 0u32;
+    string.for_each_chunk(|chunk| {
+        for unit in chunk {
+            word |= u64::from(*unit) << (held * 16);
+            held += 1;
+            if held == 4 {
+                hash.write_u64(word);
+                word = 0;
+                held = 0;
+            }
         }
-        return hash.finish();
-    }
-    for index in 0..string.len() {
-        hash.write_u16(string.unit_at(index).expect("valid string index"));
+        true
+    });
+    if held > 0 {
+        hash.write_u64(word | (u64::from(held) << 62));
     }
     hash.finish()
 }
@@ -895,6 +930,7 @@ impl<'de> Deserialize<'de> for Heap {
             next_object,
             next_env,
             counts: Counts::default(),
+            has_proxies: false,
             last_marked_string_units: 0,
             last_registered_string_units: 0,
             string_budget: super::string_budget::StringBudget::default(),

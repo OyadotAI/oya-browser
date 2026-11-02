@@ -1,3 +1,4 @@
+mod broadcast;
 /** Candidate-owned dedicated workers share residency, authority and bounded cooperative turns. */
 mod execution;
 mod lifecycle;
@@ -283,6 +284,7 @@ fn environment(
         online: parent.online,
         time_origin_ms: parent.time_origin_ms + clock,
         live_clock: parent.live_clock,
+        live_gc: parent.live_gc,
         random_seed: super::scripting::random_seed(),
         timezone_offset_minutes: parent.timezone_offset_minutes,
         timezone_initial_offset_seconds: parent.timezone_initial_offset_seconds,

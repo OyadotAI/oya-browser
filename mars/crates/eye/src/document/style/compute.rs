@@ -213,7 +213,7 @@ impl Resolver<'_> {
         let mut parts = Vec::new();
         for key in super::individual::KEYS {
             let Some((_, value)) = individual.iter().find(|(name, _)| name == key) else {
-                parts.push((None, [0.0; 2]));
+                parts.push(None);
                 continue;
             };
             match super::individual::matrix(key, value, style.font_size, self.context) {
@@ -221,7 +221,7 @@ impl Resolver<'_> {
                 Err(_) => {
                     dropped(key, Drop::Value, diagnostics);
                     hides |= hiding(key, value);
-                    parts.push((None, [0.0; 2]));
+                    parts.push(None);
                 }
             }
         }

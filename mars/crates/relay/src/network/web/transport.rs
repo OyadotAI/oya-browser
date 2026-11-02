@@ -28,6 +28,8 @@ pub(super) enum Connection {
  * the address families as Chromium's Happy Eyeballs does (eyeballs.rs).
  */
 pub(super) fn connect(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Connection> {
+    // Connecting has its own bound; the request's deadline is only an outer ceiling.
+    let deadline = deadline.min(Instant::now() + crate::constants::WEB_CONNECT_TIMEOUT);
     let addresses = resolve(url, fixture, deadline)?;
     remaining(deadline)?;
     let (socket, peer) = race(&addresses, deadline)?;
@@ -217,7 +219,7 @@ impl Connection {
         deadline: Instant,
     ) -> EngineResult<()> {
         let wire = http1_request(url, request, conditional)?;
-        let mut bytes = wire.as_bytes();
+        let mut bytes = wire.as_slice();
         while !bytes.is_empty() {
             self.deadline(deadline)?;
             let count = match self {
@@ -343,7 +345,8 @@ impl Connection {
     /** Every socket operation receives both timeouts because TLS reads may also write. */
     fn deadline(&self, deadline: Instant) -> EngineResult<()> {
         let socket = self.socket();
-        let duration = remaining(deadline)?;
+        // One read or write waits at most the stall time: a silent peer fails, a slow one goes on.
+        let duration = remaining(deadline)?.min(crate::constants::WEB_STALL_TIMEOUT);
         socket
             .set_read_timeout(Some(duration))
             .map_err(|error| io_error(Stage::SocketOptions, error))?;
@@ -467,7 +470,7 @@ fn http1_request(
     url: &Url,
     request: &WebRequest,
     conditional: &[(&'static str, String)],
-) -> EngineResult<String> {
+) -> EngineResult<Vec<u8>> {
     let host = url.host_str().ok_or_else(denied)?;
     let host = url
         .port()
@@ -498,7 +501,8 @@ fn http1_request(
         wire.push_str(&format!("{}: {value}\r\n", super::fields::http1_name(name)));
     }
     wire.push_str("\r\n");
-    wire.push_str(&request.body);
+    let mut wire = wire.into_bytes();
+    wire.extend_from_slice(&request.body);
     Ok(wire)
 }
 

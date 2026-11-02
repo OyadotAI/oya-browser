@@ -31,6 +31,11 @@ pub enum FlexBasis {
     Content,
     Pixels(f64),
     Percent(f64),
+    /// A `calc()` mixing both: `px` plus `percent` of the containing main size.
+    Mixed {
+        px: f64,
+        percent: f64,
+    },
 }
 /// Content distribution (`justify-content`, `align-content`), as Blink's
 /// `StyleContentAlignmentData`: a position or a distribution with its fallback.

@@ -12,7 +12,10 @@ pub(super) fn decode(asset: &ImageAsset) -> EngineResult<Bitmap> {
     if bytes > EDGE as usize * EDGE as usize * CHANNELS {
         return Err(unsupported());
     }
-    if matches!(asset.mime.as_str(), "image/gif" | "image/webp") {
+    if matches!(
+        asset.mime.as_str(),
+        "image/gif" | "image/webp" | "image/avif"
+    ) {
         return super::formats::decode(asset);
     }
     let _scratch = Allocation::new(bytes.saturating_mul(SCRATCH_COPIES))?;

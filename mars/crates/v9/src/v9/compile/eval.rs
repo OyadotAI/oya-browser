@@ -139,6 +139,7 @@ fn parse_scope(text: &str) -> Option<Scope> {
         bindings: Vec::new(),
         index: std::collections::HashMap::default(),
         env: !global,
+        captured: None,
         slots: 0,
         boundary: false,
         global,
@@ -425,7 +426,7 @@ impl Compiler {
         let params = context.params;
         self.begin_function(strict, FuncFlags::default());
         self.f().eval_grammar = context.grammar;
-        self.scopes.extend(context.scopes);
+        self.scopes.extend(context.scopes.into_iter().map(Arc::new));
         self.classes = context.classes;
         let base = self.scopes.len();
         self.f().scope_base = base;

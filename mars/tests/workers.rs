@@ -445,7 +445,7 @@ fn unsupported_platform_clones_leave_transfer_ports_attached() {
             "/",
             html(
                 "",
-                "<script>let result='';const w=new Worker('/worker.js');const pair=new MessageChannel();pair.port2.onmessage=e=>result+=e.data;try{w.postMessage(new Blob(['abc']),[pair.port1])}catch(e){result=e.name+'|'}pair.port1.postMessage('attached');</script>",
+                "<script>let result='';const w=new Worker('/worker.js');const pair=new MessageChannel();pair.port2.onmessage=e=>result+=e.data;try{w.postMessage(()=>{},[pair.port1])}catch(e){result=e.name+'|'}pair.port1.postMessage('attached');</script>",
             ),
         ),
         (

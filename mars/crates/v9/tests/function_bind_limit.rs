@@ -1,5 +1,5 @@
 /** Bound-argument admission follows the pinned native semantic limit without changing parameter or resident-storage quotas. */
-mod common;
+use crate::common;
 
 /** The accepted boundary is reachable through the real spread-call path and creates a genuine bound capture record. */
 #[test]

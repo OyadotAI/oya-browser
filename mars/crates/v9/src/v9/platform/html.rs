@@ -5,7 +5,7 @@
  */
 use super::Page;
 use super::nodes::NodeView;
-use crate::constants::{DOCUMENT_DEPTH, FRAGMENT_BYTES};
+use crate::constants::{DOCUMENT_DEPTH, HTML_BYTES};
 use crate::protocol::{EngineError, EngineResult};
 use std::collections::BTreeMap;
 
@@ -14,8 +14,19 @@ const VOID: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
     "track", "wbr",
 ];
-/** Elements whose content is raw text. */
-pub(super) const RAW: [&str; 4] = ["script", "style", "textarea", "title"];
+/** Elements whose content is raw text (WHATWG RAWTEXT, script data and PLAINTEXT): no tags
+ * parse and no references decode, so `<xmp>&amp;</xmp>` keeps its literal `&amp;`. */
+pub(super) const RAW: [&str; 7] = [
+    "script",
+    "style",
+    "xmp",
+    "iframe",
+    "noembed",
+    "noframes",
+    "plaintext",
+];
+/** Elements whose content is RCDATA (WHATWG): no tags parse, but references decode. */
+const RCDATA: [&str; 2] = ["textarea", "title"];
 
 /** Escape text content. */
 fn escape_text(text: &str, out: &mut String) {
@@ -75,6 +86,33 @@ fn inner_children(page: &mut Page, id: usize) -> Vec<usize> {
     }
 }
 
+/**
+ * Raw text as written inside its element. A `</` that starts the element's own closing tag, in
+ * any case, is written `<\/` so the parser reads it as text: a script's `</style><a>` in a live
+ * `<style>` would otherwise re-parse as an element the script never made.
+ */
+fn raw_text_safe(text: &str, tag: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (index, _) in lower.match_indices(&format!("</{tag}")) {
+        out.push_str(&text[last..index]);
+        out.push_str("<\\");
+        last = index + 1;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+/** A raw-text element's body and end tag. Its whole text content is written and guarded at once,
+so a closing tag split across text nodes, or element children a script appended, cannot end the
+element early when the markup is parsed again: children are written as their text, never as tags. */
+fn write_raw_body(page: &mut Page, id: usize, qualified: &str, out: &mut String) {
+    let text = page.text_content(id);
+    out.push_str(&raw_text_safe(&text, qualified));
+    out.push_str("</");
+    out.push_str(qualified);
+    out.push('>');
+}
 /** Write one node; `shadow` includes shadow roots. */
 fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow: bool) {
     let Some(view) = page.view(id) else {
@@ -82,13 +120,10 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
     };
     match view.tag.as_str() {
         "#text" => {
-            let parent_raw = page
-                .parent(id)
-                .map(|parent| page.tag(parent))
-                .is_some_and(|tag| RAW.contains(&tag.as_str()));
+            let parent_tag = page.parent(id).map(|parent| page.tag(parent));
             let text = view.text.unwrap_or_default();
-            if parent_raw {
-                out.push_str(&text);
+            if let Some(tag) = parent_tag.filter(|tag| RAW.contains(&tag.as_str())) {
+                out.push_str(&raw_text_safe(&text, &tag));
             } else {
                 escape_text(&text, out);
             }
@@ -125,6 +160,10 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
             let qualified = page.qualified_element_name(id);
             write_open(&qualified, &view, out);
             if VOID.contains(&tag) || depth > DOCUMENT_DEPTH * 4 {
+                return;
+            }
+            if RAW.contains(&tag) {
+                write_raw_body(page, id, &qualified, out);
                 return;
             }
             let children = if shadow {
@@ -182,8 +221,8 @@ fn normalize_newlines(html: &str) -> String {
 
 /** Parse HTML into a preorder node list. */
 pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
-    if html.len() > FRAGMENT_BYTES * 4 {
-        return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES * 4));
+    if html.len() > HTML_BYTES {
+        return Err(EngineError::limit("fragment bytes", HTML_BYTES));
     }
     let mut nodes: Vec<Parsed> = Vec::new();
     let mut open: Vec<(usize, String)> = Vec::new();
@@ -241,11 +280,11 @@ pub(in crate::v9) fn parse_tree(html: &str) -> EngineResult<Vec<Parsed>> {
             implied_close(&mut open, &tag);
             let index = push(&mut nodes, &open, &tag, attributes, None)?;
             rest = remaining;
-            if RAW.contains(&tag.as_str()) {
+            if RAW.contains(&tag.as_str()) || RCDATA.contains(&tag.as_str()) {
                 let close = format!("</{tag}");
-                let end = rest.to_ascii_lowercase().find(&close).unwrap_or(rest.len());
+                let end = find_ignore_ascii_case(rest, &close).unwrap_or(rest.len());
                 if end > 0 {
-                    let text = decode_entities(&rest[..end], tag != "script" && tag != "style");
+                    let text = decode_entities(&rest[..end], !RAW.contains(&tag.as_str()));
                     nodes.push(Parsed {
                         tag: "#text".into(),
                         attributes: BTreeMap::new(),
@@ -417,6 +456,19 @@ fn implied_close(open: &mut Vec<(usize, String)>, tag: &str) {
     }
 }
 
+/** The byte offset of the first `needle` in `haystack`, ignoring ASCII case. It copies nothing, so
+a raw-text scan that moves past each element's own text stays linear across a whole fragment; a
+lowercased copy of the rest per element was quadratic in the number of raw-text elements. */
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    let (haystack, needle) = (haystack.as_bytes(), needle.as_bytes());
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle))
+}
+
 /** Read a start tag after `<`: name, attributes, self-closing flag, and the rest of the input. */
 fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
     let name_end = input
@@ -456,13 +508,13 @@ fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
                 let body = &after[1..];
                 let end = body.find(quote).unwrap_or(body.len());
                 rest = body.get(end + 1..).unwrap_or("");
-                decode_entities(&body[..end], true)
+                mars_core::entities::decode(&body[..end], true)
             } else {
                 let end = after
                     .find(|c: char| c.is_whitespace() || c == '>')
                     .unwrap_or(after.len());
                 rest = &after[end..];
-                decode_entities(&after[..end], true)
+                mars_core::entities::decode(&after[..end], true)
             }
         } else {
             String::new()
@@ -472,61 +524,47 @@ fn open_tag(input: &str) -> (String, BTreeMap<String, String>, bool, &str) {
     (tag, attributes, closed, rest)
 }
 
-/** Decode the common character references. */
+/** Decode character references in text with the shared WHATWG decoder; raw text keeps them. */
 pub(in crate::v9) fn decode_entities(text: &str, decode: bool) -> String {
-    if !decode || !text.contains('&') {
-        return text.to_string();
+    if decode {
+        mars_core::entities::decode(text, false)
+    } else {
+        text.to_string()
     }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('&') {
-        out.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let end = rest.find(';').filter(|end| *end <= ENTITY_LENGTH);
-        let Some(end) = end else {
-            out.push('&');
-            rest = &rest[1..];
-            continue;
-        };
-        let name = &rest[1..end];
-        let decoded = match name {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            "nbsp" => Some('\u{a0}'),
-            "copy" => Some('©'),
-            "reg" => Some('®'),
-            "hellip" => Some('…'),
-            "mdash" => Some('\u{2014}'),
-            "ndash" => Some('–'),
-            "laquo" => Some('«'),
-            "raquo" => Some('»'),
-            _ => name
-                .strip_prefix("#x")
-                .or_else(|| name.strip_prefix("#X"))
-                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                .or_else(|| {
-                    name.strip_prefix('#')
-                        .and_then(|decimal| decimal.parse().ok())
-                })
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[end + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
-/** Longest entity reference recognized. */
-const ENTITY_LENGTH: usize = 10;
+#[cfg(test)]
+mod tests {
+    use super::parse_tree;
+    use std::time::{Duration, Instant};
+
+    /** Raw-text elements in the 15 MB fragment: about the most the node bound lets one parse keep. */
+    const RAW_TEXT_TEST_ELEMENTS: usize = 15_000;
+    /** The time a linear parse of the fragment may take, far above the linear cost (about 30 ms) and far
+    below the quadratic one (about 4 s). */
+    const PARSE_LIMIT: Duration = Duration::from_secs(2);
+
+    /** Each `<style>` raw-text element in a 15 MB fragment is found and kept, within the time limit:
+    the close-tag search for one element does not copy the markup after it, so the parse is linear. */
+    #[test]
+    fn many_raw_text_elements_in_one_large_fragment_parse_in_linear_time() {
+        let element = format!("<style>{}</style>", "a{color:red}".repeat(90));
+        let markup = element.repeat(RAW_TEXT_TEST_ELEMENTS);
+        let started = Instant::now();
+        let parsed = parse_tree(&markup).expect("the fragment is within its bounds");
+        assert!(
+            started.elapsed() < PARSE_LIMIT,
+            "parsed in {:?}",
+            started.elapsed()
+        );
+        let styles = parsed.iter().filter(|node| node.tag == "style").count();
+        assert_eq!(styles, RAW_TEXT_TEST_ELEMENTS);
+    }
+
+    /** A fragment past HTML_BYTES is refused rather than parsed, whatever its element count. */
+    #[test]
+    fn fragment_past_the_document_bound_is_refused() {
+        let markup = "a".repeat(crate::constants::HTML_BYTES + 1);
+        assert!(parse_tree(&markup).is_err());
+    }
+}

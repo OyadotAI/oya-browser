@@ -81,10 +81,11 @@ fn parsed_response(input: &mut Input<'_>, image: bool, head: bool) -> EngineResu
     })
 }
 
+/** The final head: whether it is reusable, its status, headers and Set-Cookie fields. */
+type FinalHead = (bool, u16, BTreeMap<String, String>, Vec<String>);
+
 /** Only final headers reach body framing; HTTP protocol upgrades are explicitly unsupported. */
-fn final_head(
-    input: &mut Input<'_>,
-) -> EngineResult<(bool, u16, BTreeMap<String, String>, Vec<String>)> {
+fn final_head(input: &mut Input<'_>) -> EngineResult<FinalHead> {
     let mut used = 0usize;
     let mut informational = 0usize;
     loop {

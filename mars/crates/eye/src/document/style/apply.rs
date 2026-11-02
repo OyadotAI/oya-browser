@@ -20,7 +20,19 @@ pub(super) fn apply(
 ) -> EngineResult<bool> {
     let raw = value.trim();
     let lower = raw.to_ascii_lowercase();
-    let value = if ["background-image", "mask-image", "border-image-source"].contains(&key) {
+    // Font tags, custom identifiers and image URLs keep their case; every other keyword is
+    // matched lowercased.
+    let value = if [
+        "background-image",
+        "mask-image",
+        "border-image-source",
+        "font-feature-settings",
+        "font-variation-settings",
+        "view-transition-name",
+        "list-style-type",
+    ]
+    .contains(&key)
+    {
         raw
     } else {
         lower.as_str()
@@ -54,8 +66,18 @@ pub(super) fn apply(
         style.size_keywords[1] = keyword;
         style.min_width_percent = None;
         style.min_width = None;
+        style.min_width_offset = 0.0;
+        style.min_width_expr = None;
         if let Some(percent) = value.strip_suffix('%') {
             style.min_width_percent = Some(number(percent)?);
+        } else if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+            style.min_width_expr = Some(expr);
+        } else if value.starts_with("calc(") {
+            let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+            match percent {
+                true => (style.min_width_percent, style.min_width_offset) = (Some(main), offset),
+                false => style.min_width = Some(main),
+            }
         } else if keyword == SizeKeyword::None && value != "auto" {
             style.min_width = Some(contextual_length(value, style.font_size, context)?);
         }
@@ -94,7 +116,10 @@ pub(super) fn apply(
         || super::multicol::apply(style, key, value, context)?
         || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
+        || super::outline::apply(style, key, value, context)?
+        || super::decoration::apply(style, key, value, context)?
         || super::border_image::apply(style, key, value, context)?
+        || super::kept_values::apply(style, key, value, context)?
     {
         return Ok(true);
     }
@@ -249,7 +274,9 @@ fn text(
         "text-align" => {
             style.align = match value {
                 "left" | "center" | "right" | "start" | "end" | "justify" => value,
-                "match-parent" => super::text_align::matched(&style.align, style.parent_rtl),
+                "match-parent" | "-webkit-match-parent" => {
+                    super::text_align::matched(&style.align, style.parent_rtl)
+                }
                 "justify-all" => "start",
                 "-webkit-center" => "webkit-center",
                 _ => return Err(unsupported()),
@@ -291,6 +318,13 @@ fn layout(
             let keyword = size_keyword(value, style.font_size, context)?;
             style.size_keywords[2] = keyword;
             style.percent_max_width = value.ends_with('%');
+            style.max_width_offset = 0.0;
+            style.max_width_expr = None;
+            if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+                (style.max_width, style.percent_max_width) = (None, false);
+                style.max_width_expr = Some(expr);
+                return Ok(true);
+            }
             style.max_width = match value {
                 _ if keyword != SizeKeyword::None => {
                     style.percent_max_width = false;
@@ -301,14 +335,15 @@ fn layout(
                     None
                 }
                 _ if style.percent_max_width => Some(number(value.trim_end_matches('%'))?),
+                _ if value.starts_with("calc(") => {
+                    let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+                    (style.percent_max_width, style.max_width_offset) = (percent, offset);
+                    Some(main)
+                }
                 _ => Some(contextual_length(value, style.font_size, context)?),
             }
         }
         "opacity" => style.opacity = opacity(value)?,
-        "outline" | "outline-color" | "outline-width" | "outline-style" | "outline-offset" => note(
-            diagnostics,
-            format!("Style decoration {key} is not painted."),
-        ),
         _ => return Ok(false),
     }
     Ok(true)
@@ -339,6 +374,20 @@ fn size_keyword(value: &str, font: f64, context: RenderContext) -> EngineResult<
     })
 }
 /**
+ * A `calc()` of a percentage and a length, split into its main part (the percentage when there
+ * is one, else the pixels), whether that part is a percentage, and the pixel offset that rides
+ * on the percentage. A math function out of range is clamped, as CSS Values 4 requires.
+ */
+fn mixed_calc(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, bool, f64)> {
+    let mixed = super::values::dimension(value, font, context)?;
+    let percent = mixed.percent != 0.0;
+    let (main, offset) = match percent {
+        true => (mixed.percent, mixed.px),
+        false => (mixed.px, 0.0),
+    };
+    Ok((main.clamp(0.0, CSS_MAX_SCALAR), percent, offset))
+}
+/**
  * `width`: a keyword, a percentage, a length, or a `calc()` mixing both, whose px part waits in
  * `width_offset` until the percentage resolves against the containing block.
  */
@@ -346,6 +395,7 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
     let keyword = size_keyword(value, style.font_size, context)?;
     style.size_keywords[0] = keyword;
     style.width_offset = 0.0;
+    style.width_expr = None;
     style.percent_width = value.ends_with('%');
     style.width_stretch = matches!(value, "stretch" | "-webkit-fill-available");
     style.width_fit = keyword != SizeKeyword::None;
@@ -361,6 +411,11 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
         style.width = Some(100.0);
         return Ok(());
     }
+    if let Some(expr) = super::values::deferred(value, style.font_size, context)? {
+        (style.width, style.percent_width) = (None, false);
+        style.width_expr = Some(expr);
+        return Ok(());
+    }
     style.width = match value {
         "auto" | "min-content" | "max-content" | "fit-content" => {
             style.percent_width = false;
@@ -368,19 +423,8 @@ fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> Engi
         }
         _ if style.percent_width => Some(number(value.trim_end_matches('%'))?),
         _ if value.starts_with("calc(") => {
-            let mixed = super::values::dimension(value, style.font_size, context)?;
-            style.percent_width = mixed.percent != 0.0;
-            style.width_offset = if style.percent_width { mixed.px } else { 0.0 };
-            let main = if style.percent_width {
-                mixed.percent
-            } else {
-                mixed.px
-            };
-            // A part past the computed-style bounds drops the declaration instead of failing
-            // the whole cascade at validation.
-            if !(0.0..=crate::constants::CSS_MAX_SCALAR).contains(&main) {
-                return Err(unsupported());
-            }
+            let (main, percent, offset) = mixed_calc(value, style.font_size, context)?;
+            (style.percent_width, style.width_offset) = (percent, offset);
             Some(main)
         }
         _ => Some(contextual_length(value, style.font_size, context)?),
@@ -399,6 +443,11 @@ fn display(
         "inline" | "inline flow" => set_display(style, true, false, false, false),
         "inline-block" | "inline flow-root" => set_display(style, true, true, false, false),
         // An inline-level table: atomic on its line, a table inside.
+        // An inline box whose principal box is a list item, so it gets a marker.
+        "inline-list-item" | "inline list-item" => {
+            set_display(style, true, false, false, false);
+            style.list_item = true;
+        }
         "inline-table" | "inline table" => {
             set_display(style, true, true, false, false);
             style.table_box = TableBox::Table;

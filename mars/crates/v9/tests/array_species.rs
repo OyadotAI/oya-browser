@@ -1,5 +1,5 @@
 /** Array-producing methods honor constructor species and preserve observable callback/definition order. */
-mod common;
+use crate::common;
 
 #[test]
 /** All species-aware methods preserve the derived Array's constructor. */

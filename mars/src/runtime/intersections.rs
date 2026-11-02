@@ -57,7 +57,10 @@ impl Observations {
 
     /** A finished cycle cannot restart during the same rendering opportunity. */
     pub fn ready(&self) -> bool {
-        self.pending && self.not_before.is_none_or(|at| std::time::Instant::now() >= at)
+        self.pending
+            && self
+                .not_before
+                .is_none_or(|at| std::time::Instant::now() >= at)
     }
 
     /** Retain undelivered sizes for a later frame; geometry invalidation cannot bypass this yield. */
@@ -100,7 +103,11 @@ pub(super) fn layout(page: &mut Page, context: RenderContext, scroll_y: f64) {
             .as_ref()
             .map(super::scripting::boxes)
             .unwrap_or_default(),
-        wrappers: page.display.as_ref().map(|display| display.resize_wrappers).unwrap_or_default(),
+        wrappers: page
+            .display
+            .as_ref()
+            .map(|display| display.resize_wrappers)
+            .unwrap_or_default(),
         viewport: [context.width, context.height],
         device_pixel_ratio: page.scripting.environment.device_pixel_ratio,
         scroll: [
@@ -164,7 +171,8 @@ mod tests {
         let mut geometry = observations.sampled.clone().unwrap();
         geometry.wrappers.html = Some(mars_core::geometry::BoxMetrics {
             content: [0.0, 0.0, 800.0, 20.0],
-            border: [800.0, 20.0], vertical: false,
+            border: [800.0, 20.0],
+            vertical: false,
         });
         observations.layout(geometry);
         assert!(observations.pending);

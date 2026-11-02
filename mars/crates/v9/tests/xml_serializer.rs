@@ -1,5 +1,5 @@
 /** XMLSerializer: serializeToString writes a node as XML that reads back unchanged. Text and attributes are escaped, empty elements self-close, and a namespace that changes is declared. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Markup the XML reader parsed serializes with its escapes and namespace declaration intact. */

@@ -1,6 +1,6 @@
 /** The HTML popover API in V9: the `popover` reflection, show/hide/toggle with Blink's
 exceptions, beforetoggle and coalesced toggle events, the auto stack, and popovertarget. */
-mod common;
+use crate::common;
 use common::{console, environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 
@@ -12,6 +12,7 @@ fn eval(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,
@@ -81,6 +82,7 @@ fn toggle_events_are_queued_and_coalesced() {
     let input = || PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

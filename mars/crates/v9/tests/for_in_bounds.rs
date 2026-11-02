@@ -1,5 +1,5 @@
 /* for-in over an oversized typed array: browser builds enumerate every key, conformance builds refuse with RangeError. */
-mod common;
+use crate::common;
 use mars_v9::constants::VM_ARRAY_LENGTH;
 
 /** Browser path: the key snapshot is unbounded, so for-in visits every index and completes. Release only: the walk exceeds the debug script deadline. */

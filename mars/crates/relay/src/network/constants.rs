@@ -7,6 +7,11 @@ use std::time::Duration;
 /// hung (and restarts the engine) instead of receiving an ordinary, degradable timeout.
 pub const REPLY_MARGIN: Duration = Duration::from_millis(300);
 
+/// Chrome's image Accept without AVIF, for the one retry after the runtime's AVIF decoder reports
+/// an AVIF feature it does not build (intra block copy, superres, rotation); the first request
+/// keeps Chrome's exact header, which offers AVIF first.
+pub const ACCEPT_IMAGE_WITHOUT_AVIF: &str = "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
+
 /// One socket read. Large enough that a 2 MiB body is not thousands of system calls, small
 /// enough that the retained cursor buffer stays a fixed, modest allocation.
 pub const READ_BYTES: usize = 16 * 1024;
@@ -45,8 +50,9 @@ pub const CACHE_VARIANTS: usize = 4;
 /// Last-Modified.
 pub const HEURISTIC_DIVISOR: u32 = 10;
 
-/// Concurrent workers for a batch of subresource fetches.
-pub const BATCH_WORKERS: usize = 6;
+/// Concurrent workers for a batch of subresource fetches: twelve, as a page's head is a dozen
+/// or more sheets and scripts over one or two HTTP/2 origins, where streams are cheap.
+pub const BATCH_WORKERS: usize = 12;
 
 /// Cookies kept in total. Chromium's store holds at most 3000 before global eviction.
 pub const COOKIE_COUNT: usize = 3000;

@@ -40,12 +40,14 @@ pub(crate) fn parse(value: &str) -> Option<ContentType> {
     })
 }
 
-/** Strict UTF-8 for the UTF-8 label; every other label decodes with its WHATWG encoding, malformed
-bytes becoming U+FFFD. An unknown label is refused rather than guessed. */
+/** UTF-8 for the UTF-8 label; every other label decodes with its WHATWG encoding. Malformed bytes
+become U+FFFD in both, as the Encoding standard's decode does: browsers never refuse a resource
+for its bytes (aa.com's Tealium script carries a raw 0x80 and stopped loading). An unknown label
+is refused rather than guessed. */
 pub(crate) fn decode(body: Vec<u8>, charset: Option<&str>) -> EngineResult<String> {
     let encoding = encoding_for_label(charset.unwrap_or(http::UTF_8));
     if encoding == Some(http::UTF_8) {
-        return strict_utf8(&body);
+        return Ok(utf8(&body));
     }
     let encoding = encoding
         .and_then(charset::for_label)
@@ -53,21 +55,14 @@ pub(crate) fn decode(body: Vec<u8>, charset: Option<&str>) -> EngineResult<Strin
     Ok(encoding.decode(&body).0.into_owned())
 }
 
-/** UTF-8 with its byte order mark dropped; any malformed sequence refuses the body. */
-fn strict_utf8(body: &[u8]) -> EngineResult<String> {
-    let start = if body.starts_with(UTF8_BOM) {
-        UTF8_BOM.len()
-    } else {
-        0
-    };
-    std::str::from_utf8(&body[start..])
-        .map(str::to_owned)
-        .map_err(|_| EngineError::unsupported("The resource is not valid UTF-8."))
+/** UTF-8 with its byte order mark dropped and malformed sequences replaced. */
+fn utf8(body: &[u8]) -> String {
+    String::from_utf8_lossy(body.strip_prefix(UTF8_BOM).unwrap_or(body)).into_owned()
 }
 
 /** Worker scripts always use UTF-8 decoding, including replacement characters and BOM removal. */
 pub(crate) fn worker_source(body: &[u8]) -> String {
-    String::from_utf8_lossy(body.strip_prefix(UTF8_BOM).unwrap_or(body)).into_owned()
+    utf8(body)
 }
 
 /** The charset an HTML body is decoded with: a UTF-8 byte order mark, else the transport's declared
@@ -201,11 +196,11 @@ mod tests {
         assert_eq!(error.message, "Unsupported resource encoding.");
     }
 
+    /** Malformed UTF-8 becomes U+FFFD, as browsers decode it; the resource still loads. */
     #[test]
-    fn invalid_utf8_under_a_utf8_label_is_refused() {
+    fn invalid_utf8_under_a_utf8_label_is_replaced() {
         for charset in [None, Some("utf-8")] {
-            let error = decode(b"\xFF".to_vec(), charset).unwrap_err();
-            assert_eq!(error.code, "unsupported_feature");
+            assert_eq!(decode(b"a\xFFb".to_vec(), charset).unwrap(), "a\u{FFFD}b");
         }
     }
 

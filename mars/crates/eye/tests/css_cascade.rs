@@ -206,14 +206,15 @@ fn before_rules_style_only_the_generated_box() {
 }
 
 #[test]
-fn other_pseudo_element_rules_are_dropped() {
+fn other_pseudo_element_rules_never_style_the_element() {
     let document = styled("<p id=a>a</p>", "p::selection{color:red} p{opacity:.5}");
     assert_eq!(color(&document, "a"), None);
+    assert_eq!(by_id(&document, "a").style.opacity, 0.5);
     assert!(
         document
             .diagnostics
             .iter()
-            .any(|d| d.contains("pseudo-element"))
+            .all(|d| !d.contains("pseudo-element"))
     );
 }
 

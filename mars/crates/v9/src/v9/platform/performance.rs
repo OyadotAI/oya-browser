@@ -6,6 +6,32 @@ use crate::v9::vm::{Call, Res, Vm};
 
 /** Private entry storage is never exposed as an authored property. */
 const ENTRIES: &str = "performance.entries";
+/** PerformanceTiming attribute names. A measure may name one in place of a mark (Next.js measures
+from `navigationStart`), and it resolves to the time origin, since `performance.timing` reports
+every one of these at the origin. */
+const TIMING_ATTRIBUTES: [&str; 21] = [
+    "navigationStart",
+    "unloadEventStart",
+    "unloadEventEnd",
+    "redirectStart",
+    "redirectEnd",
+    "fetchStart",
+    "domainLookupStart",
+    "domainLookupEnd",
+    "connectStart",
+    "connectEnd",
+    "secureConnectionStart",
+    "requestStart",
+    "responseStart",
+    "responseEnd",
+    "domLoading",
+    "domInteractive",
+    "domContentLoadedEventStart",
+    "domContentLoadedEventEnd",
+    "domComplete",
+    "loadEventStart",
+    "loadEventEnd",
+];
 /** Shell and opted-in native timelines advance monotonically; standalone page time stays exact. */
 pub(super) fn now(vm: &Vm) -> f64 {
     #[cfg(feature = "conformance")]
@@ -209,6 +235,9 @@ fn position(vm: &mut Vm, values: &[JsValue], value: JsValue, fallback: f64) -> R
             return Err(vm.unsupported_error("performance.measure options"));
         }
         return vm.to_number(&start);
+    }
+    if TIMING_ATTRIBUTES.contains(&vm.to_text(&value)?.as_str()) {
+        return Ok(0.0);
     }
     let name = vm.to_string(&value)?;
     for item in values.iter().rev() {

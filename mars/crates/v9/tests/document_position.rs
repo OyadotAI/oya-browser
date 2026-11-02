@@ -1,5 +1,5 @@
 /** Node document-position constants: each bit has its value, and a detached pair reports disconnected, implementation-specific and an order. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** The implementation-specific bit is 32, as the DOM standard fixes it. */

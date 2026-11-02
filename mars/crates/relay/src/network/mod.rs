@@ -4,6 +4,7 @@ mod cookies;
 pub mod cors;
 mod headers;
 mod mime;
+mod partition;
 pub mod policy;
 mod request;
 mod url;
@@ -13,6 +14,7 @@ use crate::constants::{
 };
 use crate::protocol::{EngineError, EngineResult};
 pub use cookies::{CookieEntry, CookieJar};
+pub use partition::partition_site;
 pub use request::{Destination, Method, Preflight, WebRequest, WebResponse};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -20,7 +22,7 @@ use std::time::{Duration, Instant};
 pub use url::Endpoint;
 pub use web::Prepared;
 pub use web::redirect_url;
-pub use web::{CHROME_ENGINE, clear_cache, fetch_batch, set_cache_directory};
+pub use web::{CHROME_ENGINE, clear_cache, fetch_batch, forget, set_cache_directory};
 pub use web::{WebPage, fetch as fetch_web};
 
 /// Every call revalidates the literal destination inside the network service.

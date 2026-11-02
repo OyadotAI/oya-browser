@@ -1,5 +1,5 @@
 /** Web Animations use actual clock-driven tasks, native opacity sampling, Promise jobs and validated state transport. */
-mod common;
+use crate::common;
 use mars_v9::{AnimationTarget, Execution};
 
 /** A small public timer roundtrip preserves the original scripts and document projection. */
@@ -124,10 +124,10 @@ fn keyframe_effect_timing_is_private_and_observable() {
     assert_eq!(common::global(&loaded, "r"), "100,0,150,0.5,1");
     assert_eq!(loaded.effects.opacity_effects[0].value, 0.5);
 }
-/** Unsupported properties and composition are refused explicitly before an animation is registered. */
+/** Unsupported composition and invalid timing are refused before an animation is registered. */
 #[test]
 fn unsupported_effects_do_not_masquerade_as_finished_animations() {
-    let source = "const out=[];for(const [frames,options] of [[{transform:['none','translateX(1px)']},100],[{opacity:[0,1]},{duration:100,composite:'add'}],[{opacity:[0,1]},{duration:-1}]]){try{document.body.animate(frames,options);out.push('allowed')}catch(e){out.push(e.name)}}const r=out.join();";
+    let source = "const out=[];for(const [frames,options] of [[{opacity:[0,1]},{duration:100,composite:'add'}],[{opacity:[0,1]},{duration:-1}],[{opacity:[0,1]},{duration:100,easing:'bounce'}]]){try{document.body.animate(frames,options);out.push('allowed')}catch(e){out.push(e.name)}}const r=out.join();";
     let loaded = common::load(source);
     assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
     assert_eq!(
@@ -136,6 +136,19 @@ fn unsupported_effects_do_not_masquerade_as_finished_animations() {
     );
     assert!(loaded.effects.opacity_effects.is_empty());
     assert!(loaded.effects.next_timer_ms.is_none());
+}
+/** As in Chrome, keyframes V9 does not paint (transform) with any valid easing still give a
+running Animation: its timing and easing are reported, and nothing is painted for them. */
+#[test]
+fn unpainted_properties_and_css_easings_run_their_timing() {
+    let source = "const a=document.body.animate({transform:['none','translateX(10px)']},{duration:100,easing:'cubic-bezier(0.4, 0, 0.2, 1)'});const b=document.body.animate([{transform:'scale(1)'},{transform:'scale(2)'}],{duration:50,easing:'ease-in-out'});const r=[a.playState,a.effect.getTiming().easing,b.effect.getTiming().easing].join();";
+    let loaded = common::load(source);
+    assert!(loaded.failed.is_empty(), "{:?}", common::failure(&loaded));
+    assert_eq!(
+        common::global(&loaded, "r"),
+        "running,cubic-bezier(0.4, 0, 0.2, 1),ease-in-out"
+    );
+    assert!(loaded.effects.opacity_effects.is_empty());
 }
 /** Detached targets may finish, but a nonexistent projection node cannot enter native rendering. */
 #[test]

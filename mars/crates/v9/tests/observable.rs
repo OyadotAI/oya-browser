@@ -1,5 +1,5 @@
 /** Observable, Subscriber and EventTarget.when through page scripts: one test per rule of the proposal. */
-mod common;
+use crate::common;
 use common::{eval, failure, global, load};
 
 /** The interfaces are globals, and Observable needs `new`, so the constructor is not callable. */

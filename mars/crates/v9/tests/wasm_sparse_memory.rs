@@ -1,5 +1,5 @@
 /** Sparse Wasm memory grows logical length without materializing untouched zero pages. */
-mod common;
+use crate::common;
 
 /** Growth detaches old buffers and lets typed views access distant resident pages. */
 #[test]

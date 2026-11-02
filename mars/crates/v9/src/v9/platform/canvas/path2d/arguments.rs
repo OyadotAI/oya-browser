@@ -32,6 +32,14 @@ pub(in crate::v9::platform::canvas) fn stroke_argument(
     receiver(vm, value).map(Some)
 }
 
+/** A Path2D first argument selects the path overload; any other value begins the point arguments. */
+pub(in crate::v9::platform::canvas) fn retained_argument(
+    vm: &mut Vm,
+    value: &JsValue,
+) -> Option<ObjectId> {
+    identity(vm, value)
+}
+
 /** Retained geometry observes the context transform at use time and leaves both source paths unchanged. */
 pub(in crate::v9::platform::canvas) fn snapshot(
     vm: &Vm,

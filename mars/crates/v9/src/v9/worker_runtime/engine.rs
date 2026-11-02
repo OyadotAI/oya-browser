@@ -72,6 +72,7 @@ fn input<'a>(
     PageInput {
         sources,
         source_keys: &[],
+        module_keys: &[],
         environment,
         host,
         modules,
@@ -105,6 +106,7 @@ fn execute(
         environment,
         None,
         &modules,
+        &[],
     )?;
     let Compiled::Each(codes) = compiled else {
         return Err(EngineError::invalid("Worker compilation mode mismatch."));

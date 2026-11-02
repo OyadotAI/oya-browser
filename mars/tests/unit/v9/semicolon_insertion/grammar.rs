@@ -50,11 +50,7 @@ fn newline_statements_preserve_execution_order() {
 fn same_line_missing_separator_points_at_the_next_statement() {
     let source = "let n=1 let m=2";
     let error = syntax(source);
-    assert!(
-        error.message.contains("unexpected token"),
-        "{}",
-        error.message
-    );
+    assert!(error.message.contains("Unexpected"), "{}", error.message);
     assert_eq!(
         error.location.unwrap().byte_offset,
         source.find("let m").unwrap()
@@ -87,11 +83,7 @@ fn standard_for_headers_require_both_explicit_semicolons() {
         "for(var n=0;n<2/*\n*/n++){}",
     ] {
         let error = syntax(source);
-        assert!(
-            error.message.contains("unexpected token"),
-            "{}",
-            error.message
-        );
+        assert!(error.message.contains("Unexpected"), "{}", error.message);
     }
     assert_eq!(
         result("let total=0\nfor(var n=0;n<3;n++){total=total+n}", "total"),

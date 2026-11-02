@@ -69,32 +69,52 @@ impl CookieJar {
     /// Every unexpired cookie, for the inspection protocol's cookie listing.
     pub fn entries(&mut self, now: SystemTime) -> Vec<CookieEntry> {
         self.expire(now);
-        self.records
-            .iter()
-            .map(|cookie| CookieEntry {
-                name: cookie.name.clone(),
-                value: cookie.value.clone(),
-                domain: if cookie.host_only {
-                    cookie.domain.clone()
-                } else {
-                    format!(".{}", cookie.domain)
-                },
-                path: cookie.path.clone(),
-                secure: cookie.secure,
-                http_only: cookie.http_only,
-                same_site: match cookie.same_site {
-                    SameSite::Strict => "Strict".into(),
-                    SameSite::Lax => "Lax".into(),
-                    SameSite::None => "None".into(),
-                },
-                expires: cookie.expires.and_then(|at| {
-                    at.duration_since(SystemTime::UNIX_EPOCH)
-                        .ok()
-                        .map(|since| since.as_secs())
-                }),
-            })
-            .collect()
+        self.records.iter().map(Cookie::entry).collect()
     }
+    /// The cookies `document.cookie` would show a document at `url`, as entries in the same
+    /// order (longest path first), for the Cookie Store API. HttpOnly cookies never appear.
+    pub fn script_entries(&mut self, url: &Url, now: SystemTime) -> Vec<CookieEntry> {
+        self.expire(now);
+        let mut records = self
+            .records
+            .iter()
+            .filter(|c| c.applies(url, true, true, Api::Script))
+            .collect::<Vec<_>>();
+        records.sort_by_key(|c| std::cmp::Reverse(c.path.len()));
+        records.into_iter().map(Cookie::entry).collect()
+    }
+}
+
+impl Cookie {
+    /// This cookie as an inspection entry.
+    fn entry(&self) -> CookieEntry {
+        let cookie = self;
+        CookieEntry {
+            name: cookie.name.clone(),
+            value: cookie.value.clone(),
+            domain: if cookie.host_only {
+                cookie.domain.clone()
+            } else {
+                format!(".{}", cookie.domain)
+            },
+            path: cookie.path.clone(),
+            secure: cookie.secure,
+            http_only: cookie.http_only,
+            same_site: match cookie.same_site {
+                SameSite::Strict => "Strict".into(),
+                SameSite::Lax => "Lax".into(),
+                SameSite::None => "None".into(),
+            },
+            expires: cookie.expires.and_then(|at| {
+                at.duration_since(SystemTime::UNIX_EPOCH)
+                    .ok()
+                    .map(|since| since.as_secs())
+            }),
+        }
+    }
+}
+
+impl CookieJar {
     /// Remove the cookies named `name` whose domain is `domain` (host-only or Domain, dot or not)
     /// and, when given, whose path is exactly `path`; returns how many went.
     pub fn remove(&mut self, name: &str, domain: &str, path: Option<&str>) -> usize {

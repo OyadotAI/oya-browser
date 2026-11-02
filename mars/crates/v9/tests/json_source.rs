@@ -1,5 +1,5 @@
 /** Reviver source context reflects exact JSON tokens and the graph before callbacks run. */
-mod common;
+use crate::common;
 
 /** Context preserves token spelling, including escapes, exponent notation and negative zero. */
 #[test]

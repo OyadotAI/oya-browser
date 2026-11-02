@@ -171,6 +171,9 @@ impl ComputedStyle {
             || self
                 .transform
                 .is_some_and(|m| !m.iter().all(|v| v.is_finite() && v.abs() <= TRANSFORM_MAX))
+            || self
+                .transform_4
+                .is_some_and(|m| !m.iter().all(|v| v.is_finite() && v.abs() <= TRANSFORM_MAX))
         {
             return Err(invalid());
         }

@@ -112,3 +112,15 @@ fn text_items_shrink_to_their_lines() {
          <div style='height:50px'>3</div><div style='height:50px'>4</div></div>";
     assert_eq!(rect(markup, "a").3, 25.0);
 }
+
+/** A `calc()` basis that resolves below zero is clamped to zero, as css-values-4 range checking
+requires: in a 400px row, `calc(10px - 50%)` is -190px and takes no space, so the two items split
+the row evenly at 200px each. */
+#[test]
+fn a_negative_calc_basis_clamps_to_zero() {
+    let markup = "<div style='display:flex;width:400px'>\
+         <i id=a style='display:block;background:red;flex:1 1 calc(10px - 50%);min-width:0'></i>\
+         <i id=b style='display:block;background:red;flex:1 1 0px;min-width:0'></i></div>";
+    assert_eq!(rect(markup, "a").2, 200.0);
+    assert_eq!(rect(markup, "b").2, 200.0);
+}

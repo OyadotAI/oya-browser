@@ -214,7 +214,7 @@ fn fixed(px: f64) -> Track {
 /** The style a subgrid lays out with: each inherited axis becomes an explicit grid of fixed
  * tracks with the parent's names before its own and no auto-repeat, at the inherited gap. None
  * for a grid that inherits nothing. */
-pub(super) fn adopt(node: &Node) -> Option<ComputedStyle> {
+pub(super) fn adopt(node: &Node) -> Option<crate::document::SharedStyle> {
     let inherited = INHERITED.with(|map| map.borrow().get(&node.local_id).cloned())?;
     let mut style = node.style.clone();
     for (axis, axis_inherited) in inherited.into_iter().enumerate() {

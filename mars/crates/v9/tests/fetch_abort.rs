@@ -1,5 +1,5 @@
 /** Fetch signals retain native identity, cancellation and exact reasons across host-response turns. */
-mod common;
+use crate::common;
 use common::{console, input, round_trip};
 use mars_v9::{Execution, HostResponse, VmState};
 

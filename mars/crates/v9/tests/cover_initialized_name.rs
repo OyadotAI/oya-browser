@@ -1,5 +1,5 @@
 /** Cover initialized names are accepted in patterns but rejected before object expressions execute. */
-mod common;
+use crate::common;
 
 /** An invalid cover initialized name must throw SyntaxError before resolving its callee. */
 #[test]

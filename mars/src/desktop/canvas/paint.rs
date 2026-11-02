@@ -40,7 +40,7 @@ impl Shape {
         }
     }
     /// Grows (or with a negative amount shrinks) every edge; radii follow, never below zero.
-    fn outset(&self, amount: f64) -> Self {
+    pub fn outset(&self, amount: f64) -> Self {
         Self {
             x: self.x - amount,
             y: self.y - amount,
@@ -285,6 +285,19 @@ impl Painter {
         self.path(&shape.outset(-width / 2.0));
         CGContext::stroke_path(self.cg());
     }
+    /// Strokes a rounded box's outline with a dash pattern (`dashes` in points, alternating on and
+    /// off); an empty pattern is the solid stroke `stroke` draws. The pattern resets afterwards.
+    pub fn stroke_dashed(&self, shape: &Shape, width: f64, color: &NSColor, dashes: &[f64]) {
+        color.setStroke();
+        let cg = self.cg();
+        CGContext::set_line_width(cg, width);
+        // SAFETY: `dashes` outlives the call, and CoreGraphics copies the pattern when it is set.
+        unsafe { CGContext::set_line_dash(cg, 0.0, dashes.as_ptr(), dashes.len()) };
+        self.path(&shape.outset(-width / 2.0));
+        CGContext::stroke_path(cg);
+        // SAFETY: a zero count with a null pattern restores the solid line.
+        unsafe { CGContext::set_line_dash(cg, 0.0, std::ptr::null(), 0) };
+    }
     /// Fills each side of a non-uniform border as its own trapezoid with its own color.
     pub fn sides(&self, shape: &Shape, widths: [f64; 4], colors: [Option<Retained<NSColor>>; 4]) {
         let (x, y, w, h) = (shape.x, shape.y, shape.width, shape.height);
@@ -324,6 +337,12 @@ impl Painter {
             let Some(color) = shadow_color(&shadow.color, alpha) else {
                 continue;
             };
+            let lands = shape
+                .outset(shadow.spread + shadow.blur)
+                .offset(shadow.x, shadow.y);
+            if !self.in_clip(&lands) {
+                continue;
+            }
             CGContext::save_g_state(self.cg());
             self.outside(shape);
             // The shape is filled SHADOW_REACH to the left and its shadow offset back, so only
@@ -405,6 +424,19 @@ impl Painter {
             ),
         );
         CGContext::eo_clip(self.cg());
+    }
+    /// Whether a box meets the current clip. A shadow whose landing spot is off the page is
+    /// skipped: cast from SHADOW_REACH away, CoreGraphics lands a ghost of it a further
+    /// SHADOW_REACH on, so a box parked at `left: -10000px` (Amazon's keyboard-shortcut menu)
+    /// put a translucent block at the viewport's left edge.
+    fn in_clip(&self, shape: &Shape) -> bool {
+        let clip = CGContext::clip_bounding_box(self.cg());
+        let (left, top) = (clip.origin.x, clip.origin.y);
+        let (right, bottom) = (left + clip.size.width, top + clip.size.height);
+        shape.x < right
+            && shape.x + shape.width > left
+            && shape.y < bottom
+            && shape.y + shape.height > top
     }
     /// A zero-offset blur in the shadow's color; the cast shape itself carries the offset.
     /// CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur

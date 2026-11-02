@@ -1,5 +1,5 @@
 /** Instance checks observe genuine proxy prototype operations, constructor ordering and native GC roots. */
-mod common;
+use crate::common;
 
 /** Direct, explicit hasInstance and inherited proxy prototype checks all use the same actual trap result. */
 #[test]

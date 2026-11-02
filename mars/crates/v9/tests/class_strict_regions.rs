@@ -1,5 +1,5 @@
 /** Class definition expressions are lexically strict without changing the enclosing activation's arguments, receiver or privacy mode. */
-mod common;
+use crate::common;
 
 /** Computed method names and heritage both reject failed writes in an otherwise sloppy surrounding function. */
 #[test]

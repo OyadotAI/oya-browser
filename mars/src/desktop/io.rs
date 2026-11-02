@@ -39,25 +39,16 @@ impl Drop for Descriptor {
     }
 }
 
-/// Separate pollable reader observes EOF even while a previous agent mutation is in flight.
-#[cfg_attr(feature = "test-support", allow(dead_code))]
+/** Where requests go: commands to the worker, and window observations to the UI thread when a
+test or the native transport supplies that channel. */
+pub(super) type Route = (
+    SyncSender<Command>,
+    Option<SyncSender<super::broker::Event>>,
+);
+
+/** Window observations and screenshots go straight to the UI thread. Queued behind the worker's
+command channel they waited for its current page step, which on a busy page is seconds long. */
 pub(super) fn start(
-    commands: SyncSender<Command>,
-    output: Receiver<Response>,
-    authority: SharedAuthority,
-    cancel: Arc<AtomicBool>,
-    connected: Arc<AtomicBool>,
-) -> EngineResult<Vec<JoinHandle<()>>> {
-    let input = Descriptor::new(libc::STDIN_FILENO)?;
-    let stdout = Descriptor::new(libc::STDOUT_FILENO)?;
-    Ok(start_descriptors(
-        input, stdout, commands, output, authority, cancel, connected,
-    ))
-}
-/** Test builds can inject native UI actions while a runtime request is blocked. Production
-transports retain their existing ordering and never expose the human-input test seam. */
-#[cfg(feature = "test-support")]
-pub(super) fn start_with_events(
     commands: SyncSender<Command>,
     events: SyncSender<super::broker::Event>,
     output: Receiver<Response>,
@@ -67,7 +58,7 @@ pub(super) fn start_with_events(
 ) -> EngineResult<Vec<JoinHandle<()>>> {
     let input = Descriptor::new(libc::STDIN_FILENO)?;
     let stdout = Descriptor::new(libc::STDOUT_FILENO)?;
-    Ok(start_routed(
+    Ok(start_descriptors(
         input,
         stdout,
         (commands, Some(events)),
@@ -78,36 +69,25 @@ pub(super) fn start_with_events(
     ))
 }
 
-/** Private descriptor injection preserves the native EOF compatibility path in hermetic tests. */
-#[cfg_attr(feature = "test-support", allow(dead_code))]
+/** Descriptor injection keeps the native framing and shutdown path for hermetic tests, which
+pass no event channel: window requests then take the command path, as on the MCP transport. */
 pub(super) fn start_descriptors(
     input: Descriptor,
     stdout: Descriptor,
-    commands: SyncSender<Command>,
+    route: Route,
     output: Receiver<Response>,
     authority: SharedAuthority,
     cancel: Arc<AtomicBool>,
     connected: Arc<AtomicBool>,
 ) -> Vec<JoinHandle<()>> {
-    start_routed(
-        input,
-        stdout,
-        (commands, None),
-        output,
-        authority,
-        cancel,
-        connected,
-    )
+    start_routed(input, stdout, route, output, authority, cancel, connected)
 }
 
 /** Optional native test routing shares the same bounded framing and shutdown path. */
 fn start_routed(
     input: Descriptor,
     stdout: Descriptor,
-    route: (
-        SyncSender<Command>,
-        Option<SyncSender<super::broker::Event>>,
-    ),
+    route: Route,
     output: Receiver<Response>,
     authority: SharedAuthority,
     cancel: Arc<AtomicBool>,
@@ -172,10 +152,9 @@ fn read(
                         tab_id: key,
                     });
                 drop(state);
-                #[cfg(feature = "test-support")]
-                if matches!(request.op.as_str(), "window.human" | "window.inspect")
-                    && let Some(events) = &route.1
-                {
+                let window_op =
+                    request.op.starts_with("window.") || request.op == "page.screenshot";
+                if let Some(events) = route.1.as_ref().filter(|_| window_op) {
                     if events
                         .try_send(super::broker::Event::Window(request, permit))
                         .is_err()

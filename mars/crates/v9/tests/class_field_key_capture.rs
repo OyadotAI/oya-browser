@@ -1,5 +1,5 @@
 /** Computed class field keys are captured during definition, separately from per-instance initializer values. */
-mod common;
+use crate::common;
 
 /** Computed keys run once in source order with methods, while values run for each new instance. */
 #[test]

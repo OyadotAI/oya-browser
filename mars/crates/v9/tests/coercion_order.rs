@@ -1,5 +1,5 @@
 /** String splitting and number formatting preserve authored conversion order even when a shortcut returns immediately. */
-mod common;
+use crate::common;
 
 /** A zero split limit skips searching, but still observes receiver, limit and separator conversions in order. */
 #[test]

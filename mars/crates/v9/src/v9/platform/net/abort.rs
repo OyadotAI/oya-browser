@@ -202,6 +202,7 @@ pub(in crate::v9) fn mark_aborted(vm: &mut Vm, signal: ObjectId, value: JsValue)
         vm.pin(JsValue::Object(*id));
     }
     prune_aborted_listeners(&mut vm.page.state, &vm.heap);
+    super::body_stream::abort_streams(vm)?;
     for id in signals {
         cancel_pending(vm, id, &reason)?;
         super::super::fire(vm, Target::Object(id), "abort", false)?;
@@ -263,9 +264,11 @@ pub(super) fn validate(page: &PageState, heap: &Heap) -> EngineResult<()> {
     validate_summary(page)?;
     for pending in &page.pending {
         if pending.signal.is_some_and(|id| !branded(heap, id))
-            || !heap
-                .get(pending.owner)
-                .is_some_and(|object| pending.xhr || matches!(object.class, Class::Promise(_)))
+            || !heap.get(pending.owner).is_some_and(|object| {
+                pending.xhr
+                    || (pending.indexed && object.function().is_some())
+                    || (!pending.indexed && matches!(object.class, Class::Promise(_)))
+            })
         {
             return Err(invalid());
         }
@@ -295,8 +298,13 @@ pub(super) fn validate_summary(page: &PageState) -> EngineResult<()> {
         if pending.id == 0
             || pending.id > page.next_request
             || !requests.insert(pending.id)
-            || pending.xhr && pending.signal.is_some()
-            || !pending.xhr && pending.signal.is_none()
+            || (pending.xhr || pending.indexed || pending.platform) && pending.signal.is_some()
+            || [pending.xhr, pending.indexed, pending.platform]
+                .iter()
+                .filter(|kind| **kind)
+                .count()
+                > 1
+            || !pending.xhr && !pending.indexed && !pending.platform && pending.signal.is_none()
             || pending.xhr && !page.xhrs.contains_key(&pending.owner)
         {
             return Err(invalid());

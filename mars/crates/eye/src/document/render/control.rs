@@ -147,8 +147,11 @@ fn title(context: &LayoutContext<'_>, node: &Node) -> String {
     } else if node.tag == "button" {
         node.text.clone()
     } else if node.tag == "select" {
-        super::super::forms::select_options(context.document, node.local_id)
-            .into_iter()
+        context
+            .controls
+            .options_of(node.local_id)
+            .iter()
+            .map(|position| &context.document.nodes[*position])
             .find(|n| n.selected)
             .map(|n| n.text.clone())
             .unwrap_or_default()
@@ -207,7 +210,7 @@ fn authored_size(
 }
 /** The style a control's title is measured and drawn in: the page's font when it set one,
  * otherwise Chromium's system control face at `font`. */
-fn title_style(node: &Node, font: f64) -> crate::document::ComputedStyle {
+fn title_style(node: &Node, font: f64) -> crate::document::SharedStyle {
     let mut style = node.style.clone();
     style.font_size = font;
     if !node.style.font_authored {

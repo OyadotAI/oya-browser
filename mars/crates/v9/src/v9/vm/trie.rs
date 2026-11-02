@@ -49,12 +49,35 @@ impl<V> Node<V> {
             Self::Branch(Box::new(std::array::from_fn(|_| None)))
         }
     }
+
+    /** Find a lower-bound key by descending only matching or later branches. */
+    fn first_at_or_after(&self, key: u32, shift: u32) -> Option<u32> {
+        let first = ((key >> shift) & MASK) as usize;
+        match self {
+            Self::Leaf(slots) => slots[first..].iter().flatten().next().map(|(key, _)| *key),
+            Self::Branch(children) => {
+                children
+                    .iter()
+                    .enumerate()
+                    .skip(first)
+                    .find_map(|(index, child)| {
+                        child
+                            .as_ref()?
+                            .first_at_or_after(if index == first { key } else { 0 }, shift - BITS)
+                    })
+            }
+        }
+    }
 }
 
-/** The map: a shared root and its entry count. */
+/** The map: a shared root, its entry count and its height. The root covers only as many levels
+as the largest key needs (`shift` is its level's shift), growing when a larger key arrives: a
+page's half-million objects take four hops per lookup instead of six, and every object access
+in the interpreter is one. */
 pub(in crate::v9) struct Trie<V> {
     root: Arc<Node<V>>,
     len: usize,
+    shift: u32,
 }
 
 impl<V> Clone for Trie<V> {
@@ -63,6 +86,7 @@ impl<V> Clone for Trie<V> {
         Self {
             root: Arc::clone(&self.root),
             len: self.len,
+            shift: self.shift,
         }
     }
 }
@@ -71,8 +95,9 @@ impl<V> Default for Trie<V> {
     /** No entries. */
     fn default() -> Self {
         Self {
-            root: Arc::new(Node::empty(ROOT_SHIFT)),
+            root: Arc::new(Node::empty(0)),
             len: 0,
+            shift: 0,
         }
     }
 }
@@ -84,15 +109,23 @@ impl<V: std::fmt::Debug + Clone> std::fmt::Debug for Trie<V> {
     }
 }
 
-impl<V: Clone> Trie<V> {
+impl<V> Trie<V> {
     /** Entries held. */
     pub fn len(&self) -> usize {
         self.len
     }
+    /** Whether the root's levels reach `key`. */
+    #[inline]
+    fn covers(&self, key: u32) -> bool {
+        self.shift >= ROOT_SHIFT || key >> (self.shift + BITS) == 0
+    }
     /** The value under `key`. */
     pub fn get(&self, key: &u32) -> Option<&V> {
+        if !self.covers(*key) {
+            return None;
+        }
         let mut node = &*self.root;
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -112,36 +145,31 @@ impl<V: Clone> Trie<V> {
     pub fn contains_key(&self, key: &u32) -> bool {
         self.get(key).is_some()
     }
-    /** The value under `key` for writing: the path and the value are copied if shared. */
-    pub fn get_mut(&mut self, key: &u32) -> Option<&mut V> {
-        let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
-        loop {
-            match node {
-                Node::Branch(children) => {
-                    let child = children[((key >> shift) & MASK) as usize].as_mut()?;
-                    node = Arc::make_mut(child);
-                    shift -= BITS;
-                }
-                Node::Leaf(slots) => {
-                    let (held, value) = slots[(key & MASK) as usize].as_mut()?;
-                    if held != key {
-                        return None;
-                    }
-                    return Some(Arc::make_mut(value));
-                }
-            }
-        }
+
+    /** Identity frontier checks need only a lower-bound lookup, not a walk over the whole heap. */
+    pub fn first_key_at_or_after(&self, key: u32) -> Option<u32> {
+        self.covers(key)
+            .then(|| self.root.first_at_or_after(key, self.shift))
+            .flatten()
     }
-    /** Store `value` under `key`, returning what was there. */
-    pub fn insert(&mut self, key: u32, value: V) -> Option<V> {
-        self.insert_shared(key, Arc::new(value))
-            .map(|old| Arc::try_unwrap(old).unwrap_or_else(|shared| (*shared).clone()))
+    /** Add a level above the root: the old root becomes the new one's first child, holding
+    the same keys at the same paths below. */
+    fn grow(&mut self) {
+        let shift = self.shift + BITS;
+        let mut root = Node::empty(shift);
+        if let Node::Branch(children) = &mut root {
+            children[0] = Some(self.root.clone());
+        }
+        self.root = Arc::new(root);
+        self.shift = shift;
     }
     /** Store an already shared value. */
     fn insert_shared(&mut self, key: u32, value: Arc<V>) -> Option<Arc<V>> {
+        while !self.covers(key) {
+            self.grow();
+        }
         let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
+        let mut shift = self.shift;
         loop {
             match node {
                 Node::Branch(children) => {
@@ -156,30 +184,6 @@ impl<V: Clone> Trie<V> {
                         self.len += 1;
                     }
                     return old.map(|(_, value)| value);
-                }
-            }
-        }
-    }
-    /** Remove `key`, returning its value. Emptied nodes stay; a sweep rebuilds the tree. */
-    #[cfg(test)]
-    pub fn remove(&mut self, key: &u32) -> Option<V> {
-        let mut node = Arc::make_mut(&mut self.root);
-        let mut shift = ROOT_SHIFT;
-        loop {
-            match node {
-                Node::Branch(children) => {
-                    let child = children[((key >> shift) & MASK) as usize].as_mut()?;
-                    node = Arc::make_mut(child);
-                    shift -= BITS;
-                }
-                Node::Leaf(slots) => {
-                    let slot = &mut slots[(key & MASK) as usize];
-                    if slot.as_ref().is_none_or(|(held, _)| held != key) {
-                        return None;
-                    }
-                    let (_, value) = slot.take()?;
-                    self.len -= 1;
-                    return Some(Arc::try_unwrap(value).unwrap_or_else(|shared| (*shared).clone()));
                 }
             }
         }
@@ -206,6 +210,71 @@ impl<V: Clone> Trie<V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.iter().map(|(_, value)| value)
     }
+    /** Entries with their shared values, in key order. */
+    fn iter_shared(&self) -> Iter<'_, V> {
+        Iter {
+            stack: vec![(&*self.root, 0)],
+        }
+    }
+}
+
+impl<V: Clone> Trie<V> {
+    /** The value under `key` for writing: the path and the value are copied if shared. */
+    pub fn get_mut(&mut self, key: &u32) -> Option<&mut V> {
+        if !self.covers(*key) {
+            return None;
+        }
+        let mut node = Arc::make_mut(&mut self.root);
+        let mut shift = self.shift;
+        loop {
+            match node {
+                Node::Branch(children) => {
+                    let child = children[((key >> shift) & MASK) as usize].as_mut()?;
+                    node = Arc::make_mut(child);
+                    shift -= BITS;
+                }
+                Node::Leaf(slots) => {
+                    let (held, value) = slots[(key & MASK) as usize].as_mut()?;
+                    if held != key {
+                        return None;
+                    }
+                    return Some(Arc::make_mut(value));
+                }
+            }
+        }
+    }
+    /** Store `value` under `key`, returning what was there. */
+    pub fn insert(&mut self, key: u32, value: V) -> Option<V> {
+        self.insert_shared(key, Arc::new(value))
+            .map(|old| Arc::try_unwrap(old).unwrap_or_else(|shared| (*shared).clone()))
+    }
+    /** Remove `key`, returning its value. Emptied nodes stay; a sweep rebuilds the tree. */
+    #[cfg(test)]
+    pub fn remove(&mut self, key: &u32) -> Option<V> {
+        if !self.covers(*key) {
+            return None;
+        }
+        let mut node = Arc::make_mut(&mut self.root);
+        let mut shift = self.shift;
+        loop {
+            match node {
+                Node::Branch(children) => {
+                    let child = children[((key >> shift) & MASK) as usize].as_mut()?;
+                    node = Arc::make_mut(child);
+                    shift -= BITS;
+                }
+                Node::Leaf(slots) => {
+                    let slot = &mut slots[(key & MASK) as usize];
+                    if slot.as_ref().is_none_or(|(held, _)| held != key) {
+                        return None;
+                    }
+                    let (_, value) = slot.take()?;
+                    self.len -= 1;
+                    return Some(Arc::try_unwrap(value).unwrap_or_else(|shared| (*shared).clone()));
+                }
+            }
+        }
+    }
     /** Every value for writing: copies the whole tree if shared, so callers that write a few
     values read first and `get_mut` those. */
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
@@ -230,12 +299,6 @@ impl<V: Clone> Trie<V> {
         }
         walk(Arc::make_mut(&mut self.root), &mut out);
         out.into_iter()
-    }
-    /** Entries with their shared values, in key order. */
-    fn iter_shared(&self) -> Iter<'_, V> {
-        Iter {
-            stack: vec![(&*self.root, 0)],
-        }
     }
 }
 
@@ -298,6 +361,31 @@ impl<'a, V: Clone> IntoIterator for &'a Trie<V> {
 mod tests {
     use super::*;
 
+    /** Lower-bound lookup agrees with ordered keys across sparse branches, deletion and snapshots. */
+    #[test]
+    fn lower_bounds_preserve_sparse_keys_after_mutation() {
+        let keys = [0, 1, 63, 64, 4095, 4096, 70_000, 0x4000_0000, u32::MAX];
+        let mut trie: Trie<()> = keys.into_iter().map(|key| (key, ())).collect();
+        let original = trie.clone();
+        for key in [64, 4096, 0x4000_0000] {
+            trie.remove(&key);
+        }
+        for map in [&trie, &original, &Trie::<()>::default()] {
+            for lower in keys
+                .into_iter()
+                .flat_map(|key| [key.saturating_sub(1), key, key.saturating_add(1)])
+            {
+                assert_eq!(
+                    map.first_key_at_or_after(lower),
+                    map.keys().copied().find(|key| *key >= lower),
+                    "{lower}"
+                );
+            }
+        }
+        trie.retain(|key, _| *key < 64);
+        assert_eq!(trie.first_key_at_or_after(64), None);
+    }
+
     /** Reads, writes, removals and order hold across sparse keys, including the intrinsic range. */
     #[test]
     fn entries_round_trip_in_key_order() {
@@ -343,6 +431,32 @@ mod tests {
 
     /** A clone shares everything: a write to one leaves the other as it was, and the untouched
     values stay the same allocation. */
+    #[test]
+    fn the_root_grows_to_the_largest_key_and_keeps_every_entry() {
+        let mut trie = Trie::default();
+        trie.insert(5, "five");
+        let small = trie.clone();
+        assert_eq!(
+            trie.get(&70),
+            None,
+            "a key past the root's reach is absent, not a panic"
+        );
+        for key in [70, 5_000, 1 << 20, 0x3fff_ffff] {
+            trie.insert(key, "big");
+        }
+        assert_eq!(trie.get(&5), Some(&"five"));
+        for key in [70, 5_000, 1 << 20, 0x3fff_ffff] {
+            assert_eq!(trie.get(&key), Some(&"big"));
+        }
+        assert_eq!(trie.len(), 5);
+        assert_eq!(small.get(&5), Some(&"five"));
+        assert_eq!(small.get(&5_000), None);
+        assert_eq!(trie.remove(&5_000), Some("big"));
+        assert_eq!(trie.get(&5_000), None);
+        let keys: Vec<u32> = trie.keys().copied().collect();
+        assert_eq!(keys, vec![5, 70, 1 << 20, 0x3fff_ffff]);
+    }
+
     #[test]
     fn clones_share_until_written() {
         let mut first: Trie<Vec<u8>> = (0..1000u32).map(|k| (k, vec![k as u8])).collect();

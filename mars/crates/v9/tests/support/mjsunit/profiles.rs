@@ -12,7 +12,7 @@ pub(super) fn write(test: &str, profiles: Vec<(Option<u64>, String)>) -> Result<
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    let root = crate::out_dir();
+    let root = crate::test262_runner::out_dir();
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     for (endpoint, json) in profiles {

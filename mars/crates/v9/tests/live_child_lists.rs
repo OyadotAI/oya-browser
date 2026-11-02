@@ -1,6 +1,6 @@
 /** Live child lists in V9 (`children`, `childNodes`): index, length and item read the element's
 current children, skip or keep text as the list says, and refresh after insertions and removals. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 
@@ -12,6 +12,7 @@ fn eval(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

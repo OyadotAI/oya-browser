@@ -1,5 +1,5 @@
 /** Class construction failures carry the values and names V8 puts in them. */
-mod common;
+use crate::common;
 
 /** `this` before `super()` has V8's wording, whether read or returned. */
 #[test]

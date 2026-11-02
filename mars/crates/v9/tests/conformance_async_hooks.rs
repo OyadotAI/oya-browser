@@ -1,6 +1,6 @@
 /* Promise-hook conformance checks inspect real event logs outside native callbacks. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 
 /** Hooks are explicitly enabled only for these d8-host requests. */

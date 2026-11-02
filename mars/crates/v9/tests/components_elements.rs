@@ -1,5 +1,5 @@
 /** Web Components in V9: custom elements, shadow roots and slots, templates, observers, traversal. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, SimpleFragmentParser, StorageState};
 
@@ -11,6 +11,7 @@ fn run(source: &str) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,
@@ -25,6 +26,103 @@ fn eval(source: &str, name: &str) -> String {
     let execution = run(source);
     assert!(execution.failed.is_empty(), "{:?}", execution.failed);
     global(&execution, name)
+}
+
+/** A discarded custom element's self-referencing closures must not become permanent page roots. */
+#[test]
+fn detached_custom_elements_release_their_closures() {
+    const DEFINITION: &str = "class XGarbage extends HTMLElement {constructor(){super();this.callback=()=>this;}}customElements.define('x-garbage',XGarbage);";
+    let baseline = run(DEFINITION);
+    let churn = run(&format!(
+        "{DEFINITION}(()=>{{for(let i=0;i<128;i++){{const e=document.createElement('x-garbage');document.body.appendChild(e);e.remove();}}}})();"
+    ));
+    assert!(churn.failed.is_empty(), "{:?}", churn.failed);
+    let count = |execution: &Execution| {
+        let wire = serde_json::to_value(&execution.state).unwrap();
+        wire["heap"][0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|object| object[1]["c"].get("function").is_some())
+            .count()
+    };
+    assert!(
+        count(&churn) <= count(&baseline) + 2,
+        "discarded elements retained functions: {} -> {}",
+        count(&baseline),
+        count(&churn)
+    );
+}
+
+/** Even without own properties, a connected custom wrapper keeps the prototype installed by upgrade. */
+#[test]
+fn connected_custom_elements_keep_their_wrappers() {
+    let execution = run(
+        "class XKept extends HTMLElement{}customElements.define('x-kept',XKept);document.body.appendChild(document.createElement('x-kept'));",
+    );
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let wire = serde_json::to_value(&execution.state).unwrap();
+    let custom = wire["page"]["components"]["custom"].as_object().unwrap();
+    assert_eq!(custom.len(), 1);
+    let wrappers = wire["page"]["wrappers"].as_object().unwrap();
+    assert!(custom.keys().all(|node| wrappers.contains_key(node)));
+}
+
+/** Script reachability keeps detached instances and their closures across collection and transport. */
+#[test]
+fn referenced_detached_custom_elements_survive_the_next_task() {
+    let sources = ["class XHeld extends HTMLElement{constructor(){super();this.callback=()=>this;}}customElements.define('x-held',XHeld);const held=document.createElement('x-held');let r='';setTimeout(()=>{r=[held instanceof XHeld,held.callback()===held].join()},1);".to_owned()];
+    let execution = run(&sources[0]);
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let state = serde_json::from_value(serde_json::to_value(execution.state).unwrap()).unwrap();
+    let host = host();
+    let mut environment = environment();
+    environment.dom_level = DomLevel::Extended;
+    let next =
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).unwrap();
+    assert_eq!(global(&next, "r"), "true,true");
+}
+
+/** Observation registration is a weak link to its node, so a discarded observer/target cycle is collectible. */
+#[test]
+fn discarded_mutation_observers_release_their_callbacks() {
+    let baseline = run("");
+    let churn = run(
+        "(()=>{for(let i=0;i<128;i++){const e=document.createElement('div');new MutationObserver(()=>e).observe(e,{attributes:true});}})();",
+    );
+    assert!(churn.failed.is_empty(), "{:?}", churn.failed);
+    assert!(
+        churn.state.allocation_counts()[1] <= baseline.state.allocation_counts()[1] + 2,
+        "discarded observers retained functions: {:?} -> {:?}",
+        baseline.state.allocation_counts(),
+        churn.state.allocation_counts()
+    );
+}
+
+/** A reachable observed node keeps its callback even when script no longer holds the observer. */
+#[test]
+fn reachable_mutation_targets_keep_callbacks_across_tasks() {
+    let sources = ["let calls=0;const kept=document.createElement('div');(()=>{new MutationObserver(()=>calls++).observe(kept,{attributes:true});new MutationObserver(()=>calls++).observe(document.getElementById('main'),{attributes:true});new MutationObserver(()=>calls++).observe(document,{attributes:true,subtree:true});})();setTimeout(()=>{kept.setAttribute('title','x');document.getElementById('main').setAttribute('title','x');},1);".to_owned()];
+    let execution = run(&sources[0]);
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let state = common::round_trip(execution.state);
+    let host = host();
+    let mut environment = environment();
+    environment.dom_level = DomLevel::Extended;
+    let next =
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).unwrap();
+    assert_eq!(global(&next, "calls"), "3");
+}
+
+/** Document and host subtree observations stop at a shadow boundary while observers inside it deliver. */
+#[test]
+fn mutation_observations_respect_document_and_shadow_boundaries() {
+    let execution = run(
+        "let outer=0,inner=0;const h=document.createElement('div');document.body.appendChild(h);const s=h.attachShadow({mode:'open'});const child=document.createElement('span');s.appendChild(child);new MutationObserver(()=>outer++).observe(document,{attributes:true,subtree:true});new MutationObserver(()=>outer++).observe(h,{attributes:true,subtree:true});new MutationObserver(()=>inner++).observe(s,{attributes:true,subtree:true});child.setAttribute('title','inside');",
+    );
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert_eq!(global(&execution, "outer"), "0");
+    assert_eq!(global(&execution, "inner"), "1");
 }
 
 #[test]
@@ -195,4 +293,101 @@ fn projected_hosts_keep_their_shadow_root_through_the_change_log() {
             .iter()
             .any(|node| node.tag == "b" && node.parent == Some(root.local_id))
     );
+}
+
+/** A definition made after hundreds of matching elements exist upgrades each one once, in tree
+order, and leaves elements of other names alone. */
+#[test]
+fn elements_defined_after_many_nodes_upgrade_in_tree_order() {
+    let source = "const d=document.getElementById('main');let h='<x-u id=u1></x-u>';\
+        for(let i=0;i<200;i++)h+='<x-t id=t'+i+'></x-t>';d.innerHTML=h;\
+        const order=[];class XT extends HTMLElement{constructor(){super();order.push(this.id)}}\
+        customElements.define('x-t',XT);\
+        const r=[order.length,order[0],order[199],order.join(',')===Array.from({length:200},(_,i)=>'t'+i).join(','),\
+        document.getElementById('u1') instanceof XT].join('|');";
+    assert_eq!(eval(source, "r"), "200|t0|t199|true|false");
+}
+
+/** An element removed before its name is defined stays out of the upgrade until it connects again. */
+#[test]
+fn elements_removed_before_definition_upgrade_only_when_connected_again() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-rm id=rm></x-rm>';\
+        const gone=document.getElementById('rm');gone.remove();let runs=0;\
+        class XR extends HTMLElement{constructor(){super();runs++}}\
+        customElements.define('x-rm',XR);\
+        const before=[runs,gone instanceof XR].join(':');\
+        d.appendChild(gone);\
+        const r=[before,runs,gone instanceof XR].join('|');";
+    assert_eq!(eval(source, "r"), "0:false|1|true");
+}
+
+/** An element removed and re-inserted before its definition upgrades exactly once, in place. */
+#[test]
+fn elements_reinserted_before_definition_upgrade_once() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-ri id=a></x-ri><x-ri id=b></x-ri>';\
+        const a=document.getElementById('a');const b=document.getElementById('b');\
+        d.insertBefore(a,null);d.insertBefore(b,a);d.removeChild(b);d.appendChild(b);\
+        let runs=[];class XI extends HTMLElement{constructor(){super();runs.push(this.id)}}\
+        customElements.define('x-ri',XI);\
+        const r=[runs.join(','),d.lastElementChild===b,a instanceof XI].join('|');";
+    assert_eq!(eval(source, "r"), "a,b|true|true");
+}
+
+/** Elements in an open shadow tree of a connected host upgrade when their definition arrives. */
+#[test]
+fn shadow_tree_elements_upgrade_when_their_name_is_defined() {
+    let source = "const h=document.createElement('div');document.body.appendChild(h);\
+        const s=h.attachShadow({mode:'open'});s.innerHTML='<x-sh id=in></x-sh>';\
+        const detachedHost=document.createElement('div');const ds=detachedHost.attachShadow({mode:'open'});\
+        ds.innerHTML='<x-sh id=off></x-sh>';\
+        class XS extends HTMLElement{}\
+        customElements.define('x-sh',XS);\
+        const r=[s.getElementById('in') instanceof XS,ds.getElementById('off') instanceof XS].join('|');";
+    assert_eq!(eval(source, "r"), "true|false");
+}
+
+/** An element created but never inserted is not upgraded by a definition; it upgrades on connection. */
+#[test]
+fn created_elements_upgrade_only_once_connected() {
+    let source = "let runs=0;const made=document.createElement('x-cr');\
+        class XC extends HTMLElement{constructor(){super();runs++}}\
+        customElements.define('x-cr',XC);\
+        const before=[runs,made instanceof XC].join(':');\
+        document.getElementById('main').appendChild(made);\
+        const r=[before,runs,made instanceof XC].join('|');";
+    assert_eq!(eval(source, "r"), "0:false|1|true");
+}
+
+/** Elements inserted after an earlier definition are found by a later definition of their own name. */
+#[test]
+fn later_definitions_find_elements_inserted_after_earlier_ones() {
+    let source = "const d=document.getElementById('main');\
+        class XA extends HTMLElement{}customElements.define('x-early',XA);\
+        d.innerHTML='<x-late id=l1></x-late><x-late id=l2></x-late><x-early></x-early>';\
+        const order=[];class XL extends HTMLElement{constructor(){super();order.push(this.id)}}\
+        customElements.define('x-late',XL);\
+        const r=[order.join(','),document.getElementById('l2') instanceof XL,\
+        document.querySelector('x-early') instanceof XA].join('|');";
+    assert_eq!(eval(source, "r"), "l1,l2|true|true");
+}
+
+/** A customized built-in whose `is` is written after insertion upgrades when its definition arrives. */
+#[test]
+fn is_written_after_insertion_upgrades_at_definition() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<button id=bt></button>';\
+        const bt=document.getElementById('bt');bt.setAttribute('is','x-btn');\
+        class XB2 extends HTMLElement{}\
+        customElements.define('x-btn',XB2,{extends:'button'});\
+        const r=[bt instanceof XB2,document.createElement('button') instanceof XB2].join('|');";
+    assert_eq!(eval(source, "r"), "true|false");
+}
+
+/** A definition whose name matches no element upgrades nothing and leaves other elements alone. */
+#[test]
+fn definitions_without_matching_elements_leave_others_alone() {
+    let source = "const d=document.getElementById('main');d.innerHTML='<x-keep id=k></x-keep>';\
+        const keep=document.getElementById('k');\
+        class XN extends HTMLElement{}customElements.define('x-none',XN);\
+        const r=[keep instanceof XN,keep.localName].join('|');";
+    assert_eq!(eval(source, "r"), "false|x-keep");
 }

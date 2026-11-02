@@ -2,7 +2,7 @@
 tags, misnested and stray tags, table repair and embedded-content fallbacks keep the page instead
 of refusing it. Only hard bounds, script policy and charset conflicts still refuse. */
 use super::{
-    Document, ScriptKind, ScriptMode, ScriptResource, StyleSource, markup,
+    Document, MetaRefresh, ScriptKind, ScriptMode, ScriptResource, StyleSource, markup,
     recovery::{
         CLOSES_P, DEFAULT_SCOPE, EMBEDDED, HEADINGS, MEDIA_RESOURCES, SCOPED_END, TABLE_CONTENT,
         TABLE_CONTEXT, TABLE_SCOPE, VOID, in_scope, list_item, ordinary_end,
@@ -11,8 +11,7 @@ use super::{
     xml::{Tokens, XmlTokenizer},
 };
 use crate::constants::{
-    DIAGNOSTICS, DOCUMENT_DEPTH, FRAGMENT_BYTES, HTML_BYTES, METADATA_BYTES, METADATA_ELEMENTS,
-    NODES, TEXT_BYTES,
+    DIAGNOSTICS, DOCUMENT_DEPTH, HTML_BYTES, METADATA_BYTES, METADATA_ELEMENTS, NODES, TEXT_BYTES,
 };
 use crate::protocol::{EngineError, EngineResult};
 use mars_core::charset::meta_name;
@@ -99,8 +98,8 @@ pub struct Fragment {
 /// elements stay containers, inline handlers are stripped and inserted scripts never run. Only
 /// raw-text contexts and the hard bounds refuse. Forms and tables are normalized as a page's are.
 pub fn parse_fragment(context: &str, html: &str, first_id: usize) -> EngineResult<Fragment> {
-    if html.len() > FRAGMENT_BYTES {
-        return Err(EngineError::limit("fragment bytes", FRAGMENT_BYTES));
+    if html.len() > HTML_BYTES {
+        return Err(EngineError::limit("fragment bytes", HTML_BYTES));
     }
     if CONTEXT_REFUSED.contains(&context) {
         return Err(EngineError::unsupported(
@@ -226,6 +225,8 @@ const FOREIGN_BREAKOUT: [&str; 45] = [
     "font",
 ];
 /** MathML text integration points: their children are HTML, except mglyph and malignmark. */
+/** The key that introduces a refresh address in its content, as in `5; url=/next`. */
+const URL_KEY: &str = "url";
 const MATH_TEXT_POINTS: [&str; 5] = ["mi", "mo", "mn", "ms", "mtext"];
 /** SVG HTML integration points: their children are HTML. */
 const SVG_HTML_POINTS: [&str; 3] = ["foreignobject", "desc", "title"];
@@ -246,8 +247,6 @@ const HEAD_CONTENT: [&str; 9] = [
 const INERT_RAW: [&str; 4] = ["noscript", "noembed", "noframes", "iframe"];
 /** Placeholder width and height for frames, video, canvas and objects without dimensions, in CSS px. */
 const EMBED_SIZE: (u32, u32) = (300, 150);
-/** Height of an audio element showing its controls, in CSS px. */
-const AUDIO_CONTROLS_HEIGHT: u32 = 54;
 /** One line of placeholder label at the default font size, subtracted from the padded height. */
 const PLACEHOLDER_LINE: u32 = 24;
 /** The largest author dimension a placeholder honors, so a hostile size cannot exceed layout bounds. */
@@ -297,6 +296,7 @@ impl<'a> Tree<'a> {
                 csp: Vec::new(),
                 metadata: Vec::new(),
                 charset: String::new(),
+                refresh: None,
             },
             stack: Vec::new(),
             head: false,
@@ -970,7 +970,7 @@ impl<'a> Tree<'a> {
         }
     }
     /// Charset and content-type metadata must agree with decoding. Other http-equiv pragmas never
-    /// refuse the page: refresh is noted and not followed, set-cookie is ignored as Chromium
+    /// refuse the page: refresh is recorded for the coordinator to follow, set-cookie is ignored as Chromium
     /// ignores it, a Content-Security-Policy is recorded for the coordinator, the rest are noted.
     fn meta(&mut self, attrs: &markup::Attributes) -> EngineResult<()> {
         if let Some(label) = attrs.get("charset") {
@@ -1000,7 +1000,7 @@ impl<'a> Tree<'a> {
             },
             "x-ua-compatible" | "set-cookie" => Ok(()),
             "refresh" => {
-                self.diagnose("A meta refresh was not followed.");
+                self.refresh(content);
                 Ok(())
             }
             "content-security-policy" => {
@@ -1011,6 +1011,16 @@ impl<'a> Tree<'a> {
                 self.diagnose("An unsupported http-equiv pragma was ignored.");
                 Ok(())
             }
+        }
+    }
+    /** Keeps the document's first declarative refresh. A fragment never refreshes, and a later one is ignored, as the spec's declarative refresh steps run once per document. */
+    fn refresh(&mut self, content: &str) {
+        if self.fragment || self.document.refresh.is_some() {
+            return;
+        }
+        match parse_refresh(content) {
+            Some(refresh) => self.document.refresh = Some(refresh),
+            None => self.diagnose("A meta refresh without a delay was ignored."),
         }
     }
     /** Records one meta policy within its count and size bounds. */
@@ -1132,10 +1142,6 @@ impl<'a> Tree<'a> {
         for message in markup::recover(&tag, &mut attrs) {
             self.diagnose(message);
         }
-        if self.fragment {
-            // Script-inserted markup never gains an inline handler, not even a button's onclick.
-            attrs.retain(|key, _| !key.starts_with("on"));
-        }
         self.resolve_addresses(&tag, &mut attrs);
         // A self-closing start tag is acknowledged only for a foreign element, which then
         // closes at once: `<math><mrow/><mi/></math>` holds two siblings.
@@ -1182,8 +1188,10 @@ impl<'a> Tree<'a> {
     /// runtime fills with its document. Nothing is loaded or executed here.
     fn finish(&mut self, index: usize) {
         let node = &self.document.nodes[index];
+        // Frames, canvases and media elements paint themselves: the app draws a video's frames,
+        // its poster and native controls into the element's own box.
         if !EMBEDDED.contains(&node.tag.as_str())
-            || ["iframe", "canvas"].contains(&node.tag.as_str())
+            || ["iframe", "canvas", "video", "audio"].contains(&node.tag.as_str())
         {
             return;
         }
@@ -1372,13 +1380,7 @@ fn conditional_media(attrs: &markup::Attributes) -> Option<&str> {
 
 /** Author width and height attributes, or the element's default size; None for a zero-size box. */
 fn placeholder_size(node: &super::Node) -> Option<(String, u32)> {
-    let default = match node.tag.as_str() {
-        "audio" if node.attributes.contains_key("controls") => {
-            (EMBED_SIZE.0, AUDIO_CONTROLS_HEIGHT)
-        }
-        "audio" => return None,
-        _ => EMBED_SIZE,
-    };
+    let default = EMBED_SIZE;
     let height = dimension(node.attributes.get("height")).map_or(default.1, |(value, _)| value);
     let width = match dimension(node.attributes.get("width")) {
         Some((value, true)) => format!("{}%", value.min(100)),
@@ -1469,4 +1471,46 @@ fn html_annotation(node: &super::Node) -> bool {
         encoding.eq_ignore_ascii_case("text/html")
             || encoding.eq_ignore_ascii_case("application/xhtml+xml")
     })
+}
+
+/** The shared declarative refresh steps' parse of a refresh's content: leading whitespace, a delay of ASCII digits with an optional fraction, an optional `;` or `,`, then an optional `url=` whose address may be quoted. None when no delay is present; an empty address means the document's own. */
+fn parse_refresh(content: &str) -> Option<MetaRefresh> {
+    let text = content.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let (whole, rest) = split_digits(text);
+    if whole.is_empty() {
+        return None;
+    }
+    let (fraction, rest) = match rest.strip_prefix('.') {
+        Some(after) => split_digits(after),
+        None => ("", rest),
+    };
+    let fraction = if fraction.is_empty() { "0" } else { fraction };
+    let seconds = format!("{whole}.{fraction}").parse::<f64>().ok()?;
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let rest = rest.strip_prefix([';', ',']).unwrap_or(rest);
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let address = match rest.get(..URL_KEY.len()) {
+        Some(key) if key.eq_ignore_ascii_case(URL_KEY) => {
+            let after = rest[URL_KEY.len()..].trim_start_matches(|c: char| c.is_ascii_whitespace());
+            after
+                .strip_prefix('=')
+                .unwrap_or(after)
+                .trim_start_matches(|c: char| c.is_ascii_whitespace())
+        }
+        _ => rest,
+    };
+    let address = address
+        .strip_prefix(['\'', '"'])
+        .map_or(address, |quoted| quoted.trim_end_matches(['\'', '"']));
+    let address = address.trim();
+    Some(MetaRefresh {
+        seconds,
+        url: (!address.is_empty()).then(|| address.to_owned()),
+    })
+}
+
+/** Splits the leading run of ASCII digits from the rest of the text. */
+fn split_digits(text: &str) -> (&str, &str) {
+    let end = text.bytes().take_while(u8::is_ascii_digit).count();
+    text.split_at(end)
 }

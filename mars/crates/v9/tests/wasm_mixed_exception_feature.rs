@@ -1,6 +1,6 @@
 /* The d8 testing flag controls modules mixing legacy and new exception constructs. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The same mixed module is invalid by default and can execute under the testing flag. */
 #[test]

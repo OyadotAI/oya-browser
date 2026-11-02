@@ -39,6 +39,12 @@ const FORM: &str = r#"<html><head><title>Form</title></head><body>
 <p>Sixteen</p><p>Seventeen</p><p>Eighteen</p><p>Nineteen</p><p>Twenty</p><p>End</p>
 </body></html>"#;
 
+/** A search box that opens on focus, as Airbnb's does: its focus listener must run for a click. */
+const FOCUS_FORM: &str = r#"<html><head><title>Search</title></head><body>
+<input id="where" aria-label="Where" onfocus="document.title='Focused'">
+<p>Search destinations</p>
+</body></html>"#;
+
 /** The page itself chooses focus and exposes trusted keyboard/default-action effects as ordinary DOM text. */
 const ESCAPE_FORM: &str = r#"<html><head><title>Escape</title></head><body>
 <input id="escape-focus" aria-label="Escape focus"><input id="other" aria-label="Other">
@@ -434,6 +440,36 @@ fn click_at_activates_the_node_under_the_point() {
         json!({"x":-1.0,"y":5.0}),
     );
     assert_eq!(outside.unwrap_err().code, "invalid_target");
+}
+
+/** A click on a text field focuses it in the page, so its focus listener runs before any typing. */
+#[test]
+fn click_on_text_field_runs_the_page_focus_listener() {
+    let site = Site::with_page(FOCUS_FORM);
+    let (mut runtime, authority) = site.runtime(Owner::Human);
+    let tab = open_form(&mut runtime, &authority, &site, "a");
+    let (x, y) = centre(
+        &mut runtime,
+        &authority,
+        "a",
+        tab,
+        json!({"role":"textbox","name":"Where"}),
+    );
+    let at = head(&mut runtime, &authority, "a", tab);
+    let clicked = agent(
+        &mut runtime,
+        &authority,
+        "a",
+        Some(tab),
+        "page.click_at",
+        json!({"page_id":at["page_id"],"expected_revision":at["expected_revision"],"x":x,"y":y}),
+    )
+    .unwrap();
+    assert!(
+        clicked["focused"].as_str().unwrap().contains("node-"),
+        "{clicked}"
+    );
+    assert_eq!(clicked["title"], "Focused", "{clicked}");
 }
 
 /** Keys map to native operations: text, Backspace, Space toggles, Enter submits; secrets stay out. */

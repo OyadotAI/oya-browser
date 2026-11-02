@@ -3,7 +3,8 @@ use super::ImageAsset;
 use crate::protocol::{EngineError, EngineResult};
 use mars_core::canvas::{Bitmap, CHANNELS, EDGE};
 
-/** Animated GIFs expose their first full-canvas frame; WebP animation remains unsupported. */
+/** Animated GIFs expose their first full-canvas frame; WebP animation remains unsupported. AVIF is
+decoded by Mars's own decoder, which owns every bound it reads from the file. */
 pub(super) fn decode(asset: &ImageAsset) -> EngineResult<Bitmap> {
     if asset.bytes.len() > crate::constants::IMAGE_BYTES {
         return Err(unsupported());
@@ -17,6 +18,9 @@ pub(super) fn decode(asset: &ImageAsset) -> EngineResult<Bitmap> {
         || u64::from(width) * u64::from(height) * CHANNELS as u64 != asset.decoded
     {
         return Err(unsupported());
+    }
+    if asset.mime == "image/avif" {
+        return super::super::avif::bitmap(&asset.bytes);
     }
     crate::platform::decode_canvas_image(&asset.bytes, width, height)
 }

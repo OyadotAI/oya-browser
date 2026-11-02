@@ -1,6 +1,6 @@
 /** Typed array and DataView edge cases where the order of brand checks, conversions and
 allocation is observable: slot getters, constructors, set, subarray, reverse and lastIndexOf. */
-mod common;
+use crate::common;
 
 /** %TypedArray%.prototype's getters need [[TypedArrayName]]; a DataView receiver is a TypeError. */
 #[test]

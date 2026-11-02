@@ -22,8 +22,11 @@ pub(super) fn gather(vm: &mut Vm, depth: usize) -> Res<bool> {
                 && Some(entry.observed) != target.previous
             {
                 entry.depth = cycle::depth(vm, target.node)?;
-                if entry.depth > depth { state.queued.push(entry); }
-                else { skipped = true; }
+                if entry.depth > depth {
+                    state.queued.push(entry);
+                } else {
+                    skipped = true;
+                }
             }
         }
         vm.page.state.resize_observers.insert(id, state);
@@ -34,9 +37,17 @@ pub(super) fn gather(vm: &mut Vm, depth: usize) -> Res<bool> {
 
 /** Snapshot flags describe live registrations and records without re-reading pre-callback geometry. */
 pub(super) fn effects(vm: &mut Vm) {
-    vm.page.effects.resize_observers = vm.page.state.resize_observers.values()
+    vm.page.effects.resize_observers = vm
+        .page
+        .state
+        .resize_observers
+        .values()
         .any(|state| !state.targets.is_empty());
-    vm.page.effects.resize_observers_pending = vm.page.state.resize_observers.values()
+    vm.page.effects.resize_observers_pending = vm
+        .page
+        .state
+        .resize_observers
+        .values()
         .any(|state| !state.queued.is_empty());
 }
 
@@ -47,7 +58,9 @@ fn measure(vm: &mut Vm, target: &Observation) -> Res<Option<Entry>> {
     let measured = match target.node {
         super::super::nodes::HTML => environment.resize_wrappers.html,
         super::super::nodes::BODY => environment.resize_wrappers.body,
-        _ => environment.geometry.iter()
+        _ => environment
+            .geometry
+            .iter()
             .find(|bounds| bounds.node == target.node && bounds.resize_box.is_some())
             .and_then(|bounds| bounds.resize_box),
     };

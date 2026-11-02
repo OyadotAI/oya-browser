@@ -1,5 +1,5 @@
 /** A definition the target refuses names the missing property when the target is not extensible, and reports a redefinition otherwise; proxies answer for their target. */
-mod common;
+use crate::common;
 
 /** Object.defineProperty on a non-extensible object names the property it could not add. */
 #[test]

@@ -7,7 +7,7 @@ use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{Class, IterState};
 use crate::v9::vm::heap::{Key, Object};
 use crate::v9::vm::realm::{realm, symbol};
-use crate::v9::vm::{Exit, Res, Resume, Vm};
+use crate::v9::vm::{Exit, Res, Resume, Thrown, Vm};
 
 /** What an async `yield*` step awaits: a next, throw or return result, the return() result of
 closing an iterator without `throw`, or a return value when the iterator has no `return`. */
@@ -23,9 +23,20 @@ impl Vm<'_> {
         match op {
             Op::GetAsyncIterator => {
                 let value = self.peek(0);
-                let record = self.get_async_iterator(&value)?;
+                let roots = self.pins.len();
+                let record = match self.get_async_iterator(&value) {
+                    Ok(record) => record,
+                    Err(error) => {
+                        if let Thrown::Value(value) = &error {
+                            self.push(value.clone());
+                        }
+                        self.pins.truncate(roots);
+                        return Err(error);
+                    }
+                };
                 self.pop();
                 self.push(JsValue::Object(record));
+                self.pins.truncate(roots);
             }
             Op::AsyncIterNext => {
                 let (iterator, next) = self.top_record()?;

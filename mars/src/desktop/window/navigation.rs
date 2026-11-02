@@ -147,8 +147,41 @@ impl Window {
     }
 }
 
+/** Filters diagnostics for entries containing script execution warnings. */
+fn filter_script_diagnostics(items: &[Value]) -> Option<String> {
+    let lines: Vec<_> = items
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|text| text.to_ascii_lowercase().contains("script"))
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+/** Extracts diagnostic messages related to script failures from the inspection snapshot. */
+fn extract_script_details(snapshot: &BrowserSnapshot) -> String {
+    snapshot.inspection["diagnostics"]
+        .as_array()
+        .and_then(|items| filter_script_diagnostics(items))
+        .unwrap_or_else(|| {
+            "Page script execution did not complete. Open another address or try reloading.".into()
+        })
+}
+
+/** Whether the snapshot is ready for incomplete notice evaluation. */
+fn should_evaluate_notice(snapshot: &BrowserSnapshot, noticed: Option<&String>) -> Option<String> {
+    if snapshot.inspection["settling"] == true {
+        return None;
+    }
+    let key = snapshot.inspection["page_id"].as_str()?.to_owned();
+    if noticed == Some(&key) {
+        return None;
+    }
+    let degraded = snapshot.inspection["degraded"].as_array()?;
+    degraded.iter().any(|item| item == "scripts").then_some(key)
+}
+
 impl Window {
-    /** Terminal script failures use existing engine signals, never guesses from blank content. */
+    /** Terminal script failures display notices only when readable document content is absent. */
     pub(super) fn incomplete_notice(&mut self) {
         if self.busy || self.agent_busy || self.error.is_some() {
             return;
@@ -156,43 +189,26 @@ impl Window {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        if snapshot.inspection["settling"] == true {
+        let Some(key) = should_evaluate_notice(snapshot, self.navigation.noticed_document.as_ref())
+        else {
             return;
-        }
-        let key = snapshot.inspection["page_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        if self.navigation.noticed_document.as_ref() == Some(&key) {
-            return;
-        }
-        let failed = snapshot.inspection["degraded"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == "scripts"));
-        if !failed {
-            return;
-        }
-        self.navigation.noticed_document = Some(key);
-        self.navigation.details = Some(
-            snapshot.inspection["diagnostics"]
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter(|text| text.to_ascii_lowercase().contains("script"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .filter(|text| !text.is_empty())
-                .unwrap_or_else(|| {
-                    "Page script execution did not complete. Open another address or try reloading."
-                        .into()
-                }),
+        };
+        let (has_doc, details) = (
+            snapshot.document.is_some(),
+            extract_script_details(snapshot),
         );
+        self.apply_incomplete_notice(key, details, has_doc);
+    }
+
+    /** Records script failure details and triggers disclosure when document content is missing. */
+    fn apply_incomplete_notice(&mut self, key: String, details: String, has_document: bool) {
+        self.navigation.noticed_document = Some(key);
+        self.navigation.details = Some(details);
         self.navigation.expanded = false;
         self.retry_allowed = true;
-        self.show_incomplete_notice();
+        if !has_document {
+            self.show_incomplete_notice();
+        }
     }
     /** Disclosure uses the existing wrapping selectable banner and its bounded scroll area. */
     pub(super) fn show_incomplete_notice(&mut self) {

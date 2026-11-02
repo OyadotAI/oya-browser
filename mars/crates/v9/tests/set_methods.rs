@@ -1,5 +1,5 @@
 /** Set algebra uses live internal data and the complete observable set-like argument protocol. */
-mod common;
+use crate::common;
 
 /** Algebra retains insertion order, avoids species construction, and treats NaN and zeros as set keys. */
 #[test]

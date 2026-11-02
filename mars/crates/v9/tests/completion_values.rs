@@ -1,6 +1,6 @@
 /** Script and eval completion values (spec UpdateEmpty): every statement kind that turns an
 empty completion into undefined resets the value, and finally keeps the try's value. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Each case is `source => expected String(eval(source))`. */

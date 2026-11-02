@@ -1121,8 +1121,9 @@ pub(super) fn min_content_breaks(context: &LayoutContext<'_>, node: &Node) -> su
     }
 }
 /** Whether every letter boundary is a break opportunity min-content counts (CSS Text 3 section
-5.5): `word-break: break-all | break-word`, `line-break: anywhere` or `overflow-wrap: anywhere`,
-each inherited. `overflow-wrap: break-word` breaks only to avoid overflow, so it does not. */
+5.5): `word-break: break-all`, `line-break: anywhere` or `overflow-wrap: anywhere` (which
+`word-break: break-word` computes to), each inherited. `overflow-wrap: break-word` breaks only to
+avoid overflow, so it does not. */
 pub(super) fn breaks_for_min_content(context: &LayoutContext<'_>, node: &Node) -> bool {
     inherited(context, node, |style| style.word_break_all)
         || inherited(context, node, |style| style.line_break_anywhere)

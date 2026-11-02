@@ -3,7 +3,7 @@
  * Document.createProcessingInstruction and the ownerDocument each of them answers with, plus
  * the rule that replaced children stay reachable for mutation records.
  */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, StorageState};
 
@@ -15,6 +15,7 @@ fn run(source: &str) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

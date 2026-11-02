@@ -1,5 +1,5 @@
 /** Shared backing stores expose distinct brands, coherent views, atomic integers and safe state transport. */
-mod common;
+use crate::common;
 
 /** Shared and ordinary buffer brands reject each other's accessor receivers while views share bytes. */
 #[test]

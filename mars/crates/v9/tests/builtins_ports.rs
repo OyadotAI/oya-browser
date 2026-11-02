@@ -5,7 +5,7 @@
  * the Number and Boolean prototype wrappers, Date setters on invalid dates and
  * Date.prototype[Symbol.toPrimitive]. Each test is named after the rule it pins.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

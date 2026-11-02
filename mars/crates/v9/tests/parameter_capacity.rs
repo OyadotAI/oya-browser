@@ -1,5 +1,5 @@
 /** V8-compatible logical arity remains independent of actual heap, frame, code, source and execution budgets. */
-mod common;
+use crate::common;
 
 /** The original regression first exercises thousands of distinct formals with matching and missing actual arguments. */
 const LARGE_PARAMETERS: usize = 8_000;

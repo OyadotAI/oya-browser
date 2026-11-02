@@ -1,5 +1,5 @@
 /** Duplicate named groups (ES2025): one name may label groups in different alternatives, and the parser refuses names that can both take part in one match. */
-mod common;
+use crate::common;
 
 /** A name may be declared once in each alternative of a disjunction; the capture that participated is the one reported. */
 #[test]

@@ -102,26 +102,36 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
         0.0
     };
     let available = (viewport - style.margin[1] - style.margin[3]).max(0.0);
-    let specified = style.width.map(|width| {
-        if style.percent_width {
-            viewport * width / 100.0 + style.width_offset
-        } else {
-            width
-        }
-    });
+    let specified = style
+        .width_expr
+        .as_ref()
+        .map(|expr| expr.resolve(viewport).max(0.0))
+        .or_else(|| {
+            style.width.map(|width| {
+                if style.percent_width {
+                    viewport * width / 100.0 + style.width_offset
+                } else {
+                    width
+                }
+            })
+        });
     let minimum = style
         .min_width
         .map(|width| width + adjustment)
         .unwrap_or(edges)
         .max(edges);
     let maximum = style
-        .max_width
-        .map(|width| {
-            if style.percent_max_width {
-                viewport * width / 100.0
-            } else {
-                width + adjustment
-            }
+        .max_width_expr
+        .as_ref()
+        .map(|expr| expr.resolve(viewport).max(0.0) + adjustment)
+        .or_else(|| {
+            style.max_width.map(|width| {
+                if style.percent_max_width {
+                    viewport * width / 100.0 + style.max_width_offset
+                } else {
+                    width + adjustment
+                }
+            })
         })
         .unwrap_or(crate::constants::LAYOUT_EXTENT)
         .max(minimum);
@@ -171,7 +181,7 @@ pub(super) fn container_root(document: &Document) -> Option<(Document, usize)> {
     }
     let id = document.nodes.iter().map(|node| node.local_id).max()? + 1;
     let mut root = crate::document::markup::node("body", id, None, Default::default()).ok()?;
-    root.style = layout_only(body);
+    root.style = layout_only(body).into();
     let mut copy = document.clone();
     for node in copy.nodes.iter_mut().filter(|node| node.parent.is_none()) {
         node.parent = Some(id);

@@ -16,6 +16,7 @@ fn execute(
     v9::load_page(v9::PageInput {
         sources: &[source.into()],
         source_keys: &[],
+        module_keys: &[],
         document: document::script_document(document, "metadata-page").unwrap(),
         storage: Default::default(),
         host: &host,

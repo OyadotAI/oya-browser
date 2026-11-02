@@ -1,6 +1,6 @@
 /** Event dispatch in V9: constants, constructors, passive listeners, options, signals, window.event
 and exception reporting. Each test runs a script against the test page and reads one global back. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 
@@ -12,6 +12,7 @@ fn eval(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

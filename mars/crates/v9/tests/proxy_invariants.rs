@@ -1,5 +1,5 @@
 /** Proxy traps preserve descriptor facts and ordinary receiver forwarding without fake writes. */
-mod common;
+use crate::common;
 
 /** Revocation removes the target but preserves creation-time call and constructor internal methods. */
 #[test]

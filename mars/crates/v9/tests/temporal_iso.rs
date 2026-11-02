@@ -1,5 +1,5 @@
 /** Temporal over the ISO 8601 calendar, UTC and fixed offsets: one test per ported rule. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** PlainDate reads ISO strings, derives week and day fields, and adds with constrain. */

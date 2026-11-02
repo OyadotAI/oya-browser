@@ -1,5 +1,5 @@
 /** Template escapes preserve delimiters and distinguish tagged cooking from early syntax errors. */
-mod common;
+use crate::common;
 
 /** An incomplete escape never eats the substitution or backtick that ends its chunk. */
 #[test]

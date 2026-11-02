@@ -1,5 +1,5 @@
 /** Auto-accessors use private per-instance storage and real prototype or static accessor descriptors. */
-mod common;
+use crate::common;
 
 /** Initializers create backing slots, while the public property remains a nonenumerable prototype accessor. */
 #[test]

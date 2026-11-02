@@ -369,6 +369,26 @@ fn attribute_references_keep_query_strings() {
     assert_eq!(link.attributes["title"], "\"q\"");
 }
 
+/** Text uses the full WHATWG table: `&copyright;` is `©right;`, and a bad scalar is U+FFFD. */
+#[test]
+fn named_references_use_the_full_table() {
+    let document =
+        parse("<p id=p>&eacute;&notin;&amp;amp; &copyright; &#xD800; &nGt;</p>").unwrap();
+    assert_eq!(
+        by_id(&document, "p").text,
+        "é∉&amp; ©right; \u{fffd} \u{226b}\u{20d2}"
+    );
+}
+
+/** RCDATA title and textarea text decode the same table, and their tags stay text. */
+#[test]
+fn rcdata_title_and_textarea_decode_references() {
+    let document =
+        parse("<title>&hellip;&lt;b&gt;</title><textarea id=t>&eacute;&copy</textarea>").unwrap();
+    assert_eq!(document.title, "…<b>");
+    assert_eq!(by_id(&document, "t").value, "é©");
+}
+
 /** Line breaks, word-break opportunities and rules are void, and `</br>` is a break. */
 #[test]
 fn void_breaks_and_rules_do_not_open() {
@@ -393,22 +413,27 @@ fn self_closing_flag_is_ignored_on_html_elements() {
     );
 }
 
-/** Inline handlers are stripped and never run; the handlers V9 supports are kept: a button's
-onclick and the body's, which HTML forwards to the window (`<body onload>`). */
+/** Inline handlers stay on every element for V9 to run, and the body's are forwarded to the
+window (`<body onload>`), as in HTML. */
 #[test]
-fn inline_event_handlers_are_stripped() {
+fn inline_event_handlers_are_kept() {
     let document = parse(
         "<body onload=boot()><div id=d onclick=steal() onmouseover=x()>d</div><img id=i src=a.png onerror=pwn()><button id=b onclick=go()>Go</button>",
     )
     .unwrap();
-    for id in ["d", "i"] {
-        let node = by_id(&document, id);
-        assert!(
-            node.attributes.keys().all(|key| !key.starts_with("on")),
-            "{id}"
-        );
-        assert!(node.handler.is_none());
-    }
+    let div = by_id(&document, "d");
+    assert_eq!(
+        div.attributes.get("onmouseover").map(String::as_str),
+        Some("x()")
+    );
+    assert_eq!(div.handler.as_deref(), Some("steal()"));
+    assert_eq!(
+        by_id(&document, "i")
+            .attributes
+            .get("onerror")
+            .map(String::as_str),
+        Some("pwn()")
+    );
     assert_eq!(
         document
             .formatting
@@ -420,7 +445,7 @@ fn inline_event_handlers_are_stripped() {
     );
     assert_eq!(by_id(&document, "b").handler.as_deref(), Some("go()"));
     assert!(
-        document
+        !document
             .diagnostics
             .iter()
             .any(|d| d.contains("event handler"))
@@ -533,11 +558,11 @@ fn html_byte_bound_still_refuses() {
 /** Diagnostics stay deduplicated however often a page repeats the same recovery. */
 #[test]
 fn diagnostics_are_deduplicated() {
-    let document = parse(&"<div onclick=x()>a</div>".repeat(50)).unwrap();
+    let document = parse(&"<input type=date>".repeat(50)).unwrap();
     let handler = document
         .diagnostics
         .iter()
-        .filter(|d| d.contains("event handler"))
+        .filter(|d| d.contains("plain text"))
         .count();
     assert_eq!(handler, 1);
 }

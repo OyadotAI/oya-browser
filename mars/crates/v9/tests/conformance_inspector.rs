@@ -1,6 +1,6 @@
 /* The conformance inspector: a page-side `send` that answers protocol requests through `receive`. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Loads a page with the inspector enabled and returns the environment for it. */
 fn inspector_environment() -> mars_v9::PageEnvironment {

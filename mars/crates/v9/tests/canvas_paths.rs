@@ -1,5 +1,5 @@
 /** Real Canvas path methods must retain state correctly while producing observable bounded pixels. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::DocumentHost;
 

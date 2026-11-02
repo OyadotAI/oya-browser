@@ -1,5 +1,5 @@
 /** Eval CallSites retain real source creation origins, sourceURL distinctions, and normal source/heap lifetimes. */
-mod common;
+use crate::common;
 
 /** Hosts supply source identity without modifying the script being evaluated. */
 fn eval(source: &str) -> String {

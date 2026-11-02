@@ -1,5 +1,5 @@
 /** Scoped RegExp modifiers affect real compiled matching without leaking into surrounding grammar or flags. */
-mod common;
+use crate::common;
 
 /** Alternations restore the enclosing mode instead of contaminating sibling branches. */
 #[test]

@@ -1,6 +1,6 @@
 /** The DOM over the app's projection: queries, mutations in both change logs, and events. */
-mod common;
-use common::{console, eval, input, load, load_with};
+use crate::common;
+use common::{console, eval, global, input, load, load_with};
 use mars_v9::{
     DomLevel,
     document::{DomChange, InsertPosition, ScriptChange},
@@ -148,11 +148,11 @@ fn extended_log_records_every_mutation() {
     );
 }
 
-/** Event handler attributes stay author-owned even in the extended log. */
+/** Sensitive attributes like srcdoc stay refused in the extended log. */
 #[test]
 fn handler_attributes_are_refused() {
     let execution = load_with(
-        "document.getElementById('first').setAttribute('onclick','alert(1)');",
+        "document.getElementById('first').setAttribute('srcdoc','alert(1)');",
         &extended(),
     );
     assert!(
@@ -242,6 +242,32 @@ fn link_clicks_record_navigation() {
     second.document = document;
     let clicked = mars_v9::click_page(second, loaded.state, 4).unwrap();
     assert_eq!(console(&clicked), ["seen"]);
+    assert_eq!(
+        clicked.effects.navigation.unwrap().url,
+        "https://example.com/docs"
+    );
+}
+
+/** A click listener that throws does not prevent navigation, reporting the error instead. */
+#[test]
+fn link_clicks_with_throwing_listener_still_navigates() {
+    let mut document = common::page();
+    document
+        .nodes
+        .push(common::element(4, Some(0), "a", &[("href", "/docs")]));
+    let sources = vec![
+        "document.querySelector('a').addEventListener('click',()=>{console.log('pre-throw');throw new Error('analytics failed')});"
+            .to_string(),
+    ];
+    let environment = common::environment();
+    let host = common::host();
+    let mut first = input(&sources, &host, &environment);
+    first.document = document.clone();
+    let loaded = mars_v9::load_page(first).unwrap();
+    let mut second = input(&sources, &host, &environment);
+    second.document = document;
+    let clicked = mars_v9::click_page(second, loaded.state, 4).unwrap();
+    assert_eq!(console(&clicked)[0], "pre-throw");
     assert_eq!(
         clicked.effects.navigation.unwrap().url,
         "https://example.com/docs"
@@ -359,4 +385,31 @@ fn static_node_list_indexes_and_lengths() {
     let source = "const l=document.querySelectorAll('p');\
         const r=[l.length,l[0]===document.getElementById('first'),l[1].className,l[2]===undefined].join();";
     assert_eq!(eval(source, "r"), "2,true,note,true");
+}
+
+/** A host object's own properties (dataset, classList, style and live lists) read their current
+values on every read, after the page changes them, so reading one never returns a stale copy. */
+#[test]
+fn host_object_own_properties_read_their_current_values() {
+    let source = "const d=document.getElementById('main');d.setAttribute('data-kind','a');\
+        d.setAttribute('data-kind','b');d.classList.add('x','y');d.setAttribute('style','color: red');\
+        const before=d.children.length;d.appendChild(document.createElement('i'));const kids=d.children;\
+        const r=[d.dataset.kind,d.classList[1],d.classList.length,d.style.color,kids.length-before,kids[before].tagName].join('|');";
+    let execution = load_with(source, &extended());
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert_eq!(global(&execution, "r"), "b|b|4|red|1|I");
+}
+
+/** After a removal the projected index is rebuilt: lookups by id and sibling walks see only the
+surviving nodes, in order. */
+#[test]
+fn removing_a_node_rebuilds_the_index_for_later_lookups() {
+    let source = "const d=document.getElementById('main');let h='';\
+        for(let i=0;i<300;i++)h+='<span id=s'+i+'></span>';d.insertAdjacentHTML('beforeend',h);\
+        document.getElementById('s10').remove();\
+        const r=[document.getElementById('s10')===null,document.getElementById('s9').nextElementSibling.id,\
+        document.getElementById('s299').previousElementSibling.id,document.querySelectorAll('#main > span').length].join('|');";
+    let execution = load_with(source, &extended());
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert_eq!(global(&execution, "r"), "true|s11|s298|299");
 }

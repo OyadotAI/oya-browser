@@ -86,11 +86,10 @@ fn agreeing_transport_charset_parses() {
     parse_with_charset("<meta charset='utf-8'><p>ascii</p>", Some("windows-1252")).unwrap();
 }
 
-/** Refresh is noted and not followed, set-cookie is ignored and unknown pragmas are noted. */
+/** set-cookie is ignored and unknown pragmas are noted; none of them refuse the page. */
 #[test]
 fn other_http_equiv_values_never_refuse_the_page() {
     for (equiv, diagnostics) in [
-        ("refresh", &["A meta refresh was not followed."][..]),
         ("set-cookie", &[][..]),
         (
             "x-other",
@@ -233,4 +232,50 @@ fn maximum_document_parses_in_linear_time() {
     assert!(start.elapsed() < RPC_TIMEOUT / 3, "{:?}", start.elapsed());
     assert_eq!(document.nodes.len(), NODES);
     assert!(document.nodes.iter().all(|node| node.text == "text"));
+}
+
+/** A refresh's delay and address parse as the declarative refresh steps read them. */
+#[test]
+fn refresh_content_yields_its_delay_and_address() {
+    for (content, seconds, url) in [
+        ("5; URL=\"/next?x=1\"", 5.0, Some("/next?x=1")),
+        (
+            "0;url=\"https://example.com/a\"",
+            0.0,
+            Some("https://example.com/a"),
+        ),
+        (
+            "1.5, https://example.com/b",
+            1.5,
+            Some("https://example.com/b"),
+        ),
+        ("2;", 2.0, None),
+        ("3", 3.0, None),
+        ("  4 ; uRl = /spaced ", 4.0, Some("/spaced")),
+    ] {
+        let document = parse(&format!(
+            "<meta http-equiv='refresh' content='{content}'><p>x</p>"
+        ))
+        .unwrap();
+        let refresh = document.refresh.expect(content);
+        assert_eq!(refresh.seconds, seconds, "{content}");
+        assert_eq!(refresh.url.as_deref(), url, "{content}");
+    }
+}
+
+/** Only the first refresh a document declares is kept, and one with no delay is noted and dropped. */
+#[test]
+fn first_refresh_wins_and_a_delayless_one_is_dropped() {
+    let document = parse("<meta http-equiv='refresh' content='7;url=/first'><meta http-equiv='refresh' content='1;url=/second'><p>x</p>").unwrap();
+    let refresh = document.refresh.unwrap();
+    assert_eq!(
+        (refresh.seconds, refresh.url.as_deref()),
+        (7.0, Some("/first"))
+    );
+    let document = parse("<meta http-equiv='refresh' content='url=/no-delay'><p>x</p>").unwrap();
+    assert!(document.refresh.is_none());
+    assert_eq!(
+        document.diagnostics,
+        ["A meta refresh without a delay was ignored."]
+    );
 }

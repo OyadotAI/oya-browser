@@ -150,6 +150,44 @@ fn overflow_wrap_anywhere_min_content_is_a_letter() {
     assert!((item.width - letter.width).abs() < 0.5, "{}", item.width);
 }
 
+/** `word-break: break-word` is `overflow-wrap: anywhere`, so its breaks count in min-content, and
+an inheriting child takes the same min-content as the letter. */
+#[test]
+fn word_break_break_word_min_content_is_a_letter() {
+    let item = target(
+        "<div style='word-break:break-word'><div id=t style='width:min-content'>XXXX</div></div>",
+        BASE,
+    );
+    let letter = target("<div id=t style='width:min-content'>X</div>", BASE);
+    assert!((item.width - letter.width).abs() < 0.5, "{}", item.width);
+}
+
+/** A child's own `overflow-wrap: normal` overrides an inherited `word-break: break-word`: the child
+has no letter breaks, so its min-content is the whole word. */
+#[test]
+fn word_break_break_word_is_overridden_by_child_overflow_wrap() {
+    let item = target(
+        "<div style='word-break:break-word'><div id=t style='width:min-content;overflow-wrap:normal'>XXXX</div></div>",
+        BASE,
+    );
+    let word = target("<div id=t style='width:min-content'>XXXX</div>", BASE);
+    let letter = target("<div id=t style='width:min-content'>X</div>", BASE);
+    assert!((item.width - word.width).abs() < 0.5, "{}", item.width);
+    assert!(item.width > letter.width + 1.0, "{}", item.width);
+}
+
+/** `word-break: break-all` counts every letter in min-content, as it did before `break-word` was
+split out of it. */
+#[test]
+fn word_break_break_all_min_content_is_a_letter() {
+    let item = target(
+        "<div id=t style='width:min-content;word-break:break-all'>XXXX</div>",
+        BASE,
+    );
+    let letter = target("<div id=t style='width:min-content'>X</div>", BASE);
+    assert!((item.width - letter.width).abs() < 0.5, "{}", item.width);
+}
+
 /** `text-justify: auto` spreads CJK text between its ideographs. */
 #[test]
 fn auto_justification_spreads_between_ideographs() {

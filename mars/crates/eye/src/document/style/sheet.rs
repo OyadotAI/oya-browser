@@ -127,6 +127,8 @@ struct Parser<'a> {
     layer: usize,
     /// `@property` registrations, shared by every sheet.
     properties: &'a mut Registrations,
+    /// The `@media` conditions evaluated so far, shared by every sheet.
+    media_seen: &'a mut media::MediaSeen,
     /// The sheet declared `@namespace`, which Eye does not resolve: prefixed selectors drop.
     namespaced: bool,
 }
@@ -134,13 +136,14 @@ struct Parser<'a> {
 pub(super) fn parse_sheet(
     sheet: &str,
     context: RenderContext,
-    (rules, budget, keyframes, font_faces, layers, properties): (
+    (rules, budget, keyframes, font_faces, layers, properties, media_seen): (
         &mut Vec<Rc<Rule>>,
         &mut Budget,
         &mut Keyframes,
         &mut FontFaces,
         &mut Layers,
         &mut Registrations,
+        &mut media::MediaSeen,
     ),
     diagnostics: &mut Vec<String>,
     skipped: bool,
@@ -170,6 +173,7 @@ pub(super) fn parse_sheet(
         layers,
         layer: layer::OUTER,
         properties,
+        media_seen,
         namespaced: false,
     };
     parser.list(&source, None, Mode::Apply, 0)
@@ -254,7 +258,11 @@ impl Parser<'_> {
         let name = at_name(prelude);
         let condition = prelude[1 + name.len().min(prelude.len() - 1)..].trim();
         let truth = match name.as_str() {
-            "media" => media::media(condition, self.context),
+            "media" => {
+                let truth = media::media(condition, self.context);
+                self.media_seen.record(condition, truth);
+                truth
+            }
             "supports" => match media::supports(condition) {
                 Truth::False => Truth::Unknown,
                 truth => truth,
@@ -353,13 +361,28 @@ impl Parser<'_> {
         if block.declarations.is_empty() && !block.hiding {
             return Ok(());
         }
-        for text in selectors {
-            let (text, pseudo) = generated(text);
-            // Under `@namespace` a prefix (or the default namespace) changes what `*|E` means.
-            let parsed = match self.namespaced && prefixed(&text) {
-                true => Err("namespace selector"),
-                false => selector_parse::parse(&text),
-            };
+        let namespaced = self.namespaced;
+        let parsed: Vec<_> = selectors
+            .iter()
+            .map(|text| {
+                let (text, pseudo) = generated(text);
+                // Under `@namespace` a prefix (or the default namespace) changes what `*|E` means.
+                let parsed = match namespaced && prefixed(&text) {
+                    true => Err("namespace selector"),
+                    false => selector_parse::parse(&text),
+                };
+                (text, pseudo, parsed)
+            })
+            .collect();
+        // Blink drops the whole rule when one selector in its list is invalid, so none of the
+        // others may style or hide anything either.
+        if parsed
+            .iter()
+            .any(|(_, _, parsed)| parsed.as_ref().err() == Some(&selector_parse::INVALID))
+        {
+            return Ok(());
+        }
+        for (text, pseudo, parsed) in parsed {
             let rules: Vec<Rule> = match (parsed, mode) {
                 (Ok(selector), Mode::Apply) => vec![Rule {
                     specificity: selector_parse::specificity(&selector),
@@ -379,6 +402,8 @@ impl Parser<'_> {
                         .into_iter()
                         .collect()
                 }
+                // Blink drops an invalid selector without a word, and it matches nothing to hide.
+                (Err(selector_parse::INVALID), _) => Vec::new(),
                 (Err(feature), _) => {
                     note(
                         self.diagnostics,

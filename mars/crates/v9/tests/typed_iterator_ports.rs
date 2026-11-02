@@ -1,5 +1,5 @@
 /** Regression tests for the typed-array, BigInt, Iterator and Array ports test262 drove. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** BigInt typed arrays convert elements with ToBigInt: numeric strings and booleans are accepted. */

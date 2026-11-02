@@ -1,5 +1,5 @@
 /** Error stack entry points enforce receiver and descriptor admission before formatting or collecting trace data. */
-mod common;
+use crate::common;
 
 /** Public reflection is the observable boundary; tests never reach private trace slots. */
 fn eval(source: &str) -> String {

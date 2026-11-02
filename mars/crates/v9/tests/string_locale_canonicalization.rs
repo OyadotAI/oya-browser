@@ -1,5 +1,5 @@
 /** String locale case methods canonicalize their locales argument, while the plain case methods ignore it. */
-mod common;
+use crate::common;
 
 /** Greek final sigma follows cased context across case-ignorable characters. */
 #[test]

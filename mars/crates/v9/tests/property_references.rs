@@ -1,5 +1,5 @@
 /** Property references preserve native receiver brands, null-base error ordering and current Test262 key/with semantics. */
-mod common;
+use crate::common;
 
 /** Object environment records require HasBinding and a second GetBindingValue HasProperty observation. */
 #[test]

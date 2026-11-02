@@ -1,7 +1,7 @@
 /** The URL Standard parser behind URL and URLSearchParams: file hosts and drive letters,
 empty path segments, IPv4 and IPv6 hosts, opaque paths, the setters' state overrides, ASCII
 `xn--` labels, blob origins, the statics, and the URL to URLSearchParams link. */
-mod common;
+use crate::common;
 
 /** Evaluate `expr` after `setup`. */
 fn eval(setup: &str, expr: &str) -> String {

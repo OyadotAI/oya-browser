@@ -1,6 +1,6 @@
 /* Conformance page limits bound real Wasm memory creation and growth. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** A lowered host limit preserves declared maximum while bounding allocation and growth. */
 #[test]

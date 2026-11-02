@@ -1,6 +1,7 @@
 /** Worker messages are bounded inert graphs; object identities never cross an isolate boundary. */
 mod decode;
 mod encode;
+mod kinds;
 pub(in crate::v9) use decode::decode;
 pub(in crate::v9) use encode::encode;
 
@@ -49,6 +50,20 @@ enum Kind {
     Array(u32),
     Buffer(Vec<u8>),
     View(ElementKind, usize, usize, usize),
+    /// A Date's time value bits.
+    Date(u64),
+    /// A RegExp's source and flags; lastIndex is not cloned.
+    RegExp(JsString, String),
+    /// Map entries in insertion order.
+    Map(Vec<(Atom, Atom)>),
+    /// Set values in insertion order.
+    Set(Vec<Atom>),
+    /// A Boolean, Number, String or BigInt object.
+    Wrapper(Primitive),
+    /// An error; the name selects the prototype and the message travels as a field.
+    Error(String),
+    /// A Blob's bytes and type, plus a File's name and last-modified bits.
+    Blob(Vec<u8>, JsString, Option<(JsString, u64)>),
 }
 /** Properties retain enumeration order; getters have already been evaluated in the sender. */
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,13 +102,17 @@ impl WorkerData {
             Atom::Value(_) => true,
             Atom::Reference(index) => *index < self.nodes.len(),
         };
+        let entries_valid = |kind: &Kind| match kind {
+            Kind::Map(entries) => entries.iter().all(|(key, value)| atom(key) && atom(value)),
+            Kind::Set(values) => values.iter().all(atom),
+            _ => true,
+        };
         if bytes > WORKER_MESSAGE_BYTES
             || self.nodes.len() > NODES
             || !atom(&self.root)
-            || self
-                .nodes
-                .iter()
-                .any(|node| node.fields.iter().any(|(_, value)| !atom(value)))
+            || self.nodes.iter().any(|node| {
+                !entries_valid(&node.kind) || node.fields.iter().any(|(_, value)| !atom(value))
+            })
         {
             return Err(EngineError::limit(
                 "worker message bytes",

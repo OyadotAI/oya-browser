@@ -1,29 +1,24 @@
+use super::paints;
+use super::placement;
+use limits::Affine;
+/** Glyph ink is rasterized as opaque black coverage, then composited through the paint source per pixel. */
+const INK: [u8; 4] = [0, 0, 0, u8::MAX];
 /** Synchronous drawing, text and pixel readback operate on the canvas's actual bounded backing. */
 use super::*;
 use crate::v9::builtins::typed;
 
-/** Only font selections the host resolves consistently are admitted. */
-pub(super) fn font(text: &str) -> Option<Font> {
-    let (size, family) = text.trim().split_once("px ")?;
-    let size: f64 = size.parse().ok()?;
-    let family = family.trim();
-    (size.is_finite()
-        && size > 0.0
-        && size <= f64::from(limits::EDGE)
-        && ["serif", "sans-serif", "monospace"].contains(&family))
-    .then(|| Font {
-        size,
-        family: family.into(),
-    })
-}
+/** Smallest stroke ring, in pixels, so even a hairline text outline is visible. */
+const MIN_RING_RADIUS: usize = 1;
+
 /** Brand first, then run one supported operation through a fixed dispatch table. */
 pub(super) fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
     type Handler = fn(&mut Vm, &Call, usize) -> Res<JsValue>;
-    let handlers: [(&str, Handler); 5] = [
+    let handlers: [(&str, Handler); 6] = [
         ("fillRect", rectangle),
         ("clearRect", rectangle),
         ("fillText", text),
+        ("strokeText", text),
         ("measureText", text),
         ("getImageData", readback),
     ];
@@ -61,34 +56,49 @@ fn rectangle(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         return Ok(JsValue::Undefined);
     }
     drawable(vm, node)?;
+    let clearing = dom::native_name(call) == "clearRect";
     let state = &vm.page.state.canvases[&node];
+    let layered = !clearing && shadows::layered(&state.drawing);
     let plan = limits::plan_rect(
         [state.bitmap.width, state.bitmap.height],
         values,
         state.drawing.transform,
-    )?
-    .with_clip(clipping::current(state)?)?
-    .with_composite(if dom::native_name(call) == "clearRect" {
-        limits::Composite::SourceOver
+    )?;
+    let plan = if layered {
+        plan
     } else {
-        state.drawing.composite
-    });
-    work(vm, plan.work())?;
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    if dom::native_name(call) == "clearRect" {
+        plan.with_clip(clipping::current(state)?)?
+            .with_composite(if clearing {
+                limits::Composite::SourceOver
+            } else {
+                state.drawing.composite
+            })
+    };
+    shadows::charge(vm, node, plan.work())?;
+    if clearing {
+        let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
         limits::clear_rect(&mut state.bitmap, &plan)?;
-    } else {
-        limits::fill_rect(
-            &mut state.bitmap,
-            &plan,
-            state.drawing.fill,
-            state.drawing.alpha,
-        )?;
+        state.dirty |= !plan.is_empty();
+        return Ok(JsValue::Undefined);
+    }
+    let Some((shader, clean)) = paints::source(vm, node, false) else {
+        return Ok(JsValue::Undefined);
+    };
+    if layered {
+        let painted = shadows::paint_layered(vm, node, clean, |layer| {
+            limits::fill_rect_with(layer, &plan, &shader, 1.0)
+        });
+        return painted.map(|()| JsValue::Undefined);
+    }
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    limits::fill_rect_with(&mut state.bitmap, &plan, &shader, state.drawing.alpha)?;
+    if !plan.is_empty() {
+        state.origin_clean &= clean;
     }
     state.dirty |= !plan.is_empty();
     Ok(JsValue::Undefined)
 }
-/** Native measurement and ink use the same font; never replace missing glyphs with fake bars. */
+/** Native measurement and ink use the same font; strokes and maxWidth derive from the same glyph coverage. */
 fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     let value = vm.to_text(&call.arg(0))?;
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
@@ -96,74 +106,147 @@ fn text(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
         return Err(quota(vm));
     }
     if dom::native_name(call) == "measureText" {
-        let width = vm
-            .page
-            .canvas_host
-            .measure(&vm.page.state.canvases[&node].drawing.font, &value)?;
-        return results::metrics(vm, width);
+        let fields = placement::measurement(vm, node, &value)?;
+        return results::metrics(vm, &fields);
     }
     let at = [vm.to_number(&call.arg(1))?, vm.to_number(&call.arg(2))?];
+    let max_width = match call.arg(3) {
+        JsValue::Undefined => None,
+        width => Some(vm.to_number(&width)?),
+    };
     let node = context_node(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))?;
-    if at.iter().any(|v| !v.is_finite()) {
+    if at.iter().any(|v| !v.is_finite()) || max_width.is_some_and(|w| w.is_nan() || w <= 0.0) {
         return Ok(JsValue::Undefined);
     }
-    if !matches!(call.arg(3), JsValue::Undefined) {
-        return Err(vm.dom_exception(
-            "NotSupportedError",
-            "Canvas text maxWidth is not implemented.",
-        ));
-    }
     drawable(vm, node)?;
+    let stroke = dom::native_name(call) == "strokeText";
+    let origin = placement::origin(vm, node, &value, at)?;
+    let fit = fitted(vm, node, &value, origin, max_width)?;
+    let ring = if stroke {
+        ring_radius(&vm.page.state.canvases[&node])
+    } else {
+        0
+    };
     let clip = clipping::current(&vm.page.state.canvases[&node])?.cloned();
     let pixels = vm.page.state.canvases[&node].bitmap.pixels.len() / limits::CHANNELS;
-    work(
-        vm,
-        pixels * (limits::COMPOSITE_WORK + usize::from(clip.is_some())),
-    )?;
+    let ring_work = if ring > 0 { (2 * ring + 1) * 2 } else { 0 };
+    let per_pixel = limits::COMPOSITE_WORK + usize::from(clip.is_some()) + ring_work;
+    let charge = pixels.checked_mul(per_pixel).ok_or_else(|| quota(vm))?;
+    work(vm, charge)?;
+    shadows::charge(vm, node, 0)?;
+    let Some((shader, clean)) = paints::source(vm, node, stroke) else {
+        return Ok(JsValue::Undefined);
+    };
     let state = &vm.page.state.canvases[&node];
     if !state.bitmap.drawable() {
         return Ok(JsValue::Undefined);
     }
+    let transform = state.drawing.transform.compose(fit);
     let ink = vm.page.canvas_host.text_transformed(
         &state.bitmap,
         &state.drawing.font,
         &value,
-        at,
-        state.drawing.fill,
-        state.drawing.transform,
+        origin,
+        INK,
+        transform,
     )?;
     ink.validate()?;
     if ink.width != state.bitmap.width || ink.height != state.bitmap.height {
         return Err(EngineError::invalid("Invalid native canvas text dimensions.").into());
     }
-    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
-    let width = state.bitmap.width as usize;
-    for (index, (pixel, color)) in state
-        .bitmap
-        .pixels
-        .make_mut()?
-        .chunks_exact_mut(4)
-        .zip(ink.pixels.chunks_exact(4))
-        .enumerate()
-    {
-        let coverage = clip.as_ref().map_or(1.0, |clip| {
-            clip.coverage((index % width) as u32, (index / width) as u32)
+    let ink = if ring > 0 {
+        limits::outline_ring(&ink, ring)?
+    } else {
+        ink
+    };
+    if shadows::layered(&state.drawing) {
+        let painted = shadows::paint_layered(vm, node, clean, |layer| {
+            paint_ink(
+                layer,
+                &ink,
+                &shader,
+                1.0,
+                limits::Composite::SourceOver,
+                None,
+            )
         });
-        if coverage == 0.0 {
-            continue;
-        }
-        limits::composite_coverage(
-            pixel,
-            [color[0], color[1], color[2], color[3]],
-            state.drawing.alpha,
-            state.drawing.composite,
-            coverage,
-            coverage,
-        );
+        return painted.map(|()| JsValue::Undefined);
     }
+    let state = vm.page.state.canvases.get_mut(&node).expect("canvas");
+    let (alpha, composite) = (state.drawing.alpha, state.drawing.composite);
+    paint_ink(
+        &mut state.bitmap,
+        &ink,
+        &shader,
+        alpha,
+        composite,
+        clip.as_ref(),
+    )?;
+    state.origin_clean &= clean;
     state.dirty = true;
     Ok(JsValue::Undefined)
 }
+
+/** Stroke radius is half the line width, rounded, and never less than one pixel. */
+fn ring_radius(state: &State) -> usize {
+    let edge = state.bitmap.width.max(state.bitmap.height) as f64;
+    let half = (state.drawing.pen.width / 2.0).round();
+    if !half.is_finite() {
+        return edge as usize;
+    }
+    half.clamp(MIN_RING_RADIUS as f64, edge.max(MIN_RING_RADIUS as f64)) as usize
+}
+
+/** maxWidth shrinks overflowing glyphs horizontally about their anchor and never stretches them. */
+fn fitted(
+    vm: &mut Vm,
+    node: usize,
+    value: &str,
+    origin: [f64; 2],
+    max_width: Option<f64>,
+) -> Res<Affine> {
+    let Some(max) = max_width else {
+        return Ok(Affine::IDENTITY);
+    };
+    let width = placement::measurement(vm, node, value)?[0].1;
+    if width <= max || width <= 0.0 {
+        return Ok(Affine::IDENTITY);
+    }
+    let [x, y] = origin;
+    let to_origin = Affine([1.0, 0.0, 0.0, 1.0, x, y]);
+    let scale = Affine([max / width, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    let from_origin = Affine([1.0, 0.0, 0.0, 1.0, -x, -y]);
+    Ok(to_origin.compose(scale).compose(from_origin))
+}
+
+/** Glyph coverage composites through the paint source, one pixel at a time, and clip coverage bounds where ink may land. */
+fn paint_ink(
+    target: &mut Bitmap,
+    ink: &Bitmap,
+    shader: &limits::Shader,
+    alpha: f64,
+    composite: limits::Composite,
+    clip: Option<&limits::ClipMask>,
+) -> EngineResult<()> {
+    let width = target.width as usize;
+    let pixels = target.pixels.make_mut()?;
+    for (index, (pixel, glyph)) in pixels
+        .chunks_exact_mut(limits::CHANNELS)
+        .zip(ink.pixels.chunks_exact(limits::CHANNELS))
+        .enumerate()
+    {
+        let (x, y) = ((index % width) as u32, (index / width) as u32);
+        let clip_coverage = clip.map_or(1.0, |clip| clip.coverage(x, y));
+        if clip_coverage == 0.0 {
+            continue;
+        }
+        let color = shader.color_at(f64::from(x) + 0.5, f64::from(y) + 0.5);
+        let covered = f64::from(glyph[3]) / f64::from(u8::MAX);
+        limits::composite_coverage(pixel, color, alpha, composite, covered, clip_coverage);
+    }
+    Ok(())
+}
+
 /** Readback returns a detached typed copy, with transparent padding outside the canvas. */
 fn readback(vm: &mut Vm, call: &Call, _: usize) -> Res<JsValue> {
     let mut values = [0.0; 4];

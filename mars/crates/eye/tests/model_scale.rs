@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 /** A third of the private call deadline, so one stage leaves room for the others in the same call. */
 const STAGE_BUDGET: Duration = Duration::from_secs(RPC_TIMEOUT.as_secs() / 3);
-/** Labeled inputs in the large fixture; the form-control cap keeps it below 256. */
+/** Labeled inputs in the large fixture, all of them controls the node budget already bounds. */
 const LABELED: usize = 120;
 
 /** A NODES-node page with labeled inputs, wrapping labels and duplicate author IDs. */
@@ -77,6 +77,30 @@ fn labels_equal_label_per_node() {
     assert!(expected.contains(&"Email here Also".to_string()));
 }
 
+/** Wrapping labels resolve stable IDs even when neither identity nor ancestry follows vector order. */
+#[test]
+fn batch_labels_preserve_associations_after_identity_reordering() {
+    let mut document = parse(concat!(
+        "<label for=i>Explicit</label><section><label>Wrapped <b>name</b><input id=i></label></section>",
+        "<p aria-label=Authored>text</p><input placeholder=Hint>"
+    )).unwrap();
+    for node in &mut document.nodes {
+        node.local_id += NODES;
+        node.parent = node.parent.map(|parent| parent + NODES);
+    }
+    document.nodes.reverse();
+    let expected: Vec<_> = document
+        .nodes
+        .iter()
+        .map(|node| label(&document, node))
+        .collect();
+    assert_eq!(document.labels(), expected);
+    let mut labeler = document.labeler();
+    for (index, expected) in expected.iter().enumerate() {
+        assert_eq!(&labeler.label(index), expected);
+    }
+}
+
 /** Labeling every node of a NODES-node page finishes well inside the call deadline. */
 #[test]
 fn labels_at_the_node_limit_are_linear() {
@@ -117,12 +141,17 @@ fn table(rows: usize) -> String {
     format!("<table>{}</table>", "<tr><td>x</td></tr>".repeat(rows))
 }
 
-/** A table at TABLE_ROWS parses and one more row is refused with the row limit. */
+/** A table at TABLE_ROWS is annotated with headers; one more row still parses, keeps every
+cell, and only goes without header associations. */
 #[test]
-fn table_rows_limit_holds_at_the_boundary() {
-    parse(&table(TABLE_ROWS)).unwrap();
-    let error = parse(&table(TABLE_ROWS + 1)).unwrap_err();
-    assert!(error.message.contains("table rows"), "{}", error.message);
+fn a_table_past_the_annotation_bound_still_parses() {
+    let small = parse(&table(TABLE_ROWS)).unwrap();
+    assert!(small.nodes.iter().any(|node| node.table_cell.is_some()));
+    let large = parse(&table(TABLE_ROWS + 1)).unwrap();
+    let cells = large.nodes.iter().filter(|node| node.tag == "td").count();
+    assert_eq!(cells, TABLE_ROWS + 1);
+    assert!(large.nodes.iter().all(|node| node.table_cell.is_none()));
+    assert!(large.diagnostics.iter().any(|d| d.contains("large table")));
 }
 
 /** Static text totaling `bytes`, split into nodes at the per-node cap. */

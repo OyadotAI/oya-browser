@@ -25,8 +25,12 @@ unsafe extern "C" {
     fn sandbox_check(pid: libc::pid_t, operation: *const c_char, filter: i32, ...) -> i32;
 }
 
-/** Real engine processes from the production executable. */
+/** Real engine processes from the production executable. The sandbox applies only to
+subprocess engines, which `MARS_PROCESS_ISOLATION` selects; in-process engines share the
+coordinator's sandbox. */
 fn runtime() -> Runtime {
+    // SAFETY: every test in this binary sets the same value before starting a runtime.
+    unsafe { std::env::set_var("MARS_PROCESS_ISOLATION", "1") };
     Runtime::start(EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars")))).unwrap()
 }
 

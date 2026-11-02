@@ -1,5 +1,5 @@
 /** Async iteration requires an of clause and never falls through to classic for or property enumeration grammar. */
-mod common;
+use crate::common;
 
 /** Empty, expression and declaration heads cannot turn a for-await statement into a classic semicolon loop. */
 #[test]

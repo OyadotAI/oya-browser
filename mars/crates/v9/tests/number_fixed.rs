@@ -1,5 +1,5 @@
 /** Number fixed formatting uses exact binary64 rounding, preserving the sign of rounded values. */
-mod common;
+use crate::common;
 
 /** A negative nonzero value stays negative when its formatted magnitude rounds to zero. */
 #[test]

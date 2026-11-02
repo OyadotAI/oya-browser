@@ -1,5 +1,5 @@
 /** Resizable buffers change real storage and invalidate or recover every existing view by live bounds. */
-mod common;
+use crate::common;
 
 /** Fixed views recover after regrowth, and tracking views follow byte length with element alignment. */
 #[test]

@@ -1,7 +1,7 @@
 //! Module conformance rules ported for test262: early errors of module code, indirect exports
 //! that must resolve when linking, re-exported namespaces, and dynamic import of a module with a
 //! syntax error. Hermetic: modules are served from memory, round after round, as the app does.
-mod common;
+use crate::common;
 
 use common::{environment, host, page};
 use mars_v9::{
@@ -31,6 +31,7 @@ fn load(files: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
         let page_input = PageInput {
             sources: &sources,
             source_keys: &[],
+            module_keys: &[],
             document: page(),
             storage: StorageState::default(),
             host: &host,

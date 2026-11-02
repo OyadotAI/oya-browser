@@ -1,5 +1,5 @@
 /** Reflect.apply rejection diagnostics use inert target data while preserving callable checks and argument-list ordering. */
-mod common;
+use crate::common;
 
 /** Rejected targets are checked through the public builtin, with no private formatter entry points. */
 fn eval(source: &str) -> String {

@@ -785,12 +785,19 @@ impl Vm<'_> {
                     Slot::Accessor(_, None) => return Ok(false),
                     Slot::Data(_) if prop.attrs & WRITABLE == 0 => return Ok(false),
                     Slot::Data(_) => {
-                        let window = realm().ids.window_prototype;
-                        let intrinsic = id == window
-                            && self.proto_of(start) == Some(window)
-                            && realm()
-                                .object(window)
-                                .is_some_and(|o| o.get(&key).is_some());
+                        // The global's own platform prototype (Window's, or a dedicated
+                        // worker's, where `onmessage` lives) holds real global bindings, so a
+                        // strict assignment to one sets it, as in a browser.
+                        let ids = &realm().ids;
+                        let intrinsic = [ids.window_prototype, ids.worker_prototype]
+                            .into_iter()
+                            .any(|global| {
+                                id == global
+                                    && self.proto_of(start) == Some(global)
+                                    && realm()
+                                        .object(global)
+                                        .is_some_and(|o| o.get(&key).is_some())
+                            });
                         if contextual && id != start && !intrinsic {
                             return Err(
                                 self.reference_error(&format!("{} is not defined", key_text(&key)))
@@ -828,9 +835,29 @@ impl Vm<'_> {
         }
         self.write_own(*target, key, value)
     }
-    /** One step of the ordinary [[Get]] walk answered straight from a heap object's property
-    list, as V8's fast-properties load does; anything exotic, an accessor, or a function's
-    virtual names says Slow and takes the full path, so behaviour is unchanged. */
+    /**
+     * `key` along an ordinary prototype chain from `id`, answered straight from each heap
+     * object's property list as V8's fast-properties load does: `Some(Some(value))` for an own
+     * data property found on the way, `Some(None)` when every object on the chain is ordinary
+     * and none has it, and `None` as soon as an accessor, a proxy or any other exotic object is
+     * met, which only the full [[HasProperty]] and [[Get]] may decide. Lets a descriptor's six
+     * names be read in one walk each instead of twelve generic lookups per `defineProperty`.
+     */
+    pub(in crate::v9) fn plain_lookup(&self, id: ObjectId, key: &Key) -> Option<Option<JsValue>> {
+        let mut id = id;
+        for _ in 0..CHAIN_STEPS {
+            if !self.realm_global_accessible(id) {
+                return None;
+            }
+            match self.fast_own(id, key) {
+                Fast::Value(value) => return Some(Some(value)),
+                Fast::Missing(Some(proto)) => id = proto,
+                Fast::Missing(None) => return Some(None),
+                Fast::Slow => return None,
+            }
+        }
+        None
+    }
     fn fast_own(&self, id: ObjectId, key: &Key) -> Fast {
         #[cfg(feature = "conformance")]
         if crate::v9::builtins::shared_container_active(self, id) {
@@ -839,6 +866,19 @@ impl Vm<'_> {
         let Some(object) = self.heap.get(id) else {
             return Fast::Slow;
         };
+        if let Class::Array(elements) = &object.class
+            && let Some(index) = key.index()
+        {
+            if let Some(val) = elements.get(index as usize)
+                && *val != JsValue::Hole
+            {
+                return Fast::Value(val.clone());
+            }
+            if object.props.get(key).is_none() {
+                return Fast::Missing(object.proto);
+            }
+            return Fast::Slow;
+        }
         if !ordinary_slot(&object.class, key) {
             return Fast::Slow;
         }

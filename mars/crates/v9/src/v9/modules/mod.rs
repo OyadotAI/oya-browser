@@ -40,12 +40,14 @@ use super::value::{JsString, JsValue, ObjectId};
 use super::vm::heap::{ENUMERABLE, EnvId, Key, Prop, Slot as HeapSlot, WRITABLE};
 use super::vm::realm::{Builder, symbol};
 use super::vm::{Call, Res, Vm};
-use crate::constants::{MODULE_BYTES, MODULES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES};
+use crate::constants::{
+    MODULE_BYTES, MODULE_SOURCES, MODULES, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES,
+};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::syntax::Name;
 use import_map::ImportMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use url::Url;
 
@@ -54,7 +56,7 @@ pub(in crate::v9) const MODULE_OFFSET: usize = 128 * 1024 * 1024;
 /* Classic sources end before the module region, and modules end before dynamic code. */
 const _: () = assert!(
     SCRIPT_TOTAL_BYTES + SCRIPT_COUNT <= MODULE_OFFSET
-        && MODULE_OFFSET + MODULE_BYTES + MODULES <= super::DYNAMIC_OFFSET
+        && MODULE_OFFSET + MODULE_BYTES + MODULE_SOURCES <= super::DYNAMIC_OFFSET
 );
 
 /// The module scripts, import maps and fetched modules of a page, supplied with every request.
@@ -236,6 +238,9 @@ pub(in crate::v9) struct Modules {
     entries: BTreeMap<usize, ModuleEntry>,
     /// Offset spans of fetched modules, for import() referrers.
     ranges: Vec<(usize, usize, String)>,
+    /// Every URL the app delivered this request, as a module or a classic script: a set, so a
+    /// page with hundreds of dynamic scripts checks each one in constant time.
+    fetched: HashSet<String>,
     /// Offset spans of page sources.
     scripts: Vec<(usize, usize)>,
     /// The page sources' URLs ("" when inline).
@@ -289,11 +294,12 @@ impl Modules {
     pub fn open(
         vm: &mut Vm,
         input: &ModuleInput,
+        keys: &[super::SourceKey],
         sources: &[String],
         starts: &[usize],
         state: ModuleState,
     ) -> EngineResult<()> {
-        validate(input, sources.len())?;
+        validate(input, keys, sources.len())?;
         state.validate(sources.len())?;
         let mut modules = Modules {
             state,
@@ -328,7 +334,7 @@ impl Modules {
             .map(|entry| entry.index)
             .collect();
         for index in inline {
-            let body = compile(vm, &sources[index], starts[index])?;
+            let body = compile(vm, &sources[index], starts[index], None)?;
             if let Some(base) = document.clone() {
                 modules
                     .compiled
@@ -336,14 +342,16 @@ impl Modules {
             }
         }
         let mut offset = MODULE_OFFSET;
-        for module in &input.sources {
+        for (position, module) in input.sources.iter().enumerate() {
+            let key = keys.get(position);
             let length = module.source.as_ref().map_or(0, String::len);
+            modules.fetched.insert(module.url.clone());
             modules
                 .ranges
                 .push((offset, offset + length, module.url.clone()));
             if module.classic {
                 let code = match &module.source {
-                    Some(source) => compile_classic(vm, source, offset, &module.url),
+                    Some(source) => compile_classic(vm, source, offset, &module.url, key),
                     None => Err(unavailable(&module.url)),
                 };
                 modules.loaded.insert(module.url.clone(), code);
@@ -351,7 +359,7 @@ impl Modules {
                 continue;
             }
             let body = match &module.source {
-                Some(source) => compile(vm, source, offset)?,
+                Some(source) => compile(vm, source, offset, key)?,
                 None => Err(unavailable(&module.url)),
             };
             offset += length + 1;
@@ -363,6 +371,11 @@ impl Modules {
         }
         vm.modules = modules;
         Ok(())
+    }
+    /** How many fetched sources the map was opened over, so a task whose input delivered no new
+    source (the app only appends) keeps the map instead of re-opening it. */
+    pub fn opened_sources(&self) -> usize {
+        self.ranges.len()
     }
     /** A delivered classic script's code, or why it has none; None while it is still on its way. */
     pub fn loaded(&self, url: &str) -> Option<EngineResult<Arc<Code>>> {
@@ -377,7 +390,7 @@ impl Modules {
     }
     /** Whether the app delivered this URL already (as a source or as a failure). */
     pub fn delivered(&self, url: &str) -> bool {
-        self.ranges.iter().any(|(_, _, delivered)| delivered == url)
+        self.fetched.contains(url)
     }
     /** The source a page byte offset falls in, for diagnostics: a page script's URL (or its
     one-based index when inline), a fetched module's or script's URL, or dynamic code. */
@@ -515,9 +528,12 @@ fn unavailable(url: &str) -> EngineError {
 
 /** Input bounds: MODULES sources within MODULE_BYTES, none over SCRIPT_BYTES, entries that
 name real page sources once each. */
-fn validate(input: &ModuleInput, sources: usize) -> EngineResult<()> {
-    if input.sources.len() > MODULES {
-        return Err(EngineError::limit("modules", MODULES));
+fn validate(input: &ModuleInput, keys: &[super::SourceKey], sources: usize) -> EngineResult<()> {
+    if input.sources.len() > MODULE_SOURCES {
+        return Err(EngineError::limit("modules", MODULE_SOURCES));
+    }
+    if !keys.is_empty() && keys.len() != input.sources.len() {
+        return Err(EngineError::invalid("Invalid V9 module keys."));
     }
     let mut total = 0usize;
     for module in &input.sources {
@@ -553,6 +569,7 @@ fn compile_classic(
     source: &str,
     offset: usize,
     path: &str,
+    key: Option<&super::SourceKey>,
 ) -> EngineResult<Arc<Code>> {
     #[cfg(feature = "conformance")]
     if vm.page.environment.conformance_d8
@@ -572,28 +589,25 @@ fn compile_classic(
         );
     }
     let _ = path;
-    vm.registry
-        .script(source, offset, || super::parse_at(source, offset, None))
+    let parse = || super::parse_at(source, offset, None);
+    match key {
+        Some(text) => vm.registry.script_keyed(*text, source, offset, parse),
+        None => vm.registry.script(source, offset, parse),
+    }
 }
 
-/** Compile one module at its page offset; the outer error is a service failure. */
-fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompilation> {
-    Ok(vm.registry.module(source, offset, || {
-        super::lexer::tokenize_module(source)
-            .map_err(|mut error| {
-                if let Some(location) = error.location.as_deref_mut() {
-                    location.byte_offset += offset;
-                }
-                error
-            })
-            .and_then(|mut tokens| {
-                for token in &mut tokens {
-                    token.location.byte_offset += offset;
-                    token.end += offset;
-                }
-                syntax::parse_module(tokens)
-            })
-    }))
+/** Compile a module source at `offset`; `key` is its text key when the caller holds one. */
+fn compile(
+    vm: &mut Vm,
+    source: &str,
+    offset: usize,
+    key: Option<&super::SourceKey>,
+) -> EngineResult<ModuleCompilation> {
+    let parse = || super::lexer::tokenize_module_at(source, offset).and_then(syntax::parse_module);
+    Ok(match key {
+        Some(text) => vm.registry.module_keyed(*text, source, offset, parse),
+        None => vm.registry.module(source, offset, parse),
+    })
 }
 
 /** `import(specifier)`: a promise for the namespace, once the graph loads and evaluates. The

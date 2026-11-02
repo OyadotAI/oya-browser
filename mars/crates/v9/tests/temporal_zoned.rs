@@ -1,5 +1,5 @@
 /** Temporal.ZonedDateTime and Instant.prototype.toZonedDateTimeISO over the engine's shipped New York rules: one test per rule. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** The instant in the regression test reads as EDT, and the zone's canonical id is kept. */

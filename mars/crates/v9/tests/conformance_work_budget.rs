@@ -1,6 +1,6 @@
 /* Shell work-budget overrides are explicit, bounded and separate from production defaults. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** The shell rejects overrides outside its explicitly bounded range. */
 #[test]

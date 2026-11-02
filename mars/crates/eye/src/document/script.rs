@@ -117,6 +117,7 @@ fn project_fragment(nodes: Vec<Node>) -> EngineResult<Vec<ScriptNode>> {
         csp: Vec::new(),
         metadata: Vec::new(),
         charset: String::new(),
+        refresh: None,
     };
     let first = first_ids(&document);
     Ok(document

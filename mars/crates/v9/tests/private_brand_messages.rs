@@ -1,5 +1,5 @@
 /** Private brand failures preserve the operation and declared name without exposing internal IDs. */
-mod common;
+use crate::common;
 
 /** Reading an absent private field reports its public spelling and read direction. */
 #[test]

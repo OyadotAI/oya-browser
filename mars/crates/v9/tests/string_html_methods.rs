@@ -1,5 +1,5 @@
 /** Annex B's legacy String.prototype HTML methods (CreateHTML, spec B.2.2.2.1). */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Each method wraps the string in its tag and quotes the attribute, escaping `"`. */

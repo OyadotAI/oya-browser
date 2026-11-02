@@ -1,10 +1,9 @@
 /** Native HTTP fetch preserves exact bytes without relaxing CORS or legacy XHR text decoding. */
 #[allow(dead_code)]
 mod support;
-use mars::protocol::Request;
 use mars::runtime::{
     EnginePrograms, Runtime,
-    authority::{Authority, Owner, Permit},
+    authority::{Authority, Owner},
 };
 use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
@@ -17,13 +16,13 @@ fn bytes(mime: &str, body: &[u8]) -> Vec<u8> {
     response
 }
 
-/** Disposable service ownership and explicit fixture origins exercise the ordinary fetch coordinator. */
+/** Agent navigation settles fixture fetches before inspection; human navigation intentionally publishes sooner. */
 fn evaluate(fixture: &Fixture, mut grants: Vec<String>) -> Value {
     grants.push(fixture.url.clone());
     let mut runtime = Runtime::desktop(
         EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
         grants,
-        Authority::shared(Owner::Human),
+        Authority::shared(Owner::Agent),
         Arc::new(AtomicBool::new(false)),
     )
     .unwrap();
@@ -32,18 +31,8 @@ fn evaluate(fixture: &Fixture, mut grants: Vec<String>) -> Value {
 }
 
 /** Requests retain real tab ownership and never inject fake network results. */
-fn call(runtime: &mut Runtime, op: &str, mut params: Value) -> Value {
-    params["tab_id"] = json!("tab-1");
-    runtime
-        .handle_as(
-            Request::new("fetch-bytes", op, params),
-            Permit {
-                owner: Owner::Human,
-                epoch: 1,
-                tab_id: Some(1),
-            },
-        )
-        .unwrap()
+fn call(runtime: &mut Runtime, op: &str, params: Value) -> Value {
+    support::agent_call(runtime, op, params).unwrap()
 }
 
 /** Fetch byte readers are exact and text readers use UTF8; XHR still obeys its declared charset. */

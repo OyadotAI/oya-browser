@@ -1,6 +1,6 @@
 /** Range receivers and offsets are validated: splitText past the end is an IndexSizeError, and a
 StaticRange refuses Range methods while keeping its own accessors. */
-mod common;
+use crate::common;
 
 #[test]
 fn split_text_past_the_end_is_an_index_size_error() {

@@ -1,6 +1,6 @@
 /* Real contexts preserve identity, isolation, ownership and collection across public page requests. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Foreign dates remain valid across repeated evaluation in their owning realm. */
 #[test]

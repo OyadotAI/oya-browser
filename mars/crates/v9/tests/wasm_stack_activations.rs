@@ -1,5 +1,5 @@
 /** Structured Wasm stacks capture genuine running interpreter frames before callbacks unwind, preserving privacy and GC roots. */
-mod common;
+use crate::common;
 
 /** Compact fixtures use one-byte section/body lengths and one void signature, with an optional real JS import. */
 fn module(bodies: &[&[u8]], imported: bool, named: bool) -> (Vec<u8>, Vec<usize>) {

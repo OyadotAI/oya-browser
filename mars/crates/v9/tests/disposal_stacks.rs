@@ -1,5 +1,5 @@
 /** Disposal stacks implement captured cleanup, suppression, asynchronous settlement and private ownership transfer. */
-mod common;
+use crate::common;
 
 /** Registration captures methods eagerly and cleanup calls them in reverse order with the original receiver. */
 #[test]

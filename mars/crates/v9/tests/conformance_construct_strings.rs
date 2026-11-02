@@ -1,6 +1,6 @@
 /* V8 string construction intrinsics create real retained cons and slice backing. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Invalid types, lengths and arities retain V8's undefined result and argument evaluation. */
 #[test]

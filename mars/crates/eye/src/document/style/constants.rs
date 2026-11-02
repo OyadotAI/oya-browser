@@ -9,6 +9,11 @@ pub(super) const SELECTOR_ARGUMENTS: usize = 16;
 pub(super) const HAS_VISITS: usize = 512;
 /** Custom property values are retained per declaring element, so each one is bounded. */
 pub(super) const CUSTOM_PROPERTY_BYTES: usize = 2048;
+/** Kept property values are inherited by every descendant, so each one is bounded like a custom
+property; an oversized value is dropped rather than stored. */
+pub(super) const KEPT_VALUE_BYTES: usize = CUSTOM_PROPERTY_BYTES;
+/** Entries in a kept list such as `font-feature-settings`; past this the declaration is dropped. */
+pub(super) const KEPT_LIST_ITEMS: usize = 64;
 /** `var()` chains stop here; deeper or cyclic references are invalid at computed-value time. */
 pub(super) const VAR_DEPTH: usize = 8;
 /** Substituted values cannot double themselves past this size through repeated references. */
@@ -96,5 +101,19 @@ pub(super) const ORDER_MAX: i64 = 1 << 20;
 pub(super) const CONTAINER_NAMES: usize = 8;
 /** An `aspect-ratio` outside this range of width over height is not one Eye lays out. */
 pub(super) const ASPECT_RATIO_MAX: f64 = 4096.0;
+/** A `list-style-type` string marker keeps at most this many bytes. */
+pub(super) const MARKER_BYTES: usize = 16;
+/** A `linear()` timing function keeps at most this many points. */
+pub(super) const LINEAR_POINTS: usize = 256;
+/** A `linear()` timing function needs at least two points to describe a progression. */
+pub(super) const LINEAR_MIN_POINTS: usize = 2;
 /** `env()` functions one value may substitute before it is refused. */
 pub(super) const ENV_FUNCTIONS: usize = 8;
+/** A `font-feature-settings` or `font-variation-settings` tag is exactly this many bytes. */
+pub(super) const FONT_TAG_BYTES: usize = 4;
+/** The first printable ASCII byte a font tag may hold (space). */
+pub(super) const FONT_TAG_FIRST_BYTE: u8 = 0x20;
+/** The last printable ASCII byte a font tag may hold (tilde). */
+pub(super) const FONT_TAG_LAST_BYTE: u8 = 0x7e;
+/** `scroll-snap-align` takes one or two alignments, one per axis. */
+pub(super) const SNAP_ALIGN_WORDS: usize = 2;

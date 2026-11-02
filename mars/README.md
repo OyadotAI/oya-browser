@@ -1,8 +1,9 @@
 # Mars
 
 Mars is Oya's Rust browser, being built for people and agents. Relay networking, Eye
-documents/layout/rendering, the V9 JavaScript runtime, native window and agent tools are
-implemented in Rust, with the engines running as supervised services. It uses no Chromium,
+documents/layout/rendering, the V9 JavaScript runtime (with JIT execution bridge), native window
+and agent tools are implemented in Rust, with the engines running as unified in-process services
+sharing memory and thread pool (with optional subprocess isolation via `MARS_PROCESS_ISOLATION=1`). It uses no Chromium,
 Blink, V8, CDP, WebView, injected agent scripts or existing browser engine.
 
 The replacement target is a complete everyday browser with native human controls and native
@@ -728,7 +729,12 @@ V9 supports `window.localStorage` and `window.sessionStorage` with only
 values, up to 256 entries and 64 KiB per origin-area (2,048 UTF-16 units per
 key/value). Local storage is origin-scoped and kept in a separate Keychain item;
 session storage is scoped to the tab and origin and disappears when the tab closes.
-Cookie clearing leaves local storage intact. Storage writes remain candidates
+Cookie clearing leaves local storage intact.
+`indexedDB` (pages and dedicated workers) implements IndexedDB 3.0: databases, versions and
+upgrades, object stores with key paths and key generators, unique and multiEntry indexes,
+cursors in every direction, key ranges, transactions with spec event timing, abort rollback and
+auto-commit, and structured-clone values including Blobs. Databases persist per storage
+partition in their own sealed records and are cleared with saved site storage. Storage writes remain candidates
 until script execution, document validation, layout and authority publication succeed.
 The aggregate localStorage record is limited to 512 KiB. Secure-store failures block
 storage use rather than falling back to plaintext. An uncertain write or rollback also stores a
@@ -765,6 +771,7 @@ changes remain candidate data until document validation and authority publicatio
 | Stylesheets / each sheet / aggregate CSS | 4 linked / 16 KiB / 64 KiB |
 | Session cookies / per host / aggregate jar / cookie Keychain record | 64 / 16 / 32 KiB / 48 KiB |
 | Web Storage entries / area / per key or value / aggregate Keychain record | 256 / 64 KiB / 2,048 UTF-16 units / 512 KiB |
+| IndexedDB keys and values per database / per origin | 4 MiB / 32 MiB |
 | URL / correlation ID | 2 KiB / 128 bytes |
 | Shared layout work / display lines / maximum layout extent | 5,242,880 / 32,768 / 1,048,576 logical points |
 | Page viewport width / height | 280–4,096 / 120–4,096 logical points |

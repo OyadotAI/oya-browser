@@ -7,7 +7,15 @@ use super::{
     selector_parse::{Compound, Pseudo, Simple},
     sheet::{PseudoBox, Rule, Target},
 };
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
+
+/** How many rule subjects name each class, so a compound with several classes is keyed by its
+rarest: airbnb's atomic CSS writes every subject as `.dir.atm_xxxx`, ten thousand rules, and
+keyed by the first class they all landed in one bucket that every `dir` element tried. */
+type Frequency = HashMap<String, usize>;
 /** Which bucket a key selects. */
 #[derive(Clone, Copy)]
 enum Keyed {
@@ -50,12 +58,18 @@ impl Buckets {
     /** Indexes every rule once. */
     pub(super) fn new(rules: &[Rc<Rule>]) -> Self {
         let mut buckets = Self::default();
-        for (index, rule) in rules.iter().enumerate() {
-            let subject = match &rule.target {
+        let subjects: Vec<Option<&Compound>> = rules
+            .iter()
+            .map(|rule| match &rule.target {
                 Target::Selector(selector) => selector.compounds.last(),
                 Target::Mask(compound) => Some(compound),
-            };
-            buckets.keys_mut(rule.pseudo).insert(index, subject);
+            })
+            .collect();
+        let frequency = class_frequency(subjects.iter().flatten().copied());
+        for (index, rule) in rules.iter().enumerate() {
+            buckets
+                .keys_mut(rule.pseudo)
+                .insert(index, subjects[index], &frequency);
         }
         buckets
     }
@@ -101,11 +115,11 @@ impl Keys {
     /** Files one rule under its subject's key, or under each key of a `:is()` or `:where()`
     argument list when the subject has no key of its own: the subject then matches only
     elements one of its arguments matches, each of which carries that argument's key. */
-    fn insert(&mut self, index: usize, subject: Option<&Compound>) {
+    fn insert(&mut self, index: usize, subject: Option<&Compound>, frequency: &Frequency) {
         let Some(subject) = subject else {
             return self.universal.push(index);
         };
-        if let Some((map, key)) = key_of(subject) {
+        if let Some((map, key)) = key_of(subject, frequency) {
             return self.file(map, key, index);
         }
         let arguments = subject.simples.iter().find_map(|simple| match simple {
@@ -117,7 +131,12 @@ impl Keys {
             .and_then(|arguments| {
                 arguments
                     .iter()
-                    .map(|selector| selector.compounds.last().and_then(key_of))
+                    .map(|selector| {
+                        selector
+                            .compounds
+                            .last()
+                            .and_then(|compound| key_of(compound, frequency))
+                    })
                     .collect()
             });
         match keys {
@@ -167,15 +186,33 @@ impl Keys {
 }
 /** The most selective key of one compound: id, class, tag (`:root` is the `html` tag), then
 attribute name. */
-fn key_of(compound: &Compound) -> Option<(Keyed, &str)> {
+/** How many subjects (and `:is()` arguments' subjects) name each class. */
+fn class_frequency<'a>(subjects: impl Iterator<Item = &'a Compound>) -> Frequency {
+    let mut frequency = Frequency::new();
+    for subject in subjects {
+        for class in classes(subject) {
+            *frequency.entry(class.to_owned()).or_default() += 1;
+        }
+    }
+    frequency
+}
+
+/** The classes a compound names. */
+fn classes(compound: &Compound) -> impl Iterator<Item = &str> {
+    compound.simples.iter().filter_map(|simple| match simple {
+        Simple::Class(class) => Some(class.as_str()),
+        _ => None,
+    })
+}
+
+/** The bucket key of a subject: its id, else the class fewest subjects share (a compound's
+first class is often a page-wide one), else its tag, else an attribute name. */
+fn key_of<'a>(compound: &'a Compound, frequency: &Frequency) -> Option<(Keyed, &'a str)> {
     let id = compound.simples.iter().find_map(|simple| match simple {
         Simple::Id(id) => Some(id.as_str()),
         _ => None,
     });
-    let class = compound.simples.iter().find_map(|simple| match simple {
-        Simple::Class(class) => Some(class.as_str()),
-        _ => None,
-    });
+    let class = classes(compound).min_by_key(|class| frequency.get(*class).copied().unwrap_or(0));
     let attribute = compound.simples.iter().find_map(|simple| match simple {
         Simple::Attribute { name, .. } => Some(name.as_str()),
         _ => None,

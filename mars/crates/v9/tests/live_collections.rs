@@ -1,7 +1,7 @@
 /** Live HTMLCollection behaviour in V9: getElementsByTagName, getElementsByTagNameNS and
 getElementsByClassName follow the tree as it changes, while querySelectorAll stays a snapshot. The
 collections answer from a cache keyed on the tree generation, so each test reads after a mutation. */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, PageInput, StorageState};
 
@@ -13,6 +13,7 @@ fn eval(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

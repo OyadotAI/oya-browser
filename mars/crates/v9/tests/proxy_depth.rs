@@ -1,6 +1,6 @@
 /** Proxy chains cannot overflow the native stack: trap-less proxies forward in a loop, and a
 chain whose traps recurse natively meets the call-depth bound as a RangeError. */
-mod common;
+use crate::common;
 use std::sync::Mutex;
 
 /// Proxies in each chain: far past any native stack if every hop were a native call. A debug

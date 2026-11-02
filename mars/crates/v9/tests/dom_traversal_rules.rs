@@ -3,7 +3,7 @@
  * documents by their node types, and a filter may not call back into the traversal running it.
  * Each rule has one test, and the refusal paths are covered as well as the happy one.
  */
-mod common;
+use crate::common;
 use common::{environment, global, host, page};
 use mars_v9::{DomLevel, Execution, PageInput, StorageState};
 
@@ -15,6 +15,7 @@ fn run(source: &str) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: page(),
         storage: StorageState::default(),
         host: &host,

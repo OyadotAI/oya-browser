@@ -36,6 +36,44 @@ fn flex_inside_a_table_cell_stays_flex() {
     assert_eq!(b.0, a.0 + 100.0);
 }
 
+/** Fallback diagnostics preserve the distinction between visible button content and hidden children. */
+#[test]
+fn flex_fallbacks_use_direct_child_visibility() {
+    for (markup, fallback) in [
+        ("<button style='display:flex'></button>", true),
+        (
+            "<button style='display:flex'><i hidden>x</i></button>",
+            true,
+        ),
+        ("<button style='display:flex'><i>x</i></button>", false),
+        (
+            "<div style='display:flex'><table hidden></table></div>",
+            true,
+        ),
+        ("<div style='display:flex'><span>x</span></div>", false),
+    ] {
+        let document = styled(markup);
+        let noted = document
+            .diagnostics
+            .iter()
+            .any(|note| note.contains("laid out as block"));
+        assert_eq!(noted, fallback, "{markup}");
+        let styles: Vec<_> = document
+            .nodes
+            .iter()
+            .map(|node| node.style.clone())
+            .collect();
+        render(&document, 800.0).unwrap();
+        assert!(
+            document
+                .nodes
+                .iter()
+                .zip(styles)
+                .all(|(node, before)| node.style == before)
+        );
+    }
+}
+
 /** `&#x0D;` produces a real U+000D in the text; only literal CRs in the source become LF. */
 #[test]
 fn character_reference_carriage_return_survives_newline_normalization() {

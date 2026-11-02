@@ -2,7 +2,7 @@
 use super::{
     AlignItems, BackgroundRepeat, BackgroundSize, Clear, ComputedStyle, Extent, Float, GridArea,
     GridLine, GridTemplate, LineName, ListStyle, ObjectFit, Track, TrackSize, VerticalAlign,
-    constants::{ASPECT_RATIO_MAX, GRID_LINE_MAX, GRID_NAME_BYTES, GRID_TRACKS},
+    constants::{ASPECT_RATIO_MAX, GRID_LINE_MAX, GRID_NAME_BYTES, GRID_TRACKS, MARKER_BYTES},
     syntax::{split_top, tokens},
     unsupported,
     values::{dimension, number},
@@ -44,8 +44,13 @@ pub(super) fn apply(
                 .ok()
                 .map(|shift| (shift.px, shift.percent));
         }
-        "list-style-type" => style.list_style = list_style(value)?,
-        "list-style" => style.list_style = list_shorthand(value),
+        "list-style-type" => {
+            (style.list_style, style.list_marker) = list_type(value)?;
+        }
+        "list-style" => {
+            style.list_style = list_shorthand(value);
+            style.list_marker = None;
+        }
         "row-gap" | "column-gap" | "grid-row-gap" | "grid-column-gap" => {
             gap(style, key, value, context)?
         }
@@ -98,10 +103,15 @@ pub(super) fn apply(
             style.overflow_wrap_anywhere = breaking(value, &["anywhere"]);
         }
         "word-break" => {
-            style.word_break_all = breaking(value, &["break-all", "break-word"]);
+            style.word_break_all = breaking(value, &["break-all"]);
             style.word_break_fill = breaking(value, &["break-all"]);
             style.word_break_keep_all = breaking(value, &["keep-all"]);
             style.word_break_auto_phrase = breaking(value, &["auto-phrase"]);
+            // CSS Text 3: `break-word` is the deprecated `normal` plus `overflow-wrap: anywhere`.
+            if value.trim() == "break-word" {
+                style.overflow_wrap_break = Some(true);
+                style.overflow_wrap_anywhere = Some(true);
+            }
         }
         "line-break" => {
             style.line_break_anywhere = breaking(value, &["anywhere"]);
@@ -295,6 +305,23 @@ fn list_style(value: &str) -> EngineResult<ListStyle> {
         | "lower-greek" => ListStyle::Decimal,
         _ => return Err(unsupported()),
     })
+}
+/**
+ * `list-style-type`: a keyword, or a quoted string drawn as the marker. The string keeps its
+ * case and is stored beside the disc type, so the symbol path places it the same way.
+ */
+fn list_type(value: &str) -> EngineResult<(ListStyle, Option<String>)> {
+    match quoted(value) {
+        Some(text) => Ok((ListStyle::Disc, Some(text))),
+        None => Ok((list_style(&value.to_ascii_lowercase())?, None)),
+    }
+}
+/** The text inside one pair of matching quotes, with no escapes and at most a bounded length. */
+fn quoted(value: &str) -> Option<String> {
+    let quote = value.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let inner = value.strip_prefix(quote)?.strip_suffix(quote)?;
+    let plain = !inner.contains([quote, '\\']);
+    (plain && inner.len() <= MARKER_BYTES).then(|| inner.to_string())
 }
 /** The type keyword of a `list-style` shorthand; images and positions are ignored. */
 fn list_shorthand(value: &str) -> ListStyle {

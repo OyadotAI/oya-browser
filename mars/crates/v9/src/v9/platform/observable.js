@@ -959,3 +959,264 @@
     define(global.EventTarget.prototype, 'when', when);
   }
 })(globalThis);
+
+/**
+ * TextEncoderStream and TextDecoderStream, which pages construct after feature-detecting
+ * them (medium.com's bootstrap). Chrome's shapes made them exist with
+ * illegal constructors, so detection passed and construction threw. The streams wrap the native
+ * TransformStream, TextEncoder and TextDecoder; state lives in a WeakMap, out of the page's reach.
+ */
+(function installTextStreams(global) {
+  'use strict';
+  if (typeof global.TransformStream !== 'function' || typeof global.TextEncoder !== 'function') {
+    return;
+  }
+  /** Stream object to its transform stream and codec. */
+  const inner = new WeakMap();
+  /** The state behind `self`, or a TypeError for a foreign receiver. */
+  function state(self) {
+    const value = inner.get(self);
+    if (!value) throw new TypeError('Illegal invocation');
+    return value;
+  }
+
+  class TextEncoderStream {
+    constructor() {
+      const encoder = new global.TextEncoder();
+      const stream = new global.TransformStream({
+        transform(chunk, controller) {
+          const bytes = encoder.encode(String(chunk));
+          if (bytes.length) controller.enqueue(bytes);
+        },
+      });
+      inner.set(this, { stream, codec: encoder });
+    }
+    get encoding() { state(this); return 'utf-8'; }
+    get readable() { return state(this).stream.readable; }
+    get writable() { return state(this).stream.writable; }
+  }
+
+  class TextDecoderStream {
+    constructor(label = 'utf-8', options = {}) {
+      const decoder = new global.TextDecoder(label, options);
+      const stream = new global.TransformStream({
+        transform(chunk, controller) {
+          const text = decoder.decode(chunk, { stream: true });
+          if (text) controller.enqueue(text);
+        },
+        flush(controller) {
+          const text = decoder.decode();
+          if (text) controller.enqueue(text);
+        },
+      });
+      inner.set(this, { stream, codec: decoder });
+    }
+    get encoding() { return state(this).codec.encoding; }
+    get fatal() { return state(this).codec.fatal; }
+    get ignoreBOM() { return state(this).codec.ignoreBOM; }
+    get readable() { return state(this).stream.readable; }
+    get writable() { return state(this).stream.writable; }
+  }
+
+  function define(target, name, value) {
+    Object.defineProperty(target, name, { value, writable: true, enumerable: false, configurable: true });
+  }
+  define(global, 'TextEncoderStream', TextEncoderStream);
+  define(global, 'TextDecoderStream', TextDecoderStream);
+})(globalThis);
+
+/**
+ * ReadableStream.prototype.pipeTo, pipeThrough, tee and async iteration, over the native
+ * reader and writer. The native stream has none of them and Chrome's shapes left inert stubs
+ * that returned undefined, so `stream.pipeThrough(new TextEncoderStream())` (React Router's
+ * streamed hydration on medium.com) produced no stream and the app rendered nothing.
+ */
+(function installStreamPiping(global) {
+  'use strict';
+  const Readable = global.ReadableStream;
+  if (typeof Readable !== 'function') return;
+
+  /** Ignore a rejection that has already been reported through another path. */
+  function quiet(promise) {
+    if (promise && typeof promise.catch === 'function') promise.catch(() => {});
+  }
+
+  /** Stop piping because of an abort signal, honouring the prevent options. */
+  function abortPipe(reader, writer, options, reason) {
+    if (!options.preventAbort) quiet(writer.abort(reason));
+    if (!options.preventCancel) quiet(reader.cancel(reason));
+  }
+
+  function pipeTo(destination, options = {}) {
+    const reader = this.getReader();
+    const writer = destination.getWriter();
+    const { signal } = options;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error, failed) => {
+        if (settled) return;
+        settled = true;
+        try { reader.releaseLock(); } catch (_) {}
+        try { writer.releaseLock(); } catch (_) {}
+        if (failed) reject(error); else resolve();
+      };
+      if (signal) {
+        const onAbort = () => { abortPipe(reader, writer, options, signal.reason); finish(signal.reason, true); };
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      const pump = () => reader.read().then(({ done, value }) => {
+        if (settled) return undefined;
+        if (done) {
+          if (options.preventClose) { finish(); return undefined; }
+          return writer.close().then(() => finish(), (error) => finish(error, true));
+        }
+        return writer.write(value).then(pump);
+      }, (error) => {
+        if (!options.preventAbort) quiet(writer.abort(error));
+        finish(error, true);
+      });
+      pump().catch((error) => {
+        if (!options.preventCancel) quiet(reader.cancel(error));
+        finish(error, true);
+      });
+    });
+  }
+
+  function pipeThrough(transform, options = {}) {
+    if (!transform || !transform.writable || !transform.readable) {
+      throw new TypeError("Failed to execute 'pipeThrough' on 'ReadableStream': invalid transform stream.");
+    }
+    quiet(pipeTo.call(this, transform.writable, options));
+    return transform.readable;
+  }
+
+  function tee() {
+    const reader = this.getReader();
+    const controllers = [];
+    let reading = null;
+    let ended = false;
+    const each = (action) => controllers.forEach((controller) => { try { action(controller); } catch (_) {} });
+    const pull = () => {
+      if (ended) return undefined;
+      if (!reading) {
+        reading = reader.read().then(({ done, value }) => {
+          reading = null;
+          if (done) { ended = true; each((controller) => controller.close()); return; }
+          each((controller) => controller.enqueue(value));
+        }, (error) => { reading = null; ended = true; each((controller) => controller.error(error)); });
+      }
+      return reading;
+    };
+    const branch = () => new Readable({ start(controller) { controllers.push(controller); }, pull });
+    return [branch(), branch()];
+  }
+
+  function values(options = {}) {
+    const reader = this.getReader();
+    const keep = Boolean(options && options.preventCancel);
+    return {
+      next() {
+        return reader.read().then((result) => {
+          if (result.done) reader.releaseLock();
+          return result;
+        });
+      },
+      return(value) {
+        const done = { done: true, value };
+        if (keep) { reader.releaseLock(); return Promise.resolve(done); }
+        return reader.cancel(value).then(() => { reader.releaseLock(); return done; });
+      },
+      [Symbol.asyncIterator]() { return this; },
+    };
+  }
+
+  function define(target, name, value) {
+    Object.defineProperty(target, name, { value, writable: true, enumerable: false, configurable: true });
+  }
+  const proto = Readable.prototype;
+  define(proto, 'pipeTo', pipeTo);
+  define(proto, 'pipeThrough', pipeThrough);
+  define(proto, 'tee', tee);
+  define(proto, 'values', values);
+  define(proto, Symbol.asyncIterator, values);
+})(globalThis);
+
+/**
+ * Element.prototype.attributes as one live NamedNodeMap per element, as the DOM requires. The
+ * native getter returns a fresh snapshot, so React's `for (t = e.attributes; t.length;)
+ * e.removeAttributeNode(t[0])` (it clears <html> and <body> while hydrating) removed the first
+ * attribute and then failed on the stale snapshot. The proxy answers every read from a fresh
+ * native snapshot, so length, indices and named attributes always match the element.
+ */
+(function installLiveAttributes(global) {
+  'use strict';
+  const Element = global.Element;
+  if (typeof Element !== 'function' || typeof Proxy !== 'function') return;
+  let owner = Element.prototype;
+  let descriptor;
+  while (owner && !(descriptor = Object.getOwnPropertyDescriptor(owner, 'attributes'))) {
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (!descriptor || typeof descriptor.get !== 'function') return;
+  const snapshot = descriptor.get;
+  /** Element to its one live map. */
+  const maps = new WeakMap();
+
+  /** The interface prototype a live map reports, so instanceof and toString match Chrome. */
+  const mapProto = typeof global.NamedNodeMap === 'function' ? global.NamedNodeMap.prototype : Object.prototype;
+
+  function live(element) {
+    const current = () => snapshot.call(element);
+    // A plain target with no own properties: every own key is reported configurable from the
+    // fresh snapshot, so no proxy invariant ties the answers to the target.
+    return new Proxy(Object.create(mapProto), {
+      get(_, key) {
+        const fresh = current();
+        if (!Reflect.has(fresh, key) && key in mapProto) return Reflect.get(mapProto, key, fresh);
+        const value = Reflect.get(fresh, key, fresh);
+        return typeof value === 'function' && key !== 'constructor' ? value.bind(fresh) : value;
+      },
+      has(_, key) { return Reflect.has(current(), key); },
+      ownKeys() { return Reflect.ownKeys(current()); },
+      getOwnPropertyDescriptor(_, key) {
+        const fresh = Reflect.getOwnPropertyDescriptor(current(), key);
+        if (fresh) fresh.configurable = true;
+        return fresh;
+      },
+    });
+  }
+
+  Object.defineProperty(owner, 'attributes', {
+    configurable: descriptor.configurable,
+    enumerable: descriptor.enumerable,
+    get: { attributes() {
+      let map = maps.get(this);
+      if (!map) {
+        snapshot.call(this);
+        map = live(this);
+        maps.set(this, map);
+      }
+      return map;
+    } }.attributes,
+  });
+})(globalThis);
+
+/**
+ * MediaCapabilities answers for a page whose media stack is another module's: the media builder
+ * owns decodingInfo and encodingInfo, which report nothing as supported until it lands. The rest
+ * of the APIs that were inert stubs are real now, in the `platform_apis` scripts.
+ */
+(function installMediaCapabilities(global) {
+  'use strict';
+  const nav = global.navigator;
+  if (!nav || !nav.mediaCapabilities) return;
+  const proto = Object.getPrototypeOf(nav.mediaCapabilities) || nav.mediaCapabilities;
+  const unsupported = { supported: false, smooth: false, powerEfficient: false };
+  for (const name of ['decodingInfo', 'encodingInfo']) {
+    Object.defineProperty(proto, name, {
+      value: { [name]() { return Promise.resolve({ ...unsupported }); } }[name],
+      writable: true, enumerable: true, configurable: true,
+    });
+  }
+})(globalThis);

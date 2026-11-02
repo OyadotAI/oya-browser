@@ -1,5 +1,5 @@
 /** Native property traversal and JSON revivers must throw before Rust's stack can overflow. */
-mod common;
+use crate::common;
 
 /** Missing traps recurse through the handler's prototype before any trap body is invoked. */
 #[test]

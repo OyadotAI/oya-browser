@@ -1,6 +1,6 @@
 /* The shell feature flag controls custom descriptor binary syntax. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** A paired descriptor validates only when the proposal is enabled. */
 #[test]

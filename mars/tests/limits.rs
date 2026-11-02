@@ -30,7 +30,7 @@ fn escaped_request_ids_remain_usable_at_the_document_text_limit() {
         .into_bytes(),
     );
     let mut child = Command::new(env!("CARGO_BIN_EXE_mars"))
-        .arg("agent")
+        .args(["agent", "--fixture-origin", &fixture.url])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

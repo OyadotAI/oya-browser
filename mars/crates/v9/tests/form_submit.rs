@@ -1,5 +1,5 @@
 /** Script form submission: `form.elements`, `requestSubmit()` and `submit()` plan a GET navigation. */
-mod common;
+use crate::common;
 use common::{global, load_with};
 use mars_v9::DomLevel;
 

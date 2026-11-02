@@ -1,6 +1,6 @@
 /** Agent masks from rules Eye cannot parse stay as narrow as the rule's real subject, so link
 clicks keep working on MDN, Google and X (each repro is cut down from that site's CSS). */
-use mars_eye::{Document, compute_styles, parse};
+use mars_eye::{Document, compute_styles, constants::STYLE_BYTES, parse};
 
 /** Styles `markup` with one sheet. */
 fn styled(markup: &str, sheet: &str) -> Document {
@@ -63,4 +63,34 @@ fn is_subject_masks_only_its_arguments() {
     );
     assert!(!actionable(&document, "inside"));
     assert!(actionable(&document, "outside"));
+}
+
+/** Airbnb: a rule whose selector has a compound starting with a digit (`.a 744`) is invalid, so
+Blink drops it silently; it must not mask the page, and its `position` cannot hide anything. */
+#[test]
+fn a_selector_starting_with_a_digit_is_invalid_and_masks_nothing() {
+    let document = styled(
+        "<a id=link href=#>Where</a><input id=where>",
+        ".atm_mk_stnw88 744{position:absolute}",
+    );
+    assert!(actionable(&document, "link"));
+    assert!(actionable(&document, "where"));
+    assert!(document.formatting.body.style.interactive);
+    assert!(!document.formatting.agent_untrusted);
+}
+
+/** Airbnb ships about 1.8 MB of CSS, and a sheet past the byte allowance keeps only its hiding
+rules: plain declarations there never make a link or an input unclickable, and the page stays
+trusted, however many such sheets it links. */
+#[test]
+fn links_and_inputs_stay_actionable_past_the_style_byte_allowance() {
+    let big = ".x{color:blue}".repeat(STYLE_BYTES / ".x{color:blue}".len() + 1);
+    let document = compute_styles(
+        &parse("<a id=link href=#>Where</a><input id=where>").unwrap(),
+        &[big.clone(), big],
+    )
+    .unwrap();
+    assert!(actionable(&document, "link"));
+    assert!(actionable(&document, "where"));
+    assert!(!document.formatting.agent_untrusted);
 }

@@ -1,5 +1,5 @@
 /** Super-property updates retain one receiver, base and canonical key through conversion, cleanup and suspension. */
-mod common;
+use crate::common;
 
 /** A returned arrow retains the original constructor, new.target, receiver and field initialization. */
 #[test]

@@ -73,13 +73,12 @@ impl Window {
                     .as_ref()
                     .map(|snapshot| &snapshot.inspection)
                     .ok_or_else(|| EngineError::invalid("No visible page."))?;
-                if inspection["tab_id"] != shot.tab_id
-                    || inspection["page_id"] != shot.page_id
-                    || inspection["revision"] != shot.expected_revision
-                    || inspection["layout_generation"] != shot.layout_generation
-                {
+                // The frame on screen is what a screenshot shows. A page that kept changing since the
+                // caller looked is still that page, so the capture is of its presented frame and the
+                // reply says which revision that was; only a different page is refused.
+                if inspection["tab_id"] != shot.tab_id || inspection["page_id"] != shot.page_id {
                     return Err(EngineError::invalid(
-                        "Screenshot targets a stale visible page or layout.",
+                        "Screenshot targets a page that is no longer visible.",
                     ));
                 }
                 if !self.capture.granted() {
@@ -88,7 +87,12 @@ impl Window {
                     authority::lock(&self.broker.authority)?
                         .validate_tab(permit, crate::runtime::tab_key(&shot.tab_id)?)?;
                 }
-                self.capture.save(&self.mars.root, inspection)
+                let timed = std::time::Instant::now();
+                let mut captured = self.capture.save(&self.mars.root, inspection)?;
+                crate::runtime::perf::record("ui.capture", timed, String::new);
+                captured["requested_revision"] = json!(shot.expected_revision);
+                captured["requested_layout_generation"] = json!(shot.layout_generation);
+                Ok(captured)
             }
             "window.resize" => {
                 let size: Resize = parameters(request.params)?;

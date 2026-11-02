@@ -7,7 +7,8 @@ use crate::protocol::{
 use crate::{network, v9};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Write};
+use std::sync::mpsc::{Receiver, SyncSender};
 
 /** Private dispatch never shares the public agent operation table. */
 type Handler = fn(Value) -> EngineResult<Value>;
@@ -34,51 +35,232 @@ pub fn run_service(name: &str) -> EngineResult<()> {
     })
 }
 
+/** Reader adapter turning channel message frames into a byte stream; typed jobs that arrive
+between frames run here, on the engine's thread, and answer through their own channel. */
+struct ChannelReader {
+    receiver: Receiver<super::supervisor::Inbound>,
+    /** Set when the owning service drops: the thread exits though senders remain. */
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    current: Cursor<Vec<u8>>,
+}
+
+impl ChannelReader {
+    /** Creates a new reader connected to the request receiver. */
+    fn new(
+        receiver: Receiver<super::supervisor::Inbound>,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            receiver,
+            stop,
+            current: Cursor::new(Vec::new()),
+        }
+    }
+
+    /** Refills the internal buffer with the next frame from the channel. */
+    fn refill(&mut self) -> io::Result<bool> {
+        use std::sync::mpsc::RecvTimeoutError;
+        loop {
+            if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                return Ok(false);
+            }
+            match self.receiver.recv_timeout(crate::constants::RPC_POLL) {
+                Ok(super::supervisor::Inbound::Frame(frame)) => {
+                    self.current = Cursor::new(frame);
+                    return Ok(true);
+                }
+                Ok(super::supervisor::Inbound::Job(job)) => run_job(job),
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => return Ok(false),
+            }
+        }
+    }
+}
+
+/** A job that panics drops its answer channel, so its caller sees a failed service call
+instead of this engine thread dying with it. */
+fn run_job(job: super::supervisor::Job) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+}
+
+impl io::Read for ChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self
+            .current
+            .get_ref()
+            .len()
+            .saturating_sub(self.current.position() as usize);
+        if available == 0 && !self.refill()? {
+            return Ok(0);
+        }
+        self.current.read(buf)
+    }
+}
+
+impl io::BufRead for ChannelReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let available = self
+            .current
+            .get_ref()
+            .len()
+            .saturating_sub(self.current.position() as usize);
+        if available == 0 && !self.refill()? {
+            return Ok(&[]);
+        }
+        self.current.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.current.consume(amt);
+    }
+}
+
+/** Writer adapter forwarding buffered reply frames into a sync channel. */
+struct ChannelWriter {
+    sender: SyncSender<EngineResult<Vec<u8>>>,
+    buffer: Vec<u8>,
+}
+
+impl ChannelWriter {
+    /** Creates a new writer connected to the reply channel. */
+    fn new(sender: SyncSender<EngineResult<Vec<u8>>>) -> Self {
+        Self {
+            sender,
+            buffer: Vec::new(),
+        }
+    }
+}
+
+impl io::Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        let frame = std::mem::take(&mut self.buffer);
+        self.sender
+            .send(Ok(frame))
+            .map_err(|err| io::Error::new(io::ErrorKind::BrokenPipe, err))
+    }
+}
+
 /** Reads framed requests until the owner's pipe closes, answering each in order. */
 fn serve(name: &str) -> EngineResult<()> {
     let _owner = super::lifetime::OwnerWatch::start()?;
+    serve_stream(name, BufReader::new(io::stdin()), io::stdout())
+}
+
+/** Run an in-process engine worker servicing requests over memory channels. */
+pub(super) fn serve_in_process(
+    name: &str,
+    requests: Receiver<super::supervisor::Inbound>,
+    replies: SyncSender<EngineResult<Vec<u8>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> EngineResult<()> {
+    let reader = ChannelReader::new(requests, stop);
+    let writer = ChannelWriter::new(replies);
+    serve_stream(name, reader, writer)
+}
+
+/** Dispatches a single network request token preparation. */
+fn prepare_network_token(
+    frame: &[u8],
+    id: &str,
+    prepared: &mut Option<(u64, network::Prepared)>,
+    sequence: &mut u64,
+) -> EngineResult<Vec<u8>> {
+    prepared.take();
+    *sequence = sequence.saturating_add(1);
+    let current_seq = *sequence;
+    value_request(frame)
+        .and_then(prepare)
+        .map(|connection| {
+            *prepared = Some((current_seq, connection));
+            json!({"token": current_seq})
+        })
+        .and_then(|result| encode_reply(id, &result))
+}
+
+/** Dispatches a network transmit operation against an active prepared connection. */
+fn transmit_network_token(
+    frame: &[u8],
+    id: &str,
+    prepared: &mut Option<(u64, network::Prepared)>,
+) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Transmit| {
+        prepared
+            .take()
+            .filter(|(token, _)| *token == input.token)
+            .ok_or_else(|| EngineError::invalid("Prepared request token expired or was consumed."))
+            .and_then(|(_, connection)| connection.transmit())
+    })
+}
+
+/** Dispatches one request frame to the appropriate engine service handler. */
+fn dispatch_service_frame(
+    name: &str,
+    head: &RequestHead,
+    frame: &[u8],
+    prepared: &mut Option<(u64, network::Prepared)>,
+    sequence: &mut u64,
+    input: &mut (dyn BufRead + Send),
+    output: &mut (dyn Write + Send),
+) -> EngineResult<Vec<u8>> {
+    if name == "network" && head.op == "network.prepare" {
+        prepare_network_token(frame, &head.id, prepared, sequence)
+    } else if name == "network" && head.op == "network.transmit" {
+        transmit_network_token(frame, &head.id, prepared)
+    } else if name == "v9" && head.op == "v9.worker" {
+        let imports = super::worker_io::Pipe::new(&head.id, input, output);
+        typed(frame, &head.id, |call| run_page_host(call, Some(&imports)))
+    } else {
+        dispatch(name, &head.op, &head.id, frame)
+    }
+}
+
+/** Writes a framed reply (or encoded error response) to the output stream. */
+fn write_service_reply(
+    output: &mut (dyn Write + Send),
+    head_id: Option<String>,
+    reply: EngineResult<Vec<u8>>,
+) -> EngineResult<()> {
+    let bytes = match reply {
+        Ok(bytes) => bytes,
+        Err(error) => encode(&Response::new(head_id, Err(error)))?,
+    };
+    output.write_all(&bytes).map_err(closed)?;
+    output.flush().map_err(closed)
+}
+
+/** Reads framed requests until stream closes, answering each in order. */
+pub(super) fn serve_stream(
+    name: &str,
+    mut input: impl BufRead + Send,
+    mut output: impl Write + Send,
+) -> EngineResult<()> {
     if !["network", "document", "v9"].contains(&name) {
         return Err(EngineError::invalid("Unknown engine service."));
     }
-    let mut input = BufReader::new(io::stdin());
-    let mut output = io::stdout();
     let mut prepared: Option<(u64, network::Prepared)> = None;
     let mut sequence = 0_u64;
     while let Some(frame) = read_frame(&mut input)? {
         let head: RequestHead = decode(&frame)?;
         head.validate()?;
-        let reply = if name == "network" && head.op == "network.prepare" {
-            prepared.take();
-            sequence = sequence.saturating_add(1);
-            value_request(&frame)
-                .and_then(prepare)
-                .map(|connection| {
-                    prepared = Some((sequence, connection));
-                    json!({"token":sequence})
-                })
-                .and_then(|result| encode_reply(&head.id, &result))
-        } else if name == "network" && head.op == "network.transmit" {
-            typed(&frame, &head.id, |input: Transmit| {
-                prepared
-                    .take()
-                    .filter(|(token, _)| *token == input.token)
-                    .ok_or_else(|| {
-                        EngineError::invalid("Prepared request token expired or was consumed.")
-                    })
-                    .and_then(|(_, connection)| connection.transmit())
-            })
-        } else if name == "v9" && head.op == "v9.worker" {
-            let imports = super::worker_io::Pipe::new(&head.id, &mut input, &mut output);
-            typed(&frame, &head.id, |call| run_page_host(call, Some(&imports)))
-        } else {
-            dispatch(name, &head.op, &head.id, &frame)
-        };
-        let bytes = match reply {
-            Ok(bytes) => bytes,
-            Err(error) => encode(&Response::new(Some(head.id), Err(error)))?,
-        };
-        output.write_all(&bytes).map_err(closed)?;
-        output.flush().map_err(closed)?;
+        let head_id = head.id.clone();
+        let reply = dispatch_service_frame(
+            name,
+            &head,
+            &frame,
+            &mut prepared,
+            &mut sequence,
+            &mut input,
+            &mut output,
+        );
+        write_service_reply(&mut output, Some(head_id), reply)?;
     }
     Ok(())
 }
@@ -114,8 +296,15 @@ fn dispatch(name: &str, op: &str, id: &str, frame: &[u8]) -> EngineResult<Vec<u8
         ("document", "document.styles", styles),
         ("document", "document.frame_styles", frame_styles),
         ("document", "document.frame_render", frame_render),
+        ("document", "document.layout", layout),
+        ("document", "document.value", value),
         ("v9", "v9.page", page),
         ("v9", "v9.devtools", devtools),
+        ("v9", "v9.execute", execute),
+        ("v9", "v9.load", load),
+        ("v9", "v9.event", event),
+        ("v9", "v9.document_load", document_load),
+        ("v9", "v9.document_click", document_click),
     ];
     if let Some((_, _, handler)) = typed_handlers
         .iter()
@@ -137,13 +326,7 @@ fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
         ("network", "network.fetch", fetch),
         ("network", "network.web_fetch", web_fetch),
         ("network", "network.cache_clear", cache_clear),
-        ("document", "document.layout", layout),
-        ("document", "document.value", value),
-        ("v9", "v9.execute", execute),
-        ("v9", "v9.load", load),
-        ("v9", "v9.event", event),
-        ("v9", "v9.document_load", document_load),
-        ("v9", "v9.document_click", document_click),
+        ("network", "network.cache_forget", cache_forget),
     ];
     let handler = handlers
         .iter()
@@ -157,6 +340,13 @@ fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+/** URLs whose cached copies another network process made stale. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Forget {
+    /** Absolute URLs without fragments, as Relay keys them. */
+    urls: Vec<String>,
+}
 /** Only the network owner receives an outbound URL. */
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -289,13 +479,13 @@ fn frame_styles(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
         document::compute_frame_styles(&input.document, &input.sheets, context)
     })
 }
-/** A frame's document laid out in its content box, unscrolled. */
+/** A frame's document laid out in its content box, its scroll containers at `scroll`. */
 fn frame_render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
     typed(frame, id, |input: Render| {
         let context = input
             .context
             .ok_or_else(|| EngineError::invalid("A frame needs its viewport."))?;
-        document::render_frame(&input.document, context)
+        document::render_frame_scrolled(&input.document, context, &input.scroll)
     })
 }
 /** Input editing does not reinterpret its value as source. */
@@ -430,7 +620,7 @@ struct PageCall {
 /** The V9 page entry points, one per lifecycle step. */
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum PageAction {
+pub(super) enum PageAction {
     /** Run the page's scripts, each rolled back alone on failure. */
     Load,
     /** Fire DOMContentLoaded or load. */
@@ -440,6 +630,14 @@ enum PageAction {
     /** A person typed into a field the document already updated; None hides a secret value. */
     Input {
         target: usize,
+        #[serde(default)]
+        value: Option<String>,
+    },
+    /** Typed strokes into one field, each delivered as a person's keyboard would; `value` is the
+    field's text, absent for a secret field whose text never enters the engine. */
+    Typed {
+        target: usize,
+        strokes: Vec<v9::Stroke>,
         #[serde(default)]
         value: Option<String>,
     },
@@ -453,6 +651,8 @@ enum PageAction {
     Timers { now_ms: f64, budget: usize },
     /** Sample layout and deliver intersection records without firing unrelated author timers. */
     Observe,
+    /** The viewport changed while the page was idle: media query listeners hear it. */
+    Media,
     /** Fresh layout resumes a depth-gated resize cycle; complete ends it at the host deadline. */
     Resize { complete: bool },
     /** Hand back responses to the page's requests. */
@@ -535,6 +735,7 @@ fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
         host: &host,
         environment: &call.environment,
         modules: &modules,
+        module_keys: &[],
     };
     let state = match call.state {
         Some(state) => Some(state),
@@ -594,6 +795,7 @@ fn run_page_host(
         host: &host,
         environment: &call.environment,
         modules: &modules,
+        module_keys: &[],
     };
     let state = || match (&call.state, call.base) {
         (Some(state), _) => Ok(state.clone()),
@@ -602,25 +804,264 @@ fn run_page_host(
             "This V9 page step needs committed state.",
         )),
     };
-    let mut execution = match call.action {
-        PageAction::Load if imports.is_some() => v9::load_worker(input),
-        PageAction::Load => v9::load_page(input),
-        PageAction::Event { event } => v9::page_event(input, state()?, event),
-        PageAction::Click { target } => v9::click_page(input, state()?, target),
-        PageAction::Input { target, value } => v9::input_page(input, state()?, target, value),
-        PageAction::Keyboard { key, target } => v9::keyboard_page(input, state()?, key, target),
-        PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
-        PageAction::Observe => v9::observe_page(input, state()?),
-        PageAction::Resize { complete } => v9::continue_resize_observers(input, state()?, complete),
-        PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
-        PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
-        PageAction::Modules if imports.is_some() => v9::resume_worker_modules(input, state()?),
-        PageAction::Modules => v9::load_modules(input, state()?),
-    }?;
+    let mut execution = run_action(call.action, input, state, imports.is_some())?;
     if call.resident {
         keep_resident(&mut execution, call.base, call.keep);
     }
     Ok(execution)
+}
+
+/** Run one lifecycle action against the input, taking committed state only when it needs it. */
+fn run_action(
+    action: PageAction,
+    input: v9::PageInput<'_>,
+    state: impl FnOnce() -> EngineResult<v9::VmState>,
+    worker: bool,
+) -> EngineResult<v9::Execution> {
+    match action {
+        PageAction::Load if worker => v9::load_worker(input),
+        PageAction::Load => v9::load_page(input),
+        PageAction::Event { event } => v9::page_event(input, state()?, event),
+        PageAction::Click { target } => v9::click_page(input, state()?, target),
+        PageAction::Input { target, value } => v9::input_page(input, state()?, target, value),
+        PageAction::Typed {
+            target,
+            strokes,
+            value,
+        } => v9::typed_page(input, state()?, target, strokes, value),
+        PageAction::Keyboard { key, target } => v9::keyboard_page(input, state()?, key, target),
+        PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
+        PageAction::Observe => v9::observe_page(input, state()?),
+        PageAction::Media => v9::report_media(input, state()?),
+        PageAction::Resize { complete } => v9::continue_resize_observers(input, state()?, complete),
+        PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
+        PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
+        PageAction::Modules if worker => v9::resume_worker_modules(input, state()?),
+        PageAction::Modules => v9::load_modules(input, state()?),
+    }
+}
+
+/**
+ * A page step handed over in process as owned values: the scripts and modules are shared with
+ * the coordinator rather than copied, encoded or hashed, and the state lives here under its
+ * token exactly as a framed resident step's does.
+ */
+pub(super) struct TypedPage {
+    /** The page's classic scripts with their code-cache keys, computed once per script list. */
+    pub sources: std::sync::Arc<ResidentSources>,
+    /** Module scripts, import maps and fetched modules. */
+    pub modules: std::sync::Arc<v9::ModuleInput>,
+    /** Each module source's key, aligned with `modules.sources`, so V9 does not hash them. */
+    pub module_keys: std::sync::Arc<Vec<v9::SourceKey>>,
+    /** The step's projection of the candidate document. */
+    pub document: document::ScriptDocument,
+    /** Origin storage candidates. */
+    pub storage: v9::StorageState,
+    /** Preferred languages for navigator.languages. */
+    pub languages: Vec<String>,
+    /** URL, viewport, clock, geometry and the facts the page sees. */
+    pub environment: v9::PageEnvironment,
+    /** Every page-owned lease this process may keep states for. */
+    pub resident_contexts: Vec<String>,
+    /** The resident state the step starts from; none for a first load. */
+    pub base: Option<u64>,
+    /** The committed state kept beside `base` for an abort. */
+    pub keep: Option<u64>,
+    /** What to run. */
+    pub action: PageAction,
+}
+
+/** One typed page step on this engine thread, on V9's own stack, kept resident. */
+pub(super) fn run_typed_page(call: TypedPage) -> EngineResult<v9::Execution> {
+    admit_resident(
+        &call.document.identity,
+        Some(&call.resident_contexts),
+        call.base,
+        call.keep,
+    )?;
+    let (call, live) = live_action(call);
+    if let Some(action) = live {
+        return run_live_page(call, action);
+    }
+    let host = v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
+        languages: &call.languages,
+        fragments: &document::DomFragments,
+    };
+    let input = v9::PageInput {
+        sources: &call.sources.texts,
+        source_keys: &call.sources.keys,
+        document: call.document,
+        storage: call.storage,
+        host: &host,
+        environment: &call.environment,
+        modules: &call.modules,
+        module_keys: call.module_keys.as_slice(),
+    };
+    let base = call.base;
+    let state = || {
+        base.map_or_else(
+            || {
+                Err(EngineError::invalid(
+                    "This V9 page step needs committed state.",
+                ))
+            },
+            resident_state,
+        )
+    };
+    let mut execution = run_action(call.action, input, state, false)?;
+    keep_resident(&mut execution, call.base, call.keep);
+    Ok(execution)
+}
+
+/// `MARS_V9_LIVE=0` sends every task down the resident path during the live realm's rollout.
+const LIVE_SWITCH: &str = "MARS_V9_LIVE";
+
+/** Whether tasks run on live realms, read once per process. */
+fn live_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var(LIVE_SWITCH).map_or(true, |value| value != "0"))
+}
+
+/** The task a live realm runs for an action, or the call back when the action (a load, a
+module continuation) takes the consuming path; the task after it restores a realm once. */
+fn live_action(mut call: TypedPage) -> (TypedPage, Option<v9::LiveAction>) {
+    if !live_enabled() || call.base.is_none() {
+        return (call, None);
+    }
+    let action = std::mem::replace(&mut call.action, PageAction::Load);
+    let live = match action {
+        PageAction::Event { event } => v9::LiveAction::Event(event),
+        PageAction::Click { target } => v9::LiveAction::Click { target },
+        PageAction::Input { target, value } => v9::LiveAction::Input { target, value },
+        PageAction::Typed {
+            target,
+            strokes,
+            value,
+        } => v9::LiveAction::Typed {
+            target,
+            strokes,
+            value,
+        },
+        PageAction::Keyboard { key, target } => v9::LiveAction::Keyboard { key, target },
+        PageAction::Timers { now_ms, budget } => v9::LiveAction::Timers { now_ms, budget },
+        PageAction::Observe => v9::LiveAction::Observe,
+        PageAction::Media => v9::LiveAction::Media,
+        PageAction::Resize { complete } => v9::LiveAction::Resize { complete },
+        PageAction::Resume { responses } => v9::LiveAction::Resume(responses),
+        PageAction::Images { responses } => v9::LiveAction::Images(responses),
+        other @ (PageAction::Load | PageAction::Modules) => {
+            call.action = other;
+            return (call, None);
+        }
+    };
+    (call, Some(live))
+}
+
+/**
+ * One task on the page's live realm: the realm kept under the task's base runs it in place;
+ * any other base restores a realm from the kept state as a resident step built its VM. The
+ * outcome is kept resident under a new token exactly as before, so `keep` and rollback are
+ * unchanged, and the realm is kept for the next task under that token. A task that fails
+ * drops the realm; the next task restores it from the kept state.
+ */
+fn run_live_page(call: TypedPage, action: v9::LiveAction) -> EngineResult<v9::Execution> {
+    let base = call
+        .base
+        .ok_or_else(|| EngineError::invalid("This V9 page step needs committed state."))?;
+    let host = live_host(&call.languages)?;
+    let identity = call.document.identity.clone();
+    let input = v9::LiveInput {
+        sources: &call.sources.texts,
+        source_keys: &call.sources.keys,
+        module_keys: call.module_keys.as_slice(),
+        document: call.document,
+        storage: call.storage,
+        host,
+        environment: &call.environment,
+        modules: &call.modules,
+    };
+    let mut realm = match take_session(&identity, base) {
+        Some(realm) => realm,
+        None => v9::LiveVm::restore(&input, resident_state(base)?)?,
+    };
+    let mut execution = realm.run(&input, action)?;
+    keep_resident(&mut execution, call.base, call.keep);
+    if let Some(token) = execution.state_token {
+        keep_session(identity, token, realm);
+    }
+    Ok(execution)
+}
+
+/** A live realm with its page identity and the token its state stands at. */
+struct Session {
+    identity: String,
+    token: u64,
+    realm: v9::LiveVm,
+}
+
+thread_local! {
+    /** Live realms, most recently used first; at most one per page identity. */
+    static SESSIONS: std::cell::RefCell<std::collections::VecDeque<Session>> = Default::default();
+}
+
+/** The page's realm when it stands at `base`; a realm at another token is dropped, since the
+task restores from the kept state and the stale realm would only hold memory. */
+fn take_session(identity: &str, base: u64) -> Option<v9::LiveVm> {
+    SESSIONS.with_borrow_mut(|sessions| {
+        let index = sessions
+            .iter()
+            .position(|session| session.identity == identity)?;
+        let session = sessions.remove(index)?;
+        (session.token == base).then_some(session.realm)
+    })
+}
+
+/** Keep the realm for the page's next task, within the resident page bound. */
+fn keep_session(identity: String, token: u64, realm: v9::LiveVm) {
+    SESSIONS.with_borrow_mut(|sessions| {
+        sessions.retain(|session| session.identity != identity);
+        sessions.push_front(Session {
+            identity,
+            token,
+            realm,
+        });
+        sessions.truncate(RESIDENT_PAGES);
+    });
+}
+
+/** Drop the realms of pages no longer leased, beside their kept states. */
+fn retain_sessions(contexts: &[String]) {
+    SESSIONS.with_borrow_mut(|sessions| {
+        sessions.retain(|session| contexts.contains(&session.identity));
+    });
+}
+
+/// Hosts a live realm borrows for its whole life: one per distinct language list, leaked once
+/// and shared, since a process sees a handful of language settings; past LIVE_HOSTS the task
+/// takes the resident path instead of leaking more.
+const LIVE_HOSTS: usize = 16;
+
+/** The static host for `languages`. */
+fn live_host(languages: &[String]) -> EngineResult<&'static v9::DocumentHost<'static>> {
+    static HOSTS: std::sync::Mutex<Vec<&'static v9::DocumentHost<'static>>> =
+        std::sync::Mutex::new(Vec::new());
+    let mut hosts = HOSTS.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(host) = hosts.iter().find(|host| host.languages == languages) {
+        return Ok(host);
+    }
+    if hosts.len() >= LIVE_HOSTS {
+        return Err(EngineError::limit("live realm hosts", LIVE_HOSTS));
+    }
+    let host: &'static v9::DocumentHost<'static> = Box::leak(Box::new(v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
+        languages: Box::leak(languages.to_vec().into_boxed_slice()),
+        fragments: &document::DomFragments,
+    }));
+    hosts.push(host);
+    Ok(host)
 }
 
 /// Pages whose states this process keeps between steps. Each keeps only its committed state,
@@ -703,6 +1144,7 @@ fn admit_resident(
             }
         }
         pages.retain(|page| contexts.contains(&page.identity));
+        retain_sessions(contexts);
         Ok(())
     })
 }
@@ -755,6 +1197,10 @@ fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<
     let token = NEXT_TOKEN.get();
     NEXT_TOKEN.set(token.wrapping_add(1));
     let state = std::mem::take(&mut execution.state);
+    super::supervisor::perf::record("v9.allocations", std::time::Instant::now(), || {
+        let [objects, functions, environments, bindings] = state.allocation_counts();
+        format!("{objects}\t{functions}\t{environments}\t{bindings}")
+    });
     execution.state = state.summary();
     execution.state_token = Some(token);
     let identity = match state.identity() {
@@ -798,7 +1244,7 @@ pub(super) struct ResidentSources {
 
 impl ResidentSources {
     /** Sources with their keys. */
-    fn new(texts: Vec<String>) -> Self {
+    pub(super) fn new(texts: Vec<String>) -> Self {
         let keys = texts.iter().map(|text| v9::source_key(text)).collect();
         Self { texts, keys }
     }
@@ -949,6 +1395,18 @@ fn cache_clear(params: Value) -> EngineResult<Value> {
     network::clear_cache();
     Ok(json!({"cleared":true}))
 }
+/** Drops this process's cached copies of URLs an unsafe request in another network process
+changed (page fetches run on the loader's own processes, each with its own memory cache). */
+fn cache_forget(params: Value) -> EngineResult<Value> {
+    let input: Forget = parameters(params)?;
+    if input.urls.len() > FORGET_URLS {
+        return Err(EngineError::limit("forgotten URLs", FORGET_URLS));
+    }
+    network::forget(&input.urls);
+    Ok(json!({"forgotten":true}))
+}
+/** URLs one `network.cache_forget` may name: an unsafe request changes one resource. */
+const FORGET_URLS: usize = 16;
 /** Fetches a bounded batch concurrently through Relay's ordinary prepare and transmit path. GETs
 only (Relay refuses others per request); redirects come back unfollowed. */
 fn fetch_batch(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
@@ -991,11 +1449,12 @@ fn apply(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
         document::apply_script_changes(&applied, &input.script_changes)
     })
 }
-/** Legacy abstract geometry remains available to headless clients. */
-fn layout(params: Value) -> EngineResult<Value> {
-    let input: Snapshot = parameters(params)?;
-    document::validate_content(&input.document)?;
-    serialize(document::layout(&input.document))
+/** Legacy abstract geometry remains available to headless clients without intermediate JSON trees. */
+fn layout(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Snapshot| {
+        document::validate_content(&input.document)?;
+        Ok(document::layout(&input.document))
+    })
 }
 /** Native point layout is computed once, independently of the window. */
 fn render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
@@ -1014,60 +1473,57 @@ fn run_render(input: Render) -> EngineResult<document::DisplayList> {
     }
     document::render_scrolled(&input.document, context, &input.scroll)
 }
-/** Type actions and human input use the same literal-value validator. */
-fn value(params: Value) -> EngineResult<Value> {
-    let input: SetValue = parameters(params)?;
-    serialize(document::set_value(
-        &input.document,
-        input.local_id,
-        &input.value,
-    )?)
+/** Type actions and human input apply literal values directly from decoded parameters. */
+fn value(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: SetValue| {
+        document::set_value(&input.document, input.local_id, &input.value)
+    })
 }
-/** Legacy execution delegates to the same owned interpreter. */
-fn execute(params: Value) -> EngineResult<Value> {
-    serialize(v9::execute(&parameters::<Execute>(params)?.source)?)
+/** Legacy execution evaluates source directly without intermediate JSON allocation. */
+fn execute(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Execute| v9::execute(&input.source))
 }
-/** Load-time globals become explicit serializable VM state. */
-fn load(params: Value) -> EngineResult<Value> {
-    let input: Load = parameters(params)?;
-    serialize(v9::load_scripts_with_storage(
-        &input.sources,
-        &input.inputs,
-        input.storage,
-    )?)
+/** Load-time scripts initialize VM state straight from typed frame parameters. */
+fn load(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Load| {
+        v9::load_scripts_with_storage(&input.sources, &input.inputs, input.storage)
+    })
 }
-/** No event can obtain an agent transport or native OS callback. */
-fn event(params: Value) -> EngineResult<Value> {
-    let input: Event = parameters(params)?;
-    serialize(v9::event_scripts_with_storage(
-        &input.sources,
-        &input.handler,
-        input.state,
-        &input.inputs,
-        input.storage,
-    )?)
+/** Event handlers execute under committed state straight from typed request frames. */
+fn event(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Event| {
+        v9::event_scripts_with_storage(
+            &input.sources,
+            &input.handler,
+            input.state,
+            &input.inputs,
+            input.storage,
+        )
+    })
 }
-/** Projected state is initialized even when a page has no classic scripts. */
-fn document_load(params: Value) -> EngineResult<Value> {
-    let input: DocumentLoad = parameters(params)?;
-    serialize(v9::load_document_scripts_with(
-        &input.sources,
-        input.document,
-        input.storage,
-        &host(&input.languages),
-    )?)
+/** Document scripts load into transactional VM state directly from typed frames. */
+fn document_load(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: DocumentLoad| {
+        v9::load_document_scripts_with(
+            &input.sources,
+            input.document,
+            input.storage,
+            &host(&input.languages),
+        )
+    })
 }
-/** Inline source and registered listeners execute together under the V9 transaction. */
-fn document_click(params: Value) -> EngineResult<Value> {
-    let input: DocumentClick = parameters(params)?;
-    serialize(v9::click_document_scripts_with(
-        &input.sources,
-        input.target,
-        input.state,
-        input.document,
-        input.storage,
-        &host(&input.languages),
-    )?)
+/** Document click handlers execute under transactional state directly from typed frames. */
+fn document_click(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: DocumentClick| {
+        v9::click_document_scripts_with(
+            &input.sources,
+            input.target,
+            input.state,
+            input.document,
+            input.storage,
+            &host(&input.languages),
+        )
+    })
 }
 
 /** Eye's pure fragment parser runs inside the V9 process; parsing grants no authority. */
@@ -1109,6 +1565,73 @@ mod tests {
         let mut execution = execution(identity);
         keep_resident(&mut execution, base, keep);
         execution.state_token.unwrap()
+    }
+
+    /** A typed page call over an empty page `identity`, from `base`, keeping `keep`. */
+    fn typed_call(
+        identity: &str,
+        base: Option<u64>,
+        keep: Option<u64>,
+        action: super::PageAction,
+    ) -> super::TypedPage {
+        let document: crate::document::ScriptDocument =
+            serde_json::from_value(json!({"identity": identity, "nodes": []})).unwrap();
+        super::TypedPage {
+            sources: std::sync::Arc::new(super::ResidentSources::new(Vec::new())),
+            modules: std::sync::Arc::new(v9::ModuleInput::default()),
+            module_keys: std::sync::Arc::new(Vec::new()),
+            document,
+            storage: v9::StorageState::default(),
+            languages: vec!["en".into()],
+            environment: v9::PageEnvironment::default(),
+            resident_contexts: vec![identity.to_string()],
+            base,
+            keep,
+            action,
+        }
+    }
+
+    /** A timers task at the virtual clock's start. */
+    fn timers() -> super::PageAction {
+        super::PageAction::Timers {
+            now_ms: 0.0,
+            budget: 1,
+        }
+    }
+
+    /** On the executor thread, a task on the live token keeps its realm for the next task, a
+    task naming another token restores from the kept state and replaces the realm, and tokens
+    advance either way; the committed token is kept throughout, as the app keeps it. */
+    #[test]
+    fn live_realm_runs_in_place_and_restores_from_other_tokens() {
+        v9::spawn_execution_thread("test-live".into(), || {
+            super::admit_resident("live", Some(&["live".to_string()]), None, None).unwrap();
+            let committed = kept("live", None, None);
+            let keep = Some(committed);
+            let run = |base: u64| {
+                super::run_typed_page(typed_call("live", Some(base), keep, timers()))
+                    .unwrap()
+                    .state_token
+                    .unwrap()
+            };
+            let first = run(committed);
+            assert!(
+                super::take_session("live", first).is_some(),
+                "realm kept at its token"
+            );
+            let second = run(first);
+            assert_ne!(first, second);
+            let third = run(committed);
+            assert!(
+                super::take_session("live", third).is_some(),
+                "the rollback's realm is kept"
+            );
+            assert!(super::take_session("live", third).is_none(), "taken once");
+            assert!(resident_state(third).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
     }
 
     /** A step's state stays in the process under its token; the reply carries the token. */

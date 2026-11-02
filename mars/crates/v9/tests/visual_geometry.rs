@@ -1,5 +1,5 @@
 /** DOM visual geometry uses native transforms while offset and client measurements keep raw layout sizes. */
-mod common;
+use crate::common;
 use mars_v9::{NodeBox, PageEnvironment};
 
 /** One visible native paragraph with explicit raw layout data. */
@@ -131,4 +131,29 @@ fn degenerate_or_nonfinite_quads_cannot_claim_a_hit() {
             "null"
         );
     }
+}
+
+/** Excluding a pointer target must not discard its dimensions or hide the box underneath. */
+#[test]
+fn pointer_excluded_boxes_keep_measurements_but_never_appear_in_hits() {
+    let mut environment = environment(NodeBox {
+        node: 0,
+        width: 200.0,
+        height: 100.0,
+        ..NodeBox::default()
+    });
+    environment.geometry.push(NodeBox {
+        node: 1,
+        width: 200.0,
+        height: 100.0,
+        pointer_excluded: true,
+        ..NodeBox::default()
+    });
+    assert_eq!(
+        value(
+            "const n=document.getElementById('first');const r=[n.getBoundingClientRect().width,n.offsetHeight,document.elementFromPoint(50,50).id,document.elementsFromPoint(50,50).map(n=>n.id||n.tagName).join(',')].join('|');",
+            &environment
+        ),
+        "200|100|main|main,BODY,HTML"
+    );
 }

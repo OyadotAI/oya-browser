@@ -63,6 +63,11 @@ fn clone(
     if super::conformance_host_object(vm, value) {
         return Err(uncloneable(vm, "A native test object"));
     }
+    if let Some(copy) = crate::v9::platform::blob::clone_blob(vm, value)? {
+        let copy = JsValue::Object(copy);
+        memo.push((id, copy.clone()));
+        return Ok(copy);
+    }
     let class = vm
         .string_data(id)
         .map(Class::String)

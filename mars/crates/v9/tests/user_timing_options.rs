@@ -1,6 +1,6 @@
 /** User Timing 3 options: Google's inline bootstrap calls `performance.mark(name, {startTime})`,
 and when V9 refused it, the scripts after it failed on the helpers it defines. */
-mod common;
+use crate::common;
 
 /** A mark takes its startTime and detail from the options; detail defaults to null. */
 #[test]
@@ -25,4 +25,21 @@ fn measure_options_resolve_marks_numbers_and_duration() {
         const c=performance.measure('c',{end:40,duration:15,detail:'d'});\
         const r=[a.startTime,a.duration,b.startTime,b.duration,c.startTime,c.duration,c.detail].join();";
     assert_eq!(common::eval(source, "r"), "10,20,5,7,25,15,d");
+}
+
+/** A measure may start from `navigationStart`, a PerformanceTiming attribute, as Next.js does: it
+resolves to the time origin, so the measure starts at 0 and is recorded. */
+#[test]
+fn measure_accepts_a_timing_attribute_name_as_its_start() {
+    let source = "performance.mark('late');\
+        const m=performance.measure('from-navigation','navigationStart','late');\
+        const r=[m.startTime,m.entryType,performance.getEntriesByName('from-navigation').length].join();";
+    assert_eq!(common::eval(source, "r"), "0,measure,1");
+}
+
+/** A name that is neither a mark nor a timing attribute still throws, so a missing mark is not hidden. */
+#[test]
+fn a_measure_from_an_unknown_name_still_throws() {
+    let source = "let r='';try{performance.measure('x','no-such-mark')}catch(e){r=e.message}";
+    assert_eq!(common::eval(source, "r"), "Unknown performance mark");
 }

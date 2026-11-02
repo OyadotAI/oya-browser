@@ -1,5 +1,5 @@
 /** Arguments aliases and descriptor detachment through the public page and retained-state APIs. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Simple sloppy parameters and indexed arguments share a live binding in both directions. */

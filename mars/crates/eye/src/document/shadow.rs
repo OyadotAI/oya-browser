@@ -507,7 +507,7 @@ fn anchor(selector: &str, group: usize) -> Option<String> {
 /// leaves out (an unassigned light child, a shadow root) is hidden and never actionable.
 pub(super) fn restore(document: &Document, styled: Document) -> Document {
     let mut out = document.clone();
-    let styles: HashMap<usize, super::ComputedStyle> = styled
+    let styles: HashMap<usize, super::SharedStyle> = styled
         .nodes
         .into_iter()
         .map(|node| (node.local_id, node.style))

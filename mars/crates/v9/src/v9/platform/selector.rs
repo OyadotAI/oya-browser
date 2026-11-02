@@ -545,10 +545,33 @@ fn compound_matches(
     compound: &Compound,
     scope: Option<usize>,
 ) -> bool {
-    let Some(view) = page.view(node) else {
-        return false;
-    };
-    if view.tag.starts_with('#') {
+    // Tag, id, classes and attributes read the stored node in place: copying its record for
+    // every candidate was most of a querySelector over a large document.
+    let plain = page.with_element(node, |tag, attributes| {
+        if tag.starts_with('#') {
+            return false;
+        }
+        let id = attributes.get("id").map(String::as_str).unwrap_or("");
+        if compound.ids.iter().any(|wanted| wanted != id) {
+            return false;
+        }
+        let classes = attributes.get("class").map(String::as_str).unwrap_or("");
+        if compound.classes.iter().any(|wanted| {
+            !classes
+                .split_ascii_whitespace()
+                .any(|class| class == wanted)
+        }) {
+            return false;
+        }
+        compound.attributes.iter().all(|attribute| {
+            // The engine-only popover marker is never visible to pages.
+            attribute.name != crate::document::POPOVER_OPEN_ATTRIBUTE
+                && attributes
+                    .get(&attribute.name)
+                    .is_some_and(|actual| attribute_matches(attribute, actual))
+        })
+    });
+    if plain != Some(true) {
         return false;
     }
     if let Some(wanted) = compound.tag.as_deref()
@@ -556,30 +579,12 @@ fn compound_matches(
     {
         return false;
     }
-    let id = view.attributes.get("id").map(String::as_str).unwrap_or("");
-    if compound.ids.iter().any(|wanted| wanted != id) {
+    if compound.pseudos.is_empty() {
+        return true;
+    }
+    let Some(view) = page.view(node) else {
         return false;
-    }
-    let classes = view
-        .attributes
-        .get("class")
-        .map(String::as_str)
-        .unwrap_or("");
-    if compound.classes.iter().any(|wanted| {
-        !classes
-            .split_ascii_whitespace()
-            .any(|class| class == wanted)
-    }) {
-        return false;
-    }
-    for attribute in &compound.attributes {
-        let Some(actual) = view.attributes.get(&attribute.name) else {
-            return false;
-        };
-        if !attribute_matches(attribute, actual) {
-            return false;
-        }
-    }
+    };
     compound
         .pseudos
         .iter()
@@ -588,19 +593,32 @@ fn compound_matches(
 
 /** One attribute operator. */
 fn attribute_matches(attribute: &Attribute, actual: &str) -> bool {
-    let (actual, wanted) = if attribute.insensitive {
-        (actual.to_lowercase(), attribute.value.to_lowercase())
-    } else {
-        (actual.to_string(), attribute.value.clone())
-    };
-    match attribute.op {
+    if attribute.op.is_none() {
+        return true;
+    }
+    // Only an `i` flag needs lowered copies; a plain match compares the stored text in place.
+    if attribute.insensitive {
+        let (actual, wanted) = (actual.to_lowercase(), attribute.value.to_lowercase());
+        return operator_matches(attribute.op, &actual, &wanted);
+    }
+    operator_matches(attribute.op, actual, &attribute.value)
+}
+
+/** An attribute selector operator applied to the value as it is to be compared. */
+fn operator_matches(op: Option<char>, actual: &str, wanted: &str) -> bool {
+    match op {
         None => true,
         Some('=') => actual == wanted,
         Some('~') => actual.split_ascii_whitespace().any(|word| word == wanted),
-        Some('|') => actual == wanted || actual.starts_with(&format!("{wanted}-")),
-        Some('^') => !wanted.is_empty() && actual.starts_with(&wanted),
-        Some('$') => !wanted.is_empty() && actual.ends_with(&wanted),
-        Some('*') => !wanted.is_empty() && actual.contains(&wanted),
+        Some('|') => {
+            actual == wanted
+                || actual
+                    .strip_prefix(wanted)
+                    .is_some_and(|rest| rest.starts_with('-'))
+        }
+        Some('^') => !wanted.is_empty() && actual.starts_with(wanted),
+        Some('$') => !wanted.is_empty() && actual.ends_with(wanted),
+        Some('*') => !wanted.is_empty() && actual.contains(wanted),
         _ => false,
     }
 }

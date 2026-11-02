@@ -1,5 +1,5 @@
 /** arcTo bindings preserve their distinct empty-path, radius and coordinate conversion behavior. */
-mod common;
+use crate::common;
 use mars_core::canvas::CanvasHost;
 use mars_v9::DocumentHost;
 

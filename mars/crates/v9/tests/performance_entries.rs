@@ -1,5 +1,5 @@
 /** Performance marks and measures store real timeline entries across serialized page requests. */
-mod common;
+use crate::common;
 
 /** Marks, measures, retrieval and clearing share the same underlying timeline. */
 #[test]

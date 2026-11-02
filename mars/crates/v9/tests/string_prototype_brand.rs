@@ -1,5 +1,5 @@
 /** The canonical String prototype has real empty StringData before and after lazy heap materialization. */
-mod common;
+use crate::common;
 
 /** Every ordinary observation runs through the public library and actual VM. */
 fn result(source: &str) -> String {

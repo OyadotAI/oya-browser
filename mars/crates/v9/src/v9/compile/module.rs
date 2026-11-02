@@ -6,7 +6,6 @@
  */
 use super::*;
 use crate::v9::syntax::{DEFAULT_BINDING, ExportEntry, FuncFlags, ModuleSyntax, Pattern, site_of};
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 /** The hidden parameter holding a module's `import.meta` object. */
@@ -60,10 +59,10 @@ impl Compiler {
             .collect();
         params.push(Pattern::Ident(Name::from(META), pos));
         let body = Func {
-            source_span: std::cell::RefCell::new(None),
+            source_span: crate::v9::syntax::Late::new(None),
             site,
             name: None,
-            display: RefCell::new(Name::from("")),
+            display: crate::v9::syntax::Late::new(Name::from("")),
             params,
             rest: None,
             body: Body::Block(std::mem::take(&mut program.body)),
@@ -80,7 +79,7 @@ impl Compiler {
             syntax,
             bindings: Vec::new(),
         });
-        self.compile_function(&body, false)?;
+        self.compile_now(&body, false)?;
         let scope = self.module.take().expect("module scope");
         Ok((site, link_facts(scope)?))
     }

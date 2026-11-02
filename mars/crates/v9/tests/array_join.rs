@@ -1,5 +1,5 @@
 /** Array.join reports a catchable length error before allocating oversized output. */
-mod common;
+use crate::common;
 
 /** The data-only empty-separator path rejects an oversized result inside JavaScript. */
 #[test]

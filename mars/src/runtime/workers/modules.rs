@@ -38,11 +38,7 @@ impl Graph {
             Vec::new()
         };
         Self {
-            input: ModuleInput {
-                entries,
-                sources,
-                ..ModuleInput::default()
-            },
+            input: ModuleInput { entries, sources },
             pending: Vec::new(),
             credentials: if kind == WorkerType::Classic {
                 WorkerCredentials::SameOrigin

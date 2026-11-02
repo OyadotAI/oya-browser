@@ -1,4 +1,4 @@
-/** Bounded IntersectionObserver dictionaries support viewport roots, px/% margins and thresholds. */
+/** Bounded IntersectionObserver dictionaries: viewport or element roots, px/% margins and thresholds. */
 use super::*;
 
 /** Percentages resolve against the undilated root width for every side, including vertical sides. */
@@ -9,10 +9,23 @@ pub(super) struct Margin {
     pub percent: bool,
 }
 
-/** Unsupported clipping roots and visibility tracking fail explicitly instead of fabricating visibility. */
+/** An element root: its node, and the wrapper the page passed, which the observer keeps alive.
+Lazy-loading lists observe rows against their own scroller (GitHub's file tree); refusing one
+threw inside React's render and the repository page showed "Unable to load page". */
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Root {
+    pub node: usize,
+    pub object: ObjectId,
+}
+
+/** Visibility tracking fails explicitly instead of fabricating visibility. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Options {
+    /// None for the viewport (an omitted, null or Document root).
+    #[serde(default)]
+    pub root: Option<Root>,
     pub margins: [Margin; 4],
     pub thresholds: Vec<f64>,
 }
@@ -44,9 +57,7 @@ pub(super) fn parse(vm: &mut Vm, value: &JsValue) -> Res<Options> {
         return Err(vm.unsupported_error("IntersectionObserver delay is unavailable"));
     }
     let root = member(vm, value, "root")?;
-    if !root.nullish() {
-        return Err(vm.unsupported_error("IntersectionObserver supports only a viewport root"));
-    }
+    let root = root_value(vm, &root)?;
     let margin = member(vm, value, "rootMargin")?;
     let margins = margin_value(vm, margin)?;
     let scroll = member(vm, value, "scrollMargin")?;
@@ -63,9 +74,22 @@ pub(super) fn parse(vm: &mut Vm, value: &JsValue) -> Res<Options> {
         return Err(vm.unsupported_error("IntersectionObserver visibility tracking is unavailable"));
     }
     Ok(Options {
+        root,
         margins,
         thresholds,
     })
+}
+
+/** The root member: None for the viewport (null, omitted or a Document), an Element's node
+otherwise; anything else is the TypeError WebIDL's `(Element or Document)?` conversion raises. */
+fn root_value(vm: &mut Vm, root: &JsValue) -> Res<Option<Root>> {
+    if root.nullish() || matches!(super::events::target_of(vm, root), Some(Target::Document)) {
+        return Ok(None);
+    }
+    match super::element(vm, root) {
+        Ok((node, object)) => Ok(Some(Root { node, object })),
+        Err(_) => Err(vm.type_error("IntersectionObserver root must be an Element or Document")),
+    }
 }
 
 /** Null and omitted dictionaries expose no members. */

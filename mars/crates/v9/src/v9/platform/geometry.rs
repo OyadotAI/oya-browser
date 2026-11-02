@@ -55,6 +55,7 @@ pub(super) fn hits(environment: &PageEnvironment, point: [f64; 2]) -> Vec<usize>
         .geometry
         .iter()
         .rev()
+        .filter(|bounds| !bounds.pointer_excluded)
         .filter(|bounds| contains(bounds, point, environment.scroll_y))
         .filter_map(|bounds| seen.insert(bounds.node).then_some(bounds.node))
         .collect()

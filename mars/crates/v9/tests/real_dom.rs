@@ -1,5 +1,5 @@
 /** DOM sequences from real pages that cross requests (python.org's Modernizr then jQuery). */
-mod common;
+use crate::common;
 use common::{environment, host, page, round_trip};
 use mars_v9::{DomLevel, PageEvent, PageInput, SimpleFragmentParser, StorageState};
 
@@ -18,6 +18,7 @@ fn removed_nodes_keep_their_ids_across_requests() {
     let input = |document| PageInput {
         sources: &sources,
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

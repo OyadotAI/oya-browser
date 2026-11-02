@@ -4,7 +4,7 @@ use mars_core::canvas::Affine;
 mod arguments;
 mod geometry;
 mod lifecycle;
-pub(super) use arguments::{fill_arguments, snapshot, stroke_argument};
+pub(super) use arguments::{fill_arguments, retained_argument, snapshot, stroke_argument};
 pub(in crate::v9) use lifecycle::{validate, validate_targets};
 /** Retained wrappers and native geometry have independent page bounds. */
 const OBJECTS: usize = 64;

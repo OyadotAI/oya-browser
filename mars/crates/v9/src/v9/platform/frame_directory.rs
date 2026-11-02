@@ -208,6 +208,16 @@ pub(in crate::v9) fn lookup(vm: &mut Vm, object: ObjectId, key: &Key) -> Res<Opt
         return Ok(None);
     }
     let Key::Str(name) = key else { return Ok(None) };
+    // With no child contexts and no parent routes only the page's own window can name a frame
+    // (its iframe elements). Every property load comes through here before its cache, and
+    // finding a proxy target walks the heap: skipping it was ~5% of V9's execution on YouTube.
+    let environment = &vm.page.environment;
+    if environment.frame_contexts.is_empty()
+        && environment.parent_frames.is_empty()
+        && object != vm.global_object()
+    {
+        return Ok(None);
+    }
     let proxy_target = messaging::target_of(vm, &JsValue::Object(object));
     if let Some(target) = proxy_target
         && let Some(window) = proxy_window(vm, target)

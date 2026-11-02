@@ -1,5 +1,5 @@
 /** Legacy call assignment targets parse, evaluate the call once, then throw a runtime ReferenceError. */
-mod common;
+use crate::common;
 
 /** The left call runs before the invalid reference, while the right side stays unevaluated. */
 #[test]

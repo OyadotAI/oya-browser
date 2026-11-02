@@ -1,5 +1,5 @@
 /** Read-only backing capabilities remain native data across species, workers, wire streams and saved requests. */
-mod common;
+use crate::common;
 
 /** A subarray retains readonly aliases while independent copies receive writable storage. */
 #[test]

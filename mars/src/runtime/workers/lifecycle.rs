@@ -1,19 +1,37 @@
 /** Dedicated worker lifecycle preserves candidate ownership and bounded execution. */
 use super::*;
 
+/** What a Worker creation asks for: its script URL, name, kind, credentials and Blob source. */
+pub(super) struct WorkerSpec {
+    /** The script URL as the page wrote it. */
+    pub(super) url: String,
+    /** The Worker's name, exposed to its global scope. */
+    pub(super) name: String,
+    /** Classic or module script. */
+    pub(super) worker_type: WorkerType,
+    /** Credentials mode for the script fetch. */
+    pub(super) credentials: WorkerCredentials,
+    /** The Blob the URL names, when the URL is a `blob:` URL. */
+    pub(super) blob_source: Option<crate::v9::BlobUrlSource>,
+}
+
 impl Runtime {
     /** Capacity is reserved before source acquisition, and every unsuccessful exit releases it. */
     pub(super) fn create_worker(
         &mut self,
         page: &Page,
         owner: &[u32],
-        url: &str,
-        name: String,
-        worker_type: WorkerType,
-        credentials: WorkerCredentials,
-        blob_source: Option<crate::v9::BlobUrlSource>,
+        spec: WorkerSpec,
         until: Instant,
     ) -> EngineResult<Context> {
+        let WorkerSpec {
+            url,
+            name,
+            worker_type,
+            credentials,
+            blob_source,
+        } = spec;
+        let url = url.as_str();
         if owner.len() >= usize::from(crate::v9::WORKER_DEPTH)
             || page.scripting.workers.contexts.len() >= WORKER_CONTEXTS
         {

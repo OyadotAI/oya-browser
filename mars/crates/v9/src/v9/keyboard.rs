@@ -1,4 +1,5 @@
 /** Typed trusted keyboard entry points run over committed state without accepting page-authored event authority. */
+use super::vm::Vm;
 use super::{Execution, PageInput, VmState, finish, on_v9_stack, open, platform};
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,57 @@ pub enum KeyboardKey {
     Enter,
 }
 
+/** One keystroke a person types into a field, or a whole-text replacement of its value. */
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stroke {
+    /** A printable character: keydown, keypress, beforeinput, input and keyup, then it is inserted. */
+    Character(char),
+    /** Backspace: keydown, beforeinput, input and keyup; no keypress, as in a browser. */
+    Backspace,
+    /** A fill: the whole text replaced in one edit, with beforeinput and input, then change, and no key events. */
+    Replace(String),
+    /** A secret field's stroke: the text is withheld, so the key is "Unidentified" and every edit reports no data. `press` says whether the stroke presses a key (a typed character) or only fills (a replacement). */
+    Concealed { press: bool },
+}
+
+/** Typed strokes into one field under one execution, each as a person's keyboard delivers it. `value` is the field's text, or None for a secret field whose text never enters the engine. The result says per stroke whether its edit went through. */
+pub fn typed_page(
+    input: PageInput<'_>,
+    state: VmState,
+    target: usize,
+    strokes: Vec<Stroke>,
+    value: Option<String>,
+) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, super::vm::Limits::default())?;
+        typed_body(&mut vm, target, strokes, value)?;
+        finish(vm)
+    })
+}
+
+/** The task of `typed_page`. */
+pub(super) fn typed_body(
+    vm: &mut Vm,
+    target: usize,
+    strokes: Vec<Stroke>,
+    value: Option<String>,
+) -> EngineResult<()> {
+    if !vm.page.exists(target) {
+        return Err(EngineError::invalid("Invalid projected input target."));
+    }
+    let known = value.is_some();
+    if let Some(text) = value {
+        vm.page.state.values.insert(target, text);
+    }
+    vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(vm);
+    platform::media::activate(&mut vm.page);
+    vm.page.effects.typed =
+        platform::type_strokes(vm, target, &strokes, known).map_err(super::fatal)?;
+    Ok(())
+}
+
 /** Dispatch a real native key to the current focused node; an optional target must match that focus. */
 pub fn keyboard_page(
     input: PageInput<'_>,
@@ -24,10 +76,21 @@ pub fn keyboard_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, super::vm::Limits::default())?;
-        platform::press_key(&mut vm, key, target).map_err(super::fatal)?;
-        vm.drain_jobs().map_err(super::fatal)?;
+        keyboard_body(&mut vm, key, target)?;
         finish(vm)
     })
+}
+
+/** The task of `keyboard_page`. */
+pub(super) fn keyboard_body(
+    vm: &mut Vm,
+    key: KeyboardKey,
+    target: Option<usize>,
+) -> EngineResult<()> {
+    platform::host_bridge::activate(vm);
+    super::platform::media::activate(&mut vm.page);
+    platform::press_key(vm, key, target).map_err(super::fatal)?;
+    vm.drain_jobs().map_err(super::fatal)
 }
 
 /** A host cannot redirect a focused key to a stale or unrelated node. */

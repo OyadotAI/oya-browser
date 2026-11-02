@@ -2,7 +2,7 @@
 innerHTML and outerHTML setters, outerHTML on a parentless element, the SyntaxError for a bad
 insertAdjacentHTML position, the input-stream newline rule in markup, and the required argument
 of createContextualFragment. */
-mod common;
+use crate::common;
 use common::{environment, failure, global, host, load, page};
 use mars_v9::{Execution, ModuleInput, PageInput, StorageState};
 
@@ -15,6 +15,7 @@ fn run_with_charset(charset: &str, source: &str) -> Execution {
     mars_v9::load_page(PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document,
         storage: StorageState::default(),
         host: &host,

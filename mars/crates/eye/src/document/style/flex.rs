@@ -308,7 +308,26 @@ pub(super) fn basis_in(
     if let Some(value) = value.strip_suffix('%') {
         return number(value).map(FlexBasis::Percent);
     }
+    if super::values::is_math(value) {
+        return mixed_basis(value, font, context);
+    }
     super::values::contextual_length(value, font, context).map(FlexBasis::Pixels)
+}
+/** A `calc()` basis: pixels, a percentage, or both, which resolves against the container later. */
+fn mixed_basis(
+    value: &str,
+    font: f64,
+    context: crate::document::RenderContext,
+) -> EngineResult<FlexBasis> {
+    let length = super::values::dimension(value, font, context)?;
+    if !length.px.is_finite() || !length.percent.is_finite() {
+        return Err(unsupported());
+    }
+    Ok(match (length.px, length.percent) {
+        (px, 0.0) => FlexBasis::Pixels(px.max(0.0)),
+        (0.0, percent) => FlexBasis::Percent(percent),
+        (px, percent) => FlexBasis::Mixed { px, percent },
+    })
 }
 /** New structural lengths accept pixels or unitless zero; unsupported units cannot guess layout. */
 pub(super) fn pixels(value: &str) -> EngineResult<f64> {

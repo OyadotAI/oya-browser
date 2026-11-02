@@ -171,7 +171,11 @@ pub(super) fn children(
             Some(list) => row_items.extend(list),
             None => {
                 own.push((row_items.len(), natural.len() - 1));
-                row_items.push(row_contribution(item, height));
+                row_items.push(row_contribution(
+                    item,
+                    height,
+                    content_based_minimum(spanned_tracks(&row_defs, item.row, item.rows)),
+                ));
             }
         }
     }
@@ -453,7 +457,7 @@ fn row_measure(
     let margins = kid.node.style.margin;
     let height =
         super::flex_layout::item_height(context, kid.node, width)? + margins[0] + margins[2];
-    Ok(row_contribution(kid, height))
+    Ok(row_contribution(kid, height, true))
 }
 /** A grid's column widths and used column gap at a `content` width for its `placed` items, as
  * `children` sizes them; a row subgrid's items are measured in them before it lays out. */
@@ -562,8 +566,8 @@ fn track_sizing(
         .collect()
 }
 /** An item's column contributions as outer widths: min-content, max-content and the minimum
- * contribution, which is its `min-width`, or its automatic minimum (the content-based minimum,
- * clamped by the fixed tracks it spans, or zero for a scroll container). */
+ * contribution, which is its `min-width`, or its automatic minimum: the content-based minimum
+ * clamped by the fixed tracks it spans when `content_based_minimum` applies, else zero. */
 fn column_contribution(
     context: &mut LayoutContext<'_>,
     item: &Placed<'_>,
@@ -593,8 +597,11 @@ fn column_contribution(
         Some(width) => (width, width),
         None => (intrinsic.min_content, intrinsic.max_content),
     };
-    let spanned = &defs[item.column.min(defs.len())..(item.column + item.columns).min(defs.len())];
-    let minimum = if node.style.min_width.is_some() || super::flex::scroll_container(node) {
+    let spanned = spanned_tracks(defs, item.column, item.columns);
+    let minimum = if node.style.min_width.is_some()
+        || super::flex::scroll_container(node)
+        || !content_based_minimum(spanned)
+    {
         clamp(0.0)
     } else {
         let mut content = fixed.unwrap_or(intrinsic.min_content);
@@ -611,6 +618,28 @@ fn column_contribution(
         max_content: clamp(max_content),
     })
 }
+/** The tracks an item spans on one axis, clipped to the `defs` the grid built. */
+fn spanned_tracks(
+    defs: &[tracks::TrackSizing],
+    start: usize,
+    span: usize,
+) -> &[tracks::TrackSizing] {
+    let start = start.min(defs.len());
+    &defs[start..(start + span).min(defs.len())]
+}
+/** Whether an item's automatic minimum is its content-based minimum (css-grid-1 6.6): it spans
+ * a track whose minimum is `auto`, and when it spans more than one track, none of them is
+ * flexible. Otherwise the automatic minimum is zero, so a wide item spanning fractional tracks
+ * does not force them open to its min-content width (Blink's special_spanning_criteria). */
+fn content_based_minimum(spanned: &[tracks::TrackSizing]) -> bool {
+    let auto_minimum = spanned
+        .iter()
+        .any(|track| track.min == tracks::MinSizing::Auto);
+    let flexible = spanned
+        .iter()
+        .any(|track| matches!(track.max, tracks::MaxSizing::Fr(_)));
+    auto_minimum && (!flexible || spanned.len() <= 1)
+}
 /** The summed fixed maxima of spanned tracks when every one is fixed, which caps a
  * content-based minimum (css-grid-2 6.6). */
 fn fixed_maxima(spanned: &[tracks::TrackSizing]) -> Option<f64> {
@@ -624,7 +653,7 @@ fn fixed_maxima(spanned: &[tracks::TrackSizing]) -> Option<f64> {
 }
 /** An item's row contributions from its outer height at its final width; a scroll container or
  * an authored `min-height` gives a smaller minimum contribution. */
-fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
+fn row_contribution(item: &Placed<'_>, height: f64, content_based: bool) -> tracks::Contribution {
     let node = item.node;
     let margins = node.style.margin[0] + node.style.margin[2];
     let minimum = match node
@@ -633,7 +662,7 @@ fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
         .and_then(|extent| extent.resolve_size(None))
     {
         Some(min) => super::sizing::border_height(node, min) + margins,
-        None if super::flex::scroll_container(node) => {
+        None if super::flex::scroll_container(node) || !content_based => {
             super::sizing::vertical_edges(node) + margins
         }
         None => height,
@@ -852,10 +881,7 @@ pub(super) fn intrinsic(
         &columns,
         None,
     );
-    let mut items = column_items(context, style, &placed, &defs, gap)?;
-    for contribution in &mut items {
-        contribution.minimum = limited_min_content(contribution, &defs);
-    }
+    let items = column_items(context, style, &placed, &defs, gap)?;
     let total = |space| {
         let widths = tracks::size_tracks(&defs, &items, space, gap, false);
         widths.iter().sum::<f64>() + gap * widths.len().saturating_sub(1) as f64
@@ -864,14 +890,4 @@ pub(super) fn intrinsic(
         min_content: total(tracks::Space::MinContent),
         max_content: total(tracks::Space::MaxContent(0.0)),
     })
-}
-/** An item's limited min-content contribution (css-grid-2 12.5.1): its min-content contribution
- * capped by the spanned tracks' fixed maximum when they all have one, never below its minimum
- * contribution. */
-fn limited_min_content(item: &tracks::Contribution, defs: &[tracks::TrackSizing]) -> f64 {
-    let end = (item.start + item.span).min(defs.len());
-    let spanned = &defs[item.start.min(end)..end];
-    let limited =
-        fixed_maxima(spanned).map_or(item.min_content, |limit| item.min_content.min(limit));
-    limited.max(item.minimum)
 }

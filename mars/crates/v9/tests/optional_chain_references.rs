@@ -1,5 +1,5 @@
 /** Optional-chain values keep successful member references through parentheses and erase failed references. */
-mod common;
+use crate::common;
 
 /** Parenthesized optional members preserve the object receiver for calls and computed-name calls. */
 #[test]

@@ -329,6 +329,10 @@ pub(super) const HTML_ELEMENT: &[Attr] = &[
     rc("tabIndex", "tabindex", Kind::Long(-1)),
     rc("enterKeyHint", "enterkeyhint", Kind::Enum(&ENTER_KEY_HINT)),
     rc("inputMode", "inputmode", Kind::Enum(&INPUT_MODE)),
+    // HTMLOrSVGElement.nonce: scripts copy it onto the elements they insert (facebook.com reads
+    // `script.nonce`). ponytail: reflected, where browsers keep an internal slot and hide the
+    // content attribute; nonce hiding when an exfiltration risk matters.
+    s("nonce"),
 ];
 pub(super) const ANCHOR: &[Attr] = &[
     s("target"),

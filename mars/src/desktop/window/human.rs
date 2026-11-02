@@ -637,15 +637,18 @@ impl Window {
                 self.mars.suggestions.set(Vec::new(), &self.canvas);
             }
             self.typed = None;
+            self.edit_start = None;
             return;
         }
         let text = self.mars.address.stringValue().to_string();
+        let start = self.edit_start.get_or_insert_with(|| text.clone());
         let committed = self.mars.committed_url();
         let key = format!("{text}\n{committed}");
         if self.typed.as_deref() == Some(key.as_str()) {
             return;
         }
-        let items = if text == committed {
+        // Focusing the field shows nothing, as in Chrome: the popup follows the person's typing.
+        let items = if text == committed || text == *start {
             Vec::new()
         } else {
             history::suggestions(&self.library.history, &self.library.bookmarks, &text)

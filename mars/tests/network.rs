@@ -43,9 +43,9 @@ fn unsupported_http_features_are_explicitly_rejected() {
     }
 }
 
-/** A peer closing early cannot publish a partial body. */
+/** A peer closing early cannot publish a partial body; malformed UTF-8 is decoded, not refused. */
 #[test]
-fn truncated_and_non_utf8_bodies_are_rejected() {
+fn truncated_bodies_are_rejected_and_malformed_utf8_is_replaced() {
     let fixture = Fixture::raw(
         b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 100\r\n\r\nshort".to_vec(),
     );
@@ -56,10 +56,8 @@ fn truncated_and_non_utf8_bodies_are_rejected() {
     let fixture = Fixture::raw(
         b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 1\r\n\r\n\xff".to_vec(),
     );
-    assert_eq!(
-        fetch(&format!("{}/", fixture.url)).unwrap_err().code,
-        "unsupported_feature"
-    );
+    // A malformed byte decodes to U+FFFD, as the Encoding standard's UTF-8 decoder does.
+    assert_eq!(fetch(&format!("{}/", fixture.url)).unwrap(), "\u{fffd}");
 }
 
 /** Body and header budgets cannot be bypassed using connection-delimited responses. */

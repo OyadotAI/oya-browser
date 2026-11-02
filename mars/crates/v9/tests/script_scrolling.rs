@@ -1,6 +1,6 @@
 /** Script scrolling: `scrollTop`/`scrollLeft` and `scroll*()` on elements and the window are
 recorded for the app to paint, clamped to the scroll range the last layout reported. */
-mod common;
+use crate::common;
 
 /** An element's `scrollTop` and `scrollLeft` round-trip and reach the app as one offset. */
 #[test]

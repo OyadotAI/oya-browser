@@ -1,5 +1,5 @@
 /** Quantified single atoms match long inputs without the recursion depth of the general loop. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** Greedy loops over a class, a dot and a literal run over hundreds of thousands of characters. */

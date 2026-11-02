@@ -555,15 +555,23 @@ fn write(vm: &mut Vm, document: usize, text: &str) -> Res<()> {
     if !vm.page.state.writes.contains_key(&document) {
         open(vm, document)?;
     }
-    let limit = crate::constants::FRAGMENT_BYTES * 4;
-    let buffer = vm.page.state.writes.entry(document).or_default();
-    if buffer.len() + text.len() > limit {
+    let limit = crate::constants::HTML_BYTES;
+    let written = vm.page.state.writes.get(&document).map_or(0, String::len);
+    if written + text.len() > limit {
         return Err(dom_error(
             vm,
             crate::protocol::EngineError::limit("document.write bytes", limit),
         ));
     }
-    buffer.push_str(text);
+    vm.page
+        .charge_fragment_bytes(text.len())
+        .map_err(|error| dom_error(vm, error))?;
+    vm.page
+        .state
+        .writes
+        .entry(document)
+        .or_default()
+        .push_str(text);
     Ok(())
 }
 
@@ -649,7 +657,10 @@ fn prologue<'m>(vm: &mut Vm, document: usize, markup: &'m str) -> Res<&'m str> {
             rest = after.get(end + 3..).unwrap_or("");
             continue;
         }
-        if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+        if rest
+            .get(..9)
+            .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype"))
+        {
             let end = rest.find('>').unwrap_or(rest.len());
             let (name, public, system) = doctype_parts(&rest[9..end]);
             let node = doctype(vm, &name, &public, &system)?;
@@ -669,7 +680,10 @@ fn doctype_parts(body: &str) -> (String, String, String) {
         .unwrap_or(body.len());
     let name = body[..end].to_ascii_lowercase();
     let rest = body[end..].trim_start();
-    let keyword = |word: &str| rest.len() >= 6 && rest[..6].eq_ignore_ascii_case(word);
+    let keyword = |word: &str| {
+        rest.get(..6)
+            .is_some_and(|head| head.eq_ignore_ascii_case(word))
+    };
     let mut quoted = quoted_strings(&rest[rest.len().min(6)..]).into_iter();
     if keyword("public") {
         let public = quoted.next().unwrap_or_default();

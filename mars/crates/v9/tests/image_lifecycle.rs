@@ -1,5 +1,5 @@
 /** Native image tasks retain source identity and expose only outcomes supplied by the actual host decoder. */
-mod common;
+use crate::common;
 use common::{console, environment, host, input};
 use mars_v9::document::{DomChange, ScriptChange, ScriptDocument};
 use mars_v9::{Execution, ImageResponse, VmState};
@@ -116,7 +116,45 @@ fn reply(execution: &Execution, dimensions: Option<(u32, u32)>) -> ImageResponse
         dimensions,
         bitmap: None,
         origin_clean: false,
+        current_src: execution.effects.image_requests[0].url.clone(),
     }
+}
+
+/** currentSrc is empty until the host answers, then reports the URL the host selected, even for a failed load. */
+#[test]
+fn current_src_reports_the_host_selected_url_once_the_request_completes() {
+    let (sources, loaded) = load(
+        "const i=new Image();console.log(JSON.stringify(i.currentSrc));i.onload=()=>console.log('load',i.currentSrc);i.onerror=()=>console.log('error',i.currentSrc);i.src='/one.png';",
+    );
+    assert_eq!(console(&loaded), ["\"\""]);
+    let mut response = reply(&loaded, Some((2, 1)));
+    response.current_src = "https://example.com/one@2x.png".into();
+    let finished = deliver(&sources, loaded.state, vec![response]);
+    assert_eq!(console(&finished), ["load https://example.com/one@2x.png"]);
+    let (sources, loaded) = load(
+        "const i=new Image();i.onerror=()=>console.log('error',i.currentSrc);i.src='/bad.png';",
+    );
+    let mut response = reply(&loaded, None);
+    response.current_src = "https://example.com/bad.png".into();
+    let failed = deliver(&sources, loaded.state, vec![response]);
+    assert_eq!(console(&failed), ["error https://example.com/bad.png"]);
+}
+
+/** A host answer whose URL text is over the address bound cannot set currentSrc: the batch is refused whole. */
+#[test]
+fn current_src_rejects_an_invalid_host_selection() {
+    let (sources, loaded) = load("const i=new Image();i.src='/one.png';");
+    let mut response = reply(&loaded, Some((2, 1)));
+    response.current_src = format!(
+        "https://example.test/{}",
+        "a".repeat(mars_core::constants::URL_BYTES)
+    );
+    let result = mars_v9::resume_images(
+        input(&sources, &host(), &environment()),
+        loaded.state,
+        vec![response],
+    );
+    assert!(result.is_err());
 }
 
 #[test]

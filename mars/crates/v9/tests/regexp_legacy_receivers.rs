@@ -1,5 +1,5 @@
 /** Legacy RegExp accessors use their actual creation-context match record independently of the supplied receiver. */
-mod common;
+use crate::common;
 
 /** Borrowing each capture/context getter neither requires nor consults the intrinsic constructor receiver. */
 #[test]

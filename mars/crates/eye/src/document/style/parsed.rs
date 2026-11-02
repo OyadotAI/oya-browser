@@ -90,6 +90,9 @@ struct State {
     layers: Layers,
     /// `@property` registrations, shared by every sheet.
     properties: Registrations,
+    /// The `@media` conditions this parse evaluated: it holds under any context answering
+    /// them alike (see `MediaSeen`).
+    media: super::media::MediaSeen,
 }
 
 impl Default for State {
@@ -105,6 +108,7 @@ impl Default for State {
             diagnostics: Vec::new(),
             layers: Layers::default(),
             properties: Registrations::default(),
+            media: Default::default(),
         }
     }
 }
@@ -115,6 +119,11 @@ struct Recent {
     context: RenderContext,
     sheets: Vec<String>,
     state: Rc<State>,
+    /// The parser after each sheet in turn (`checkpoints[i]` after `i + 1` sheets), so a list
+    /// that changes one sheet in the middle (a CSS-in-JS block rewritten, a `<style>` inserted
+    /// before linked sheets) resumes after the longest common prefix instead of parsing every
+    /// sheet again: airbnb's 1.9 MB re-parsed on each of its forced layouts, 0.5 s a time.
+    checkpoints: Vec<Rc<State>>,
     parsed: std::cell::OnceCell<Rc<Parsed>>,
     /// The last scoped list parsed on top of this parse, for the next cascade to reuse or extend.
     scoped: RefCell<Option<Rc<ScopedParse>>>,
@@ -123,6 +132,8 @@ struct Recent {
 /** One scoped sheet list parsed on top of a recent main parse, kept whole: the parser after it,
 each rule's group and what the cascade reads. */
 struct ScopedParse {
+    /// The context it was parsed under; another one reuses it only when its media answer alike.
+    context: RenderContext,
     scoped: Vec<(String, usize)>,
     group: usize,
     state: Rc<State>,
@@ -150,11 +161,21 @@ pub(super) fn parsed(
     context: RenderContext,
 ) -> EngineResult<(Rc<Parsed>, Vec<usize>)> {
     let main = match recent(sheets, context) {
-        Some((state, true)) => state,
+        Some((state, true, _)) => state,
         found => {
-            let state = found.map_or_else(State::default, |(state, _)| (*state).clone());
-            let (state, _) = parse(state, sheets, &[], document_group, context)?;
-            remember(sheets, context, state)
+            let (state, mut checkpoints) = found.map_or_else(
+                || (State::default(), Vec::new()),
+                |(state, _, kept)| ((*state).clone(), kept),
+            );
+            let (state, _) = parse(
+                state,
+                sheets,
+                &[],
+                document_group,
+                context,
+                &mut checkpoints,
+            )?;
+            remember(sheets, context, state, checkpoints)
         }
     };
     if scoped.is_empty() {
@@ -175,6 +196,7 @@ pub(super) fn parsed(
             .find(|entry| Rc::ptr_eq(&entry.state, &main))
             .and_then(|entry| entry.scoped.borrow().clone())
             .filter(|prior| prior.group == document_group)
+            .filter(|prior| prior.context == context || prior.state.media.holds(context))
     });
     // ponytail: the list compares are O(scoped bytes) per cascade; a digest from the
     // coordinator would make them O(1).
@@ -196,6 +218,7 @@ pub(super) fn parsed(
     RECENT.with_borrow(|recent| {
         if let Some(entry) = recent.iter().find(|entry| Rc::ptr_eq(&entry.state, &main)) {
             entry.scoped.replace(Some(Rc::new(ScopedParse {
+                context,
                 scoped: scoped.to_vec(),
                 group: document_group,
                 state: Rc::new(state),
@@ -225,6 +248,7 @@ fn parse_scoped(
             &mut state.font_faces,
             &mut state.layers,
             &mut state.properties,
+            &mut state.media,
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, false)?;
         groups.resize(state.rules.len(), *group);
@@ -232,31 +256,61 @@ fn parse_scoped(
     Ok((state, groups))
 }
 
+/** How many leading sheets two lists share. */
+fn common_prefix(sheets: &[String], recent: &[String]) -> usize {
+    sheets
+        .iter()
+        .zip(recent)
+        .take_while(|(sheet, kept)| sheet == kept)
+        .count()
+}
+
 /** The parser after the recent parse of exactly these sheets (true), or after the longest
-recent list they extend (false), now the most recently used. */
-fn recent(sheets: &[String], context: RenderContext) -> Option<(Rc<State>, bool)> {
+prefix a recent list shares with them (false) with the checkpoints up to it, now the most
+recently used; None when no recent parse shares a first sheet. */
+fn recent(sheets: &[String], context: RenderContext) -> Option<(Rc<State>, bool, Vec<Rc<State>>)> {
     RECENT.with_borrow_mut(|recent| {
-        let best = recent
+        let (best, shared) = recent
             .iter()
             .enumerate()
-            .filter(|(_, entry)| entry.context == context && sheets.starts_with(&entry.sheets))
-            .max_by_key(|(_, entry)| entry.sheets.len())
-            .map(|(index, _)| index)?;
-        let entry = recent.remove(best)?;
-        let found = (Rc::clone(&entry.state), entry.sheets.len() == sheets.len());
+            .filter(|(_, entry)| entry.context == context || entry.state.media.holds(context))
+            .map(|(index, entry)| (index, common_prefix(sheets, &entry.sheets)))
+            .filter(|(_, shared)| *shared > 0)
+            .max_by_key(|(_, shared)| *shared)?;
+        let mut entry = recent.remove(best)?;
+        // Valid under both contexts; the next lookup under this one is then an exact match.
+        entry.context = context;
+        let usable = shared.min(entry.checkpoints.len());
+        let kept = entry.checkpoints[..usable].to_vec();
+        // The entry's own state keeps its identity, which the `Parsed` lookup is keyed by.
+        let state = if shared == entry.sheets.len() {
+            Rc::clone(&entry.state)
+        } else if usable == 0 {
+            recent.push_front(entry);
+            return None;
+        } else {
+            Rc::clone(&entry.checkpoints[usable - 1])
+        };
+        let exact = shared == entry.sheets.len() && shared == sheets.len();
         recent.push_front(entry);
-        Some(found)
+        Some((state, exact, kept))
     })
 }
 
-/** Keeps the parser after `sheets` as the most recent parse. */
-fn remember(sheets: &[String], context: RenderContext, state: State) -> Rc<State> {
+/** Keeps the parser after `sheets`, and after each of them, as the most recent parse. */
+fn remember(
+    sheets: &[String],
+    context: RenderContext,
+    state: State,
+    checkpoints: Vec<Rc<State>>,
+) -> Rc<State> {
     let state = Rc::new(state);
     RECENT.with_borrow_mut(|recent| {
         recent.push_front(Recent {
             context,
             sheets: sheets.to_vec(),
             state: Rc::clone(&state),
+            checkpoints,
             parsed: std::cell::OnceCell::new(),
             scoped: RefCell::new(None),
         });
@@ -266,13 +320,15 @@ fn remember(sheets: &[String], context: RenderContext, state: State) -> Rc<State
 }
 
 /** Continues `state` over the sheets it has not parsed, then the scoped ones, under the shared
-rule budget; returns the parser and each rule's group when there were scoped sheets. */
+rule budget; returns the parser and each rule's group when there were scoped sheets. The parser
+after each main sheet joins `checkpoints`, for the next list to resume from. */
 fn parse(
     mut state: State,
     sheets: &[String],
     scoped: &[(String, usize)],
     document_group: usize,
     context: RenderContext,
+    checkpoints: &mut Vec<Rc<State>>,
 ) -> EngineResult<(State, Vec<usize>)> {
     for (index, sheet) in sheets.iter().enumerate().skip(state.count) {
         // Sheets past the count or byte budget still contribute their hiding rules as masks.
@@ -287,9 +343,16 @@ fn parse(
             &mut state.font_faces,
             &mut state.layers,
             &mut state.properties,
+            &mut state.media,
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, skipped)?;
         state.count = index + 1;
+        // Bounded: a checkpoint holds every rule parsed so far, so only the sheets within the
+        // count budget get one, at most STYLE_SHEETS of them; a later change resumes from the
+        // last kept checkpoint and parses the few sheets after it again.
+        if !skipped && checkpoints.len() < STYLE_SHEETS {
+            checkpoints.push(Rc::new(state.clone()));
+        }
     }
     if scoped.is_empty() {
         return Ok((state, Vec::new()));
@@ -300,6 +363,26 @@ fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** A list whose middle sheet changed keeps the rules of the sheets before it: only the
+    changed sheet and those after it parse again, so their rule identities are new. */
+    #[test]
+    fn changed_middle_sheet_resumes_after_the_common_prefix() {
+        let context = RenderContext::default();
+        let first = vec![
+            "p { color: red }".to_owned(),
+            ".v9 { color: blue }".to_owned(),
+            "a { color: green }".to_owned(),
+        ];
+        let (before, _) = parsed(&first, &[], 0, context).unwrap();
+        let mut changed = first.clone();
+        changed[1] = ".v9 { color: black }".to_owned();
+        let (after, _) = parsed(&changed, &[], 0, context).unwrap();
+        assert_eq!(after.rules.len(), 3);
+        assert!(Rc::ptr_eq(&before.rules[0], &after.rules[0]));
+        assert!(!Rc::ptr_eq(&before.rules[1], &after.rules[1]));
+        assert!(!Rc::ptr_eq(&before.rules[2], &after.rules[2]));
+    }
 
     /** The same scoped list on the same main parse is one parse; a list that extends it keeps
     the earlier scoped rules' identity and groups and parses only the added sheets. */
@@ -325,21 +408,31 @@ mod tests {
 
     /** The same texts under the same context share one parse; a changed text or context does not. */
     #[test]
-    fn recent_parses_are_shared_by_exact_texts_and_context() {
-        let sheets = vec!["p { color: red }".to_owned()];
+    fn recent_parses_are_shared_by_texts_and_contexts_their_media_cannot_tell_apart() {
+        let sheets =
+            vec!["p { color: red } @media (min-width: 800px) { p { color: green } }".to_owned()];
         let context = RenderContext::default();
         let (first, _) = parsed(&sheets, &[], 0, context).unwrap();
         let (again, _) = parsed(&sheets, &[], 0, context).unwrap();
         assert!(Rc::ptr_eq(&first, &again));
         let (other, _) = parsed(&["p { color: blue }".to_owned()], &[], 0, context).unwrap();
         assert!(!Rc::ptr_eq(&first, &other));
+        // A shorter window answers (min-width: 800px) as before: the parse is reused.
+        let shorter = RenderContext {
+            height: context.height - 34.0,
+            ..context
+        };
+        let (kept, _) = parsed(&sheets, &[], 0, shorter).unwrap();
+        assert!(Rc::ptr_eq(&first, &kept));
+        // A narrow one crosses the breakpoint: parsed again, without the media rule.
         let narrow = RenderContext {
             width: 400.0,
             ..context
         };
         let (narrowed, _) = parsed(&sheets, &[], 0, narrow).unwrap();
         assert!(!Rc::ptr_eq(&first, &narrowed));
-        assert_eq!(first.rules.len(), 1);
+        assert_eq!(first.rules.len(), 2);
+        assert_eq!(narrowed.rules.len(), 1);
     }
 
     /** A list that extends a recent one continues its parse: the earlier rules keep their order
@@ -363,7 +456,7 @@ mod tests {
         assert_eq!(extended.rules[2].order, 2);
         let (fresh, _) = {
             let state = State::default();
-            let (state, _) = parse(state, &longer, &[], 0, context).unwrap();
+            let (state, _) = parse(state, &longer, &[], 0, context, &mut Vec::new()).unwrap();
             (Rc::new(Parsed::of(&state)), ())
         };
         assert_eq!(fresh.rules.len(), extended.rules.len());

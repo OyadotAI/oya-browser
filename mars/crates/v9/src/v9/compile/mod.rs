@@ -8,15 +8,18 @@ mod class_fields;
 mod eval;
 pub(in crate::v9) use eval::{env_sizes, private_sites as eval_private_sites};
 mod catch_bindings;
+mod early;
 mod expr;
 mod function;
 mod iteration;
+pub(in crate::v9) mod lazy;
 mod member_reference;
 mod module;
 mod parameters;
 mod pattern;
 mod resources;
 mod scan;
+mod site_map;
 mod site_text;
 use pattern::Source;
 use site_text::{CATCH_VALUE, FOR_VALUE, YIELD_STAR_VALUE};
@@ -30,7 +33,6 @@ use super::value::JsString;
 use super::vm::heap::FastMap;
 use crate::protocol::{EngineError, EngineResult};
 pub(in crate::v9) use module::{Export, ModuleInfo};
-use std::rc::Rc;
 use std::sync::Arc;
 
 /** Register and slot indexes. */
@@ -380,6 +382,9 @@ pub(in crate::v9) struct Code {
     pub name: JsString,
     /// Exact source is shared by all functions compiled from one source unit.
     pub source: Option<(Arc<str>, usize)>,
+    /// The caller scopes a direct eval compiled under, as the compiler's context text; None for
+    /// every other code. A retained eval is reused only under the same scopes.
+    pub scopes: Option<Arc<str>>,
     /// Absolute byte boundaries of this function or class literal.
     pub source_span: Option<(u32, u32)>,
     /// Observable function length.
@@ -407,6 +412,10 @@ pub(in crate::v9) struct Code {
     pub callees: Vec<(u32, SiteKind, Arc<str>)>,
     /// Inline caches of the property loads and stores, one per entry of `strings`.
     pub caches: crate::v9::vm::shape::SiteCaches,
+    /// A stub's deferred compile: None for compiled code (see `lazy`).
+    pub lazy: Option<Arc<lazy::Lazy>>,
+    /// Call and loop heat, and the compiled form once the JIT has produced one.
+    pub jit: crate::v9::jit::JitSlot,
 }
 
 impl Code {
@@ -418,6 +427,13 @@ impl Code {
             .ok()?;
         let (_, kind, text) = &self.callees[index];
         Some((*kind, text))
+    }
+    /** Code from the platform bootstrap, which pages must see as native, as Chrome's own
+    interfaces are: its functions print `[native code]`, never the bootstrap's text. */
+    pub fn platform(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|(_, base)| *base == crate::constants::SCRIPT_TOTAL_BYTES)
     }
     /** Preserve comments and whitespace without interpreting the function's public name. */
     pub fn original_source(&self) -> Option<&str> {
@@ -457,6 +473,7 @@ impl Code {
                 .source
                 .as_ref()
                 .map(|(text, base)| (text.clone(), (*base as i64 + delta) as usize)),
+            scopes: self.scopes.clone(),
             source_span: self
                 .source_span
                 .map(|(start, end)| (shift(start), shift(end))),
@@ -505,6 +522,8 @@ impl Code {
                 })
                 .collect(),
             caches: crate::v9::vm::shape::SiteCaches::new(self.strings.len()),
+            lazy: self.lazy.as_ref().map(|lazy| Arc::new(lazy.rebased(delta))),
+            jit: crate::v9::jit::JitSlot::default(),
         }
     }
     /** Bytes this code holds, for the process cache's bound. */
@@ -532,18 +551,57 @@ impl Code {
                 .sum::<usize>()
             + self.strict_ranges.len() * std::mem::size_of::<(u32, u32)>()
             + self.caches.bytes()
+            + self.scopes.as_ref().map_or(0, |scopes| scopes.len())
     }
 }
 
-/** Every code of one page, keyed by site. */
-#[derive(Default)]
+/** Every code of one page, keyed by site. A persistent map: the registry travels with the
+page's state from step to step (cloning it is O(1) and shares structure), so a step no longer
+re-files the page's ~69,000 functions before it runs, and a retried step starts from its base
+state's registry. */
+#[derive(Clone, Default)]
 pub(in crate::v9) struct Registry {
-    pub codes: FastMap<u32, Arc<Code>>,
+    pub codes: site_map::SiteMap,
+    /// Entry sites adopted during the current step (`begin_step` clears it). Two sources on one
+    /// site within a step are a fault; a site filed by an earlier step belongs to whatever
+    /// source is compiled there now (a later devtools evaluation reuses an offset, say).
+    adopted: crate::v9::vm::heap::FastSet<u32>,
+}
+
+impl std::fmt::Debug for Registry {
+    /** The count of filed codes; the codes themselves are large and printed nowhere. */
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Registry")
+            .field("codes", &self.codes.len())
+            .finish()
+    }
+}
+
+/** How a unit stands against what the registry already holds at its entry site. */
+enum Filing {
+    /** Nothing there yet: file every code, refusing any site already taken. */
+    Fresh,
+    /** This very unit: a later step re-adopting its scripts, nothing to do. */
+    Filed,
+    /** The same source at the same offset, compiled again (after the process cache let the
+    old unit go): its codes replace the old ones. */
+    Recompiled,
+    /** Another source at an offset an earlier step's source held: the old source's codes go
+    first, then the new ones are filed as fresh. */
+    Replaced,
+    /** Another source claims the site. */
+    Conflict,
 }
 
 /** The content key of a classic script, wherever it sits on a page. */
 pub(in crate::v9) fn source_key(source: &str) -> cache::Key {
     cache::text_key(cache::Grammar::Script, source)
+}
+
+/** SHA-256 of a module's text, the part of its cache key that does not depend on its offset. */
+pub(in crate::v9) fn module_source_key(source: &str) -> cache::Key {
+    cache::text_key(cache::Grammar::Module, source)
 }
 
 /** Native-fixture grammar has its own cache namespace, even for identical source bytes. */
@@ -582,19 +640,7 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
-        let key = cache::at(&text, offset);
-        let unit = match cache::get(&key) {
-            Some(unit) => unit,
-            None => {
-                let unit = match cache::elsewhere(&text) {
-                    Some((at, unit)) => Arc::new(unit.rebased(offset as i64 - at as i64)),
-                    None => compile_script(&parse()?, Some((source, offset)))?,
-                };
-                cache::put(key, unit.clone());
-                cache::remember(text, offset, key);
-                unit
-            }
-        };
+        let unit = cached_unit(text, source, offset, parse)?;
         self.adopt(&unit)?;
         Ok(unit.entry.clone())
     }
@@ -620,6 +666,7 @@ impl Registry {
                     &parse(scopes.strict, &scopes.private_names(), scopes.grammar)?,
                     scopes,
                     (source, offset),
+                    context,
                 )?;
                 cache::put(key, unit.clone());
                 unit
@@ -639,7 +686,21 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
-        let key = cache::key(cache::Grammar::Module, offset, source);
+        self.module_keyed(module_source_key(source), source, offset, parse)
+    }
+    /**
+     * `module` for a source whose `module_source_key` the caller already holds: a service that
+     * keeps a page's modules resident hashes each once, not on every request, and the key at
+     * an offset is one cheap hash of that text key.
+     */
+    pub fn module_keyed(
+        &mut self,
+        text: cache::Key,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
+        let key = cache::at(&text, offset);
         let unit = match cache::get(&key) {
             Some(unit) => unit,
             None => {
@@ -648,7 +709,7 @@ impl Registry {
                 unit
             }
         };
-        if self.codes.contains_key(&unit.entry.site) {
+        if matches!(self.filing(&unit), Filing::Conflict) {
             return Err(EngineError::invalid("Duplicate V9 module site."));
         }
         self.adopt(&unit)?;
@@ -658,21 +719,230 @@ impl Registry {
             .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
         Ok((unit.entry.clone(), info))
     }
-    /** Files a unit's codes under their sites; a site compiled twice in one page is refused. */
+    /**
+     * The code already filed at `site` when it is exactly this dynamic source: the same text at
+     * the same offset, under the same caller scopes for direct eval. It answers with no parse
+     * and no hash, so a step re-adopting a retained source costs one text comparison. Any other
+     * source at the site is None, and the keyed path tells the cases apart.
+     */
+    pub fn refiled(
+        &mut self,
+        site: u32,
+        source: &str,
+        offset: usize,
+        scopes: Option<&str>,
+    ) -> Option<Arc<Code>> {
+        let entry = self.codes.get(&site)?;
+        if !is_same_source(entry, source, offset, scopes) {
+            return None;
+        }
+        let entry = entry.clone();
+        self.adopted.insert(site);
+        Some(entry)
+    }
+    /** Start a step: what earlier steps filed stays, but no longer counts as this step's. */
+    pub fn begin_step(&mut self) {
+        self.adopted.clear();
+    }
+    /** The entry code at `site` when this step adopted it. */
+    pub fn adopted_this_step(&self, site: u32) -> Option<Arc<Code>> {
+        self.adopted
+            .contains(&site)
+            .then(|| self.codes.get(&site).cloned())
+            .flatten()
+    }
+    /** Drop every code filed for the source `entry` came from: a different source now
+    compiles at that offset, and none of the old one's functions may answer for the new one's
+    sites. Runs only when a later step reuses an offset (an unretained evaluation's). */
+    fn evict_source(&mut self, entry: &Code) {
+        let Some((text, base)) = &entry.source else {
+            let site = entry.site;
+            self.codes.retain(|filed, _| *filed != site);
+            return;
+        };
+        let tags = super::syntax::SITE_TAGS as usize;
+        let range = base * tags..(base + text.len() + 1) * tags;
+        self.codes
+            .retain(|site, _| !range.contains(&(*site as usize)));
+    }
+    /** Where `unit` stands: see `Filing`. */
+    fn filing(&self, unit: &cache::Unit) -> Filing {
+        let Some(filed) = self.codes.get(&unit.entry.site) else {
+            return Filing::Fresh;
+        };
+        if Arc::ptr_eq(filed, &unit.entry) {
+            return Filing::Filed;
+        }
+        let same = match (&filed.source, &unit.entry.source) {
+            (Some((old, at)), Some((new, base))) => {
+                at == base && (Arc::ptr_eq(old, new) || old == new)
+            }
+            _ => false,
+        };
+        if same {
+            Filing::Recompiled
+        } else if !self.adopted.contains(&unit.entry.site) {
+            Filing::Replaced
+        } else {
+            Filing::Conflict
+        }
+    }
+    /** Files a unit's codes under their sites; two sources on one site in a step are refused.
+    A unit already filed (a later step of the same page) costs one lookup. */
     fn adopt(&mut self, unit: &cache::Unit) -> EngineResult<()> {
+        let fresh = match self.filing(unit) {
+            Filing::Filed => {
+                self.adopted.insert(unit.entry.site);
+                return Ok(());
+            }
+            Filing::Conflict => return Err(EngineError::invalid("Duplicate V9 code site.")),
+            Filing::Fresh => true,
+            Filing::Recompiled => false,
+            Filing::Replaced => {
+                if let Some(old) = self.codes.get(&unit.entry.site).cloned() {
+                    self.evict_source(&old);
+                }
+                true
+            }
+        };
+        self.adopted.insert(unit.entry.site);
+        self.codes.reserve(unit.codes.len() + 1);
         for code in &unit.codes {
-            if self.codes.contains_key(&code.site) {
+            if fresh && self.codes.contains_key(&code.site) {
                 return Err(EngineError::invalid("Duplicate V9 code site."));
             }
-            self.codes.insert(code.site, code.clone());
+            self.file(code);
         }
-        self.codes.insert(unit.entry.site, unit.entry.clone());
+        self.file(&unit.entry);
         Ok(())
+    }
+    /** Files one code; a stub whose first call already compiled it (on this page or any other)
+    files its compiled code and nested functions instead, so a rebuilt registry runs it at once. */
+    fn file(&mut self, code: &Arc<Code>) {
+        match code.lazy.as_ref().and_then(|lazy| lazy.compiled()).cloned() {
+            Some(unit) => {
+                for nested in unit.codes.iter().chain([&unit.entry]) {
+                    self.file(nested);
+                }
+            }
+            None => {
+                self.codes.insert(code.site, code.clone());
+            }
+        }
+    }
+    /** The code to run at `site`: filed code as it is, or a stub compiled now and filed, with
+    its nested functions, in its place. None for an unknown site; an error when the deferred
+    compile fails, the early error an eager compile would have raised at load. */
+    pub fn compiled(&mut self, site: u32) -> EngineResult<Option<Arc<Code>>> {
+        let Some(code) = self.codes.get(&site).cloned() else {
+            return Ok(None);
+        };
+        let Some(lazy) = &code.lazy else {
+            return Ok(Some(code));
+        };
+        let unit = lazy.unit(code.source.as_ref())?;
+        for nested in unit.codes.iter().chain([&unit.entry]) {
+            self.file(nested);
+        }
+        Ok(Some(unit.entry.clone()))
     }
     /** Look up compiled code by site. */
     pub fn get(&self, site: u32) -> Option<&Arc<Code>> {
         self.codes.get(&site)
     }
+}
+
+/** Whether `code` is the entry of exactly this dynamic source: its text, its offset and, for
+direct eval, its caller scopes. Scripts carry no scopes, so they match only scripts. */
+fn is_same_source(code: &Code, source: &str, offset: usize, scopes: Option<&str>) -> bool {
+    code.scopes.as_deref() == scopes
+        && code
+            .source
+            .as_ref()
+            .is_some_and(|(text, at)| *at == offset && **text == *source)
+}
+
+/**
+ * The process cache's unit for `source` as a classic script at `offset`: the one a request
+ * compiled there before, a copy compiled at another offset rebased, or else `parse` compiled
+ * and kept. Free of any registry, so a page load can fill the cache from a side thread while
+ * its stylesheets and images are still resolved, and the load step only adopts.
+ */
+fn cached_unit(
+    text: cache::Key,
+    source: &str,
+    offset: usize,
+    parse: impl FnOnce() -> EngineResult<Program>,
+) -> EngineResult<Arc<cache::Unit>> {
+    let key = cache::at(&text, offset);
+    if let Some(unit) = cache::get(&key) {
+        return Ok(unit);
+    }
+    let unit = match cache::elsewhere(&text) {
+        Some((at, unit)) => Arc::new(unit.rebased(offset as i64 - at as i64)),
+        None => compile_script(&parse()?, Some((source, offset)))?,
+    };
+    cache::put(key, unit.clone());
+    cache::remember(text, offset, key);
+    Ok(unit)
+}
+
+/** Hand the deferred functions of the cached unit at `offset` to `workers` executor threads
+(see `v9::precompile_deferred`) and wait for them; the units stay the cache's and the stubs'
+own. Waiting bounds the threads alive at once to `workers`: a page's scripts are compiled one
+after another, and a load that stops early joins its compile thread, which joins these. */
+pub(in crate::v9) fn precompile_deferred(
+    text: &cache::Key,
+    offset: usize,
+    workers: usize,
+) -> usize {
+    let Some(unit) = cache::get(&cache::at(text, offset)) else {
+        return 0;
+    };
+    let lazies: Vec<(Arc<Code>, Arc<lazy::Lazy>)> = unit
+        .codes
+        .iter()
+        .filter_map(|code| code.lazy.clone().map(|lazy| (code.clone(), lazy)))
+        .collect();
+    let total = lazies.len();
+    if total == 0 || workers == 0 {
+        return 0;
+    }
+    let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let lazies = Arc::new(lazies);
+    let pool: Vec<_> = (0..workers.min(total))
+        .filter_map(|index| {
+            let (next, lazies) = (Arc::clone(&next), Arc::clone(&lazies));
+            crate::v9::execution_thread::spawn_execution_thread(
+                format!("oya-defer-{index}"),
+                move || {
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((code, lazy)) = lazies.get(at) else {
+                            return;
+                        };
+                        let _ = lazy.unit(code.source.as_ref());
+                    }
+                },
+            )
+            .ok()
+        })
+        .collect();
+    for worker in pool {
+        let _ = worker.join();
+    }
+    total
+}
+
+/** Fill the process cache with `source` compiled as a classic script at `offset`, for a page
+load that compiles ahead of its load step; the unit itself stays this module's. */
+pub(in crate::v9) fn precompile(
+    text: cache::Key,
+    source: &str,
+    offset: usize,
+    parse: impl FnOnce() -> EngineResult<Program>,
+) -> EngineResult<()> {
+    cached_unit(text, source, offset, parse).map(|_| ())
 }
 
 /** Compile a classic script and its nested functions into one shareable unit. */
@@ -695,9 +965,11 @@ fn compile_eval(
     program: &Program,
     context: eval::Context,
     source: (&str, usize),
+    scopes: &str,
 ) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
-    let script = compiler.eval_script(program, context)?;
+    let mut script = compiler.eval_script(program, context)?;
+    script.scopes = Some(Arc::from(scopes));
     Ok(Arc::new(cache::Unit::new(
         compiler.done,
         script,
@@ -761,7 +1033,10 @@ struct Binding {
     block_function: bool,
 }
 
-/** One lexical scope during compilation. */
+/** One lexical scope during compilation. Shared copy-on-write: a deferred function keeps the
+scopes it was written in, so taking them costs a pointer per scope, and only a scope changed
+after that is copied. */
+#[derive(Clone)]
 struct Scope {
     bindings: Vec<Binding>,
     /// Position of each name in `bindings`: a minified bundle declares thousands of names in one
@@ -769,6 +1044,8 @@ struct Scope {
     index: std::collections::HashMap<Name, usize>,
     /// Whether this scope has a runtime environment record.
     env: bool,
+    /// Known nested references restrict function environments; dynamic scopes retain every binding.
+    captured: Option<Arc<std::collections::HashSet<Name>>>,
     /// Slots allocated in that environment.
     slots: Slot,
     /// First scope of a function: lookups crossing it leave the function.
@@ -853,13 +1130,19 @@ struct FnState {
 /** The compiler: a stack of functions over one shared scope stack. */
 #[derive(Default)]
 struct Compiler {
-    scopes: Vec<Scope>,
+    scopes: Vec<Arc<Scope>>,
     functions: Vec<FnState>,
     done: Vec<Code>,
     /// Enclosing classes, innermost last, for private names: each one's site and declared names.
     classes: Vec<(u32, Vec<Name>)>,
     /// The module body being compiled, if any.
     module: Option<module::ModuleScope>,
+    /// Compiling a deferred function, whose subtree `early` already checked when it deferred.
+    checked: bool,
+    /// Compile every function now, as the deferred-compile oracle test does.
+    eager: bool,
+    /// Shared dependency analysis survives deferred compilation without repeating whole syntax walks.
+    captures: scan::CaptureCache,
 }
 
 /** Most registers any one function may use. */
@@ -961,18 +1244,19 @@ impl Compiler {
     }
     /** Push a scope; `env` gives it a runtime environment. */
     fn push_scope(&mut self, env: bool, boundary: bool) {
-        self.scopes.push(Scope {
+        self.scopes.push(Arc::new(Scope {
             bindings: Vec::new(),
             index: std::collections::HashMap::default(),
             env,
+            captured: None,
             slots: 0,
             boundary,
             global: false,
-        });
+        }));
     }
     /** Declare a binding in the innermost scope; redeclaring a name reuses its place. */
     fn declare(&mut self, name: &Name, declared: Declared) -> EngineResult<Place> {
-        let scope = self.scopes.last_mut().expect("scope");
+        let scope = Arc::make_mut(self.scopes.last_mut().expect("scope"));
         if let Some(existing) = scope.index.get(name).map(|&at| &mut scope.bindings[at]) {
             if declared != Declared::Var && declared != Declared::Hidden {
                 existing.declared = declared;
@@ -981,7 +1265,13 @@ impl Compiler {
         }
         let place = if scope.global {
             Place::Global
-        } else if scope.env {
+        } else if scope.env
+            && ((declared == Declared::Hidden && &**name != "this")
+                || scope
+                    .captured
+                    .as_ref()
+                    .is_none_or(|captured| captured.contains(name)))
+        {
             let slot = scope.slots;
             scope.slots = scope
                 .slots
@@ -996,7 +1286,7 @@ impl Compiler {
     }
     /** Add a binding record to the innermost scope. */
     fn push_binding(&mut self, name: &Name, declared: Declared, place: Place) -> Place {
-        let scope = self.scopes.last_mut().expect("scope");
+        let scope = Arc::make_mut(self.scopes.last_mut().expect("scope"));
         scope.index.insert(name.clone(), scope.bindings.len());
         scope.bindings.push(Binding {
             name: name.clone(),
@@ -1053,6 +1343,7 @@ impl Compiler {
             strict_ranges: state.strict_ranges,
             name,
             source: None,
+            scopes: None,
             source_span: func.and_then(|func| *func.source_span.borrow()),
             length,
             ops: state.ops,
@@ -1060,24 +1351,27 @@ impl Compiler {
             env,
             arguments: state.arguments,
             caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
+            jit: crate::v9::jit::JitSlot::default(),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),
             templates: state.templates,
             positions: state.positions,
             callees: state.callees,
+            lazy: None,
         }
     }
     /** Compile a script's top level. */
     fn script(&mut self, program: &Program) -> EngineResult<Code> {
         self.begin_function(program.strict, FuncFlags::default());
-        self.scopes.push(Scope {
+        self.scopes.push(Arc::new(Scope {
             bindings: Vec::new(),
             index: std::collections::HashMap::default(),
             env: false,
+            captured: None,
             slots: 0,
             boundary: true,
             global: true,
-        });
+        }));
         self.at(program.pos);
         self.global_declarations(&program.body)?;
         let result = self.temp()?;
@@ -1150,6 +1444,46 @@ mod rebase_tests {
         )
     }
 
+    /** Shapes of a unit's codes with every deferred function compiled and expanded in place,
+    so a comparison covers what the first calls will run, not only the stubs. */
+    pub(super) fn shapes(unit: &super::cache::Unit) -> Vec<String> {
+        let mut all = Vec::new();
+        for code in unit.codes.iter().chain([&unit.entry]) {
+            match &code.lazy {
+                Some(lazy) => all.extend(shapes(&lazy.unit(code.source.as_ref()).unwrap())),
+                None => all.push(shape(code)),
+            }
+        }
+        all
+    }
+
+    /** Every deferred function compiles to exactly the code the eager compile gives it: the
+    scopes it captured are the scopes the eager compile saw at that point. */
+    #[test]
+    fn deferred_functions_compile_to_the_eager_code() {
+        let source = "var top=1;function outer(a,b){const f=(x)=>x+a+top;class K extends Array{#p=1;\
+            static s(){return 2}get g(){return this.#p}m(){return ()=>super.g}}\
+            return [f(b),new K().g,K.s(),eval('a'),arguments[0]]}\
+            const o={m(){return `t${top}`},*gen(){yield 1},async am(){await 0}};\
+            {let blocked=2;function inner(){return blocked}}\
+            label:for(let i=0;i<2;i++){try{throw new Error('e'+i)}catch(e){(()=>e)();continue label}}\
+            outer(1,2);";
+        let program = crate::v9::parse_at(source, 0, Some(0)).unwrap();
+        let lazy = compile_script(&program, Some((source, 0))).unwrap();
+        let mut compiler = super::Compiler {
+            eager: true,
+            ..super::Compiler::default()
+        };
+        let entry = compiler.script(&program).unwrap();
+        let eager = super::cache::Unit::new(compiler.done, entry, None, Some((source, 0)));
+        let sorted = |mut all: Vec<String>| {
+            all.sort();
+            all
+        };
+        assert!(lazy.codes.iter().any(|code| code.lazy.is_some()));
+        assert_eq!(sorted(shapes(&lazy)), sorted(shapes(&eager)));
+    }
+
     /** A script compiled at one offset and moved to another is exactly the script compiled
     there: the cache may hand out the moved one instead of parsing again. */
     #[test]
@@ -1165,11 +1499,6 @@ mod rebase_tests {
         };
         let (early, late) = (compile(100), compile(5_000));
         let moved = early.rebased(4_900);
-        let shapes = |unit: &super::cache::Unit| {
-            let mut all: Vec<String> = unit.codes.iter().map(|code| shape(code)).collect();
-            all.push(shape(&unit.entry));
-            all
-        };
         assert_eq!(shapes(&moved), shapes(&late));
         assert_ne!(shapes(&early), shapes(&late));
     }
@@ -1193,16 +1522,207 @@ mod rebase_real_page {
                 continue;
             };
             let moved = early.rebased(776_777);
-            let shapes = |unit: &super::cache::Unit| {
-                let mut all: Vec<String> = unit
-                    .codes
-                    .iter()
-                    .map(|code| super::rebase_tests::shape(code))
-                    .collect();
-                all.push(super::rebase_tests::shape(&unit.entry));
-                all
-            };
+            let shapes = super::rebase_tests::shapes;
             assert!(shapes(&moved) == shapes(&late), "script {index} differs");
         }
+    }
+
+    /** A real page's scripts compile lazily to exactly their eager code, every function. */
+    #[test]
+    #[ignore = "needs MARS_REBASE_SOURCES"]
+    fn real_page_functions_compile_lazily_to_their_eager_code() {
+        let path = std::env::var("MARS_REBASE_SOURCES").expect("MARS_REBASE_SOURCES");
+        let sources: Vec<String> = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let sorted = |mut all: Vec<String>| {
+            all.sort();
+            all
+        };
+        for (index, source) in sources.iter().enumerate() {
+            let Ok(program) = crate::v9::parse_at(source, 0, Some(index)) else {
+                continue;
+            };
+            let Ok(lazy) = super::compile_script(&program, Some((source, 0))) else {
+                continue;
+            };
+            let mut compiler = super::Compiler {
+                eager: true,
+                ..super::Compiler::default()
+            };
+            let entry = compiler.script(&program).unwrap();
+            let eager = super::cache::Unit::new(compiler.done, entry, None, Some((source, 0)));
+            let shapes = super::rebase_tests::shapes;
+            assert!(
+                sorted(shapes(&lazy)) == sorted(shapes(&eager)),
+                "script {index} differs"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod retained_tests {
+    use super::{Code, Registry, cache};
+    use crate::v9::compile_dynamic;
+    use std::sync::Arc;
+
+    /** The caller context the Function constructor compiles under. */
+    const INDIRECT: &str = "n|g";
+    /** A strict caller's context: the same text compiles to other code under it. */
+    const STRICT: &str = "s|g";
+    /** The offset of the first dynamic source; a second one sits past it. */
+    const BASE: usize = crate::v9::DYNAMIC_OFFSET;
+    /** Where a second dynamic source starts, clear of the first. */
+    const SECOND: usize = BASE + 100;
+
+    /** The registry the next step starts from: the carried one, with nothing adopted yet. */
+    fn next_step(carried: &Registry) -> Registry {
+        let mut step = carried.clone();
+        step.begin_step();
+        step
+    }
+
+    /** The source text a code was compiled from. */
+    fn text(code: &Code) -> &str {
+        code.source
+            .as_ref()
+            .map(|(text, _)| &**text)
+            .unwrap_or_default()
+    }
+
+    /** Classic and eval code kept by an earlier step is handed back as the same code to a later
+    step that re-adopts it: nothing is parsed or compiled again. */
+    #[test]
+    fn retained_dynamic_code_is_reused_across_steps() {
+        let mut first = Registry::default();
+        let script = compile_dynamic(&mut first, "1+1", BASE, None, false).unwrap();
+        let eval = compile_dynamic(&mut first, "2+2", SECOND, Some(INDIRECT), false).unwrap();
+        let lookups = cache::lookups();
+        let mut step = next_step(&first);
+        let again = compile_dynamic(&mut step, "1+1", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&script, &again));
+        let again = compile_dynamic(&mut step, "2+2", SECOND, Some(INDIRECT), false).unwrap();
+        assert!(Arc::ptr_eq(&eval, &again));
+        let mut later = next_step(&step);
+        let again = compile_dynamic(&mut later, "1+1", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&script, &again));
+        // No keyed lookup at all: the registry answers before the source is hashed.
+        assert_eq!(cache::lookups(), lookups);
+    }
+
+    /** Another source at an offset an earlier step's source held compiles fresh, and the next
+    step sees the new one, not the old one. */
+    #[test]
+    fn a_different_source_at_the_same_offset_recompiles() {
+        let mut first = Registry::default();
+        let old = compile_dynamic(&mut first, "1+1", BASE, None, false).unwrap();
+        let mut step = next_step(&first);
+        let new = compile_dynamic(&mut step, "2+2", BASE, None, false).unwrap();
+        assert!(!Arc::ptr_eq(&old, &new));
+        assert_eq!(text(&new), "2+2");
+        let mut later = next_step(&step);
+        let again = compile_dynamic(&mut later, "2+2", BASE, None, false).unwrap();
+        assert!(Arc::ptr_eq(&new, &again));
+    }
+
+    /** The same text at the same offset under other caller scopes, or as a plain script, is
+    other code: a retained eval answers only for its own scopes. */
+    #[test]
+    fn an_eval_with_a_different_context_recompiles() {
+        let mut first = Registry::default();
+        let indirect = compile_dynamic(&mut first, "x", BASE, Some(INDIRECT), false).unwrap();
+        let mut step = next_step(&first);
+        let strict = compile_dynamic(&mut step, "x", BASE, Some(STRICT), false).unwrap();
+        assert!(!Arc::ptr_eq(&indirect, &strict));
+        assert_eq!(strict.scopes.as_deref(), Some(STRICT));
+        let mut again = next_step(&step);
+        let script = compile_dynamic(&mut again, "x", BASE, None, false).unwrap();
+        assert!(!Arc::ptr_eq(&strict, &script));
+        assert_eq!(script.scopes, None);
+        let mut back = next_step(&again);
+        let indirect_again = compile_dynamic(&mut back, "x", BASE, Some(INDIRECT), false).unwrap();
+        assert_eq!(indirect_again.scopes.as_deref(), Some(INDIRECT));
+    }
+}
+
+#[cfg(test)]
+mod filing_tests {
+    use super::{Registry, compile_script};
+
+    /** A script compiled at `offset`, as its own unit. */
+    fn unit(source: &str, offset: usize) -> std::sync::Arc<super::cache::Unit> {
+        let program = crate::v9::parse_at(source, offset, Some(0)).unwrap();
+        compile_script(&program, Some((source, offset))).unwrap()
+    }
+
+    /** A later step re-adopting the same unit, or the same source compiled again, files it
+    without a duplicate-site refusal; another source on the same site is refused within a
+    step and takes the site over in the next one. */
+    #[test]
+    fn a_registry_carried_across_steps_refiles_only_what_changed() {
+        let mut registry = Registry::default();
+        let first = unit("function f(){return 1}f();", 10);
+        registry.adopt(&first).unwrap();
+        let filed = registry.codes.len();
+        registry.adopt(&first).unwrap();
+        assert_eq!(registry.codes.len(), filed);
+        registry
+            .adopt(&unit("function f(){return 1}f();", 10))
+            .unwrap();
+        assert_eq!(registry.codes.len(), filed);
+        assert!(
+            registry
+                .adopt(&unit("function g(){return 2}g();", 10))
+                .is_err()
+        );
+        // Only this step's adoptions answer a dynamic compile without the keyed cache.
+        let entry = first.entry.site;
+        assert!(registry.adopted_this_step(entry).is_some());
+        registry.begin_step();
+        assert!(registry.adopted_this_step(entry).is_none());
+        // The next step may compile another source where an earlier step's was; none of the old
+        // source's functions survive to answer for the new source's sites.
+        let old: Vec<u32> = first.codes.iter().map(|code| code.site).collect();
+        assert!(!old.is_empty());
+        registry.adopt(&unit("var x=1;", 10)).unwrap();
+        for site in old {
+            assert!(
+                registry.codes.get(&site).is_none(),
+                "old function site {site} survived"
+            );
+        }
+        assert!(registry.codes.get(&entry).is_some());
+    }
+}
+
+#[cfg(test)]
+mod deferred_pool_tests {
+    use super::{cache, precompile, precompile_deferred, source_key};
+
+    /** The pool has compiled every deferred function of the script when the call returns, so
+    the compile thread that waits on it leaves no worker running on its own. */
+    #[test]
+    fn deferred_pool_finishes_before_returning() {
+        let source = "function a(){return 1}function b(){return a()+1}function c(){return b()+1}\
+            const d=()=>c()+1;d();";
+        let offset = 7;
+        let text = source_key(source);
+        precompile(text, source, offset, || {
+            crate::v9::parse_at(source, offset, None)
+        })
+        .unwrap();
+        let unit = cache::get(&cache::at(&text, offset)).expect("cached");
+        let deferred = unit.codes.iter().filter(|code| code.lazy.is_some()).count();
+        assert!(deferred > 0, "the functions were deferred");
+        assert_eq!(precompile_deferred(&text, offset, 2), deferred);
+        let compiled = unit
+            .codes
+            .iter()
+            .filter_map(|code| code.lazy.as_ref())
+            .filter(|lazy| lazy.compiled().is_some())
+            .count();
+        assert_eq!(
+            compiled, deferred,
+            "every deferred function compiled before the return"
+        );
     }
 }

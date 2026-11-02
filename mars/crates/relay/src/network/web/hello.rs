@@ -69,15 +69,11 @@ pub(super) fn config() -> EngineResult<Arc<ClientConfig>> {
     CONFIG.get_or_init(build).clone().ok_or_else(unconfigured)
 }
 
-/** The Mozilla roots both TLS paths trust, built once. */
+/** The Mozilla and system roots both TLS paths trust, built once. */
 fn roots() -> Arc<RootCertStore> {
     static ROOTS: OnceLock<Arc<RootCertStore>> = OnceLock::new();
     ROOTS
-        .get_or_init(|| {
-            Arc::new(RootCertStore::from_iter(
-                webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
-            ))
-        })
+        .get_or_init(|| Arc::new(super::roots::root_store()))
         .clone()
 }
 

@@ -3,7 +3,7 @@
  * type normalization, line endings, slicing and reads, and FormData's entry list. Each test pins
  * one rule through page script.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

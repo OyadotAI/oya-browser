@@ -1,5 +1,5 @@
 /** A call of a value that is not a function names the callee as the source wrote it, as V8 does. */
-mod common;
+use crate::common;
 
 /** A member chain is printed dot by dot. */
 #[test]

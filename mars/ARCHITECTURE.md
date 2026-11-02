@@ -47,21 +47,174 @@ AppKit native window       native agent NDJSON or MCP stdio
           one worker / one Rust Runtime
           bounded tab states + shared engines and cookie profile
                         |
-            supervised private pipes
+          in-process engine threads, typed calls (no JSON)
+          [optional: MARS_PROCESS_ISOLATION=1 for subprocesses]
                /        |        \
-          network    document     V9
-          process     process   process
-             |           |
-      OS sockets/TLS    owned layout + OS glyph metrics
+            Relay      Eye  <--  V9 (sync LayoutHost)
+          (network)  (document)  (JavaScript VM)
+             |           |              |
+      OS sockets/TLS  owned layout  bytecode interpreter
+                      + glyphs      (JIT bridge: profiling only)
 ```
+
+## Unified in-process engine and JIT execution bridge
+
+### In-process engine execution and shared memory
+Mars runs the coordinator, Relay (network), Eye (document/layout) and V9 (JavaScript) in one OS
+process by default; each engine is a long-lived thread. `MARS_PROCESS_ISOLATION=1` runs them as
+sandboxed subprocesses instead, for hermetic tests, crash recovery and the platform sandbox.
+
+- **Typed calls, no serialization** (`src/runtime/supervisor/jobs.rs`): in process, a hot call
+  (`v9.page`, `document.styles`, `document.apply`, `document.render`) is a closure sent to the
+  engine's thread with owned Rust values; the typed result comes back on a one-shot channel under
+  the same deadline and cancellation polling. Nothing is encoded to JSON, and a page's scripts are
+  shared by `Arc` instead of hashed per step. Subprocess engines keep the framed JSON path.
+- **Synchronous layout** (`crates/v9/src/v9/platform/layout_host.rs`,
+  `src/runtime/scripting/sync_layout.rs`): when script reads a box or computed style the last
+  layout cannot answer, V9 calls the `LayoutHost` the app put on `PageEnvironment`. The host
+  applies the step's change log, cascades and lays out on Eye's engine thread while V9 waits,
+  and the same run continues. Successful reads seal the attribute journal prefix. The next
+  read moves the previous document back to Eye and applies only the new suffix; changed
+  prefixes restart from the original document. `MutationCursor` retains the identity frontier
+  and whole-journal limits across reads, including IDs removed before a read. Commit also
+  reuses this document, marking styles dirty when it applies a final suffix.
+  At most `LAYOUT_CALLS` per step; past that, or with no
+  host (subprocess mode), V9 reports `stale_geometry`/`style_requests` and the coordinator lays
+  out and runs the step again, as before.
+- **Shared computed styles** (`crates/eye/src/document/style/shared.rs`): DOM nodes retain a
+  pointer to immutable computed values. Document snapshots and unchanged cascade results share
+  those values; a native edit detaches only the changed style. Node insertions and moves carry
+  the pointer instead of every CSS field. Serialization still writes the same value object.
+- **Persistent execution thread** (`crates/v9/src/v9/execution_thread.rs`): the in-process V9
+  service owns the full execution stack and runs successive calls on that thread, preserving
+  thread-local shape caches. Each call retains its panic boundary. Standalone callers and
+  framed services still acquire an execution thread when their caller does not own that stack.
+  This does not yet retain a live VM between tasks; resident state restoration remains.
+- **Custom element lifetime**: an upgrade registration does not root each instance. Connected
+  custom elements retain their wrappers and upgraded prototypes; detached instances follow
+  ordinary script and DOM reachability. Construction and queued slot changes keep their targets
+  alive until those operations finish. Opt-in `v9.allocations` records allocation charges per
+  resident step without serializing the heap.
+- **Native task collection**: desktop pages and workers enable `PageEnvironment.live_gc`.
+  Heap growth or bound pressure runs ordinary collection at the task checkpoint, reclaiming
+  unreachable weak-key cycles. Standalone snapshot callers retain weak identities as before.
+  Reachable DOM targets own mutation observers; observer registrations hold their target weakly,
+  so discarded observer/target cycles do not retain callbacks. Pending records remain roots.
+  Observation traversal includes the owning document and stops at shadow roots. A stable heap
+  near a bound does not trigger another collection without growth or actual bound pressure.
+- **Resident heap admission**: identity bounds use radix-tree lower bounds and proxy presence is
+  maintained with allocation/recounting, avoiding two whole-heap scans during task restoration.
+- **Script call forwarding**: the intrinsic `Function.prototype.call` enters a script closure on
+  the current interpreter loop, retaining the original caller and exception boundary. Native
+  callbacks, proxies, bound targets and replaced call properties retain ordinary dispatch.
+- **Dictionary property caches**: large objects retain a layout identity for own-property slots.
+  Dictionary snapshots share that identity until a key is added or removed, when only the changed
+  snapshot receives a fresh identity. Slot reads still inspect data/accessor kind and writes still
+  inspect writability, so redefinitions need no structural invalidation. Identities are process
+  metadata, rebuilt when state is deserialized.
+- **Request submission**: validated script tasks give their outgoing requests a bounded admission
+  turn before followup script loading. Network workers can download concurrently with that work;
+  responses stay queued for the ordinary network task source. Resize observer broadcasts continue
+  deferring resource work until their rendering cycle allows it.
+- **Closure environments**: function locals used by nested functions live in shared environment
+  slots; other locals remain activation registers and disappear when that activation returns.
+  Dependency analysis is memoized across lazy compilation. Direct eval, mapped arguments and
+  module scopes keep their existing full environments. Class scopes and lexical block scopes
+  retain their established layout.
+- **Engine call bound**: `rpc_timeout()` never sits under the effective V9 script deadline plus a
+  margin, so a slow but bounded script reports its own limit instead of having its engine killed.
+
+### V9 JIT bridge
+On Apple silicon macOS, hot functions use the owned ARM64 assembler and executable-memory
+manager in `v9::jit`. Forward jumps become native branches; other instructions call the
+interpreter's instruction helper and dispatch through a block table. This preserves interpreter
+semantics but does not yet specialize arithmetic or property accesses into native operations.
+Compilation currently runs on the execution thread. The separate conformance tier-status bridge
+reports optimization metadata; its status alone is not evidence of native specialization.
 
 ## Ownership and transactions
 
+SVGElement derives from Element, SVGGraphicsElement derives from SVGElement, and
+SVGSVGElement derives from SVGGraphicsElement. Shape completion never writes SVG
+members onto HTMLElement. Wrappers use their established namespace and local
+name; creation relinks foreign wrappers after namespace registration while
+preserving HTML custom classes. Native common style/event behavior is inherited
+from Element, and SVG focus/blur reuse existing native implementations.
+
+BroadcastChannel state belongs to V9; only inert ordered Open/Post/Close commands
+and a complete live endpoint snapshot cross to the coordinator. UTF-16 names are
+exact, IDs never recycle, closed calls fail before cloning, and relevant message
+listeners retain otherwise unreachable open channels. Native MessageEvents carry
+structured cloned data and the sender's origin; delivery rechecks receiver state.
+The shared worker clone supports cycles, aliases, plain objects/arrays, buffers,
+typed views, Date, RegExp, Map, Set, primitive wrappers, errors and Blobs/Files;
+shared-buffer payloads remain explicit clone refusals. No transfer-list API is exposed.
+
+IndexedDB's engine is a V9 JavaScript bootstrap (`platform/indexed_db/js`) run once per
+fresh page or dedicated worker, beside the Observable bootstrap. Keys are encoded so string
+order is key order; stores and indexes are sorted arrays searched by bisection; every
+mutation journals an undo step, so abort restores exact state. Requests, events and
+auto-commit run as timer tasks with a microtask checkpoint per listener; a native drain
+hook makes a transaction inactive at the end of the task that created it. The engine asks
+the coordinator for a database image when it first opens a database (an `indexeddb`
+HostRequest) and sends each committed transaction's changed records as an effect. The
+coordinator (`runtime/indexed_db.rs`) keeps one image per storage partition (top-level
+site plus origin), applies commits atomically and seals each partition's record in the
+profile vault under a digest name; ephemeral profiles keep them in memory. Clearing saved
+site storage removes them. A database is bounded at 4 MiB of keys and values, an origin at
+32 MiB; contexts see other pages' commits on their next open of a database.
+
+Persistence encoder selection uses the stored value's native Rust brand, with shared
+encoder functions for every graph node. Ordinary records do not throw Date/ArrayBuffer
+brand errors or allocate a fresh dispatch table while serializing. The tagged graph wire
+format is unchanged, including aliases, cycles, sparse arrays, typed views and special
+numbers; Blob classification reads its private brand without copying payload bytes.
+
+The Runtime broker captures recipients at Post, excludes only the sender endpoint,
+and isolates authoritative exact origins plus schemeful registrable-domain sites.
+The site helper reuses Relay's Public Suffix List logic; paths, queries and ports
+do not partition top-level sites. Candidate commands, snapshots and acknowledgments
+are promoted with the same authority-guarded navigation/mutation/quiet publication.
+Detached frames, terminated workers, navigation replacement and tab closure revoke
+reception; earlier accepted posts can still complete. Terminal callback failure
+publishes one diagnostic and task acknowledgment with the unchanged page rather
+than retrying a poisoned callback forever. Inactive tab tasks use current tab
+authority and restore the selected tab, with one broadcast delivery per idle slice.
+Channels do not span independent Runtime/app instances.
+
+V9 admits 256 handles/context, 4,096 UTF-16 name units, 256 commands/turn and 16 MiB
+effect storage. Native endpoints share the seven ordinary context ceiling; the
+broker permits 1,024 tasks and 16 MiB accounted queue/metadata storage. Full and
+summary validation retain the same endpoint bounds. Per-message WorkerData bounds
+and the total VM-state limit are unchanged.
+
+Document's event parent is null for the case-sensitive `load` event. Resource
+loads retain element and Document delivery but cannot reach Window capture;
+direct Window load remains unchanged. Other non-bubbling events still traverse
+ancestors in capture. Async function/iterator setup releases temporary pin scopes
+only after results, pending reactions or abrupt values have an owning root.
+
+V9 Execution carries aggregate finalization rollback in an optional `load_failure`
+separate from indexed script failures. Native consumers surface it once as a page
+diagnostic. Whole-load transport failures use an explicit valid script index when
+available and otherwise remain page-level failures; successful scripts are never
+invented as the sources of an aggregate failure.
+
+Intrinsic keyword width lookups belong to an active layout context. A thread-bound
+scope guard starts with empty measurements and restores the enclosing map when
+nested orthogonal layout exits. Completed child widths are published during
+premeasurement, so parent contributions never depend on previous-page node IDs.
+
 Event listener lifetime uses native AbortSignal branding/state, independent of
 replaceable public properties. Abort prunes registrations synchronously before
-callbacks; admission at the listener ceiling prunes old aborted entries and
+callbacks; admission at the listener storage ceiling prunes old aborted entries and
 invokes target-aware GC with converted arguments rooted. Remaining live listeners
-still enforce the existing ceiling. Collector node-target membership is indexed
+share a 16 MiB native/wire budget derived from the unchanged 64 MiB state ceiling.
+Accounting includes conservative tree slack, both event-name string capacities,
+and worst-case JSON escaping. Cached charges follow every mutation; restoration
+streams bounded registrations with unique identities. Full and summary checks
+share validation; dispatch snapshots consume work and IDs cannot wrap or reuse.
+Collector node-target membership is indexed
 once per pass to avoid a wrapper-by-listener scan.
 
 CSP inline script and handler admission share source-expression grammar and the
@@ -323,6 +476,25 @@ module requests keep their prior charset decoding. Fetch text/JSON readers apply
 UTF-8 independently of MIME charset. Image/navigation/preflight requests cannot
 select the raw script response flag, and existing network/VM response caps remain.
 
+Request and Response expose one lazy native default ReadableStream over their buffered
+bytes. Stream locks and disturbance govern whole-body consumers, cloning and inherited
+Request bodies; an absent body remains distinct from a present empty body. Fetched streams
+retain their AbortSignal independently of the Response wrapper. Whole-body reads avoid
+allocating a stream unless script requests it. This does not add incremental network
+streaming, BYOB readers or ReadableStream upload bodies.
+
+Independent dynamic classic-script requests use the existing bounded parallel prefetch
+path before ordered delivery. Prefetch and final acquisition share URL/CSP admission;
+JavaScript MIME and integrity checks still govern execution. Request keys include the
+shaped credentials and headers, and batch duplicate detection uses an ordered set.
+
+The asynchronous network loader keeps waiting hops in one pool queue instead of assigning
+them behind busy workers. Each completion admits the next waiting hop directly on a free
+worker, even while the coordinator is executing JavaScript. Idle workers retain URL cache
+affinity; cache-maintenance commands keep their per-worker FIFO ordering. The queue lock
+covers admission only, never network I/O, and workers hold weak scheduler references so
+runtime shutdown can close the queues under the existing cancellation flag.
+
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally
 unique. Pending and live workers share the six-worker admission ceiling; existing
@@ -369,6 +541,12 @@ layout before the one final intersection delivery. Deadline exhaustion preserves
 registrations and last-delivered sizes, with one cycle per settle and a rendering
 cooldown preventing immediate restart. Callback-created resource work waits for
 ordinary processing; unrelated timers/fetch/worker turns never run inside cycles.
+
+Synchronous layout caches retain the exact DOM and extended change logs used by
+Eye. V9 coalesces repeated attribute writes in place, so matching log lengths do
+not establish freshness. Both mid-task geometry reuse and final styled-document
+reuse compare the actual edits. Immutable log snapshots are shared with Eye's
+job through Arc, keeping unchanged reads cached without duplicating input logs.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
@@ -467,8 +645,11 @@ classic sources and module input by digest, and each page's script state (heap, 
 platform state) by token, so a step sends a token instead of the heap (25 MB on YouTube). Per
 page it keeps only the committed state, the last step's base and that step's result, for at most
 RESIDENT_PAGES pages; the coordinator keeps the state's summary (listeners, detached nodes,
-images) and the token. A state V9 built itself skips re-validation; one decoded from a frame is
-always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
+images) and the token. Encoded page maps and their compact JSON are shared by immutable snapshots;
+mutable access first discards that snapshot's encoding and copies a shared map. Unchanged maps
+therefore avoid deep copies between steps, while retries and abandoned candidates retain their
+original values and byte-size validation remains exact. A state V9 built itself skips re-validation;
+one decoded from a frame is always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
 coordinator reloads the page (a POST result is never replayed; its scripts stop). In the desktop, a
 navigation shows its parsed and styled page in the window before its scripts run (`window.inspect`
 reports it with `settling`); the committed page, history and the navigation's reply still wait
@@ -503,6 +684,38 @@ the relevant pending work; app close invalidates every queued tab mutation befor
 Activating a saved page rerenders its layout at the current
 viewport and clamps its scroll. The native strip bounds the session to the configured tab limit;
 multiple windows, tab history restoration and closed-tab recovery remain future work.
+
+## Media elements
+
+`<video>` and `<audio>` are split across the three engines and the shell. V9's platform
+bootstrap (`platform/media.js`, installed with the other script-defined interfaces) owns the
+HTML media element state machine: resource selection over `src` and `<source>` (type and
+media checks), ready and network states, play/pause with Chrome's muted-autoplay policy,
+seeking, every media event in specification order, TimeRanges, MediaError, audio/video/text
+track lists, TextTrack/VTTCue/VTTRegion with a WebVTT parser, `<track>` loading, and the Media
+Source object model. It talks to the host only through a private object (`platform/media.rs`)
+that is never on a global: commands (`MediaCommand`) leave in `HostEffects::media`, updates
+arrive as `PageEvent::Media`, and attribute or tree changes on media elements are handed to
+the script at the next stable state (the microtask queue running dry). Elements with a player
+keep their wrappers rooted. `canPlayType`, `isTypeSupported` and `mediaCapabilities` answer
+from `PageEnvironment::media`, which the coordinator probes once from AVFoundation.
+
+The coordinator (`src/runtime/media*`) queues commands with the page candidate, hands them to
+the players through a plain-data hub, fetches the byte ranges the players ask for through
+Relay (`Destination::Video`/`Audio`, `Range` requests, Chrome's media headers; Blob URLs are
+served from captured bytes) and diffs player status into updates (timeupdate at 4 Hz while
+playing). Players of a page that is gone are released. On macOS the players live on the main
+thread (`src/desktop/media*`): AVFoundation decodes and plays audio with the page's volume,
+mute, rate and pitch setting, its resource loader reads only from the hub (it never opens a
+socket), and frames are pulled from a BGRA output and painted into the element's box with
+`object-fit`/`object-position`, under captions and Chromium-like native controls. Eye lays
+media out as replaced boxes (300 by 150 video, 300 by 54 audio with controls, audio without
+controls hidden) and never renders their children. Supported H.264/AAC fragmented MP4
+Media Source appends reach the native video and audio decoders. Sample ends are calculated
+in integer presentation timestamps before conversion to seconds, so contiguous buffered
+ranges merge without floating-point gaps. Unsupported codec combinations remain explicit
+refusals. Native MediaMetadata owns title, artist, album and normalized immutable artwork
+records; broader Media Session behavior and chapter metadata remain unfinished.
 
 ## Performance and footprint targets
 
@@ -609,6 +822,49 @@ the exact agent-visible display list. Production builds omit this observation.
 | src/desktop/window/ | Native intentions, ordered updates, OS-only tools, menus |
 | src/desktop/canvas.rs, src/desktop/mars.rs | Native controls, painting and shell |
 | crates/eye/src/platform/ | OS font measurement/drawing primitives reused by the Mars shell |
+| crates/v9/src/v9/platform/host_bridge.rs, platform_apis/ | V9's private platform bridge and the JavaScript side of coordinator-backed APIs |
+| src/runtime/platform.rs, src/runtime/platform/ | Coordinator side: locks, events, Cache Storage, service workers, clipboard, cookies, credentials and devices |
+
+## Coordinator-backed platform APIs
+
+Service workers, Cache Storage, the Async Clipboard, Web Locks, the Cookie Store, Storage
+Access, Credential Management, Screen Wake Lock, gamepads, Web MIDI, EME Clear Key and
+`getInstalledRelatedApps` are JavaScript in `platform_apis/` (concatenated into the platform
+bootstrap) over one native bridge. The bootstrap takes `__marsPlatformHost` from the global's
+prototype chain and deletes it before page scripts run. `call(op, json, bytes)` records a
+`HostRequest` of kind "platform" whose body carries the arguments and V9's own transient user
+activation (a click, key or typed input within five seconds), so a page cannot claim an
+activation it never had. Answers are `{ok}` or `{error:{name,message}}`; bytes ride in
+`body_bytes` and resolve as `[json, ArrayBuffer]`.
+
+The coordinator dispatches each operation through a command map (`platform::handler`). A
+handler answers or parks: parked requests stay on the page (`Scripting::parked`) and are
+retried whenever `Platform::version` changes, which is how lock grants, cookie changes,
+`serviceWorker.ready` and the per-context event queue (`events.next`) reach a page without
+polling. The idle loop polls devices, cookie watchers and context liveness (`poll_platform`) and
+wakes the visible page when a parked request can now be answered. Dedicated workers answer
+immediately and refuse operations that would wait.
+
+Service workers keep a registry (scope, waiting and active versions with their scripts)
+persisted in the profile's sealed ServiceWorkers record; Cache Storage and stored credentials
+have their own records. `--ephemeral` desktops pass an in-memory record store. A version runs
+in V9's worker runtime with `PageEnvironment::service_worker` (ServiceWorkerGlobalScope) and a
+residency lease, only while it has work, and stops after 30 s idle. Functional events queue in
+the coordinator and reach the worker when its parked `sw.next` is retried; `sw.done` returns
+each outcome. Install and Activate follow the spec's jobs; `clients.claim` and new documents
+(controller chosen in `build_page`) set controllers. Script `fetch`/XHR of a controlled page
+and top-level GET navigations whose URL a registration matches become FetchEvents, run
+synchronously until answered or ten seconds pass, with navigation preload when enabled.
+Requests the parser and native loaders make (stylesheets, classic scripts, images, fonts) do
+not pass through service workers yet.
+Synchronous XHR (`open` with async false) is answered by the step's own fetch, not by a service
+worker, so a controlled page's blocking request skips its worker for now. Each one waits at most
+`SYNC_XHR_WAIT` and the step replays at most `SYNC_XHR_REPLAYS` times.
+
+The Clear Key key store (`platform/clearkey.rs`) is the only interface the media pipeline uses
+for decryption: `Runtime::decrypt_clear_key(identity, key_id, iv, subsamples, sample)` decrypts
+'cenc' (AES-128-CTR) samples in place with the keys that context's sessions loaded, or reports
+that the key is missing. Widevine and every other key system reject with NotSupportedError.
 
 ## Failure, egress and lifetime
 

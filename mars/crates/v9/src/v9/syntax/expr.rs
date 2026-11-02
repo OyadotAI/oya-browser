@@ -215,7 +215,7 @@ impl Parser {
             self.position -= 1;
             return Err(self.unexpected());
         }
-        let name = Name::from(name.as_str());
+        let name = name.0.clone();
         self.use_private(&name, pos)?;
         let object = self.binary(9, no_in)?;
         self.node(ExprKind::PrivateIn(name, Box::new(object)), pos)
@@ -334,10 +334,7 @@ impl Parser {
         if ends {
             self.error_at(pos, AWAIT_BINDING)
         } else {
-            self.error_at(
-                Pos::from_location(self.peek_at(1).location),
-                UNTERMINATED_ARGUMENTS,
-            )
+            self.error_at(self.peek_at(1).location, UNTERMINATED_ARGUMENTS)
         }
     }
     /** Postfix `++` and `--` with no line break before them. */
@@ -559,7 +556,7 @@ impl Parser {
     /** A dotted name: an identifier name or a `#private` name. */
     fn member_name(&mut self) -> EngineResult<MemberProp> {
         if let Kind::Private(name) = &self.peek().kind {
-            let name = Name::from(name.as_str());
+            let name = name.0.clone();
             let pos = self.pos();
             self.next();
             self.use_private(&name, pos)?;
@@ -739,7 +736,7 @@ impl Parser {
             }
             Kind::String(value) => {
                 self.next();
-                ExprKind::String(value)
+                ExprKind::String(*value)
             }
             Kind::Opaque(feature) => {
                 self.next();
@@ -747,13 +744,14 @@ impl Parser {
             }
             Kind::BigInt(value) => {
                 self.next();
-                ExprKind::BigInt(value)
+                ExprKind::BigInt(*value)
             }
             Kind::BigIntWide(digits) => {
                 self.next();
-                ExprKind::BigIntWide(Name::from(digits.as_str()))
+                ExprKind::BigIntWide(Name::from(&*digits))
             }
-            Kind::Regex { pattern, flags } => {
+            Kind::Regex(regex) => {
+                let crate::v9::lexer::RegexText { pattern, flags } = *regex;
                 self.regex_literal_check(pos, &pattern, &flags)?;
                 self.next();
                 ExprKind::Regex(Name::from(pattern.as_str()), Name::from(flags.as_str()))
@@ -841,16 +839,14 @@ impl Parser {
         let mut quasis = Vec::new();
         let mut raws = Vec::new();
         let mut expressions = Vec::new();
-        let Kind::Template {
-            cooked,
-            raw,
-            tail,
-            invalid,
-            ..
-        } = self.next().kind
-        else {
+        let Kind::Template { text, tail, .. } = self.next().kind else {
             return Err(self.unexpected());
         };
+        let crate::v9::lexer::TemplateText {
+            cooked,
+            raw,
+            invalid,
+        } = *text;
         if let (Some(reason), false) = (invalid, tagged) {
             return Err(self.error_at(self.pos(), reason));
         }
@@ -861,12 +857,15 @@ impl Parser {
             expressions.push(self.expression(false)?);
             match self.next().kind {
                 Kind::Template {
-                    cooked,
-                    raw,
+                    text,
                     head: false,
                     tail: last,
-                    invalid,
                 } => {
+                    let crate::v9::lexer::TemplateText {
+                        cooked,
+                        raw,
+                        invalid,
+                    } = *text;
                     if let (Some(reason), false) = (invalid, tagged) {
                         return Err(self.error_at(self.pos(), reason));
                     }
@@ -1041,7 +1040,7 @@ impl Parser {
         let token = self.next();
         self.strict_literal(&token)?;
         Ok(match token.kind {
-            Kind::Name(name) => PropKey::Name(Name::from(name.as_str())),
+            Kind::Name(name) => PropKey::Name(name.0.clone()),
             Kind::String(value) => PropKey::Name(Name::from(
                 value
                     .to_dom()
@@ -1055,7 +1054,7 @@ impl Parser {
             Kind::BigIntWide(digits) => {
                 PropKey::Name(Name::from(crate::v9::value::bigint_property_key(&digits)?))
             }
-            Kind::Private(name) => PropKey::Private(Name::from(name.as_str())),
+            Kind::Private(name) => PropKey::Private(name.0.clone()),
             Kind::Symbol('[') => {
                 let key = self.assignment(false)?;
                 self.expect("]")?;

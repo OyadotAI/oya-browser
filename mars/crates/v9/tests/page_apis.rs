@@ -4,7 +4,7 @@
  * lookups, `detail` on a plain Event, style sheets, validity, inserted script loading and the
  * input events typing fires. Each test pins one rule through the public entry points.
  */
-mod common;
+use crate::common;
 
 use common::{console, eval, failure, host, input, load_with, round_trip};
 use mars_v9::{DomLevel, ModuleInput, ModuleSource, PageEvent};
@@ -92,6 +92,28 @@ fn blank_text_nodes_survive_insertion() {
     );
     assert_eq!(failure(&execution), None);
     assert_eq!(common::global(&execution, "r"), "1|filled|true|filled");
+}
+
+/**
+ * Attaching a detached subtree keeps every text node it holds as the same node: empty texts a
+ * script will fill, and texts next to each other, which markup alone would merge into one.
+ */
+#[test]
+fn attached_subtree_keeps_empty_and_adjacent_text_nodes() {
+    let mut environment = common::environment();
+    environment.dom_level = DomLevel::Extended;
+    let execution = load_with(
+        "const host = document.getElementById('first'); const d = document.createElement('div');
+         d.appendChild(document.createTextNode('')); d.appendChild(document.createTextNode(''));
+         d.appendChild(document.createTextNode('x')); d.appendChild(document.createTextNode('y'));
+         d.appendChild(document.createElement('b')); const made = Array.from(d.childNodes);
+         host.appendChild(d); const kids = Array.from(d.childNodes);
+         const r = [kids.length, kids.map(n => n.data ?? n.tagName).join(','),
+           kids.every((n, i) => n === made[i]), made.every(n => n.parentNode === d)].join('|');",
+        &environment,
+    );
+    assert_eq!(failure(&execution), None);
+    assert_eq!(common::global(&execution, "r"), "5|,,x,y,B|true|true");
 }
 
 /** `Node.ELEMENT_NODE` lives on the constructor as well as the prototype. */
@@ -527,6 +549,7 @@ fn eval_extended(source: &str, name: &str) -> String {
     let execution = mars_v9::load_page(mars_v9::PageInput {
         sources: &[source.to_string()],
         source_keys: &[],
+        module_keys: &[],
         document: common::page(),
         storage: mars_v9::StorageState::default(),
         host: &host,
@@ -536,4 +559,50 @@ fn eval_extended(source: &str, name: &str) -> String {
     .expect("page loads");
     assert!(execution.failed.is_empty(), "{:?}", execution.failed);
     common::global(&execution, name)
+}
+
+/** Two scripts inserted with `async = false` take effect in insertion order however their
+sources arrive: the second, delivered first, waits for the first. A script left async runs as
+soon as it lands. */
+#[test]
+fn ordered_inserted_scripts_run_in_insertion_order_whatever_lands_first() {
+    let environment = common::environment();
+    let sources = vec![
+        "let ran = '';
+         for (const name of ['a', 'b']) {
+           const s = document.createElement('script'); s.async = false; s.src = '/' + name + '.js';
+           document.head.appendChild(s);
+         }
+         const free = document.createElement('script'); free.src = '/c.js'; document.head.appendChild(free);"
+            .to_string(),
+    ];
+    let execution = load_with(&sources[0], &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(execution.script_requests.len(), 3);
+    let delivered = |urls: &[(&str, &str)]| ModuleInput {
+        entries: Vec::new(),
+        sources: urls
+            .iter()
+            .map(|(url, body)| ModuleSource {
+                url: format!("https://example.com/{url}"),
+                source: Some(body.to_string()),
+                classic: true,
+            })
+            .collect(),
+    };
+    let host = host();
+    let later = delivered(&[("b.js", "ran += 'b'"), ("c.js", "ran += 'c'")]);
+    let mut page_input = input(&sources, &host, &environment);
+    page_input.modules = &later;
+    let after = mars_v9::load_modules(page_input, round_trip(execution.state)).expect("b and c");
+    assert_eq!(common::global(&after, "ran"), "c");
+    let all = delivered(&[
+        ("b.js", "ran += 'b'"),
+        ("c.js", "ran += 'c'"),
+        ("a.js", "ran += 'a'"),
+    ]);
+    let mut page_input = input(&sources, &host, &environment);
+    page_input.modules = &all;
+    let after = mars_v9::load_modules(page_input, round_trip(after.state)).expect("a too");
+    assert_eq!(common::global(&after, "ran"), "cab");
 }

@@ -1,5 +1,5 @@
 /** Immutable backing capabilities survive lifecycle changes while preserving exact bytes and native brands. */
-mod common;
+use crate::common;
 
 /** Converting fixed and resizable allocations detaches the source and freezes only their bytes. */
 #[test]

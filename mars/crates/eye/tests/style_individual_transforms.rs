@@ -61,11 +61,24 @@ fn percentage_translate_is_box_relative() {
     assert_eq!(target(&document).translate_percent, [-50.0, -50.0]);
 }
 
-/** A rotation about another axis is a 3D transform Eye refuses. */
+/** Equal within the rounding these checks allow. */
+fn near(actual: f64, expected: f64) {
+    assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+}
+
+/** A rotation about another axis is a 3D matrix: its planar form squeezes y, and the full
+matrix is kept for the 3D paint pass. */
 #[test]
-fn rotation_about_x_is_refused() {
+fn rotation_about_x_is_a_three_dimensional_matrix() {
     let document = styled("rotate: x 45deg", "");
-    assert_eq!(target(&document).transform, None);
+    let style = target(&document);
+    let planar = rounded(style.transform).unwrap();
+    assert_eq!(
+        (planar[0], planar[1], planar[2], planar[4], planar[5]),
+        (1.0, 0.0, 0.0, 0.0, 0.0)
+    );
+    near(planar[3], std::f64::consts::FRAC_1_SQRT_2);
+    assert!(style.transform_4.is_some());
 }
 
 /** Keywords in either order, lengths and percentages place the origin. */

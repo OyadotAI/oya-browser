@@ -1,6 +1,6 @@
 /** The indexed live-range and listener registries behave as the DOM standard says through script:
 range points follow subtree removals and insertions, and listeners match, fire and unregister by key. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** A removed subtree's points are found by walking it: a point two levels down collapses to the gap. */

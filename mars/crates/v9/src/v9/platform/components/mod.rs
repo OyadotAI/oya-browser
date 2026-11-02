@@ -9,6 +9,7 @@
  * DOM natives queue what changed during one call, and `flush` runs custom element reactions and
  * records mutations before the call returns, as the [CEReactions] binding steps do.
  */
+mod candidates;
 mod install;
 mod observer;
 mod reactions;
@@ -83,6 +84,10 @@ pub(in crate::v9) struct State {
     pub waiting: BTreeMap<String, ObjectId>,
     /** Upgraded custom elements and the definition each runs. */
     pub custom: BTreeMap<usize, usize>,
+    /** Connected elements not yet upgraded, by the name a definition would match; see candidates.rs. */
+    pub candidates: BTreeMap<String, BTreeSet<usize>>,
+    /** Whether `candidates` has been built from the document (by the first definition). */
+    pub candidates_built: bool,
     /** Custom elements whose connectedCallback ran and whose disconnectedCallback has not. */
     pub connected: BTreeSet<usize>,
     /** Elements whose constructor threw; they stay failed, as in browsers. */
@@ -114,19 +119,16 @@ impl State {
             ]);
         }
         out.extend(self.waiting.values().map(|id| JsValue::Object(*id)));
-        out.extend(
-            self.observations
-                .iter()
-                .map(|observation| JsValue::Object(observation.observer)),
-        );
         for (observer, records) in &self.records {
             out.push(JsValue::Object(*observer));
             out.extend(records.iter().cloned());
         }
-        // An upgraded element's wrapper carries its class prototype even without own properties.
+        // Construction and queued slot changes own their targets until those operations finish.
+        // Upgrade metadata alone cannot keep a discarded element and its closures alive.
         out.extend(
-            self.custom
-                .keys()
+            self.constructing
+                .iter()
+                .chain(&self.slot_changes)
                 .filter_map(|node| wrappers.get(node))
                 .map(|id| JsValue::Object(*id)),
         );

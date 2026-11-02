@@ -1,5 +1,5 @@
 /** HTML partial updates: the Unsafe methods insert parsed markup at a position beside or inside an element. */
-mod common;
+use crate::common;
 use common::eval;
 
 /** appendHTMLUnsafe adds parsed markup as the element's last children. */

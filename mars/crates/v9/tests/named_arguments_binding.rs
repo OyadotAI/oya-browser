@@ -1,5 +1,5 @@
 /** A named function expression's self binding never overwrites the activation's own arguments binding. */
-mod common;
+use crate::common;
 
 /** Direct eval reads the local arguments object even when the function expression itself is named arguments. */
 #[test]

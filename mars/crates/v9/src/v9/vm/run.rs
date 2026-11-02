@@ -15,6 +15,7 @@ use crate::protocol::EngineError;
 use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::builtins;
 use crate::v9::compile::{Op, SiteKind};
+use crate::v9::jit::compiled::Outcome;
 use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
 mod asyncgen;
@@ -208,42 +209,112 @@ impl Vm<'_> {
         }
         Ok(())
     }
-    /** Execute instructions until an exit or an exception. */
+    /** Execute instructions until an exit or an exception. Compiled code takes over whenever the
+    running frame has it: on entry, after a frame change, and once a loop has made its function hot. */
     fn execute(&mut self) -> Res<Exit> {
+        if let Some(exit) = self.run_compiled()? {
+            return Ok(exit);
+        }
         loop {
-            self.select_frame_realm()?;
-            self.remaining = match self.remaining.checked_sub(1) {
-                Some(remaining) => remaining,
-                None => return Err(self.charge(1).expect_err("budget exhausted")),
-            };
-            if self.remaining.is_multiple_of(SCRIPT_CLOCK_STRIDE) {
-                if self.expired() {
-                    return Err(Thrown::Fatal(super::super::platform::timeout()));
-                }
-                #[cfg(feature = "conformance")]
-                crate::v9::builtins::profile_tick(self)?;
-                self.collect_if_needed()?;
-                #[cfg(feature = "conformance")]
-                if let Some(host) = self.page.environment.conformance_workers.clone() {
-                    host.collection_safepoint(self.page.environment.conformance_worker_id, self)?;
-                }
+            let depth = self.frames.len();
+            let index = self.frame().pc;
+            if let Some(exit) = self.step_at(index)? {
+                return Ok(exit);
             }
-            self.collect_if_due()?;
-            let frame = self.frames.last_mut().expect("running frame");
-            let Some(op) = frame.code.ops.get(frame.pc).copied() else {
-                return Err(EngineError::invalid("V9 ran past the end of its code.").into());
-            };
-            frame.pc += 1;
-            if let Flow::Exit(exit) = self.op(op)? {
+            // Calls and returns change the depth; only a frame change can make compiled code the
+            // right tier for the running frame, so the common instruction pays one comparison.
+            let requested = std::mem::take(&mut self.jit_request);
+            if (self.frames.len() != depth || requested)
+                && let Some(exit) = self.run_compiled()?
+            {
                 return Ok(exit);
             }
         }
     }
+    /** Runs the running frame in compiled code for as long as it has some. Returns when the
+    compiled code yields, returns or throws, or `None` when the interpreter should take over. */
+    fn run_compiled(&mut self) -> Res<Option<Exit>> {
+        loop {
+            let Some((code, pc)) = self
+                .frames
+                .last()
+                .map(|frame| (frame.code.clone(), frame.pc))
+            else {
+                return Ok(None);
+            };
+            // Past the last instruction only the interpreter reports the error, as it always has.
+            if pc > code.ops.len() {
+                return Ok(None);
+            }
+            let Some(compiled) = code.jit.compiled(&code) else {
+                return Ok(None);
+            };
+            match compiled.enter(self) {
+                Outcome::Switch => continue,
+                Outcome::Exit(exit) => return Ok(Some(exit)),
+                Outcome::Error(thrown) => return Err(thrown),
+                Outcome::Panic(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+    }
+    /** Runs the instruction at `index` of the running frame: the per-instruction bookkeeping, then
+    the instruction. Compiled code comes through here too, so budget, deadline, collection and
+    error positions are the same in both tiers. */
+    pub(in crate::v9) fn step_at(&mut self, index: usize) -> Res<Option<Exit>> {
+        self.tick()?;
+        let frame = self.frames.last_mut().expect("running frame");
+        let Some(op) = frame.code.ops.get(index).copied() else {
+            return Err(EngineError::invalid("V9 ran past the end of its code.").into());
+        };
+        frame.pc = index + 1;
+        match self.op(op)? {
+            Flow::Next => Ok(None),
+            Flow::Exit(exit) => Ok(Some(exit)),
+        }
+    }
+    /** The bookkeeping every instruction pays: the budget, the deadline, the realm and collection. */
+    fn tick(&mut self) -> Res<()> {
+        self.remaining = match self.remaining.checked_sub(1) {
+            Some(remaining) => remaining,
+            None => return Err(self.charge(1).expect_err("budget exhausted")),
+        };
+        if self.remaining.is_multiple_of(SCRIPT_CLOCK_STRIDE) {
+            if self.expired() {
+                return Err(Thrown::Fatal(super::super::platform::timeout()));
+            }
+            #[cfg(feature = "conformance")]
+            crate::v9::builtins::profile_tick(self)?;
+            self.collect_if_needed()?;
+            #[cfg(feature = "conformance")]
+            if let Some(host) = self.page.environment.conformance_workers.clone() {
+                host.collection_safepoint(self.page.environment.conformance_worker_id, self)?;
+            }
+        }
+        if self.collect_due {
+            self.collect_if_due()?;
+        }
+        self.select_frame_realm()
+    }
+    /** Moves the running frame to `target`. A backward jump is one more trip round a loop, so it
+    warms the function; the first time that makes the function hot, the interpreter is asked to
+    look for compiled code at its next boundary. */
+    fn branch(&mut self, target: u32) {
+        let hot = {
+            let frame = self.frame();
+            let backward = (target as usize) < frame.pc;
+            frame.pc = target as usize;
+            backward && frame.code.jit.warm()
+        };
+        if hot {
+            self.jit_request = true;
+        }
+    }
     /** The running frame. */
+    #[inline]
     fn frame(&mut self) -> &mut super::Frame {
         self.frames.last_mut().expect("running frame")
     }
-    /** References use the current instruction's lexical strictness; activation and stack privacy keep the function's own mode. */
+    /** References use the current instruction lexical strictness; activation and stack privacy keep the function own mode. */
     #[inline]
     fn reference_strict(&self) -> bool {
         self.frames
@@ -251,6 +322,7 @@ impl Vm<'_> {
             .is_some_and(|frame| frame.code.strict_at(frame.pc.saturating_sub(1)))
     }
     /** Push onto the operand stack. */
+    #[inline]
     pub(in crate::v9) fn push(&mut self, value: JsValue) {
         if let JsValue::String(text) = &value {
             self.track_string(text);
@@ -258,16 +330,22 @@ impl Vm<'_> {
         self.frame().stack.push(value);
     }
     /** Pop the operand stack. */
+    #[inline]
     pub(in crate::v9) fn pop(&mut self) -> JsValue {
-        self.frame().stack.pop().unwrap_or(JsValue::Undefined)
+        // A match, not unwrap_or: that builds the default and drops it on every pop.
+        match self.frame().stack.pop() {
+            Some(value) => value,
+            None => JsValue::Undefined,
+        }
     }
     /** Read the value `depth` below the top. */
+    #[inline]
     fn peek(&mut self, depth: usize) -> JsValue {
         let stack = &self.frame().stack;
-        stack
-            .get(stack.len().wrapping_sub(depth + 1))
-            .cloned()
-            .unwrap_or(JsValue::Undefined)
+        match stack.get(stack.len().wrapping_sub(depth + 1)) {
+            Some(value) => value.clone(),
+            None => JsValue::Undefined,
+        }
     }
     /** The two plain numbers on top of the stack, read in place: the arithmetic and comparison
     fast paths neither clone nor drop operand values, which the generic peek-and-drop sequence
@@ -1701,9 +1779,7 @@ impl Vm<'_> {
                 self.push(key);
             }
             Op::Call(count) => {
-                let stack = &mut self.frame().stack;
-                let start = stack.len().saturating_sub(count as usize);
-                let args: Vec<JsValue> = stack[start..].to_vec();
+                let args = self.take_args(count as usize);
                 let this = self.peek(count as usize);
                 let function = self.peek(count as usize + 1);
                 return self.call_op(function, this, args, count as usize + 2, None);
@@ -1716,9 +1792,7 @@ impl Vm<'_> {
                 return self.call_op(function, this, args, 3, None);
             }
             Op::New(count) => {
-                let stack = &mut self.frame().stack;
-                let start = stack.len().saturating_sub(count as usize);
-                let args: Vec<JsValue> = stack[start..].to_vec();
+                let args = self.take_args(count as usize);
                 let function = self.peek(count as usize);
                 return self.call_op(
                     function.clone(),
@@ -2015,15 +2089,15 @@ impl Vm<'_> {
                     self.push(JsValue::String(text));
                 }
             }
-            Op::Jump(target) => self.frame().pc = target as usize,
+            Op::Jump(target) => self.branch(target),
             Op::JumpIfFalse(target) => {
                 if !self.pop().truthy() {
-                    self.frame().pc = target as usize;
+                    self.branch(target);
                 }
             }
             Op::JumpIfTrue(target) => {
                 if self.pop().truthy() {
-                    self.frame().pc = target as usize;
+                    self.branch(target);
                 }
             }
             Op::JumpIfFalseKeep(target) => {
@@ -2474,6 +2548,7 @@ impl Vm<'_> {
     }
     /** Keep a returned frame's vectors for the next call, emptied so no value outlives its frame. */
     fn recycle_frame(&mut self, frame: super::Frame) {
+        self.recycle_args(frame.args);
         if self.frame_pool.len() >= super::FRAME_POOL {
             return;
         }
@@ -2481,6 +2556,23 @@ impl Vm<'_> {
         stack.clear();
         regs.clear();
         self.frame_pool.push((stack, regs));
+    }
+    /** The arguments of a call: the top `count` operands copied into a pooled vector, so the call
+    needs no allocation once the pool is warm. */
+    pub(in crate::v9) fn take_args(&mut self, count: usize) -> Vec<JsValue> {
+        let mut args = self.arg_pool.pop().unwrap_or_default();
+        let stack = &self.frame().stack;
+        let start = stack.len().saturating_sub(count);
+        args.extend_from_slice(&stack[start..]);
+        args
+    }
+    /** Keep an argument vector for a later call, emptied so no argument outlives its call. */
+    pub(in crate::v9) fn recycle_args(&mut self, mut args: Vec<JsValue>) {
+        if self.arg_pool.len() >= super::FRAME_POOL {
+            return;
+        }
+        args.clear();
+        self.arg_pool.push(args);
     }
     /** The innermost active derived constructor frame whose scope chain holds `env`, the
     environment that owns the `this` slot super() just filled. The frame may be inside a block
@@ -2599,6 +2691,12 @@ impl Vm<'_> {
     fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
         if let JsValue::Object(id) = base {
             self.guard_realm_global(*id)?;
+            // A hit is an own data property of this exact shape, which beats a named frame in
+            // every case (dotted names are never indexes), so it answers before the key is built
+            // and the frame directory is consulted.
+            if let Some(value) = self.load_hit(site, base) {
+                return Ok(value);
+            }
             let key = self.constant_key(site);
             if let Some(value) = crate::v9::platform::frame_directory::lookup(self, *id, &key)? {
                 return Ok(value);
@@ -2646,6 +2744,7 @@ impl Vm<'_> {
         self.get(base, &key)
     }
     /** A cached own data property of an ordinary object, if the site knows its shape. */
+    #[inline]
     fn load_hit(&self, site: u32, base: &JsValue) -> Option<JsValue> {
         let JsValue::Object(id) = base else {
             return None;

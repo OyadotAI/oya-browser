@@ -1,5 +1,5 @@
 /** Named evaluation distinguishes real properties from prototype setters and preserves method/accessor key names. */
-mod common;
+use crate::common;
 
 /** Computed string, number and symbol keys name every ordinary, async and generator method. */
 #[test]

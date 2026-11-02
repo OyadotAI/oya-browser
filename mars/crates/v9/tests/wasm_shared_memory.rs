@@ -1,5 +1,5 @@
 /** Shared Wasm memory exposes frozen wrappers and stable identity for no-op growth. */
-mod common;
+use crate::common;
 
 /** Fixed and resizable shared views stay frozen without changing the shared backing. */
 #[test]

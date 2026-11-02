@@ -1,5 +1,5 @@
 /** DataView operations take their final backing witness after all observable numeric conversions. */
-mod common;
+use crate::common;
 
 /** Growing a buffer from the offset conversion can make a previously invalid view accessible again. */
 #[test]

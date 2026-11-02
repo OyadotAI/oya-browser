@@ -1,5 +1,5 @@
 /** Integer-indexed [[Set]] distinguishes its actual receiver before conversion and ordinary-property writes. */
-mod common;
+use crate::common;
 
 /** Inherited in-range indices create child properties; invalid canonical indices stop at the typed holder. */
 #[test]

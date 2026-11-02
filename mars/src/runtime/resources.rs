@@ -1,13 +1,18 @@
 /** Governed one-hop resources keep effect admission, cookies and deadlines in the coordinator. */
 use super::supervisor::Runtime;
 use crate::{
-    constants::{REDIRECTS, WEB_TIMEOUT},
+    constants::REDIRECTS,
     network::{Destination, Method, Preflight, WebRequest, WebResponse, cors},
     protocol::{EngineError, EngineResult},
 };
 use serde_json::json;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use url::Url;
+
+mod in_flight;
+mod request_diagnostics;
+pub(super) use in_flight::{InFlight, Progress, ScriptLoad};
+use request_diagnostics::{FailureStage, RequestDiagnostic};
 
 /** What a redirect response does to an acquisition. */
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -19,6 +24,14 @@ pub(super) enum Redirects {
     /** Hand it back so the caller re-decides credentials and origin for the next hop. */
     Return,
 }
+/** Who asked for a request: the page that initiated it, and whether it is a top-level navigation. */
+struct Requester {
+    /** The initiating page's URL, or `None` for a typed URL with no initiator. */
+    initiator: Option<Url>,
+    /** Whether the request navigates a top-level document rather than loading a subresource. */
+    top_level: bool,
+}
+
 /** Response metadata keeps final method for history replay policy. */
 pub(super) struct Acquired {
     pub response: WebResponse,
@@ -47,17 +60,41 @@ impl Runtime {
     itself). */
     pub(super) fn acquire_with(
         &mut self,
-        mut request: WebRequest,
+        request: WebRequest,
         deadline: Instant,
         initiator: Option<Url>,
         top_level: bool,
         redirects_policy: Redirects,
         credentials: bool,
     ) -> EngineResult<Acquired> {
-        let grants = self
-            .web_origins
-            .clone()
-            .ok_or_else(|| EngineError::unsupported("Forms require desktop networking."))?;
+        self.acquire_diagnosed(
+            request,
+            deadline,
+            Requester {
+                initiator,
+                top_level,
+            },
+            redirects_policy,
+            credentials,
+            None,
+        )
+    }
+
+    /** Preserve the original native failure before unsafe-submission recovery hides its cause. */
+    fn acquire_diagnosed(
+        &mut self,
+        mut request: WebRequest,
+        deadline: Instant,
+        requester: Requester,
+        redirects_policy: Redirects,
+        credentials: bool,
+        diagnostic: Option<(RequestDiagnostic, FailureStage)>,
+    ) -> EngineResult<Acquired> {
+        let Requester {
+            initiator,
+            top_level,
+        } = requester;
+        let started = Instant::now();
         let mut admitted_unsafe = false;
         let mut diagnostics = Vec::new();
         // Who caused the request drives Sec-Fetch-Site, Origin and Referer; typed URLs have none.
@@ -65,6 +102,10 @@ impl Runtime {
             request.initiator = initiator.as_ref().map(Url::to_string);
         }
         let result = (|| {
+            let grants = self
+                .web_origins
+                .clone()
+                .ok_or_else(|| EngineError::unsupported("Forms require desktop networking."))?;
             for redirects in 0..=REDIRECTS {
                 // A DevTools client that paused this navigation decides its first hop.
                 let intercepted = (redirects == 0 && top_level)
@@ -80,7 +121,7 @@ impl Runtime {
                 );
                 let remaining = deadline
                     .saturating_duration_since(Instant::now())
-                    .min(WEB_TIMEOUT);
+                    .min(crate::constants::WEB_REQUEST_CEILING);
                 if remaining.is_zero() {
                     return Err(EngineError::navigation_timeout());
                 }
@@ -102,7 +143,12 @@ impl Runtime {
                     })?;
                     admitted_unsafe |= !request.method.is_safe();
                     let transmit = json!({"token":token["token"]});
-                    self.call_typed("network", "network.transmit", &transmit, Some(deadline))?
+                    let response: WebResponse =
+                        self.call_typed("network", "network.transmit", &transmit, Some(deadline))?;
+                    if !request.method.is_safe() {
+                        self.loader.forget(&[cache_url(&url)]);
+                    }
+                    response
                 };
                 // Fetch stores a response's cookies only when the request included credentials.
                 let stored: &[String] = if credentials {
@@ -164,13 +210,23 @@ impl Runtime {
             }
             Err(EngineError::unsupported("Redirect limit exceeded."))
         })();
-        result.map_err(|error| if admitted_unsafe { uncertain() } else { error })
+        result.map_err(|error| {
+            if let Some((diagnostic, stage)) = diagnostic {
+                diagnostic.error(started, stage, &error);
+            }
+            if admitted_unsafe { uncertain() } else { error }
+        })
     }
 }
 
-/// Requests one `network.fetch_batch` call carries: two rounds of Relay's batch workers, so a
-/// batch of the largest resources still fits one wire frame.
-pub(super) const FETCH_BATCH: usize = 2 * crate::network::network::constants::BATCH_WORKERS;
+/// How long one wait for a head script's hop lasts before `take_prefetched` looks again.
+const PREFETCH_WAIT: Duration = Duration::from_millis(250);
+
+/// Requests one `network.fetch_batch` call carries: eight rounds of Relay's batch workers, so a
+/// whole head of sheets and scripts (YouTube sends 13, airbnb 41) goes in one call rather than
+/// serial calls for the remainder, each a round trip after the last; the largest resources
+/// still fit one wire frame.
+pub(super) const FETCH_BATCH: usize = 8 * crate::network::network::constants::BATCH_WORKERS;
 
 /** The outcome of one batched request as the network service reports it. */
 #[derive(serde::Deserialize)]
@@ -183,6 +239,15 @@ enum BatchOutcome {
 }
 
 impl Runtime {
+    /** An unsafe request a loader worker sent changed this URL's resource: every other network
+    process drops its cached copies, or a later GET there would read the stale one. */
+    fn forget_cached(&mut self, url: &Url) -> EngineResult<()> {
+        let urls = [cache_url(url)];
+        self.loader.forget(&urls);
+        self.call("network", "network.cache_forget", json!({"urls": urls}))?;
+        Ok(())
+    }
+
     /** Names the cache partition, initiator-derived cookies and the like for one hop, so a
     prefetched request and the later acquire of the same resource are byte-identical. */
     fn shape_hop(
@@ -226,10 +291,75 @@ impl Runtime {
 
     /** A prefetched answer to exactly this request (cookies included), used at most once. */
     fn take_prefetched(&mut self, request: &WebRequest) -> Option<EngineResult<WebResponse>> {
-        if self.prefetched.is_empty() || request.method != Method::Get {
+        if request.method != Method::Get {
             return None;
         }
-        self.prefetched.remove(&prefetch_key(request))
+        let key = prefetch_key(request);
+        if let Some(answer) = self.prefetched.remove(&key) {
+            return Some(answer);
+        }
+        let hop = self.prefetching.remove(&key)?;
+        let until = Instant::now() + crate::constants::WEB_REQUEST_CEILING;
+        loop {
+            if let Some(answer) = self.prefetch_results.remove(&hop) {
+                return Some(answer);
+            }
+            if Instant::now() >= until {
+                return None;
+            }
+            // The hop is back in the set while the wait lands other hops, so routing sees it.
+            self.prefetching.insert(key.clone(), hop);
+            let done = self.loader.wait(until.min(Instant::now() + PREFETCH_WAIT));
+            self.keep_loaded(done);
+            self.prefetching.remove(&key);
+        }
+    }
+
+    /**
+     * Start head scripts on the loader, shaped as `prefetch` shapes a batch, so they download
+     * beside the sheets while the page is styled and painted; `acquire` collects each when
+     * `resolve_scripts` asks. A script already prefetched or already on the wire is not sent again.
+     */
+    pub(super) fn prefetch_on_loader(
+        &mut self,
+        requests: Vec<(WebRequest, Url)>,
+        deadline: Instant,
+    ) {
+        let Some(grants) = self.web_origins.clone() else {
+            return;
+        };
+        for (mut request, initiator) in requests {
+            let Ok(url) = crate::network::policy::web_url(&request.url) else {
+                continue;
+            };
+            if request.method != Method::Get {
+                continue;
+            }
+            if request.initiator.is_none() {
+                request.initiator = Some(initiator.to_string());
+            }
+            self.shape_hop(&mut request, &url, Some(&initiator), false, true);
+            let key = prefetch_key(&request);
+            if self.prefetched.contains_key(&key) || self.prefetching.contains_key(&key) {
+                continue;
+            }
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(crate::constants::WEB_REQUEST_CEILING);
+            if remaining.is_zero() {
+                return;
+            }
+            let millis = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
+            let hop = self.loader.submit(request, grants.clone(), millis);
+            self.prefetching.insert(key, hop);
+        }
+    }
+
+    /** Forget every head answer and hop: a navigation's candidate is built or dropped. */
+    pub(super) fn clear_prefetches(&mut self) {
+        self.prefetched.clear();
+        self.prefetching.clear();
+        self.prefetch_results.clear();
     }
 
     /**
@@ -249,6 +379,7 @@ impl Runtime {
             return Ok(());
         };
         let mut shaped: Vec<(String, WebRequest)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for (mut request, initiator) in requests {
             let Ok(url) = crate::network::policy::web_url(&request.url) else {
                 continue;
@@ -261,7 +392,7 @@ impl Runtime {
             }
             self.shape_hop(&mut request, &url, Some(&initiator), false, true);
             let key = prefetch_key(&request);
-            if !self.prefetched.contains_key(&key) && !shaped.iter().any(|(k, _)| *k == key) {
+            if !self.prefetched.contains_key(&key) && seen.insert(key.clone()) {
                 shaped.push((key, request));
             }
         }
@@ -272,7 +403,7 @@ impl Runtime {
         for chunk in shaped.chunks(FETCH_BATCH) {
             let remaining = deadline
                 .saturating_duration_since(Instant::now())
-                .min(WEB_TIMEOUT);
+                .min(crate::constants::WEB_REQUEST_CEILING);
             if remaining.is_zero() {
                 return Ok(());
             }
@@ -451,15 +582,18 @@ impl Credentials {
 }
 
 /// One script request, as parsed from what the page asked for.
+#[derive(Clone)]
 pub(super) struct ScriptRequest {
+    /// Native fetch/XHR identity correlates opt-in diagnostics without storing page addresses.
+    pub request_id: Option<u32>,
     /// Fetch body readers consume raw bytes; modules and legacy XHR retain their decoding rules.
     pub raw_response: bool,
     /// The current hop's URL.
     pub url: Url,
     /// Any method a script may send; only GET and HEAD are safe.
     pub method: Method,
-    /// The text body (empty for GET and HEAD).
-    pub body: String,
+    /// The body's bytes (empty for GET and HEAD): text as UTF-8, a buffer or Blob as given.
+    pub body: Vec<u8>,
     /// Page-set headers, forbidden names already dropped.
     pub headers: Vec<(String, String)>,
     /// cors, no-cors or same-origin.
@@ -499,11 +633,19 @@ impl Runtime {
         let include = request.credentials == Credentials::Include;
         let mut flow = cors::Flow::new(base.origin(), request.mode);
         for redirects in 0..=REDIRECTS {
+            let diagnostic = RequestDiagnostic::new(base, &request);
             if request.worker_policy.as_ref().is_some_and(|policy| {
                 !super::csp::allows_connect(&policy.csp, &policy.base, &request.url)
-            }) || !flow.enter(&request.url)
-                || !self.preflighted(base, &request, &flow, preflights, until)?
-            {
+            }) {
+                diagnostic.refused(FailureStage::Policy);
+                return Ok(ScriptAnswer::Failed);
+            }
+            if !flow.enter(&request.url) {
+                diagnostic.refused(FailureStage::Mode);
+                return Ok(ScriptAnswer::Failed);
+            }
+            if !self.preflighted(base, &request, &flow, preflights, until)? {
+                diagnostic.refused(FailureStage::Preflight);
                 return Ok(ScriptAnswer::Failed);
             }
             let first = redirects == 0;
@@ -514,12 +656,14 @@ impl Runtime {
             if tainting == cors::Tainting::Cors
                 && !cors::allows(&response.headers, &flow.serialized(), include)
             {
+                diagnostic.refused(FailureStage::Cors);
                 return Ok(ScriptAnswer::Failed);
             }
             if !REDIRECT_STATUSES.contains(&response.status) {
                 return Ok(answer(response, tainting, include));
             }
             let Some(next) = self.next_hop(&request.url, &response) else {
+                diagnostic.refused(FailureStage::Redirect);
                 return Ok(ScriptAnswer::Failed);
             };
             flow.redirect(&request.url, &next);
@@ -532,6 +676,7 @@ impl Runtime {
             }
             request.url = next;
         }
+        RequestDiagnostic::new(base, &request).refused(FailureStage::RedirectLimit);
         Ok(ScriptAnswer::Failed)
     }
 
@@ -571,7 +716,10 @@ impl Runtime {
             }),
             ..WebRequest::get(request.url.as_str())
         };
-        let Some(response) = self.script_send(base, web, false, until)? else {
+        let diagnostic = RequestDiagnostic::new(base, request);
+        let Some(response) =
+            self.script_send(base, web, false, until, diagnostic, FailureStage::Preflight)?
+        else {
             return Ok(false);
         };
         let Some(allowance) = cors::preflight(response.status, &response.headers, &origin, include)
@@ -592,34 +740,20 @@ impl Runtime {
         first: bool,
         until: Instant,
     ) -> EngineResult<Option<WebResponse>> {
-        let tainting = flow.tainting();
-        let cookies = match request.credentials {
-            Credentials::Include => true,
-            Credentials::SameOrigin => tainting == cors::Tainting::Basic,
-            Credentials::Omit => false,
-        };
-        let origin = (tainting == cors::Tainting::Cors || !request.method.is_safe())
-            .then(|| flow.serialized());
-        let mut web = WebRequest {
-            method: request.method.clone(),
-            raw_response: request.raw_response,
-            top_level: request
-                .worker_policy
-                .as_ref()
-                .map(|policy| policy.partition.to_string()),
-            body: request.body.clone(),
-            destination: Destination::Empty,
-            headers: request.headers.clone(),
-            origin,
-            mode: Some(request.mode),
-            ..WebRequest::get(request.url.as_str())
-        };
+        let (mut web, cookies) = hop_request(request, flow);
         // A DevTools client that paused this page request decides its first hop, as it does
         // for navigations; a hop after a redirect is never paused.
         if first && let Some(answer) = super::devtools::intercept(&mut web) {
             return answer.map(Some);
         }
-        self.script_send(base, web, cookies, until)
+        self.script_send(
+            base,
+            web,
+            cookies,
+            until,
+            RequestDiagnostic::new(base, request),
+            FailureStage::Acquire,
+        )
     }
 
     /** Send one script hop; an egress refusal or network failure is None, never a detail the
@@ -630,18 +764,32 @@ impl Runtime {
         web: WebRequest,
         cookies: bool,
         until: Instant,
+        diagnostic: RequestDiagnostic,
+        stage: FailureStage,
     ) -> EngineResult<Option<WebResponse>> {
-        match self.acquire_with(
+        let started = Instant::now();
+        match self.acquire_diagnosed(
             web,
             until,
-            Some(base.clone()),
-            false,
+            Requester {
+                initiator: Some(base.clone()),
+                top_level: false,
+            },
             Redirects::Return,
             cookies,
+            Some((diagnostic, stage)),
         ) {
-            Ok(acquired) => Ok(Some(acquired.response)),
-            Err(error) if error.service.is_some() || error.code == "control_denied" => Err(error),
-            Err(_) => Ok(None),
+            Ok(acquired) => {
+                diagnostic.response(started, stage, acquired.response.status);
+                Ok(Some(acquired.response))
+            }
+            Err(error) => {
+                if error.service.is_some() || error.code == "control_denied" {
+                    Err(error)
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -651,6 +799,42 @@ impl Runtime {
         let location = response.location.as_deref()?;
         crate::network::redirect_url(url, location, &grants).ok()
     }
+}
+
+/** A URL as Relay's cache keys it: absolute, without its fragment. */
+fn cache_url(url: &Url) -> String {
+    let mut url = url.clone();
+    url.set_fragment(None);
+    url.into()
+}
+
+/** One hop's request as its CORS state calls for, and whether it carries cookies: credentials
+by mode and tainting, Origin on CORS and unsafe requests. Shared by the blocking and the
+loader paths so both send byte-identical hops. */
+fn hop_request(request: &ScriptRequest, flow: &cors::Flow) -> (WebRequest, bool) {
+    let tainting = flow.tainting();
+    let cookies = match request.credentials {
+        Credentials::Include => true,
+        Credentials::SameOrigin => tainting == cors::Tainting::Basic,
+        Credentials::Omit => false,
+    };
+    let origin =
+        (tainting == cors::Tainting::Cors || !request.method.is_safe()).then(|| flow.serialized());
+    let web = WebRequest {
+        method: request.method.clone(),
+        raw_response: request.raw_response,
+        top_level: request
+            .worker_policy
+            .as_ref()
+            .map(|policy| policy.partition.to_string()),
+        body: request.body.clone(),
+        destination: Destination::Empty,
+        headers: request.headers.clone(),
+        origin,
+        mode: Some(request.mode),
+        ..WebRequest::get(request.url.as_str())
+    };
+    (web, cookies)
 }
 
 /** The final response as the page may see it, by tainting. */

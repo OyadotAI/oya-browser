@@ -1,6 +1,6 @@
 /* JavaScript prototype imports have an independent shell proposal gate. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Prototype imports undergo builtin signature validation only when interop is enabled. */
 #[test]

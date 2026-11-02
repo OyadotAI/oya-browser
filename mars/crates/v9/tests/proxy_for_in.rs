@@ -1,5 +1,5 @@
 /** For-in respects proxy descriptors and virtual prototypes while retaining a bounded, serializable candidate snapshot. */
-mod common;
+use crate::common;
 
 /** Virtual prototype keys are discovered, and enumeration never asks a proxy's has trap. */
 #[test]

@@ -1,6 +1,6 @@
 /* The shell feature flag controls acquire and release atomic encodings. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 
 /** Atomic fences with an acquire/release order require the proposal flag. */
 #[test]

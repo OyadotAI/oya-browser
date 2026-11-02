@@ -1,5 +1,5 @@
 /** Template literals freeze their arrays and preserve realm/parsed-source identity without retaining dead dynamic programs. */
-mod common;
+use crate::common;
 
 /** Evaluate language behavior through the public page API. */
 fn eval(source: &str) -> String {

@@ -53,7 +53,11 @@ impl Workers {
     }
 
     /** Port messages follow native paired endpoints, independently of each worker's local handle IDs. */
-    pub(super) fn port(&mut self, from: &[u32], message: crate::v9::PortMessage) -> EngineResult<bool> {
+    pub(super) fn port(
+        &mut self,
+        from: &[u32],
+        message: crate::v9::PortMessage,
+    ) -> EngineResult<bool> {
         let Some(peer) = self
             .links
             .get(&message.link)

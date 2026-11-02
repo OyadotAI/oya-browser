@@ -6,6 +6,244 @@ use serde_json::{Value, json};
 use std::sync::{Arc, atomic::AtomicBool};
 use support::{Fixture, agent_call, desktop, html};
 
+/** Page loads a refresh chain may make: the first page plus the runtime's bound on refresh navigations. */
+const LOADS_PER_CHAIN: usize = 6;
+
+/** Both script servers must receive a request before either sends its response. */
+const CONCURRENT_SCRIPTS: usize = 2;
+/** A sequential implementation fails promptly instead of leaving a fixture thread blocked. */
+const SCRIPT_OVERLAP_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+/** Independent fixture threads rendezvous without relying on elapsed-time performance assertions. */
+type ScriptArrival = Arc<(std::sync::Mutex<usize>, std::sync::Condvar)>;
+
+/** A script server records whether both downloads were active while it held its response. */
+fn held_script(
+    arrived: ScriptArrival,
+    overlapped: Arc<std::sync::atomic::AtomicUsize>,
+    text: &'static str,
+) -> Fixture {
+    Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = arrived.as_ref();
+            let mut count = count.lock().unwrap();
+            *count += 1;
+            wake.notify_all();
+            let (count, _) = wake
+                .wait_timeout_while(count, SCRIPT_OVERLAP_WAIT, |count| {
+                    *count < CONCURRENT_SCRIPTS
+                })
+                .unwrap();
+            if *count >= CONCURRENT_SCRIPTS {
+                overlapped.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            reply("text/javascript", "", text)
+        }),
+        false,
+    )
+}
+
+/** Dynamic classic downloads overlap, while their effects still follow the page's requested order. */
+#[test]
+fn dynamic_classic_scripts_download_concurrently() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let arrived = ScriptArrival::default();
+    let overlapped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let first = held_script(
+        Arc::clone(&arrived),
+        Arc::clone(&overlapped),
+        "document.getElementById('out').textContent+='a'",
+    );
+    let second = held_script(
+        Arc::clone(&arrived),
+        Arc::clone(&overlapped),
+        "document.getElementById('out').textContent+='b'",
+    );
+    let body = format!(
+        "<p id=out></p><script>for(const src of ['{}/a.js','{}/b.js']){{const s=document.createElement('script');s.async=false;s.src=src;document.head.appendChild(s)}}</script>",
+        first.url, second.url
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        vec![fixture.url.clone(), first.url.clone(), second.url.clone()],
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert_eq!(
+        overlapped.load(std::sync::atomic::Ordering::SeqCst),
+        CONCURRENT_SCRIPTS
+    );
+    assert!(texts(&page).contains("ab"), "{page}");
+}
+
+/** A script-created fetch starts before the same task's dynamic script download is awaited. */
+#[test]
+fn fetch_submission_overlaps_followup_script_loading() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let arrived = ScriptArrival::default();
+    let api_arrived = Arc::clone(&arrived);
+    let api = Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = api_arrived.as_ref();
+            *count.lock().unwrap() += 1;
+            wake.notify_all();
+            reply("text/plain", "Access-Control-Allow-Origin: *\r\n", "ready")
+        }),
+        false,
+    );
+    let overlapped = Arc::new(AtomicBool::new(false));
+    let script_overlapped = Arc::clone(&overlapped);
+    let script = Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = arrived.as_ref();
+            let (count, _) = wake
+                .wait_timeout_while(count.lock().unwrap(), SCRIPT_OVERLAP_WAIT, |count| {
+                    *count == 0
+                })
+                .unwrap();
+            script_overlapped.store(*count > 0, std::sync::atomic::Ordering::SeqCst);
+            reply("text/javascript", "", "document.title='loaded'")
+        }),
+        false,
+    );
+    let body = format!(
+        "<script>fetch('{}/api');const s=document.createElement('script');s.src='{}/next.js';document.head.appendChild(s)</script>",
+        api.url, script.url
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        vec![fixture.url.clone(), api.url.clone(), script.url.clone()],
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(
+        overlapped.load(std::sync::atomic::Ordering::SeqCst),
+        "the fetch waited for the followup script to finish"
+    );
+}
+
+/** A denied dynamic script never reaches the network, including through batch prefetch. */
+#[test]
+fn dynamic_script_prefetch_preserves_csp_admission() {
+    let body = "<p id=out></p><script nonce=run>let failed=0;for(const src of ['/a.js','/b.js']){const s=document.createElement('script');s.src=src;s.onerror=()=>document.getElementById('out').textContent=String(++failed);document.head.appendChild(s)}</script>";
+    let (fixture, counts) = Fixture::routes_counted(vec![(
+        "/",
+        html("Content-Security-Policy: script-src 'nonce-run'\r\n", body),
+    )]);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(texts(&page).contains('2'), "{page}");
+    let counts = counts.lock().unwrap();
+    assert!(!counts.contains_key("/a.js") && !counts.contains_key("/b.js"));
+}
+
+/** The loader's six active hops fill the pool before a seventh request can make progress. */
+const FETCH_WORKERS: usize = 6;
+/** A broken queue releases its fixture after a bounded wait, so the regression cannot hang. */
+const FETCH_RENDEZVOUS: std::time::Duration = std::time::Duration::from_secs(5);
+/** Active arrivals and the seventh request's arrival are coordinated independently of page timers. */
+type FetchArrival = Arc<(std::sync::Mutex<(usize, bool)>, std::sync::Condvar)>;
+
+/** Hold the first request until the seventh arrives; other workers finish when the pool is full. */
+fn held_fetch(state: FetchArrival, slow: bool, advanced: Arc<AtomicBool>) -> Fixture {
+    Fixture::start(
+        Box::new(move |request| {
+            let (lock, wake) = state.as_ref();
+            let mut state = lock.lock().unwrap();
+            if request
+                .split_whitespace()
+                .nth(1)
+                .is_some_and(|path| path.starts_with("/extra"))
+            {
+                state.1 = true;
+                wake.notify_all();
+            } else {
+                state.0 += 1;
+                wake.notify_all();
+                let (finished, _) = wake
+                    .wait_timeout_while(state, FETCH_RENDEZVOUS, |state| {
+                        if slow {
+                            !state.1
+                        } else {
+                            state.0 < FETCH_WORKERS
+                        }
+                    })
+                    .unwrap();
+                if slow {
+                    advanced.store(finished.1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            reply("text/plain", "Access-Control-Allow-Origin: *\r\n", "ok")
+        }),
+        false,
+    )
+}
+
+/** Match the stable affinity hash so the waiting request would previously sit behind the slow hop. */
+fn fetch_worker(url: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    hasher.finish() % FETCH_WORKERS as u64
+}
+
+/** A saturated network pool keeps delivering queued work while one active request is held open. */
+#[test]
+fn queued_fetches_use_a_free_worker_while_their_preferred_worker_is_blocked() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let state = FetchArrival::default();
+    let advanced = Arc::new(AtomicBool::new(false));
+    let servers: Vec<_> = (0..FETCH_WORKERS)
+        .map(|index| held_fetch(Arc::clone(&state), index == 0, Arc::clone(&advanced)))
+        .collect();
+    let mut urls: Vec<_> = servers
+        .iter()
+        .map(|server| format!("{}/held", server.url))
+        .collect();
+    let preferred = fetch_worker(&urls[0]);
+    let extra = (0..)
+        .map(|index| format!("{}/extra{index}", servers[1].url))
+        .find(|url| fetch_worker(url) == preferred)
+        .unwrap();
+    urls.push(extra);
+    let body = format!(
+        "<p id=out>waiting</p><script>Promise.all({}.map(url=>fetch(url))).then(()=>document.getElementById('out').textContent='done')</script>",
+        serde_json::to_string(&urls).unwrap()
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let origins = std::iter::once(fixture.url.clone())
+        .chain(servers.iter().map(|server| server.url.clone()))
+        .collect();
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        origins,
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let page = run_until(&mut runtime, 200, |page| texts(page).contains("done"));
+    assert!(texts(&page).contains("done"), "{page}");
+    assert!(
+        advanced.load(std::sync::atomic::Ordering::SeqCst),
+        "the queued request waited for the blocked worker"
+    );
+}
+
 /** A 200 response of `mime` with any extra header lines. */
 fn reply(mime: &str, headers: &str, body: &str) -> Vec<u8> {
     format!(
@@ -316,6 +554,56 @@ fn measuring_an_inserted_node_sees_its_layout() {
     assert!(texts(&clicked).contains(&expected), "{clicked}");
 }
 
+/** Consecutive forced reads see appended mutations even after a previous read's nodes are removed. */
+#[test]
+fn successive_layout_reads_apply_new_mutations() {
+    let (_fixture, _, page) = load(
+        "<p id=out></p><script>const widths=[];for(let i=0;i<6;i++){\
+         const box=document.createElement('div');box.style.width=(20+i)+'px';\
+         document.body.appendChild(box);getComputedStyle(box).display;\
+         widths.push(box.getBoundingClientRect().width);box.remove()}\
+         document.getElementById('out').textContent=widths.join(',')</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("20,21,22,23,24,25"), "{page}");
+}
+
+/** A new computed-style request must refresh layout after an earlier attribute entry changes. */
+#[test]
+fn coalesced_attribute_writes_refresh_forced_layout() {
+    let (_fixture, _, page) = load(
+        "<div id=box></div><p id=out></p><script>const box=document.getElementById('box');\
+         box.style.width='200px';getComputedStyle(box).display;const first=box.getBoundingClientRect().width;\
+         box.style.width='300px';getComputedStyle(document.getElementById('out')).display;\
+         const second=box.getBoundingClientRect().width;\
+         document.getElementById('out').textContent=first+','+second</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("200,300"), "{page}");
+}
+
+/** A final coalesced write after a layout read commits its own document, not the cached one. */
+#[test]
+fn coalesced_attribute_writes_after_layout_commit_the_final_value() {
+    let (_fixture, mut runtime, page) = load(
+        "<div id=box></div><script>const box=document.getElementById('box');\
+         box.style.width='200px';box.getBoundingClientRect();box.style.width='300px'</script>",
+        vec![],
+    );
+    let box_node = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "box")
+        .unwrap();
+    assert_eq!(box_node["bounds"]["width"].as_f64(), Some(300.0), "{page}");
+    let console = agent_call(&mut runtime, "page.console", json!({})).unwrap();
+    assert!(
+        !console.to_string().contains("scripts stopped"),
+        "{console}"
+    );
+}
+
 /** The names page.find reports for links, in document order. */
 fn link_names(runtime: &mut mars::runtime::Runtime, visible_only: bool) -> Vec<String> {
     let found = agent_call(
@@ -419,8 +707,8 @@ fn bound_text_in_whitespace_node_renders() {
 }
 
 /** A gzip-encoded binary body, as YouTube posts its guide request, reaches the server as the
-JSON it encodes: Relay carries text bodies, so the runtime sends the decoded identity body
-without the Content-Encoding header, and the page reads the answer. */
+JSON it encodes: the runtime sends the decoded identity body without the Content-Encoding
+header, as it always has, and the page reads the answer. */
 #[test]
 fn gzipped_binary_body_reaches_the_server_decoded() {
     let (fixture, _runtime, page) = load(
@@ -440,6 +728,48 @@ fn gzipped_binary_body_reaches_the_server_decoded() {
     assert!(request.ends_with("{\"guide\":true}"), "{request}");
     assert!(
         !request.to_ascii_lowercase().contains("content-encoding"),
+        "{request}"
+    );
+}
+
+/** A binary body that is not UTF-8 (a protobuf, as YouTube's SABR requests carry) reaches the server
+whole: its Content-Length is the byte count, no Content-Type is invented for a buffer, and the
+server sees every byte (here through the fixture's lossy view, where each invalid byte is one
+replacement character). */
+#[test]
+fn a_binary_body_reaches_the_server_whole() {
+    let (fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const raw=new Uint8Array([8,255,0,128,195,40,10]);\
+         fetch('/api',{method:'POST',body:raw}).then(r=>r.text()).then(t=>{\
+         document.getElementById('out').textContent='sent '+t},e=>{\
+         document.getElementById('out').textContent='failed '+e})</script>",
+        vec![("/api", reply("text/plain", "", "ok"))],
+    );
+    assert!(texts(&page).contains("sent ok"), "{page}");
+    let request = fixture.last_request.lock().unwrap().clone();
+    let lossy = String::from_utf8_lossy(&[8, 255, 0, 128, 195, 40, 10]).to_string();
+    assert!(request.ends_with(&lossy), "{request:?}");
+    let lower = request.to_ascii_lowercase();
+    assert!(lower.contains("content-length: 7"), "{request}");
+    assert!(!lower.contains("content-type"), "{request}");
+}
+
+/** A string body still goes out as UTF-8 text labeled text/plain. */
+#[test]
+fn a_text_body_reaches_the_server_as_utf8_text() {
+    let (fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>fetch('/api',{method:'POST',body:'h\\u00e9llo'})\
+         .then(r=>r.text()).then(t=>{document.getElementById('out').textContent='sent '+t},e=>{\
+         document.getElementById('out').textContent='failed '+e})</script>",
+        vec![("/api", reply("text/plain", "", "ok"))],
+    );
+    assert!(texts(&page).contains("sent ok"), "{page}");
+    let request = fixture.last_request.lock().unwrap().clone();
+    assert!(request.ends_with("h\u{e9}llo"), "{request:?}");
+    let lower = request.to_ascii_lowercase();
+    assert!(lower.contains("content-length: 6"), "{request}");
+    assert!(
+        lower.contains("content-type: text/plain;charset=utf-8"),
         "{request}"
     );
 }
@@ -596,25 +926,29 @@ fn script_linked_stylesheet_that_fails_is_degraded() {
  * on the page may be acted on: the same fail-closed rule navigation applies to linked sheets. */
 #[test]
 fn script_linked_stylesheet_past_the_allowance_fails_closed() {
-    let filler = format!(
-        "<style>/*{}*/</style>",
-        "x".repeat(mars::constants::STYLE_TOTAL_BYTES - 64)
-    );
+    // The allowance is larger than one HTML body may be, so linked sheets fill it.
+    let sheets = mars::constants::STYLE_TOTAL_BYTES / mars::constants::STYLE_BYTES;
+    let filler = mars::constants::STYLE_BYTES - FILLER_SLACK;
+    let mut routes: Vec<(&'static str, Vec<u8>)> = (0..sheets)
+        .map(|index| {
+            let path: &'static str = Box::leak(format!("/fill{index}.css").into_boxed_str());
+            let css = format!("/*{}*/", "x".repeat(filler));
+            (path, reply("text/css", "", &css))
+        })
+        .collect();
+    let links: String = (0..sheets)
+        .map(|index| format!("<link rel=stylesheet href=/fill{index}.css>"))
+        .collect();
     let body = format!(
-        "{filler}<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
+        "{links}<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
          l.rel='stylesheet';l.href='/more.css';document.head.appendChild(l)</script>"
     );
-    let (_fixture, mut runtime, page) = load(
-        &body,
-        vec![(
-            "/more.css",
-            reply(
-                "text/css",
-                "",
-                &format!("#go{{color:red}}/*{}*/", "y".repeat(256)),
-            ),
-        )],
-    );
+    let past = "y".repeat(sheets * FILLER_SLACK);
+    routes.push((
+        "/more.css",
+        reply("text/css", "", &format!("#go{{color:red}}/*{past}*/")),
+    ));
+    let (_fixture, mut runtime, page) = load(&body, routes);
     assert!(
         page["degraded"]
             .as_array()
@@ -628,6 +962,10 @@ fn script_linked_stylesheet_past_the_allowance_fails_closed() {
     assert_eq!(link["disabled"], true, "{found}");
 }
 
+/** Bytes each filler sheet leaves under STYLE_BYTES; the script-linked sheet is larger than
+all of them together, so it lands past the allowance. */
+const FILLER_SLACK: usize = 64;
+
 /** The node id of the element whose HTML id is `html_id`. */
 fn node_by_html_id(page: &Value, html_id: &str) -> Value {
     page["nodes"]
@@ -639,10 +977,11 @@ fn node_by_html_id(page: &Value, html_id: &str) -> Value {
         .clone()
 }
 
-/** A page that changes itself in the background (YouTube) does not keep its own timers awake:
-otherwise it runs scripts forever and every click waits behind them. */
+/** A page that changes itself in the background keeps its timers awake only as long as the
+changes are progress, and never past AGENT_AWAKE_CAP after the agent's last action (the window
+past TICK_WINDOW is proven in tests/agent_progress_window.rs): clicks are not starved for ever. */
 #[test]
-fn background_change_does_not_extend_awake_window() {
+fn background_change_extends_awake_window_within_its_cap() {
     let (_fixture, mut runtime, _page) = load(
         "<p id=out>0</p><script>let n=0;setInterval(()=>{\
          document.getElementById('out').textContent=String(++n)},50)</script>",
@@ -655,7 +994,12 @@ fn background_change_does_not_extend_awake_window() {
         published |= runtime.run_page_scripts();
     }
     assert!(published);
-    assert_eq!(runtime.script_awake_until(), Some(awake));
+    let extended = runtime.script_awake_until().unwrap();
+    assert!(extended >= awake, "progress must not shorten the window");
+    assert!(
+        extended <= std::time::Instant::now() + std::time::Duration::from_secs(180),
+        "progress extended the window past the agent cap"
+    );
 }
 
 /** A person's or agent's input keeps the page's timers running for another window. */
@@ -773,4 +1117,223 @@ fn clicking_a_button_descendant_preserves_the_original_event_target() {
     )
     .unwrap();
     assert!(texts(&clicked).contains("child"), "{clicked}");
+}
+
+/** How long the slow route below holds its answer: well past a navigation's settle, with room for a
+debug build on a loaded machine, so the test tells waiting apart from slowness. */
+const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(8);
+
+/** A fetch on a slow link does not hold the page: navigation returns before the answer comes,
+and the answer still reaches the page on a later background run. */
+#[test]
+fn a_slow_fetch_does_not_hold_the_page() {
+    let page: &'static str = "<p id=out>waiting</p><script>fetch('/slow').then(r=>r.text())\
+        .then(t=>document.getElementById('out').textContent=t)</script>";
+    let fixture = support::Fixture::start(
+        Box::new(move |request| {
+            if request.split_whitespace().nth(1) == Some("/slow") {
+                std::thread::sleep(SLOW_ANSWER);
+                return reply("text/plain", "", "arrived");
+            }
+            html("", page)
+        }),
+        false,
+    );
+    let mut runtime = desktop(&fixture.url);
+    let started = std::time::Instant::now();
+    let loaded = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(
+        started.elapsed() < SLOW_ANSWER,
+        "navigation waited for the fetch"
+    );
+    assert!(texts(&loaded).contains("waiting"), "{loaded}");
+    let deadline = std::time::Instant::now() + 4 * SLOW_ANSWER;
+    let mut now = loaded;
+    while !texts(&now).contains("arrived") && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+        now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    }
+    assert!(texts(&now).contains("arrived"), "{now}");
+}
+
+/** Keeps the runtime's background work running for up to `attempts` short slices, stopping once `done` holds. */
+fn run_until(
+    runtime: &mut mars::runtime::Runtime,
+    attempts: usize,
+    done: impl Fn(&Value) -> bool,
+) -> Value {
+    let mut page = agent_call(runtime, "page.inspect", json!({})).unwrap();
+    for _ in 0..attempts {
+        if done(&page) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+        page = agent_call(runtime, "page.inspect", json!({})).unwrap();
+    }
+    page
+}
+
+/** A declarative refresh follows its delay to the address it names, as Chrome does, and replaces the entry it was loaded into. */
+#[test]
+fn meta_refresh_follows_after_its_delay() {
+    let (fixture, mut runtime, page) = load(
+        "<meta http-equiv='refresh' content='0; url=/second'><p>first</p>",
+        vec![("/second", html("", "<p>second page</p>"))],
+    );
+    assert_eq!(page["url"], format!("{}/", fixture.url), "{page}");
+    let after = run_until(&mut runtime, 40, |page| {
+        page["url"] == format!("{}/second", fixture.url)
+    });
+    assert_eq!(after["url"], format!("{}/second", fixture.url), "{after}");
+    assert!(texts(&after).contains("second page"), "{after}");
+    let history = agent_call(&mut runtime, "page.history", json!({})).unwrap();
+    assert_eq!(history["length"], 1, "{history}");
+}
+
+/** A refresh with a delay waits for it: the page stays on its first document until the delay has passed. */
+#[test]
+fn meta_refresh_waits_for_its_delay() {
+    let (fixture, mut runtime, page) = load(
+        "<meta http-equiv='refresh' content='30; url=/second'><p>first</p>",
+        vec![("/second", html("", "<p>second page</p>"))],
+    );
+    let after = run_until(&mut runtime, 10, |_| false);
+    assert_eq!(after["url"], format!("{}/", fixture.url), "{page}");
+    assert!(texts(&after).contains("first"), "{after}");
+}
+
+/** A refresh to a non-web address is not followed, so a script URL cannot run through the refresh path. */
+#[test]
+fn meta_refresh_to_a_script_address_is_not_followed() {
+    let (fixture, mut runtime, _page) = load(
+        "<meta http-equiv='refresh' content='0; url=javascript:void(0)'><p>first</p>",
+        vec![],
+    );
+    let after = run_until(&mut runtime, 10, |_| false);
+    assert_eq!(after["url"], format!("{}/", fixture.url), "{after}");
+}
+
+/** A page that refreshes to itself forever is stopped by the chain bound: the refresh navigations stop, and the page stays put. */
+#[test]
+fn meta_refresh_chain_is_bounded() {
+    let body = "<meta http-equiv='refresh' content='0'><p>loop</p>";
+    let (fixture, counts) = Fixture::routes_counted(vec![("/", html("", body))]);
+    let mut runtime = desktop(&fixture.url);
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    run_until(&mut runtime, 80, |_| false);
+    let settled = counts.lock().unwrap()["/"];
+    run_until(&mut runtime, 10, |_| false);
+    let later = counts.lock().unwrap()["/"];
+    assert_eq!(settled, later, "the refresh loop kept going");
+    assert!(settled <= LOADS_PER_CHAIN, "{settled} page loads");
+}
+
+/** deleteRule on a sheet with a nested `@media` block leaves the rules after it in force, as
+styled-components' cleanup needs: the page's hidden drawer stays hidden instead of falling inside a
+media block whose closing brace was lost. */
+#[test]
+fn delete_rule_leaves_later_rules_in_force_after_a_media_block() {
+    let (_fixture, _runtime, page) = load(
+        "<style id=s>@media screen and (max-width: 599px){.m{color:red}}\n.gone{color:blue}\n\
+         .target{visibility:hidden}</style><div class=target id=t>x</div><p id=o></p>\
+         <script>const s=document.getElementById('s');s.sheet.deleteRule(1);\
+         document.getElementById('o').textContent='vis='+\
+         getComputedStyle(document.getElementById('t')).visibility;</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("vis=hidden"), "{page}");
+}
+
+/** A script's `<style>` text that closes itself with markup stays text in the agent's document:
+the `</style>` in it cannot make an `<a id=evil>` element the script never created. The page keeps
+working, so the script's own element still renders. */
+#[test]
+fn raw_text_closer_from_script_adds_no_element() {
+    let (_fixture, _runtime, page) = load(
+        "<div id=root></div><script>const s=document.createElement('style');\
+         s.textContent='</style><a id=evil href=/x>x</a>';\
+         document.getElementById('root').appendChild(s);\
+         const p=document.createElement('p');p.textContent='still working';\
+         document.getElementById('root').appendChild(p);</script>",
+        vec![],
+    );
+    let evil = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["html_id"] == "evil");
+    assert!(!evil, "{page}");
+    assert!(texts(&page).contains("still working"), "{page}");
+}
+
+/** A closing tag split across two text nodes of a raw-text element, or an element a script
+appends inside one, still cannot end the element early when the document is projected: the
+element's whole text is guarded at once and its children are written as text. */
+#[test]
+fn split_or_nested_raw_text_closers_add_no_element() {
+    let (_fixture, _runtime, page) = load(
+        "<div id=root></div><script>const s=document.createElement('style');\
+         s.appendChild(document.createTextNode('</st'));\
+         s.appendChild(document.createTextNode('yle><a id=split href=/x>x</a>'));\
+         document.getElementById('root').appendChild(s);\
+         const t=document.createElement('style');\
+         const inner=document.createElement('b');inner.textContent='</style><a id=nested href=/y>y</a>';\
+         t.appendChild(inner);document.getElementById('root').appendChild(t);\
+         const p=document.createElement('p');p.textContent='still working';\
+         document.getElementById('root').appendChild(p);</script>",
+        vec![],
+    );
+    let ids: Vec<&str> = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|node| node["html_id"].as_str())
+        .collect();
+    assert!(
+        !ids.contains(&"split") && !ids.contains(&"nested"),
+        "{page}"
+    );
+    assert!(texts(&page).contains("still working"), "{page}");
+}
+
+/** A synchronous XMLHttpRequest (Akamai's interstitial does one) gets its answer before the
+script's next line: the step replays with the answer, so the text is there after the send. */
+#[test]
+fn synchronous_xhr_answers_before_the_next_statement() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const x=new XMLHttpRequest();x.open('GET','/sync.txt',false);\
+         x.send();document.getElementById('out').textContent='sync '+x.status+' '+x.responseText</script>",
+        vec![("/sync.txt", reply("text/plain", "", "hello"))],
+    );
+    assert!(texts(&page).contains("sync 200 hello"), "{page}");
+    assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
+}
+
+/** A timer's synchronous request resumes with its original state and completes the task. */
+#[test]
+fn timer_synchronous_xhr_answers_before_the_next_statement() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>setTimeout(()=>{const x=new XMLHttpRequest();\
+         x.open('GET','/sync.txt',false);x.send();\
+         document.getElementById('out').textContent='sync '+x.status+' '+x.responseText},0)</script>",
+        vec![("/sync.txt", reply("text/plain", "", "hello"))],
+    );
+    assert!(texts(&page).contains("sync 200 hello"), "{page}");
+    assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
+}
+
+/** A synchronous request a different origin refuses (no CORS grant) throws NetworkError at send(),
+which the page's own try/catch takes; the statements after it still run. */
+#[test]
+fn refused_synchronous_cross_origin_request_is_a_catchable_network_error() {
+    let other = Fixture::routes(vec![("/data", reply("text/plain", "", "secret"))]);
+    let body = format!(
+        "<p id=out>start</p><script>let r='';const x=new XMLHttpRequest();x.open('GET','{}/data',false);\
+         try{{x.send()}}catch(e){{r=e.name}}document.getElementById('out').textContent='after '+r;</script>",
+        other.url
+    );
+    let (_fixture, _runtime, page) = load(&body, vec![]);
+    assert!(texts(&page).contains("after NetworkError"), "{page}");
 }

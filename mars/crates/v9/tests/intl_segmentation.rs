@@ -3,7 +3,7 @@
  * conformance break iterator also uses. These pin the segment text, the UTF-16 index, and the
  * word-like flag, so the shared splitter cannot drift from what pages already receive.
  */
-mod common;
+use crate::common;
 
 use common::eval;
 

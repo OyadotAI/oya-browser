@@ -80,7 +80,7 @@ impl Session {
             state = self.wait(state, deadline).map_err(Failure::Final)?;
         }
         let head = request.method == crate::network::Method::Head;
-        let body = request.body.as_bytes();
+        let body = request.body.as_slice();
         let id = match state.open(&borrowed, weight, body, limit, head, deadline) {
             Ok(Some(id)) => id,
             Ok(None) => return Err(Failure::Retryable(state::reset_error())),
@@ -154,7 +154,8 @@ impl Session {
             return Err(timeout());
         }
         let mut bytes = vec![0; READ_CHUNK];
-        let _ = self.reader.set_read_timeout(Some(remaining));
+        let stall = remaining.min(crate::constants::WEB_STALL_TIMEOUT);
+        let _ = self.reader.set_read_timeout(Some(stall));
         match (&self.reader).read(&mut bytes) {
             Ok(count) => {
                 bytes.truncate(count);

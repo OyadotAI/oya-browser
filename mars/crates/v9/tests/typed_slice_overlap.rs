@@ -1,5 +1,5 @@
 /** Typed-array slice species can alias the source: each same-buffer raw element is read after earlier writes. */
-mod common;
+use crate::common;
 
 /** The actual bytecode/native path must complete before committed values are compared. */
 fn result(source: &str) -> String {

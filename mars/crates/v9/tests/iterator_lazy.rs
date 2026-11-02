@@ -1,5 +1,5 @@
 /** Lazy iterator helpers preserve demand, callback order, reentrancy and abrupt completion. */
-mod common;
+use crate::common;
 
 /** Map/filter/drop/take execute only as demanded and pass examined-element indices. */
 #[test]

@@ -1,6 +1,6 @@
 /* Native ValueSerializer compatibility exercises V8 wire bytes and actual receiving JavaScript graphs. */
 #![cfg(feature = "conformance")]
-mod common;
+use crate::common;
 use mars_v9::PageEnvironment;
 /** Every check uses the public d8 host through real VM execution, including author getter behavior. */
 fn run(source: &str) -> Vec<String> {
@@ -50,7 +50,10 @@ fn serialization_does_not_flatten_compact_input() {
         "{:?}",
         common::failure(&execution)
     );
-    assert!(serde_json::to_string(&execution.state).unwrap().len() < 100_000);
+    assert!(
+        serde_json::to_string(&execution.state).unwrap().len()
+            < common::empty_state_bytes() + 100_000
+    );
 }
 #[test]
 /** Known native version-15 records decode through tags and ZigZag rather than a private wrapper format. */

@@ -32,22 +32,23 @@ fn common_elements_are_accepted() {
     }
 }
 
-/** Video and canvas carry the page's placeholder label as their own text, adding no node, so a
-script-built element parses back to the structure the script engine holds; a frame, a replaced
-box of its own, carries no label. */
+/** Frames, media and canvases are replaced boxes the app fills: a script-built one parses to a
+single node with no placeholder label, the structure the script engine holds. */
 #[test]
-fn embedded_content_is_labelled_without_extra_nodes() {
+fn embedded_content_parses_without_labels_or_extra_nodes() {
     let frame = parse_fragment("body", "<iframe src=https://ads.example/x></iframe>", 10).unwrap();
     assert_eq!(frame.nodes.len(), 1);
     assert!(frame.nodes[0].text.is_empty());
+    // Media and canvases paint their own boxes: no label, no extra node.
     for (html, tag) in [
         ("<video src=v.mp4></video>", "video"),
+        ("<audio controls src=a.mp3></audio>", "audio"),
         ("<canvas></canvas>", "canvas"),
     ] {
         let fragment = parse_fragment("body", html, 10).unwrap();
         assert_eq!(fragment.nodes.len(), 1, "{html}");
         assert_eq!(fragment.nodes[0].tag, tag);
-        assert!(fragment.nodes[0].text.contains("not supported"));
+        assert!(fragment.nodes[0].text.is_empty(), "{html}");
     }
     let text = mars_eye::DomFragments;
     let nodes = mars_core_parse(&text, "<iframe></iframe>");
@@ -68,19 +69,23 @@ fn inserted_scripts_never_run() {
     );
 }
 
-/** Inline handlers are stripped, even a button's onclick, and javascript: URLs stay inert. */
+/** Inline handlers are kept for V9 to run, as browsers keep them; javascript: URLs stay inert. */
 #[test]
-fn handlers_are_stripped_and_script_urls_inert() {
+fn handlers_are_kept_and_script_urls_inert() {
     let fragment = parse_fragment(
         "body",
         "<button onclick=x()>b</button><img src='javascript:x()' onerror=y()><a href='javascript:z()'>l</a>",
         10,
     )
     .unwrap();
-    for node in &fragment.nodes {
-        assert!(node.attributes.keys().all(|key| !key.starts_with("on")));
-        assert!(node.handler.is_none());
-    }
+    assert_eq!(fragment.nodes[0].handler.as_deref(), Some("x()"));
+    assert_eq!(
+        fragment.nodes[1]
+            .attributes
+            .get("onerror")
+            .map(String::as_str),
+        Some("y()")
+    );
     assert!(fragment.nodes[1].image_src.is_none());
     assert!(fragment.nodes[2].href.is_none());
 }

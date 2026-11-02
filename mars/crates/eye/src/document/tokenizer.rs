@@ -1,7 +1,7 @@
+use super::markup::Attributes;
 /** Owned HTML tokenization with the Living Standard's error recovery: malformed markup becomes
 text, comments or dropped tokens, never a refusal, and every scan moves forward so input cannot hang. */
-use super::entities::decode;
-use super::markup::Attributes;
+use mars_core::entities::decode;
 
 /** Raw text is requested explicitly by tree construction. */
 pub(super) struct Tokenizer<'a> {

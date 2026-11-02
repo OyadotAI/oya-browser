@@ -1,16 +1,16 @@
 use super::Document;
+use super::markup::{self, Attributes};
+use super::recovery::VOID;
+use super::tokenizer::{Token, Tokenizer};
+use crate::constants::NODES;
+use crate::protocol::{EngineError, EngineResult};
 /** XML documents (XHTML and SVG), ported from the essentials of Blink's XMLDocumentParser over
 libxml2: a well-formed XML 1.0 tokenizer that feeds the same tree builder the HTML parser uses, so
 an `.xht` page builds the same Document. Self-closing tags close, CDATA is text everywhere,
 namespaces resolve (XHTML elements are HTML elements, SVG elements are SVG, any other is inert),
 and the first well-formedness error stops parsing, as Blink does, with Blink's parse-error block
 shown above what was built up to it. */
-use super::entities::decode;
-use super::markup::{self, Attributes};
-use super::recovery::VOID;
-use super::tokenizer::{Token, Tokenizer};
-use crate::constants::NODES;
-use crate::protocol::{EngineError, EngineResult};
+use mars_core::entities::decode;
 use std::collections::{HashMap, HashSet};
 
 /** The XHTML namespace: only its elements get HTML semantics, and only its void elements are void. */

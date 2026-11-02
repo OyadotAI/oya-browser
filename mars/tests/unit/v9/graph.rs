@@ -3,6 +3,10 @@ use super::closures::next;
 use mars::v9::{VmState, event, load};
 use serde_json::{Value, json};
 
+/** An object identity no page heap reaches: below the intrinsic range, far past any allocation,
+so a forged reference stays dangling however much the platform bootstrap allocates. */
+const DANGLING: u32 = 0x3FFF_FFF0;
+
 /** One named way to corrupt a saved state wire, given the forged closure's object id. */
 type Forgery = (&'static str, fn(&mut Value, u64));
 
@@ -41,7 +45,7 @@ fn forged_graph_edges_fail_closed() {
     let function = crate::v9::wire_global_object(&original, "f");
     let cases: [Forgery; 6] = [
         ("dangling global", |wire, _| {
-            wire["globals"]["f"]["value"] = json!({"o": 999})
+            wire["globals"]["f"]["value"] = json!({"o": DANGLING})
         }),
         ("unknown code site", |wire, function| {
             crate::v9::wire_object(wire, function)["c"]["function"]["f"]["closure"]["site"] =
@@ -49,14 +53,14 @@ fn forged_graph_edges_fail_closed() {
         }),
         ("missing environment", |wire, function| {
             crate::v9::wire_object(wire, function)["c"]["function"]["f"]["closure"]["env"] =
-                json!(999)
+                json!(DANGLING)
         }),
         ("environment parent cycle", |wire, _| {
             let env = &mut wire["heap"][1][1];
             env[1]["p"] = env[0].clone();
         }),
         ("dangling environment slot", |wire, _| {
-            wire["heap"][1][0][1]["s"][0] = json!({"o": 999})
+            wire["heap"][1][0][1]["s"][0] = json!({"o": DANGLING})
         }),
         ("rewound identity counter", |wire, _| {
             wire["heap"][2] = json!(0)

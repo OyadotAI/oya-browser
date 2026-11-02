@@ -1,5 +1,5 @@
 /** Public Canvas compositing is consistent across every supported painter and saved-state boundary. */
-mod common;
+use crate::common;
 use mars_core::canvas::{Affine, Bitmap, CanvasHost, Font};
 use mars_v9::{DocumentHost, Execution};
 

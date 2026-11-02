@@ -1,5 +1,5 @@
 /** Resource declarations capture methods eagerly and dispose on normal and abrupt lexical exits. */
-mod common;
+use crate::common;
 
 /** Successful resources dispose in reverse order and keep their original receivers and captured methods. */
 #[test]
