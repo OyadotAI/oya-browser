@@ -1,8 +1,10 @@
 /** Human and agent controls share native targeting, validation and V9 event execution. */
+mod activation;
+mod typing;
 use super::{page::Page, supervisor::Runtime};
-use crate::document::{Node, TextChange};
+use crate::document::{DomChange, Node};
 use crate::protocol::{EngineError, EngineResult, parameters};
-use crate::v9::Execution;
+use crate::v9::Stroke;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -64,32 +66,34 @@ impl Runtime {
             return Err(invalid_target());
         }
         validate_text_target(&page, &node)?;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)?;
-        page.document = self.apply(
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )?;
+        page.document = std::sync::Arc::new(self.apply(
             &page.document,
-            &[TextChange {
+            &[DomChange::Text {
                 html_id: node.html_id,
                 text: input.text,
             }],
-        )?;
-        page.state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)
-            .map_err(|_| {
-                EngineError::unsupported(
-                    "Retaining references or listeners to removed elements is not supported.",
-                )
-            })?;
+        )?);
+        page.styled = false;
+        super::scripting::validate_script_state(
+            &page.state,
+            page.state_token,
+            &crate::document::script_document(&page.document, &page.script_identity)?,
+        )
+        .map_err(|_| {
+            EngineError::unsupported(
+                "Retaining references or listeners to removed elements is not supported.",
+            )
+        })?;
         let result = self.finish_mutation(page)?;
         Ok(edit_result(result, &input.node_id))
     }
-    /** Native text entry replaces only an enabled input's literal value. */
+    /** Native text entry replaces only an enabled input's literal value, as a fill does: one
+    beforeinput and input at the field, then change. */
     pub(super) fn type_text(&mut self, params: Value) -> EngineResult<Value> {
         let input: Edit = parameters(params)?;
         let mut page = self.current()?.clone();
@@ -99,19 +103,44 @@ impl Runtime {
             &input.node_id,
             input.expected_revision,
         )?;
-        let value = self.call(
-            "document",
-            "document.value",
-            json!({"document":page.document,"local_id":node.local_id,"value":input.text}),
-        )?;
-        page.document = self.returned("document", value)?;
+        self.type_strokes(&mut page, &node, vec![Stroke::Replace(input.text)])?;
         let result = self.finish_mutation(page)?;
         Ok(edit_result(result, &input.node_id))
+    }
+    /**
+     * Tell the page's scripts a select's option changed: a trusted `input` and `change` at the
+     * field, then a short settle so what the handlers start lands in the same commit. A secret
+     * field's value never reaches V9. A step V9 refuses leaves the value in place; authority and
+     * service failures still stop the operation.
+     */
+    fn notify_input(&mut self, page: &mut Page, node: &Node, text: &str) -> EngineResult<()> {
+        if !page.scripting.loaded {
+            return Ok(());
+        }
+        let value = (!node.secret()).then(|| text.to_owned());
+        let action = json!({"kind":"input","target":node.local_id,"value":value});
+        match self.script_step(page, action) {
+            Ok(_) => {
+                let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
+                self.settle_after_input(page, deadline)?;
+                Ok(())
+            }
+            Err(error) if stops_operation(&error) => Err(error),
+            Err(_) => Ok(()),
+        }
     }
     /** Links and buttons enter the same owned action path for mouse, keyboard and tools. */
     pub(super) fn click(&mut self, params: Value) -> EngineResult<Value> {
         let input: Click = parameters(params)?;
         let page = self.current()?.clone();
+        if let Some(href) = frame_link(
+            &page,
+            &input.page_id,
+            &input.node_id,
+            input.expected_revision,
+        )? {
+            return self.follow(&href);
+        }
         let node = target(
             &page,
             &input.page_id,
@@ -121,68 +150,141 @@ impl Runtime {
         if node.disabled || !node.style.interactive {
             return Err(invalid_target());
         }
-        if node.tag == "a" {
-            return self.follow(node.href.as_deref().ok_or_else(invalid_target)?);
+        // A span or icon supplies the event target; its nearest supported control owns the default.
+        let control = activation::target(&page.document, &node)?;
+        if control.tag != "button"
+            && !["input", "label"].contains(&control.tag.as_str())
+            && self.click_listened(&page, &node)?
+            && let Some(result) = self.script_click(page.clone(), &node)?
+        {
+            // V9 follows an unprevented ancestor link itself. Never activate that link twice.
+            return Ok(result);
         }
-        if node.tag == "label" {
-            let control = page
-                .document
-                .nodes
-                .iter()
-                .find(|n| {
-                    node.attributes.get("for") == Some(&n.html_id)
-                        || n.parent == Some(node.local_id)
-                            && ["input", "select", "textarea"].contains(&n.tag.as_str())
-                })
+        if control.tag == "a" {
+            return self.follow(control.href.as_deref().ok_or_else(invalid_target)?);
+        }
+        if control.tag == "label" {
+            let input = crate::document::labeled_control(&page.document, &control)
                 .cloned()
                 .ok_or_else(invalid_target)?;
-            if control.disabled || control.hidden() {
+            if input.disabled || input.hidden() {
                 return Err(invalid_target());
             }
+            return self.activate_control(page, input);
+        }
+        if control.tag == "input" {
             return self.activate_control(page, control);
         }
-        if node.tag == "input" {
-            return self.activate_control(page, node);
-        }
-        if node.tag != "button" {
+        if control.tag != "button" {
             return Err(invalid_target());
         }
-        self.button(page, node)
+        self.button(page, control, &node)
     }
-    /** V9 gets only committed globals and current input values, never an agent permit. */
-    fn button(&mut self, mut page: Page, node: Node) -> EngineResult<Value> {
-        let projection = crate::document::script_document(&page.document, &page.script_identity)?;
-        let has_listener = page
-            .state
-            .has_click_listener(&page.script_identity, node.local_id);
-        if node.handler.is_none() && !has_listener {
-            if node.input_type() == "submit"
-                && crate::document::form_owner(&page.document, &node).is_some()
-            {
-                return self.submit_node(&page, node.local_id);
-            }
-            return Ok(page.inspect());
+    /** Whether a click on this node does anything: a default control acts for it, or page code listens. */
+    pub(super) fn click_has_effect(&self, page: &Page, node: &Node) -> EngineResult<bool> {
+        Ok(activation::has_default(&page.document, node) || self.click_listened(page, node)?)
+    }
+    /** Whether a click on this node reaches page code: an inline handler, or a listener on the
+    node, an ancestor, the document or the window. */
+    fn click_listened(&self, page: &Page, node: &Node) -> EngineResult<bool> {
+        if activation::inline_handler(&page.document, node) {
+            return Ok(true);
         }
-        let sources = page.scripts.clone();
-        let storage = self.storage_for(&page.origin)?;
-        let value=self.call("v9","v9.document_click",json!({"sources":sources,"target":node.local_id,"state":page.state,"document":projection,"storage":storage})).map_err(|mut error|{if error.phase.is_some(){error.hint="Correct the script. No script changes were applied.".into();}error})?;
-        let execution: Execution = self.returned("v9", value)?;
-        page.document = self.apply(&page.document, &execution.changes)?;
-        execution
+        if !page.scripting.loaded {
+            return Ok(false);
+        }
+        let projection = crate::document::script_document(&page.document, &page.script_identity)?;
+        Ok(page
             .state
-            .validate_document(&crate::document::script_document(
-                &page.document,
-                &page.script_identity,
-            )?)?;
-        page.state = execution.state;
-        page.storage_dirty = execution.storage != storage;
-        page.storage = execution.storage;
-        self.finish_mutation(page)
+            .click_reaches_listener(&projection, node.local_id))
+    }
+    /**
+     * A click on a text field, as a person's pointer gives it: a trusted click through V9 that focuses
+     * the field and runs its focus and click listeners. Airbnb's search opens on that focus. A page
+     * without script has no listener to run, so it keeps only the agent's focus record.
+     */
+    pub(super) fn focus_field_by_click(
+        &mut self,
+        page: Page,
+        field: &Node,
+    ) -> EngineResult<Option<Value>> {
+        if !page.scripting.loaded {
+            return Ok(None);
+        }
+        self.script_click(page, field)
+    }
+    /** A click whose page code V9 refused falls back to the native default (following the
+    link), as in a browser; authority and service failures still stop it. */
+    fn script_click(&mut self, page: Page, node: &Node) -> EngineResult<Option<Value>> {
+        match self.run_click(page, node) {
+            Ok(result) => Ok(Some(result)),
+            Err(error) if stops_operation(&error) => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+    /**
+     * A trusted click through V9 (capture, target, bubble), then a short settle so handlers'
+     * timers and requests land in the same commit. An unprevented link click comes back as a
+     * navigation, which goes through the ordinary path after the commit.
+     */
+    fn run_click(&mut self, mut page: Page, node: &Node) -> EngineResult<Value> {
+        let step = self.script_step(&mut page, json!({"kind":"click","target":node.local_id}))?;
+        let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
+        let changed = self.settle_after_input(&mut page, deadline)? || step.changed;
+        page.scripting.wake();
+        let result = if changed {
+            self.finish_mutation(page)?
+        } else {
+            self.commit_quietly(page)?;
+            self.inspection()
+        };
+        self.resolve_interaction_navigation(result)
+    }
+
+    /** Follows a navigation a script started during the interaction, else keeps its result. */
+    fn resolve_interaction_navigation(&mut self, default: Value) -> EngineResult<Value> {
+        Ok(self
+            .follow_script_navigation(0)
+            .transpose()?
+            .unwrap_or(default))
+    }
+    /**
+     * V9 gets only committed state and the projection, never an agent permit. A button whose
+     * own handler or listener runs does not also submit its form; a submit button reached only
+     * by document-level listeners runs them and then submits.
+     */
+    fn button(&mut self, page: Page, node: Node, event_target: &Node) -> EngineResult<Value> {
+        let own = node.handler.is_some()
+            || page
+                .state
+                .has_click_listener(&page.script_identity, node.local_id);
+        let submits = node.input_type() == "submit"
+            && crate::document::form_owner(&page.document, &node).is_some();
+        if own {
+            return self.run_click(page, event_target).map_err(|mut error| {
+                if error.phase.is_some() {
+                    error.hint = "Correct the script. No script changes were applied.".into();
+                }
+                error
+            });
+        }
+        if self.click_listened(&page, event_target)? {
+            let result = self.script_click(page, event_target)?;
+            if !submits {
+                return Ok(result.unwrap_or_else(|| self.inspection()));
+            }
+            let page = self.current()?.clone();
+            return self.submit_node(&page, node.local_id);
+        }
+        if submits {
+            return self.submit_node(&page, node.local_id);
+        }
+        Ok(page.inspect())
     }
     /** Native input clicks share form/radio behavior with agent activation. */
     fn activate_control(&mut self, mut page: Page, node: Node) -> EngineResult<Value> {
         if ["checkbox", "radio"].contains(&node.input_type()) {
-            page.document = crate::document::set_checked(
+            page.document = std::sync::Arc::new(crate::document::set_checked(
                 &page.document,
                 node.local_id,
                 if node.input_type() == "radio" {
@@ -190,7 +292,8 @@ impl Runtime {
                 } else {
                     !node.checked
                 },
-            )?;
+            )?);
+            page.styled = false;
             return self.finish_mutation(page);
         }
         if node.input_type() == "submit" {
@@ -208,7 +311,12 @@ impl Runtime {
             &input.node_id,
             input.expected_revision,
         )?;
-        page.document = crate::document::set_checked(&page.document, node.local_id, input.checked)?;
+        page.document = std::sync::Arc::new(crate::document::set_checked(
+            &page.document,
+            node.local_id,
+            input.checked,
+        )?);
+        page.styled = false;
         self.finish_mutation(page)
     }
     /** The selected option must belong to the exact current select. */
@@ -228,7 +336,13 @@ impl Runtime {
             .find(|n| page.node_id(n.local_id) == input.option_id)
             .ok_or_else(invalid_target)?
             .local_id;
-        page.document = crate::document::select(&page.document, node.local_id, option)?;
+        page.document = std::sync::Arc::new(crate::document::select(
+            &page.document,
+            node.local_id,
+            option,
+        )?);
+        page.styled = false;
+        self.notify_input(&mut page, &node, "")?;
         self.finish_mutation(page)
     }
     /** Enter and explicit tool submission share the exact same successful-control algorithm. */
@@ -256,6 +370,11 @@ impl Runtime {
         } else {
             crate::document::form_owner(&page.document, node).ok_or_else(invalid_target)?
         };
+        if let Some(result) = self.scripted_submit(page, form)? {
+            return Ok(result);
+        }
+        // The page as the submit handlers left it: they may have filled or fixed fields.
+        let page = &self.current()?.clone();
         let submitter =
             if node.input_type() == "submit" && ["input", "button"].contains(&node.tag.as_str()) {
                 Some(id)
@@ -275,8 +394,7 @@ impl Runtime {
             Err(error) => {
                 if let Some(id) = error.invalid_node.as_deref() {
                     let mut candidate = page.clone();
-                    if let Some(node) = candidate
-                        .document
+                    if let Some(node) = std::sync::Arc::make_mut(&mut candidate.document)
                         .nodes
                         .iter_mut()
                         .find(|n| n.local_id == *id)
@@ -290,14 +408,54 @@ impl Runtime {
         };
         self.navigate_submission(proposal)
     }
-    /** Expensive execution/layout occurs before the exact authority/commit boundary. */
-    fn finish_mutation(&mut self, mut page: Page) -> EngineResult<Value> {
+    /** Runs the page's `submit` handlers before a person's or agent's submission and commits
+    what they changed. Some(result) when the page cancelled it (a single-page app that sends the
+    form with fetch, or validation that refused it); None when the native submission goes on.
+    A page whose scripts fail keeps the native submission, as a browser does. */
+    fn scripted_submit(&mut self, page: &Page, form: usize) -> EngineResult<Option<Value>> {
+        if !page.scripting.loaded {
+            return Ok(None);
+        }
+        let mut page = page.clone();
+        let event = json!({"kind":"event","event":{"submit":{"form":form}}});
+        let step = match self.script_step(&mut page, event) {
+            Ok(step) => step,
+            Err(error) if stops_operation(&error) => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        // Read the verdict now: every later step of the settle overwrites submit_allowed.
+        let allowed = page.scripting.submit_allowed.take() == Some(form);
+        let deadline = std::time::Instant::now() + crate::constants::WEB_TIMEOUT;
+        let changed = self.settle_after_input(&mut page, deadline)? || step.changed;
+        page.scripting.wake();
+        let result = if changed {
+            self.finish_mutation(page)?
+        } else {
+            self.commit_quietly(page)?;
+            self.inspection()
+        };
+        if allowed {
+            return Ok(None);
+        }
+        self.resolve_interaction_navigation(result).map(Some)
+    }
+    /** Commit a change a person or agent made, and keep the page's timers awake for another
+    window, since they are interacting with it. */
+    pub(super) fn finish_mutation(&mut self, mut page: Page) -> EngineResult<Value> {
+        page.scripting.wake();
+        self.commit_mutation(page)
+    }
+    /** Expensive execution/layout occurs before the exact authority/commit boundary. Does not
+    wake the page: a background run that changed the document commits here, and waking would
+    keep a page that always mutates (YouTube) running scripts forever, starving input. */
+    pub(super) fn commit_mutation(&mut self, mut page: Page) -> EngineResult<Value> {
         page.revision = page
             .revision
             .checked_add(1)
             .ok_or_else(|| EngineError::limit("document revisions", usize::MAX))?;
         page.layout_generation = page.layout_generation.saturating_add(1);
-        self.prepare(&mut page)?;
+        self.prepare_current(&mut page)?;
+        let broadcast = self.prepare_broadcast(&mut page)?;
         let rollback = if page.storage_dirty {
             self.write_storage(&page.origin, &page.storage)?
         } else {
@@ -311,8 +469,11 @@ impl Runtime {
                 runtime.commit_storage(&origin, &storage);
             }
             page.storage_dirty = false;
+            runtime.broadcast = broadcast;
             runtime.page = Some(page);
+            runtime.sync_history_url();
             runtime.clamp_scroll();
+            runtime.adopt_script_scroll();
             runtime.inspection()
         });
         if published.is_err()
@@ -324,6 +485,56 @@ impl Runtime {
     }
 }
 
+/** A painted frame link follows through normal policy. A wrong page or revision is left to the
+ordinary target check, so a stale revision still reports a revision conflict. */
+fn frame_link(
+    page: &Page,
+    page_id: &str,
+    node_id: &str,
+    revision: u64,
+) -> EngineResult<Option<String>> {
+    if page.id() != page_id || page.revision != revision {
+        return Ok(None);
+    }
+    let Some(local) = node_id
+        .strip_prefix(&format!("{}:node-", page.id()))
+        .and_then(|id| id.parse::<usize>().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(frame) = page.frames.iter().find(|frame| frame.node(local).is_some()) else {
+        return Ok(None);
+    };
+    let painted = page.display.as_ref().is_some_and(|display| {
+        display
+            .items
+            .iter()
+            .any(|item| item.local_id == local && crate::document::agent_visible(item))
+    });
+    if !painted {
+        return Err(invalid_target());
+    }
+    let mut node = frame.node(local);
+    while let Some(current) = node {
+        if current.tag == "a"
+            && !current.hidden()
+            && !current.disabled
+            && !crate::document::agent_hidden(frame.document(), current)
+        {
+            return Ok(current.href.as_deref().and_then(|href| frame.resolve(href)));
+        }
+        node = current
+            .parent
+            .and_then(|parent| frame.node(frame.id_base() + parent));
+    }
+    Ok(None)
+}
+
+/** Authority, ownership and engine-service failures stop an action; V9 refusals do not. */
+fn stops_operation(error: &EngineError) -> bool {
+    error.service.is_some()
+        || ["permission_denied", "control_denied"].contains(&error.code.as_str())
+}
 /** Legacy HTML-ID proposals must resolve back to the exact native node the caller selected. */
 fn validate_text_target(page: &Page, node: &Node) -> EngineResult<()> {
     if page

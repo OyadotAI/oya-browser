@@ -39,9 +39,18 @@ impl Drop for Descriptor {
     }
 }
 
-/// Separate pollable reader observes EOF even while a previous agent mutation is in flight.
+/** Where requests go: commands to the worker, and window observations to the UI thread when a
+test or the native transport supplies that channel. */
+pub(super) type Route = (
+    SyncSender<Command>,
+    Option<SyncSender<super::broker::Event>>,
+);
+
+/** Window observations and screenshots go straight to the UI thread. Queued behind the worker's
+command channel they waited for its current page step, which on a busy page is seconds long. */
 pub(super) fn start(
     commands: SyncSender<Command>,
+    events: SyncSender<super::broker::Event>,
     output: Receiver<Response>,
     authority: SharedAuthority,
     cancel: Arc<AtomicBool>,
@@ -50,14 +59,35 @@ pub(super) fn start(
     let input = Descriptor::new(libc::STDIN_FILENO)?;
     let stdout = Descriptor::new(libc::STDOUT_FILENO)?;
     Ok(start_descriptors(
-        input, stdout, commands, output, authority, cancel, connected,
+        input,
+        stdout,
+        (commands, Some(events)),
+        output,
+        authority,
+        cancel,
+        connected,
     ))
 }
-/** Private descriptor injection preserves the native EOF compatibility path in hermetic tests. */
+
+/** Descriptor injection keeps the native framing and shutdown path for hermetic tests, which
+pass no event channel: window requests then take the command path, as on the MCP transport. */
 pub(super) fn start_descriptors(
     input: Descriptor,
     stdout: Descriptor,
-    commands: SyncSender<Command>,
+    route: Route,
+    output: Receiver<Response>,
+    authority: SharedAuthority,
+    cancel: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
+) -> Vec<JoinHandle<()>> {
+    start_routed(input, stdout, route, output, authority, cancel, connected)
+}
+
+/** Optional native test routing shares the same bounded framing and shutdown path. */
+fn start_routed(
+    input: Descriptor,
+    stdout: Descriptor,
+    route: Route,
     output: Receiver<Response>,
     authority: SharedAuthority,
     cancel: Arc<AtomicBool>,
@@ -65,7 +95,7 @@ pub(super) fn start_descriptors(
 ) -> Vec<JoinHandle<()>> {
     let (guard, stop, live) = (authority.clone(), cancel.clone(), connected.clone());
     let reader = thread::spawn(move || {
-        read(input, &commands, &guard, &stop);
+        read(input, &route, &guard, &stop);
         disconnect(&guard, &live);
     });
     let writer = thread::spawn(move || {
@@ -77,7 +107,10 @@ pub(super) fn start_descriptors(
 /** EOF, malformed framing and saturated admission all revoke ownership immediately. */
 fn read(
     input: Descriptor,
-    commands: &SyncSender<Command>,
+    route: &(
+        SyncSender<Command>,
+        Option<SyncSender<super::broker::Event>>,
+    ),
     authority: &SharedAuthority,
     cancel: &AtomicBool,
 ) {
@@ -119,7 +152,18 @@ fn read(
                         tab_id: key,
                     });
                 drop(state);
-                if commands.try_send(Command::Agent(request, permit)).is_err() {
+                let window_op =
+                    request.op.starts_with("window.") || request.op == "page.screenshot";
+                if let Some(events) = route.1.as_ref().filter(|_| window_op) {
+                    if events
+                        .try_send(super::broker::Event::Window(request, permit))
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+                if route.0.try_send(Command::Agent(request, permit)).is_err() {
                     return;
                 }
             } else {
@@ -139,9 +183,12 @@ fn write(output: Descriptor, responses: Receiver<Response>, cancel: &AtomicBool)
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => return,
         };
+        let timed = std::time::Instant::now();
         let Ok(bytes) = encode(&response) else {
             return;
         };
+        crate::runtime::perf::record("io.encode", timed, || bytes.len().to_string());
+        let timed = std::time::Instant::now();
         let mut offset = 0;
         while offset < bytes.len() && !cancel.load(Ordering::Relaxed) {
             if !ready(output.fd, libc::POLLOUT) {
@@ -160,6 +207,7 @@ fn write(output: Descriptor, responses: Receiver<Response>, cancel: &AtomicBool)
                 return;
             }
         }
+        crate::runtime::perf::record("io.write", timed, String::new);
     }
 }
 /** Fixed short polling intervals cap shutdown latency without busy waiting. */

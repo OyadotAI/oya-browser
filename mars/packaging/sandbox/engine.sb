@@ -1,0 +1,27 @@
+;; Seatbelt profile every Mars engine child (Relay network, Eye document, V9 script) applies to itself
+;; before reading its first request. A compromised engine can still compute and answer on its pipe,
+;; but it cannot start programs, signal other processes, write outside its scratch directory or read
+;; the person's home folder. lifetime.rs fills @SCRATCH@, @HOME@ and @PROGRAM@ with resolved absolute paths.
+(version 1)
+(allow default)
+
+;; No helper programs: a page exploit must not gain a shell or a second unconfined process.
+(deny process-exec* process-fork)
+(deny signal (target others))
+
+;; Writes only into the engine scratch directory and the standard null and dtrace devices.
+(deny file-write*)
+(allow file-write*
+    (subpath "@SCRATCH@")
+    (literal "/dev/null")
+    (literal "/dev/dtracehelper"))
+
+;; Home holds keys, mail and documents. Only installed fonts stay readable for text measurement,
+;; plus Mars's own program folder (the .app, or a build folder), which macOS frameworks read lazily
+;; when Mars itself is installed under home, such as ~/Applications.
+(deny file-read* (subpath "@HOME@"))
+(allow file-read* (subpath "@HOME@/Library/Fonts"))
+(allow file-read* (subpath "@PROGRAM@"))
+
+;; Engines dial out at most; they never listen for connections.
+(deny network-bind network-inbound)

@@ -50,7 +50,8 @@ fn resize_preserves_identity_state_and_native_bounds() {
         305.0,
     );
     assert_native_bounds(&runtime, &page);
-    runtime.set_viewport(640.0, 700.0).unwrap();
+    // Chromium's 8px body margin leaves room for two 280px fields at 640; 560 forces one column.
+    runtime.set_viewport(560.0, 700.0).unwrap();
     let narrow = call(&mut runtime, "page.inspect", json!({})).unwrap();
     assert_eq!(narrow["page_id"], page["page_id"]);
     assert_eq!(narrow["revision"], page["revision"]);
@@ -62,7 +63,7 @@ fn resize_preserves_identity_state_and_native_bounds() {
     }
     close(
         node(&narrow, "user")["bounds"]["width"].as_f64().unwrap(),
-        550.0,
+        518.0,
     );
     close(
         node(&narrow, "pass")["bounds"]["x"].as_f64().unwrap(),
@@ -97,7 +98,8 @@ fn required_validation_remains_associated_and_non_overlapping_after_resize() {
         .parse::<usize>()
         .unwrap();
     assert_eq!(error.invalid_node.as_deref(), Some(&user_local));
-    runtime.set_viewport(640.0, 700.0).unwrap();
+    // Chromium's 8px body margin leaves room for two 280px fields at 640; 560 forces one column.
+    runtime.set_viewport(560.0, 700.0).unwrap();
     let snapshot = runtime.snapshot();
     let page = snapshot.inspection;
     let display = snapshot.display.unwrap();
@@ -125,26 +127,34 @@ fn required_validation_remains_associated_and_non_overlapping_after_resize() {
     assert_native_bounds(&runtime, &page);
 }
 
-/** Unsupported layout rejects only the candidate and leaves the committed page and revision intact. */
+/** Unsupported layout degrades the candidate instead of refusing it; a percentage gap is
+approximated as zero without a diagnostic, like the other approximated flex values. */
 #[test]
-fn failed_css_and_layout_navigation_retain_the_previous_document() {
-    let good = fixture(&forms());
+fn unsupported_css_and_layout_commit_best_effort() {
     for body in [
         "<div style='display:flex;gap:20%'><p>candidate</p></div>",
         "<div style='display:flex'>mixed<p>candidate</p></div>",
     ] {
-        let bad = fixture(body);
-        let mut runtime = Runtime::desktop(
-            EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars"))),
-            vec![good.url.clone(), bad.url.clone()],
-            Authority::shared(Owner::Agent),
-            Arc::new(AtomicBool::new(false)),
+        let page_fixture = fixture(body);
+        let mut runtime = runtime(&page_fixture.url);
+        let page = call(
+            &mut runtime,
+            "page.navigate",
+            json!({"url":page_fixture.url}),
         )
         .unwrap();
-        let page = call(&mut runtime, "page.navigate", json!({"url":good.url})).unwrap();
-        let error = call(&mut runtime, "page.navigate", json!({"url":bad.url})).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature");
-        assert!(error.previous_page_retained);
-        assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+        assert!(page.to_string().contains("candidate"), "{body}");
     }
+    let gap = fixture("<div style='display:flex;gap:20%'><p>candidate</p></div>");
+    let mut runtime = runtime(&gap.url);
+    let page = call(&mut runtime, "page.navigate", json!({"url":gap.url})).unwrap();
+    assert_eq!(page["diagnostics"], json!([]));
+    assert_eq!(page["degraded"], json!([]));
+    let candidate = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["text"] == "candidate")
+        .unwrap();
+    assert!(candidate["bounds"]["width"].as_f64().unwrap() > 0.0);
 }

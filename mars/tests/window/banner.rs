@@ -4,7 +4,7 @@ use super::*;
 /// Native point comparisons permit platform rounding without concealing a clipped text line.
 const TOLERANCE: f64 = 0.01;
 /// The toolbar and tab strip together define the first available error-banner coordinate.
-const OCCUPIED_CHROME: f64 = 86.0;
+const OCCUPIED_MARS: f64 = 86.0;
 /// Complete messages retain consistent spacing around text and native recovery controls.
 const PADDING: f64 = 8.0;
 /// A visible error must preserve a usable page viewport.
@@ -56,7 +56,7 @@ fn native_validation_banner_is_complete_at_wide_and_narrow_sizes() {
     let page = &state["native_banner"]["page"];
     close(
         number(page, "y") + number(page, "height"),
-        number(&state, "height") - OCCUPIED_CHROME,
+        number(&state, "height") - OCCUPIED_MARS,
     );
     window.capture();
 }
@@ -104,7 +104,7 @@ fn assert_complete(state: &Value, width: f64, height: f64) {
     let page = &banner["page"];
     close(
         number(text, "y") + number(text, "height"),
-        height - OCCUPIED_CHROME - PADDING,
+        height - OCCUPIED_MARS - PADDING,
     );
     close(
         number(text, "y"),

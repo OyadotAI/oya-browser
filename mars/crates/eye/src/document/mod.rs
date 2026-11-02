@@ -3,30 +3,79 @@ mod content;
 mod context;
 mod forms;
 mod markup;
+pub(crate) mod matrix;
+mod mutation;
 mod parser;
+mod pointer;
+mod quirks;
+mod recovery;
 mod render;
 mod script;
+mod shadow;
 mod style;
 mod table;
 mod tokenizer;
+mod xml;
 use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
-pub use context::{Appearance, RenderContext};
-pub use forms::{Submission, form_owner, label, select, set_checked, submission};
+pub use context::{Appearance, FRAME_VIEWPORT_MIN, RenderContext};
+pub use forms::{
+    ControlIndex, Labeler, Submission, form_owner, label, option_disabled, own_text, select,
+    select_options, set_checked, submission,
+};
 use mars_core::dom::descendant_ids;
-pub use mars_core::dom::{ScriptDocument, ScriptNode, TextChange, validate_text};
-pub use parser::parse;
+pub use mars_core::dom::{
+    DomChange, FragmentParser, InsertPosition, MetadataElement, ScriptChange, ScriptDocument,
+    ScriptMode, ScriptNode, TextChange, validate_text,
+};
+pub use mutation::{MutationCursor, apply_changes, apply_script_changes};
+pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml};
+pub use pointer::{
+    focus_field, is_text_field, item_contains, labeled_control, pointer_target, takes_pointer,
+};
+pub use render::vertical::{WRITING_CCW, WRITING_LR, WRITING_RL};
+pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 pub use render::{
-    DisplayDecoration, DisplayItem, DisplayList, PaintLine, render, render_with_context, role,
+    ClipRect, DecorationLine, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList,
+    DisplayOutline, DisplayShadow, FillRule, GradientStop, GradientTile, ImageSize, LineCap,
+    LineJoin, MAX_OUTLINE_OFFSET, OpacityGroup, PaintLine, PathCommand, Pin, ScrollArea,
+    ScrollOffsets, VectorPath, agent_hidden, agent_hidden_nodes, agent_visible, embed_frame,
+    frame_viewport, painted_bounds, render, render_frame, render_frame_scrolled, render_scrolled,
+    render_with_context, role, sliced_shadow, spread_radius, wheel_target,
 };
-pub use script::script_document;
+pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
+pub use script::{DomFragments, Fragments, normalize_document_text, script_document};
 use serde::{Deserialize, Serialize};
+pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
+use std::collections::BTreeMap;
+pub use style::DecorationStyle;
+pub use style::default_transform_origin;
+pub use style::evaluate_media;
 pub use style::{
-    AlignItems, BoxSizing, ColorScheme, ComputedStyle, DocumentFormatting, FlexBasis,
-    FlexDirection, FlexWrap, FormattingElement, JustifyContent, LineHeight, StyleSource,
-    compute_styles, compute_styles_with_context,
+    AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
+    ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
+    FormattingElement, JustifyContent, LineHeight, ObjectFit, Overflow, Position, SharedStyle,
+    StyleSource, TextTransform, WhiteSpace, background_owner, background_urls, canvas_key,
+    compute_frame_styles, compute_styles, compute_styles_with_context, css_imports, layer_key,
+    rebase_urls,
 };
+pub use style::{
+    AnimationDirection, AnimationFill, OpacityAnimation, OpacityAnimations, OpacityKeyframe,
+};
+pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
+pub use style::{COMPUTED_PROPERTIES, computed_value as computed_css_value, css_color};
+pub use style::{
+    FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
+    FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
+    install_fonts,
+};
+pub use style::{OpacityTransitions, TransitionEasing, TransitionStyle, TransitionTarget};
+pub use style::{Rotation, RotationTransitions};
+pub use style::{RotationAnimation, RotationAnimations, RotationKeyframe};
+pub use style::{Scale, ScaleAnimation, ScaleAnimations, ScaleKeyframe, ScaleTransitions};
+pub use style::{Translation, TranslationTransitions};
+pub use xml::xml_mime;
 
 /** Private computed values are validated before layout even when a Rust caller bypasses CSS parsing. */
 pub fn validate_styles(document: &Document) -> EngineResult<()> {
@@ -60,7 +109,57 @@ pub struct Document {
     /// Non-target wrapper styles preserve root/body semantics without allocating native node IDs.
     #[serde(default)]
     pub formatting: DocumentFormatting,
+    /// `<meta http-equiv=Content-Security-Policy>` texts in source order, at most CSP_POLICIES of
+    /// TEXT_BYTES each. Eye only records them; the coordinator enforces them when it fetches.
+    #[serde(default)]
+    pub csp: Vec<String>,
+    /// Metadata and data-block elements in source order, at most METADATA_ELEMENTS. They are
+    /// never nodes, so layout, paint and agents never see them; scripts find them through V9.
+    #[serde(default)]
+    pub metadata: Vec<MetadataElement>,
+    /// The first `<meta http-equiv=refresh>` whose content names a delay, as the shared declarative
+    /// refresh steps read it. The coordinator follows it the way Chrome does; eye only parses it.
+    #[serde(default)]
+    pub refresh: Option<MetaRefresh>,
+    /// The encoding name the parser settled: a meta charset when one agreed with the decoding,
+    /// else the transport's. Empty only for fragments; it is what `document.characterSet` reports.
+    #[serde(default)]
+    pub charset: String,
 }
+
+/// What a script element holds; modules and import maps go to V9's module loader.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptKind {
+    /// A classic script.
+    #[default]
+    Classic,
+    /// `type=module`: deferred unless `async`, fetched in CORS mode with its imports.
+    Module,
+    /// `type=importmap`: inline JSON mapping module specifiers to URLs.
+    ImportMap,
+}
+
+impl ScriptKind {
+    /// Classic scripts carry no kind on the wire, as before modules existed.
+    pub fn is_classic(&self) -> bool {
+        *self == Self::Classic
+    }
+}
+
+/// A declarative refresh: after `seconds`, navigate to `url`. Absent `url` means the document's own
+/// address; a relative one stays as written and resolves against the document's base.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaRefresh {
+    /// The delay before the navigation, in seconds; a fraction is allowed.
+    pub seconds: f64,
+    /// The address to navigate to, or None for the document's own address.
+    pub url: Option<String>,
+}
+
+/// Meta-delivered policies one document keeps; later ones are dropped with a diagnostic.
+pub const CSP_POLICIES: usize = 8;
 
 /// Page scripts retain order while the coordinator resolves external source bytes.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -71,12 +170,32 @@ pub struct ScriptResource {
     /// External location remains private coordinator data until fetched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
+    /// Execution phase: blocking first, then defer, then async, each in document order.
+    #[serde(default)]
+    pub mode: ScriptMode,
+    /// A classic script, a module script or an import map.
+    #[serde(default, skip_serializing_if = "ScriptKind::is_classic")]
+    pub kind: ScriptKind,
+    /// Subresource Integrity metadata; the coordinator verifies the fetched body against it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
+    /// The element's `nonce`, matched against Content-Security-Policy `'nonce-…'` sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    /// The element's own attributes (`id`, `data-*`, `type`), within the page's METADATA_BYTES,
+    /// so the head record V9 gives the script answers `getElementById` and dataset reads the
+    /// way the real element does (Google's sign-in locates its bundle by `id="base-js"`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, String>,
 }
 
 /// Native node identity is separate from its source HTML identifier.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
+    /// Actual script-drawn content, separate from network images and author attributes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas: Option<mars_core::canvas::Bitmap>,
     /// Document-local identity; the coordinator adds the page generation.
     pub local_id: usize,
     /// Used only by the supported script DOM operation.
@@ -114,7 +233,7 @@ pub struct Node {
     pub selected: bool,
     /// Owned CSS supplies both paint and action visibility.
     #[serde(default, skip_serializing_if = "default_style")]
-    pub style: ComputedStyle,
+    pub style: SharedStyle,
     /// Only implemented constraints produce a value-free associated error.
     #[serde(default)]
     pub validation: Option<String>,
@@ -127,9 +246,38 @@ pub struct Node {
     /// Intrinsic dimensions are set by the coordinator after bounded decode.
     #[serde(default)]
     pub image_size: Option<(u32, u32)>,
+    /// The image has a natural size but no natural aspect ratio (an SVG with at most one of a
+    /// width and a height and no viewBox), so a stretched box fills both axes freely.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub image_ratio_free: bool,
+    /// A custom element V9 upgraded, for `:defined` (uncustomized elements count as defined
+    /// too; only an undefined custom element is not).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defined: bool,
     /// Parsed cell relationships let inspection use the same stable native identities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_cell: Option<TableCell>,
+    /// Source whitespace directly followed this element. The parser drops whitespace-only text,
+    /// so this is how inline layout tells `<b>a</b> <i>b</i>` (spaced) from `<b>a</b><i>b</i>`
+    /// (adjacent, as syntax-highlighted code is).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space_after: bool,
+    /// Source whitespace began this element's content before any text or child, as in an
+    /// otherwise empty `<span> </span>` spacer between two links.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space_leading: bool,
+    /// The dropped white space `space_leading` stands for, which preserved white space
+    /// (`pre`, `pre-wrap`) lays out as written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub leading_space: String,
+    /// The page's focused element, as a script's `focus()` left it, for `:focus` and
+    /// `:focus-within`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub focused: bool,
+    /// The runtime loaded a document or drawing into this `<object>` or `<embed>`, so it lays
+    /// out as a replaced box (an iframe always does) and its fallback children do not render.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub embedded: bool,
 }
 
 /// Table relationships are derived from bounded source order during parsing.
@@ -148,8 +296,8 @@ pub struct TableCell {
     pub headers: Vec<usize>,
 }
 /** Default style metadata need not consume private wire budget for every unstyled node. */
-fn default_style(style: &ComputedStyle) -> bool {
-    *style == ComputedStyle::default()
+fn default_style(style: &SharedStyle) -> bool {
+    *style == SharedStyle::default()
 }
 impl Node {
     /// Control semantics are explicit rather than inferred by AppKit.
@@ -167,8 +315,14 @@ impl Node {
     pub fn secret(&self) -> bool {
         self.tag == "input" && ["password", "hidden"].contains(&self.input_type())
     }
-    /// Inherited visibility is resolved before native targeting.
+    /// Inherited visibility is resolved before native targeting: an invisible box is hidden
+    /// from agents even though it still takes up room in layout.
     pub fn hidden(&self) -> bool {
+        self.removed() || self.style.invisible
+    }
+    /// Whether the node generates no box at all, so layout skips it; `visibility: hidden` boxes
+    /// are laid out and only not painted.
+    pub fn removed(&self) -> bool {
         self.style.hidden
             || self.attributes.contains_key("hidden")
             || (self.tag == "input" && self.input_type() == "hidden")
@@ -212,23 +366,7 @@ pub fn apply(document: &Document, changes: &[TextChange]) -> EngineResult<Docume
     }
     let mut candidate = document.clone();
     for change in changes {
-        let local = candidate
-            .nodes
-            .iter()
-            .find(|node| node.html_id == change.html_id)
-            .map(|node| node.local_id)
-            .ok_or_else(invalid_target)?;
-        let removed = descendants(&candidate, local);
-        candidate
-            .nodes
-            .retain(|node| !removed.contains(&node.local_id));
-        candidate
-            .nodes
-            .iter_mut()
-            .find(|node| node.local_id == local)
-            .ok_or_else(invalid_target)?
-            .text
-            .clone_from(&change.text);
+        mutation::apply_text(&mut candidate, change)?;
     }
     validate_content(&candidate)?;
     Ok(candidate)

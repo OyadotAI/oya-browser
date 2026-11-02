@@ -1,0 +1,628 @@
+/**
+ * Direct eval (spec PerformEval and EvalDeclarationInstantiation; V8's
+ * Runtime_ResolvePossiblyDirectEval with its scope analysis). A call spelled `eval(...)` records
+ * the caller's environment scopes as text; when the callee turns out to be the intrinsic eval the
+ * VM compiles the argument in those scopes, so the code resolves the caller's bindings by
+ * environment hops. The text travels beside the source (never inside it, where a page could
+ * write it) and a restored page recompiles from the pair.
+ * A sloppy eval's new `var`s land in the caller function's eval-var object (the `%ext` binding,
+ * V8's context extension), which every name lookup that crosses that function checks first.
+ */
+use super::*;
+
+/** The hidden binding holding a sloppy function's eval-var object. */
+pub(super) const EXT: &str = "%ext";
+
+/** The hidden binding holding a `with` statement's object. */
+pub(super) const WITH: &str = "%with";
+
+/** Internal names (`this`, `new.target`, `%home`, ...) never resolve through a `with` object. */
+fn internal(name: &str) -> bool {
+    name == "this" || name.contains('.') || name.starts_with('%')
+}
+
+/** One dynamic check a lookup makes before its static place: env (hops, slot) and whether it
+is a `with` object rather than an eval-var object. */
+pub(super) type Check = (Slot, Slot, bool);
+
+/** The caller's scopes as the eval code sees them. */
+pub(super) struct Context {
+    /// The caller's mode participates in parsing before any compiler lowering happens.
+    pub(super) strict: bool,
+    /// The call sits in a sloppy function's parameter list.
+    params: bool,
+    pub(super) grammar: u8,
+    scopes: Vec<Scope>,
+    /// Private environments retain lexical class sites and declaration sets, outermost first.
+    classes: Vec<(u32, Vec<Name>)>,
+}
+
+/** The one-letter code of each declaration kind in the context text. */
+const KINDS: [(Declared, char); 7] = [
+    (Declared::Var, 'V'),
+    (Declared::Let, 'L'),
+    (Declared::Const, 'C'),
+    (Declared::ClassInner, 'K'),
+    (Declared::FunctionName, 'F'),
+    (Declared::Hidden, 'H'),
+    (Declared::Catch, 'P'),
+];
+
+/** Parse the context text `eval_context` made; it travels beside the eval source, never in it. */
+pub(super) fn context(text: &str) -> Option<Context> {
+    let (strict, scopes) = text.split_once('|')?;
+    let grammar = if strict.len() == 1 {
+        0
+    } else {
+        strict.get(1..)?.parse::<u8>().ok()?
+    };
+    if grammar > 15 {
+        return None;
+    }
+    let (scopes, private) = scopes.split_once('|').unwrap_or((scopes, ""));
+    let classes = private
+        .split(';')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut fields = part.split(',');
+            let site = fields.next()?.parse::<u32>().ok()?;
+            let names = fields
+                .map(|name| {
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(Name::from(name))
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?;
+            if names.is_empty() {
+                None
+            } else {
+                Some((site, names))
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let scopes = scopes
+        .split(';')
+        .filter(|scope| !scope.is_empty())
+        .map(parse_scope)
+        .collect::<Option<Vec<_>>>()?;
+    Some(Context {
+        strict: strict.starts_with('s'),
+        params: strict.starts_with('p'),
+        grammar,
+        scopes,
+        classes,
+    })
+}
+
+impl Context {
+    /** Parsing checks declaration visibility, while lowering retains which lexical class owns each spelling. */
+    pub(super) fn private_names(&self) -> Vec<Name> {
+        self.classes
+            .iter()
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect()
+    }
+}
+/** Actual callers must have every recorded private environment on their lexical chain. */
+pub(in crate::v9) fn private_sites(text: &str) -> Option<Vec<u32>> {
+    Some(
+        context(text)?
+            .classes
+            .into_iter()
+            .map(|(site, _)| site)
+            .collect(),
+    )
+}
+
+/** Slots each environment scope of a context needs, innermost first, so the VM can check them
+against the caller's real environments before eval code indexes into them. */
+pub(in crate::v9) fn env_sizes(text: &str) -> Option<Vec<Slot>> {
+    let context = context(text)?;
+    Some(
+        context
+            .scopes
+            .iter()
+            .rev()
+            .filter(|scope| scope.env)
+            .map(|scope| scope.slots)
+            .collect(),
+    )
+}
+
+/** One scope of the context text: `g` for the global scope, else `e` and its bindings. */
+fn parse_scope(text: &str) -> Option<Scope> {
+    let mut parts = text.split(' ');
+    let global = parts.next()? == "g";
+    let mut scope = Scope {
+        bindings: Vec::new(),
+        index: std::collections::HashMap::default(),
+        env: !global,
+        captured: None,
+        slots: 0,
+        boundary: false,
+        global,
+    };
+    for part in parts {
+        let mut fields = part.split(':');
+        let name = Name::from(fields.next()?);
+        let code = fields.next()?.chars().next()?;
+        let declared = KINDS.iter().find(|(_, c)| *c == code)?.0;
+        let slot: Slot = fields.next()?.parse().ok()?;
+        scope.slots = scope.slots.max(slot.checked_add(1)?);
+        scope.index.insert(name.clone(), scope.bindings.len());
+        scope.bindings.push(Binding {
+            name,
+            declared,
+            place: Place::Env(slot),
+            block_function: fields.next() == Some("b"),
+        });
+    }
+    Some(scope)
+}
+
+impl Compiler {
+    /** The caller's environment scopes at a direct eval call, as context text. */
+    pub(super) fn eval_context(&self) -> String {
+        let state = self.f_ref();
+        let mut text = String::from(match (state.effective_strict(), state.in_params) {
+            (true, _) => "s|",
+            (false, true) => "p|",
+            (false, false) => "n|",
+        });
+        if state.eval_grammar != 0 {
+            text.pop();
+            text.push_str(&state.eval_grammar.to_string());
+            text.push('|');
+        }
+        for scope in &self.scopes {
+            if scope.global {
+                text.push_str("g;");
+                continue;
+            }
+            if !scope.env {
+                continue;
+            }
+            text.push('e');
+            for binding in &scope.bindings {
+                let (Place::Env(slot), Some((_, code))) = (
+                    binding.place,
+                    KINDS.iter().find(|(kind, _)| *kind == binding.declared),
+                ) else {
+                    continue;
+                };
+                text.push_str(&format!(" {}:{code}:{slot}", binding.name));
+                if binding.block_function {
+                    text.push_str(":b");
+                }
+            }
+            text.push(';');
+        }
+        if self.classes.iter().any(|(_, names)| !names.is_empty()) {
+            text.push('|');
+            for (site, names) in &self.classes {
+                if names.is_empty() {
+                    continue;
+                }
+                text.push_str(&site.to_string());
+                for name in names {
+                    text.push(',');
+                    text.push_str(name);
+                }
+                text.push(';');
+            }
+        }
+        text
+    }
+    /** The function being emitted, read-only. */
+    fn f_ref(&self) -> &FnState {
+        self.functions.last().expect("function state")
+    }
+    /** Environment hops from the innermost scope to scope `index`. */
+    fn hops_to(&self, index: usize) -> Slot {
+        self.scopes[index + 1..].iter().filter(|s| s.env).count() as Slot
+    }
+    /**
+     * The objects a lookup of `name` must check before its static place: each `%ext` of a
+     * sloppy function with direct eval and each `with` object the lookup crosses, innermost
+     * first.
+     */
+    pub(super) fn ext_checks(&self, name: &str) -> Vec<Check> {
+        let mut checks = Vec::new();
+        let mut hops: Slot = 0;
+        for scope in self.scopes.iter().rev() {
+            let binding = scope.index.get(name).map(|&at| &scope.bindings[at]);
+            if binding.is_some_and(|binding| binding.declared != Declared::FunctionName) {
+                break;
+            }
+            for (hidden, with) in [(EXT, false), (WITH, true)] {
+                if with && internal(name) {
+                    continue;
+                }
+                if let Some(Binding {
+                    place: Place::Env(slot),
+                    ..
+                }) = scope.index.get(hidden).map(|&at| &scope.bindings[at])
+                {
+                    checks.push((hops, *slot, with));
+                }
+            }
+            if binding.is_some() {
+                break;
+            }
+            if scope.env {
+                hops += 1;
+            }
+        }
+        checks
+    }
+    /** Emit eval-var checks for a load: each found value jumps past the static load. */
+    pub(super) fn ext_loads(&mut self, name: &str) -> EngineResult<Vec<usize>> {
+        let checks = self.ext_checks(name);
+        if checks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let index = self.name(name)?;
+        let mut jumps = Vec::new();
+        for (hops, slot, with) in checks {
+            self.emit(if with {
+                Op::GetWith(index, hops, slot, false)
+            } else {
+                Op::GetExt(index, hops, slot)
+            });
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
+        }
+        Ok(jumps)
+    }
+    /** Emit eval-var checks for a store of the top of stack, which stays. */
+    pub(super) fn ext_stores(&mut self, name: &str) -> EngineResult<Vec<usize>> {
+        let checks = self.ext_checks(name);
+        if checks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let index = self.name(name)?;
+        let mut jumps = Vec::new();
+        for (hops, slot, with) in checks {
+            self.emit(if with {
+                Op::SetWith(index, hops, slot)
+            } else {
+                Op::SetExt(index, hops, slot)
+            });
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
+        }
+        Ok(jumps)
+    }
+    /**
+     * Evaluate an identifier reference before its right-hand side (spec 13.15.2 step 1) when
+     * a `with` or eval-var object may hold the name: pushes the object that does, or
+     * undefined, so `load_ref` and `assign_ref` use that object whatever the right-hand side
+     * added or deleted. Returns whether a base was pushed; a static name needs none.
+     */
+    pub(super) fn ref_name(&mut self, name: &Name, pos: Pos) -> EngineResult<bool> {
+        let checks = self.ext_checks(name);
+        if checks.is_empty() {
+            return Ok(false);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        let mut jumps = Vec::new();
+        for (hops, slot, with) in checks {
+            self.emit(Op::ResolveRef(index, hops, slot, with));
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
+        }
+        self.emit(Op::Undefined);
+        self.patch_all(jumps);
+        Ok(true)
+    }
+    /** Push the value of the reference `ref_name` made: `base -> base value`. Without a base
+    this is a plain load. */
+    pub(super) fn load_ref(&mut self, name: &Name, pos: Pos, base: bool) -> EngineResult<()> {
+        if !base {
+            return self.load_name(name, pos);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        self.emit(Op::GetRef(index));
+        let found = self.emit(Op::JumpIfTrue(0));
+        self.load_static_name(name)?;
+        self.patch(found);
+        Ok(())
+    }
+    /** Store through the reference `ref_name` made: `base value -> value`. Without a base this
+    is a plain assignment. */
+    pub(super) fn assign_ref(&mut self, name: &Name, pos: Pos, base: bool) -> EngineResult<()> {
+        if !base {
+            return self.assign_name(name, pos);
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        self.emit(Op::SetRef(index));
+        let stored = self.emit(Op::JumpIfTrue(0));
+        self.assign_static(name)?;
+        self.patch(stored);
+        Ok(())
+    }
+    /** End a logical assignment through a reference: the skipped store leaves the base under
+    the kept value, so that path drops it before both paths join. */
+    pub(super) fn end_logical_ref(&mut self, skip: usize, base: bool) {
+        if !base {
+            self.patch(skip);
+            return;
+        }
+        let done = self.emit(Op::Jump(0));
+        self.patch(skip);
+        self.emit(Op::Swap);
+        self.emit(Op::Pop);
+        self.patch(done);
+    }
+    /**
+     * Push a called name's value and `this`: a `with` object that holds the name is the
+     * receiver (spec 9.1.1.2.10 WithBaseObject); anything else calls with undefined.
+     */
+    pub(super) fn callee_name(&mut self, name: &Name, pos: Pos) -> EngineResult<()> {
+        let checks = self.ext_checks(name);
+        if !checks.iter().any(|check| check.2) {
+            self.load_name(name, pos)?;
+            self.emit(Op::Undefined);
+            return Ok(());
+        }
+        self.at(pos);
+        let index = self.name(name)?;
+        let (mut found, mut done) = (Vec::new(), Vec::new());
+        for (hops, slot, with) in checks {
+            self.emit(if with {
+                Op::GetWith(index, hops, slot, true)
+            } else {
+                Op::GetExt(index, hops, slot)
+            });
+            let jump = self.emit(Op::JumpIfTrue(0));
+            if with {
+                done.push(jump)
+            } else {
+                found.push(jump)
+            }
+        }
+        self.load_static_name(name)?;
+        self.patch_all(found);
+        self.emit(Op::Undefined);
+        self.patch_all(done);
+        Ok(())
+    }
+    /** `delete name` checks dynamic eval and `with` bindings first; jumps land at the end. */
+    pub(super) fn delete_checks(&mut self, name: &Name) -> EngineResult<Vec<usize>> {
+        let mut jumps = Vec::new();
+        for (hops, slot, with) in self.ext_checks(name) {
+            let index = self.name(name)?;
+            self.emit(if with {
+                Op::DeleteWith(index, hops, slot)
+            } else {
+                Op::DeleteExt(index, hops, slot)
+            });
+            jumps.push(self.emit(Op::JumpIfTrue(0)));
+        }
+        Ok(jumps)
+    }
+    /** Point eval-var check jumps here. */
+    pub(super) fn patch_all(&mut self, jumps: Vec<usize>) {
+        for jump in jumps {
+            self.patch(jump);
+        }
+    }
+    /** `eval(args)` with no spread: the VM decides at run time whether it is direct. */
+    pub(super) fn direct_eval_call(&mut self, count: u16) -> EngineResult<()> {
+        let context = self.eval_context();
+        let index = self.name(&context)?;
+        self.emit(Op::DirectEval(count, index));
+        Ok(())
+    }
+    /** Compile direct eval code inside the caller's scopes. */
+    pub(super) fn eval_script(
+        &mut self,
+        program: &Program,
+        context: Context,
+    ) -> EngineResult<Code> {
+        let strict = program.strict || context.strict;
+        let params = context.params;
+        self.begin_function(strict, FuncFlags::default());
+        self.f().eval_grammar = context.grammar;
+        self.scopes.extend(context.scopes.into_iter().map(Arc::new));
+        self.classes = context.classes;
+        let base = self.scopes.len();
+        self.f().scope_base = base;
+        self.at(program.pos);
+        let body = &program.body;
+        super::stmt::early_conflict(body, strict, true, &[])?;
+        let mut vars = Vec::new();
+        scan::var_names(body, true, true, &mut vars);
+        let functions = scan::function_declarations(body);
+        let var_scope = self.scopes.iter().rposition(|s| s.index.contains_key(EXT));
+        if !strict {
+            self.f().eval_vars = Some(var_scope);
+            let mut names = vars.clone();
+            names.extend(functions.iter().filter_map(|f| f.name.clone()));
+            if params && names.iter().any(|name| &**name == "arguments") {
+                let index =
+                    self.name("Cannot declare 'arguments' in a parameter initializer eval")?;
+                self.emit(Op::ThrowSyntax(index));
+            }
+            self.eval_conflicts(&names, var_scope)?;
+            if var_scope.is_none() {
+                self.check_global_declarations(&vars, &functions, true)?;
+            }
+            let mut annex = Vec::new();
+            scan::var_names(body, false, true, &mut annex);
+            // A set, not `vars.contains`: an eval of n vars would otherwise cost n squared.
+            let declared: super::super::vm::heap::FastSet<&Name> = vars.iter().collect();
+            annex.retain(|name| !declared.contains(name) && !self.eval_blocked(name, var_scope));
+            self.eval_vars(&names, var_scope)?;
+            if var_scope.is_none() {
+                for name in annex {
+                    let index = self.name(&name)?;
+                    self.emit(Op::AnnexGlobal(index, false));
+                }
+            } else {
+                self.eval_vars(&annex, var_scope)?;
+            }
+        }
+        let env = scan::has_closure(body);
+        self.push_scope(env, true);
+        let push = env.then(|| {
+            self.f().envs += 1;
+            self.emit(Op::PushEnv(0))
+        });
+        if strict {
+            for name in &vars {
+                let place = self.declare(name, Declared::Var)?;
+                self.emit(Op::Undefined);
+                self.set_place(place, 0);
+                self.emit(Op::Pop);
+            }
+        }
+        for (name, kind) in scan::lexical_names(body, false) {
+            let declared = if kind.immutable() {
+                Declared::Const
+            } else {
+                Declared::Let
+            };
+            if let Place::Register(slot) = self.declare(&name, declared)? {
+                self.emit(Op::Hole);
+                self.emit(Op::SetReg(slot));
+                self.emit(Op::Pop);
+            }
+        }
+        for func in functions {
+            let name = func.name.clone().expect("declaration name");
+            if strict {
+                self.declare(&name, Declared::Var)?;
+            }
+            self.closure(&func, false)?;
+            if strict {
+                self.initialize(&name, func.pos)?;
+            } else {
+                self.eval_function_store(&name, var_scope)?;
+            }
+            self.emit(Op::Pop);
+        }
+        let result = self.temp()?;
+        self.emit(Op::Undefined);
+        self.emit(Op::SetReg(result));
+        self.emit(Op::Pop);
+        self.statements_with_result(body, Some(result))?;
+        self.emit(Op::GetReg(result));
+        self.emit(Op::Return);
+        let scope = self.scopes.pop().expect("eval scope");
+        if let Some(push) = push {
+            self.f().ops[push] = Op::PushEnv(scope.slots);
+        }
+        self.scopes.clear();
+        let site = crate::v9::syntax::site_of(program.pos);
+        Ok(self.end_function(None, site, None))
+    }
+    /** A sloppy eval's `var` may not cross a lexical binding of its name up to the var scope. */
+    fn eval_conflicts(&mut self, names: &[Name], var_scope: Option<usize>) -> EngineResult<()> {
+        let floor = var_scope.unwrap_or(0);
+        for name in names {
+            let lexical = self.scopes[floor..].iter().any(|scope| {
+                scope.index.get(name).is_some_and(|&at| {
+                    matches!(
+                        scope.bindings[at].declared,
+                        Declared::Let | Declared::Const | Declared::ClassInner
+                    )
+                })
+            });
+            if lexical {
+                let message = format!("Identifier '{name}' has already been declared");
+                let index = self.name(&message)?;
+                self.emit(Op::ThrowSyntax(index));
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+    /** Annex B (B.3.3.3): a block function in eval is not hoisted past a caller's lexical
+    binding of its name between the eval and its var scope. */
+    fn eval_blocked(&self, name: &Name, var_scope: Option<usize>) -> bool {
+        self.scopes[var_scope.unwrap_or(0)..].iter().any(|scope| {
+            scope.index.get(name).is_some_and(|&at| {
+                !matches!(scope.bindings[at].declared, Declared::Var | Declared::Catch)
+            })
+        })
+    }
+    /** Annex B: store a sloppy eval's block function (on the stack, kept) into its var scope
+    when no static binding took it: the eval-var object, or the global object. */
+    pub(super) fn eval_block_function_store(
+        &mut self,
+        name: &Name,
+        var_scope: Option<usize>,
+    ) -> EngineResult<()> {
+        let index = self.name(name)?;
+        match var_scope {
+            None => {
+                self.emit(Op::AnnexGlobal(index, true));
+            }
+            Some(at) => {
+                let (hops, slot) = self.ext_slot(at);
+                self.emit(Op::SetExt(index, hops, slot));
+                self.emit(Op::Pop);
+            }
+        }
+        Ok(())
+    }
+    /** Create a sloppy eval's vars: global properties, or entries of the function's `%ext`. */
+    fn eval_vars(&mut self, names: &[Name], var_scope: Option<usize>) -> EngineResult<()> {
+        for name in names {
+            let index = self.name(name)?;
+            match var_scope {
+                None => {
+                    self.emit(Op::DeclareVar(index, true));
+                }
+                Some(at)
+                    if self.scopes[at].index.get(name).is_none_or(|&slot| {
+                        self.scopes[at].bindings[slot].declared == Declared::FunctionName
+                    }) =>
+                {
+                    let (hops, slot) = self.ext_slot(at);
+                    self.emit(Op::DeclareExt(index, hops, slot));
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
+    /** Where scope `at`'s `%ext` lives, from here. */
+    fn ext_slot(&self, at: usize) -> (Slot, Slot) {
+        let scope = &self.scopes[at];
+        let slot = match scope.index.get(EXT).map(|&i| scope.bindings[i].place) {
+            Some(Place::Env(slot)) => slot,
+            _ => 0,
+        };
+        (self.hops_to(at), slot)
+    }
+    /** Store a sloppy eval's function declaration (on the stack, kept) into its var scope. */
+    fn eval_function_store(&mut self, name: &Name, var_scope: Option<usize>) -> EngineResult<()> {
+        let index = self.name(name)?;
+        let Some(at) = var_scope else {
+            self.emit(Op::Dup);
+            self.emit(Op::DeclareFunction(index, true));
+            return Ok(());
+        };
+        let hops = self.hops_to(at);
+        let scope = &self.scopes[at];
+        match scope.index.get(name).map(|&i| &scope.bindings[i]) {
+            Some(Binding {
+                place: Place::Env(slot),
+                declared,
+                ..
+            }) if *declared != Declared::FunctionName => {
+                self.emit(Op::SetEnv(hops, *slot));
+            }
+            _ => {
+                let (hops, slot) = self.ext_slot(at);
+                self.emit(Op::SetExt(index, hops, slot));
+                self.emit(Op::Pop);
+            }
+        }
+        Ok(())
+    }
+}

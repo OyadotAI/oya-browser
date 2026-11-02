@@ -1,5 +1,7 @@
 /** Independent public consumers pin Relay policy and request failures without network I/O. */
-use mars_relay::{CookieJar, Method, Prepared, WebRequest, policy};
+use mars_relay::{CookieJar, Method, Prepared, WebRequest, fetch, fetch_web, policy};
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::time::SystemTime;
 
 /** Rejected literal targets must fail before opening a socket or resolving a name. */
@@ -99,4 +101,138 @@ fn cookies_round_trip_through_pure_records_without_profile_io() {
             .header(&insecure, Some(&insecure), true, now)
             .is_empty()
     );
+}
+
+/** Navigation, subresource and loopback fetches each open one connection. */
+const PATHS: usize = 3;
+
+/** Serves one raw response to exactly `PATHS` loopback connections. */
+fn serve(response: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    let origin = format!("http://{}", listener.local_addr().expect("address"));
+    let worker = std::thread::spawn(move || {
+        for stream in listener.incoming().take(PATHS) {
+            let mut stream = stream.expect("connection");
+            let mut request = Vec::new();
+            let mut byte = [0; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
+            stream.write_all(&response).expect("response");
+        }
+    });
+    (origin, worker)
+}
+
+/** Every fetch path parses Content-Type and decodes charsets identically. */
+#[test]
+fn content_type_verdicts_match_on_every_fetch_path() {
+    let accepted = "\u{e9}".as_bytes();
+    for (content_type, body, expected) in [
+        ("text/html;charset=UTF-8", accepted, Ok("\u{e9}")),
+        ("TEXT/HTML; Charset=\"utf-8\"", accepted, Ok("\u{e9}")),
+        (
+            "text/html; charset=windows-1252",
+            b"\x80\x93\xE9".as_slice(),
+            Ok("\u{20AC}\u{201C}\u{e9}"),
+        ),
+        (
+            "text/html; charset=shift_jis",
+            b"\x82\xA0".as_slice(),
+            Ok("\u{3042}"),
+        ),
+        (
+            "text/html; charset=nope",
+            accepted,
+            Err("unsupported_feature"),
+        ),
+    ] {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        let (origin, worker) = serve(response);
+        let url = format!("{origin}/");
+        let grants = std::slice::from_ref(&origin);
+        let navigation = fetch_web(&url, grants).map(|page| page.source);
+        let subresource = Prepared::connect(WebRequest::get(&url), grants, PREPARATION_MS)
+            .and_then(Prepared::transmit)
+            .map(|response| {
+                assert_eq!(response.mime, "text/html", "{content_type}");
+                response.source
+            });
+        let loopback = fetch(&url);
+        worker.join().expect("fixture");
+        for result in [navigation, subresource, loopback] {
+            assert_eq!(
+                result.as_deref().map_err(|error| error.code.as_str()),
+                expected,
+                "{content_type}"
+            );
+        }
+    }
+}
+
+/** A `data:` resource (facebook.com links its CSS and scripts that way) is refused as
+unsupported, so a page loader skips that one resource instead of abandoning the navigation as an
+egress denial. It is still never fetched, and a redirect to one is still refused. */
+#[test]
+fn data_urls_are_unsupported_resources_rather_than_egress_denials() {
+    let data = "data:text/css; charset=utf-8,.a%7Bcolor%3Ared%7D";
+    assert_eq!(
+        policy::web_url(data).expect_err("inline").code,
+        "unsupported_feature"
+    );
+    let error = Prepared::connect(WebRequest::get(data), &[], PREPARATION_MS)
+        .err()
+        .expect("never fetched");
+    assert_eq!(error.code, "unsupported_feature");
+    let page = url::Url::parse("https://1.1.1.1/").expect("url");
+    assert!(mars_relay::redirect_url(&page, data, &[]).is_err());
+    for other in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "ftp://1.1.1.1/",
+    ] {
+        assert_eq!(
+            policy::web_url(other).expect_err("denied").code,
+            "permission_denied"
+        );
+    }
+}
+
+/** Budget a caller gives a request to a server that never answers. */
+const STALLED_MS: u64 = 1_000;
+/** Parallel test load may delay the observing thread after Relay's own timeout fires. */
+const LOAD_SLACK_MS: u64 = 500;
+
+/** Relay reports its own timeout while the fixture is still stalled, with room for scheduler
+delay in a parallel test run. The production reply margin still protects the caller's deadline. */
+#[test]
+fn a_stalled_server_times_out_before_the_callers_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    let origin = format!("http://{}", listener.local_addr().expect("address"));
+    let holder = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("connection");
+        std::thread::sleep(std::time::Duration::from_millis(STALLED_MS * 2));
+        drop(stream);
+    });
+    let started = std::time::Instant::now();
+    let error = Prepared::connect(
+        WebRequest::get(&format!("{origin}/")),
+        std::slice::from_ref(&origin),
+        STALLED_MS,
+    )
+    .and_then(Prepared::transmit)
+    .expect_err("stalled");
+    let elapsed = started.elapsed();
+    assert_eq!(error.code, "timeout");
+    assert!(error.service.is_none());
+    assert!(
+        elapsed < std::time::Duration::from_millis(STALLED_MS + LOAD_SLACK_MS),
+        "{elapsed:?}"
+    );
+    holder.join().expect("holder");
 }

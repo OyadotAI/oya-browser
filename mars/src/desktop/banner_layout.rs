@@ -11,11 +11,11 @@ pub(super) const TEXT_INSET: f64 = 16.0;
 /// The banner separates its text, action row and outside edges.
 const PADDING: f64 = 8.0;
 /// Native actions retain their normal hit-target height.
-const ACTION_HEIGHT: f64 = 28.0;
+pub(super) const ACTION_HEIGHT: f64 = 28.0;
 /// Retry remains narrower than Dismiss without sharing a hit region.
 const RETRY_WIDTH: f64 = 72.0;
 /// Dismiss remains fixed at the trailing edge even when Retry is hidden.
-const DISMISS_WIDTH: f64 = 88.0;
+pub(super) const DISMISS_WIDTH: f64 = 88.0;
 /// Tall errors must retain a usable page viewport.
 const MINIMUM_PAGE_HEIGHT: f64 = 120.0;
 /// Three spaces surround and separate the message and action row.

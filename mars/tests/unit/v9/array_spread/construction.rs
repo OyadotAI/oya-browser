@@ -31,54 +31,65 @@ fn sparse_sources_materialize_dense_undefined_without_mutating_the_source() {
     );
 }
 
-/** Brand failures belong to the ellipsis and preserve the designer's execute-phase distinction. */
+/** Non-iterable operands throw a catchable TypeError located at the operand, after the ellipsis. */
 #[test]
-fn unsupported_and_noniterable_operands_have_precise_execute_errors() {
-    for operand in ["null", "undefined", "true", "1"] {
+fn noniterable_operands_throw_located_type_errors() {
+    for operand in [
+        "null",
+        "undefined",
+        "true",
+        "1",
+        "{}",
+        "{length:1,0:7}",
+        "function(){}",
+    ] {
         let source = format!("\nconst a=[...{operand}];");
         let error = execute(&source).unwrap_err();
         assert_eq!(error.code, "script_execution_error", "{operand}");
         assert!(
-            error
-                .message
-                .contains("The array spread value is not iterable")
+            error.message.contains("TypeError"),
+            "{operand}: {}",
+            error.message
         );
         assert_eq!(error.phase.as_deref(), Some("execute"));
-        assert_eq!(
-            error.location.unwrap().byte_offset,
-            source.find("...").unwrap()
-        );
+        assert!(error.location.unwrap().byte_offset >= source.find("...").unwrap() + 3);
     }
-    for operand in ["{}", "{length:1,0:7}", "function(){}"] {
-        let source = format!("const a=[...{operand}];");
-        let error = execute(&source).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature", "{operand}");
-        assert_eq!(error.phase.as_deref(), Some("execute"));
+    assert_eq!(
+        result(
+            "let caught='';try{[...{}];}catch(error){caught=error instanceof TypeError;}",
+            "caught"
+        ),
+        "true"
+    );
+}
+
+/** A nullish spread error names the well-known symbol it tried to read, never an internal id. */
+#[test]
+fn nullish_spread_errors_name_symbol_iterator() {
+    for operand in ["null", "undefined"] {
+        let error = execute(&format!("const a=[...{operand}];")).unwrap_err();
         assert!(
-            error
-                .message
-                .contains("Iteration for this value type is not supported")
-        );
-        assert_eq!(
-            error.location.unwrap().byte_offset,
-            source.find("...").unwrap()
+            error.message.contains("Symbol(Symbol.iterator)"),
+            "{}",
+            error.message
         );
     }
 }
 
-/** Operand failures retain their own inner source position instead of being repointed to spread. */
+/** Operand failures retain their own inner source position and skip later elements. */
 #[test]
 fn operand_failures_keep_their_inner_location_and_skip_later_expressions() {
     let source = "const a=[...missing,alsoMissing];";
     let error = execute(source).unwrap_err();
     assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("missing is not defined"));
     assert_eq!(
         error.location.unwrap().byte_offset,
         source.find("missing").unwrap()
     );
-    let source = "const a=[...null,alsoMissing];";
-    let error = execute(source).unwrap_err();
-    assert!(error.message.contains("not iterable"));
+    let error = execute("const a=[...null,alsoMissing];").unwrap_err();
+    assert!(error.message.contains("TypeError"));
+    assert!(!error.message.contains("alsoMissing"));
 }
 
 /** A failed candidate does not mutate the committed input reused by a later valid event. */
@@ -102,7 +113,8 @@ fn later_spread_failure_discards_earlier_heap_global_and_storage_edits() {
         event(source, "run()", round_trip(loaded.state), &[])
             .unwrap()
             .changes[0]
-            .text,
+            .text()
+            .unwrap(),
         "0 1"
     );
 }

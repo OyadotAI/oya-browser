@@ -16,7 +16,23 @@ fn preserves_http_method_serialization_and_default() {
         serde_json::from_str::<Method>("\"Post\"").unwrap(),
         Method::Post
     );
-    assert!(serde_json::from_str::<Method>("\"Delete\"").is_err());
+    assert_eq!(
+        serde_json::from_str::<Method>("\"Delete\"").unwrap(),
+        Method::Delete
+    );
+    assert!(serde_json::from_str::<Method>("\"Connect\"").is_err());
+}
+
+/** Script method names normalize the Fetch way; PATCH is case-sensitive and CONNECT is refused. */
+#[test]
+fn parses_script_methods_the_fetch_way() {
+    assert_eq!(Method::parse("delete"), Some(Method::Delete));
+    assert_eq!(Method::parse("Head"), Some(Method::Head));
+    assert_eq!(Method::parse("PATCH"), Some(Method::Patch));
+    assert_eq!(Method::parse("patch"), None);
+    assert_eq!(Method::parse("CONNECT"), None);
+    assert_eq!(Method::Options.name(), "OPTIONS");
+    assert!(Method::Head.is_safe() && !Method::Put.is_safe());
 }
 
 /** Sequential frame transport preserves request identity and consumes complete lines only. */

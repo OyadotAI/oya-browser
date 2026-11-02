@@ -4,6 +4,10 @@ use super::*;
 /** This is a synthetic styled fixture; the original example source is separately tested unchanged at document stages. */
 const STYLED: &str = "<style>html{color-scheme:light dark;background:light-dark(#eee,#222)}body{font:16px/1.6 system-ui,sans-serif;max-width:26em;margin:auto;padding:25vh 2em 2em;text-align:center}</style><p id=out>Initial counter</p><input id=name><button id=step type=button onclick='step()'>Step</button><button id=probe type=button onclick='probe()'>Probe</button><script>var count=1;window.localStorage.setItem('count',count);function step(){count++;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count;}function probe(){document.getElementById('out').textContent=count+' '+window.localStorage.getItem('count');}</script>";
 
+/** The fixture has no doctype, so it lays out in quirks mode: the paragraph's UA top margin is a
+ * quirky margin at the start of the body and counts as zero, as in Chromium. */
+const P_MARGIN: f64 = 0.0;
+
 /** Context reflow preserves edited inputs, page/revision identity and both script and Storage state. */
 #[test]
 fn resize_and_appearance_recompute_retained_css_without_replaying_scripts_or_fetching() {
@@ -56,7 +60,7 @@ fn resize_and_appearance_recompute_retained_css_without_replaying_scripts_or_fet
                 display.items[0].width,
                 display.items[0].y
             ),
-            (x, 416.0, height / 4.0)
+            (x, 416.0, height / 4.0 + P_MARGIN)
         );
         page = call(&mut runtime, "page.click", target(&inspected, "probe")).unwrap();
         assert_eq!(node(&page, "out")["text"], "2 2");

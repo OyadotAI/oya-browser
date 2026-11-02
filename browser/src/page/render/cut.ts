@@ -225,16 +225,18 @@ export function keptWithGaps(blocks: Block[], kept: number[], total: number): (n
 
 /**
  * Renders a page with `room` for its blocks and, while it is over `max`, renders it again with less room: the
- * overflow comes off the room twice, once for the overflow and once as slack for lines a pick may add. At most
- * MAX_REFITS times; a page still over `max` then comes from `fallback`.
+ * overflow comes off the room twice on the first pass, once for the overflow and once as slack for lines a pick may
+ * add, and REFIT_GROWTH times more on each pass after. At most MAX_REFITS times; a page still over `max` then comes
+ * from `fallback`.
  */
 export function refit(max: number, room: number, render: (room: number) => string, fallback: () => string): string {
   let left = room;
   let page = render(left);
   for (let pass = 0; page.length > max && pass < PAGE_RENDER.MAX_REFITS; pass++) {
-    const overflow = page.length - max;
-    // The overflow comes off twice, since the lines a pick adds (gaps, region comments) are not in its size.
-    left -= overflow + overflow;
+    // The overflow comes off at least twice, since the lines a pick adds (gaps, region comments) are not in its size.
+    // The share grows each pass: a pick fills its room to within one row, so an overflow smaller than a row would come
+    // back unchanged every pass and the page would fall back to no blocks at all.
+    left -= (page.length - max) * PAGE_RENDER.REFIT_GROWTH ** (pass + 1);
     page = render(left);
   }
   return page.length <= max ? page : fallback();

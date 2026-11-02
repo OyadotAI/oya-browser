@@ -3,6 +3,7 @@ mod envelopes;
 mod lifecycle;
 mod native;
 mod tools;
+mod waits;
 use super::wire::ids::IdKey;
 use super::{
     Action,
@@ -35,6 +36,8 @@ struct Pending {
     control_epoch: Option<u64>,
     admitted: Instant,
     cancelled: bool,
+    /// A page_wait keeps its condition so the session can re-check it between human actions.
+    wait: Option<waits::Plan>,
 }
 /// A connection's state transitions and deadlines are deterministic over the caller-supplied clock.
 pub struct Session {
@@ -42,6 +45,8 @@ pub struct Session {
     started: Instant,
     seen: BTreeSet<IdKey>,
     pending: BTreeMap<String, Pending>,
+    /// Unsatisfied waits between checks; they hold no native slot and no worker time.
+    waiting: Vec<waits::Waiting>,
     next_native: u64,
 }
 impl Session {
@@ -52,6 +57,7 @@ impl Session {
             started: now,
             seen: BTreeSet::new(),
             pending: BTreeMap::new(),
+            waiting: Vec::new(),
             next_native: 0,
         }
     }
@@ -78,7 +84,7 @@ impl Session {
         if self.phase == Phase::Closed {
             return expired;
         }
-        self.native_response(response)
+        self.native_response(response, now)
     }
     /// Expiry ends the connection rather than inventing the outcome of admitted native work.
     pub fn poll(&mut self, now: Instant) -> Vec<Action> {
@@ -97,7 +103,7 @@ impl Session {
         {
             return self.close("The MCP native request deadline expired.");
         }
-        Vec::new()
+        self.recheck(now)
     }
     /** Duplicate or exhausted whole-session correlation retires the session without an ambiguous reply. */
     fn remember(&mut self, id: &ExternalId) -> Option<Vec<Action>> {
@@ -133,6 +139,7 @@ impl Session {
         }
         self.phase = Phase::Closed;
         self.pending.clear();
+        self.waiting.clear();
         self.seen.clear();
         vec![Action::Close(reason)]
     }

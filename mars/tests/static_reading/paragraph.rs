@@ -51,13 +51,19 @@ fn unchanged_httpbin_commits_complete_paragraph_and_scrolls_without_new_node_ids
         .iter()
         .find(|item| item["node_id"] == paragraph["node_id"])
         .unwrap();
+    // Lines join with a space, except after a hyphen, where CSS may break inside a word.
     let painted_text = painted["lines"]
         .as_array()
         .unwrap()
         .iter()
         .map(|line| line["text"].as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join(" ");
+        .fold(String::new(), |mut text, line| {
+            if !text.is_empty() && !text.ends_with('-') {
+                text.push(' ');
+            }
+            text.push_str(line);
+            text
+        });
     assert_eq!(
         painted_text,
         text.split_whitespace().collect::<Vec<_>>().join(" ")

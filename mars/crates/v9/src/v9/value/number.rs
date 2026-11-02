@@ -1,6 +1,8 @@
 /** ECMAScript numeric grammar and one-rounding power-of-two integer conversion. */
 use super::super::source::whitespace;
 use crate::protocol::{EngineError, EngineResult};
+
+mod radix;
 /** Literal separators are accepted only between two digits of the same radix. */
 pub(in crate::v9) fn literal(source: &str) -> EngineResult<f64> {
     let radix = radix(source);
@@ -23,7 +25,7 @@ pub(in crate::v9) fn literal(source: &str) -> EngineResult<f64> {
     parse(&source.replace('_', ""), false).ok_or_else(invalid)
 }
 /** StringToNumber accepts whitespace, signed decimals/Infinity and unsigned radix integers. */
-pub(super) fn string_number(source: &str) -> f64 {
+pub(in crate::v9) fn string_number(source: &str) -> f64 {
     let source = source.trim_matches(whitespace);
     if source.is_empty() {
         return 0.0;
@@ -146,4 +148,19 @@ pub(in crate::v9) fn to_uint32(value: f64) -> u32 {
     value
         .trunc()
         .rem_euclid(crate::constants::JS_UINT32_MODULUS) as u32
+}
+
+/** ToInt32: ToUint32 reinterpreted as signed. */
+pub(in crate::v9) fn to_int32(value: f64) -> i32 {
+    to_uint32(value) as i32
+}
+
+/** Number::toString(10), using the pinned ECMAScript-compatible shortest formatting. */
+pub(in crate::v9) fn number_to_string(value: f64) -> String {
+    ryu_js::Buffer::new().format(value).to_string()
+}
+
+/** Number::toString(radix) uses the pinned conversion algorithm under the binary64 precision bound. */
+pub(in crate::v9) fn radix_string(value: f64, radix: u32) -> String {
+    radix::format(value, radix)
 }

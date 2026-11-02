@@ -1,6 +1,5 @@
 /** Projected DOM tests exercise retained references, callback dispatch and candidate rollback publicly. */
 use mars::{
-    constants::JS_EVENT_LISTENERS,
     document::{ScriptDocument, parse, script_document},
     v9::{Execution, StorageState, VmState, click_document_scripts, event, load_document_scripts},
 };
@@ -38,7 +37,7 @@ fn result(source: &str, expression: &str) -> String {
         &format!("{source}document.getElementById('out').textContent={expression};"),
         &page(),
     );
-    executed.changes.last().unwrap().text.clone()
+    executed.changes.last().unwrap().text().unwrap().to_owned()
 }
 
 mod inline;

@@ -1,0 +1,260 @@
+/** Shared graph snapshots validate typed records before scripts and restore only granted native roots. */
+use super::*;
+use crate::protocol::{EngineError, EngineResult};
+use crate::v9::vm::heap::Heap;
+use std::collections::BTreeMap;
+fn invalid() -> EngineError {
+    EngineError::invalid("Invalid shared Wasm GC typed record.")
+}
+
+/** Shared graph records cannot encode function bodies, foreign IDs or values outside their validated types. */
+pub(in crate::v9::builtins::wasm) fn validate_arena(arena: &SharedGcArena) -> EngineResult<()> {
+    let (sources, records) = arena.snapshot_records();
+    let modules = sources
+        .iter()
+        .map(|bytes| binary::parse(bytes).ok())
+        .collect::<Vec<_>>();
+    for (node, record) in &records {
+        #[cfg(not(feature = "conformance"))]
+        let _ = node;
+        let module = modules.get(record.module as usize).ok_or_else(invalid)?;
+        let Some(module) = module else {
+            if sources[record.module as usize].as_ref() == WAIT_QUEUE_META {
+                if record.ty != 0 || record.array || !record.values.is_empty() {
+                    return Err(invalid());
+                }
+                continue;
+            }
+            #[cfg(feature = "conformance")]
+            if crate::v9::builtins::validate_shared_js_record(arena, &records, *node)? {
+                continue;
+            }
+            return Err(invalid());
+        };
+        let definition = module
+            .definitions
+            .get(record.ty as usize)
+            .filter(|d| d.shared)
+            .ok_or_else(invalid)?;
+        let fields = match &definition.kind {
+            Kind::Struct(fields)
+                if !record.array
+                    && fields.len() + usize::from(definition.descriptor.is_some())
+                        == record.values.len() =>
+            {
+                fields.as_slice()
+            }
+            Kind::Array(field) if record.array => std::slice::from_ref(field),
+            _ => return Err(invalid()),
+        };
+        if let Some(descriptor) = definition.descriptor {
+            let value = record.values.last().ok_or_else(invalid)?;
+            if !valid_value(
+                &modules,
+                &sources,
+                &records,
+                module,
+                Type::Exact(i64::from(descriptor), false),
+                value,
+            ) {
+                return Err(invalid());
+            }
+        }
+        for (index, value) in record
+            .values
+            .iter()
+            .take(if record.array {
+                record.values.len()
+            } else {
+                fields.len()
+            })
+            .enumerate()
+        {
+            let field = &fields[if record.array { 0 } else { index }];
+            if !valid_value(&modules, &sources, &records, module, field.ty, value) {
+                return Err(invalid());
+            }
+            if let Some(bits) = field.packed
+                && !matches!(value,SharedGcValue::Number(v) if f64::from_bits(*v).fract()==0.0 && f64::from_bits(*v)>=0.0 && f64::from_bits(*v)<(1u64<<bits)as f64)
+            {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(())
+}
+fn valid_value(
+    modules: &[Option<Module>],
+    sources: &[std::sync::Arc<[u8]>],
+    records: &BTreeMap<u64, crate::v9::vm::data::SharedGcRecord>,
+    m: &Module,
+    ty: Type,
+    value: &SharedGcValue,
+) -> bool {
+    match ty {
+        Type::I32 => {
+            matches!(value,SharedGcValue::Number(v) if f64::from_bits(*v).fract()==0.0 && f64::from_bits(*v)>=i32::MIN as f64 && f64::from_bits(*v)<=i32::MAX as f64)
+        }
+        Type::I64 => {
+            matches!(value,SharedGcValue::BigInt(v) if *v>=i64::MIN as i128 && *v<=i64::MAX as i128)
+        }
+        Type::F32 | Type::F64 => matches!(value, SharedGcValue::Number(_)),
+        Type::V128 => matches!(value, SharedGcValue::Vector(_)),
+        _ => {
+            let Some((heap, nullable)) = ty.reference() else {
+                return false;
+            };
+            if !gc_types::is_shared(m, ty) {
+                return false;
+            }
+            if *value == SharedGcValue::Null {
+                return nullable;
+            }
+            if let SharedGcValue::Reference(node) = value {
+                let Some(record) = records.get(node) else {
+                    return false;
+                };
+                let Some(Some(source)) = modules.get(record.module as usize) else {
+                    let wait_queue = sources
+                        .get(record.module as usize)
+                        .is_some_and(|s| s.as_ref() == WAIT_QUEUE_META);
+                    return if wait_queue {
+                        heap == -36
+                    } else {
+                        matches!(heap, -17 | -18)
+                    };
+                };
+                if heap < 0 {
+                    return matches!(heap, -19..=-17)
+                        || heap == -21 && !record.array
+                        || heap == -22 && record.array;
+                }
+                if matches!(ty, Type::Exact(..)) {
+                    return gc_types::equivalent(source, record.ty, m, heap as u32);
+                }
+                let mut current = Some(record.ty);
+                for _ in 0..=source.definitions.len() {
+                    let Some(index) = current else {
+                        return false;
+                    };
+                    if gc_types::equivalent(source, index, m, heap as u32) {
+                        return true;
+                    }
+                    current = source.definitions[index as usize].parent;
+                }
+                false
+            } else if heap == -17 {
+                #[cfg(feature = "conformance")]
+                let extra = matches!(
+                    value,
+                    SharedGcValue::SharedString(_) | SharedGcValue::Smi(_)
+                );
+                #[cfg(not(feature = "conformance"))]
+                let extra = false;
+                extra
+                    || matches!(
+                        value,
+                        SharedGcValue::Undefined
+                            | SharedGcValue::Boolean(_)
+                            | SharedGcValue::Number(_)
+                            | SharedGcValue::BigInt(_)
+                            | SharedGcValue::BigIntWide(_)
+                            | SharedGcValue::String(_)
+                    )
+            } else {
+                #[cfg(feature = "conformance")]
+                let shared_string = matches!(
+                    value,
+                    SharedGcValue::SharedString(_) | SharedGcValue::Smi(_)
+                );
+                #[cfg(not(feature = "conformance"))]
+                let shared_string = false;
+                (heap == -18
+                    && (matches!(
+                        value,
+                        SharedGcValue::Undefined
+                            | SharedGcValue::Boolean(_)
+                            | SharedGcValue::Number(_)
+                            | SharedGcValue::BigInt(_)
+                            | SharedGcValue::BigIntWide(_)
+                            | SharedGcValue::String(_)
+                    ) || shared_string))
+                    || matches!(heap, -20..=-18)
+                        && matches!(value,SharedGcValue::Number(v) if f64::from_bits(*v).fract()==0.0 && f64::from_bits(*v)>=-1_073_741_824.0 && f64::from_bits(*v)<1_073_741_824.0)
+            }
+        }
+    }
+}
+/** Validation examines every graph, including unreachable forged wrappers, before any author code executes. */
+pub(in crate::v9::builtins::wasm) fn validate(heap: &Heap) -> EngineResult<()> {
+    for object in heap.shared_objects().filter_map(|id| heap.objects.get(&id)) {
+        if let Class::WasmShared(root) = &object.class {
+            if object.extensible || object.proto.is_some() || !object.props.is_empty() {
+                return Err(invalid());
+            }
+            validate_arena(&root.arena())?;
+        }
+    }
+    Ok(())
+}
+/** Restored snapshots merge locally; only an exact endpoint/root grant may recover a live shared Arc. */
+pub(in crate::v9::builtins::wasm) fn initialize(vm: &mut Vm) -> EngineResult<()> {
+    validate(&vm.heap)?;
+    let roots = vm
+        .heap
+        .shared_objects()
+        .filter_map(|id| Some((id, vm.heap.objects.get(&id)?)))
+        .filter_map(|(id, o)| match &o.class {
+            Class::WasmShared(root) => Some((id, root.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if roots.is_empty() {
+        // Nothing to restore, and the counts are already exact (see the typed initializer).
+        return Ok(());
+    }
+    let mut canonical: BTreeMap<u64, SharedGcArena> = BTreeMap::new();
+    // Keep every copied root live while independent root subgraphs merge into one local arena.
+    let mut merged_roots = Vec::new();
+    for (_, root) in &roots {
+        if root.restored() {
+            let arena = canonical
+                .entry(root.arena().identity())
+                .or_insert_with(|| root.arena());
+            merged_roots.push(arena.merge_snapshot(root)?);
+        }
+    }
+    for (id, root) in roots {
+        let restored = if root.restored() {
+            root.attach_to(&canonical[&root.arena().identity()])?
+        } else {
+            root.clone()
+        };
+        #[cfg(feature = "conformance")]
+        let restored = {
+            let mut restored = restored;
+            if let Some(host) = &vm.page.environment.conformance_workers {
+                if let Some(live) = host.restore_shared_gc(
+                    vm.page.environment.conformance_worker_id,
+                    root.arena().identity(),
+                    root.node(),
+                ) {
+                    if root.metadata()?.0 != live.metadata()?.0
+                        || root.metadata()?.1 != live.metadata()?.1
+                        || root.metadata()?.2 != live.metadata()?.2
+                    {
+                        return Err(invalid());
+                    }
+                    restored = live;
+                } else {
+                    restored =
+                        host.shared_gc(vm.page.environment.conformance_worker_id, restored)?;
+                }
+            }
+            restored
+        };
+        vm.heap.get_mut(id).ok_or_else(invalid)?.class = Class::WasmShared(restored);
+    }
+    vm.heap.recount();
+    Ok(())
+}

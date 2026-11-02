@@ -29,14 +29,19 @@ impl Window {
     /** The owning UI thread implements only a small explicit OS command table. */
     pub(super) fn window_request(
         &mut self,
-        request: Request,
+        mut request: Request,
         permit: Permit,
     ) -> EngineResult<Value> {
         request.validate()?;
+        // The attach front door stamps its lane on every request; window operations have no lane
+        // parameter, and would otherwise refuse every attached agent's observation.
+        if let Some(params) = request.params.as_object_mut() {
+            params.remove("lane");
+        }
         match request.op.as_str() {
             "window.inspect" => {
                 let _: Empty = parameters(request.params)?;
-                let size = self.chrome.root.bounds().size;
+                let size = self.mars.root.bounds().size;
                 let tab_id = self.selected_tab_id();
                 let owner = if self.broker.permit(Owner::Human, &tab_id).is_ok() {
                     Owner::Human
@@ -47,15 +52,16 @@ impl Window {
                 #[cfg(feature = "test-support")]
                 let observation = {
                     let mut observation = observation;
+                    observation["navigation"] = json!({"busy":self.busy,"activity":self.activity,"requested":self.navigation.requested,"committed":self.mars.committed_url(),"address":self.mars.address.stringValue().to_string(),"stop_visible":self.mars.reload.tag()==mars::STOP,"stopping":self.navigation.stopping,"pending":self.navigation.pending});
                     observation["native_frames"] = self.canvas.native_frames();
-                    observation["native_banner"] = self.chrome.banner_observation();
+                    observation["native_banner"] = self.mars.banner_observation();
                     observation["render_context"] = self
                         .snapshot
                         .as_ref()
                         .map(|snapshot| snapshot.render_context)
                         .map_or(Value::Null, |context| json!(context));
                     observation["native_validation"] =
-                        self.canvas.validation_regions(&self.chrome.root);
+                        self.canvas.validation_regions(&self.mars.root);
                     observation
                 };
                 Ok(observation)
@@ -67,16 +73,26 @@ impl Window {
                     .as_ref()
                     .map(|snapshot| &snapshot.inspection)
                     .ok_or_else(|| EngineError::invalid("No visible page."))?;
-                if inspection["tab_id"] != shot.tab_id
-                    || inspection["page_id"] != shot.page_id
-                    || inspection["revision"] != shot.expected_revision
-                    || inspection["layout_generation"] != shot.layout_generation
-                {
+                // The frame on screen is what a screenshot shows. A page that kept changing since the
+                // caller looked is still that page, so the capture is of its presented frame and the
+                // reply says which revision that was; only a different page is refused.
+                if inspection["tab_id"] != shot.tab_id || inspection["page_id"] != shot.page_id {
                     return Err(EngineError::invalid(
-                        "Screenshot targets a stale visible page or layout.",
+                        "Screenshot targets a page that is no longer visible.",
                     ));
                 }
-                self.capture.save(&self.chrome.root, inspection)
+                if !self.capture.granted() {
+                    // Without the operator's --capture-dir grant, pixels go only to an agent the
+                    // person handed this tab to, at the tab's current control epoch.
+                    authority::lock(&self.broker.authority)?
+                        .validate_tab(permit, crate::runtime::tab_key(&shot.tab_id)?)?;
+                }
+                let timed = std::time::Instant::now();
+                let mut captured = self.capture.save(&self.mars.root, inspection)?;
+                crate::runtime::perf::record("ui.capture", timed, String::new);
+                captured["requested_revision"] = json!(shot.expected_revision);
+                captured["requested_layout_generation"] = json!(shot.layout_generation);
+                Ok(captured)
             }
             "window.resize" => {
                 let size: Resize = parameters(request.params)?;
@@ -99,6 +115,8 @@ impl Window {
                     .setContentSize(NSSize::new(size.width, size.height));
                 Ok(json!({"width":size.width,"height":size.height,"layout_pending":true}))
             }
+            #[cfg(feature = "test-support")]
+            "window.human" => self.human_request(request.params),
             _ => Err(EngineError::unsupported("Unknown native window operation.")),
         }
     }

@@ -1,69 +1,68 @@
-/** Missing ToPrimitive remains an explicit located failure and never leaks a partially changed candidate. */
+/** Loose equality converts references through ToPrimitive; failures are located and follow browser event semantics. */
 use super::*;
 use mars::{
     document::{parse, script_document},
-    v9::{StorageState, click_document_scripts, load_document_scripts, load_scripts},
+    v9::{JsValue, StorageState, click_document_scripts, load_document_scripts, load_scripts},
 };
 
-/** Number, String and Boolean comparisons require genuine conversion for all supported reference brands. */
+/** References compare with primitives through ToPrimitive, in both orders and for both operators. */
 #[test]
-fn conversion_required_comparisons_refuse_both_orders_and_both_operators() {
-    for reference in ["({})", "[]", "(function(){})"] {
-        for primitive in ["0", "''", "false", "true"] {
-            for operator in ["==", "!="] {
-                for expression in [
-                    format!("{reference}{operator}{primitive}"),
-                    format!("{primitive}{operator}{reference}"),
-                ] {
-                    let error = execute(&format!("const result={expression};")).unwrap_err();
-                    assert_eq!(error.code, "unsupported_feature", "{expression}");
-                    assert_eq!(error.phase.as_deref(), Some("execute"));
-                    assert!(error.location.is_some());
-                }
-            }
-        }
-    }
-}
-
-/** A host reference is not a numeric fallback, while its nullish fast path stays supported. */
-#[test]
-fn projected_host_conversion_is_located_and_does_not_echo_page_values() {
-    for expression in [
-        "document==0",
-        "''!=document",
-        "false==document.getElementById('out')",
+fn reference_comparisons_convert_through_to_primitive() {
+    for (expression, expected) in [
+        ("({})==0", "false"),
+        ("[]==0", "true"),
+        ("''==[]", "true"),
+        ("[]!=false", "false"),
+        ("(function(){})==true", "false"),
+        ("0!=[]", "false"),
     ] {
-        let document = script_document(
-            &parse("<p id=out>private marker</p>").unwrap(),
-            "equality-page",
-        )
-        .unwrap();
-        let error = load_document_scripts(
-            &[format!("const result={expression};")],
-            document,
-            StorageState::default(),
-        )
-        .unwrap_err();
-        assert_eq!(error.code, "unsupported_feature");
-        assert_eq!(error.phase.as_deref(), Some("execute"));
-        assert_eq!(error.location.unwrap().script_index, Some(1));
-        assert!(!error.message.contains("private marker"));
+        assert_eq!(result("", expression), expected, "{expression}");
     }
 }
 
-/** Comparison failure points to the binary token in the original ordered source entry. */
+/** A projected host reference converts to its string tag instead of failing or reading page text. */
 #[test]
-fn ordered_script_conversion_errors_retain_exact_operator_coordinates() {
-    let first = "const object={};";
+fn projected_host_references_convert_without_reading_page_text() {
+    let document = script_document(
+        &parse("<p id=out>private marker</p>").unwrap(),
+        "equality-page",
+    )
+    .unwrap();
+    let loaded = load_document_scripts(
+        &["const a=document==0,b=''!=document,c=false==document.getElementById('out');".into()],
+        document,
+        StorageState::default(),
+    )
+    .unwrap();
+    for (name, expected) in [("a", false), ("b", true), ("c", false)] {
+        assert_eq!(
+            loaded.state.globals()[name].value,
+            Some(JsValue::Boolean(expected))
+        );
+    }
+    let wire = serde_json::to_string(&loaded.state).unwrap();
+    assert!(!wire.contains("private marker"));
+}
+
+/** A failed conversion points into the original ordered source entry that raised it. */
+#[test]
+fn ordered_script_conversion_errors_retain_their_source_coordinates() {
+    let first = "const object=Object.create(null);";
     let second = "\nconst result = object == 1;";
     let error = load_scripts(&[first.into(), second.into()], &[]).unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    assert!(
+        error
+            .message
+            .contains("Cannot convert object to primitive value")
+    );
     let location = error.location.unwrap();
     assert_eq!(location.script_index, Some(2));
     assert_eq!(
         location.byte_offset,
-        first.len() + 1 + second.find("==").unwrap()
+        first.len() + 1 + second.find("object ==").unwrap()
     );
-    assert_eq!((location.line, location.column), (2, 23));
+    assert_eq!(location.line, 2);
     assert_eq!(error.phase.as_deref(), Some("execute"));
 }
 
@@ -79,34 +78,33 @@ fn malformed_equality_remains_rejected_even_in_unreachable_source() {
     assert_eq!(result("if(false){const value={}==0;}", "'kept'"), "kept");
 }
 
-/** Failed coercion discards globals, heap, closures, Storage and DOM proposals; a valid later click still works. */
+/** A click whose conversion throws keeps the handler's earlier effects and logs the error, as browsers do. */
 #[test]
-fn failed_event_conversion_preserves_committed_state_and_allows_recovery() {
+fn throwing_event_conversion_keeps_earlier_effects_and_logs_the_error() {
     let document = script_document(&parse("<p id=out>initial</p><button id=bad type=button onclick='fail()'>Fail</button><button id=good type=button onclick='good()'>Good</button>").unwrap(), "equality-page").unwrap();
     let source = "let count=0;const box={count:0};function make(){let value=0;return ()=>++value;}const next=make();function fail(){count=9;box.count=9;next();window.localStorage.setItem('changed','yes');document.getElementById('out').textContent='partial';const object={valueOf:function(){missing();}};const bad=object==0;}function good(){count++;document.getElementById('out').textContent=count+' '+box.count+' '+next()+' '+window.localStorage.getItem('changed');}";
     let sources = [source.into()];
     let loaded =
         load_document_scripts(&sources, document.clone(), StorageState::default()).unwrap();
-    let before = serde_json::to_value(&loaded.state).unwrap();
-    let error = click_document_scripts(
+    let failed = click_document_scripts(
         &sources,
         document.get_by_id("bad").unwrap(),
-        loaded.state.clone(),
-        document.clone(),
-        loaded.storage.clone(),
-    )
-    .unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert_eq!(serde_json::to_value(&loaded.state).unwrap(), before);
-    assert!(loaded.storage.local.is_empty());
-    let recovered = click_document_scripts(
-        &sources,
-        document.get_by_id("good").unwrap(),
         loaded.state,
-        document,
+        document.clone(),
         loaded.storage,
     )
     .unwrap();
-    assert_eq!(recovered.changes[0].text, "1 0 1 null");
-    assert!(recovered.storage.local.is_empty());
+    assert_eq!(failed.changes[0].text().unwrap(), "partial");
+    assert_eq!(failed.storage.local["changed"], "yes");
+    assert_eq!(failed.effects.console[0].level, "error");
+    assert!(failed.effects.console[0].text.contains("ReferenceError"));
+    let recovered = click_document_scripts(
+        &sources,
+        document.get_by_id("good").unwrap(),
+        failed.state,
+        document,
+        failed.storage,
+    )
+    .unwrap();
+    assert_eq!(recovered.changes[0].text().unwrap(), "10 9 2 yes");
 }

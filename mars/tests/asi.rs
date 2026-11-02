@@ -98,57 +98,52 @@ fn text(page: &Value) -> &str {
         .unwrap()
 }
 
-/** Source admission does not weaken event rollback after earlier model, Storage and DOM proposals. */
+/** A handler that throws keeps its earlier model, Storage and DOM effects, as browsers do, and the page keeps working. */
 #[test]
-fn semicolonless_actions_preserve_state_on_failure_and_recover() {
+fn semicolonless_actions_keep_effects_before_a_throw_and_recover() {
     let fixture = fixture(PAGE);
     let mut runtime = runtime(vec![fixture.url.clone()]);
     let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let page = call(&mut runtime, "page.click", target(&page, "run")).unwrap();
     assert_eq!(text(&page), "1 1");
-    let error = call(&mut runtime, "page.click", target(&page, "bad")).unwrap_err();
-    assert_eq!(error.code, "script_execution_error");
-    assert_eq!(error.phase.as_deref(), Some("execute"));
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
-    let read = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&read), "1 1 1");
+    let thrown = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+    assert_eq!(text(&thrown), "proposed");
+    let read = call(&mut runtime, "page.click", target(&thrown, "read")).unwrap();
+    assert_eq!(text(&read), "11 11 11");
     let recovered = call(&mut runtime, "page.click", target(&read, "run")).unwrap();
-    assert_eq!(text(&recovered), "2 2");
+    assert_eq!(text(&recovered), "12 12");
     let reloaded = call(&mut runtime, "page.reload", json!({})).unwrap();
     assert_ne!(reloaded["page_id"], recovered["page_id"]);
     let reset = call(&mut runtime, "page.click", target(&reloaded, "run")).unwrap();
     assert_eq!(text(&reset), "1 1");
 }
 
-/** Every later source and unreachable function must parse before any new page can replace the prior one. */
+/** A later script that fails to parse stops only itself; the earlier script's DOM and storage commit. */
 #[test]
 fn later_invalid_sources_retain_the_committed_native_page_and_storage() {
-    for (source, code) in [
-        ("var first=1 var second=2", "script_syntax_error"),
-        (
-            "function unused(){return\nlet broken=}",
-            "script_syntax_error",
-        ),
-        ("function unused(){const f=(n)\n=>n}", "script_syntax_error"),
-        ("function unused(){throw\n1}", "unsupported_feature"),
+    for source in [
+        "var first=1 var second=2",
+        "function unused(){return\nlet broken=}",
+        "function unused(){const f=(n)\n=>n}",
+        "function unused(){throw\n1}",
     ] {
         let good = fixture(PAGE);
         let invalid = fixture(&format!(
             "<p id=out>bad page</p><script>window.localStorage.setItem('count','proposed')\ndocument.getElementById('out').textContent='proposed'</script><script>{source}</script>"
         ));
         let mut runtime = runtime(vec![good.url.clone(), invalid.url.clone()]);
-        let page = call(&mut runtime, "page.navigate", json!({"url":good.url})).unwrap();
-        let page = call(&mut runtime, "page.click", target(&page, "run")).unwrap();
-        let error = call(&mut runtime, "page.navigate", json!({"url":invalid.url})).unwrap_err();
-        assert_eq!(error.code, code, "{source}");
-        assert_eq!(error.phase.as_deref(), Some("parse"), "{source}");
-        assert!(error.previous_page_retained, "{source}");
-        assert_eq!(error.location.unwrap().script_index, Some(2), "{source}");
-        assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
-        let read = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-        assert_eq!(text(&read), "1 1 1");
-        let recovered = call(&mut runtime, "page.click", target(&read, "run")).unwrap();
-        assert_eq!(text(&recovered), "2 2");
+        call(&mut runtime, "page.navigate", json!({"url":good.url})).unwrap();
+        let page = call(&mut runtime, "page.navigate", json!({"url":invalid.url})).unwrap();
+        assert_eq!(text(&page), "proposed", "{source}");
+        let diagnostics = page["diagnostics"].to_string();
+        assert!(
+            diagnostics.contains("Script 2 (inline) did not run"),
+            "{source}: {diagnostics}"
+        );
+        assert!(
+            diagnostics.contains("syntax error"),
+            "{source}: {diagnostics}"
+        );
     }
 }
 

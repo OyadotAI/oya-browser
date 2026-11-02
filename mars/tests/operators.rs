@@ -94,9 +94,9 @@ fn operator_input_journeys_persist_counters_and_reload_fresh_state() {
     assert_eq!(text(&page, "out"), "string world 0 1 1");
 }
 
-/** Late document rejection rolls back earlier operator mutations and void side effects as one transaction. */
+/** A handler that throws keeps its earlier operator updates, the assignment's evaluated right side and Storage, as browsers do. */
 #[test]
-fn late_document_failure_rolls_back_operator_references_storage_and_text_together() {
+fn throwing_handler_keeps_operator_updates_storage_and_text_made_before_the_throw() {
     let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>var globalCount=0;const array=[0];function holder(){}holder.n=0;function make(){let n=0;return fail=>{const old=n++;++globalCount;array[0]+=2;holder.n++;window.localStorage.setItem('count',globalCount);document.getElementById('out').textContent=old+' '+n+' '+globalCount+' '+array[0]+' '+holder.n;if(fail){document.getElementById('missing').textContent=void(globalCount+=100);}};}const saved=make();function good(){saved(false);}function bad(){saved(true);}function read(){document.getElementById('out').textContent=globalCount+' '+window.localStorage.getItem('count');}</script>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
@@ -104,16 +104,16 @@ fn late_document_failure_rolls_back_operator_references_storage_and_text_togethe
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "0 1 1 2 1");
     let stale = target(&page, "good");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+    let page = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+    assert_eq!(text(&page, "out"), "1 2 2 4 2");
     let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&page, "out"), "1 1");
+    assert_eq!(text(&page, "out"), "102 2");
     assert_eq!(
         call(&mut runtime, "page.click", stale).unwrap_err().code,
         "revision_conflict"
     );
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-    assert_eq!(text(&page, "out"), "1 2 2 4 2");
+    assert_eq!(text(&page, "out"), "2 3 103 6 3");
 }
 
 /** Repeated update operators consume the request work budget and cannot publish earlier proposals after exhaustion. */

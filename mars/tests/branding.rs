@@ -57,7 +57,10 @@ fn invalid_commands_keep_structured_failure_and_mars_recovery_hint() {
         assert!(output.stdout.is_empty());
         let error: EngineError = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(error.code, "invalid_request");
-        assert_eq!(error.message, "Expected desktop, demo, agent, or --help.");
+        assert_eq!(
+            error.message,
+            "Expected desktop, demo, agent, set-default, or --help."
+        );
         assert_eq!(error.hint, "Run mars --help.");
         assert!(!error.retryable);
     }

@@ -1,0 +1,272 @@
+/**
+ * Compiled code shared across the requests of one V9 process. A page's lifecycle is many
+ * requests (load, each event, each timer run, each click), and each starts a fresh VM over the
+ * committed state; compiling the page's megabytes of script again for every one cost more than
+ * running them. A unit is keyed by a SHA-256 of its grammar, page offset and exact source text,
+ * so a request can only receive the code its own text produces at that site, never another
+ * page's. The bound is CODE_CACHE_BYTES of code; the least recently used unit goes first.
+ */
+use super::{Code, ModuleInfo};
+use crate::constants::CODE_CACHE_BYTES;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/** Which grammar the text compiled under: the same text is different code in each. */
+#[derive(Clone, Copy)]
+pub(super) enum Grammar {
+    Script,
+    Module,
+    #[cfg(feature = "conformance")]
+    NativeFixture,
+}
+
+/** One compiled source: its nested codes, its entry code and, for a module, its link facts. */
+pub(super) struct Unit {
+    /// Every function the source contains.
+    pub codes: Vec<Arc<Code>>,
+    /// The script's top-level code or the module's body.
+    pub entry: Arc<Code>,
+    /// Imports and exports, for a module.
+    pub info: Option<Arc<ModuleInfo>>,
+    /// Bytes the unit holds, charged against the bound.
+    bytes: usize,
+}
+
+impl Unit {
+    /** The same unit as compiled `delta` bytes further along a page (see `Code::rebased`). */
+    pub fn rebased(&self, delta: i64) -> Self {
+        Self {
+            codes: self
+                .codes
+                .iter()
+                .map(|code| Arc::new(code.rebased(delta)))
+                .collect(),
+            entry: Arc::new(self.entry.rebased(delta)),
+            info: self.info.clone(),
+            bytes: self.bytes,
+        }
+    }
+    /** A unit over a deferred function's codes, sharing its script's source text rather than
+    copying it; the script's unit already counted those bytes. */
+    pub fn sharing(codes: Vec<Code>, entry: Code, source: Option<(Arc<str>, usize)>) -> Self {
+        let bytes = codes.iter().chain([&entry]).map(Code::footprint).sum();
+        let attach = |mut code: Code| {
+            code.source = source.clone();
+            Arc::new(code)
+        };
+        Self {
+            codes: codes.into_iter().map(attach).collect(),
+            entry: attach(entry),
+            info: None,
+            bytes,
+        }
+    }
+    /** A unit over freshly compiled codes. */
+    pub fn new(
+        mut codes: Vec<Code>,
+        mut entry: Code,
+        info: Option<ModuleInfo>,
+        source: Option<(&str, usize)>,
+    ) -> Self {
+        let mut bytes = codes
+            .iter()
+            .chain([&entry])
+            .map(Code::footprint)
+            .sum::<usize>();
+        if let Some((source, base)) = source {
+            bytes += source.len();
+            let shared: Arc<str> = Arc::from(source);
+            for code in codes.iter_mut().chain([&mut entry]) {
+                code.source = Some((shared.clone(), base));
+            }
+        }
+        Self {
+            codes: codes.into_iter().map(Arc::new).collect(),
+            entry: Arc::new(entry),
+            info: info.map(Arc::new),
+            bytes,
+        }
+    }
+}
+
+/** SHA-256 of grammar, offset and source. */
+pub(super) type Key = [u8; 32];
+
+/** A cached unit and the stamp of its last use. */
+struct Slot {
+    unit: Arc<Unit>,
+    stamp: u64,
+}
+
+/** The process cache: units by key, their use order and the bytes they hold. */
+#[derive(Default)]
+struct Cache {
+    units: HashMap<Key, Slot>,
+    /// Keys by last-use stamp, least recently used first. A stamp is never reused, so every use
+    /// moves its key in O(log n) rather than scanning the order for it.
+    order: BTreeMap<u64, Key>,
+    /// The stamp the next use takes.
+    clock: u64,
+    bytes: usize,
+    /// Set when an eviction may have left `texts` naming a unit that is gone.
+    evicted: bool,
+    /// Where each source text was last compiled: its offset and the key of that unit there.
+    texts: HashMap<Key, (usize, Key)>,
+}
+
+impl Cache {
+    /** The next use stamp, after every stamp taken so far. */
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+}
+
+/** The one cache of this process. */
+static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+
+/** The cache, usable even after a panicking holder. */
+fn cache() -> std::sync::MutexGuard<'static, Cache> {
+    CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/** SHA-256 of `source` under `grammar`, wherever it sits on a page. */
+pub(super) fn text_key(grammar: Grammar, source: &str) -> Key {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(&[match grammar {
+        Grammar::Script => 0,
+        Grammar::Module => 1,
+        #[cfg(feature = "conformance")]
+        Grammar::NativeFixture => 2,
+    }]);
+    context.update(&(source.len() as u64).to_le_bytes());
+    context.update(source.as_bytes());
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
+/** The key of the text `text` names at page offset `offset`, hashing the text only once. */
+pub(super) fn at(text: &Key, offset: usize) -> Key {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(text);
+    context.update(&(offset as u64).to_le_bytes());
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
+/** The unit `text` compiled to at some other offset, and that offset, while it is cached. */
+pub(super) fn elsewhere(text: &Key) -> Option<(usize, Arc<Unit>)> {
+    let cache = cache();
+    let (offset, key) = cache.texts.get(text)?;
+    Some((*offset, cache.units.get(key)?.unit.clone()))
+}
+
+/** Records that `text` was compiled at `offset` under `key`, for `elsewhere`. */
+pub(super) fn remember(text: Key, offset: usize, key: Key) {
+    let mut cache = cache();
+    cache.texts.insert(text, (offset, key));
+    if std::mem::take(&mut cache.evicted) {
+        let Cache { texts, units, .. } = &mut *cache;
+        texts.retain(|_, (_, key)| units.contains_key(key));
+    }
+}
+
+/** The key of direct eval `source` at `offset` in caller scopes `scopes`: the same text in other
+scopes is other code. Length prefixes keep the two texts from running into each other. */
+pub(super) fn eval_key(offset: usize, scopes: &str, source: &str) -> Key {
+    const EVAL_TAG: u8 = 2;
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(&[EVAL_TAG]);
+    context.update(&(offset as u64).to_le_bytes());
+    for text in [scopes, source] {
+        context.update(&(text.len() as u64).to_le_bytes());
+        context.update(text.as_bytes());
+    }
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Keyed lookups this thread made: a test reads it to tell a re-adoption that went through
+    /// the keyed cache from one that answered from the registry.
+    static LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/** Keyed lookups this thread has made (test builds only). */
+#[cfg(test)]
+pub(super) fn lookups() -> usize {
+    LOOKUPS.with(std::cell::Cell::get)
+}
+
+/** The unit under `key`, now the most recently used. */
+pub(super) fn get(key: &Key) -> Option<Arc<Unit>> {
+    #[cfg(test)]
+    LOOKUPS.with(|count| count.set(count.get() + 1));
+    let mut cache = cache();
+    let stamp = cache.tick();
+    let slot = cache.units.get_mut(key)?;
+    let previous = std::mem::replace(&mut slot.stamp, stamp);
+    let unit = slot.unit.clone();
+    cache.order.remove(&previous);
+    cache.order.insert(stamp, *key);
+    Some(unit)
+}
+
+/** Keeps `unit` under `key`, evicting the least recently used units past the bound; a unit
+larger than the whole bound is not kept. */
+pub(super) fn put(key: Key, unit: Arc<Unit>) {
+    if unit.bytes > CODE_CACHE_BYTES {
+        return;
+    }
+    let mut cache = cache();
+    if cache.units.contains_key(&key) {
+        return;
+    }
+    while cache.bytes + unit.bytes > CODE_CACHE_BYTES {
+        let Some((_, oldest)) = cache.order.pop_first() else {
+            break;
+        };
+        if let Some(evicted) = cache.units.remove(&oldest) {
+            cache.bytes -= evicted.unit.bytes;
+            cache.evicted = true;
+        }
+    }
+    let stamp = cache.tick();
+    cache.bytes += unit.bytes;
+    cache.order.insert(stamp, key);
+    cache.units.insert(key, Slot { unit, stamp });
+}
+
+/** Compiled units cross threads: every request runs on its own stack. */
+#[allow(dead_code)]
+fn units_are_shareable() {
+    fn shareable<T: Send + Sync>() {}
+    shareable::<Unit>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** The key a caller computes from a text key and an offset, as the registry does. */
+    fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
+        at(&text_key(grammar, source), offset)
+    }
+
+    /** Keys separate grammar, offset and text, including texts that differ only in length. */
+    #[test]
+    fn keys_separate_grammar_offset_and_text() {
+        let script = key(Grammar::Script, 0, "a");
+        assert_ne!(script, key(Grammar::Module, 0, "a"));
+        assert_ne!(script, key(Grammar::Script, 1, "a"));
+        assert_ne!(script, key(Grammar::Script, 0, "b"));
+        assert_eq!(script, key(Grammar::Script, 0, "a"));
+    }
+}

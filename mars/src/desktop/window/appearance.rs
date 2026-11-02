@@ -36,7 +36,12 @@ struct AppearanceRequest {
 impl Window {
     /** Effective appearance and post-banner scroll size are sampled together on the UI thread. */
     pub(super) fn render_context(&self) -> RenderContext {
-        let size = self.chrome.scroll.contentSize();
+        let zoom = self.mars.scroll.magnification().max(0.01);
+        let size = self.mars.scroll.contentSize();
+        let size = objc2_foundation::NSSize::new(
+            (size.width / zoom).clamp(human::PAGE_WIDTH_MIN, human::PAGE_WIDTH_MAX),
+            (size.height / zoom).max(crate::constants::MIN_VIEWPORT_HEIGHT),
+        );
         let names =
             unsafe { NSArray::from_slice(&[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) };
         let matched = self

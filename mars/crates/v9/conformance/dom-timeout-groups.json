@@ -1,0 +1,107 @@
+{
+  "_purpose": "Keep native DOM timeout work separate from the immutable V8 failure inventory.",
+  "source_root": "/Users/mk/Dev/upstream/wpt",
+  "upstream_tests_unchanged": true,
+  "groups": [
+    {
+      "id": "DOM-1-popover-state",
+      "max_scope": "Hide on popover type mutation, exact beforetoggle/toggle sequence, reentrancy and connected document checks; reuse in-progress user popover implementation.",
+      "tests": [
+        "html/semantics/popovers/popover-change-type.html",
+        "css/css-position/static-position/top-layer-box-uses-icb-htb-ltr.html",
+        "css/css-position/static-position/top-layer-box-uses-icb-vlr-ltr.html",
+        "css/css-position/static-position/top-layer-box-uses-icb-srl-rtl.html"
+      ],
+      "required_api": [
+        "HTMLElement.popover setter invokes hide algorithm when shown type changes",
+        "showPopover/hidePopover/togglePopover",
+        "beforetoggle/toggle task coalescing",
+        ":popover-open selector"
+      ],
+      "verification": "Fresh reproduction first; first test later awaits Escape through testdriver, so fix actual input bridge or report that separate blocker, never resolve input promises with a stub."
+    },
+    {
+      "id": "DOM-2-resource-completion",
+      "max_scope": "True resource load/error delivery from host-owned fetch/decode outcomes, plus iframe URL load distinctly from image load. Do not put filesystem or network authority inside V9.",
+      "tests": [
+        "css/css-flexbox/inline-flex-column-image-load.html",
+        "html/semantics/popovers/popover-hide-inactive-document.html",
+        "html/semantics/popovers/popover-move-documents-during-hide.html",
+        "css/css-position/sticky/position-sticky-fixed-ancestor-iframe.html",
+        "css/css-position/sticky/position-sticky-column-reverse-flex.html",
+        "css/css-position/position-change.html",
+        "html/semantics/popovers/popover-anchor-multicol-display.html"
+      ],
+      "required_api": [
+        "Same-origin iframe URL navigation commits contentDocument and queues load/error",
+        "Window/body load forwarding preserves handlers",
+        "HTMLImageElement complete/naturalWidth/naturalHeight and load/error driven by actual decoding"
+      ],
+      "image_evidence": "Concrete source found: inline-flex-column-image-load.html24 sets img.onload to remove reftest-wait, then30 sets actual data: PNG after forcing layout. It is absent from every available report under configured outbase; source matches user symptom but no observed current result. Current HTMLImageElement lacks complete/naturalWidth/naturalHeight and image completion updates host assets without dispatching load/error.",
+      "verification": "Use real same-origin fixture and actual success/failure; verify listener-before-src, removed/replaced source, detached Image requests, one load/error per completed request, no stale generation event.",
+      "unreported_source_candidates": [
+        "css/css-flexbox/inline-flex-column-image-load.html"
+      ]
+    },
+    {
+      "id": "DOM-3-animation-completion",
+      "max_scope": "Real transition/animation records and lifecycle linked to Eye style/layout; implement native timing and completion, no empty getAnimations facade or immediate finished Promise.",
+      "tests": [
+        "css/css-position/position-fixed-scroll-overlap.html",
+        "css/css-position/overlay/overlay-transition-finished.html",
+        "css/css-position/overlay/overlay-transition-dialog.html"
+      ],
+      "required_api": [
+        "Element.animate keyframe/timing normalization, real animation timeline, finished Promise fulfilled at actual completion",
+        "CSS transitionend for discrete overlay transitions",
+        "Correct top-layer removal while overlay transition active",
+        "Element.getAnimations({subtree:true}) and Animation.finish/finished from actual animation records"
+      ],
+      "evidence": "Confirmed actual wait: position-fixed-scroll-overlap.html28 calls waitForCompositorReady(); dom/events/scrolling/scroll_support.js213 calls document.body.animate({opacity:[0,1]},{duration:1});214 returns animation.finished. Element.animate is absent in current dom.rs2351. Overlay transition-finished independently waits real transitionend; dialog case only waits RAF. popover-utils finishAnimations is defined but not called by inspected HTML, so not counted as an active dependency.",
+      "verification": "Fresh transition branch diagnostics; cancellation/reversal/zero duration and genuine completion order tests before original reftest."
+    }
+  ],
+  "fresh_reproductions": {
+    "css/css-flexbox/inline-flex-column-image-load.html": {
+      "status": "reftest-wait timeout",
+      "report": "/private/tmp/mars-v9-dom-before/results-css-flexbox.json",
+      "after": {
+        "status": "pass",
+        "pixel_comparison": "pass",
+        "report": "/private/tmp/mars-v9-dom-after/results-css-flexbox.json"
+      }
+    },
+    "css/css-position/position-fixed-scroll-overlap.html": {
+      "status": "reftest-wait timeout",
+      "report": "/private/tmp/mars-v9-dom-before/results-css-position.json",
+      "after": {
+        "status": "pixel mismatch; completion wait resolved",
+        "report": "/private/tmp/mars-v9-dom-after/results-css-position.json"
+      }
+    },
+    "html/semantics/popovers/popover-change-type.html": {
+      "before": "timeout; parsed div text rejected on reinsertion",
+      "after": {
+        "status": "pass",
+        "native_input": "actual Escape request handled with page/revision/ownership checks",
+        "report": "/private/tmp/mars-v9-popover-diagnostic/results-html-semantics-popovers-popover-change-type.html.json"
+      }
+    }
+  },
+  "remaining_distinct_causes": [
+    "native testdriver input bridge",
+    "iframe URL navigation",
+    "WPT dynamic Python endpoints",
+    "CSS transitions and renderer layout differences"
+  ],
+  "verification": "Unchanged image-load and popover change-type fixtures pass. Animation waiter completes with real timing; pixel comparison remains a failure. No upstream tests or completion signals were changed.",
+  "native_regressions": {
+    "runtime_unit": 98,
+    "image_lifecycle_v9": 12,
+    "web_animations_v9": 15,
+    "keyboard_v9": 6,
+    "image_runtime": 14,
+    "keyboard_runtime": 3,
+    "failed": 0
+  }
+}

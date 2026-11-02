@@ -1,4 +1,4 @@
-/** Hermetic geometry checks pin complete native recovery text beneath the occupied chrome. */
+/** Hermetic geometry checks pin complete native recovery text beneath the occupied mars. */
 #[path = "../src/desktop/banner_layout.rs"]
 mod banner_layout;
 

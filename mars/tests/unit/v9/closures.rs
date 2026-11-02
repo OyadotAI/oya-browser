@@ -24,7 +24,7 @@ fn private_counters_persist_across_serialized_events() {
     let mut state = load(source, &[]).unwrap().state;
     for expected in 1..=4 {
         let event = next(source, state);
-        assert_eq!(event.changes[0].text, expected.to_string());
+        assert_eq!(event.changes[0].text().unwrap(), expected.to_string());
         state = event.state;
     }
 }
@@ -38,9 +38,9 @@ fn ordered_scripts_preserve_code_identity_and_reassigned_function_cells() {
     ];
     let state = load_scripts(&sources, &[]).unwrap().state;
     let first = event_scripts(&sources, "run()", state, &[]).unwrap();
-    assert_eq!(first.changes[0].text, "1 7 8 9");
+    assert_eq!(first.changes[0].text().unwrap(), "1 7 8 9");
     let second = event_scripts(&sources, "run()", first.state, &[]).unwrap();
-    assert_eq!(second.changes[0].text, "2 7 10 9");
+    assert_eq!(second.changes[0].text().unwrap(), "2 7 10 9");
 }
 /** Siblings share cells while separate factory invocations never share their mutable activation. */
 #[test]
@@ -67,9 +67,9 @@ fn invocation_retains_the_callee_before_argument_side_effects() {
     let source = "let trace='';let target=function(a,b){trace=trace+'C';return a+b;};function pick(){trace=trace+'P';return target;}function arg(n){trace=trace+n;target=function(){return 99;};return n;}let value=pick()(arg(1),arg(2));";
     assert_eq!(result(source, "trace+' '+value+' '+target()"), "P12C 3 99");
     let error = execute("const n=3;function fail(){return missing;}n(fail());").unwrap_err();
-    assert!(error.message.contains("Binding is not defined"));
+    assert!(error.message.contains("missing is not defined"));
     let error = execute("const n=3;n(1);").unwrap_err();
-    assert!(error.message.contains("The value is not callable"));
+    assert!(error.message.contains("is not a function"));
 }
 /** Nested declarations hoist into their defining activation after parameters have been initialized. */
 #[test]
@@ -78,7 +78,12 @@ fn direct_nested_declarations_hoist_and_override_parameters() {
     assert_eq!(result(source, "outer(99)"), "7");
     let source = "function make(){return helper;function helper(){return 9;}}const saved=make();";
     assert_eq!(result(source, "saved()"), "9");
-    assert!(execute("function outer(){if(true){function blocked(){}}}").is_err());
+    // Sloppy block function declarations also bind in the enclosing scope (Annex B).
+    assert!(execute("function outer(){if(true){function blocked(){}}}").is_ok());
+    assert_eq!(
+        result("if(true){function blocked(){return 4;}}", "blocked()"),
+        "4"
+    );
     assert!(execute("function outer(){while(true){const f=function(){break;};}}").is_err());
 }
 /** Named expression recursion uses a private immutable name outside the parameter activation. */
@@ -90,14 +95,22 @@ fn named_expressions_keep_their_self_binding_private() {
         execute("const f=function hidden(){};hidden();")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("hidden is not defined")
     );
+}
+
+/** A named expression's own name is immutable: sloppy writes are ignored and strict writes throw. */
+#[test]
+fn named_expression_self_bindings_are_immutable() {
     assert_eq!(
-        execute("const f=function self(){self=1;};f();")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
+        result(
+            "const f=function self(){self=1;return typeof self;};",
+            "f()"
+        ),
+        "function"
     );
+    let error = execute("const f=function self(){'use strict';self=1;};f();").unwrap_err();
+    assert!(error.message.contains("TypeError"), "{}", error.message);
 }
 /** Captured lookup observes live TDZ/const cells and block shadowing rather than copied values. */
 #[test]
@@ -116,7 +129,7 @@ fn captured_cells_preserve_tdz_const_and_block_shadowing() {
         execute("function make(){const n=1;return function(){n=2;};}make()();")
             .unwrap_err()
             .message
-            .contains("const binding")
+            .contains("Assignment to constant variable")
     );
     assert_eq!(
         result(
@@ -163,50 +176,43 @@ fn failed_callbacks_discard_captured_mutations_and_proposals() {
     let before = serde_json::to_value(&state).unwrap();
     assert!(event(source, "bad()", state.clone(), &[]).is_err());
     assert_eq!(serde_json::to_value(&state).unwrap(), before);
-    assert_eq!(next(source, state).changes[0].text, "1 1");
+    assert_eq!(next(source, state).changes[0].text().unwrap(), "1 1");
 }
-/** Page callbacks do not expand the public inline-handler grammar into an evaluation channel. */
+/** Inline handlers are ordinary script: they may pass function code and run several statements. */
 #[test]
-fn inline_handlers_remain_named_calls_without_inline_function_code() {
-    let source = "function run(){}";
+fn inline_handlers_run_ordinary_code() {
+    let source = "let calls=0;function run(f){calls=calls+1;if(f){f();}}";
     let state = load(source, &[]).unwrap().state;
-    for handler in [
-        "run(function(){})",
-        "(function(){})()",
-        "run.call()",
-        "run();run();",
+    for (handler, expected) in [
+        ("run(function(){calls=calls+10;})", 11.0),
+        ("(function(){calls=5;})()", 5.0),
+        ("run.call()", 1.0),
+        ("run();run();", 2.0),
     ] {
-        let error = event(source, handler, state.clone(), &[]).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature", "{handler}");
-        assert_eq!(error.input_kind.as_deref(), Some("handler"));
-    }
-    event(source, "run(1)", state, &[]).unwrap();
-}
-/** Function numeric/string coercions fail explicitly until ToPrimitive is implemented. */
-#[test]
-fn unsupported_function_semantics_never_acquire_scalar_fallbacks() {
-    for source in [
-        "const f=function(){};let n=+f;",
-        "const f=function(){};let n=f+1;",
-        "const f=function(){};let n=f<1;",
-        "const f=function(){};document.getElementById('out').textContent=f;",
-    ] {
+        let executed = event(source, handler, state.clone(), &[]).unwrap();
         assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
+            executed.state.globals()["calls"].value,
+            Some(mars::v9::JsValue::Number(expected)),
+            "{handler}"
         );
     }
 }
-/** Limits apply inside a single candidate before any finish-only collection can run. */
+/** Functions convert like any object: ToNumber gives NaN and + concatenates a string. */
 #[test]
-fn closure_allocation_and_recursive_calls_have_independent_limits() {
-    for source in [
-        "let i=0;while(i<600){(function(){});i=i+1;}",
-        "const f=function self(){self();};f();",
-    ] {
-        let error = execute(source).unwrap_err();
-        assert_eq!(error.code, "limit_exceeded");
-        assert_eq!(error.phase.as_deref(), Some("execute"));
-    }
+fn functions_convert_through_to_primitive() {
+    assert_eq!(
+        result("const f=function(){};", "(+f)+' '+(f<1)+' '+(typeof (f+1))"),
+        "NaN false string"
+    );
+}
+/** Closure allocation is bounded only by live functions, and runaway recursion throws a catchable RangeError. */
+#[test]
+fn closure_garbage_is_free_and_recursion_hits_the_call_depth() {
+    assert_eq!(
+        result("let i=0;while(i<20000){(function(){});i=i+1;}", "i"),
+        "20000"
+    );
+    let error = execute("const f=function self(){self();};f();").unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("RangeError"), "{}", error.message);
 }

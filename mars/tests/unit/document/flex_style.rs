@@ -7,17 +7,29 @@ use serde_json::json;
 /** A single stable author identity exposes computed values independently of layout algorithms. */
 fn style(declarations: &str) -> ComputedStyle {
     let document = parse("<div id=x></div>").unwrap();
-    compute_styles(&document, &[format!("#x{{{declarations}}}")])
+    (*compute_styles(&document, &[format!("#x{{{declarations}}}")])
         .unwrap()
         .nodes[0]
-        .style
+        .style)
         .clone()
 }
 /** Defaults distinguish automatic main/minimum sizes from explicit zero and do not create flex containers. */
 #[test]
 fn flex_defaults_are_explicit_and_preserve_legacy_styles() {
     let computed = style("");
-    assert_eq!(computed, ComputedStyle::default());
+    // An element under the body records its left-to-right parent, and its borders keep CSS's
+    // initial specified width (medium, 3px: what `border-width: inherit` passes on) and color
+    // (currentColor); every other field is default.
+    assert_eq!(computed.parent_rtl, Some(false));
+    assert_eq!(computed.border_specified, [3.0; 4]);
+    assert_eq!(computed.border_current, [true; 4]);
+    let unparented = ComputedStyle {
+        parent_rtl: None,
+        border_specified: [0.0; 4],
+        border_current: [false; 4],
+        ..computed.clone()
+    };
+    assert_eq!(unparented, ComputedStyle::default());
     assert_eq!(computed.box_sizing, BoxSizing::ContentBox);
     assert!(!computed.display_flex);
     assert_eq!(computed.flex_direction, FlexDirection::Row);
@@ -25,7 +37,10 @@ fn flex_defaults_are_explicit_and_preserve_legacy_styles() {
     assert_eq!(computed.flex_basis, FlexBasis::Auto);
     assert_eq!((computed.flex_grow, computed.flex_shrink), (0.0, 1.0));
     assert_eq!((computed.row_gap, computed.column_gap), (0.0, 0.0));
-    assert_eq!(computed.justify_content, JustifyContent::Start);
+    // `normal`, which Blink keeps distinct from `flex-start`: flex items pack at the start,
+    // while flex lines and auto grid tracks stretch.
+    assert_eq!(computed.justify_content, JustifyContent::Stretch);
+    assert_eq!(computed.justify_content, JustifyContent::normal());
     assert_eq!(computed.align_items, AlignItems::Stretch);
     assert_eq!(computed.min_width, None);
 }
@@ -179,43 +194,39 @@ fn flex_cannot_override_hidden_and_inert_ancestor_guards() {
     assert!(computed.nodes.iter().all(|node| node.hidden()));
     assert!(computed.nodes.iter().all(|node| !node.style.interactive));
 }
-/** Unsupported structures and malformed scalar forms fail explicitly instead of inventing geometry. */
+/// Unsupported structures and malformed scalar forms are dropped with a diagnostic naming the
+/// property, and never invent geometry: the result equals the style without that declaration.
 #[test]
-fn unsupported_flex_values_and_excluded_structures_are_rejected() {
-    for declaration in [
-        "display:inline-flex",
-        "display:flex;flex-direction:row-reverse",
-        "display:flex;flex-direction:column;flex-wrap:wrap",
-        "flex-wrap:wrap-reverse",
-        "flex:1 auto 2",
-        "flex:1 2 3",
-        "flex:1 2 0 0",
-        "flex-basis:1em",
-        "flex-basis:content",
-        "flex-grow:-1",
-        "flex-shrink:NaN",
-        "flex-grow:4097",
-        "gap:10",
-        "gap:1%",
-        "gap:1px 2px 3px",
-        "row-gap:-1px",
-        "justify-content:space-around",
-        "align-items:baseline",
-        "align-self:center",
-        "align-content:stretch",
-        "order:1",
-        "height:100px",
-        "min-height:0",
-        "max-height:100px",
-        "position:absolute",
-        "padding:auto",
-    ] {
+fn unsupported_flex_values_and_excluded_structures_are_dropped_with_a_diagnostic() {
+    let computed = |css: &str| {
         let document = parse("<div id=x></div>").unwrap();
+        compute_styles(&document, &[format!("#x{{{css}}}")]).unwrap()
+    };
+    for (declaration, kept, named) in [
+        (
+            "display:flex;flex-direction:column;gap:10",
+            "display:flex;flex-direction:column",
+            "gap",
+        ),
+        ("flex:1 auto 2", "", "flex"),
+        ("flex:1 2 3", "", "flex"),
+        ("flex:1 2 0 0", "", "flex"),
+        ("flex-basis:fit-content(10px)", "", "flex-basis"),
+        ("flex-basis:fit-content(10px)", "", "flex-basis"),
+        ("flex-grow:-1", "", "flex-grow"),
+        ("flex-shrink:NaN", "", "flex-shrink"),
+        ("flex-grow:70000", "", "flex-grow"),
+        ("gap:10", "", "gap"),
+        ("gap:1px 2px 3px", "", "gap"),
+        ("align-content:10px", "", "align-content"),
+        ("padding:auto", "", "padding"),
+    ] {
+        let document = computed(declaration);
+        assert_eq!(document.diagnostics.len(), 1, "{declaration}");
+        assert!(document.diagnostics[0].contains(named), "{declaration}");
         assert_eq!(
-            compute_styles(&document, &[format!("#x{{{declaration}}}")])
-                .unwrap_err()
-                .code,
-            "unsupported_feature",
+            document.nodes[0].style,
+            computed(kept).nodes[0].style,
             "{declaration}"
         );
     }
@@ -240,14 +251,15 @@ fn computed_style_serde_preserves_defaults_and_rejects_unknown_variants() {
 fn private_computed_styles_reject_nonfinite_negative_and_excessive_values() {
     let cases: &[fn(&mut ComputedStyle)] = &[
         |s| s.font_size = f64::NAN,
-        |s| s.font_size = 0.0,
-        |s| s.font_size = 73.0,
-        |s| s.border = 9.0,
-        |s| s.margin[0] = -1.0,
+        // Zero is `font-size: 0`, which hides text; sizes between it and the minimum are invalid.
+        |s| s.font_size = 4.0,
+        |s| s.font_size = 1025.0,
+        |s| s.border = 70000.0,
+        |s| s.margin[0] = -70000.0,
         |s| s.padding[0] = f64::INFINITY,
-        |s| s.width = Some(4097.0),
+        |s| s.width = Some(70000.0),
         |s| s.max_width = Some(-1.0),
-        |s| s.min_width = Some(4097.0),
+        |s| s.min_width = Some(70000.0),
         |s| s.flex_grow = -1.0,
         |s| s.flex_shrink = f64::NAN,
         |s| s.row_gap = f64::INFINITY,

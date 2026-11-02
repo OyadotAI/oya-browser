@@ -1,4 +1,6 @@
 /** The native MCP front door translates bounded protocol state without owning I/O or browser authority. */
+/** Agents attach to the running browser over a private local socket. */
+pub mod attach;
 pub mod catalog;
 mod session;
 mod wire;

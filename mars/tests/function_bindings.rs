@@ -109,9 +109,9 @@ fn call_and_apply_adapt_current_input_once_per_native_event_adapter() {
     }
 }
 
-/** A rejected final DOM proposal discards receiver, prefix, function, global and Storage mutations together. */
+/** A handler that throws keeps the receiver, prefix, function, global and Storage effects it made first, as browsers do. */
 #[test]
-fn late_document_failure_rolls_back_every_bound_controller_candidate() {
+fn throwing_handler_keeps_every_bound_controller_effect_before_the_throw() {
     let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>function make(){const receiver={n:0};const record={n:0};function mutate(record,fail){this.n=this.n+1;record.n=record.n+1;mutate.extra=mutate.extra+1;globalThis.last=this.n;window.localStorage.setItem('count',this.n);document.getElementById('out').textContent=this.n+' '+record.n+' '+mutate.extra;if(fail){document.getElementById('missing').textContent='fail';}}mutate.extra=0;return mutate.bind(receiver,record);}const saved=make();function good(){saved(false);}function bad(){saved(true);}function read(){document.getElementById('out').textContent=last+' '+window.localStorage.getItem('count');}</script>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
@@ -119,16 +119,16 @@ fn late_document_failure_rolls_back_every_bound_controller_candidate() {
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "1 1 1");
     let stale = target(&page, "good");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+    let page = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+    assert_eq!(text(&page, "out"), "2 2 2");
     let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&page, "out"), "1 1");
+    assert_eq!(text(&page, "out"), "2 2");
     assert_eq!(
         call(&mut runtime, "page.click", stale).unwrap_err().code,
         "revision_conflict"
     );
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-    assert_eq!(text(&page, "out"), "2 2 2");
+    assert_eq!(text(&page, "out"), "3 3 3");
     let projection = page.to_string();
     assert!(!projection.contains("bound_receiver"));
     assert!(!projection.contains("next_function"));

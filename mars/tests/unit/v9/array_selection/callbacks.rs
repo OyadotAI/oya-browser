@@ -11,7 +11,7 @@ fn callbacks_receive_value_index_source_and_explicit_receiver() {
     );
 }
 
-/** Strict callbacks keep undefined while sloppy callbacks obtain the page-global receiver. */
+/** Strict callbacks keep their receiver as given; sloppy callbacks without one get the global object. */
 #[test]
 fn ordinary_strict_and_sloppy_callback_receiver_rules_are_preserved() {
     let source = "const s=[1].some(function(){'use strict';return this===undefined;});const f=[2].find(function(){return this===globalThis;});";
@@ -24,11 +24,19 @@ fn ordinary_strict_and_sloppy_callback_receiver_rules_are_preserved() {
             ),
             if method == "some" { "true" } else { "7" }
         );
+    }
+}
+
+/** A sloppy callback given a primitive thisArg receives it boxed, as OrdinaryCallBindThis requires. */
+#[test]
+fn sloppy_callbacks_box_a_primitive_receiver() {
+    for method in ["some", "find"] {
         assert_eq!(
-            execute(&format!("[7].{method}(function(){{return true;}},4);"))
-                .unwrap_err()
-                .code,
-            "unsupported_feature"
+            result(
+                "",
+                &format!("[7].{method}(function(){{return typeof this==='object'&&this==4;}},4)")
+            ),
+            if method == "some" { "true" } else { "7" }
         );
     }
 }
@@ -40,9 +48,9 @@ fn arrow_and_bound_predicates_keep_their_own_receivers() {
     assert_eq!(result(source, "f+' '+s"), "4 true");
 }
 
-/** Extracted methods use exactly the ordinary call/apply/bind paths and retain array branding. */
+/** Extracted methods use the ordinary call/apply/bind paths, work on array-likes and refuse nullish receivers. */
 #[test]
-fn methods_support_call_apply_bind_and_refuse_nonarray_receivers() {
+fn methods_support_call_apply_bind_generic_receivers_and_refuse_nullish_ones() {
     let source = "const some=[].some;const find=[].find;const yes=v=>v>1;";
     assert_eq!(
         result(
@@ -51,14 +59,18 @@ fn methods_support_call_apply_bind_and_refuse_nonarray_receivers() {
         ),
         "true 2 true 3"
     );
+    assert_eq!(
+        result(
+            "",
+            "[].some.call({},()=>true)+' '+[].find.call({length:0},()=>true)+' '+[].find.call('abc',v=>v==='b')"
+        ),
+        "false undefined b"
+    );
     for method in ["some", "find"] {
-        for receiver in ["null", "undefined", "{}", "{length:0}", "'abc'"] {
-            assert_eq!(
-                execute(&format!("[].{method}.call({receiver},()=>true);"))
-                    .unwrap_err()
-                    .code,
-                "unsupported_feature"
-            );
+        for receiver in ["null", "undefined"] {
+            let error = execute(&format!("[].{method}.call({receiver},()=>true);")).unwrap_err();
+            assert_eq!(error.code, "script_execution_error");
+            assert!(error.message.contains("TypeError"), "{}", error.message);
         }
     }
 }
@@ -71,7 +83,7 @@ fn callback_truthiness_accepts_functions_and_projected_host_values() {
     let source = "const a=[1].some(()=>document);const b=[2].find(()=>()=>false);document.getElementById('out').textContent=a+' '+b;";
     let execution =
         mars::v9::load_document_scripts(&[source.into()], document, Default::default()).unwrap();
-    assert_eq!(execution.changes[0].text, "true 2");
+    assert_eq!(execution.changes[0].text().unwrap(), "true 2");
 }
 
 /** Arguments beyond thisArg still evaluate once, in ordinary source order, before selection. */
@@ -98,7 +110,7 @@ fn callback_failure_and_budget_exhaustion_preserve_the_prior_state() {
             "limit_exceeded"
         );
         let execution = next(source, "run()", state);
-        assert_eq!(execution.changes[0].text, expected);
+        assert_eq!(execution.changes[0].text().unwrap(), expected);
         state = execution.state;
     }
 }

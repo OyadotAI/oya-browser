@@ -5,6 +5,14 @@ mod validation;
 
 /** Small floating-point differences are permitted without hiding a pixel of displaced widget geometry. */
 const GEOMETRY_TOLERANCE: f64 = 0.00001;
+/** A native checkbox or radio is a fixed square centered in the authored box, as Chromium centers its glyph. */
+const CHOICE_FRAME: f64 = 16.0;
+/** The fixture's checkbox and radios, whose native frames follow the choice rule rather than the box. */
+const CHOICES: [&str; 3] = ["remember", "standard", "plus"];
+/** Each flex field's share of the panel's 594px content width: two 280px bases plus the 16px gap, grown equally. */
+const FIELD_WIDTH: f64 = 289.0;
+/** The authored gap between the two fields. */
+const FIELD_GAP: f64 = 16.0;
 
 /** Semantic lookup avoids depending on parser-local integer identities. */
 fn node<'a>(page: &'a Value, id: &str) -> &'a Value {
@@ -17,7 +25,7 @@ fn node<'a>(page: &'a Value, id: &str) -> &'a Value {
 }
 
 /** Every native frame must agree with its current agent-visible display item. */
-fn assert_frames(window: &mut Window, wide: bool) -> Value {
+fn assert_frames(window: &mut Window) -> Value {
     let page = window.call("page.inspect", json!({}));
     let layout = window.call("page.layout", json!({}));
     let state = window.call("window.inspect", json!({}));
@@ -31,41 +39,43 @@ fn assert_frames(window: &mut Window, wide: bool) -> Value {
             .iter()
             .find(|frame| frame["html_id"] == id)
             .unwrap();
-        for key in ["x", "y", "width"] {
-            close(frame[key].as_f64().unwrap(), item[key].as_f64().unwrap());
-        }
-        close(
-            frame["height"].as_f64().unwrap(),
-            item["control_height"]
-                .as_f64()
-                .unwrap_or_else(|| item["height"].as_f64().unwrap()),
+        let height = item["control_height"]
+            .as_f64()
+            .unwrap_or_else(|| item["height"].as_f64().unwrap());
+        let (x, y, width) = (
+            item["x"].as_f64().unwrap(),
+            item["y"].as_f64().unwrap(),
+            item["width"].as_f64().unwrap(),
         );
+        let expected = if CHOICES.contains(&id) {
+            [
+                x + (width - CHOICE_FRAME) / 2.0,
+                y + (height - CHOICE_FRAME) / 2.0,
+                CHOICE_FRAME,
+                CHOICE_FRAME,
+            ]
+        } else {
+            [x, y, width, height]
+        };
+        for (key, expected) in ["x", "y", "width", "height"].into_iter().zip(expected) {
+            close(frame[key].as_f64().unwrap(), expected);
+        }
     }
-    assert_columns(&layout, &page, wide);
+    assert_columns(&layout, &page);
     page
 }
 
-/** Expected allocation follows the designed 620px panel and the actual viewport, without an HTML renderer substitute. */
-fn assert_columns(layout: &Value, page: &Value, wide: bool) {
+/** Expected allocation follows the designed 620px panel, which fits two 280px fields and their 16px
+gap at both window widths (the window is never narrower than 640), so the fields share one row. */
+fn assert_columns(layout: &Value, page: &Value) {
     let user = item(layout, page, "user");
     let pass = item(layout, page, "pass");
+    close(user["width"].as_f64().unwrap(), FIELD_WIDTH);
+    close(user["y"].as_f64().unwrap(), pass["y"].as_f64().unwrap());
     close(
-        user["width"].as_f64().unwrap(),
-        if wide { 289.0 } else { 550.0 },
+        pass["x"].as_f64().unwrap() - user["x"].as_f64().unwrap(),
+        FIELD_WIDTH + FIELD_GAP,
     );
-    if wide {
-        close(user["y"].as_f64().unwrap(), pass["y"].as_f64().unwrap());
-        close(
-            pass["x"].as_f64().unwrap() - user["x"].as_f64().unwrap(),
-            305.0,
-        );
-    } else {
-        close(user["x"].as_f64().unwrap(), pass["x"].as_f64().unwrap());
-        assert!(
-            pass["y"].as_f64().unwrap()
-                >= user["y"].as_f64().unwrap() + user["height"].as_f64().unwrap()
-        );
-    }
 }
 
 /** Display geometry names the same opaque target returned by inspection. */
@@ -132,11 +142,11 @@ fn native_flex_form_reflows_widgets_and_completes_the_session() {
     let page = window.call("page.navigate", json!({"url":url,"control_epoch":1}));
     let identity = page["page_id"].clone();
     resize(&mut window, 1100);
-    let page = assert_frames(&mut window, true);
+    let page = assert_frames(&mut window);
     window.capture();
     let error = window.request("page.click", target(&page, "submit"));
     assert_eq!(error["error"]["code"], "validation_error");
-    let page = assert_frames(&mut window, true);
+    let page = assert_frames(&mut window);
     assert_eq!(page["page_id"], identity);
     let layout = window.call("page.layout", json!({}));
     assert!(
@@ -154,13 +164,13 @@ fn native_flex_form_reflows_widgets_and_completes_the_session() {
     ] {
         type_field(&mut window, id, value);
     }
-    let page = assert_frames(&mut window, true);
+    let page = assert_frames(&mut window);
     assert_eq!(node(&page, "user")["value"], "Ada");
     assert!(node(&page, "pass").get("value").is_none());
     window.capture();
     let generation = page["layout_generation"].as_u64().unwrap();
     resize(&mut window, 640);
-    let narrow = assert_frames(&mut window, false);
+    let narrow = assert_frames(&mut window);
     assert_eq!(narrow["page_id"], identity);
     assert_eq!(
         node(&narrow, "user")["node_id"],
@@ -174,7 +184,7 @@ fn native_flex_form_reflows_widgets_and_completes_the_session() {
         "window.appearance",
         json!({"appearance":"dark","control_epoch":1}),
     );
-    assert_frames(&mut window, false);
+    assert_frames(&mut window);
     window.capture();
     window.call(
         "window.appearance",

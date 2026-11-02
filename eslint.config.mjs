@@ -11,9 +11,10 @@ import globals from 'globals';
 import { localPlugin, baseRules, designRules, docRules } from './tooling/eslint/index.js';
 
 export default tseslint.config(
-  { ignores: ['**/node_modules', '**/dist', '**/coverage', 'server', 'ui', 'browser', 'examples', 'qa', 'scripts', 'skills', 'k8s', 'supabase', 'docs'] },
+  { ignores: ['**/node_modules', '**/dist', '**/coverage', '.claude/worktrees/**', '.keel/worktrees/**', '.codex/worktrees/**', 'server', 'ui', 'browser', 'examples', 'qa', 'scripts', 'skills', 'k8s', 'supabase', 'docs', 'mars'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
   {
     files: ['packages/**/*.{ts,js,mjs}', 'tooling/**/*.js'],
     languageOptions: { globals: globals.node },

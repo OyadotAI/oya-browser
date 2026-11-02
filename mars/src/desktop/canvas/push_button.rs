@@ -5,6 +5,8 @@ use std::cell::RefCell;
 #[derive(Default)]
 pub(super) struct Paint {
     item: RefCell<Option<DisplayItem>>,
+    /// Author-styled buttons draw no bezel: the canvas already painted their CSS box and children.
+    styled: std::cell::Cell<bool>,
 }
 define_class!(
     #[unsafe(super=NSButton)]
@@ -21,7 +23,8 @@ define_class!(
         fn draw(&self,dirty:NSRect) {
             unsafe {let _:()=msg_send![super(self),drawRect:dirty];}
             if let Some(item)=self.ivars().item.borrow().as_ref() {
-                let color=if self.isEnabled() {NSColor::controlTextColor()}else{NSColor::disabledControlTextColor()};
+                let authored=item.color.as_deref().filter(|_| self.ivars().styled.get()).and_then(literal_color);
+                let color=match authored {Some(color)=>color,None if self.isEnabled()=>NSColor::controlTextColor(),None=>NSColor::disabledControlTextColor()};
                 for line in &item.lines {platform::colored(&line.text,item.font_size,item.bold,&color).drawAtPoint(NSPoint::new(line.x-item.x,line.y-item.y));}
             }
         }
@@ -36,16 +39,20 @@ impl PushButton {
         this.setTitle(&NSString::from_str(""));
         this.setTag(item.local_id as isize + NODE_TAG);
         this.setBordered(true);
-        this.setBezelStyle(NSBezelStyle::Push);
+        // Flexible push keeps a rounded native bezel at Chromium's 21 point height.
+        this.setBezelStyle(NSBezelStyle::FlexiblePush);
         unsafe {
             this.setTarget(Some(target));
             this.setAction(Some(sel!(activate:)));
         }
-        this.update(item);
+        this.update(item, false);
         this
     }
-    /** Reflow retains the native activation/focus object. */
-    pub fn update(&self, item: &DisplayItem) {
+    /** Reflow retains the native activation/focus object. A `styled` button (author background or
+    border, as Chromium drops the native look for) loses its bezel so the page's own paint shows. */
+    pub fn update(&self, item: &DisplayItem, styled: bool) {
+        self.ivars().styled.set(styled);
+        self.setBordered(!styled);
         *self.ivars().item.borrow_mut() = Some(item.clone());
         NSView::setNeedsDisplay(self, true);
     }

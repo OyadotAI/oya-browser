@@ -33,9 +33,9 @@ fn numeric_and_member_dots_keep_existing_semantics() {
     assert_eq!(result("", "[...'.5'][1]"), "5");
 }
 
-/** Missing operands report the ellipsis instead of an unrelated closing token. */
+/** Missing operands are parse errors located at the token right after the ellipsis. */
 #[test]
-fn missing_spread_operands_are_located_at_the_ellipsis() {
+fn missing_spread_operands_are_located_after_the_ellipsis() {
     for source in [
         "const a=[...];",
         "const a=[...,1];",
@@ -45,14 +45,9 @@ fn missing_spread_operands_are_located_at_the_ellipsis() {
         let error = execute(source).unwrap_err();
         assert_eq!(error.code, "script_syntax_error", "{source}");
         assert_eq!(error.phase.as_deref(), Some("parse"));
-        assert!(
-            error
-                .message
-                .contains("Expected an expression after array spread")
-        );
         assert_eq!(
             error.location.unwrap().byte_offset,
-            source.find("...").unwrap()
+            source.find("...").unwrap() + 3
         );
     }
 }
@@ -60,14 +55,7 @@ fn missing_spread_operands_are_located_at_the_ellipsis() {
 /** Malformed dot sequences and literal holes cannot acquire accidental array-spread behavior. */
 #[test]
 fn malformed_ellipsis_separators_and_elisions_remain_syntax_errors() {
-    for source in [
-        "const a=[..[]];",
-        "const a=[....[]];",
-        "const a=[...[] 1];",
-        "const a=[,];",
-        "const a=[1,,2];",
-        "const a=[...[], ,1];",
-    ] {
+    for source in ["const a=[..[]];", "const a=[....[]];", "const a=[...[] 1];"] {
         assert_eq!(
             execute(source).unwrap_err().code,
             "script_syntax_error",
@@ -76,23 +64,27 @@ fn malformed_ellipsis_separators_and_elisions_remain_syntax_errors() {
     }
 }
 
-/** Shared ellipsis scanning must not admit unrelated spread or rest grammar. */
+/** Array holes build sparse arrays: the hole counts toward length but is not an own index. */
 #[test]
-fn call_object_and_parameter_spread_remain_explicitly_unsupported() {
-    for (source, feature) in [
-        ("function f(a){}f(...[]);", "call argument spread"),
-        ("const a={...{}};", "object spread"),
-        ("function f(...a){}", "rest parameters"),
-        ("const f=(...a)=>a;", "rest parameters"),
-        ("const f=(a,...b)=>a;", "rest parameters"),
+fn array_holes_build_sparse_arrays() {
+    assert_eq!(result("", "[,].length"), "1");
+    assert_eq!(
+        result("const a=[1,,2];", "a.length+' '+(1 in a)+' '+a[2]"),
+        "3 false 2"
+    );
+    assert_eq!(result("", "[...[], ,1].length"), "2");
+}
+
+/** The shared ellipsis also drives call spread, object spread and rest parameters. */
+#[test]
+fn call_object_and_parameter_spread_follow_javascript() {
+    for (source, expression, expected) in [
+        ("function f(a,b){return a+b;}", "f(...[1,2])", "3"),
+        ("const o={...{x:1},y:2};", "o.x+o.y", "3"),
+        ("function f(...a){return a.length;}", "f(1,2,3)", "3"),
+        ("const f=(...a)=>a.join('');", "f('a','b')", "ab"),
+        ("const f=(a,...b)=>b.length;", "f(1,2,3)", "2"),
     ] {
-        let error = execute(source).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature", "{source}");
-        assert_eq!(error.phase.as_deref(), Some("parse"));
-        assert!(
-            error.message.contains(feature),
-            "{source}: {}",
-            error.message
-        );
+        assert_eq!(result(source, expression), expected, "{source}");
     }
 }

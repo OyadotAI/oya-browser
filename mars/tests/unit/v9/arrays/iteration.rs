@@ -74,13 +74,14 @@ fn filter_predicates_use_truthiness_and_snapshot_iteration() {
     assert_eq!(result(source, "b.join(' ')+' '+b.length"), "1 8 2");
 }
 
-/** Callback failures and recursion stop within the shared VM operation and invocation allowances. */
+/** Endless callbacks stop at the work budget; recursion past the call depth throws a catchable RangeError. */
 #[test]
 fn array_callbacks_share_operation_and_call_depth_limits() {
-    for source in [
-        "[1].map(()=>{while(true){}});",
-        "function recurse(){return [1].filter(recurse);}recurse();",
-    ] {
-        assert_eq!(execute(source).unwrap_err().code, "limit_exceeded");
-    }
+    assert_eq!(
+        execute("[1].map(()=>{while(true){}});").unwrap_err().code,
+        "limit_exceeded"
+    );
+    let error = execute("function recurse(){return [1].filter(recurse);}recurse();").unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("RangeError"), "{}", error.message);
 }

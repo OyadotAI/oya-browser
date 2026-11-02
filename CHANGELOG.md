@@ -6,8 +6,151 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Security
+
+- Updated vulnerable runtime and development dependencies, including Electron and Mars's vendored Rustls. Retained the existing TLS ClientHello shaping and adapted legacy build tooling to the patched minimatch implementation.
+
 ### Added
 
+- Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
+
+- Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.
+
+- Forwarded Mars script functions through the running interpreter loop when invoked with the intrinsic `Function.prototype.call`, avoiding nested native interpreter entry. Increased the live function allowance to accommodate YouTube's connected components and player while retaining resource bounds.
+
+- Reduced Mars closure retention by keeping uncaptured function locals in activation registers. Nested lexical dependencies still share environment slots, with memoized analysis across lazy compilation and conservative handling of direct eval, mapped arguments and modules.
+
+- Made Mars native task checkpoints collect dead weak-key cycles under allocation or bound pressure, while saved-state replay retains snapshot semantics. Mutation observers now follow target reachability instead of retaining discarded target/callback cycles, deliver document-subtree changes and respect shadow boundaries. Resident task restoration uses maintained proxy presence and indexed identity checks.
+
+- Fixed Mars retaining every upgraded custom element as a permanent JavaScript root. Discarded elements can now release their closures; connected elements and script-referenced detached elements preserve their upgraded identity.
+
+- Shared Mars computed styles across document snapshots and unchanged cascades, reducing node movement and copy costs while isolating edits through copy-on-write. The document wire format stays unchanged. Layout fallback checks now index direct children once and only copy documents that need a fallback.
+
+- Reused Mars's V9 execution thread across in-process script tasks, retaining thread-local object-shape caches and each task's panic boundary.
+
+- Made Mars forced-layout mutation replay incremental: successful reads seal the journal prefix, subsequent reads apply its suffix, and commits reuse the latest validated document. Removed identities and whole-journal limits remain enforced across reads.
+
+- Indexed Mars's batch label ancestry and agent visibility lookups, removing repeated linear scans of reordered page nodes during presentation and inspection.
+
+- Fixed stale synchronous layout reuse after coalesced DOM attribute writes in Mars. Forced layouts now use the latest edits, and final writes no longer trigger a false script/document structure disagreement.
+
+- Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
+
+- Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
+
+- Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
+
+- Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
+
+- Made Mars pages show sooner: the first paint lands before images and web fonts resolve and again when they do, the head's scripts download on the loader while the sheets arrive, classic scripts and their deferred functions compile on their own threads while the document is styled, and the scripts' own DOM paints before the lifecycle events. YouTube's home paints in under a second and publishes in about two.
+
+- Kept Mars's YouTube realm resident between timer and event tasks, so each one runs in place instead of restoring the page's state first; loads and module steps keep the copying path. Audio for content playback now sounds from the first frame: the native player applies the page's volume when it is built rather than on a later settings change.
+
+- Fixed Mars pages that stayed blank or failed to load: DOMContentLoaded now waits for the parser's module scripts (DuckDuckGo's results), a script V9 asks for again before it lands is no longer started twice (github.com and airbnb.com hit the delivered-bytes limit), `DOMParser.parseFromString` no longer stops the page on text that opens with a multibyte letter, and a script inserted with `async = false` runs after the ones inserted before it however their downloads land.
+
+- Fixed a Mars closure-capture miscompile: a parameter default that reads an outer name the function body also declares now reads the outer binding, as the default runs before the body's declarations exist.
+
+- Stopped Mars's macOS painter from drawing a box shadow at the viewport's edge for an element parked far off the page (Amazon's keyboard-shortcut menu): a shadow whose landing spot misses the clip is skipped.
+
+- Sped up Mars styling of large pages: the parsed-sheet cache resumes after the longest shared prefix of the sheet list, rule buckets key a compound selector by its rarest class (airbnb's atomic classes dropped from millions of candidates per cascade to thousands), and a page with due work ticks every 16 ms.
+
+- Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
+
+- Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
+
+- Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
+
+- Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
+
+- Added opt-in, privacy-limited script request diagnostics for native failure stages and HTTP response statuses, retaining the original POST failure before uncertainty wrapping without changing web-visible fetch behavior.
+
+- Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
+
+- Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
+
+- Added bounded listener-refusal counts and stages, with opt-in numeric startup logging, to distinguish registration pressure from restore or validation failures.
+
+- Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
+
+- Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
+
+- Scoped Mars intrinsic keyword width caches to each layout, publishing measured child constraints immediately and restoring enclosing widths after nested vertical layout. Earlier pages can no longer seed current-node measurements with stale widths.
+
+- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; listener storage remains bounded.
+
+- Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
+
+- Separated embedded Mars image payload admission from the 8 KiB network-address limit. Bounded data images retain normal decoding and CSP checks; oversized optional sources finish as image errors instead of aborting navigation, with aggregate source and request text limits.
+
+- Initialized Mars Window event-handler globals, including `onload`, so reads before assignment return null and strict assignments share the existing body-forwarded dispatch path. Forbidden native constructors now identify their actual interface without consulting page-controlled names.
+
+- Added one bounded Mars TLS reconnect after a raw handshake reset, preferring another already-validated address. The same TLS settings and certificate checks remain in force, no HTTP data is replayed, and per-candidate deadline leases interrupt negotiation at the original deadline.
+
+- Corrected Mars TLS HelloRetryRequest key shares: when a server requests a specific group, the next ClientHello contains exactly that share. Initial and cookie-only retries retain GREASE and existing TLS verification.
+
+- Removed blocking Mars close-save acknowledgements and shutdown joins from the AppKit event loop. Close attempts poll bounded save tickets, retain explicit retry/discard choices, and retire late replies; owned engine, library writer and demo-server cleanup is polled while native events continue.
+
+- Replaced Mars’s 64-IntersectionObserver cap with a shared 4 MiB native-state budget, pressure reclamation of unused observers, and consistent restore checks. Geometry sampling caches target measurements and charges work before allocation; callbacks and queued records remain real rather than silently dropped.
+
+- Expanded Mars script-visible metadata to a shared 8 MiB budget and 32,256 records, reserving script-node capacity. Complete records include tag and attribute-name costs; restored documents/environments enforce the same limits, and fresh head insertion avoids repeated full-head scans.
+
+- Fixed Mars clicks on painted descendants of links and buttons: native defaults resolve to the supported ancestor while JavaScript retains the original event target. Ancestor inline handlers participate in click admission, and frame hit testing now respects pointer-events.
+
+- Fixed Mars HTTP/1 handling of informational responses such as 100 Continue and 103 Early Hints: bounded interim headers are consumed before the final response, using one shared header budget. Protocol upgrades remain explicitly unsupported.
+
+- Fixed a Mars HTTP/1 connection reuse race: each completed request now stops and joins its deadline lease before returning the socket to the shared pool, preventing an old timer from closing a later request.
+
+- Made Mars transport failures identify DNS lookup, connection, TLS handshake, send or receive errors using typed causes, without exposing raw destination or payload details. Existing TLS checks, error codes, deadlines and retry rules remain intact.
+
+- Corrected Mars resident-state validation so pending fetches and observers are checked against the heap retained by V9, while the app validates their bounded page summaries. This addresses false `Invalid native fetch signal state` page failures without weakening full-state restore checks.
+
+- Added context-owned Blob image loading in Mars with generation snapshots, cancellation, origin/img-src checks, bounded actual raster decoding and clean Canvas pixels. Blob images never fall through to network/cache/prefetch; SVG, CSS backgrounds and unmatched responsive Blob candidates remain unsupported.
+- Added native pure CSS scale transitions and keyframes to Mars, including independent signed axes, zero scales, easing, interruption, direction and pause/fill behavior. Visual geometry and hit testing follow scaling while layout/resize measurements remain unchanged; mixed and 3D transform animation remains unfinished.
+- Made Mars HTTP fetch response bodies binary-safe through Relay and the native CORS coordinator. Fetch text readers use UTF-8 while legacy XHR/module decoding stays separate; cache, redirect, body-size and header filtering rules remain in force.
+- Completed Mars's Porter–Duff Canvas operators and lighter with transparent-source processing across the clipped destination, correct fractional clip interpolation and bounded work admission. Rectangles, paths, images and text share the implementation; artistic blend modes remain unfinished.
+- Implemented context-owned Blob URL fetches in Mars with fetch-time snapshots, native origin/CSP checks, exact binary responses and bounded single-range reads. Revocation after fetch preserves captured bytes; missing or foreign URLs fail without network fallback. Fetch now binds native dependent AbortSignals, cancels queued page/worker requests, preserves abort reasons and rejects aborted response reads.
+- Added bounded ResizeObserver delivery cycles to Mars with fresh layout between depth-gated broadcasts, skipped-notification ErrorEvents, five-argument window.onerror handling and one final intersection delivery. Deadline/round limits retain registrations and defer remaining work without restarting the settle loop immediately.
+- Extended Mars data-URL fetches to exact binary bytes through the new response transport, preserving text decoding, XHR text behavior, GET-only admission and existing size limits.
+- Added exact binary body transport and heap-accounted Response storage to Mars, with independent byte readers, shared immutable clone backing and UTF-8 replacement/BOM handling for text. Combined response limits and wire admission remain unchanged.
+- Added Mars Canvas destination-over, destination-out, source-atop and xor compositing alongside source-over, consistently across rectangles, paths, images and text. Modes persist through save/restore; unsupported full-surface operators and lighter remain unaccepted.
+- Extended Mars ResizeObserver to measured HTML/body wrappers, with percentage-resolved edges and in-flow content extents kept separate from positioned overflow. Dedicated wrapper metrics also survive forced-layout retries; incomplete layouts remain unmeasured.
+- Implemented real Mars Canvas line dashes with saved dash state, iterable conversion, signed offsets, transformed stroke geometry, closed-path joins and zero-length cap dots. Pattern storage, splitting, outlines and raster work remain bounded; quota failures cannot partially paint.
+- Reused one dense-array lookup per Mars array callback iteration, retaining generic behavior for holes, inherited values, descriptors, proxies and shared containers. Callback mutation ordering and execution budgets are unchanged; speedup is unmeasured.
+- Removed redundant WindowProxy probes from Mars worker property reads and reused immutable frame identity keys. This reduces avoidable interpreter work without changing execution deadlines; Google Search and the measured performance impact remain unresolved.
+- Replaced Mars's one-shot ResizeObserver with persistent measured registrations, selected-box change detection, queued callbacks, real disconnect/unobserve cleanup and native layout invalidation. Content/border metrics use resolved layout edges; root/body wrappers without native metrics and full resize-loop iteration remain unfinished.
+- Added one nested dedicated-worker level to Mars, with parent/child messages and ports, creator-policy source loading, shared live/pending capacity, queued initialization messages and recursive termination. Retransferring already linked worker ports and deeper worker trees remain explicitly unsupported.
+- Enforced required URL/URLSearchParams arguments and constructor-only invocation before conversion hooks run, while preserving explicit `undefined` values.
+- Implemented SVG-string Path2D construction in Mars through a shared bounded path parser. Canvas preserves completed commands before malformed syntax; numeric/resource failures remain explicit. Eye reuses the parser with whole-shape rejection, and retained paths feed real fill/stroke/clipping.
+- Corrected Mars URL API argument conversion and live URLSearchParams behavior: callbacks retain their receiver, conversions cannot overwrite their own list mutations, invalid URLs convert inputs once, and exhausted iterators stay done.
+- Connected transformed Mars DOM geometry and native clicks to shared affine bounds and quadrilateral hit testing. Layout offsets/sizes remain untransformed, while visual rectangles, sticky/fixed movement and rectangular clipping follow painting. Rounded clips, masks and exact occlusion remain unfinished.
+- Added bounded scripted grandchildren to Mars frames, with recursive messages/ports, distinct parent/top identities, nested painting and shared frame/source/context limits. Framing checks include every ancestor and the final redirected origin; child work keeps the true top-level network partition. Opaque/srcdoc scripting, descendant input and cross-frame DOM access remain unfinished.
+- Replaced Mars's inert Path2D facade with branded retained geometry, independent copies, transformed addPath and actual Canvas fill/stroke/clip overloads. Object/point quotas, GC cleanup and serialized-state checks bound storage; SVG-string construction remains explicitly unsupported.
+- Implemented timed pure CSS `rotate()` transitions and keyframes in Mars, preserving full authored turns, easing, delay, interruption, iteration and pause/fill behavior. Mixed transform lists, 3D and individual-transform animation remain unfinished.
+- Implemented real Canvas clipping in Mars with immutable sample masks and saved-state sharing. Rectangles, paths, images and text honor the clip; pixel writes/readback/export retain their specified bypass behavior, and fully clipped cross-origin draws still taint. Mask retention and raster work remain bounded.
+- Implemented CORS-enabled image acquisition in Mars for anonymous and credentialed images, with per-hop server validation, mode-aware generations/caches and Canvas origin-clean provenance. Failed CORS loads stay failures; ordinary cross-origin images remain tainted. CORS images bypass legacy credentialed prefetch and the URL-only HTTP cache.
+- Implemented real Canvas `roundRect` paths in Mars with numeric/point/iterable corner radii, overlap scaling, negative dimensions and bounded atomic path admission.
+- Added actual GIF first-frame and static WebP pixel sources for Mars Canvas on macOS through bounded native decoding, retaining origin taint and shared pixel accounting. Animated WebP, partial-first-frame GIF and non-macOS decoding remain explicitly unsupported.
+- Replaced Mars's fabricated IntersectionObserver visibility with measured viewport intersections, threshold changes, root margins and asynchronous record delivery. Native layout, resize and scrolling trigger bounded observer turns without idle polling or waking unrelated timers; element roots, ancestor clipping and visibility tracking remain unfinished.
+- Implemented real Canvas `arcTo` tangent geometry in Mars, including straight-line degeneracies, current-transform handling and bounded atomic path admission. Noninvertible transforms that require inverse mapping remain explicit refusals.
+- Implemented Canvas arcs and ellipses in Mars with real transformed geometry, directed/full-turn sweeps and atomic bounded subdivision. ArcTo, roundRect and clipping remain unfinished.
+- Implemented native CSS translation transitions in Mars for `transform` values using `none`, `translate`, `translateX` and `translateY`, including percentage offsets, easing and interruption. Visual geometry moves with painting while layout offsets remain untransformed; rotation, scale, skew and 3D interpolation remain unfinished.
+- Implemented Canvas quadratic and cubic Bezier curves in Mars with adaptive pixel-space flattening, construction-time transforms and atomic path-budget admission. Curves feed the existing real fill/stroke rasterizer; arcs, ellipses and clipping remain unfinished.
+- Extended Mars Blob workers to module entry scripts, preserving static/dynamic HTTP imports, constructor credentials, top-level await and queued-message ordering. Module sources require JavaScript MIME, and inherited CSP host matching uses the creator origin. Blob dependency sharing remains unfinished.
+- Implemented timed CSS opacity keyframes in Mars, including easing, delays, fractional/infinite iterations, direction, fill and pause/resume. Native painting samples animations without rewriting authored opacity; other animated properties, animation events and full animation API exposure remain unfinished.
+- Implemented real Canvas polygon fill/stroke in Mars, including winding rules, line caps/joins, strokeRect and transform-aware paths and pens. Path state survives save/restore correctly and raster work is bounded; curves, arcs, clipping and Path2D remain unfinished.
+- Implemented context-owned Blob object URLs and classic Blob workers in Mars, with immutable source capture, revocation, inherited CSP and bounded storage. Captured workers survive later URL revocation; Blob module workers and cross-context URL sharing remain unfinished.
+- Implemented HTTP(S) dedicated module workers in Mars with governed static/dynamic imports, `import.meta.url`, constructor credentials and top-level-await initialization. Early messages wait for entry evaluation; Blob URLs, nested workers and redirects remain outside this slice.
+- Implemented sampled CSS opacity transitions in Mars, with duration/delay/easing lists, interruption and reversal handling, and native frame scheduling. Transition values stay separate from authored styles; other properties, transition events and discrete transitions remain unfinished.
+- Implemented bounded PNG/JPEG image sources for Mars Canvas `drawImage`, including crop/scale overloads, decoded-pixel sharing and cross-origin taint propagation through readback, export and canvas copies. GIF/WebP/SVG/video sources and CORS-authorized clean cross-origin drawing remain outside this slice.
+- Improved Mars's everyday navigation with an address that can replace a pending load, toolbar Stop, and expandable script-failure details. Restored the tested DuckDuckGo search/result/Back journey through JavaScript MIME, script-completion, SVG, selection and vendor-keyframe fixes. Kept markup-handler CSP separate from eval policy and preserved committed script state when cancellation occurs before request admission. Full Ladybird parity and Google Search remain unresolved.
+- Extended Mars Canvas 2D with affine transforms, drawing-state save/restore, alpha, ImageData creation/writes and canvas-to-canvas copying. Added indexed/named sibling frame messaging with document-generation checks and transferred-port routing. Broader Ladybird compatibility and successful Google Search remain unverified.
+- Native Mars page and worker clocks now advance within synchronous JavaScript tasks, preventing time-based loops from waiting forever on a frozen timestamp. Deterministic standalone V9 timing and execution budgets are preserved.
+- Added bounded classic dedicated workers to Mars with isolated globals, synchronous imports, queued messages and MessagePort transfers. Module, blob and nested workers remain unsupported; Google Search verification is still in progress.
+- Added a bounded native macOS Canvas 2D slice to Mars: solid rectangles, text, pixel readback and PNG export, with the same bitmap used by desktop and agent painting. Corrected unavailable GPU adapter discovery and aligned request languages with JavaScript preferences. Full Canvas, WebGL/WebGPU and a GPU compositor remain unfinished.
+
+- Added V9 WebAssembly table64 support with BigInt JavaScript indices, 64-bit binary operations, and bounded growth.
+- Added opt-in V8 conformance runs for previously excluded directories, with explicit exclusion reports and confined `d8.file.exists` fixture snapshots.
+- Expanded V9 conformance coverage for supported shell flags and tests that request native syntax without using percent tokens; unsupported flags and intrinsics remain explicit.
 - Renamed the independent Rust browser to **Mars**, with separately reusable **Eye** document/rendering, **V9** JavaScript and **Relay** networking libraries in a Cargo workspace. Each engine owns its implementation and uses shared value contracts without depending on the desktop application. Existing agent protocols, saved-data identities and compatibility limits remain in force.
 - Added automatic semicolon insertion in the supported classic-script grammar of Rust V9. Completed statements accept optional punctuation at permitted boundaries while continued expressions and restricted line-break rules keep their meaning. The option demo now uses semicolonless page source; unsupported grammar and full browser compatibility remain unfinished.
 - Added bounded Rust V9 array-literal spread for owned arrays and primitive strings. Copied references keep their identities, sparse entries become explicit undefined values, and string iteration preserves UTF-16 code points and lone surrogates. The option demo now composes its real model with spread; general iterators and full browser compatibility remain unfinished.
@@ -35,6 +178,18 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Kept same-origin CORS-mode images usable when irrelevant CORS response headers are malformed; strict grant validation still applies to cross-origin responses.
+- Preserved accepted Mars MessagePort replies when their sender closes, released rejected transfers, and retained legacy handler sources across VM restoration. Promise executors now propagate fatal engine failures while ordinary JavaScript throws still reject their promises.
+- Replaced Mars's resident-script eviction with shared page, frame and worker admission leases, preserving active state and navigation rollback when capacity is reached.
+- Corrected Mars's dynamically inserted same-origin sandbox frames to use the existing scripted-frame path, preserving messaging identity, mixed-URL isolation, framing refusals and resource admission. Google Search still returns HTTP 429 in the live retest; full iframe compatibility remains unfinished.
+- Rate-limit buckets are reclaimed again once they are full and idle. The sweep used to reset a bucket's idle clock before checking it, so a bucket for every sign-in email and caller address the server had ever seen was kept until restart.
+- Corrected V9 typed-array `map` to recheck same-kind species destinations after callbacks and value conversion.
+- Corrected V9 Intl time-zone name validation, alias resolution and formatting at the requested instant.
+- Corrected V9 Unicode-set early errors for invalid negated string properties and malformed expressions.
+- Added Unicode 17 emoji string-property matching to V9 regular expressions, including set operations and longest-match ordering.
+- Corrected V9 strict global assignment through inherited properties, preserving setter and proxy behavior.
+- Corrected V9 Arabic number parts and numbering-system selection so page scripts receive localized digits and directional marks.
+- Corrected Mars V9 argument aliases, bound-function metadata, private brands, string protocols and normalization, numeric formatting, JSON revivers and proxy invariants. Added sparse array storage and species behavior, exact summation, Set algebra, Float16 storage, resizable buffers, genuine weak collection and isolated conformance realms. WebAssembly now validates and executes owned scalar, SIMD, GC, exception and atomic instructions. The optional V8 conformance runner now executes unchanged upstream scripts with their declared fixtures and asynchronous callbacks, records failures accurately, and can fail its command when any case fails; full V8 compatibility remains unfinished.
 - Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
 - A browser that reconnects, or that the server drops (Disconnect, a revoked key, a control-plane stop), now gives back what its connection held at once. It stops being billed, its persona is free for another browser and can be deleted, its waiting commands fail instead of timing out, and CDP clients relayed over it are disconnected instead of left waiting. A reconnect that is accepted bills the old connection's time up to the reconnect instead of dropping it.
 

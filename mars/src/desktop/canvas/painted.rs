@@ -1,0 +1,207 @@
+/** Paint-time caches for one display list: which items touch each band of the page, each line's
+prepared text and each decoded image, so a scroll frame paints only what it reveals and never
+rebuilds text or decodes images again. Rebuilt whenever the display list or its images change. */
+use crate::document::{DisplayItem, DisplayList};
+use objc2::{AnyThread, rc::Retained};
+use objc2_app_kit::NSImage;
+use objc2_foundation::{NSAttributedString, NSData, NSRect};
+use std::collections::HashMap;
+
+/// Height of one index band, in document points; about a quarter of a window.
+const BAND: f64 = 256.0;
+
+/** Spatial index and draw caches for the current display list. */
+#[derive(Default)]
+pub(super) struct Painted {
+    /// Item indices per band, in paint order.
+    bands: Vec<Vec<u32>>,
+    /// Items with no static extent (transformed or shadowed), painted for every dirty rect.
+    always: Vec<u32>,
+    /// Prepared text per (item index, line index).
+    text: HashMap<(u32, u32), Retained<NSAttributedString>>,
+    /// Decoded images per node identity; a failed decode is remembered too.
+    images: HashMap<usize, Option<Retained<NSImage>>>,
+    /// Canvas resources use a separate namespace from CSS background images on the same node.
+    canvases: HashMap<usize, Option<Retained<NSImage>>>,
+    /// Runs drawn as one joined text, as the windowless raster draws them.
+    pub chains: crate::document::TextChains,
+}
+
+impl Painted {
+    /** Indexes every item by the bands its vertical extent covers. */
+    pub fn new(display: &DisplayList) -> Self {
+        let mut painted = Self {
+            chains: crate::document::text_chains(display.items.iter()),
+            ..Self::default()
+        };
+        for (index, item) in display.items.iter().enumerate() {
+            let index = index as u32;
+            let Some((first, last)) = extent(item) else {
+                painted.always.push(index);
+                continue;
+            };
+            if painted.bands.len() <= last {
+                painted.bands.resize_with(last + 1, Vec::new);
+            }
+            for band in &mut painted.bands[first..=last] {
+                band.push(index);
+            }
+        }
+        painted
+    }
+    /** Items that may touch `dirty`, in paint order; callers still apply the exact test. */
+    pub fn visible(&self, dirty: NSRect) -> Vec<u32> {
+        let first = band(dirty.origin.y);
+        let last = band(dirty.origin.y + dirty.size.height);
+        let mut items = self.always.clone();
+        let last = last.min(self.bands.len().saturating_sub(1));
+        for band in self.bands.get(first..=last).into_iter().flatten() {
+            items.extend_from_slice(band);
+        }
+        items.sort_unstable();
+        items.dedup();
+        items
+    }
+    /** The prepared text of one line, built once per display list. */
+    pub fn text(
+        &mut self,
+        key: (u32, u32),
+        make: impl FnOnce() -> Retained<NSAttributedString>,
+    ) -> Retained<NSAttributedString> {
+        self.text.entry(key).or_insert_with(make).clone()
+    }
+    /** The decoded image for a node's fetched bytes, decoded once per display list. */
+    pub fn image(&mut self, id: usize, bytes: Option<&[u8]>) -> Option<Retained<NSImage>> {
+        let bytes = bytes?;
+        self.images
+            .entry(id)
+            .or_insert_with(|| decode(bytes))
+            .clone()
+    }
+    /** Cache only for this display list; pixel changes invalidate the enclosing paint cache. */
+    pub fn canvas(
+        &mut self,
+        id: usize,
+        bitmap: &mars_core::canvas::Bitmap,
+    ) -> Option<Retained<NSImage>> {
+        self.canvases
+            .entry(id)
+            .or_insert_with(|| canvas_image(bitmap))
+            .clone()
+    }
+}
+
+/** Wrap actual RGBA pixels in an AppKit bitmap without encoding them or accessing a URL. */
+fn canvas_image(bitmap: &mars_core::canvas::Bitmap) -> Option<Retained<NSImage>> {
+    bitmap.validate().ok()?;
+    if !bitmap.drawable() {
+        return None;
+    }
+    rgba_image(bitmap.width, bitmap.height, &bitmap.pixels)
+}
+
+/** Straight-alpha RGBA pixels of `width` x `height` as an AppKit image. Decoded page images use
+this directly: the canvas `Bitmap` caps each edge at the <canvas> surface bound (512), so a 720px
+AVIF thumbnail sent through it came out empty and painted nothing. */
+fn rgba_image(width: u32, height: u32, pixels: &[u8]) -> Option<Retained<NSImage>> {
+    use objc2_app_kit::{NSBitmapImageRep, NSDeviceRGBColorSpace};
+    use objc2_foundation::NSSize;
+    let length = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(RGBA)?;
+    if width == 0 || height == 0 || pixels.len() != length {
+        return None;
+    }
+    // SAFETY: the checked dimensions bound the rep's own allocation and explicit RGBA stride.
+    let rep = unsafe {
+        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+        NSBitmapImageRep::alloc(),std::ptr::null_mut(),width as isize,height as isize,8,4,true,false,NSDeviceRGBColorSpace,(width as usize * RGBA) as isize,32)
+    }?;
+    let target = rep.bitmapData();
+    if target.is_null() {
+        return None;
+    }
+    // SAFETY: the rep owns exactly `length` bytes until its retained image is dropped.
+    let target = unsafe { std::slice::from_raw_parts_mut(target, length) };
+    for (out, pixel) in target.chunks_exact_mut(RGBA).zip(pixels.chunks_exact(RGBA)) {
+        out[3] = pixel[3];
+        for channel in 0..3 {
+            out[channel] = ((u32::from(pixel[channel]) * u32::from(pixel[3]) + 127) / 255) as u8;
+        }
+    }
+    let image = NSImage::initWithSize(
+        NSImage::alloc(),
+        NSSize::new(f64::from(width), f64::from(height)),
+    );
+    image.addRepresentation(&rep);
+    Some(image)
+}
+
+/** First and last band of an item's painted extent, or None when it must always paint. */
+fn extent(item: &DisplayItem) -> Option<(usize, usize)> {
+    if item.transform.is_some() || !item.shadows.is_empty() || item.pin.is_some() {
+        return None;
+    }
+    let bottom = item.y
+        + item.height.max(item.control_height.unwrap_or(0.0))
+        + item.validation.len() as f64 * item.font_size * 2.0;
+    (item.y.is_finite() && bottom.is_finite()).then(|| (band(item.y), band(bottom)))
+}
+/** The band holding a document y; anything above the page is band zero. */
+fn band(y: f64) -> usize {
+    (y.max(0.0) / BAND) as usize
+}
+/** Bytes per RGBA pixel. */
+const RGBA: usize = 4;
+/** One decode of fetched bytes; AppKit keeps the decoded bitmap with the image. */
+fn decode(bytes: &[u8]) -> Option<Retained<NSImage>> {
+    // AVIF goes through Mars's own decoder: AppKit's ImageIO would decode it outside those bounds.
+    if crate::runtime::images::avif::is_avif(bytes) {
+        return crate::runtime::images::avif::decode(bytes)
+            .ok()
+            .and_then(|image| rgba_image(image.width, image.height, &image.rgba));
+    }
+    // SAFETY: the bytes outlive the call and NSData copies them.
+    let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len() as _) };
+    NSImage::initWithData(NSImage::alloc(), &data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use objc2_foundation::{NSPoint, NSSize};
+
+    /** A decoded image wider than the <canvas> surface bound still becomes an AppKit image, as
+    YouTube's 720px AVIF thumbnails need; a pixel count that does not match is refused. */
+    #[test]
+    fn decoded_images_past_the_canvas_edge_still_paint() {
+        let (width, height) = (720, 404);
+        let pixels = vec![u8::MAX; width as usize * height as usize * RGBA];
+        assert!(rgba_image(width, height, &pixels).is_some());
+        assert!(rgba_image(width, height, &pixels[RGBA..]).is_none());
+    }
+
+    /** A dirty rect sees exactly the items whose bands it covers, in paint order. */
+    #[test]
+    fn visible_items_come_from_covered_bands_in_paint_order() {
+        let painted = Painted {
+            bands: vec![vec![0, 2], vec![2, 3], vec![4]],
+            always: vec![1],
+            ..Default::default()
+        };
+        let dirty = NSRect::new(NSPoint::new(0.0, 300.0), NSSize::new(100.0, 100.0));
+        assert_eq!(painted.visible(dirty), vec![1, 2, 3]);
+    }
+
+    /** A dirty rect below the page sees only the always-painted items. */
+    #[test]
+    fn dirty_rect_below_the_page_sees_only_always_items() {
+        let painted = Painted {
+            bands: vec![vec![0]],
+            always: vec![5],
+            ..Default::default()
+        };
+        let dirty = NSRect::new(NSPoint::new(0.0, 9000.0), NSSize::new(100.0, 100.0));
+        assert_eq!(painted.visible(dirty), vec![5]);
+    }
+}

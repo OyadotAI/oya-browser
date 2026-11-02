@@ -24,7 +24,8 @@ fn lookup_uses_actual_nonempty_author_ids_in_tree_order() {
     assert!(!document.nodes[3].text_writable);
 }
 
-/** Secret values never cross into V9 even when scripts know the element identifier. */
+/** Password values never cross into V9 even when scripts know the element identifier; hidden
+values are the page's own and scripts read them, as in Chrome. */
 #[test]
 fn projection_exposes_only_nonsecret_input_and_textarea_values() {
     let document = projection(
@@ -32,7 +33,7 @@ fn projection_exposes_only_nonsecret_input_and_textarea_values() {
     );
     assert_eq!(document.nodes[0].value.as_deref(), Some("Rust 🐙"));
     assert_eq!(document.nodes[1].value, None);
-    assert_eq!(document.nodes[2].value, None);
+    assert_eq!(document.nodes[2].value.as_deref(), Some("private"));
     assert_eq!(document.nodes[3].value.as_deref(), Some("notes"));
     assert_eq!(document.nodes[4].value, None);
 }
@@ -99,7 +100,7 @@ fn malformed_projection_identity_duplicates_parents_and_text_are_rejected() {
             1 => document.identity = "x".repeat(ID_BYTES + 1),
             2 => document.nodes[1].local_id = document.nodes[0].local_id,
             3 => document.nodes[0].parent = Some(1),
-            4 => document.nodes[1].html_id = "x".repeat(ID_BYTES + 1),
+            4 => document.nodes[1].html_id = "x".repeat(mars::constants::HTML_ID_BYTES + 1),
             _ => document.nodes[0].value = Some("x".repeat(TEXT_BYTES + 1)),
         }
         assert!(document.validate().is_err(), "case {case}");

@@ -1,0 +1,3 @@
+;; Appended to engine.sb for the Eye document and V9 script engines. Only Relay owns the network,
+;; so page parsing, layout and script execution have no socket of any kind, local or remote.
+(deny network*)

@@ -1,0 +1,1831 @@
+{
+  "fail": 331,
+  "failures": [
+    {
+      "error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')",
+      "test": "async-stack-traces-prepare-stacktrace-1.js"
+    },
+    {
+      "error": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')",
+      "test": "async-stack-traces-prepare-stacktrace-2.js"
+    },
+    {
+      "error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 11, column 3)\n    at two (script 3 line 27, column 12)",
+      "test": "async-stack-traces-prepare-stacktrace-3.js"
+    },
+    {
+      "error": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script 2 line 570, column 5)\n    at <anonymous> (script 3 line 13, column 3)\n    at two (script 3 line 35, column 12)",
+      "test": "async-stack-traces-prepare-stacktrace-4.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 expression nesting exceeds the limit of 256.",
+      "test": "big-array-literal.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 expression nesting exceeds the limit of 256.",
+      "test": "big-object-literal.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <87> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 59:1.",
+      "test": "bugs/bug-1344252.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 34:1.",
+      "test": "bugs/bug-222.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 42, column 1: Uncaught TypeError: an object is not a function.",
+      "test": "bugs/bug-617.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"kallevip\"> found <undefined>\n    at f0                        script 3 49:16\n    at test                      script 3 67:14\n    at                           script 3 77:1.",
+      "test": "bugs/bug-941049.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 1, column 1: Uncaught TypeError: no access.",
+      "test": "bugs/bug-proto.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 8, column 25: unexpected token.",
+      "test": "call-intrinsic-differential-fuzzing.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 expression nesting exceeds the limit of 256.",
+      "test": "compiler/conditional-chain.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <0>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 187:1.",
+      "test": "compiler/fast-api-calls-wasm.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "compiler/regress-445907.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 5:1.",
+      "test": "compiler/regress-447567.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 registers exceeds the limit of 65535.",
+      "test": "compiler/regress-625966.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "compiler/regress-815392.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 16: Uncaught RangeError: Maximum call stack size exceeded.",
+      "test": "compiler/regress-crbug-1399626.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 12, column 1: unexpected token.",
+      "test": "compiler/regress-crbug-1486048.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected Error\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "test": "console.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <4> found <3>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 39:1.",
+      "test": "cross-realm-filtering.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Object <Error(ReferenceError: externalizeString is not defined)> is not an instance of <TypeError> but of <ReferenceError>\n    at assertException           script 2 598:7\n    at assertThrows              script 2 618:7\n    at                           script 3 18:1.",
+      "test": "d8-builtins-not-constructors.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 15: Uncaught TypeError: undefined is not a function.",
+      "test": "d8_trace.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected EvalError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "test": "disallow-codegen-from-strings.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at testHelper                     script 3 123:5\n    at test                           script 3 129:3\n    at                                script 3 147:1.",
+      "test": "duplicate-parameters.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 48:3.",
+      "test": "error-tostring-omit.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "es6/big-weakmap.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"function\"> found <\"object\">\n    at assertEquals              script 2 513:7\n    at shadowArguments           script 3 236:3\n    at                           script 3 229:1.",
+      "test": "es6/block-sloppy-function.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <0>\n    at new Subclass1             script 3 134:7\n    at TestThisCheckOrdering     script 3 161:3\n    at                           script 3 110:2.",
+      "test": "es6/classes-experimental.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at assertThrows              script 2 624:5\n    at TestPrototype             script 3 358:3\n    at                           script 3 357:1.",
+      "test": "es6/computed-property-names-classes.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"a\"> found <\"\">\n    at assertEquals              script 2 513:7\n    at TestGeneratorComputedName script 3 78:3\n    at                           script 3 64:1.",
+      "test": "es6/computed-property-names-object-literals-methods.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"\"> found <\"__proto__\">\n    at assertEquals              script 2 513:7\n    at testObjectProperties      script 3 64:3\n    at                           script 3 35:1.",
+      "test": "es6/function-name.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"Iterator result null is not an object\"> found <\"Iterator result is not an object\">\n    at assertEquals                           script 2 513:7\n    at test_iterator_result_object_non_object script 3 349:3\n    at                                        script 3 352:1.",
+      "test": "es6/iteration-semantics.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <[[]]> found <[]>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 687:3.",
+      "test": "es6/iterator-close.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <12> found <14>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 11:1.",
+      "test": "es6/iterator-prototype.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <[\"t1\",\"t2\",\"p3\",\"p4\"]> found <[\"t1\",\"t2\",\"p1\",\"p2\"]>\n    at assertEquals              script 2 513:7\n    at testKeysProxyProto        script 3 183:3\n    at                           script 3 169:1.",
+      "test": "es6/proxies-for.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"get x\"]\nfound:\n[\"has assertEquals\",\"has x\",\"get Symbol(Symbol.unscopables)\",\"has x\",\"get x\"]\n    at assertEquals              script 2 513:7\n    at TestBasics                script 3 27:3\n    at                           script 3 30:1.",
+      "test": "es6/proxies-with-unscopables.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at assertThrows              script 2 624:5\n    at StoreToSuper              script 3 16:3\n    at                           script 3 5:1.",
+      "test": "es6/regress/regress-4097.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"undefined\"> found <\"function\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 13:1.",
+      "test": "es6/sloppy-no-duplicate-generators.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "es6/string-repeat.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at tag                       script 3 291:5\n    at testCallSiteObj           script 3 322:9\n    at                           script 3 286:1.",
+      "test": "es6/templates.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertEquals              script 2 513:7\n    at assertFalse               script 2 570:5\n    at                           script 3 21:1.",
+      "test": "es6/unicode-regexp-ignore-case-noi18n.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "es6/unicode-regexp-unanchored-advance.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at assertThrows              script 2 624:5\n    at                           script 3 35:3\n    at                           script 3 32:1.",
+      "test": "es7/typed-array-includes.js"
+    },
+    {
+      "error": "[sloppy] Test host exited with status 1",
+      "test": "es8/async-function-stacktrace.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"undefined\"> found <\"function\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 13:1.",
+      "test": "es8/sloppy-no-duplicate-async.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 40:3.",
+      "test": "eval-origin.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"eval\"> found <null>\n    at                           script 3 50:7\n    at Array.                    script 3 46:3\n    at                           script 3 100:3.",
+      "test": "eval-stack-trace.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 32, column 1: Uncaught ReferenceError: cputracemark is not defined.",
+      "test": "expose-cputracemark.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 31, column 28: Uncaught TypeError: Cannot read properties of undefined (reading 'name').",
+      "test": "function-names.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 95, column 43: Uncaught TypeError: RegExp static accessor called on an incompatible receiver.",
+      "test": "fuzz-accessors.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 20:1.",
+      "test": "harmony/async-for-of-non-iterable.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 23, column 22: Uncaught RangeError: Maximum BigInt size exceeded.",
+      "test": "harmony/bigint/regressions.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected ReferenceError\n    at assertThrows              script 2 624:5\n    at Function.                 script 3 95:7\n    at                           script 3 82:3.",
+      "test": "harmony/class-static-blocks.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "harmony/harmony-string-pad-end.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "harmony/harmony-string-pad-start.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 1, column 14: unexpected token.",
+      "test": "harmony/modules-import-defer-stack-overflow-on-sync-eval.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "harmony/modules-skip-async-mid-with-sync-error.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "harmony/modules-skip-top-level-cycle-mixed-sync.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "harmony/modules-skip-top-level-cycle-mixed-tla.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 71:1.",
+      "test": "harmony/nullish.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 14, column 1: Uncaught RangeError: Invalid typed array length.",
+      "test": "harmony/regress/regress-421227542.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"functionName: mainRealmThrower this: [object MainGlobal] functionName: null getThis threw eval threw getThis threw functionName: testWasmInstance this: [object MainGlobal] functionName: null this: [object MainGlobal]\"\nfound:\n\"functionName: mainRealmThrower this: [object MainGloba\n    at assertEquals              script 2 513:7\n    at testWasmInstance          script 3 77:3\n    at                           script 3 9:1.",
+      "test": "harmony/regress/regress-511329274.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 9, column 23: Uncaught ReferenceError: kExternalStringMinTwoByteLength is not defined.",
+      "test": "harmony/string-iswellformed-external-uncached.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 22: Uncaught TypeError: undefined is not a function.",
+      "test": "harmony/uint8array-base64-immutable.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 9, column 35: unexpected token.",
+      "test": "huge-typedarrays-helpers.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "ignition/regress-672027.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 18:1.",
+      "test": "ignition/stack-trace-source-position.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <9> found <7>\n    at assertEquals              script 2 513:7\n    at assertParts               script 3 41:5\n    at                           script 3 206:3.",
+      "test": "intl-numberformat-formattoparts.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"zero\"> found <\"other\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 43:3.",
+      "test": "intl-pluralrules-select.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Unterminated string in JSON at position 7 (line 1 column 8)\"\nfound:\n\"Unexpected end of JSON input\"\n    at assertEquals              script 2 513:7\n    at TryParse                  script 3 10:5\n    at                           script 3 15:1.",
+      "test": "json-errors.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JSON nesting exceeds the limit of 1024.",
+      "test": "json-parser-recursive.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <10> found <6>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 33:3.",
+      "test": "keyed-load-null-receiver.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 15, column 1: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "large-external-string.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "lower_limits_mode/regress/regress-crbug-405910175-map.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "lower_limits_mode/regress/regress-crbug-405910175-set.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0.07740188933548275> found <0.052790873358508184>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 66:5.",
+      "test": "math-random.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <2> found <5>\n    at assertEquals              script 2 513:7\n    at assertErrorMessage        script 3 20:3\n    at                           script 3 33:3.",
+      "test": "mjsunit-assertion-error.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "modules-skip-reset1.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "modules-skip-reset2.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "modules-skip-reset3.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 34:1.",
+      "test": "new-function.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 190:3.",
+      "test": "object-create.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "test": "parse-surrogates.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <100> found <200>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 19:1.",
+      "test": "primitive-keyed-access.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (printErr should be defined): expected <\"function\"> found <\"undefined\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 6:1.",
+      "test": "print.js"
+    },
+    {
+      "error": "[sloppy] Uncaught Error: PASS",
+      "test": "queue-microtask-cross-realm-callback-report-exception.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of 1000000.",
+      "test": "regexp/drain.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 80, column 7: Uncaught SyntaxError: Invalid regular expression: /(?i:[+\\-%&|^]|kg)x/: Invalid regular expression: invalid group.",
+      "test": "regexp/quick-check-table.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 15, column 23: Uncaught SyntaxError: Invalid regular expression: /(?:a?b??){0,2}/l: Invalid regular expression flags 'l'.",
+      "test": "regexp-14098.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 12, column 5: Uncaught SyntaxError: Invalid regular expression: /(x(a(b(c)+d){0}e)y)/l: Invalid regular expression flags 'l'.",
+      "test": "regexp-444637793.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of 1000000.",
+      "test": "regexp-capture-3.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception while parsing\n    at failWithMessage           script 2 398:11\n    at assertEarlyError          script 2 663:5\n    at                           script 3 8:1.",
+      "test": "regexp-duplicate-named-groups.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 169, column 14: Uncaught SyntaxError: Invalid regular expression: /(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((.",
+      "test": "regexp-global.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception while parsing\n    at assertEarlyError          script 2 663:5\n    at test_invalid              script 3 7:3\n    at                           script 3 11:1.",
+      "test": "regexp-modifiers.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 88, column 25: Uncaught SyntaxError: Invalid regular expression: /[\\q{abc|def}]/v: Invalid escape.",
+      "test": "regexp-not-jetstream.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception while parsing\n    at failWithMessage           script 2 398:11\n    at assertEarlyError          script 2 663:5\n    at                           script 3 6:1.",
+      "test": "regexp-unicode-sets.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-797581-1.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-797581-2.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-797581-3.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-797581-4.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 6, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-797581-5.js"
+    },
+    {
+      "error": "[sloppy] script_syntax_error: Script syntax error at line 5, column 1: unexpected token.",
+      "test": "regress/modules-skip-regress-crbug-424617296.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of 1000000.",
+      "test": "regress/regress-1006670.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <undefined> found <0>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 30:1.",
+      "test": "regress/regress-1062422.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 9: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-10931.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-1122.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-11491.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Object <MjsUnitAssertionError({stack:\"MjsUnitAssertionError\\n    at new MjsUnitAssertionError script 2 40:20\\n    at failWithMessage           script 2 398:11\\n    at assertUnreachable         script 2 704:5\\n    at                           script 3 41:3\"})> is not an instance of <TypeError> but of\n    at failWithMessage           script 2 398:11\n    at assertInstanceof          script 2 682:7\n    at                           script 3 43:3.",
+      "test": "regress/regress-115452.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 1: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-1158124.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 7: Uncaught SyntaxError: Invalid regular expression: /(?:                                                                                                                                                                                                                                                                            .",
+      "test": "regress/regress-1166138.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Failure: unreachable\n    at                           null\n    at                           null\n    at                           script 3 75:1.",
+      "test": "regress/regress-1170.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 14:1.",
+      "test": "regress/regress-1176504.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 expression nesting exceeds the limit of 256.",
+      "test": "regress/regress-1215653.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 9, column 16: Uncaught SyntaxError: Invalid regular expression: /[[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1],[1.",
+      "test": "regress/regress-1255368.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 12: Uncaught ReferenceError: getV8Statistics is not defined.",
+      "test": "regress/regress-12657.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"SyntaxError: Invalid regular expression flags\"\nfound:\n\"SyntaxError: Script syntax error at line 1, column 6: unexpected token.\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 31:3.",
+      "test": "regress/regress-136048.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <[\"\"]> found <[\"\"]>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 20:1.",
+      "test": "regress/regress-1364429.js"
+    },
+    {
+      "error": "[sloppy] Uncaught (in promise) TypeError: Cannot read properties of undefined (reading 'disable')",
+      "test": "regress/regress-13652.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener').",
+      "test": "regress/regress-1394663.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function nesting exceeds the limit of 64.",
+      "test": "regress/regress-1404863.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:3.",
+      "test": "regress/regress-1409058.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 25, column 15: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-1432470.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 22, column 35: Uncaught TypeError: String.prototype.valueOf requires that 'this' be a String.",
+      "test": "regress/regress-1447343.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 24:1.",
+      "test": "regress/regress-1447383.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"Unexpected identifier 'undefined'\"\nfound:\n\"Script syntax error at line 1, column 3: unexpected token.\"\n    at assertException           script 2 603:7\n    at assertThrows              script 2 618:7\n    at                           script 3 5:1.",
+      "test": "regress/regress-1494681.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 38:1.",
+      "test": "regress/regress-1711.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 34, column 1: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "regress/regress-1757.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Method Error.prototype.toString called on incompatible receiver invalid\"\nfound:\n\"Error.prototype.toString called on non-object\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 39:5.",
+      "test": "regress/regress-1980.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 87:1.",
+      "test": "regress/regress-2443.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 29:1.",
+      "test": "regress/regress-2470.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 30:1.",
+      "test": "regress/regress-2686.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-331074427.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-336820.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 12:1.",
+      "test": "regress/regress-344664770.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-353058.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 36, column 5: Uncaught RangeError: Maximum call stack size exceeded.",
+      "test": "regress/regress-353551.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"Number\"> found <\"Object\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 16:1.",
+      "test": "regress/regress-3718.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"\\\\8 and \\\\9 are not allowed in strict mode.\"\nfound:\n\"Script syntax error at line 1, column 17: Octal literals and legacy escapes are not allowed in strict mode.\"\n    at assertException           script 2 603:7\n    at assertThrows              script 2 618:7\n    at                           script 3 7:1.",
+      "test": "regress/regress-375748220.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 12: Uncaught SyntaxError: Invalid regular expression: /(?-i:a)|b/i: Invalid regular expression: invalid group.",
+      "test": "regress/regress-377820802.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 11: Uncaught SyntaxError: Invalid regular expression: /()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?()?(.",
+      "test": "regress/regress-380416869.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 12: Uncaught SyntaxError: Invalid regular expression: /(?i:[A-Z]{10})/: Invalid regular expression: invalid group.",
+      "test": "regress/regress-388068045.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "test": "regress/regress-401111776.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-437956096.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 15: Uncaught SyntaxError: Invalid regular expression: /(?<=(?:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "test": "regress/regress-438523582.js"
+    },
+    {
+      "error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,const inner_url = \"data:text/javascript,print('executing inner module');\";import(inner_url);.",
+      "test": "regress/regress-438732677.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 17: Uncaught SyntaxError: Invalid regular expression: /(?<=^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "test": "regress/regress-451663011.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 16: Uncaught SyntaxError: Invalid regular expression: /(?<=(?:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "test": "regress/regress-452681948.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 12: Uncaught SyntaxError: Invalid regular expression: /(a)\\1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.",
+      "test": "regress/regress-454568212.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 12: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-476509600.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 36: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-478659010.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (acos): expected <true> found <false>\n    at assertTrue                script 2 565:5\n    at testTraceNativeConversion script 3 15:5\n    at                           script 3 20:1.",
+      "test": "regress/regress-4815.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-481519344.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 14:3.",
+      "test": "regress/regress-484904778.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 29:1.",
+      "test": "regress/regress-485267831.js"
+    },
+    {
+      "error": "[sloppy] host event loop callback limit exceeded",
+      "test": "regress/regress-489941769.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-490.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 9, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener').",
+      "test": "regress/regress-490446682.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-492.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 17: Uncaught ReferenceError: SharedStructType is not defined.",
+      "test": "regress/regress-499155348.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of 1000000.",
+      "test": "regress/regress-499721612.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 9, column 1: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-500174491.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-500980.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "test": "regress/regress-503097371.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 11:1.",
+      "test": "regress/regress-505116710.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-506499280-extended.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-506499280.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 12: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-509312809.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 5, column 12: Uncaught SyntaxError: Invalid regular expression: /(?i:x|[a-f])/: Invalid regular expression: invalid group.",
+      "test": "regress/regress-510487690.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 10, column 1: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/regress-514561070.js"
+    },
+    {
+      "error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,await Promise.resolve();.",
+      "test": "regress/regress-515494863.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 12, column 1: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/regress-516022777.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (max): expected <true> found <false>\n    at assertTrue                script 2 565:5\n    at testTraceNativeConversion script 3 15:5\n    at                           script 3 19:1.",
+      "test": "regress/regress-5173.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 18, column 21: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-517406981.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertEquals              script 2 513:7\n    at assertFalse               script 2 570:5\n    at                           script 3 8:1.",
+      "test": "regress/regress-5216.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 17, column 1: Uncaught ReferenceError: getV8Statistics is not defined.",
+      "test": "regress/regress-521921424.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-522126182.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 1: Uncaught object.",
+      "test": "regress/regress-523435063.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-524.js"
+    },
+    {
+      "error": "[sloppy] Uncaught Error: ",
+      "test": "regress/regress-524775988.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 33, column 22: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/regress-532288251.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 18:1.",
+      "test": "regress/regress-578775.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "test": "regress/regress-5927.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-599414-array-concat-fast-path.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Illegal continue statement: 'a' does not denote an iteration statement\"\nfound:\n\"Script syntax error at line 1, column 6: Undefined label.\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 10:3.",
+      "test": "regress/regress-6142.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array element at index 2): expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at assertArrayEquals         script 2 540:9\n    at                           script 3 19:1.",
+      "test": "regress/regress-6223.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"pt-BR\"> found <\"en-US\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 11:3.",
+      "test": "regress/regress-6288.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 16:3.",
+      "test": "regress/regress-633998.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 5:1.",
+      "test": "regress/regress-649067.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-655573.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 10:3.",
+      "test": "regress/regress-677055.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-678917.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-689016.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-748069.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-7558019.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"\"> found <\"__proto__\">\n    at assertSame                script 2 503:5\n    at testFunctionNames         script 3 21:3\n    at                           script 3 5:1.",
+      "test": "regress/regress-7773.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-779407.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144.",
+      "test": "regress/regress-784862.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 16:1.",
+      "test": "regress/regress-786573.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: threw an exception: Script syntax error at line 1, column 26: Undefined label.\n    at failWithMessage           script 2 398:11\n    at assertDoesNotThrow        script 2 694:7\n    at                           script 3 29:1.",
+      "test": "regress/regress-8033.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"Invalid destructuring assignment target\"\nfound:\n\"Script syntax error at line 1, column 2: unexpected reserved word.\"\n    at assertException           script 2 603:7\n    at assertThrows              script 2 618:7\n    at                           script 3 6:1.",
+      "test": "regress/regress-852765.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-862433.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 11:1.",
+      "test": "regress/regress-896326.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1.",
+      "test": "regress/regress-9036-1.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 9:1.",
+      "test": "regress/regress-9036-2.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 10:1.",
+      "test": "regress/regress-9036-3.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 syntax depth exceeds the limit of 1024.",
+      "test": "regress/regress-903874.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 31, column 1: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-91.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 5:1.",
+      "test": "regress/regress-926036.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-944945.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 12, column 13: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-948307.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 32:1.",
+      "test": "regress/regress-95920.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 12, column 16: Uncaught SyntaxError: Invalid regular expression: /(?<a0>)|(?<a1>)|(?<a2>)|(?<a3>)|(?<a4>)|(?<a5>)|(?<a6>)|(?<a7>)|(?<a8>)|(?<a9>)|(?<a10>)|(?<a11>)|(?<a12>)|(?<a13>)|(?<a14>)|(?<a15>)|(?<a16>)|(?<a17>)|(?<a18>)|(?<a19>)|(?<a20>)|(?<a21>)|(?<a22>)|(?<a23>)|(?<a24>)|(?<a25>)|(?<a26>)|(?<a27>)|(?<a28>)|(?<a29>)|(?<a30>)|(?.",
+      "test": "regress/regress-980891.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 31:3.",
+      "test": "regress/regress-builtinbust-7.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 12, column 9: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-crbug-1041232.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <2> found <1>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 16:1.",
+      "test": "regress/regress-crbug-1053939-1.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <1> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 16:1.",
+      "test": "regress/regress-crbug-1053939.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 32: Uncaught TypeError: Cannot read properties of undefined (reading 'maxFixedArrayCapacity').",
+      "test": "regress/regress-crbug-1057653.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertTrue                script 2 565:5\n    at test                      script 3 13:3\n    at                           script 3 22:1.",
+      "test": "regress/regress-crbug-109362.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <144> found <-1>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 18:1.",
+      "test": "regress/regress-crbug-1105383.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "regress/regress-crbug-1191886.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 9, column 13: Uncaught RangeError: Invalid typed array length.",
+      "test": "regress/regress-crbug-1209152.js"
+    },
+    {
+      "error": "[sloppy] Uncaught Number(222.0)",
+      "test": "regress/regress-crbug-1263994.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\nshould match '/Cannot destructure property 'd' of 'undefined' as it is undefined/'\nfound:\n\"Cannot destructure 'undefined' or 'null'.\"\n    at assertException           script 2 601:7\n    at assertThrows              script 2 618:7\n    at                           script 3 35:1.",
+      "test": "regress/regress-crbug-1278086.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught Error: Error executing file: \"test/mjsunit/regress/regress-crbug-1302527.js\" (caused by MjsUnitAssertionError).",
+      "test": "regress/regress-crbug-1302527-no-lazy-feedback.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\nshould match '/Cannot define property field, object is not extensible/'\nfound:\n\"Cannot redefine property: field\"\n    at assertException           script 2 601:7\n    at assertThrows              script 2 618:7\n    at                           script 3 561:5.",
+      "test": "regress/regress-crbug-1302527.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 13, column 18: Uncaught TypeError: Cannot read properties of undefined (reading 'Div').",
+      "test": "regress/regress-crbug-1308360.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at array_iterator            script 3 19:3\n    at                           script 3 6:1.",
+      "test": "regress/regress-crbug-1357318.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 9:1.",
+      "test": "regress/regress-crbug-1360736.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 20, column 16: Uncaught TypeError: Cannot read properties of undefined (reading 'next').",
+      "test": "regress/regress-crbug-1404820.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\nshould match '/arr.push is not a function/'\nfound:\n\"undefined is not a function\"\n    at assertException           script 2 601:7\n    at assertThrows              script 2 618:7\n    at                           script 3 22:1.",
+      "test": "regress/regress-crbug-1417495.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "test": "regress/regress-crbug-1440685.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 13:3.",
+      "test": "regress/regress-crbug-1459172.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 17: Uncaught TypeError: Cannot read properties of undefined (reading 'Div').",
+      "test": "regress/regress-crbug-1509910.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 53, column 14: Uncaught SyntaxError: Invalid regular expression: /(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((.",
+      "test": "regress/regress-crbug-178790.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-357052.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"Europe/Isle_of_Man\"> found <\"eUrope/isLe_OF_man\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 11:3.",
+      "test": "regress/regress-crbug-364374.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0> found <undefined>\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 12:3.",
+      "test": "regress/regress-crbug-419454582.js"
+    },
+    {
+      "error": "[sloppy] Test host exited with status 1",
+      "test": "regress/regress-crbug-42213031.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "test": "regress/regress-crbug-478011.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of 1000000.",
+      "test": "regress/regress-crbug-482998.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"Asia/Katmandu\"> found <\"Asia/Kathmandu\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 13:3.",
+      "test": "regress/regress-crbug-487322.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: operation limit exceeded.",
+      "test": "regress/regress-crbug-493779.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"0\"> found <\"get 0\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 22:1.",
+      "test": "regress/regress-crbug-505370.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 1: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "regress/regress-crbug-521483370.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-612109.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-627934.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:3.",
+      "test": "regress/regress-crbug-627935.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: updates of this target.",
+      "test": "regress/regress-crbug-631917.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "test": "regress/regress-crbug-663410.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 3: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-crbug-714696.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 10, column 3: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "regress/regress-crbug-736451.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 array length exceeds the limit of 262144.",
+      "test": "regress/regress-crbug-798026.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-808192.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-crbug-902610-2.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/regress-crbug-902610.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-902672.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 syntax depth exceeds the limit of 1024.",
+      "test": "regress/regress-crbug-913222.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "regress/regress-crbug-9161.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-918301.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "regress/regress-crbug-923264.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 11:1.",
+      "test": "regress/regress-crbug-935800.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 10, column 1: Uncaught TypeError: 'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions or the arguments objects for calls to them.",
+      "test": "regress/regress-directive.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 38, column 9: Uncaught RangeError: Invalid string length.",
+      "test": "regress/regress-json-stringify-gc.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 88, column 21: Uncaught RangeError: Invalid string length.",
+      "test": "regress/regress-latin-1.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 38, column 14: Uncaught SyntaxError: Invalid regular expression: /(a)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b)|(b).",
+      "test": "regress/regress-regexp-construct-result.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 1: Uncaught object.",
+      "test": "regress/regress-report-exception-terminate.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 13, column 1: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "regress/regress-sliced-external-cons-regexp.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 10, column 13: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/regress-temporal-zoneinfo.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 5:1.",
+      "test": "regress/regress-v8-10602.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught Error: Error executing file: \"test/mjsunit/regress/regress-v8-12421.js\" (caused by MjsUnitAssertionError).",
+      "test": "regress/regress-v8-12421-no-lazy-feedback.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\nshould match '/Cannot define property field, object is not extensible/'\nfound:\n\"Cannot redefine property: field\"\n    at assertException           script 2 601:7\n    at assertThrows              script 2 618:7\n    at                           script 3 299:5.",
+      "test": "regress/regress-v8-12421.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 12: Uncaught SyntaxError: Invalid regular expression: /^(?:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.",
+      "test": "regress/regress-v8-12472.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Failure: unreachable\n    at assertUnreachable         script 2 704:5\n    at Object.get value          script 3 10:9\n    at                           script 3 18:1.",
+      "test": "regress/regress-v8-12595.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 8:1.",
+      "test": "regress/regress-v8-12705.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <[\"a\",\"b\"]> found <[\"a\",\"b\"]>\n    at fail                      script 2 418:11\n    at assertSame                script 2 503:5\n    at                           script 3 11:1.",
+      "test": "regress/regress-v8-8799.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: d8 concurrently active worker threads exceeds the limit of 32.",
+      "test": "regress/wasm/regress-1010272.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <0> found <-1>\n    at assertEquals                   script 2 513:7\n    at TestConcurrentGrowMemoryResult script 3 73:5\n    at                                script 3 50:1.",
+      "test": "regress/wasm/regress-1067621.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at assertThrows              script 2 624:5\n    at                           script 3 18:3\n    at                           script 3 12:2.",
+      "test": "regress/wasm/regress-1254675.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught Error: Error executing file: \"test/mjsunit/wasm/js-api.js\" (caused by MjsUnitAssertionError).",
+      "test": "regress/wasm/regress-1523740.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"RangeError: WebAssembly.Instance(): Out of memory: Cannot allocate Wasm memory for new instance\"\nfound:\n\"RangeError: Out of memory: WebAssembly memory exceeds V9 buffer limit\"\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 28:3.",
+      "test": "regress/wasm/regress-444049512.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly descriptor or continuation type.",
+      "test": "regress/wasm/regress-473272199.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 42, column 12: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/wasm/regress-474491347.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly shared custom descriptors.",
+      "test": "regress/wasm/regress-475896261.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 13, column 16: Uncaught RangeError: Out of memory: WebAssembly memory exceeds V9 buffer limit.",
+      "test": "regress/wasm/regress-482759504.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly descriptor or continuation type.",
+      "test": "regress/wasm/regress-488089242.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 33, column 23: Uncaught ReferenceError: SharedArray is not defined.",
+      "test": "regress/wasm/regress-490877756.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 12: Uncaught TypeError: undefined is not a function.",
+      "test": "regress/wasm/regress-493307331.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly descriptor or continuation type.",
+      "test": "regress/wasm/regress-493314948.js"
+    },
+    {
+      "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly descriptor or continuation type.",
+      "test": "regress/wasm/regress-493430818.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 31:3.",
+      "test": "regress/wasm/regress-493529579.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "regress/wasm/regress-493905761.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 59, column 1: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/wasm/regress-502287689.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 2617, column 12: Uncaught CompileError: WebAssembly.Module(): invalid shared heap type.",
+      "test": "regress/wasm/regress-508336493.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 3: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/wasm/regress-519715438.js"
+    },
+    {
+      "error": "[sloppy] Uncaught (in promise) RangeError: Maximum call stack size exceeded",
+      "test": "regress/wasm/regress-520777574.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 40, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'enable').",
+      "test": "regress/wasm/regress-525437482.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 3: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/wasm/regress-527985808.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 11, column 3: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/wasm/regress-529880019.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 14, column 3: Uncaught ReferenceError: send is not defined.",
+      "test": "regress/wasm/regress-534275413.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 8, column 7: Uncaught RangeError: WebAssembly.Memory.grow(): Unable to grow instance memory.",
+      "test": "regress/wasm/regress-680938.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 22, column 1: Uncaught RangeError: WebAssembly.Table.grow exceeds maximum or V9 array limit.",
+      "test": "regress/wasm/regress-752423.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/wasm/regress-810973.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "regress/wasm/regress-810973b.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array length): expected <3> found <2>\n    at assertArrayEquals         script 2 537:5\n    at TestSloppynessPropagates  script 3 15:3\n    at                           script 3 5:1.",
+      "test": "regress/wasm/regress-985154.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 16: Uncaught RangeError: Out of memory: WebAssembly memory exceeds V9 buffer limit.",
+      "test": "regress/wasm/regress-crbug-816961.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 7, column 13: Uncaught TypeError: Cannot read properties of undefined (reading 'getAndStop').",
+      "test": "regress-1400809.js"
+    },
+    {
+      "error": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,export function v4(){}.",
+      "test": "regress-367066330.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 16:3.",
+      "test": "regress-478205262.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 30:1.",
+      "test": "scanner.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "spread-large-map.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+      "test": "spread-large-set.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 resident array elements exceeds the limit of 262144.",
+      "test": "spread-large-string.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (RegExp): expected <true> found <false>\n    at assertTrue                script 2 565:5\n    at testTraceNativeConversion script 3 56:5\n    at                           script 3 61:1.",
+      "test": "stack-traces-2.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (during class construction doesn't contain expected[1] stack = ReferenceError: FAIL is not defined\n    at thrower (script 3 line 34, column 3)\n    at <anonymous> (script 3 line 39, column 16)\n    at testClassConstruction (script 3 line 38, column 3)\n    at testTrace (script 3 line 11, column\n    at assertTrue                script 2 565:5\n    at testTrace                 script 3 14:7\n    at                           script 3 48:1.",
+      "test": "stack-traces-class-fields.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 47:3.",
+      "test": "stack-traces-overflow.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (testArrayNative doesn't contain expected[0] stack = ReferenceError: FAIL is not defined\n    at <anonymous> (script 3 line 48, column 31)\n    at testArrayNative (script 3 line 48, column 3)\n    at testTrace (script 3 line 185, column 5)\n    at <anonymous> (script 3 line 290, column 1)): expe\n    at assertTrue                script 2 565:5\n    at testTrace                 script 3 188:7\n    at                           script 3 290:1.",
+      "test": "stack-traces.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "test": "stackoverflow-underapplication.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <\"undefined\"> found <\"function\">\n    at fail                      script 2 418:11\n    at assertEquals              script 2 513:7\n    at                           script 3 7:1.",
+      "test": "statistics-extension.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 71, column 14: Uncaught ReferenceError: isOneByteString is not defined.",
+      "test": "string-external-cached.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: JavaScript string UTF-16 units exceeds the limit of 1048576.",
+      "test": "string-oom-concat.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 6, column 31: Uncaught object.",
+      "test": "string-pad.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 53, column 3: Uncaught ReferenceError: externalizeString is not defined.",
+      "test": "string-replace-with-empty.js"
+    },
+    {
+      "error": "[sloppy] limit_exceeded: V9 environment UTF-16 units exceeds the limit of 2097152.",
+      "test": "substr.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 47, column 31: Uncaught TypeError: Cannot read properties of undefined (reading 'name').",
+      "test": "test-builtins-setup.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 228, column 12: Uncaught SyntaxError: Invalid regular expression: /(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$))(\\d+(?:\\s|$.",
+      "test": "third_party/regexp-pcre/regexp-pcre.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 39:1.",
+      "test": "var.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 30, column 1: Uncaught ReferenceError: triggerAssertFalse is not defined.",
+      "test": "verify-assert-false.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 30, column 1: Uncaught ReferenceError: triggerCheckFalse is not defined.",
+      "test": "verify-check-false.js"
+    },
+    {
+      "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at assertEquals              script 2 513:7\n    at assertTrue                script 2 565:5\n    at                           script 3 7:1.",
+      "test": "verify-no-fail.js"
+    }
+  ],
+  "groups": {
+    "(root)": {
+      "fail": 68,
+      "pass": 477
+    },
+    "async-hooks": {
+      "fail": 0,
+      "pass": 8
+    },
+    "bugs": {
+      "fail": 5,
+      "pass": 0
+    },
+    "compiler": {
+      "fail": 8,
+      "pass": 148
+    },
+    "decorators": {
+      "fail": 0,
+      "pass": 4
+    },
+    "es6": {
+      "fail": 17,
+      "pass": 268
+    },
+    "es7": {
+      "fail": 1,
+      "pass": 9
+    },
+    "es8": {
+      "fail": 2,
+      "pass": 6
+    },
+    "es9": {
+      "fail": 0,
+      "pass": 14
+    },
+    "extinction": {
+      "fail": 0,
+      "pass": 1
+    },
+    "harmony": {
+      "fail": 14,
+      "pass": 213
+    },
+    "ignition": {
+      "fail": 2,
+      "pass": 11
+    },
+    "iterator-helpers": {
+      "fail": 0,
+      "pass": 1
+    },
+    "lower_limits_mode": {
+      "fail": 2,
+      "pass": 0
+    },
+    "maglev": {
+      "fail": 0,
+      "pass": 20
+    },
+    "math-sum-precise": {
+      "fail": 0,
+      "pass": 10
+    },
+    "regexp": {
+      "fail": 2,
+      "pass": 6
+    },
+    "regress": {
+      "fail": 209,
+      "pass": 2144
+    },
+    "third_party": {
+      "fail": 1,
+      "pass": 1
+    },
+    "turbolev": {
+      "fail": 0,
+      "pass": 8
+    },
+    "type-profile": {
+      "fail": 0,
+      "pass": 1
+    },
+    "weakrefs": {
+      "fail": 0,
+      "pass": 61
+    }
+  },
+  "pass": 3411,
+  "skipped": {
+    "dir:d8": 43,
+    "dir:sandbox": 121,
+    "dir:shared-memory": 57,
+    "dir:tools": 11,
+    "dir:wasm": 524,
+    "flag:--allow-natives-syntax": 4589
+  },
+  "suite": "mjsunit",
+  "top_failures": [
+    {
+      "count": 27,
+      "reason": "[sloppy] limit_exceeded: JavaScript string UTF-N units exceeds the limit of N."
+    },
+    {
+      "count": 22,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <true> found <false>\n    at"
+    },
+    {
+      "count": 16,
+      "reason": "[sloppy] script_syntax_error: Script syntax error at line N, column N: unexpected token."
+    },
+    {
+      "count": 12,
+      "reason": "[sloppy] script_execution_error: Uncaught TypeError: undefined is not a function."
+    },
+    {
+      "count": 11,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n "
+    },
+    {
+      "count": 10,
+      "reason": "[sloppy] limit_exceeded: VN function parameters exceeds the limit of N."
+    },
+    {
+      "count": 10,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessag"
+    },
+    {
+      "count": 8,
+      "reason": "[sloppy] limit_exceeded: VN resident array elements exceeds the limit of N."
+    },
+    {
+      "count": 8,
+      "reason": "[sloppy] script_execution_error: Uncaught ReferenceError: send is not defined."
+    },
+    {
+      "count": 7,
+      "reason": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+    },
+    {
+      "count": 7,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected RangeError\n"
+    },
+    {
+      "count": 7,
+      "reason": "[sloppy] script_execution_error: Uncaught RangeError: Invalid typed array length."
+    },
+    {
+      "count": 6,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected SyntaxError"
+    },
+    {
+      "count": 6,
+      "reason": "[sloppy] script_execution_error: Uncaught ReferenceError: externalizeString is not defined."
+    },
+    {
+      "count": 5,
+      "reason": "[sloppy] limit_exceeded: regular expression steps exceeds the limit of N."
+    },
+    {
+      "count": 4,
+      "reason": "[sloppy] limit_exceeded: VN expression nesting exceeds the limit of N."
+    },
+    {
+      "count": 4,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\nshould mat"
+    },
+    {
+      "count": 4,
+      "reason": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: WebAssembly descriptor or continua"
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception while parsing\n    at "
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"undefined\"> found <\"funct"
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at assert"
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at fail  "
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <undefined>\n    a"
+    },
+    {
+      "count": 3,
+      "reason": "[sloppy] script_execution_error: Uncaught object."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] Test host exited with status N"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at assertFalse (script N l"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] Uncaught TypeError: Cannot read properties of undefined (reading 'getFunction')"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] limit_exceeded: VN array length exceeds the limit of N."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] limit_exceeded: VN syntax depth exceeds the limit of N."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"\"> found <\"__proto__\">\n  "
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <false> found <true>\n    at"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught RangeError: Invalid string length."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught RangeError: Maximum call stack size exceeded."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught RangeError: Out of memory: WebAssembly memory exceeds VN buffer limi"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught ReferenceError: getVNStatistics is not defined."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught SyntaxError: Invalid regular expression: /(((((((((((((((((((((((((("
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught SyntaxError: Invalid regular expression: /(?<=(?:aaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught TypeError: Cannot read properties of undefined (reading 'Div')."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught TypeError: Cannot read properties of undefined (reading 'name')."
+    },
+    {
+      "count": 2,
+      "reason": "[sloppy] script_execution_error: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfil"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught (in promise) RangeError: Maximum call stack size exceeded"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught (in promise) TypeError: Cannot read properties of undefined (reading 'disable')"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,await Promise.reso"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,const inner_url = "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught (in promise) TypeError: Failed to load module script data:text/javascript,export function vN"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught Error: "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught Error: PASS"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] Uncaught Number(N.N)"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] host event loop callback limit exceeded"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: JSON nesting exceeds the limit of N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: Script execution stopped: operation limit exceeded."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: VN environment UTF-N units exceeds the limit of N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: VN function nesting exceeds the limit of N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: VN registers exceeds the limit of N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] limit_exceeded: dN concurrently active worker threads exceeds the limit of N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught CompileError: WebAssembly.Module(): invalid shared heap type."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught Error: Error executing file: \"test/mjsunit/regress/regress-crbug-N"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught Error: Error executing file: \"test/mjsunit/regress/regress-vN-N."
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught Error: Error executing file: \"test/mjsunit/wasm/js-api.js\" (caused b"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception\n    at assertThrows  "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected Error\n    a"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected EvalError\n "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Did not throw exception, expected ReferenceEr"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"Invalid d"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"Unexpecte"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (Error message):\nexpected:\n\"\\\\N and \\"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (RegExp): expected <true> found <fals"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (acos): expected <true> found <false>"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (array element at index N): expected "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (array length): expected <N> found <N"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (during class construction doesn't co"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (max): expected <true> found <false>\n"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (printErr should be defined): expecte"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure (testArrayNative doesn't contain expe"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Illegal continue statemen"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Method Error.prototype.to"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"RangeError: WebAssembly.I"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"SyntaxError: Invalid regu"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"Unterminated string in JS"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n\"functionName: mainRealmTh"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure:\nexpected:\n[\"has assertEquals\",\"has x"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"Asia/Katmandu\"> found <\"A"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"Europe/Isle_of_Man\"> foun"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"Iterator result null is n"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"N\"> found <\"get N\">\n    a"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"Number\"> found <\"Object\">"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"a\"> found <\"\">\n    at ass"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"eval\"> found <null>\n    a"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"function\"> found <\"object"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"kallevip\"> found <undefin"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"pt-BR\"> found <\"en-US\">\n "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <\"zero\"> found <\"other\">\n  "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N.N> found"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <-N>\n    at asser"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <-N>\n    at fai"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at fa"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at fail"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at fail "
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <N>\n    at new Su"
+    },
+    {
+      "count": 1,
+      "reason": "[sloppy] script_execution_error: Uncaught MjsUnitAssertionError: Failure: expected <N> found <undefined>\n    "
+    }
+  ]
+}

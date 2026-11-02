@@ -13,9 +13,12 @@ const CONTENT_WIDTH: f64 = 416.0;
 const BODY_PADDING: f64 = 32.0;
 /// The authored line advance must match both layout and native paint.
 const LINE_HEIGHT: f64 = 25.6;
+/// The first paragraph keeps its default 1em top margin below the body's padding, as in Chromium,
+/// where padding stops a child's margin from collapsing through.
+const PARAGRAPH_MARGIN: f64 = 16.0;
 /// The retained httpbin paragraph has this complete decoded UTF-8 byte count.
 const PARAGRAPH_BYTES: usize = 3588;
-/// Sampling away from the page edge excludes scrollbars and native chrome.
+/// Sampling away from the page edge excludes scrollbars and the native Mars shell.
 const CANVAS_SAMPLE_INSET: f64 = 8.0;
 /// A small color allowance tolerates native color conversion while distinguishing both schemes.
 const COLOR_TOLERANCE: u8 = 2;
@@ -51,8 +54,17 @@ fn native_static_reading_reflows_and_paints_complete_source() {
     assert!(
         dark["layout_generation"].as_u64().unwrap() > before["layout_generation"].as_u64().unwrap()
     );
+    // A screenshot asked for at an older layout captures the frame on screen, as a browser does,
+    // and says which layout it asked for, so the caller can see the page moved on.
     let stale = window.request("page.screenshot", json!({"tab_id":before["tab_id"],"page_id":before["page_id"],"expected_revision":before["revision"],"layout_generation":before["layout_generation"]}));
-    assert_eq!(stale["error"]["code"], "invalid_request");
+    assert!(stale["error"].is_null(), "{stale}");
+    assert_eq!(
+        stale["result"]["requested_layout_generation"],
+        before["layout_generation"]
+    );
+    if let Some(shown) = stale["result"]["layout_generation"].as_u64() {
+        assert_ne!(Some(shown), before["layout_generation"].as_u64());
+    }
     capture_canvas(&mut window, 0x22);
     appearance(&mut window, "light");
     assert_styled(&mut window, &before, "light");
@@ -134,7 +146,10 @@ fn assert_styled(window: &mut Window, before: &Value, appearance: &str) -> Value
         (number(context, "width") - CONTENT_WIDTH - BODY_PADDING * 2.0) / 2.0 + BODY_PADDING,
     );
     close(number(first, "width"), CONTENT_WIDTH);
-    close(number(first, "y"), number(context, "height") / 4.0);
+    close(
+        number(first, "y"),
+        number(context, "height") / 4.0 + PARAGRAPH_MARGIN,
+    );
     close(number(first, "line_height"), LINE_HEIGHT);
     assert_nested_link_frame(&state, &layout, &page);
     page
@@ -194,23 +209,14 @@ fn assert_long_reading(window: &mut Window, url: &str) {
             .ends_with("and all of them a care-killing competency.")
     );
     let layout = window.call("page.layout", json!({}));
-    let painted = layout["items"]
+    let lines = layout["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["node_id"] == paragraph["node_id"])
-        .unwrap();
-    let painted_text = painted["lines"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|line| line["text"].as_str().unwrap())
-        .collect::<Vec<_>>()
-        .join(" ");
-    assert_eq!(
-        painted_text,
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
-    );
+        .filter(|item| item["node_id"] == paragraph["node_id"])
+        .flat_map(|item| item["lines"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert_source_coverage(text, &lines);
     let extent = number(&layout, "height");
     let maximum = (extent - number(&page["viewport"], "height")).max(0.0);
     assert!(maximum > 0.0);
@@ -229,6 +235,24 @@ fn assert_long_reading(window: &mut Window, url: &str) {
         close(number(&current["viewport"], "scroll_y"), y.min(maximum));
         window.capture();
     }
+}
+
+/// Every painted line consumes the normalized source in order; a wrap may omit its boundary
+/// space, but a break after a source hyphen must not invent one or lose any source characters.
+pub(super) fn assert_source_coverage(source: &str, lines: &[&Value]) {
+    let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut remaining = normalized.as_str();
+    assert!(!lines.is_empty(), "the source has no painted lines");
+    for (index, line) in lines.iter().enumerate() {
+        let text = line["text"].as_str().unwrap();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(!text.is_empty(), "painted line {index} is empty");
+        remaining = remaining.strip_prefix(' ').unwrap_or(remaining);
+        remaining = remaining.strip_prefix(&text).unwrap_or_else(|| {
+            panic!("painted line {index} {text:?} does not consume source {remaining:?}")
+        });
+    }
+    assert_eq!(remaining, "", "painted lines omit the end of the source");
 }
 
 /// A blank point in the actual native page viewport must carry the authored root canvas color.

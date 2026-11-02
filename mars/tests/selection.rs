@@ -136,67 +136,87 @@ fn human_and_agent_selection_use_equalities_and_both_array_predicates() {
     }
 }
 
-/** Unsupported coercion and predicate failures discard prior globals, heap, Storage and text writes. */
+/** A predicate that throws keeps the globals, heap, Storage and text written before the throw,
+as a browser does, and reports the error to the console; an engine limit discards all four and
+leaves the next event free to run. */
 #[test]
 fn failed_selection_candidates_preserve_state_and_allow_the_next_event() {
-    for (failure, code) in [
-        (
-            "const result=[1,2].find(value=>value==2&&({})==0)",
-            "unsupported_feature",
-        ),
-        ("const result=[1].find(undefined)", "script_execution_error"),
-        (
-            "const result=[1].some(value=>{while(true){}return false;})",
-            "limit_exceeded",
-        ),
-    ] {
-        let body = FAILURE.replace("FAILURE", failure);
-        let fixture = fixture(&body);
-        let mut runtime = runtime(&fixture.url, Owner::Agent);
-        let page = call(
-            &mut runtime,
-            Owner::Agent,
-            "page.navigate",
-            json!({"url":fixture.url}),
-        )
-        .unwrap();
-        let page = call(
-            &mut runtime,
-            Owner::Agent,
-            "page.click",
-            target(&page, "good"),
-        )
-        .unwrap();
-        let error = call(
-            &mut runtime,
-            Owner::Agent,
-            "page.click",
-            target(&page, "bad"),
-        )
-        .unwrap_err();
-        assert_eq!(error.code, code);
-        assert!(error.location.is_some());
-        assert_eq!(
-            call(&mut runtime, Owner::Agent, "page.inspect", json!({})).unwrap(),
-            page
-        );
-        let read = call(
-            &mut runtime,
-            Owner::Agent,
-            "page.click",
-            target(&page, "read"),
-        )
-        .unwrap();
-        assert_eq!(text(&read, "out"), "1 1 1");
-        let recovered = call(
-            &mut runtime,
-            Owner::Agent,
-            "page.click",
-            target(&read, "good"),
-        )
-        .unwrap();
-        assert_eq!(text(&recovered, "out"), "2 2");
-    }
+    let (_thrown, mut runtime, page) = after_good("const result=[1].find(undefined)");
+    let failed = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&page, "bad"),
+    )
+    .unwrap();
+    assert_eq!(text(&failed, "out"), "proposed");
+    let console = call(&mut runtime, Owner::Agent, "page.console", json!({})).unwrap();
+    assert!(
+        console["entries"]
+            .to_string()
+            .contains("Uncaught TypeError"),
+        "{console}"
+    );
+    let read = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&failed, "read"),
+    )
+    .unwrap();
+    assert_eq!(text(&read, "out"), "11 11 11");
+    let (_fixture, mut runtime, page) =
+        after_good("const result=[1].some(value=>{while(true){}return false;})");
+    let error = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&page, "bad"),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.location.is_some());
+    assert_eq!(
+        call(&mut runtime, Owner::Agent, "page.inspect", json!({})).unwrap(),
+        page
+    );
+    let read = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&page, "read"),
+    )
+    .unwrap();
+    assert_eq!(text(&read, "out"), "1 1 1");
+    let recovered = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&read, "good"),
+    )
+    .unwrap();
+    assert_eq!(text(&recovered, "out"), "2 2");
+}
+
+/** The FAILURE page with `failure` as the bad handler's last statement, after one good click. */
+fn after_good(failure: &str) -> (Fixture, Runtime, Value) {
+    let fixture = fixture(&FAILURE.replace("FAILURE", failure));
+    let mut runtime = runtime(&fixture.url, Owner::Agent);
+    let page = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.navigate",
+        json!({"url":fixture.url}),
+    )
+    .unwrap();
+    let page = call(
+        &mut runtime,
+        Owner::Agent,
+        "page.click",
+        target(&page, "good"),
+    )
+    .unwrap();
+    (fixture, runtime, page)
 }
 
 /** Discovery accurately describes added operations while retaining every enforced resource bound. */

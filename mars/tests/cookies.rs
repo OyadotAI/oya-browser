@@ -1,5 +1,6 @@
 /** Pure cookie rules use explicit time and URLs without touching the network. */
 use mars::network::CookieJar;
+use mars::network::network::constants::DOMAIN_COOKIES;
 use std::time::{Duration, SystemTime};
 use url::Url;
 fn url(value: &str) -> Url {
@@ -51,11 +52,11 @@ fn profile_roundtrip_preserves_session_cookies_and_prunes_expired_entries() {
     );
 }
 
-/** Corrupt and unsupported profile data fails whole-record rather than restoring a prefix. */
+/** Corrupt and future-version profile data fails whole-record rather than restoring a prefix. */
 #[test]
 fn profile_rejects_corruption_unknown_fields_and_future_versions() {
     let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000_000);
-    for bytes in [br"{".as_slice(), br#"{"version":2,"cookies":[]}"#.as_slice(), br#"{"version":1,"cookies":[{"name":"x","value":"y","host":"example.com","path":"/","secure":false,"same_site":"lax","expires":null,"extra":true}]}"#.as_slice()] {
+    for bytes in [br"{".as_slice(), br#"{"version":3,"cookies":[]}"#.as_slice(), br#"{"version":1,"cookies":[{"name":"x","value":"y","host":"example.com","path":"/","secure":false,"same_site":"lax","expires":null,"extra":true}]}"#.as_slice()] {
         assert!(CookieJar::from_profile(bytes, now).is_err());
     }
 }
@@ -173,7 +174,7 @@ fn max_age_expiry_deletion_prefixes_and_domain_refusals_are_value_free() {
 }
 /** Insecure overlays cannot replace or delete a previously Secure name at overlapping paths. */
 #[test]
-fn secure_overlay_and_capacity_fail_closed() {
+fn insecure_overlay_cannot_replace_a_secure_cookie() {
     let now = SystemTime::now();
     let origin = url("https://example.com/");
     let mut jar = CookieJar::default();
@@ -188,8 +189,21 @@ fn secure_overlay_and_capacity_fail_closed() {
         .len(),
         1
     );
-    for index in 0..15 {
+    assert_eq!(jar.header(&origin, Some(&origin), true, now), "a=one");
+}
+/** A full site evicts its least recently used cookie, so the per-site bound always holds. */
+#[test]
+fn site_capacity_evicts_the_least_recently_used_cookie() {
+    let now = SystemTime::now();
+    let origin = url("https://example.com/");
+    let mut jar = CookieJar::default();
+    for index in 0..DOMAIN_COOKIES {
         assert!(receive(&mut jar, &origin, &[&format!("c{index}=x")], now).is_empty());
     }
-    assert_eq!(receive(&mut jar, &origin, &["overflow=no"], now).len(), 1);
+    assert!(receive(&mut jar, &origin, &["overflow=yes"], now).is_empty());
+    let header = jar.header(&origin, Some(&origin), true, now);
+    let names: Vec<&str> = header.split("; ").collect();
+    assert_eq!(names.len(), DOMAIN_COOKIES);
+    assert!(!names.contains(&"c0=x"));
+    assert!(names.contains(&"overflow=yes"));
 }

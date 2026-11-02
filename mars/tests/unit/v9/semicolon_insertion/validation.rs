@@ -9,13 +9,23 @@ fn separate_scripts_finish_independently_and_execute_in_source_order() {
         "n=n+2".into(),
         "document.getElementById('result').textContent=n".into(),
     ];
-    assert_eq!(load_scripts(&sources, &[]).unwrap().changes[0].text, "3");
+    assert_eq!(
+        load_scripts(&sources, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
+        "3"
+    );
     let sources = vec![
         "var n=1".into(),
         "(n=4)".into(),
         "document.getElementById('result').textContent=n".into(),
     ];
-    assert_eq!(load_scripts(&sources, &[]).unwrap().changes[0].text, "4");
+    assert_eq!(
+        load_scripts(&sources, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
+        "4"
+    );
 }
 
 /** Later-source failures preserve their own source coordinates rather than the preceding EOF. */
@@ -77,20 +87,20 @@ fn named_handlers_keep_trailing_comment_and_line_terminator_behavior() {
     ] {
         let state = load(source, &[]).unwrap().state;
         assert_eq!(
-            event(source, handler, state, &[]).unwrap().changes[0].text,
+            event(source, handler, state, &[]).unwrap().changes[0]
+                .text()
+                .unwrap(),
             "done"
         );
     }
 }
 
-/** Program insertion does not widen event handlers into general source evaluation. */
+/** Inline handlers are ordinary script, so insertion applies to them like any program. */
 #[test]
-fn handlers_remain_one_direct_named_call() {
+fn handlers_run_as_ordinary_programs() {
     let source = "function f(){}";
     for handler in ["f()\nf()", "let n=1", "(()=>f())()", "f.call(null)"] {
-        let error = event(source, handler, load(source, &[]).unwrap().state, &[]).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature", "{handler}");
-        assert_eq!(error.input_kind.as_deref(), Some("handler"));
+        event(source, handler, load(source, &[]).unwrap().state, &[]).unwrap();
     }
 }
 
@@ -108,16 +118,27 @@ fn handler_errors_keep_their_original_utf16_location_and_input_kind() {
     );
 }
 
-/** New punctuation handling cannot admit currently unsupported statement forms in dead code. */
+/** throw, do-while and class statements parse in dead code and run when reached. */
 #[test]
-fn unsupported_statement_boundaries_remain_explicit() {
+fn throw_do_while_and_class_statements_run_when_reached() {
     for source in [
-        "if(false){throw\n1}",
+        "if(false){throw 1}",
         "if(false){do{}while(false)}",
         "if(false){class A{}}",
     ] {
-        let error = load(source, &[]).unwrap_err();
-        assert_eq!(error.code, "unsupported_feature", "{source}");
-        assert_eq!(error.phase.as_deref(), Some("parse"));
+        load(source, &[]).unwrap();
     }
+    let error = load("if(true){throw 1}", &[]).unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    load("let n=0;do{n++}while(n<3)", &[]).unwrap();
+    load("if(true){class A{}new A()}", &[]).unwrap();
+}
+
+/** A line break after throw is a syntax error even in dead code. */
+#[test]
+fn throw_line_breaks_are_syntax_errors() {
+    assert_eq!(
+        load("if(false){throw\n1}", &[]).unwrap_err().code,
+        "script_syntax_error"
+    );
 }

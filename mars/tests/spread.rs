@@ -17,7 +17,7 @@ use support::Fixture;
 
 /** The source and copied arrays retain the same object through successive real events. */
 const ALIASES: &str = "<p id=out>initial</p><button id=run type=button onclick='run()'>Run</button><script>const model=[{n:0}];const sparse=[];sparse.length=3;sparse[1]=model[0];const copy=[...sparse,...'A😀B'];function run(){model[0].n++;let visits=0;copy.map(value=>{visits++;return value;});document.getElementById('out').textContent=copy[1].n+' '+copy[4].length+' '+copy.length+' '+visits+' '+copy.some(value=>value===undefined);}</script>";
-/** Later spread failure must discard every earlier candidate change. */
+/** A later spread failure in `bad` follows an earlier model, Storage and DOM change. */
 const FAILURE: &str = "<p id=out>initial</p><button id=good type=button onclick='good()'>Good</button><button id=bad type=button onclick='bad()'>Bad</button><button id=read type=button onclick='read()'>Read</button><script>var count=0;const model=[{n:0}];function good(){count++;model[0].n++;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count+' '+model[0].n;}function bad(){count+=10;model[0].n+=10;window.localStorage.setItem('count',count);document.getElementById('out').textContent='proposed';FAILURE;}function read(){document.getElementById('out').textContent=count+' '+model[0].n+' '+window.localStorage.getItem('count');}</script>";
 
 /** The only network access is the explicitly granted disposable loopback origin. */
@@ -91,36 +91,41 @@ fn spread_values_keep_identity_dense_holes_and_utf16_pairs_between_native_events
     assert_eq!(text(&fresh), "1 2 6 6 true");
 }
 
-/** Invalid or exhausted later expansion preserves globals, heap, Storage, revision and output. */
+/** A spread that throws keeps the handler's earlier globals, heap and Storage effects, as browsers do. */
 #[test]
-fn failed_spread_rolls_back_the_complete_native_candidate_and_recovers() {
-    for (failure, code) in [
-        ("const result=[...model,...null]", "script_execution_error"),
-        (
-            "const result=[...model,...({length:3})]",
-            "unsupported_feature",
-        ),
-        (
-            "const chars=[...'\\ud800'];document.getElementById('out').textContent=chars[0]",
-            "unsupported_feature",
-        ),
-        (
-            "let values=[];for(let i=0;i<10;i++){values=[...values,...values,'x'];}",
-            "limit_exceeded",
-        ),
+fn throwing_spread_keeps_earlier_handler_effects_and_recovers() {
+    for failure in [
+        "const result=[...model,...null]",
+        "const result=[...model,...({length:3})]",
     ] {
         let fixture = fixture(&FAILURE.replace("FAILURE", failure));
         let mut runtime = runtime(&fixture.url);
         let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
         let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-        let error = call(&mut runtime, "page.click", target(&page, "bad")).unwrap_err();
-        assert_eq!(error.code, code, "{failure}");
-        assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
-        let read = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-        assert_eq!(text(&read), "1 1 1");
+        let thrown = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+        assert_eq!(text(&thrown), "proposed", "{failure}");
+        let read = call(&mut runtime, "page.click", target(&thrown, "read")).unwrap();
+        assert_eq!(text(&read), "11 11 11", "{failure}");
         let next = call(&mut runtime, "page.click", target(&read, "good")).unwrap();
-        assert_eq!(text(&next), "2 2");
+        assert_eq!(text(&next), "12 12", "{failure}");
     }
+}
+
+/** Expansion past the array bound stops the handler uncatchably and discards the whole candidate. */
+#[test]
+fn exhausted_spread_rolls_back_the_complete_native_candidate_and_recovers() {
+    let failure = "let values=[];for(let i=0;i<20;i++){values=[...values,...values,'x'];}";
+    let fixture = fixture(&FAILURE.replace("FAILURE", failure));
+    let mut runtime = runtime(&fixture.url);
+    let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
+    let error = call(&mut runtime, "page.click", target(&page, "bad")).unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+    let read = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
+    assert_eq!(text(&read), "1 1 1");
+    let next = call(&mut runtime, "page.click", target(&read, "good")).unwrap();
+    assert_eq!(text(&next), "2 2");
 }
 
 /** Clients discover the actual bounded literal feature without a generic iterator claim. */

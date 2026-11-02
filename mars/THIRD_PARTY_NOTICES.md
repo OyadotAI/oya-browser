@@ -4,6 +4,16 @@ These notices accompany Mars and its independently reusable Eye, V9 and Relay li
 Redistributing an individual library must retain the notices applicable to its source
 and dependencies. Upstream Blink and V8 names below identify provenance, not runtime engines.
 
+## Chrome DevTools Protocol definitions
+
+`crates/mdp/protocol/` vendors the protocol definition files (`browser_protocol.pdl`,
+`domains/*.pdl`) from Chromium `2c592105bbcd9490a9894df48d0fe59b2c512651`
+(`third_party/blink/public/devtools_protocol/`) and `js_protocol.pdl` from V8
+`fedd021b538607860f9c56e5c193ad8dcd4f2bb1` (`include/`), unmodified. They are data the
+front door's catalog reads; no protocol code is generated from them. Copyright 2017 The Chromium
+Authors; Copyright 2017 The Chromium Authors. All rights reserved. They are used under the
+BSD-style terms below.
+
 ## V8 reference algorithms and adapted test cases
 
 The V9 scanner and arithmetic-expression work studies V8 revision
@@ -69,6 +79,16 @@ code-point boundaries; it does not port iterator objects, generated code, optimi
 or cleanup machinery, or import their conformance suites.
 Adapted `test/mjsunit/number-tostring.js` cases: Copyright 2008 the V8 project
 authors. All rights reserved.
+The radix-formatting helper in `crates/v9/src/v9/value/number/radix.rs` adapts
+`DoubleToRadixStringView` from `src/numbers/conversions.cc` at the same pinned
+revision: Copyright 2011 the V8 project authors. All rights reserved. The
+BSD-style redistribution terms below apply to this adaptation as well.
+The additionally reviewed string protocol routines are
+`src/builtins/string-match-search.tq` (Copyright 2021),
+`src/builtins/string-startswith.tq` (Copyright 2018), and
+`src/builtins/string-endswith.tq` (Copyright 2019), the V8 project authors.
+All rights reserved. Their conversion and protocol order guides V9's owned
+string helpers under the same BSD-style terms.
 
 The applicable redistribution terms from that revision's `LICENSE` follow:
 
@@ -108,11 +128,29 @@ not a parser, virtual machine or browser engine. Its license files ship with
 the Cargo dependency. This package retains the selected Boost Software License
 at [licenses/ryu-js/LICENSE-BOOST](licenses/ryu-js/LICENSE-BOOST).
 
+## rustls 0.23.45 (vendored)
+
+`vendor/rustls` is the registry crate rustls 0.23.45, Apache-2.0 OR ISC OR MIT (its licence
+files are alongside), with one additive change for Chrome-shaped ClientHellos. `vendor/rustls/MARS.md`
+lists the changed files and how to diff against upstream.
+
 ## Image decoders
 
 `png` 0.17.16 and `jpeg-decoder` 0.3.2 are licensed under MIT OR Apache-2.0.
 Their license texts ship with the Cargo dependencies; the package uses their
 bounded PNG and JPEG decoding APIs for static page images.
+
+## Font and content decoders
+
+`woff2-patched` 0.4.0 (Apache-2.0; it pulls in `brotli`, `bitvec`, `four-cc`,
+`safer-bytes` and `thiserror`) unpacks WOFF2 web fonts; WOFF 1.0 tables are
+inflated with `flate2` 1.1.10 (MIT OR Apache-2.0, Rust backend). The unpacked
+sfnt is handed to CoreText per page and never registered system-wide.
+`flate2`, `brotli-decompressor` 6.0.1 and `ruzstd` 0.9.1 (MIT OR Apache-2.0 /
+BSD-3-Clause / MIT) decode gzip, deflate, brotli and zstd response bodies
+under Relay's body bounds. `psl` 2.1.245 (MIT OR Apache-2.0) supplies the
+public suffix list that cookie domain rules consult. Their license texts ship
+with the Cargo dependencies.
 
 ## Blink BSD event-listener reference algorithms
 
@@ -257,3 +295,120 @@ SDK dependency; its dependency notices remain with that installed package.
 bindings to macOS Security.framework for the default desktop cookie profile.
 They are licensed MIT OR Apache-2.0; their license texts ship with Cargo
 dependencies.
+
+## Unicode 17 emoji data extracted from Test262
+
+The generated `crates/v9/src/v9/regexp/emoji17.txt` derives from Test262's Unicode 17
+generated regular-expression property lists. Those files carry Copyright 2025 Mathias
+Bynens and the Test262 BSD license below. The underlying Unicode data is Copyright
+© 2025 Unicode, Inc. and covered by the Unicode License V3 reproduced below.
+
+Copyright (C) 2012 Ecma International
+Copyright (C) 2025 Mathias Bynens
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list
+   of conditions and the following disclaimer in the documentation and/or other materials
+   provided with the distribution.
+3. Neither the name of the authors nor Ecma International may be used to endorse or
+   promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE ECMA INTERNATIONAL "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL ECMA INTERNATIONAL BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## ICU4X Unicode data
+
+V9 uses pinned ICU4X `icu_normalizer` and `icu_properties` 2.3.0 for
+Unicode normalization and exact regular-expression property sets. The crates
+were already workspace dependencies through IDNA. Their Unicode-3.0 notice
+also applies to the linked compiled Unicode data:
+
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 2020-2024 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+SPDX-License-Identifier: Unicode-3.0
+
+—
+
+Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
+ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
+
+## Unicode simple case-folding data (regex-syntax 0.8.11)
+
+`crates/v9/src/v9/regexp/case_data.rs` adapts the Unicode 16.0 generated simple case-folding table from regex-syntax 0.8.11. The Unicode 17.0 supplement consists of mutually inverse single-scalar lowercase/uppercase pairs from Rust 1.94.0 (whose `char::UNICODE_VERSION` is 17.0.0). Special folds retain the complete generated table. The table is used as data by V9's own matcher; no foreign regular-expression engine is used.
+
+```text
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```

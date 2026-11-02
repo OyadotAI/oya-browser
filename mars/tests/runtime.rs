@@ -14,6 +14,9 @@ fn call(runtime: &mut Runtime, op: &str, params: Value) -> mars::protocol::Engin
 }
 /** Starts the actual three Rust engine processes, not in-process fakes. */
 fn runtime() -> Runtime {
+    unsafe {
+        std::env::set_var("MARS_PROCESS_ISOLATION", "1");
+    }
     Runtime::start(EnginePrograms::same(Path::new(env!("CARGO_BIN_EXE_mars")))).unwrap()
 }
 
@@ -82,32 +85,51 @@ fn separate_engines_complete_the_native_agent_flow() {
 fn failed_navigation_retains_the_previous_document_atomically() {
     let fixture = Fixture::pages();
     let mut runtime = runtime();
+    call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":format!("{}/plain", fixture.url)}),
+    )
+    .unwrap();
+    // A failing script stops only itself and the page still commits; what it did before it
+    // threw stays, as in browsers.
+    for (path, title) in [("badscript", "candidate"), ("atomic", "changed")] {
+        let page = call(
+            &mut runtime,
+            "page.navigate",
+            json!({"url":format!("{}/{path}", fixture.url)}),
+        )
+        .unwrap();
+        assert_eq!(page["degraded"], json!(["scripts"]));
+        assert_eq!(page["nodes"][0]["text"], title, "{path}");
+    }
     let original = call(
         &mut runtime,
         "page.navigate",
         json!({"url":format!("{}/plain", fixture.url)}),
     )
     .unwrap();
-    for path in ["badscript", "badmarkup", "atomic"] {
-        let error = call(
-            &mut runtime,
-            "page.navigate",
-            json!({"url":format!("{}/{path}", fixture.url)}),
-        )
-        .unwrap_err();
-        assert!(error.previous_page_retained);
-        assert_eq!(
-            call(&mut runtime, "page.inspect", json!({})).unwrap(),
-            original
-        );
-    }
+    // Markup recovers best effort, so a genuine failure is a page past the node budget.
+    let error = call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":format!("{}/over-budget", fixture.url)}),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.previous_page_retained);
+    assert_eq!(
+        call(&mut runtime, "page.inspect", json!({})).unwrap(),
+        original
+    );
     let next = call(
         &mut runtime,
         "page.navigate",
         json!({"url":format!("{}/plain", fixture.url)}),
     )
     .unwrap();
-    assert_eq!(next["page_id"], "page-2");
+    // Four commits came before; the refused candidate consumed no generation.
+    assert_eq!(next["page_id"], "page-5");
 }
 
 /** Node identities cannot be reused after a successful navigation. */
@@ -300,9 +322,14 @@ fn parent_exit(signal: &str) {
     use mars::protocol::read_frame;
     use std::io::{BufReader, Write};
     use std::os::unix::process::CommandExt;
+    // The active case's fixture exists first: the agent is granted its origin at launch.
+    let fixture = (signal == "active-parent-kill").then(Fixture::slow);
     let mut command = Command::new(env!("CARGO_BIN_EXE_mars"));
+    command.arg("agent");
+    if let Some(fixture) = &fixture {
+        command.args(["--fixture-origin", &fixture.url]);
+    }
     let mut child = command
-        .arg("agent")
         .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -326,11 +353,7 @@ fn parent_exit(signal: &str) {
         .iter()
         .map(|engine| engine["pid"].as_u64().unwrap() as u32)
         .collect();
-    let _fixture = if signal == "active-parent-kill" {
-        Some(active_request(&mut child))
-    } else {
-        None
-    };
+    let _fixture = fixture.map(|fixture| active_request(&mut child, fixture));
     if signal == "terminal-interrupt" {
         assert!(
             Command::new("/bin/kill")
@@ -348,11 +371,10 @@ fn parent_exit(signal: &str) {
 
 /** Waiting for accept ensures the parent dies while the network service owns work. */
 #[cfg(unix)]
-fn active_request(child: &mut std::process::Child) -> Fixture {
+fn active_request(child: &mut std::process::Child, fixture: Fixture) -> Fixture {
     use std::io::Write;
     use std::sync::atomic::Ordering;
     use std::time::Instant;
-    let fixture = Fixture::slow();
     let request = json!({"version":2,"id":"active","op":"page.navigate","params":{"url":format!("{}/",fixture.url)}});
     child
         .stdin

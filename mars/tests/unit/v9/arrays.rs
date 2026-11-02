@@ -1,6 +1,6 @@
 /** Source-guided array tests observe sparse ownership, callback ordering and bounded candidate publication. */
 use mars::{
-    constants::{JS_STRING_UNITS, VM_ARRAY_LENGTH},
+    constants::{JS_ENVIRONMENT_UNITS, JS_STRING_UNITS, VM_ARRAY_LENGTH},
     v9::{VmState, event, execute, load},
 };
 use serde_json::json;

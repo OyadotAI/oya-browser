@@ -1,9 +1,8 @@
 /** Predicate selection is observed through the same bounded public VM surfaces used by services. */
 use mars::{
-    constants::{VM_ARRAY_FIND_ID, VM_ARRAY_SOME_ID, VM_FUNCTION_INTRINSICS, VM_OBJECTS},
+    constants::{VM_ARRAY_FIND_ID, VM_ARRAY_SOME_ID, VM_FUNCTION_INTRINSICS},
     v9::{VmState, event, execute, load},
 };
-use serde_json::json;
 
 /** Literal proposals expose results without depending on another JavaScript engine. */
 fn result(source: &str, expression: &str) -> String {

@@ -29,12 +29,13 @@ fn canonical_intrinsics_preserve_identity_and_borrowing() {
         ),
         "7 8 9"
     );
-    for source in [
-        "Function('return 1');",
-        "Function.prototype.constructor('return 1');",
-    ] {
-        assert_eq!(execute(source).unwrap_err().code, "unsupported_feature");
-    }
+    assert_eq!(
+        result(
+            "",
+            "Function('return 1')()+Function.prototype.constructor('return 2')()"
+        ),
+        "3"
+    );
 }
 /** Global replacement and lexical shadowing leave the internal canonical constructor and prototype stable. */
 #[test]
@@ -98,12 +99,6 @@ fn call_and_bind_preserve_callee_receiver_rules() {
         ),
         "true true true true true true"
     );
-    assert_eq!(
-        execute("function f(){return this;}f.call(3);")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
-    );
 }
 /** Each binding has an identity and inner receiver/prefixes survive further binding and member calls. */
 #[test]
@@ -133,7 +128,7 @@ fn apply_reads_supported_array_like_values_and_holes() {
         "true"
     );
 }
-/** ToLength handles primitive conversion, floor, NaN and nonpositive values before allocating indices. */
+/** ToLength handles primitive conversion, floor, NaN and nonpositive values; huge lengths hit the argument bound. */
 #[test]
 fn apply_length_conversion_uses_tolength_and_enforces_argument_cap() {
     let source = "function f(a,b){return a+' '+b;}";
@@ -145,6 +140,8 @@ fn apply_length_conversion_uses_tolength_and_enforces_argument_cap() {
         "-Infinity",
         "false",
         "'garbage'",
+        "{}",
+        "65",
     ] {
         assert_eq!(
             result(source, &format!("f.apply(null,{{length:{length}}})")),
@@ -156,7 +153,7 @@ fn apply_length_conversion_uses_tolength_and_enforces_argument_cap() {
         result(source, "f.apply(null,{'0':4,'1':5,length:'2.9'})"),
         "4 5"
     );
-    for length in ["Infinity", "17", "9007199254740992"] {
+    for length in ["Infinity", "9007199254740992"] {
         assert_eq!(
             execute(&format!("{source}f.apply(null,{{length:{length}}});"))
                 .unwrap_err()
@@ -165,12 +162,6 @@ fn apply_length_conversion_uses_tolength_and_enforces_argument_cap() {
             "{length}"
         );
     }
-    assert_eq!(
-        execute(&format!("{source}f.apply(null,{{length:{{}}}});"))
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
-    );
     for value in ["1", "true", "'abc'"] {
         assert_eq!(
             execute(&format!("{source}f.apply(null,{value});"))
@@ -180,21 +171,21 @@ fn apply_length_conversion_uses_tolength_and_enforces_argument_cap() {
         );
     }
 }
-/** A noncallable borrowed apply receiver fails before unsupported list length conversion. */
+/** A noncallable borrowed adapter receiver throws a TypeError before reading its argument list. */
 #[test]
 fn adapter_errors_preserve_callable_and_argument_evaluation_order() {
     let error = execute("Function.prototype.apply.call(0,null,{length:{}});").unwrap_err();
     assert_eq!(error.code, "script_execution_error");
-    assert!(error.message.contains("not callable"));
+    assert!(error.message.contains("TypeError"), "{}", error.message);
     for method in ["call", "apply", "bind"] {
         let error = execute(&format!("Function.prototype.{method}.call(0);")).unwrap_err();
-        assert!(error.message.contains("not callable"));
+        assert!(error.message.contains("TypeError"), "{}", error.message);
     }
     assert!(
         execute("Function.prototype.call.call(0,missing());")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("missing is not defined")
     );
 }
 /** Source and bound metadata are readonly own values with ordinary strict/sloppy assignment behavior. */
@@ -229,38 +220,30 @@ fn bound_only_object_and_function_edges_survive_events_and_collection() {
     for expected in 2..=601 {
         let wire = serde_json::to_value(state).unwrap();
         let executed = event(source, "run()", serde_json::from_value(wire).unwrap(), &[]).unwrap();
-        assert_eq!(executed.changes[0].text, expected.to_string());
+        assert_eq!(executed.changes[0].text().unwrap(), expected.to_string());
         state = executed.state;
     }
 }
-/** Bound adaptation and intrinsic recursion share depth and cumulative argument limits. */
+/** Adapter recursion throws a catchable RangeError; bind chains and bound prefixes are ordinary values. */
 #[test]
-fn adapters_share_depth_and_cumulative_argument_limits() {
-    assert_eq!(
-        execute("function f(){f.call(null);}f();").unwrap_err().code,
-        "limit_exceeded"
-    );
-    assert_eq!(
-        execute("function f(){}let b=f;for(let i=0;i<17;i=i+1){b=b.bind(null);}")
-            .unwrap_err()
-            .code,
-        "limit_exceeded"
-    );
+fn adapters_share_the_call_depth() {
+    let error = execute("function f(){f.call(null);}f();").unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("RangeError"), "{}", error.message);
     assert_eq!(
         result(
-            "function f(){return 7;}let b=f;for(let i=0;i<16;i=i+1){b=b.bind(null);}",
+            "function f(){return 7;}let b=f;for(let i=0;i<17;i=i+1){b=b.bind(null);}",
             "b()"
         ),
         "7"
     );
-    let values = (0..9).map(|_| "1").collect::<Vec<_>>().join(",");
+    let values = (0..33).map(|_| "1").collect::<Vec<_>>().join(",");
     assert_eq!(
-        execute(&format!(
-            "function f(){{}}const b=f.bind(null,{values});b({values});"
-        ))
-        .unwrap_err()
-        .code,
-        "limit_exceeded"
+        result(
+            &format!("function f(){{return arguments.length;}}const b=f.bind(null,{values});"),
+            &format!("b({values})")
+        ),
+        "66"
     );
 }
 /** Snapshot-visible mutable intrinsic properties participate in ordinary candidate rollback. */
@@ -270,7 +253,9 @@ fn failed_event_does_not_publish_function_properties_or_bound_state() {
     let state = load(source, &[]).unwrap().state;
     assert!(event(source, "fail()", state.clone(), &[]).is_err());
     assert_eq!(
-        event(source, "run()", state, &[]).unwrap().changes[0].text,
+        event(source, "run()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "1 undefined"
     );
 }

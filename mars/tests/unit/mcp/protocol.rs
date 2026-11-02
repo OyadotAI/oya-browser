@@ -4,6 +4,7 @@ mod cancellation;
 mod correlation;
 mod envelopes;
 mod lifecycle;
+mod waits;
 use mars::{
     mcp::{Action, Session},
     protocol::{Request, Response},
