@@ -14,6 +14,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 - Fixed passkey account selection being refused in a human-controlled tab while an agent works elsewhere. Account selection follows its real window and requesting document, without cancelling for unrelated iframe or same-page navigation.
 
+- Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.
+
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
 
 - Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.

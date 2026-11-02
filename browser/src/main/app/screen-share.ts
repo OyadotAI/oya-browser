@@ -43,7 +43,7 @@ export class ScreenShare {
     const origin =
       details?.isMainFrame === true && gate.eligible(contents, details.securityOrigin || details.requestingUrl);
     if (!origin) return Promise.resolve(false);
-    return gate.locked(() => this.approve(contents, origin));
+    return this.approval(contents, origin);
   }
 
   /** Installs the handler on a profile's session; every way it can fail answers the page nothing. */
@@ -66,8 +66,15 @@ export class ScreenShare {
     if (!contents || !origin) return null;
     const generation = this.deps.mediaPermissions.gate.watch(contents);
     const partition = this.deps.persona.partitionName();
-    const allowed = await this.deps.mediaPermissions.gate.locked(() => this.approve(contents, origin));
+    const allowed = await this.approval(contents, origin);
     return allowed ? this.currentScreen(contents, generation, partition) : null;
+  }
+
+  /** Preflight and display requests retain independent approvals while duplicate denials are not re-prompted. */
+  private approval(contents: WebContents, origin: string): Promise<boolean> {
+    const { gate } = this.deps.mediaPermissions;
+    const key = gate.decisionKey(contents, origin, ['screen']);
+    return gate.locked(gate.guard(contents, origin), () => this.approve(contents, origin), key);
   }
 
   /** Source enumeration can prompt macOS too; recheck the document and owner before handing pixels to the page. */
