@@ -3,6 +3,8 @@ FROM node:24-alpine AS ui-build
 
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
+# The UI's legacy lint dependencies use the shared patched-minimatch adapter at install time.
+COPY browser/build/minimatch-compat.cjs /browser/build/minimatch-compat.cjs
 RUN npm ci
 COPY ui/ ./
 # The release notes page is built from the changelog at the repository root.

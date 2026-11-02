@@ -200,15 +200,22 @@ function sweepBuckets() {
   for (const [id, entry] of buckets) sweepBucket(id, entry, now);
 }
 
-/** Drop one bucket if its limit is gone, or if it is full and idle past the sweep interval. */
+/**
+ * Drop one bucket if its limit is gone, or if it is full and idle past the
+ * sweep interval. Judged without touching the bucket: refill() stamps
+ * `updated`, which made every bucket look freshly used, so none was ever
+ * reclaimed and the map kept a bucket for every sign-in email and caller
+ * address the server had ever seen.
+ */
 function sweepBucket(id, entry, now) {
   const cfg = LIMITS[id.slice(0, id.indexOf(':'))];
   if (!cfg) {
     buckets.delete(id);
     return;
   }
-  refill(entry, cfg, now);
-  if (entry.tokens >= cfg.burst && now - entry.updated > LIMIT_SWEEP_MS) buckets.delete(id);
+  const idle = now - entry.updated;
+  const full = entry.tokens + (idle / MS_PER_MINUTE) * cfg.perMinute >= cfg.burst;
+  if (full && idle > LIMIT_SWEEP_MS) buckets.delete(id);
 }
 
 const sweep = setInterval(sweepBuckets, LIMIT_SWEEP_MS);
@@ -218,3 +225,9 @@ sweep.unref?.();
 export function reset() {
   buckets.clear();
 }
+
+/** Test hook: one sweep, now. */
+export const sweepNow = () => sweepBuckets();
+
+/** Test hook: how many buckets are held. */
+export const heldBuckets = () => buckets.size;
