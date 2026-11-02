@@ -164,6 +164,17 @@ describe('page translation scripts', () => {
     assert.deepEqual(run(collectJs(1000, 100)).texts, ['Inhalt']);
   });
 
+  it('leaves form choices unchanged even when their text matches a translated paragraph', () => {
+    const select = el('select', {}, el('option', {}, 'Bonjour'));
+    const body = page(el('body', {}, el('p', {}, 'Bonjour'), select));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    FakeObserver.added(select, el('option', {}, 'Bonjour'));
+    assert.deepEqual(texts(body), ['Hello', 'Bonjour', 'Bonjour']);
+    run(restoreJs);
+    assert.deepEqual(texts(body), ['Bonjour', 'Bonjour', 'Bonjour']);
+  });
+
   it('collects nothing from a page that opts out as a whole, or whose body is editable', () => {
     const editable = el('body', {}, 'Entwurf');
     editable.isContentEditable = true;

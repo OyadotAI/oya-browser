@@ -22,9 +22,10 @@ export const detectJs = `(() => {
 /**
  * Script text: what both scripts skip, and a walk over the text nodes under an element.
  * Hidden is display:none on the element itself (its parents were checked on the way
- * down); a display:contents wrapper or an <option> has no box of its own but its text shows.
+ * down); a display:contents wrapper has no box of its own but its text shows.
+ * Form choices are excluded because an option's text can also be its submitted value.
  */
-const WALK = `const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'TEMPLATE', 'svg', 'SVG']);
+const WALK = `const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'CODE', 'PRE', 'TEMPLATE', 'svg', 'SVG']);
   const skip = (el) => SKIP.has(el.tagName) || el.getAttribute('translate') === 'no' || el.classList.contains('notranslate')
     || el.isContentEditable || getComputedStyle(el).display === 'none';
   const eligible = (node) => {
