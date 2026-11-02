@@ -19,6 +19,9 @@ export interface Registered {
   persona?: any;
 }
 
+/** The command failure returned when a registration ends. */
+type Outcome = 'disconnected' | 'reconnected';
+
 /**
  * Fails the browser's pending commands, ends its relays, unlists it, stops its
  * usage clock and frees its persona slot. Called by whoever takes the browser
@@ -30,12 +33,13 @@ export interface Registered {
  * billed and kept its persona slot until the server restarted; an accepted
  * reconnect lost the old socket's unbooked time; and relayed CDP clients hung.
  */
-export function releaseBrowser(browserId: string, browser: Registered, outcome: 'disconnected' | 'reconnected') {
+export function releaseBrowser(browserId: string, browser: Registered | undefined, outcome: Outcome) {
+  if (!browser || registry.get(browserId) !== browser) return;
   failPending(browserId, outcome, outcome === 'reconnected' ? 'Browser reconnected' : 'Browser disconnected');
   closeRelays(browserId);
-  registry.remove(browserId);
-  destroyMcpServer(browserId);
   usage.browserDisconnected(browser.apiKey, browserId);
   container.personas.release(browser.persona, browserId);
+  destroyMcpServer(browserId);
+  registry.remove(browserId);
   metrics.browsersConnected.set({}, registry.browsers.size);
 }

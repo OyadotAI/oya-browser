@@ -3,7 +3,6 @@
  * sandbox, its vendor session and its socket, in that order.
  */
 import { isConfigured as sandboxConfigured, removeSandbox } from '../../../drivers/sandbox.ts';
-import * as usage from '../../../platform/usage.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { control } from '../../control/service.ts';
 import { countBrowsers, dropBrowser } from './fleet.ts';
@@ -47,7 +46,7 @@ async function removeOwnSandbox(key, browserId, browser, sandbox) {
 /** Releases the vendor session, then drops the socket and registry entry; the failure when it would not release. */
 async function releaseAndDrop(browserId, browser) {
   const failed = await releaseVendor(browserId, browser);
-  if (!failed) dropBrowser(browserId, browser.ws, 'Stopped by operator');
+  if (!failed) dropBrowser(browserId, browser.ws, 'Stopped by operator', browser);
   return failed;
 }
 
@@ -63,9 +62,8 @@ async function releaseVendor(browserId, browser) {
   return null;
 }
 
-/** Books the stop: usage, audit, metrics, and the result. */
+/** Audits the stop; the registration's release owns billing so a later reconnect keeps its clock. */
 function stopped(req, key, browserId, browser, sandboxRemoved) {
-  usage.browserDisconnected(key, browserId);
   auditStop(req, key, browserId, { clientType: browser.clientType, provider: browser.provider, sandboxRemoved });
   countBrowsers();
   // If Oya Cloud had a sandbox for it, it was a cloud browser whatever it claimed.

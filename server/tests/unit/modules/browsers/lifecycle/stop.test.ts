@@ -11,6 +11,7 @@ import { registry } from '../../../../../src/modules/browsers/registry.ts';
 import { sessions as gatewaySessions } from '../../../../../src/modules/gateway/service.ts';
 import { getAll as getAllCookies } from '../../../../../src/modules/personas/cookies.ts';
 import { recent } from '../../../../../src/platform/audit.ts';
+import * as usage from '../../../../../src/platform/usage.ts';
 import { OPERATOR_CLOSE } from '../../../../../src/modules/browsers/constants.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 import { driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
@@ -84,6 +85,20 @@ describe('stopBrowser: a browser held here', () => {
     registry.get(B).release = release;
     assert.equal((await stopBrowser(req(), B)).ok, true);
     assert.equal(release.mock.callCount(), 1);
+  });
+
+  it('a reconnect during vendor release keeps its registration and billing clock', async () => {
+    const old = connectBrowser(B);
+    let replacement;
+    registry.get(B).release = async () => {
+      replacement = connectBrowser(B);
+      usage.browserConnected('key-a', B);
+    };
+    assert.equal((await stopBrowser(req(), B)).ok, true);
+    assert.equal(registry.get(B)?.ws, replacement);
+    assert.equal(usage.current('key-a').openBrowsers, 1);
+    assert.equal(old.closed.code, OPERATOR_CLOSE);
+    usage.browserDisconnected('key-a', B);
   });
 
   it('stops an Oya browser that has a persona', async () => {
