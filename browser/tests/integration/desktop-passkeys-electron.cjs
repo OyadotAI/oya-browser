@@ -4,7 +4,7 @@ const { setTimeout: pause } = require('node:timers/promises');
 const electron = require('electron');
 const { app, BrowserWindow } = electron;
 const { Passkeys } = require('../../src/main/app/passkeys.ts');
-const { AgentTab } = require('../../src/main/control/agent-tab.ts');
+const { AgentTab, inLane } = require('../../src/main/control/agent-tab.ts');
 const { WindowTabEvents } = require('../../src/main/windows/tab-events.ts');
 if (!process.env.OYA_PASSKEY_PROFILE) throw Error('Run desktop-passkeys.mjs');
 app.setPath('userData', process.env.OYA_PASSKEY_PROFILE);
@@ -56,8 +56,9 @@ async function main() {
     governance: { configuration: null },
     persona: { policyEpoch: Symbol(), partitionName: () => 'persist:test' },
     windows: {
-      owner: (id) => scopes.find((scope) => scope.tabs.activeTabId === id),
-      ownerOfContents: (contents) => scopes.find((scope) => scope.tabs.list[0].view.webContents === contents),
+      owner: (id) => scopes.find((scope) => scope.tabs.list.some((tab) => tab.id === id)),
+      ownerOfContents: (contents) =>
+        scopes.find((scope) => scope.tabs.list.some((tab) => tab.view.webContents === contents)),
       allTabs: () => scopes.flatMap((scope) => scope.tabs.list),
       tabEvents: new WindowTabEvents(),
     },
@@ -95,6 +96,7 @@ async function main() {
     return { response: 1 };
   };
   assert.equal(await service.choose({ ...details(), frame: child }), undefined);
+  await popupChecks(deps, service, second);
   deps.electron.dialog.showMessageBox = async (_parent, options) => {
     deps.agentTab.claim(2);
     assert.equal(options.signal.aborted, true);
@@ -108,6 +110,48 @@ async function main() {
   for (const scope of scopes) scope.shell.window.destroy();
   clearTimeout(deadline);
   app.exit(0);
+}
+
+/** Real linked popup focus does not replace the human-ownership requirement for its native opener. */
+async function popupChecks(deps, service, scope) {
+  const contents = scope.shell.window.webContents;
+  contents.setWindowOpenHandler(() => ({ action: 'allow' }));
+  const created = new Promise((resolve) => contents.once('did-create-window', resolve));
+  await contents.executeJavaScript('void window.open("about:blank", "passkey-fixture")', true);
+  const popup = await created;
+  const tab = { id: 3, openerId: 2, window: popup, view: { webContents: popup.webContents } };
+  scope.tabs.list.push(tab);
+  const previousFind = scope.tabs.find;
+  scope.tabs.find = (id) => scope.tabs.list.find((item) => item.id === id);
+  popup.show();
+  popup.focus();
+  await until(() => popup.isFocused());
+  const details = {
+    frame: popup.webContents.mainFrame,
+    relyingPartyId: 'fixture.test',
+    accounts: [{ name: 'Fixture popup', credentialId: 'popup-only-id' }],
+  };
+  let prompts = 0;
+  deps.electron.dialog.showMessageBox = async (parent) => {
+    assert.equal(parent, popup);
+    prompts++;
+    return { response: 1 };
+  };
+  assert.equal(await service.choose(details), 'popup-only-id', 'unrelated agent does not block a human popup');
+  inLane('popup-test', () => deps.agentTab.claim(2));
+  assert.equal(await service.choose(details), undefined, 'claimed opener refuses unclaimed popup');
+  assert.equal(prompts, 1);
+  inLane('popup-test', () => deps.agentTab.release());
+  deps.electron.dialog.showMessageBox = async (_parent, options) => {
+    inLane('popup-test', () => deps.agentTab.claim(2));
+    inLane('popup-test', () => deps.agentTab.release());
+    assert.equal(options.signal.aborted, true);
+    return { response: 1 };
+  };
+  assert.equal(await service.choose(details), undefined, 'late choice cannot outlive opener takeover');
+  scope.tabs.list.pop();
+  scope.tabs.find = previousFind;
+  popup.destroy();
 }
 main().catch((error) => {
   console.error(error);

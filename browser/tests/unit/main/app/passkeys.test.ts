@@ -85,6 +85,8 @@ it('profile epoch, native session, tab ownership and window lifetime are recheck
 it('only a tracked focused human popup may open the native account chooser', async () => {
   const f = fixture();
   f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
   f.owner.tabs.activeTabId = 99;
   assert.equal(await f.service.choose(f.details as any), 'two');
   f.window.isFocused = () => false;

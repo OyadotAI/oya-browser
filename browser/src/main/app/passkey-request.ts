@@ -6,6 +6,13 @@ import { PASSKEY_PROMPT_TIMEOUT_MS, PASSKEY_RECHECK_MS } from './constants.ts';
 
 /** Native ownership services; no credential data crosses this boundary. */
 export type PasskeyDeps = Pick<AppServices, 'electron' | 'windows' | 'agentTab' | 'persona' | 'governance'>;
+/** Popup ancestors retain their exact tracked tab and native window ownership scope. */
+interface Relative {
+  /** Exact adopted tab object, never a reused numeric id. */
+  tab: Tab;
+  /** Moving an opener to another window revokes an in-flight choice. */
+  owner: AppServices;
+}
 /** The original native source and identity are immutable throughout a prompt. */
 export interface PasskeySource {
   /** Exact tracked page, including a tracked popup. */
@@ -24,6 +31,8 @@ export interface PasskeySource {
   epoch: symbol;
   /** Exact partition at admission. */
   partition: string;
+  /** Popup provenance stays bound to every tracked opener, including nested OAuth windows. */
+  family: Relative[];
 }
 
 /** Resolve the requesting page rather than the root facade's currently routed tab. */
@@ -31,13 +40,15 @@ export function passkeySource(deps: PasskeyDeps, contents: WebContents, frame: W
   const owner = deps.windows?.ownerOfContents(contents);
   const tab = owner?.tabs.list.find((item) => item.view.webContents === contents);
   const window = tab?.window ?? owner?.shell.window;
-  if (!owner || !tab || !window) return null;
-  const source = { owner, tab, window, frame, contents, ...identity(deps, contents) };
+  if (!owner || !tab || !window || (tab.window && tab.openerId === undefined)) return null;
+  const family = passkeyFamily(deps, tab);
+  if (!family) return null;
+  const source = { owner, tab, window, frame, contents, family, ...passkeyIdentity(deps, contents) };
   return passkeyCurrent(deps, source) ? source : null;
 }
 
 /** Snapshot native session and the current persona transition before showing any account labels. */
-function identity(deps: PasskeyDeps, contents: WebContents) {
+function passkeyIdentity(deps: PasskeyDeps, contents: WebContents) {
   return { session: contents.session, epoch: deps.persona.policyEpoch, partition: deps.persona.partitionName() };
 }
 
@@ -46,10 +57,33 @@ export function passkeyCurrent(deps: PasskeyDeps, source: PasskeySource): boolea
   const { tab, owner, window, frame, contents } = source;
   if (tab.view.webContents !== contents || contents.isDestroyed() || window.isDestroyed()) return false;
   if (frame.isDestroyed() || frame.detached) return false;
-  if (deps.governance.configuration || !deps.agentTab.humanMay(tab.id)) return false;
+  if (deps.governance.configuration || !familyCurrent(deps, source.family)) return false;
   if (deps.windows?.ownerOfContents(contents) !== owner || contents.session !== source.session) return false;
   if (deps.persona.policyEpoch !== source.epoch || deps.persona.partitionName() !== source.partition) return false;
   return tab.window ? tab.window.isFocused() : owner.tabs.activeTabId === tab.id;
+}
+
+/** Popup ids are not necessarily claimed by the opener's agent; preserve the entire native adoption provenance. */
+function passkeyFamily(deps: PasskeyDeps, tab: Tab): Relative[] | null {
+  const family: Tab[] = [tab];
+  for (let child = tab; tab.window && child.openerId !== undefined;) {
+    const parent = deps.windows?.owner(child.openerId)?.tabs.find(child.openerId);
+    if (!parent || family.includes(parent)) return null;
+    family.push(parent);
+    child = parent;
+  }
+  return family.map((tab) => ({ tab, owner: deps.windows!.owner(tab.id)! }));
+}
+
+/** Closing, replacing, reparenting or claiming an opener invalidates a previously admitted popup. */
+function familyCurrent(deps: PasskeyDeps, family: Relative[]): boolean {
+  return family.every(
+    ({ tab, owner }, index) =>
+      deps.agentTab.humanMay(tab.id) &&
+      deps.windows?.owner(tab.id) === owner &&
+      owner.tabs.find(tab.id) === tab &&
+      (!family[0].tab.window || tab.openerId === family[index + 1]?.tab.id),
+  );
 }
 
 /** Preserve the requester and its ancestors so an unrelated iframe cannot cancel an account choice. */
