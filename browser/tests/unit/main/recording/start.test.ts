@@ -53,4 +53,14 @@ describe('startRecording', () => {
     assert.equal((await ctx.recorder.startRecording()).recording, true);
     assert.match(logged.mock.calls[0].arguments.join(' '), /page refused/);
   });
+
+  it('synchronously revokes native consent when recording starts before arming any tab', async () => {
+    const states: boolean[] = [];
+    ctx.passkeys = { sync: () => states.push(ctx.recorder.recording) };
+    ctx.recorder.channels.armRecordingView = async () => assert.deepEqual(states, [true]);
+    await ctx.recorder.startRecording();
+    assert.deepEqual(states, [true]);
+    await ctx.recorder.stopRecording();
+    assert.deepEqual(states, [true, false]);
+  });
 });

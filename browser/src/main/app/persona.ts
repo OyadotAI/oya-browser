@@ -265,7 +265,7 @@ export class Persona {
    */
   async applyServerFingerprint(profile: FingerprintProfile, cookies: unknown[] = [], now?: number): Promise<void> {
     if (!profile?.id) return;
-    const epoch = (this.policyEpoch = Symbol());
+    const epoch = this.advancePolicyEpoch();
     // WebContents partitions are immutable. Rebuild views when the profile
     // changes so the tabs, listener and cookie exporter all use the same jar.
     const switched = this.active?.id !== profile.id;
@@ -274,6 +274,13 @@ export class Persona {
       this.reopenAfterFailure(epoch, switched ? reopen : null, error),
     );
     this.publishProfile(epoch, profile, switched);
+  }
+
+  /** Revoke native consent before any profile transition can yield or later return to the old account. */
+  private advancePolicyEpoch(): symbol {
+    this.policyEpoch = Symbol();
+    this.deps.passkeys?.sync();
+    return this.policyEpoch;
   }
 
   /** A failed switch already closed the old tabs: reopen them (or the start page) so the window is never left tabless. */

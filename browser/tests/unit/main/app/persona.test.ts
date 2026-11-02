@@ -84,6 +84,21 @@ describe('Persona', () => {
     assert.equal(ctx.persona.session().name, 'persist:oya-p1');
   });
 
+  it('revokes native passkey consent immediately after advancing the profile epoch and before storage work', async () => {
+    const previous = ctx.persona.policyEpoch;
+    let calls = 0;
+    ctx.passkeys = {
+      sync: () => {
+        calls++;
+        assert.notEqual(ctx.persona.policyEpoch, previous);
+        order.push('cancel-passkey');
+      },
+    };
+    await ctx.persona.applyServerFingerprint(PROFILE, [], 9000);
+    assert.equal(order[0], 'cancel-passkey');
+    assert.equal(calls, 1);
+  });
+
   it('summarizes a fingerprint for the debug bar', () => {
     assert.deepEqual(fingerprintSummary(PROFILE), {
       id: 'p1',

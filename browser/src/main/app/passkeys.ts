@@ -2,6 +2,9 @@
 import type { App, Session, SelectWebauthnAccountDetails, MessageBoxOptions } from 'electron';
 import { PASSKEY_ACCOUNT_LIMIT, PASSKEY_LABEL_LIMIT, PASSKEY_DIALOG } from './constants.ts';
 import { PasskeyRequest, passkeySource, type PasskeyDeps } from './passkey-request.ts';
+import { createBrowserPasskeys } from './browser-passkey-runtime.ts';
+import type { BrowserPasskeys } from './browser-passkeys.ts';
+import type { BrowserPasskeyDeps } from './browser-passkey-types.ts';
 
 /** Only a build with a matching signing entitlement can enable Touch ID. */
 export function configurePasskeys(
@@ -27,24 +30,30 @@ export class Passkeys {
   private readonly installed = new WeakSet<Session>();
   /** At most one account chooser can own the UI. */
   private pending: PasskeyRequest | null = null;
+  /** Explicit isolated builds additionally gate native discovery and final success, not only account selection. */
+  private readonly browser?: BrowserPasskeys;
   /** Keep authentication outside the agent tools and renderer IPC. */
-  constructor(deps: PasskeyDeps) {
+  constructor(deps: BrowserPasskeyDeps) {
     this.deps = deps;
+    this.browser = createBrowserPasskeys(deps);
   }
   /** Electron cancels discoverable credentials unless an account is explicitly selected. */
   install(session: Session): void {
     if (this.installed.has(session)) return;
     this.installed.add(session);
+    this.browser?.install(session);
     session.on('select-webauthn-account', (_event, details, callback) => {
       void this.choose(details).then(callback, () => callback());
     });
   }
   /** A control claim revokes the original chooser before later ownership can make it eligible again. */
   sync(): void {
+    this.browser?.sync();
     this.pending?.sync();
   }
   /** Chromium validates the relying party; the chooser also fences the source document. */
   async choose(details: SelectWebauthnAccountDetails): Promise<string | undefined> {
+    if (this.browser && !this.browser.account(details)) return;
     const frame = details.frame;
     const contents = frame && this.deps.electron.webContents.fromFrame(frame);
     if (!contents || !frame || this.pending || !details.accounts.length) return;
