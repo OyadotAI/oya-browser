@@ -101,3 +101,57 @@ test('claiming or replacing an opener while its popup chooser is pending revokes
     assert.equal(await f.service.choose(f.details as any), undefined);
   }
 });
+
+test('a focused human popup keeps its chooser when the native sheet temporarily takes parent focus', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
+  f.deps.electron.dialog.showMessageBox = async (_window, options) => {
+    f.window.isFocused = () => false;
+    t.mock.timers.tick(PASSKEY_RECHECK_MS);
+    assert.equal(options.signal.aborted, false);
+    return { response: 1 };
+  };
+  assert.equal(await f.service.choose(f.details as any), 'one');
+  assert.equal(f.deps.electron.app.listenerCount('browser-window-focus'), 0);
+});
+
+test('an unfocused popup cannot use native-sheet continuation to start an account chooser', async () => {
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
+  f.window.isFocused = () => false;
+  assert.equal(await f.service.choose(f.details as any), undefined);
+  assert.deepEqual(f.boxes, []);
+});
+
+test('another real Oya window revokes a pending popup chooser even if its parent regains focus', async () => {
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
+  f.deps.windows.fromContents = () => f.owner;
+  f.deps.electron.dialog.showMessageBox = async (_window, options) => {
+    f.deps.electron.app.emit('browser-window-focus', {}, { webContents: {} });
+    f.deps.electron.app.emit('browser-window-focus', {}, f.window);
+    assert.equal(options.signal.aborted, true);
+    return { response: 1 };
+  };
+  assert.equal(await f.service.choose(f.details as any), undefined);
+  assert.equal(f.deps.electron.app.listenerCount('browser-window-focus'), 0);
+});
+
+test('replacing the popup native window cannot inherit its outstanding chooser', async () => {
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
+  f.deps.electron.dialog.showMessageBox = async () => {
+    f.tab.window = Object.assign({}, f.window);
+    return { response: 1 };
+  };
+  assert.equal(await f.service.choose(f.details as any), undefined);
+});

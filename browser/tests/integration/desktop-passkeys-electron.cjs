@@ -138,6 +138,7 @@ async function popupChecks(deps, service, scope) {
     return { response: 1 };
   };
   assert.equal(await service.choose(details), 'popup-only-id', 'unrelated agent does not block a human popup');
+  await nativeSheetChecks(deps, service, popup, details);
   inLane('popup-test', () => deps.agentTab.claim(2));
   assert.equal(await service.choose(details), undefined, 'claimed opener refuses unclaimed popup');
   assert.equal(prompts, 1);
@@ -152,6 +153,46 @@ async function popupChecks(deps, service, scope) {
   scope.tabs.list.pop();
   scope.tabs.find = previousFind;
   popup.destroy();
+}
+
+/** A real macOS sheet borrows parent focus without revoking the request that owns the native dialog. */
+async function nativeSheetChecks(deps, service, popup, details) {
+  if (process.platform !== 'darwin') return;
+  const previous = deps.electron.dialog.showMessageBox;
+  const observed = { timed: false, unfocused: 0, revokedBeforeCancel: false };
+  deps.electron.dialog.showMessageBox = async (parent, options) => {
+    const stop = new AbortController();
+    const poll = setInterval(() => {
+      if (!popup.isFocused()) observed.unfocused++;
+    }, 25);
+    const timer = setTimeout(() => {
+      observed.timed = true;
+      observed.revokedBeforeCancel = options.signal.aborted;
+      stop.abort();
+    }, 750);
+    try {
+      return await electron.dialog.showMessageBox(parent, {
+        ...options,
+        signal: AbortSignal.any([options.signal, stop.signal]),
+      });
+    } finally {
+      clearInterval(poll);
+      clearTimeout(timer);
+    }
+  };
+  try {
+    popup.focus();
+    await until(() => popup.isFocused());
+    assert.equal(await service.choose(details), undefined, 'fixture deliberately cancels the native sheet');
+    assert.equal(observed.timed, true, 'production must not self-cancel before the controlled native dismissal');
+    assert.equal(observed.revokedBeforeCancel, false, 'native sheet focus is not a takeover');
+    assert.ok(observed.unfocused > 0, 'real macOS sheet reproduced temporary parent focus loss');
+    console.log('PASS native macOS passkey sheet retains its popup request until deliberate cancellation');
+  } finally {
+    deps.electron.dialog.showMessageBox = previous;
+  }
+  popup.focus();
+  await until(() => popup.isFocused());
 }
 main().catch((error) => {
   console.error(error);
