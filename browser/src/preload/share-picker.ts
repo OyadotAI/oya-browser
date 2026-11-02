@@ -1,33 +1,8 @@
 /** Private sandboxed picker UI; source titles are text and only opaque choice tokens return to main. */
 import { ipcRenderer } from 'electron';
 import { SHARE_PICKER, type ShareKind, type ShareOption, type SharePresentation } from '../shared/share-picker.ts';
-
-/** Resolve a fixed element from the packaged browser-owned page. */
-const element = (id: string): HTMLElement => document.getElementById(id)!;
-/** Build literal text nodes, never website-controlled markup. */
-function text(tag: string, className: string, value: string): HTMLElement {
-  const node = document.createElement(tag);
-  node.className = className;
-  node.textContent = value;
-  return node;
-}
-/** Render browser-produced PNG data only, with a readable placeholder for sleeping tabs. */
-function preview(option: ShareOption): HTMLElement {
-  const box = text('span', 'preview placeholder', 'Preview unavailable');
-  if (!option.thumbnail.startsWith('data:image/png;base64,') || option.thumbnail.endsWith(',')) return box;
-  loadPreview(box, option.thumbnail);
-  return box;
-}
-/** Keep the placeholder until actual PNG bytes have decoded successfully. */
-function loadPreview(box: HTMLElement, thumbnail: string): void {
-  const image = document.createElement('img');
-  image.alt = '';
-  image.addEventListener('load', () => {
-    box.className = 'preview';
-    box.replaceChildren(image);
-  });
-  image.src = thumbnail;
-}
+import { pickerElement as element, pickerText as text, pickerPreview as preview } from './share-picker-elements.ts';
+import { NativePickerView } from './share-picker-native.ts';
 /** A real radio input provides keyboard selection and accessible checked state. */
 function sourceCard(option: ShareOption, select: () => void): HTMLLabelElement {
   const label = document.createElement('label');
@@ -45,16 +20,27 @@ class PickerView {
   private readonly data: SharePresentation;
   /** Each category change requires an explicit new choice. */
   private selected: ShareOption | null = null;
+  /** Optional system selection shares the existing footer and exact-request bridge. */
+  private readonly native: NativePickerView;
 
   /** Bind static controls once and show the tabs category first. */
   constructor(data: SharePresentation) {
     this.data = data;
     element('origin').textContent = data.origin;
+    this.native = this.nativeView(data);
     this.controls();
     this.category('tab');
     element('content').hidden = false;
     element('cancel').focus();
     requestAnimationFrame(() => ipcRenderer.send(SHARE_PICKER.READY));
+  }
+  /** Native and list selection share the same footer while keeping their confirmation protocols distinct. */
+  private nativeView(data: SharePresentation): NativePickerView {
+    return new NativePickerView(
+      data,
+      () => this.category('window'),
+      (source) => this.select(source),
+    );
   }
 
   /** Category navigation, Cancel and explicit Share are the only intents. */
@@ -84,12 +70,14 @@ class PickerView {
   /** Submitting without a selected source never grants a stream. */
   private submit(event: Event): void {
     event.preventDefault();
+    if (this.native.submit()) return;
     if (this.selected) this.answer(this.selected.id);
   }
 
   /** Switching a category clears selection, so Enter cannot accidentally share a different source. */
   private category(kind: ShareKind): void {
     this.selected = null;
+    this.native.category(kind);
     this.selection();
     for (const category of ['tab', 'window', 'screen'] as const) this.tabState(category, kind);
     const sources = this.data.sources.filter((option) => option.kind === kind);
@@ -126,7 +114,7 @@ class PickerView {
   }
 
   /** Source selection enables Share and names exactly what the person chose. */
-  private select(option: ShareOption): void {
+  private select(option: ShareOption | null): void {
     this.selected = option;
     this.selection();
   }

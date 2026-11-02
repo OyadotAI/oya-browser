@@ -781,8 +781,38 @@ IPC; opaque choice tokens resolve to native sources only in the main process.
 Tabs must belong to the requesting profile and remain human-owned; navigation,
 closure or an agent claim invalidates their preview. The requester's document,
 profile and control are rechecked while the picker is open and before delivery.
-Sharing is video only. The OS picker is not used because Electron skips the
-handler when it is, so no gate would run. Electron's empty-device
+Sharing is video only. Electron's `useSystemPicker` shortcut remains disabled
+because it bypasses this handler and its gate. On macOS15.2+, the Window category
+can instead open Apple's single-window selector through the main-process-only
+`native/window-selector` C Node-API package. This creates no SCStream and never
+answers the display callback itself. The private sheet hides while Apple owns
+pointing, then returns with an explicit Select and share confirmation. Other
+hosts retain the existing list. The browser's minimum macOS version stays13.0.
+
+`native-window-choice.ts` pins the selected CGWindowID, process ID and process
+launch time, matches only exact native Electron source IDs, and enumerates again
+after final confirmation. Titles and previews are context, never identifiers.
+Closed/replaced sources yield no stream. The adapter excludes only the picker
+helper window; ordinary Oya windows remain selectable. A cancelled native picker
+stays unavailable until its old terminal callback is consumed, even after the JS
+caller times out; the existing source list remains available. No global input
+hook, Accessibility permission, debugger or engine patch participates.
+
+`request-lease.ts` latches the exact owner window/tab, frame, session, origin and
+profile epoch. Moving focus to an external application is allowed; another Oya
+window/tab, navigation, profile switch or agent takeover permanently revokes the
+request. Native and list actions use the sheet's exact-frame IPC and separate
+confirmation states. Timers, observers and candidate tokens are retired on exit.
+
+The macOS-only optional package rebuilds against the configured Electron headers
+for each architecture. `afterPack` validates the unpacked Node-API binary and its
+architecture; the existing WebAuthn `beforePack` hook is retained. Generated
+per-architecture `bin` caches are excluded from the universal archive. The
+`test:desktop-window-selection` fixture tests the real Oya sheet and preload at
+360/600/780px, with synthetic OS choices; actual Apple pointing/selection and
+release-signed capture require separate native verification.
+
+Electron's empty-device
 media preflight requires screen consent too: both getDisplayMedia and legacy
 desktop constraints use that preflight. Camera and microphone requests retain
 their separate consent path. Native approvals are serialized through

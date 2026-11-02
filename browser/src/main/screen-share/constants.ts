@@ -42,3 +42,11 @@ export const DESKTOP_SOURCES = {
 };
 /** How often a live tab share is checked for having ended; the badge clears at most this late. */
 export const SHARE_POLL_MS = 1000;
+/** Apple's exact selected-window identity is exposed starting with macOS 15.2. */
+export const NATIVE_WINDOW_MINIMUM = { major: 15, minor: 2 };
+/** A forgotten native picker stops holding the website request; native ownership still waits for termination. */
+export const NATIVE_WINDOW_TIMEOUT_MS = 60_000;
+/** Direct selection enumerates only windows and keeps the normal bounded thumbnail size. */
+export const WINDOW_SOURCES = { types: ['window'] as 'window'[], thumbnailSize: PICKER.THUMBNAIL };
+/** Native titles are display context, bounded independently of OS metadata. */
+export const WINDOW_LABEL_LIMIT = 512;
