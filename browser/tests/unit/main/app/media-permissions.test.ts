@@ -7,6 +7,29 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fixture, details } from '../../support/media-fixture.ts';
+
+it('queued device consent cannot capture a document or profile that replaced its original requester', async () => {
+  for (const revoke of [
+    (f) => f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false }),
+    (f) => (f.deps.persona.partitionName = () => 'persist:two'),
+    (f) => (f.state.interactive = false),
+    (f) => (f.state.destroyed = true),
+  ]) {
+    const f = fixture();
+    const pending = Promise.withResolvers<boolean>();
+    const first = f.service.gate.locked(
+      () => true,
+      () => pending.promise,
+    );
+    const queued = f.service.request(f.contents as any, details as any);
+    revoke(f);
+    pending.resolve(true);
+    await first;
+    assert.equal(await queued, false);
+    assert.deepEqual(f.prompts, []);
+    assert.deepEqual(f.devices, []);
+  }
+});
 it('requires explicit site consent and macOS consent before granting the requested device', async () => {
   const f = fixture();
   assert.equal(f.check(), false);

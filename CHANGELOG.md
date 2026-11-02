@@ -12,6 +12,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.
+
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
 
 - Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.

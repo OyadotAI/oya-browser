@@ -761,7 +761,13 @@ Sharing is video only. The OS picker is not used because Electron skips the
 handler when it is, so no gate would run. Electron's empty-device
 media preflight requires screen consent too: both getDisplayMedia and legacy
 desktop constraints use that preflight. Camera and microphone requests retain
-their separate consent path. Only active HTTPS
+their separate consent path. Native approvals are serialized through
+`app/media-queue.ts`: up to four independent callbacks can wait for 30 seconds
+behind the active approval. A waiting request captures its document generation,
+origin and profile before joining the queue and rechecks them and human ownership
+before and after approval. Timed-out requests are removed without releasing an
+active native dialog; selected sources are never reused between requests.
+Only active HTTPS
 same-origin requesters can ask. Media capture is never globally granted. Existing
 streams remain under the site's stop/mute controls; these checks govern new
 access, not forced termination of existing calls. Ordinary playback/autoplay
@@ -774,7 +780,9 @@ and native display-media handoff using only the isolated test page as the captur
 source. Native pointer input verifies all three picker categories, disabled Share
 before selection, repeat selection, cancellation and ownership revocation. OS
 window/display enumeration is stubbed in this hermetic test. It does not validate
-real hardware or macOS privacy dialogs.
+real hardware or macOS privacy dialogs. The overlap fixture additionally exercises
+native microphone/camera requests arriving with a screen request, cancellation
+and retry, and revocation by reload, profile change or agent takeover.
 
 ### Session restore
 
