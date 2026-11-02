@@ -23,12 +23,12 @@ export async function captureSpecifiedTab(deps: CommandDeps, id: unknown, format
   await deps.translation?.released(tab.view);
   if (target(deps, id as number) !== tab) throw Error('Recording target changed during restoration');
   const image = await capturePage(tab.view, format === 'jpeg' ? SCREENSHOT_JPEG_QUALITY : undefined);
-  unchanged(deps, id as number, tab, revision);
+  screenshotUnchanged(deps, id as number, tab, revision);
   return image;
 }
 
 /** Pixels cannot cross a control revision or a replaced tab after an asynchronous capture. */
-function unchanged(deps: CommandDeps, id: number, tab: Tab, revision: number | undefined): void {
+function screenshotUnchanged(deps: CommandDeps, id: number, tab: Tab, revision: number | undefined): void {
   if (target(deps, id) !== tab || deps.control.snapshot().revision !== revision)
     throw Error('Recording target or owner changed during capture');
 }
