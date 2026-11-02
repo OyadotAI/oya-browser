@@ -10,6 +10,7 @@
  * records host requests and commits.
  */
 mod natives;
+mod values;
 mod wire;
 
 pub(in crate::v9) use natives::{end_of_task, install};

@@ -165,6 +165,7 @@ fn main() {
             host: &host,
             environment: &environment,
             modules: &call.modules,
+            module_keys: &[],
         };
         let state = if chain {
             carried.take().or(call.state.clone()).unwrap_or_default()

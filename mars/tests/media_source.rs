@@ -28,16 +28,21 @@ const PIXEL: usize = 4;
 
 /// The page: a muted video (so play needs no activation) fed from both fixtures, logging its times and state.
 const PAGE: &str = r#"<video id="v" muted></video><script>
-const v = document.getElementById('v'); window.times = []; window.state = 'start';
+const v = document.getElementById('v'); window.times = []; window.rangeCounts = []; window.state = 'start';
 v.addEventListener('timeupdate', () => times.push(v.currentTime));
 v.addEventListener('error', () => { state = 'error:' + (v.error && v.error.message); });
 const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
 ms.addEventListener('sourceopen', async () => {
   try {
     const load = async (type, url) => {
-      const bytes = await (await fetch(url)).arrayBuffer();
+      const reader = (await fetch(url)).body.getReader();
+      const chunks = []; let length = 0;
+      for (;;) { const {value, done} = await reader.read(); if (done) break; chunks.push(value); length += value.byteLength; }
+      const bytes = new Uint8Array(length); let offset = 0;
+      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
       const sb = ms.addSourceBuffer(type);
       await new Promise(done => { sb.addEventListener('updateend', done, { once: true }); sb.appendBuffer(bytes); });
+      rangeCounts.push(sb.buffered.length);
     };
     await load('video/mp4; codecs="avc1.42C00A"', '/video.mp4');
     await load('audio/mp4; codecs="mp4a.40.2"', '/audio.mp4');
@@ -149,6 +154,7 @@ fn a_media_source_with_video_and_audio_plays_through_the_native_player() {
     });
     assert!(advanced, "timeupdate advances: {}", report(&mut runtime));
     assert_eq!(peek(&mut runtime, "state"), json!("playing"));
+    assert_eq!(peek(&mut runtime, "rangeCounts"), json!([1, 1]));
     let (width, height, pixels) =
         mars::desktop::media_testing::frame("page-1").expect("a picture was decoded");
     assert_eq!((width, height), SIZE);

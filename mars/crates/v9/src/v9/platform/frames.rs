@@ -657,7 +657,10 @@ fn prologue<'m>(vm: &mut Vm, document: usize, markup: &'m str) -> Res<&'m str> {
             rest = after.get(end + 3..).unwrap_or("");
             continue;
         }
-        if rest.len() >= 9 && rest[..9].eq_ignore_ascii_case("<!doctype") {
+        if rest
+            .get(..9)
+            .is_some_and(|head| head.eq_ignore_ascii_case("<!doctype"))
+        {
             let end = rest.find('>').unwrap_or(rest.len());
             let (name, public, system) = doctype_parts(&rest[9..end]);
             let node = doctype(vm, &name, &public, &system)?;
@@ -677,7 +680,10 @@ fn doctype_parts(body: &str) -> (String, String, String) {
         .unwrap_or(body.len());
     let name = body[..end].to_ascii_lowercase();
     let rest = body[end..].trim_start();
-    let keyword = |word: &str| rest.len() >= 6 && rest[..6].eq_ignore_ascii_case(word);
+    let keyword = |word: &str| {
+        rest.get(..6)
+            .is_some_and(|head| head.eq_ignore_ascii_case(word))
+    };
     let mut quoted = quoted_strings(&rest[rest.len().min(6)..]).into_iter();
     if keyword("public") {
         let public = quoted.next().unwrap_or_default();

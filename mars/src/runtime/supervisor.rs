@@ -137,6 +137,12 @@ pub struct Runtime {
     navigation or script step builds its candidate. */
     pub(super) prefetched:
         std::collections::HashMap<String, EngineResult<crate::network::WebResponse>>,
+    /** Head scripts downloading on the loader, by their exact request: `take_prefetched`
+    waits for the hop when `acquire` asks, so the page is styled and painted while its scripts
+    (YouTube's 12 MB) are still on the wire instead of after them. */
+    pub(super) prefetching: BTreeMap<String, u64>,
+    /** Answers of those hops that landed before anyone asked. */
+    pub(super) prefetch_results: BTreeMap<u64, EngineResult<crate::network::WebResponse>>,
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
@@ -630,6 +636,8 @@ impl Runtime {
             languages: super::languages::preferred(),
             revisions: Default::default(),
             prefetched: Default::default(),
+            prefetching: Default::default(),
+            prefetch_results: Default::default(),
             v9_sources: Default::default(),
             shared_sources: Vec::new(),
             sync_layout: None,
@@ -1222,13 +1230,19 @@ impl Service {
         let (rep_tx, rep_rx) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
-        let worker = thread::Builder::new()
-            .name(format!("oya-{name}-inproc"))
-            .stack_size(crate::constants::SERVICE_STACK_BYTES)
-            .spawn(move || {
-                let _ = super::service::serve_in_process(name, req_rx, rep_tx, stopped);
-            })
-            .map_err(|_| EngineError::service(name, false))?;
+        let work = move || {
+            let _ = super::service::serve_in_process(name, req_rx, rep_tx, stopped);
+        };
+        let thread_name = format!("oya-{name}-inproc");
+        let worker = if name == "v9" {
+            crate::v9::spawn_execution_thread(thread_name, work)
+        } else {
+            thread::Builder::new()
+                .name(thread_name)
+                .stack_size(crate::constants::SERVICE_STACK_BYTES)
+                .spawn(work)
+        }
+        .map_err(|_| EngineError::service(name, false))?;
         Ok(Self {
             cancel,
             name,
@@ -1612,8 +1626,16 @@ pub mod perf {
             && let Ok(mut file) = file.lock()
         {
             let ms = start.elapsed().as_secs_f64() * 1000.0;
-            let _ = writeln!(file, "{event}\t{ms:.2}\t{}", detail());
+            let at = wall_ms();
+            let _ = writeln!(file, "{event}\t{ms:.2}\t{}\t@{at:.0}", detail());
         }
+    }
+
+    /** Milliseconds since the first record, so a timeline can place each step on one clock
+    (durations alone could not say when a page's thumbnails were asked for). */
+    fn wall_ms() -> f64 {
+        static EPOCH: OnceLock<Instant> = OnceLock::new();
+        EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
     }
 }
 

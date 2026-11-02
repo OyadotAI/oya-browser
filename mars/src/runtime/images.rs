@@ -854,6 +854,7 @@ impl super::supervisor::Runtime {
                 )
             })
             .collect::<Vec<_>>();
+        let phase = std::time::Instant::now();
         let backgrounds = crate::document::background_urls(document, base.as_str())
             .into_iter()
             // A later layer's key names its element; the canvas's is always wanted.
@@ -867,6 +868,9 @@ impl super::supervisor::Runtime {
                 })
             })
             .collect::<Vec<_>>();
+        super::supervisor::perf::record("images.collect", phase, || {
+            format!("{}\t{}", sources.len(), backgrounds.len())
+        });
         let mut images = BTreeMap::new();
         for (position, candidates, cors) in sources {
             let mut fetched = None;

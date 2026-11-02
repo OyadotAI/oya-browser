@@ -15,6 +15,24 @@
   /** Numbers JSON cannot carry, written as tagged strings. */
   const SPECIAL_NUMBERS = ['NaN', 'Infinity', '-Infinity', '-0'];
 
+  /** Reused encoders avoid creating functions and probing brands with exceptions for every node. */
+  const VALUE_ENCODERS = {
+    Object: (plain, ids) => ['O', encodeFields(plain, ids)],
+    Array: (array, ids) => ['A', array.length, encodeFields(array, ids)],
+    Date: (date) => ['D', encodeNumberNode(call(dateGetTime, date))],
+    Blob: encodeBlob,
+    View: encodeView,
+    ArrayBuffer: (buffer) => ['B', base64(new NativeUint8Array(buffer))],
+    Map: (map, ids) => ['M', [...map].map(([key, value]) => [encodeNode(key, ids), encodeNode(value, ids)])],
+    Set: (set, ids) => ['S', [...set].map((value) => encodeNode(value, ids))],
+    RegExp: (regexp) => ['R', call(regexpSource, regexp), call(regexpFlags, regexp)],
+    Boolean: (box) => ['W', 'Boolean', call(Boolean.prototype.valueOf, box)],
+    Number: (box) => ['W', 'Number', encodeNumberNode(call(Number.prototype.valueOf, box))],
+    String: (box) => ['W', 'String', call(String.prototype.valueOf, box)],
+    BigInt: (box) => ['W', 'BigInt', String(call(BigInt.prototype.valueOf, box))],
+    Error: (error) => ['E', String(error.name), String(error.message)],
+  };
+
   /** Serialize a stored value as JSON text. */
   function serializeValue(value) {
     return jsonStringify(encodeNode(value, new NativeMap()));
@@ -56,49 +74,8 @@
 
   /** Pick the encoder for an object's kind, checked by brand rather than by its prototype. */
   function objectEncoder(object) {
-    if (timeOf(object) !== undefined) {
-      return (date) => ['D', encodeNumberNode(timeOf(date))];
-    }
-    if (host.blob(object)) {
-      return encodeBlob;
-    }
-    if (isView(object)) {
-      return encodeView;
-    }
-    if (bufferLength(object) !== undefined) {
-      return (buffer) => ['B', base64(new NativeUint8Array(buffer))];
-    }
-    return kindEncoder(object);
-  }
-
-  /** Encoders for the remaining kinds, told apart by their [[Class]]-like tag. */
-  function kindEncoder(object) {
-    const tag = call(objectToString, object);
-    if (isArray(object)) {
-      return (array, ids) => ['A', array.length, encodeFields(array, ids)];
-    }
-    if (tag === '[object Map]') {
-      return (map, ids) => ['M', [...map].map(([key, value]) => [encodeNode(key, ids), encodeNode(value, ids)])];
-    }
-    if (tag === '[object Set]') {
-      return (set, ids) => ['S', [...set].map((value) => encodeNode(value, ids))];
-    }
-    if (tag === '[object RegExp]') {
-      return (regexp) => ['R', call(regexpSource, regexp), call(regexpFlags, regexp)];
-    }
-    return wrapperEncoder(tag) || ((plain, ids) => ['O', encodeFields(plain, ids)]);
-  }
-
-  /** Encoders for Boolean, Number, String and BigInt objects and errors. */
-  function wrapperEncoder(tag) {
-    const wrappers = {
-      '[object Boolean]': (box) => ['W', 'Boolean', call(Boolean.prototype.valueOf, box)],
-      '[object Number]': (box) => ['W', 'Number', encodeNumberNode(call(Number.prototype.valueOf, box))],
-      '[object String]': (box) => ['W', 'String', call(String.prototype.valueOf, box)],
-      '[object BigInt]': (box) => ['W', 'BigInt', String(call(BigInt.prototype.valueOf, box))],
-      '[object Error]': (error) => ['E', String(error.name), String(error.message)],
-    };
-    return own(wrappers, tag) ? wrappers[tag] : null;
+    const kind = host.valueKind(object);
+    return own(VALUE_ENCODERS, kind) ? VALUE_ENCODERS[kind] : VALUE_ENCODERS.Object;
   }
 
   /** Own enumerable string-keyed fields, in order, as [name, node] pairs. */
@@ -119,15 +96,6 @@
   function encodeBlob(blob) {
     const [type, bytes, name, modified] = host.blob(blob);
     return name === undefined ? ['L', type, base64(bytes)] : ['F', type, base64(bytes), name, modified];
-  }
-
-  /** An ArrayBuffer's byte length, or undefined for any other value. */
-  function bufferLength(value) {
-    try {
-      return call(bufferByteLength, value);
-    } catch {
-      return undefined;
-    }
   }
 
   /** Bytes per base64 chunk, so fromCharCode never receives an oversized argument list. */

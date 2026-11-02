@@ -176,19 +176,50 @@ impl StreamAudio {
         };
         if self.config.as_deref() != Some(lane.track.config.as_slice()) {
             self.flush();
-            self.format = AudioFormat::aac(
+            let started = std::time::Instant::now();
+            let format = AudioFormat::aac(
                 &lane.track.config,
                 lane.track.channels,
                 lane.track.sample_rate,
-            )
-            .ok();
+            );
+            crate::runtime::perf::record("media.audio_format", started, || {
+                format!(
+                    "{}\t{:?}\t{}\t{}",
+                    format
+                        .as_ref()
+                        .map_or_else(|error| format!("err {error:?}"), |_| "ok".into()),
+                    lane.track.config,
+                    lane.track.channels,
+                    lane.track.sample_rate
+                )
+            });
+            self.format = format.ok();
             self.config = Some(lane.track.config.clone());
         }
         let Some(format) = &self.format else { return };
+        let opened = self.renderer.is_none();
         let renderer = self
             .renderer
             .get_or_insert_with(|| open(clock, self.volume, self.muted));
+        let before = self.fed;
         feed(renderer, format, &lane.frames, &mut self.fed, playhead);
+        if opened || self.fed != before {
+            let started = std::time::Instant::now();
+            // SAFETY: getters on the renderer this stream holds.
+            let (status, ready) =
+                unsafe { (renderer.status().0, renderer.isReadyForMoreMediaData()) };
+            crate::runtime::perf::record("media.audio_feed", started, || {
+                format!(
+                    "opened={opened}\tfed={:?}\tplayhead={playhead:.2}\tframes={}\tend={:.2}\tstatus={status}\tready={ready}\tmuted={}\tvolume={}\terror={:?}",
+                    self.fed,
+                    lane.frames.len(),
+                    lane.end,
+                    self.muted,
+                    self.volume,
+                    self.error()
+                )
+            });
+        }
     }
 }
 

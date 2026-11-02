@@ -209,6 +209,15 @@ impl Vm<'_> {
             return Err(self.type_error(&format!("{text} is not a constructor")));
         }
         match behavior {
+            Behavior::Native(index)
+                if !boundary
+                    && construct.is_none()
+                    && index == native_index(realm().ids.function_call)
+                    && matches!(self.behavior(&this), Some(Behavior::Closure(..))) =>
+            {
+                let bank = self.object_realm(function.object().expect("callable object"));
+                self.with_realm(bank, |vm| vm.forward_script_call(this, args))
+            }
             Behavior::Native(index) => {
                 let callee = function.object().expect("callable object");
                 let result = self.call_native(index, callee, this, &args, construct);
@@ -240,6 +249,16 @@ impl Vm<'_> {
                 result.map(Invoked::Value)
             }
         }
+    }
+    /** Script call forwarding enters the target on the running interpreter loop, without native re-entry. */
+    fn forward_script_call(&mut self, function: JsValue, mut args: Vec<JsValue>) -> Res<Invoked> {
+        self.charge(1)?;
+        let receiver = if args.is_empty() {
+            JsValue::Undefined
+        } else {
+            args.remove(0)
+        };
+        self.invoke(function, receiver, args, None, false)
     }
     /** Whether a proxy target (followed through nested proxies, bounded) is callable. */
     fn unproxied_callable(&self, target: ObjectId) -> bool {

@@ -164,7 +164,12 @@ fn sample_intervals(
         }
         let scale = f64::from(track.timescale);
         let start = sample.pts as f64 / scale + request.offset;
-        let end = start + f64::from(sample.duration) / scale;
+        // Convert a shared boundary once: adding two rounded seconds values creates tiny gaps.
+        let end_pts = sample
+            .pts
+            .checked_add(i64::from(sample.duration))
+            .ok_or(Mp4Error::Malformed("sample presentation end"))?;
+        let end = end_pts as f64 / scale + request.offset;
         if let Some(clipped) = clip(start, end, request) {
             intervals.push(clipped);
         }

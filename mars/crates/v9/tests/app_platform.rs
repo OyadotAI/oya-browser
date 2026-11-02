@@ -9,6 +9,30 @@ use crate::common;
 
 use common::eval;
 
+/** Player metadata construction normalizes text and snapshots immutable artwork. */
+#[test]
+fn media_metadata_constructs_real_instances() {
+    let execution = common::load(
+        "const image={src:'/cover.jpg',sizes:'64x64',type:'image/jpeg'};const m=new MediaMetadata({title:42,artwork:[image]});image.src='/changed';console.log(m instanceof MediaMetadata,m.title,m.artist,m.album);console.log(m.artwork[0].src.endsWith('/cover.jpg'),Object.isFrozen(m.artwork),Object.isFrozen(m.artwork[0]));m.title='playing';console.log(m.title);",
+    );
+    assert_eq!(
+        common::console(&execution),
+        ["true 42  ", "true true true", "playing"]
+    );
+}
+
+/** Failed artwork conversion leaves the previous metadata intact. */
+#[test]
+fn media_metadata_refuses_invalid_receivers_and_artwork() {
+    let execution = common::load(
+        "const m=new MediaMetadata({artwork:[{src:'/a'}]});try{m.artwork=[{}]}catch(e){console.log(e.name)}console.log(m.artwork[0].src.endsWith('/a'));try{MediaMetadata()}catch(e){console.log(e.name)}try{Object.getOwnPropertyDescriptor(MediaMetadata.prototype,'title').get.call({})}catch(e){console.log(e.name)}",
+    );
+    assert_eq!(
+        common::console(&execution),
+        ["TypeError", "true", "TypeError", "TypeError"]
+    );
+}
+
 /** The constructor sets name, message and the legacy code, and instances are Errors. */
 #[test]
 fn dom_exception_constructs_named_errors() {

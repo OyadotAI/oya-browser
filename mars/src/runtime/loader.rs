@@ -11,13 +11,15 @@ use super::supervisor::Service;
 use crate::network::{WebRequest, WebResponse};
 use crate::protocol::{EngineError, EngineResult};
 use serde_json::{Value, json};
-use std::hash::{Hash, Hasher};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod queue;
+use queue::Queue;
 
 /// Worker threads (and network service processes) in the pool: enough for a page's parallel
 /// fetches to overlap, as Chrome keeps six connections per host, without a process per request.
@@ -53,20 +55,23 @@ pub(super) struct Done {
 struct Worker {
     /// Its own queue, so a broadcast reaches each worker exactly once.
     jobs: Sender<Job>,
-    /// Hops queued or running; zero means it would start a new one at once.
-    busy: Arc<AtomicUsize>,
+    /// Only an active hop owns a worker; waiting hops stay in the shared queue.
+    busy: bool,
+    /// A closed worker channel cannot accept another hop.
+    closed: bool,
 }
 
 /**
  * The pool. Each network process keeps its own memory cache, so a URL goes to the same worker
  * whenever that worker is free: a repeated GET is a cache hit and an unsafe request invalidates
  * the copy that would answer it. A busy preferred worker hands the hop to an idle one instead,
- * so one slow response never queues the requests behind it; unsafe requests are then announced
- * to every cache (`forget`).
+ * so one slow response never queues requests behind it. When all workers are occupied,
+ * a shared queue gives the next hop to whichever worker finishes first; unsafe requests
+ * are still announced to every cache (`forget`).
  */
 pub(super) struct Loader {
     /// The workers, by index.
-    workers: Vec<Worker>,
+    queue: Arc<Mutex<Queue>>,
     /// Finished hops, drained by `poll` and `wait`.
     results: Receiver<Done>,
     /// Set on drop, so a hop on a slow link stops at its next poll instead of running on.
@@ -81,11 +86,25 @@ impl Loader {
     pub fn start(executable: &Path) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let (done, results) = mpsc::channel();
-        let workers = (0..WORKERS)
-            .filter_map(|index| spawn(index, executable, &stop, done.clone()))
-            .collect();
+        let queue = Arc::new(Mutex::new(Queue::new(done.clone())));
+        let mut workers = Vec::new();
+        for _ in 0..WORKERS {
+            if let Some(worker) = spawn(
+                workers.len(),
+                executable,
+                &stop,
+                done.clone(),
+                Arc::downgrade(&queue),
+            ) {
+                workers.push(worker);
+            }
+        }
+        queue
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .workers = workers;
         Self {
-            workers,
+            queue,
             results,
             stop,
             next: 0,
@@ -96,36 +115,17 @@ impl Loader {
     pub fn submit(&mut self, request: WebRequest, grants: Vec<String>, remaining_ms: u64) -> u64 {
         self.next += 1;
         let id = self.next;
-        let Some(worker) = self.pick(&request.url) else {
-            return id;
-        };
-        worker.busy.fetch_add(1, Ordering::Relaxed);
         let hop = Hop {
             id,
             request,
             grants,
             remaining_ms,
         };
-        if worker.jobs.send(Job::Hop(Box::new(hop))).is_err() {
-            worker.busy.fetch_sub(1, Ordering::Relaxed);
-        }
+        self.queue
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .submit(hop);
         id
-    }
-
-    /** The URL's own worker when it is free, else any free worker, else the URL's own. */
-    fn pick(&self, url: &str) -> Option<&Worker> {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        url.split('#').next().unwrap_or(url).hash(&mut hasher);
-        let count = u64::try_from(self.workers.len())
-            .ok()
-            .filter(|count| *count > 0)?;
-        let preferred = &self.workers[usize::try_from(hasher.finish() % count).ok()?];
-        let idle = |worker: &&Worker| worker.busy.load(Ordering::Relaxed) == 0;
-        Some(if idle(&preferred) {
-            preferred
-        } else {
-            self.workers.iter().find(idle).unwrap_or(preferred)
-        })
     }
 
     /** Every hop finished since the last call, without waiting. */
@@ -157,7 +157,8 @@ impl Loader {
 
     /** One job to each worker, after whatever it already has queued. */
     fn broadcast(&self, job: impl Fn() -> Job) {
-        for worker in &self.workers {
+        let queue = self.queue.lock().unwrap_or_else(|error| error.into_inner());
+        for worker in &queue.workers {
             let _ = worker.jobs.send(job());
         }
     }
@@ -178,19 +179,19 @@ fn spawn(
     executable: &Path,
     stop: &Arc<AtomicBool>,
     done: Sender<Done>,
+    scheduler: Weak<Mutex<Queue>>,
 ) -> Option<Worker> {
     let (jobs, queue) = mpsc::channel::<Job>();
-    let busy = Arc::new(AtomicUsize::new(0));
-    let (executable, cancel, count) = (
-        executable.to_path_buf(),
-        Arc::clone(stop),
-        Arc::clone(&busy),
-    );
+    let (executable, cancel) = (executable.to_path_buf(), Arc::clone(stop));
     thread::Builder::new()
         .name(format!("oya-loader-{index}"))
-        .spawn(move || work(&executable, &cancel, &queue, &done, &count))
+        .spawn(move || work(&executable, &cancel, &queue, &done, scheduler, index))
         .ok()?;
-    Some(Worker { jobs, busy })
+    Some(Worker {
+        jobs,
+        busy: false,
+        closed: false,
+    })
 }
 
 /** Starts or replaces the worker network service respecting process isolation settings. */
@@ -219,13 +220,19 @@ fn work(
     cancel: &Arc<AtomicBool>,
     queue: &Receiver<Job>,
     done: &Sender<Done>,
-    busy: &AtomicUsize,
+    scheduler: Weak<Mutex<Queue>>,
+    index: usize,
 ) {
     let mut service: Option<Service> = None;
     while let Ok(job) = queue.recv() {
         ensure_service(&mut service, executable, cancel);
         if let Some(finished) = dispatch_job(&mut service, job) {
-            busy.fetch_sub(1, Ordering::Relaxed);
+            if let Some(scheduler) = scheduler.upgrade() {
+                scheduler
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .complete(index);
+            }
             if done.send(finished).is_err() {
                 return;
             }

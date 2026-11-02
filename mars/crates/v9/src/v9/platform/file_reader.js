@@ -9,6 +9,8 @@
  */
 (function installFileReader(global) {
   'use strict';
+  // Shell contexts have no event targets or blobs, so they do not install the File API.
+  if (typeof global.EventTarget !== 'function') return;
 
   /** readyState values the specification names. */
   const EMPTY = 0;

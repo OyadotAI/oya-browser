@@ -7,10 +7,10 @@ use serde_json::json;
 /** A single stable author identity exposes computed values independently of layout algorithms. */
 fn style(declarations: &str) -> ComputedStyle {
     let document = parse("<div id=x></div>").unwrap();
-    compute_styles(&document, &[format!("#x{{{declarations}}}")])
+    (*compute_styles(&document, &[format!("#x{{{declarations}}}")])
         .unwrap()
         .nodes[0]
-        .style
+        .style)
         .clone()
 }
 /** Defaults distinguish automatic main/minimum sizes from explicit zero and do not create flex containers. */

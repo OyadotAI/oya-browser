@@ -44,6 +44,16 @@ fn flat_page_at_node_limit_renders_inside_deadline() {
     assert!(elapsed < RENDER_BUDGET, "{elapsed:?}");
 }
 
+/** A page of flex containers checks child fallbacks once per node instead of once per pair. */
+#[test]
+fn flex_containers_at_node_limit_render_inside_deadline() {
+    let document = styled(&"<div style='display:flex;height:1px'></div>".repeat(NODES));
+    assert_eq!(document.nodes.len(), NODES);
+    let (display, elapsed) = timed(&document);
+    assert_eq!(display.unwrap().items.len(), NODES);
+    assert!(elapsed < RENDER_BUDGET, "{elapsed:?}");
+}
+
 /** A nested navigation-shaped page at NODES renders inside the deadline. */
 #[test]
 fn nested_page_at_node_limit_renders_inside_deadline() {
@@ -147,6 +157,30 @@ fn agent_hidden_follows_parents_after_a_move() {
         .find(|item| item.local_id == 0)
         .unwrap();
     assert!(paragraph.y >= cell.y && paragraph.x >= cell.x);
+}
+
+/** Batch visibility matches single-node checks across moved identities, SVG roots and hidden ancestry. */
+#[test]
+fn batch_agent_visibility_preserves_hidden_ancestry_after_reordering() {
+    let mut document = parse(concat!(
+        "<div aria-hidden=TRUE><span aria-hidden=false>hidden</span></div>",
+        "<svg><g><path/></g></svg><section><svg aria-label=Icon><path/></svg></section>",
+        "<p>visible</p><div aria-hidden=false><span>also visible</span></div>"
+    ))
+    .unwrap();
+    for node in &mut document.nodes {
+        node.local_id += NODES;
+        node.parent = node.parent.map(|parent| parent + NODES);
+    }
+    document.nodes.reverse();
+    let expected: Vec<_> = document
+        .nodes
+        .iter()
+        .map(|node| agent_hidden(&document, node))
+        .collect();
+    assert_eq!(mars_eye::agent_hidden_nodes(&document), expected);
+    assert!(expected.iter().any(|hidden| *hidden));
+    assert!(expected.iter().any(|hidden| !hidden));
 }
 
 /** A table longer than the old 1024-row grid lays out every row, as a long Hacker News thread

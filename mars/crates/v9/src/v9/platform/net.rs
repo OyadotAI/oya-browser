@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 pub(super) mod abort;
 mod blob_fetch;
 mod body;
+mod body_stream;
 mod headers;
 mod response_body;
 use body::Body;
@@ -110,6 +111,7 @@ fn record(
             signal,
             blob_bytes: blob_fetch::charge(&request),
             indexed: false,
+            head: request.method == "HEAD",
         });
     }
     vm.page.effects.requests.push(request);
@@ -241,6 +243,7 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         }
     };
     let body = read(vm, "body")?;
+    let inherited_body = body.nullish() && base.is_some();
     let body = if body.nullish() {
         base.as_ref().map_or_else(Body::default, |r| Body {
             text: r.body.clone(),
@@ -268,6 +271,9 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
     // Inherited headers were admitted under the input Request's mode; the outgoing list must pass
     // this request's own guard, so no-cors cannot inherit a non-safelisted header.
     let headers = refiltered(headers, request_guard(&mode));
+    if inherited_body {
+        body_stream::consume(vm, input.object().expect("Request input checked"))?;
+    }
     Ok(Ok(HostRequest {
         id: 0,
         kind: "fetch".into(),
@@ -428,11 +434,13 @@ pub(in crate::v9) fn request_construct(vm: &mut Vm, call: Call) -> Res<JsValue> 
 
 /** A Request object over its data. */
 fn request_object(vm: &mut Vm, request: HostRequest, signal: ObjectId) -> Res<JsValue> {
+    let absent = request.body.is_none() && request.body_bytes.is_empty();
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Request(Box::new(request)))),
         Some(realm().ids.request_prototype),
     ))?;
     abort::bind(vm, id, signal);
+    body_stream::set_null(vm, id, absent);
     Ok(JsValue::Object(id))
 }
 
@@ -441,6 +449,7 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(HostData::Request(request)) = super::host_data(vm, &call.this) else {
         return Err(vm.type_error("Illegal invocation"));
     };
+    let id = call.this.object().expect("Request receiver checked");
     match native_name(&call) {
         "url" => JsValue::string(&request.url).map_err(Into::into),
         "method" => JsValue::string(&request.method).map_err(Into::into),
@@ -455,11 +464,16 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "referrer" => JsValue::string("about:client").map_err(Into::into),
         "destination" => JsValue::string("").map_err(Into::into),
         "integrity" => JsValue::string("").map_err(Into::into),
-        "keepalive" | "bodyUsed" => Ok(JsValue::Boolean(false)),
+        "keepalive" => Ok(JsValue::Boolean(false)),
+        "bodyUsed" => Ok(JsValue::Boolean(body_stream::used(vm, id))),
+        "body" => body_stream::get(vm, id, |_| Ok(request_bytes(&request))),
         "signal" => {
             abort::request_signal(vm, call.this.object().expect("Request receiver checked"))
         }
         "clone" => {
+            if body_stream::unusable(vm, id) {
+                return Err(vm.type_error("Request body is locked or already read"));
+            }
             let mut copy = *request;
             if let Some(pairs) = live_headers(vm, &call.this) {
                 copy.headers = pairs;
@@ -467,34 +481,31 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let signal = abort::for_request(vm, &call.this, &JsValue::Undefined)?;
             request_object(vm, copy, signal)
         }
-        name @ ("text" | "json") => {
-            let promise = vm.new_promise()?;
-            let body = request.body.clone().unwrap_or_default();
-            let outcome = if name == "text" {
-                JsString::from_utf8(&body)
-                    .map(JsValue::String)
-                    .map_err(Thrown::from)
-            } else {
-                crate::v9::builtins::json_parse_text(vm, &body)
-            };
-            match outcome {
-                Ok(value) => vm.resolve_promise(promise, value)?,
-                Err(Thrown::Value(error)) => vm.settle(promise, PromiseState::Rejected(error))?,
-                Err(fatal) => return Err(fatal),
-            }
-            Ok(JsValue::Object(promise))
-        }
         name => {
-            let mut bytes = request.body_bytes.clone();
-            if let Some(text) = &request.body {
-                bytes = text.clone().into_bytes();
-            }
-            let headers = live_headers(vm, &call.this).unwrap_or(request.headers.clone());
-            match body::consume(vm, name, bytes, &headers) {
-                Some(outcome) => settled(vm, outcome),
-                None => Err(vm.unsupported_error(&format!("Request.{name}"))),
-            }
+            let outcome = request_read(vm, &call.this, &request, name);
+            settled(vm, outcome)
         }
+    }
+}
+
+/** Request text and byte readers use one binary-safe source representation. */
+fn request_bytes(request: &HostRequest) -> Vec<u8> {
+    request.body.as_ref().map_or_else(
+        || request.body_bytes.clone(),
+        |text| text.as_bytes().to_vec(),
+    )
+}
+
+/** Whole-body readers share the stream's lock and disturbance state. */
+fn request_read(vm: &mut Vm, this: &JsValue, request: &HostRequest, name: &str) -> Res<JsValue> {
+    body_stream::consume(vm, this.object().expect("Request receiver checked"))?;
+    let bytes = request_bytes(request);
+    let headers = live_headers(vm, this).unwrap_or(request.headers.clone());
+    match name {
+        "text" => JsValue::string(&response_body::text(&bytes)).map_err(Into::into),
+        "json" => crate::v9::builtins::json_parse_text(vm, &response_body::text(&bytes)),
+        _ => body::consume(vm, name, bytes, &headers)
+            .unwrap_or_else(|| Err(vm.unsupported_error(&format!("Request.{name}")))),
     }
 }
 
@@ -589,7 +600,7 @@ impl Vm<'_> {
                 }
                 self.deliver_xhr(pending.owner, response)
             } else {
-                self.deliver_fetch(pending.owner, pending.signal, response)
+                self.deliver_fetch(pending.owner, pending.signal, pending.head, response)
             };
             match result {
                 Ok(()) => {}
@@ -614,6 +625,7 @@ impl Vm<'_> {
         &mut self,
         promise: ObjectId,
         signal: Option<ObjectId>,
+        head: bool,
         response: HostResponse,
     ) -> Res<()> {
         if let Some(reason) = signal.and_then(|signal| abort::reason(self, signal)) {
@@ -623,6 +635,7 @@ impl Vm<'_> {
             let _ = error;
             return reject(self, promise, "Failed to fetch");
         }
+        let absent = head || response.status == 0 || NULL_BODY_STATUSES.contains(&response.status);
         let data = ResponseData {
             status: response.status,
             status_text: status_text(response.status, response.status_text),
@@ -636,6 +649,7 @@ impl Vm<'_> {
             Some(realm().ids.response_prototype),
         ))?;
         response_body::store(self, object, response.body_bytes)?;
+        body_stream::set_null(self, object, absent);
         if let Some(signal) = signal {
             abort::bind(self, object, signal);
         }
@@ -1186,7 +1200,7 @@ fn this_response(vm: &mut Vm, call: &Call) -> Res<(ObjectId, ResponseData)> {
 
 /** Response accessors. */
 pub(in crate::v9) fn response_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, data) = this_response(vm, &call)?;
+    let (id, data) = this_response(vm, &call)?;
     Ok(match native_name(&call) {
         "ok" => JsValue::Boolean((200..300).contains(&data.status)),
         "status" => JsValue::Number(f64::from(data.status)),
@@ -1194,7 +1208,8 @@ pub(in crate::v9) fn response_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "url" => JsValue::string(&data.url)?,
         "redirected" => JsValue::Boolean(false),
         "type" => JsValue::string(&response_type(vm, &call.this, &data))?,
-        "bodyUsed" => JsValue::Boolean(data.used),
+        "bodyUsed" => JsValue::Boolean(data.used || body_stream::used(vm, id)),
+        "body" => body_stream::get(vm, id, |vm| response_body::bytes(vm, id, &data))?,
         "headers" => {
             let guard = response_guard(vm, &call.this);
             owned_headers(vm, &call.this, data.headers, guard)?
@@ -1250,6 +1265,7 @@ fn built_response(vm: &mut Vm, data: ResponseData, kind: &str, writable: bool) -
     ))?;
     headers::put_private(vm, id, "responseType", JsValue::string(kind)?);
     headers::put_private(vm, id, "responseGuard", JsValue::Boolean(writable));
+    body_stream::set_null(vm, id, true);
     Ok(JsValue::Object(id))
 }
 
@@ -1339,6 +1355,11 @@ fn initialize_response(vm: &mut Vm, body: &JsValue, init: &JsValue, label: &str)
         return Err(EngineError::limit("response body bytes", VM_RESPONSE_BYTES).into());
     }
     let response = built_response(vm, data, "default", true)?;
+    body_stream::set_null(
+        vm,
+        response.object().expect("Response object"),
+        body.nullish(),
+    );
     response_body::store(vm, response.object().expect("Response object"), read.bytes)?;
     Ok(response)
 }
@@ -1412,7 +1433,11 @@ pub(in crate::v9) fn response_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** `response.clone()`: the same status, type and body, with its own copy of the headers. */
 fn clone_response(vm: &mut Vm, this: &JsValue, mut data: ResponseData) -> Res<JsValue> {
-    if data.used {
+    if data.used
+        || this
+            .object()
+            .is_some_and(|id| body_stream::unusable(vm, id))
+    {
         return Err(
             vm.type_error("Failed to execute 'clone' on 'Response': Response body is already used")
         );
@@ -1429,6 +1454,7 @@ fn clone_response(vm: &mut Vm, this: &JsValue, mut data: ResponseData) -> Res<Js
             "responseType",
             "responseGuard",
             response_body::KEY,
+            body_stream::NULL,
             abort::SIGNAL,
         ] {
             if let Some(value) = headers::get_private(vm, source, key) {
@@ -1451,15 +1477,11 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.settle(promise, PromiseState::Rejected(reason))?;
         return Ok(JsValue::Object(promise));
     }
-    if data.used {
+    if data.used || body_stream::unusable(vm, id) {
         reject(vm, promise, "Failed to execute: body stream already read")?;
         return Ok(JsValue::Object(promise));
     }
-    if let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|o| &mut o.class)
-        && let HostData::Response(response) = host.as_mut()
-    {
-        response.used = true;
-    }
+    body_stream::consume(vm, id)?;
     let bytes = response_body::bytes(vm, id, &data)?;
     let outcome = match name {
         "text" => JsString::from_utf8(&response_body::text(&bytes))

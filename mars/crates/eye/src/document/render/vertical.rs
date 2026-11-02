@@ -399,7 +399,7 @@ fn rotated(document: &Document, root: &Node, fit: bool) -> Document {
         let horizontal = !node.style.vertical_writing && !undoing;
         let undoes = turn.flag(0);
         let counter = node.style.counter_rotate != 0;
-        node.style = rotate_style(&node.style, turn, undoing);
+        node.style = rotate_style(&node.style, turn, undoing).into();
         if horizontal && !counter && node.local_id != root.local_id {
             node.style.vertical_writing = true;
             node.style.counter_rotate = undoes;

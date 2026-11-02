@@ -173,15 +173,16 @@ impl Page {
             .nodes
             .iter()
             .zip(&labels)
-            .filter(|(node, _)| !crate::document::agent_hidden(&self.document, node))
-            .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds, &derived))
+            .zip(crate::document::agent_hidden_nodes(&self.document))
+            .filter(|(_, hidden)| !hidden)
+            .map(|((node, label), _)| self.inspect_node(node, label, &labels, &bounds, &derived))
             .collect::<Vec<_>>();
         let frame_nodes = super::frames::documents(&self.frames).into_iter().flat_map(|(base, _, document)| {
             let labels = super::names::names(document);
-            document.nodes.iter().zip(labels).filter_map(|(node, name)| {
+            document.nodes.iter().zip(labels).zip(crate::document::agent_hidden_nodes(document)).filter_map(|((node, name), hidden)| {
                 let id = base + node.local_id;
                 let item = bounds.get(&id).filter(|item| crate::document::agent_visible(item))?;
-                if crate::document::agent_hidden(document, node) { return None; }
+                if hidden { return None; }
                 Some(json!({"node_id":self.node_id(id),"tag":node.tag,"role":crate::document::role(node),
                     "name":name,"text":node.text,"href":node.href,"enabled":!node.disabled && !node.hidden(),
                     "bounds":{"x":item.x,"y":item.y,"width":item.width,"height":item.height,"unit":"logical_points"}}))

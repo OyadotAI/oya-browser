@@ -37,6 +37,8 @@ struct Deferred {
     scopes: Vec<Arc<Scope>>,
     classes: Vec<(u32, Vec<Name>)>,
     eval_grammar: u8,
+    /// Dependency results are shared with the enclosing compilation and sibling lazy functions.
+    captures: scan::CaptureCache,
     /// The compile at the parsed offset, shared by every rebased copy.
     unit: OnceLock<EngineResult<Arc<cache::Unit>>>,
 }
@@ -82,6 +84,7 @@ impl Deferred {
             .get_or_init(|| {
                 let mut compiler = Compiler {
                     scopes: self.scopes.clone(),
+                    captures: self.captures.clone(),
                     classes: self.classes.clone(),
                     checked: true,
                     ..Compiler::default()
@@ -124,6 +127,7 @@ impl Compiler {
                 scopes: self.scopes.clone(),
                 classes: self.classes.clone(),
                 eval_grammar: self.functions.last().map_or(0, |state| state.eval_grammar),
+                captures: self.captures.clone(),
                 unit: OnceLock::new(),
             }),
             delta: 0,

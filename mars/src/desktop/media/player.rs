@@ -99,6 +99,13 @@ impl Native {
             audio: StreamAudio::default(),
             stream_ended: false,
         };
+        // The page's settings hold from the first frame: a stream renderer opened before any
+        // change would otherwise keep StreamAudio's zero volume, which left YouTube's content
+        // silent while an ad, whose play and pause transitions resend settings, sounded.
+        native.audio.apply(&native.settings);
+        crate::runtime::perf::record("media.player_new", std::time::Instant::now(), || {
+            format!("{:?}", native.settings)
+        });
         native.start_if_allowed(mtm);
         native
     }
@@ -128,6 +135,9 @@ impl Native {
     }
     /** New settings from the page. */
     pub fn set(&mut self, mtm: MainThreadMarker, settings: MediaSettings) {
+        crate::runtime::perf::record("media.player_set", std::time::Instant::now(), || {
+            format!("{settings:?}")
+        });
         self.settings = settings;
         self.start_if_allowed(mtm);
         self.apply();
@@ -242,7 +252,7 @@ impl Native {
  */
 impl Native {
     fn tick_stream(&mut self, shared: &mut Shared) {
-        let playhead = self.clock.time();
+        let playhead = self.held_playhead();
         let dry = self.media.buffered_end().is_none_or(|end| playhead >= end);
         let rate = if self.settings.paused || dry {
             0.0
@@ -260,6 +270,23 @@ impl Native {
         self.audio.step(&self.media, playhead, &self.clock);
         let stalled = dry && self.media.buffered_end().is_some();
         shared.status = self.stream_status(shared, playhead, stalled);
+    }
+
+    /**
+     * The playhead, held at the buffered end when the clock ran past it between ticks: the clock runs freely until
+     * a tick stops it, and the time the page hears with `waiting` is the end of what is buffered, not the few
+     * milliseconds the clock went on, as a browser's current playback position stops at the end of buffered data.
+     */
+    fn held_playhead(&mut self) -> f64 {
+        let playhead = self.clock.time();
+        match self.media.buffered_end() {
+            Some(end) if playhead > end => {
+                self.clock.set_rate(0.0);
+                self.clock.seek(end);
+                end
+            }
+            _ => playhead,
+        }
     }
 
     /**

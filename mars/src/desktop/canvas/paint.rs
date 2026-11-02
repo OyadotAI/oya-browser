@@ -337,6 +337,12 @@ impl Painter {
             let Some(color) = shadow_color(&shadow.color, alpha) else {
                 continue;
             };
+            let lands = shape
+                .outset(shadow.spread + shadow.blur)
+                .offset(shadow.x, shadow.y);
+            if !self.in_clip(&lands) {
+                continue;
+            }
             CGContext::save_g_state(self.cg());
             self.outside(shape);
             // The shape is filled SHADOW_REACH to the left and its shadow offset back, so only
@@ -418,6 +424,19 @@ impl Painter {
             ),
         );
         CGContext::eo_clip(self.cg());
+    }
+    /// Whether a box meets the current clip. A shadow whose landing spot is off the page is
+    /// skipped: cast from SHADOW_REACH away, CoreGraphics lands a ghost of it a further
+    /// SHADOW_REACH on, so a box parked at `left: -10000px` (Amazon's keyboard-shortcut menu)
+    /// put a translucent block at the viewport's left edge.
+    fn in_clip(&self, shape: &Shape) -> bool {
+        let clip = CGContext::clip_bounding_box(self.cg());
+        let (left, top) = (clip.origin.x, clip.origin.y);
+        let (right, bottom) = (left + clip.size.width, top + clip.size.height);
+        shape.x < right
+            && shape.x + shape.width > left
+            && shape.y < bottom
+            && shape.y + shape.height > top
     }
     /// A zero-offset blur in the shadow's color; the cast shape itself carries the offset.
     /// CoreGraphics' blur argument is a Gaussian of sigma blur/2, the same rule as a CSS blur

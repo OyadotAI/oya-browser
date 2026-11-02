@@ -52,6 +52,7 @@ pub mod platform_records {
     /** Stored password and federated credentials. */
     pub const CREDENTIALS_BYTES: usize = 1024 * 1024;
 }
+mod precompile;
 mod presentation;
 mod residency;
 mod resize_observers;

@@ -11,7 +11,7 @@ use super::{
     redirects_to_get,
 };
 use crate::constants::{REDIRECTS, WEB_REQUEST_CEILING};
-use crate::network::{WebRequest, WebResponse, cors};
+use crate::network::{Destination, WebRequest, WebResponse, cors};
 use crate::protocol::EngineResult;
 use crate::runtime::supervisor::Runtime;
 use std::time::Instant;
@@ -40,6 +40,20 @@ pub(in crate::runtime) struct InFlight {
     cookies: bool,
     /// When the current hop started, for the opt-in request diagnostics.
     started: Instant,
+    /// A module or classic script a page element asked for, rather than a fetch: its body goes
+    /// to V9 when it lands and the page never reads the answer.
+    pub load: Option<ScriptLoad>,
+}
+
+/// A script load on the loader: which source V9 waits for and how its answer is checked.
+#[derive(Clone)]
+pub(in crate::runtime) struct ScriptLoad {
+    /// The URL V9 asked for, its identity among the delivered sources.
+    pub url: String,
+    /// A classic script (`<script src>` a script connected) rather than a module.
+    pub classic: bool,
+    /// Subresource Integrity metadata the element or an import map gave it.
+    pub integrity: Option<String>,
 }
 
 /// Where a request is after it starts or after a hop comes back.
@@ -81,6 +95,33 @@ impl Runtime {
             redirects: 0,
             cookies: false,
             started: Instant::now(),
+            load: None,
+        };
+        self.drive(state, None, preflights, until)
+    }
+
+    /** Start a page's script load the same way, so it runs on the loader while the page keeps
+    running; fetching each inserted script on the coordinator held YouTube about 150 ms per
+    script. The hop is a module's (CORS) or a classic script's (no-cors, body kept). */
+    pub(in crate::runtime) fn start_script_load(
+        &mut self,
+        base: &Url,
+        request: ScriptRequest,
+        load: ScriptLoad,
+        preflights: &mut cors::PreflightCache,
+        until: Instant,
+    ) -> EngineResult<Progress> {
+        let state = InFlight {
+            job: 0,
+            id: 0,
+            beacon: false,
+            base: base.clone(),
+            flow: cors::Flow::new(base.origin(), request.mode),
+            request,
+            redirects: 0,
+            cookies: false,
+            started: Instant::now(),
+            load: Some(load),
         };
         self.drive(state, None, preflights, until)
     }
@@ -141,6 +182,14 @@ impl Runtime {
             return Ok(Hop::Refused);
         }
         let (mut web, cookies) = hop_request(&state.request, &state.flow);
+        if state.load.as_ref().is_some_and(|load| load.classic)
+            && web.mode == Some(cors::Mode::NoCors)
+        {
+            // A plain classic script is a script destination with no CORS fields, as `<script
+            // src>` is fetched at load; Relay admits CORS fields only on the empty destination.
+            web.destination = Destination::Script;
+            web.mode = None;
+        }
         state.started = Instant::now();
         // A DevTools client that paused this request decides its first hop, as for navigations.
         if state.redirects == 0
@@ -231,7 +280,13 @@ impl Runtime {
             return Some(ScriptAnswer::Failed);
         }
         if !REDIRECT_STATUSES.contains(&response.status) {
-            return Some(answer(response, tainting, include));
+            // A script load's body is run, never read by the page, so an opaque (no-cors
+            // cross-origin) classic script still delivers its text, as a browser executes it.
+            return Some(if state.load.is_some() {
+                ScriptAnswer::Readable(Box::new(response), Vec::new())
+            } else {
+                answer(response, tainting, include)
+            });
         }
         if state.redirects == REDIRECTS {
             diagnostic.refused(FailureStage::RedirectLimit);

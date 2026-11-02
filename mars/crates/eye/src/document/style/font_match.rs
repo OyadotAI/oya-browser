@@ -132,7 +132,7 @@ fn styled_texts(document: &Document) -> Vec<(&ComputedStyle, &str)> {
     for (index, node) in visible.iter().enumerate() {
         let own = node.text.as_str();
         pairs.push((
-            &node.style,
+            &*node.style,
             if own.trim().is_empty() {
                 UNIT_SAMPLE
             } else {

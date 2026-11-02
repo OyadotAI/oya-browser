@@ -15,13 +15,14 @@ const CLEANUP: &str = "indexedDbCleanup";
 static NATIVES: OnceLock<Vec<(&'static str, ObjectId)>> = OnceLock::new();
 
 /** The seam's members: name, argument count, implementation. */
-const MEMBERS: [(&str, u32, NativeFn); 9] = [
+const MEMBERS: [(&str, u32, NativeFn); 10] = [
     ("dispatch", 2, dispatch),
     ("parent", 2, parent),
     ("load", 2, load),
     ("list", 1, list),
     ("commit", 1, commit),
     ("blob", 1, blob),
+    ("valueKind", 1, super::values::kind),
     ("checkpoint", 0, checkpoint),
     ("cleanup", 1, cleanup),
     ("pending", 0, pending),

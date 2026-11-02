@@ -152,3 +152,16 @@ fn type_selectors_ignore_prefixes_and_root_matches_the_parsed_root() {
     );
     assert_eq!(r, "true|true");
 }
+
+/** Source that opens with multibyte text parses as text: the doctype check once sliced the first
+nine bytes, which split an Arabic letter (DuckDuckGo decoding "الجزيرة نت" from a result) and
+stopped the page's scripts. */
+#[test]
+fn source_opening_with_multibyte_text_parses_as_text() {
+    let r = eval(
+        "const doc = new DOMParser().parseFromString('الجزيرة نت <b>x</b>', 'text/html');
+         const r = [doc.body.textContent, doc.body.querySelector('b') !== null].join('|');",
+        "r",
+    );
+    assert_eq!(r, "الجزيرة نت x|true");
+}

@@ -119,19 +119,16 @@ impl State {
             ]);
         }
         out.extend(self.waiting.values().map(|id| JsValue::Object(*id)));
-        out.extend(
-            self.observations
-                .iter()
-                .map(|observation| JsValue::Object(observation.observer)),
-        );
         for (observer, records) in &self.records {
             out.push(JsValue::Object(*observer));
             out.extend(records.iter().cloned());
         }
-        // An upgraded element's wrapper carries its class prototype even without own properties.
+        // Construction and queued slot changes own their targets until those operations finish.
+        // Upgrade metadata alone cannot keep a discarded element and its closures alive.
         out.extend(
-            self.custom
-                .keys()
+            self.constructing
+                .iter()
+                .chain(&self.slot_changes)
                 .filter_map(|node| wrappers.get(node))
                 .map(|id| JsValue::Object(*id)),
         );

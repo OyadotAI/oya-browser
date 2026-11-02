@@ -1455,17 +1455,41 @@ pub(super) fn resolve_percent_sides(
     for index in 0..resolved.nodes.len() {
         let containing = containing_width(&resolved, &positions, &content, index).unwrap_or(root);
         let node = &mut resolved.nodes[index];
-        sides_to_pixels(&mut node.style, containing);
+        if needs_sides_resolution(&node.style) {
+            sides_to_pixels(&mut node.style, containing);
+        }
         let block = !node.style.inline || node.style.inline_block;
         if let Some(width) = first.get(&node.local_id).filter(|_| block) {
             content[index] = Some((width - horizontal_edges(node)).max(0.0));
         }
         let own = content[index].unwrap_or(containing);
-        for generated in &mut node.style.generated {
-            sides_to_pixels(&mut generated.style, own);
+        if node
+            .style
+            .generated
+            .iter()
+            .any(|generated| needs_sides_resolution(&generated.style))
+        {
+            for generated in &mut node.style.generated {
+                sides_to_pixels(&mut generated.style, own);
+            }
         }
     }
     resolved
+}
+
+/** Read before taking a mutable style: unchanged values must retain their shared allocation.
+Native values outside the CSS scalar bound still receive the existing clamp. */
+fn needs_sides_resolution(style: &crate::document::ComputedStyle) -> bool {
+    use crate::constants::CSS_MAX_SCALAR;
+    has_percent_sides(style)
+        || style
+            .padding
+            .iter()
+            .any(|side| !(0.0..=CSS_MAX_SCALAR).contains(side))
+        || style
+            .margin
+            .iter()
+            .any(|side| !(-CSS_MAX_SCALAR..=CSS_MAX_SCALAR).contains(side))
 }
 /** The nearest ancestor's measured content width, walking past boxes that had none. */
 fn containing_width(

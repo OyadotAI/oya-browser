@@ -114,7 +114,7 @@ pub(super) fn targets(
         document
             .nodes
             .iter()
-            .map(|node| (TransitionTarget::Node(node.local_id), &node.style)),
+            .map(|node| (TransitionTarget::Node(node.local_id), &*node.style)),
     )
 }
 

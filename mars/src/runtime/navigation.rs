@@ -417,9 +417,9 @@ impl Runtime {
             return Ok(None);
         }
         let post = acquired.method == Method::Post;
-        self.prefetched.clear();
+        self.clear_prefetches();
         let built = self.build_page(acquired, deadline, sensitive, None, context, settle);
-        self.prefetched.clear();
+        self.clear_prefetches();
         built
             .map(Some)
             .map_err(|error| if post { uncertain() } else { error })
@@ -463,39 +463,8 @@ impl Runtime {
             deadline,
         )?;
         let mut gaps = Gaps::default();
-        let sheets = self.stylesheets(&document, &acquired.response.url, deadline, &mut gaps)?;
-        perf::record("page.fetch_styles", phase, || {
-            sheets.iter().map(String::len).sum::<usize>().to_string()
-        });
-        phase = Instant::now();
-        document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
-        perf::record("page.styles", phase, String::new);
-        phase = Instant::now();
-        let all = crate::constants::IMAGE_COUNT;
-        self.prefetch_images(&document, &acquired.response.url, deadline, &|_| true, all)?;
-        let fonts = document.formatting.fonts.len();
-        let images =
-            self.resolve_images(&mut document, &acquired.response.url, deadline, &mut gaps)?;
-        // `ch` and `ic` resolved against fallback faces before the web fonts arrived; Blink
-        // restyles font-relative lengths when a font loads, so the page styles once more.
-        if document.formatting.font_metrics && document.formatting.fonts.len() > fonts {
-            document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
-        }
-        perf::record("page.images", phase, || images.len().to_string());
-        phase = Instant::now();
-        let mut images = images;
-        let mut frame_tree = self.initial_frame_tree(&document)?;
-        if let Some(embedding) = embedding {
-            frame_tree.window = embedding.window;
-        }
-        let (frames, scripted_frames, inert_frame_count, inert_frame_bytes) = match embedding {
-            Some(_) => Default::default(),
-            None => {
-                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
-            }
-        };
-        perf::record("page.frames", phase, || frames.len().to_string());
-        phase = Instant::now();
+        // Scripts resolve as soon as the batch lands, so V9 compiles them while the page is
+        // styled rather than after; see `precompile`.
         let resolved = self.resolve_scripts(
             script_resources,
             &acquired.response.url,
@@ -507,6 +476,40 @@ impl Runtime {
             let bytes: usize = resolved.iter().map(|script| script.source.len()).sum();
             format!("{}\t{bytes}", resolved.len())
         });
+        let scripts: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
+            resolved
+                .iter()
+                .map(|script| script.source.clone())
+                .collect(),
+        );
+        let classic: Vec<bool> = resolved
+            .iter()
+            .map(|script| !script.refused && script.module.is_none())
+            .collect();
+        let precompile = super::precompile::Precompile::start(scripts.clone(), &classic);
+        phase = Instant::now();
+        let sheets = self.stylesheets(&document, &acquired.response.url, deadline, &mut gaps)?;
+        perf::record("page.fetch_styles", phase, || {
+            sheets.iter().map(String::len).sum::<usize>().to_string()
+        });
+        phase = Instant::now();
+        document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
+        perf::record("page.styles", phase, String::new);
+        phase = Instant::now();
+        // Images and web fonts resolve after the first paint (`paint_images`), as a browser
+        // paints before they arrive: the page shows at once and fills in.
+        let mut images = std::collections::BTreeMap::new();
+        let mut frame_tree = self.initial_frame_tree(&document)?;
+        if let Some(embedding) = embedding {
+            frame_tree.window = embedding.window;
+        }
+        let (frames, scripted_frames, inert_frame_count, inert_frame_bytes) = match embedding {
+            Some(_) => Default::default(),
+            None => {
+                self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?
+            }
+        };
+        perf::record("page.frames", phase, || frames.len().to_string());
         let origin = canonical_origin(&acquired.response.url)?;
         let base_storage = self.storage_for(&origin)?;
         let generation = self
@@ -568,12 +571,7 @@ impl Runtime {
             revision: 1,
             document: std::sync::Arc::new(document),
             source_bytes: acquired.response.source.len(),
-            scripts: std::sync::Arc::new(
-                resolved
-                    .iter()
-                    .map(|script| script.source.clone())
-                    .collect(),
-            ),
+            scripts,
             resolved_stylesheets: std::sync::Arc::new(sheets),
             local_sheets: (0, 0),
             top_level_url: embedding
@@ -636,8 +634,11 @@ impl Runtime {
             self.first_paint(&page);
             perf::record("page.first_paint", phase, String::new);
         }
+        self.paint_images(&mut page, deadline, &mut gaps, embedding.is_none())?;
+        precompile.finish();
         page.scripting.loading = true;
-        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps, settle);
+        let paint = embedding.is_none() && self.provisional.is_some() && self.web_origins.is_some();
+        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps, settle, paint);
         page.scripting.loading = false;
         let restyle = restyle?;
         self.flush_inserted_images(&mut page)?;
@@ -670,6 +671,49 @@ impl Runtime {
         Ok(page)
     }
     /**
+     * The first view's images and web fonts, resolved onto the painted page: fetched into
+     * `page.images`, the page restyled once when a font arrived (`ch` and `ic` measured
+     * fallback faces until then, as Blink restyles on font load), and painted again when the
+     * window shows it. After the first paint, so the person sees the page before its images.
+     */
+    fn paint_images(
+        &mut self,
+        page: &mut Page,
+        deadline: Instant,
+        gaps: &mut Gaps,
+        painted: bool,
+    ) -> EngineResult<()> {
+        let phase = Instant::now();
+        let url = page.url.clone();
+        let all = crate::constants::IMAGE_COUNT;
+        self.prefetch_images(&page.document, &url, deadline, &|_| true, all)?;
+        let document = std::sync::Arc::make_mut(&mut page.document);
+        let fonts = document.formatting.fonts.len();
+        let images = self.resolve_images(document, &url, deadline, gaps)?;
+        perf::record("page.images", phase, || images.len().to_string());
+        let restyle = document.formatting.font_metrics && document.formatting.fonts.len() > fonts;
+        if restyle {
+            let phase = Instant::now();
+            let sheets = std::sync::Arc::clone(&page.resolved_stylesheets);
+            page.document = std::sync::Arc::new(self.styled(
+                std::sync::Arc::clone(&page.document),
+                &sheets,
+                self.render_context,
+            )?);
+            perf::record("page.font_restyle", phase, String::new);
+        }
+        let any = !images.is_empty();
+        std::sync::Arc::make_mut(&mut page.images).extend(images);
+        if painted && (any || restyle) && self.provisional.is_some() && self.web_origins.is_some() {
+            let phase = Instant::now();
+            self.prepare_display(page)?;
+            self.first_paint(page);
+            perf::record("page.image_paint", phase, String::new);
+        }
+        Ok(())
+    }
+
+    /**
      * Run the page's scripts the way a browser does: V9 isolates each one, so a script that
      * fails is rolled back alone and noted. Its source stays as it was: its top-level declarations
      * still exist in a browser, so later requests must compile them, and no later step runs a
@@ -685,6 +729,7 @@ impl Runtime {
         deadline: Instant,
         gaps: &mut Gaps,
         settle: Settle,
+        paint: bool,
     ) -> EngineResult<bool> {
         let loaded = match self.script_step(page, json!({"kind":"load"})) {
             Ok(step) => step,
@@ -710,11 +755,23 @@ impl Runtime {
             }
         }
         let mut changed = loaded.changed;
+        // What the scripts built shows before the lifecycle events and the first settle run,
+        // as a browser paints between tasks; YouTube's masthead and skeleton appear here.
+        if paint && loaded.changed {
+            let phase = Instant::now();
+            self.prepare_current(page)?;
+            self.first_paint(page);
+            perf::record("page.load_paint", phase, String::new);
+        }
         for event in ["dom_content_loaded", "load"] {
+            if event == "dom_content_loaded" {
+                changed |= self.settle_modules_before_content_loaded(page, deadline)?;
+            }
             if event == "load" {
                 page.scripting.load_pending = true;
-                changed |= self.settle_images_before_load(page, deadline)?;
-                if !page.scripting.image_loading.pending.is_empty() {
+                changed |= self.settle_resources_before_load(page, deadline)?;
+                if !page.scripting.image_loading.pending.is_empty() || super::modules::loading(page)
+                {
                     break;
                 }
                 page.scripting.load_pending = false;
@@ -800,8 +857,12 @@ impl Runtime {
                 super::csp::allows(&document.csp, &base, &candidate).then_some(url)
             })
             .map(|url| request(url, crate::network::Destination::Script));
-        let requests = sheets.chain(code).collect();
-        self.prefetch(requests, deadline)
+        // Sheets block the first paint, so they go in one batch; scripts do not, so they go to
+        // the loader and download while the page is styled and painted.
+        let sheets: Vec<_> = sheets.collect();
+        let code: Vec<_> = code.collect();
+        self.prefetch_on_loader(code, deadline);
+        self.prefetch(sheets, deadline)
     }
     /**
      * Starts the images `load_images` will read first for the nodes `wanted` selects, together:

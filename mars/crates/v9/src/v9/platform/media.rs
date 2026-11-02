@@ -317,9 +317,27 @@ fn append(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::string(&text.unwrap_or_default())?)
 }
 
-/** `host.activation()`: whether a person has clicked or typed in this page (sticky activation). */
+/** `host.activation()`: whether a person has clicked or typed in this page (sticky activation),
+or the page is on a site whose media Chrome lets autoplay without one. */
 fn activation(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    Ok(JsValue::Boolean(vm.page.state.media.activated))
+    let activated = vm.page.state.media.activated || seeded(&vm.page.environment.url);
+    Ok(JsValue::Boolean(activated))
+}
+
+/** Whether `url` is on a host of AUTOPLAY_SEEDED_HOSTS, itself or a subdomain. */
+fn seeded(url: &str) -> bool {
+    let Some(host) = url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    else {
+        return false;
+    };
+    crate::constants::AUTOPLAY_SEEDED_HOSTS.iter().any(|seed| {
+        host == *seed
+            || host
+                .strip_suffix(seed)
+                .is_some_and(|rest| rest.ends_with('.'))
+    })
 }
 
 /** An attribute that can change what a media element loads was written. */
@@ -528,4 +546,23 @@ pub(in crate::v9) fn validate(vm: &Vm) -> EngineResult<()> {
         return Err(EngineError::invalid("Invalid media state."));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seeded;
+
+    /** The seeded host itself and its subdomains autoplay; a lookalike host, a host that merely
+    ends in the name, and an address that does not parse do not. */
+    #[test]
+    fn seeded_hosts_match_exactly_or_as_a_subdomain() {
+        assert!(seeded("https://youtube.com/watch?v=x"));
+        assert!(seeded("https://www.youtube.com/"));
+        assert!(seeded("https://m.youtube.com/watch"));
+        assert!(!seeded("https://notyoutube.com/"));
+        assert!(!seeded("https://youtube.com.evil.example/"));
+        assert!(!seeded("https://youtube.co/"));
+        assert!(!seeded("not a url"));
+        assert!(!seeded("about:blank"));
+    }
 }

@@ -879,6 +879,10 @@ pub(super) fn run_typed_page(call: TypedPage) -> EngineResult<v9::Execution> {
         call.base,
         call.keep,
     )?;
+    let (call, live) = live_action(call);
+    if let Some(action) = live {
+        return run_live_page(call, action);
+    }
     let host = v9::DocumentHost {
         imports: None,
         canvas: &mars_eye::platform::NativeCanvas,
@@ -909,6 +913,155 @@ pub(super) fn run_typed_page(call: TypedPage) -> EngineResult<v9::Execution> {
     let mut execution = run_action(call.action, input, state, false)?;
     keep_resident(&mut execution, call.base, call.keep);
     Ok(execution)
+}
+
+/// `MARS_V9_LIVE=0` sends every task down the resident path during the live realm's rollout.
+const LIVE_SWITCH: &str = "MARS_V9_LIVE";
+
+/** Whether tasks run on live realms, read once per process. */
+fn live_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var(LIVE_SWITCH).map_or(true, |value| value != "0"))
+}
+
+/** The task a live realm runs for an action, or the call back when the action (a load, a
+module continuation) takes the consuming path; the task after it restores a realm once. */
+fn live_action(mut call: TypedPage) -> (TypedPage, Option<v9::LiveAction>) {
+    if !live_enabled() || call.base.is_none() {
+        return (call, None);
+    }
+    let action = std::mem::replace(&mut call.action, PageAction::Load);
+    let live = match action {
+        PageAction::Event { event } => v9::LiveAction::Event(event),
+        PageAction::Click { target } => v9::LiveAction::Click { target },
+        PageAction::Input { target, value } => v9::LiveAction::Input { target, value },
+        PageAction::Typed {
+            target,
+            strokes,
+            value,
+        } => v9::LiveAction::Typed {
+            target,
+            strokes,
+            value,
+        },
+        PageAction::Keyboard { key, target } => v9::LiveAction::Keyboard { key, target },
+        PageAction::Timers { now_ms, budget } => v9::LiveAction::Timers { now_ms, budget },
+        PageAction::Observe => v9::LiveAction::Observe,
+        PageAction::Media => v9::LiveAction::Media,
+        PageAction::Resize { complete } => v9::LiveAction::Resize { complete },
+        PageAction::Resume { responses } => v9::LiveAction::Resume(responses),
+        PageAction::Images { responses } => v9::LiveAction::Images(responses),
+        other @ (PageAction::Load | PageAction::Modules) => {
+            call.action = other;
+            return (call, None);
+        }
+    };
+    (call, Some(live))
+}
+
+/**
+ * One task on the page's live realm: the realm kept under the task's base runs it in place;
+ * any other base restores a realm from the kept state as a resident step built its VM. The
+ * outcome is kept resident under a new token exactly as before, so `keep` and rollback are
+ * unchanged, and the realm is kept for the next task under that token. A task that fails
+ * drops the realm; the next task restores it from the kept state.
+ */
+fn run_live_page(call: TypedPage, action: v9::LiveAction) -> EngineResult<v9::Execution> {
+    let base = call
+        .base
+        .ok_or_else(|| EngineError::invalid("This V9 page step needs committed state."))?;
+    let host = live_host(&call.languages)?;
+    let identity = call.document.identity.clone();
+    let input = v9::LiveInput {
+        sources: &call.sources.texts,
+        source_keys: &call.sources.keys,
+        module_keys: call.module_keys.as_slice(),
+        document: call.document,
+        storage: call.storage,
+        host,
+        environment: &call.environment,
+        modules: &call.modules,
+    };
+    let mut realm = match take_session(&identity, base) {
+        Some(realm) => realm,
+        None => v9::LiveVm::restore(&input, resident_state(base)?)?,
+    };
+    let mut execution = realm.run(&input, action)?;
+    keep_resident(&mut execution, call.base, call.keep);
+    if let Some(token) = execution.state_token {
+        keep_session(identity, token, realm);
+    }
+    Ok(execution)
+}
+
+/** A live realm with its page identity and the token its state stands at. */
+struct Session {
+    identity: String,
+    token: u64,
+    realm: v9::LiveVm,
+}
+
+thread_local! {
+    /** Live realms, most recently used first; at most one per page identity. */
+    static SESSIONS: std::cell::RefCell<std::collections::VecDeque<Session>> = Default::default();
+}
+
+/** The page's realm when it stands at `base`; a realm at another token is dropped, since the
+task restores from the kept state and the stale realm would only hold memory. */
+fn take_session(identity: &str, base: u64) -> Option<v9::LiveVm> {
+    SESSIONS.with_borrow_mut(|sessions| {
+        let index = sessions
+            .iter()
+            .position(|session| session.identity == identity)?;
+        let session = sessions.remove(index)?;
+        (session.token == base).then_some(session.realm)
+    })
+}
+
+/** Keep the realm for the page's next task, within the resident page bound. */
+fn keep_session(identity: String, token: u64, realm: v9::LiveVm) {
+    SESSIONS.with_borrow_mut(|sessions| {
+        sessions.retain(|session| session.identity != identity);
+        sessions.push_front(Session {
+            identity,
+            token,
+            realm,
+        });
+        sessions.truncate(RESIDENT_PAGES);
+    });
+}
+
+/** Drop the realms of pages no longer leased, beside their kept states. */
+fn retain_sessions(contexts: &[String]) {
+    SESSIONS.with_borrow_mut(|sessions| {
+        sessions.retain(|session| contexts.contains(&session.identity));
+    });
+}
+
+/// Hosts a live realm borrows for its whole life: one per distinct language list, leaked once
+/// and shared, since a process sees a handful of language settings; past LIVE_HOSTS the task
+/// takes the resident path instead of leaking more.
+const LIVE_HOSTS: usize = 16;
+
+/** The static host for `languages`. */
+fn live_host(languages: &[String]) -> EngineResult<&'static v9::DocumentHost<'static>> {
+    static HOSTS: std::sync::Mutex<Vec<&'static v9::DocumentHost<'static>>> =
+        std::sync::Mutex::new(Vec::new());
+    let mut hosts = HOSTS.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(host) = hosts.iter().find(|host| host.languages == languages) {
+        return Ok(host);
+    }
+    if hosts.len() >= LIVE_HOSTS {
+        return Err(EngineError::limit("live realm hosts", LIVE_HOSTS));
+    }
+    let host: &'static v9::DocumentHost<'static> = Box::leak(Box::new(v9::DocumentHost {
+        imports: None,
+        canvas: &mars_eye::platform::NativeCanvas,
+        languages: Box::leak(languages.to_vec().into_boxed_slice()),
+        fragments: &document::DomFragments,
+    }));
+    hosts.push(host);
+    Ok(host)
 }
 
 /// Pages whose states this process keeps between steps. Each keeps only its committed state,
@@ -991,6 +1144,7 @@ fn admit_resident(
             }
         }
         pages.retain(|page| contexts.contains(&page.identity));
+        retain_sessions(contexts);
         Ok(())
     })
 }
@@ -1043,6 +1197,10 @@ fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<
     let token = NEXT_TOKEN.get();
     NEXT_TOKEN.set(token.wrapping_add(1));
     let state = std::mem::take(&mut execution.state);
+    super::supervisor::perf::record("v9.allocations", std::time::Instant::now(), || {
+        let [objects, functions, environments, bindings] = state.allocation_counts();
+        format!("{objects}\t{functions}\t{environments}\t{bindings}")
+    });
     execution.state = state.summary();
     execution.state_token = Some(token);
     let identity = match state.identity() {
@@ -1407,6 +1565,73 @@ mod tests {
         let mut execution = execution(identity);
         keep_resident(&mut execution, base, keep);
         execution.state_token.unwrap()
+    }
+
+    /** A typed page call over an empty page `identity`, from `base`, keeping `keep`. */
+    fn typed_call(
+        identity: &str,
+        base: Option<u64>,
+        keep: Option<u64>,
+        action: super::PageAction,
+    ) -> super::TypedPage {
+        let document: crate::document::ScriptDocument =
+            serde_json::from_value(json!({"identity": identity, "nodes": []})).unwrap();
+        super::TypedPage {
+            sources: std::sync::Arc::new(super::ResidentSources::new(Vec::new())),
+            modules: std::sync::Arc::new(v9::ModuleInput::default()),
+            module_keys: std::sync::Arc::new(Vec::new()),
+            document,
+            storage: v9::StorageState::default(),
+            languages: vec!["en".into()],
+            environment: v9::PageEnvironment::default(),
+            resident_contexts: vec![identity.to_string()],
+            base,
+            keep,
+            action,
+        }
+    }
+
+    /** A timers task at the virtual clock's start. */
+    fn timers() -> super::PageAction {
+        super::PageAction::Timers {
+            now_ms: 0.0,
+            budget: 1,
+        }
+    }
+
+    /** On the executor thread, a task on the live token keeps its realm for the next task, a
+    task naming another token restores from the kept state and replaces the realm, and tokens
+    advance either way; the committed token is kept throughout, as the app keeps it. */
+    #[test]
+    fn live_realm_runs_in_place_and_restores_from_other_tokens() {
+        v9::spawn_execution_thread("test-live".into(), || {
+            super::admit_resident("live", Some(&["live".to_string()]), None, None).unwrap();
+            let committed = kept("live", None, None);
+            let keep = Some(committed);
+            let run = |base: u64| {
+                super::run_typed_page(typed_call("live", Some(base), keep, timers()))
+                    .unwrap()
+                    .state_token
+                    .unwrap()
+            };
+            let first = run(committed);
+            assert!(
+                super::take_session("live", first).is_some(),
+                "realm kept at its token"
+            );
+            let second = run(first);
+            assert_ne!(first, second);
+            let third = run(committed);
+            assert!(
+                super::take_session("live", third).is_some(),
+                "the rollback's realm is kept"
+            );
+            assert!(super::take_session("live", third).is_none(), "taken once");
+            assert!(resident_state(third).is_ok());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
     }
 
     /** A step's state stays in the process under its token; the reply carries the token. */

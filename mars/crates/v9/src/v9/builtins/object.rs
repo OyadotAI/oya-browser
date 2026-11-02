@@ -182,22 +182,28 @@ pub(in crate::v9) fn to_descriptor(vm: &mut Vm, value: &JsValue) -> Res<Descript
     };
     let mut desc = Descriptor::default();
     let target = JsValue::Object(*id);
-    let flag = |vm: &mut Vm, name: &str| -> Res<Option<bool>> {
-        if vm.has_property(*id, &key(name))? {
-            Ok(Some(vm.get(&target, &key(name))?.truthy()))
+    // One walk per name on an ordinary descriptor object; the generic [[HasProperty]] and
+    // [[Get]] only for proxies, accessors and other exotic objects, which must observe both.
+    let field = |vm: &mut Vm, name: &str| -> Res<Option<JsValue>> {
+        let name = key(name);
+        if let Some(found) = vm.plain_lookup(*id, &name) {
+            return Ok(found);
+        }
+        if vm.has_property(*id, &name)? {
+            Ok(Some(vm.get(&target, &name)?))
         } else {
             Ok(None)
         }
     };
+    let flag = |vm: &mut Vm, name: &str| -> Res<Option<bool>> {
+        Ok(field(vm, name)?.map(|value| value.truthy()))
+    };
     desc.enumerable = flag(vm, "enumerable")?;
     desc.configurable = flag(vm, "configurable")?;
-    if vm.has_property(*id, &key("value"))? {
-        desc.value = Some(vm.get(&target, &key("value"))?);
-    }
+    desc.value = field(vm, "value")?;
     desc.writable = flag(vm, "writable")?;
     for (name, slot) in [("get", 0), ("set", 1)] {
-        if vm.has_property(*id, &key(name))? {
-            let function = vm.get(&target, &key(name))?;
+        if let Some(function) = field(vm, name)? {
             let function = match function {
                 JsValue::Undefined => None,
                 JsValue::Object(f) if vm.is_callable(&function) => Some(f),

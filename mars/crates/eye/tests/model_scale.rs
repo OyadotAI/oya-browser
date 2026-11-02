@@ -77,6 +77,30 @@ fn labels_equal_label_per_node() {
     assert!(expected.contains(&"Email here Also".to_string()));
 }
 
+/** Wrapping labels resolve stable IDs even when neither identity nor ancestry follows vector order. */
+#[test]
+fn batch_labels_preserve_associations_after_identity_reordering() {
+    let mut document = parse(concat!(
+        "<label for=i>Explicit</label><section><label>Wrapped <b>name</b><input id=i></label></section>",
+        "<p aria-label=Authored>text</p><input placeholder=Hint>"
+    )).unwrap();
+    for node in &mut document.nodes {
+        node.local_id += NODES;
+        node.parent = node.parent.map(|parent| parent + NODES);
+    }
+    document.nodes.reverse();
+    let expected: Vec<_> = document
+        .nodes
+        .iter()
+        .map(|node| label(&document, node))
+        .collect();
+    assert_eq!(document.labels(), expected);
+    let mut labeler = document.labeler();
+    for (index, expected) in expected.iter().enumerate() {
+        assert_eq!(&labeler.label(index), expected);
+    }
+}
+
 /** Labeling every node of a NODES-node page finishes well inside the call deadline. */
 #[test]
 fn labels_at_the_node_limit_are_linear() {

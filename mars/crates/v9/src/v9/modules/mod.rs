@@ -372,6 +372,11 @@ impl Modules {
         vm.modules = modules;
         Ok(())
     }
+    /** How many fetched sources the map was opened over, so a task whose input delivered no new
+    source (the app only appends) keeps the map instead of re-opening it. */
+    pub fn opened_sources(&self) -> usize {
+        self.ranges.len()
+    }
     /** A delivered classic script's code, or why it has none; None while it is still on its way. */
     pub fn loaded(&self, url: &str) -> Option<EngineResult<Arc<Code>>> {
         self.loaded.get(url).cloned()

@@ -240,7 +240,7 @@ fn emit(document: &Document, plans: Vec<(Option<usize>, Vec<Child>)>, first: usi
     let styles: HashMap<usize, &crate::document::ComputedStyle> = document
         .nodes
         .iter()
-        .map(|n| (n.local_id, &n.style))
+        .map(|n| (n.local_id, &*n.style))
         .collect();
     for (parent, children) in plans {
         let style = parent
@@ -324,7 +324,7 @@ impl Emitted {
         else {
             return;
         };
-        node.style = anonymous_style(style, &wrapper);
+        node.style = anonymous_style(style, &wrapper).into();
         // Source white space around the run stays around the box that now holds it.
         node.space_leading =
             edge_old(&wrapper, false).is_some_and(|i| document.nodes[i].space_leading);

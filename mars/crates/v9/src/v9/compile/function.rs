@@ -60,6 +60,13 @@ impl Compiler {
         self.begin_function(func.strict, func.flags);
         self.f().eval_grammar = grammar;
         self.push_scope(env, true);
+        if env && !mapped && !uses.eval && !self.module_body(func.site) {
+            let dependencies = self.captures.analyze(func);
+            if !dependencies.dynamic {
+                Arc::make_mut(self.scopes.last_mut().expect("function scope")).captured =
+                    Some(dependencies.captured.clone());
+            }
+        }
         self.at(func.pos);
         let result = self.function_body(func, uses, self_name);
         let scope = self.scopes.pop().expect("function scope");

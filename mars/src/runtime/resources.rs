@@ -6,12 +6,12 @@ use crate::{
     protocol::{EngineError, EngineResult},
 };
 use serde_json::json;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use url::Url;
 
 mod in_flight;
 mod request_diagnostics;
-pub(super) use in_flight::{InFlight, Progress};
+pub(super) use in_flight::{InFlight, Progress, ScriptLoad};
 use request_diagnostics::{FailureStage, RequestDiagnostic};
 
 /** What a redirect response does to an acquisition. */
@@ -219,9 +219,14 @@ impl Runtime {
     }
 }
 
-/// Requests one `network.fetch_batch` call carries: two rounds of Relay's batch workers, so a
-/// batch of the largest resources still fits one wire frame.
-pub(super) const FETCH_BATCH: usize = 2 * crate::network::network::constants::BATCH_WORKERS;
+/// How long one wait for a head script's hop lasts before `take_prefetched` looks again.
+const PREFETCH_WAIT: Duration = Duration::from_millis(250);
+
+/// Requests one `network.fetch_batch` call carries: eight rounds of Relay's batch workers, so a
+/// whole head of sheets and scripts (YouTube sends 13, airbnb 41) goes in one call rather than
+/// serial calls for the remainder, each a round trip after the last; the largest resources
+/// still fit one wire frame.
+pub(super) const FETCH_BATCH: usize = 8 * crate::network::network::constants::BATCH_WORKERS;
 
 /** The outcome of one batched request as the network service reports it. */
 #[derive(serde::Deserialize)]
@@ -286,10 +291,75 @@ impl Runtime {
 
     /** A prefetched answer to exactly this request (cookies included), used at most once. */
     fn take_prefetched(&mut self, request: &WebRequest) -> Option<EngineResult<WebResponse>> {
-        if self.prefetched.is_empty() || request.method != Method::Get {
+        if request.method != Method::Get {
             return None;
         }
-        self.prefetched.remove(&prefetch_key(request))
+        let key = prefetch_key(request);
+        if let Some(answer) = self.prefetched.remove(&key) {
+            return Some(answer);
+        }
+        let hop = self.prefetching.remove(&key)?;
+        let until = Instant::now() + crate::constants::WEB_REQUEST_CEILING;
+        loop {
+            if let Some(answer) = self.prefetch_results.remove(&hop) {
+                return Some(answer);
+            }
+            if Instant::now() >= until {
+                return None;
+            }
+            // The hop is back in the set while the wait lands other hops, so routing sees it.
+            self.prefetching.insert(key.clone(), hop);
+            let done = self.loader.wait(until.min(Instant::now() + PREFETCH_WAIT));
+            self.keep_loaded(done);
+            self.prefetching.remove(&key);
+        }
+    }
+
+    /**
+     * Start head scripts on the loader, shaped as `prefetch` shapes a batch, so they download
+     * beside the sheets while the page is styled and painted; `acquire` collects each when
+     * `resolve_scripts` asks. A script already prefetched or already on the wire is not sent again.
+     */
+    pub(super) fn prefetch_on_loader(
+        &mut self,
+        requests: Vec<(WebRequest, Url)>,
+        deadline: Instant,
+    ) {
+        let Some(grants) = self.web_origins.clone() else {
+            return;
+        };
+        for (mut request, initiator) in requests {
+            let Ok(url) = crate::network::policy::web_url(&request.url) else {
+                continue;
+            };
+            if request.method != Method::Get {
+                continue;
+            }
+            if request.initiator.is_none() {
+                request.initiator = Some(initiator.to_string());
+            }
+            self.shape_hop(&mut request, &url, Some(&initiator), false, true);
+            let key = prefetch_key(&request);
+            if self.prefetched.contains_key(&key) || self.prefetching.contains_key(&key) {
+                continue;
+            }
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(crate::constants::WEB_REQUEST_CEILING);
+            if remaining.is_zero() {
+                return;
+            }
+            let millis = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX);
+            let hop = self.loader.submit(request, grants.clone(), millis);
+            self.prefetching.insert(key, hop);
+        }
+    }
+
+    /** Forget every head answer and hop: a navigation's candidate is built or dropped. */
+    pub(super) fn clear_prefetches(&mut self) {
+        self.prefetched.clear();
+        self.prefetching.clear();
+        self.prefetch_results.clear();
     }
 
     /**
@@ -309,6 +379,7 @@ impl Runtime {
             return Ok(());
         };
         let mut shaped: Vec<(String, WebRequest)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for (mut request, initiator) in requests {
             let Ok(url) = crate::network::policy::web_url(&request.url) else {
                 continue;
@@ -321,7 +392,7 @@ impl Runtime {
             }
             self.shape_hop(&mut request, &url, Some(&initiator), false, true);
             let key = prefetch_key(&request);
-            if !self.prefetched.contains_key(&key) && !shaped.iter().any(|(k, _)| *k == key) {
+            if !self.prefetched.contains_key(&key) && seen.insert(key.clone()) {
                 shaped.push((key, request));
             }
         }

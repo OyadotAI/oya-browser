@@ -128,7 +128,7 @@ pub enum InsertPosition {
 }
 
 /// One ordered script change; engines replay the log in order so both trees end up identical.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DomChange {
     /// Replace an element's descendants with text, exactly like TextChange.
@@ -656,7 +656,7 @@ pub fn validate_text(text: &str) -> EngineResult<()> {
 /// The extended script change log: everything DomChange expresses plus removal, any allowed
 /// attribute, attribute removal, node text and field values. V9 emits it only when the app says
 /// its document engine replays it (`PageEnvironment::dom_level`); otherwise V9 keeps to DomChange.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScriptChange {
     /// Final pixels from a canvas in this exact document candidate, independently validated by Eye.

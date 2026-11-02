@@ -83,9 +83,13 @@ pub(super) enum Settle {
 /// V9 round trips one settle may make (requests and timer runs together).
 const SETTLE_STEPS: usize = 12;
 /// Task sources the settle loop takes turns between (see `next_action`).
-const TASK_SOURCES: usize = 7;
+const TASK_SOURCES: usize = 8;
 /// The task source that delivers network responses to the page.
 const NETWORK_SOURCE: usize = 5;
+/// The task source that runs due timers; a visible page's first settle leaves it to the ticks.
+const TIMER_SOURCE: usize = 6;
+/// The task source that runs the scripts and frames that landed since the last `modules` step.
+const MODULES_SOURCE: usize = 7;
 /// Timer callbacks one V9 timer run may make. A step costs ~200 ms of fixed work around its
 /// callbacks on YouTube, so a run that stops after a few left the app's job queue growing.
 const TIMER_BUDGET: usize = 256;
@@ -95,8 +99,14 @@ use crate::constants::STEP_RESPONSE_BYTES;
 const FAILED_TO_FETCH: &str = "Failed to fetch";
 /// Fetch labels a string body with this when the page set no Content-Type.
 const TEXT_BODY_TYPE: &str = "text/plain;charset=UTF-8";
-/// Wall time between background timer runs while a page is open.
+/// Wall time between background timer runs while a page is open and has nothing due.
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
+/// Wall time between runs while the page has work due: one frame, so a page still booting runs
+/// its tasks nearly back to back as a browser does. On YouTube's watch page the 100 ms wait
+/// between some eighty busy ticks idled the page for 17 s of its first minute.
+const TICK_BUSY_INTERVAL: Duration = Duration::from_millis(16);
+/// The longest a busy page waits after a slow run, so people and agents still get a turn.
+const TICK_THROTTLE_CAP: Duration = Duration::from_millis(32);
 /// Real time one background run may spend, so the coordinator keeps answering people promptly.
 const TICK_WALL: Duration = Duration::from_millis(400);
 /// Background timers keep running this long after the page's last quiet point, then wait for the
@@ -208,8 +218,9 @@ pub(super) struct Scripting {
     pub media_viewport: Option<(f64, f64)>,
     /// CORS preflights this page's requests already passed, so they are not repeated.
     pub preflights: crate::network::cors::PreflightCache,
-    /// Wall time the last background run took. The next waits at least this long, so a page
-    /// whose timer steps are slow keeps the coordinator free half the time for people and agents.
+    /// Wall time the last background run took. The next waits at least this long, up to
+    /// TICK_THROTTLE_CAP, so a slow run still leaves the coordinator a window for people and
+    /// agents; waiting as long as the run itself ran YouTube's boot at half speed.
     pub tick_cost: Duration,
     /// Module scripts, import maps and the modules fetched for them.
     pub modules: super::modules::Modules,
@@ -403,11 +414,16 @@ impl Scripting {
 
     /** Native transition frames use their next sample time while expensive work stays throttled. */
     pub(super) fn tick_interval(&self) -> Duration {
+        let interval = if self.loaded && self.pending() {
+            TICK_BUSY_INTERVAL
+        } else {
+            TICK_INTERVAL
+        };
         super::animations::next_sample(self)
             .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
-            .unwrap_or(TICK_INTERVAL)
-            .min(TICK_INTERVAL)
-            .max(self.tick_cost)
+            .unwrap_or(interval)
+            .min(interval)
+            .max(self.tick_cost.min(TICK_THROTTLE_CAP))
     }
 }
 
@@ -476,6 +492,7 @@ impl Runtime {
                 .duration_since(UNIX_EPOCH)
                 .map_or(0.0, |elapsed| elapsed.as_secs_f64() * MS_PER_SECOND),
             live_clock: true,
+            live_gc: true,
             timezone_offset_minutes: timezone_offset_minutes(),
             random_seed: random_seed(),
             dom_level: DomLevel::Extended,
@@ -491,10 +508,11 @@ impl Runtime {
     /// replay and the structure check all succeed; effects are recorded for the caller to act on.
     pub(super) fn script_step(&mut self, page: &mut Page, action: Value) -> EngineResult<Step> {
         let load = action["kind"] == "load";
+        let started = Instant::now();
         if load {
             self.initialize_image_loading(page);
+            super::supervisor::perf::record("step.image_init", started, String::new);
         }
-        let started = Instant::now();
         let kind = action["kind"].as_str().unwrap_or_default().to_string();
         let observer_turn = matches!(kind.as_str(), "observe" | "resize");
         if !page.storage_dirty {
@@ -509,7 +527,9 @@ impl Runtime {
             .unwrap_or(0);
         page.inspection = None;
         super::frame_pages::prune_routes(page);
+        super::supervisor::perf::record("step.project", started, || kind.clone());
         let mut environment = self.step_environment(page)?;
+        super::supervisor::perf::record("step.environment", started, || kind.clone());
         page.scripting.media_viewport =
             Some((environment.viewport_width, environment.viewport_height));
         if load {
@@ -542,14 +562,15 @@ impl Runtime {
         // much as styling the page. The structure check still runs.
         // When the step's last mid-script layout applied all its changes, its styled document is
         // this step's result: no second apply, and no restyle if the sheets end up the same.
-        let finished = self.sync_layout.take().and_then(|host| {
-            host.finished((execution.changes.len(), execution.script_changes.len()))
-        });
+        let finished = self
+            .sync_layout
+            .take()
+            .and_then(|host| host.finished(&execution.changes, &execution.script_changes));
         let mut styled_with = None;
         let applied = changed
             .then(|| match finished {
                 Some((styled, sheets)) => {
-                    styled_with = Some(sheets);
+                    styled_with = sheets;
                     Ok(styled)
                 }
                 None => self.apply_all(
@@ -716,7 +737,8 @@ impl Runtime {
                 || !page.scripting.modules.pending.is_empty()
                 || !page.scripting.modules.pending_scripts.is_empty()
                 || !page.scripting.modules.frame_requests.is_empty();
-        } else if kind != "modules" {
+        } else {
+            self.dispatch_pending_requests(page)?;
             self.follow_modules(page, &mut step)?;
         }
         super::intersections::layout(page, self.render_context, self.scroll_y);
@@ -802,7 +824,7 @@ impl Runtime {
         let deadline = Instant::now() + INSERTED_IMAGE_WALL;
         // The inserted images go out together, as in `build_page`.
         let left = crate::constants::IMAGE_COUNT.saturating_sub(page.images.len());
-        self.prefetched.clear();
+        self.clear_prefetches();
         let loaded = self
             .prefetch_images_skipping(
                 &page.document,
@@ -823,7 +845,7 @@ impl Runtime {
                     &page.scripting.image_loading.managed,
                 )
             });
-        self.prefetched.clear();
+        self.clear_prefetches();
         let images = match loaded {
             Ok(images) => images,
             Err(error) if super::images::stops_loading(&error) => return Err(error),
@@ -1218,7 +1240,7 @@ impl Runtime {
         virtual_end: f64,
         yield_now: &mut dyn FnMut() -> bool,
     ) -> EngineResult<bool> {
-        self.settle(page, until, virtual_end, yield_now, false)
+        self.settle(page, until, virtual_end, yield_now, false, true)
     }
 
     /// The settle loop. With `wait_network`, a page with nothing else to do waits for its
@@ -1231,6 +1253,7 @@ impl Runtime {
         virtual_end: f64,
         yield_now: &mut dyn FnMut() -> bool,
         wait_network: bool,
+        timers: bool,
     ) -> EngineResult<bool> {
         let previous_opacity = super::animations::paint_effects(&page.scripting);
         let mut changed = false;
@@ -1248,7 +1271,8 @@ impl Runtime {
                 changed |= self.observe_intersections_until(page, until)?;
                 continue;
             }
-            let Some(action) = self.next_action(page, until, virtual_end, &mut changed)? else {
+            let Some(action) = self.next_action(page, until, virtual_end, timers, &mut changed)?
+            else {
                 if wait_network && self.wait_for_network(page, until) {
                     continue;
                 }
@@ -1305,13 +1329,16 @@ impl Runtime {
         deadline: Instant,
         settle: Settle,
     ) -> EngineResult<bool> {
-        let (wall, wait_network) = match settle {
-            Settle::Settled => (SETTLE_WALL, true),
-            Settle::Visible => (VISIBLE_SETTLE_WALL, false),
+        // A visible page publishes at its load event, as a browser paints then; its timers run
+        // on the ticks that follow. One YouTube timer run before publishing held the page
+        // back 0.3 s, and a run cannot be cut short once a callback is inside.
+        let (wall, wait_network, timers) = match settle {
+            Settle::Settled => (SETTLE_WALL, true, true),
+            Settle::Visible => (VISIBLE_SETTLE_WALL, false, false),
         };
         let until = deadline.min(Instant::now() + wall);
         let end = page.scripting.clock_ms + SETTLE_VIRTUAL_MS;
-        self.settle(page, until, end, &mut || false, wait_network)
+        self.settle(page, until, end, &mut || false, wait_network, timers)
     }
 
     /** Settle what a person's input started for one frame before its commit; the rest runs on
@@ -1323,7 +1350,7 @@ impl Runtime {
     ) -> EngineResult<bool> {
         let until = deadline.min(Instant::now() + INPUT_SETTLE_WALL);
         let end = page.scripting.clock_ms + INPUT_SETTLE_VIRTUAL_MS;
-        self.settle(page, until, end, &mut || false, true)
+        self.settle(page, until, end, &mut || false, true, true)
     }
 
     /// Perform a batch of script requests; beacons are sent and expect no answer. Requests start
@@ -1331,7 +1358,7 @@ impl Runtime {
     /// stay pending for the next slice, as a browser's fetch waits for a busy main thread rather
     /// than failing. Each started request gets at least SCRIPT_REQUEST_WALL on the network, so
     /// a slice that slow script steps used up does not turn every answer into a network error.
-    fn perform_requests(
+    pub(super) fn perform_requests(
         &mut self,
         page: &mut Page,
         requests: Vec<HostRequest>,
@@ -1644,11 +1671,15 @@ impl Runtime {
         page: &mut Page,
         until: Instant,
         virtual_end: f64,
+        timers: bool,
         changed: &mut bool,
     ) -> EngineResult<Option<Value>> {
         self.collect_loaded();
         for offset in 1..=TASK_SOURCES {
             let source = (page.scripting.last_source + offset) % TASK_SOURCES;
+            if source == TIMER_SOURCE && !timers {
+                continue;
+            }
             if let Some(action) = self.source_action(page, source, until, virtual_end, changed)? {
                 page.scripting.last_source = source;
                 return Ok(Some(action));
@@ -1667,6 +1698,7 @@ impl Runtime {
         changed: &mut bool,
     ) -> EngineResult<Option<Value>> {
         let landed = source == NETWORK_SOURCE && self.landed(page);
+        let loading = super::modules::loading(page);
         let scripting = &mut page.scripting;
         Ok(match source {
             0 if scripting.scroll_pending => {
@@ -1676,7 +1708,8 @@ impl Runtime {
             1 if !scripting.image_loading.pending.is_empty() => {
                 Some(self.image_action(page, until, changed)?)
             }
-            2 if scripting.load_pending => {
+            // `load` waits for the scripts the page inserted, as a browser's does.
+            2 if scripting.load_pending && !loading => {
                 scripting.load_pending = false;
                 Some(json!({"kind":"event","event":"load"}))
             }
@@ -1694,12 +1727,17 @@ impl Runtime {
                 let responses = self.perform_requests(page, requests, until)?;
                 (!responses.is_empty()).then(|| json!({"kind":"resume","responses":responses}))
             }
-            6 if scripting
-                .next_timer_ms
-                .is_some_and(|due| due <= virtual_end) =>
+            TIMER_SOURCE
+                if scripting
+                    .next_timer_ms
+                    .is_some_and(|due| due <= virtual_end) =>
             {
                 scripting.clock_ms = scripting.clock_ms.max(virtual_end);
                 Some(json!({"kind":"timers","now_ms":scripting.clock_ms,"budget":TIMER_BUDGET}))
+            }
+            MODULES_SOURCE if scripting.modules.landed => {
+                scripting.modules.landed = false;
+                Some(json!({"kind":"modules"}))
             }
             _ => None,
         })

@@ -55,9 +55,23 @@ fn start(
         nonce: attributes.get("nonce").cloned(),
         integrity: attributes.get("integrity").cloned(),
         cross_origin: attributes.get("crossorigin").cloned(),
+        ordered: page.state.ordered_scripts.contains(&node),
         done: false,
     });
     Start::Admitted
+}
+
+/** A script's `async` assignment: false puts a script element on the in-order list, true takes
+it off again, as the HTML non-blocking flag follows the IDL attribute. */
+pub(in crate::v9) fn async_set(vm: &mut Vm, node: usize, value: bool) {
+    if vm.page.tag(node) != "script" {
+        return;
+    }
+    if value {
+        vm.page.state.ordered_scripts.remove(&node);
+    } else {
+        vm.page.state.ordered_scripts.insert(node);
+    }
 }
 
 /** A node (and its descendants) just connected, or a connected script's `src` just set: start
@@ -257,14 +271,22 @@ fn quiet(vm: &mut Vm, result: Res<JsValue>) -> Res<()> {
 }
 
 /** Run every started `<script src>` whose source this request delivered, in start order; the
-element then gets its `load` event, or `error` when the app refused or could not fetch it. */
+element then gets its `load` event, or `error` when the app refused or could not fetch it. An
+ordered load (`async = false`) waits while an earlier ordered one is still on its way, so two
+scripts a page inserts in order take effect in that order however their downloads land. */
 pub(in crate::v9) fn run_delivered(vm: &mut Vm) -> EngineResult<()> {
+    let mut ordered_waiting = false;
     for index in 0..vm.page.state.script_loads.len() {
         let load = vm.page.state.script_loads[index].clone();
         if load.done || load.url.is_empty() {
             continue;
         }
-        let Some(code) = vm.modules.loaded(&load.url) else {
+        let code = vm.modules.loaded(&load.url);
+        if load.ordered && (ordered_waiting || code.is_none()) {
+            ordered_waiting = true;
+            continue;
+        }
+        let Some(code) = code else {
             continue;
         };
         vm.page.state.script_loads[index].done = true;
@@ -315,6 +337,9 @@ pub(in crate::v9) fn adopt(page: &mut Page, old: usize, new: usize) {
     }
     // Only a script element is in the set, and only one of those has loads to re-point, so an
     // ordinary node's adoption costs a set lookup, not a walk over every load.
+    if page.state.ordered_scripts.remove(&old) {
+        page.state.ordered_scripts.insert(new);
+    }
     if page.state.script_elements.remove(&old) {
         page.state.script_elements.insert(new);
         for load in page

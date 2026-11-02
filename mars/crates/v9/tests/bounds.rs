@@ -33,11 +33,11 @@ fn live_objects_are_bounded_but_garbage_is_collected() {
     assert!(heap_bound(&failure(&live).unwrap()));
 }
 
-/** Live closures past VM_FUNCTIONS stop the script. */
+/** Live closures past VM_FUNCTIONS stop the script independently of one array's length bound. */
 #[test]
 fn live_functions_are_bounded() {
     let execution = load(&format!(
-        "const keep=[];for(let i=0;i<{};i++)keep.push(()=>i);",
+        "const keep=new Set();for(let i=0;i<{};i++)keep.add(()=>i);",
         VM_FUNCTIONS + 10
     ));
     assert!(failure(&execution).unwrap().contains("V9 functions"));

@@ -1,4 +1,5 @@
 /** Typed trusted keyboard entry points run over committed state without accepting page-authored event authority. */
+use super::vm::Vm;
 use super::{Execution, PageInput, VmState, finish, on_v9_stack, open, platform};
 use crate::protocol::{EngineError, EngineResult};
 use serde::{Deserialize, Serialize};
@@ -39,20 +40,31 @@ pub fn typed_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, super::vm::Limits::default())?;
-        if !vm.page.exists(target) {
-            return Err(EngineError::invalid("Invalid projected input target."));
-        }
-        let known = value.is_some();
-        if let Some(text) = value {
-            vm.page.state.values.insert(target, text);
-        }
-        vm.remaining = vm.limits.operations;
-        platform::host_bridge::activate(&mut vm);
-        platform::media::activate(&mut vm.page);
-        vm.page.effects.typed =
-            platform::type_strokes(&mut vm, target, &strokes, known).map_err(super::fatal)?;
+        typed_body(&mut vm, target, strokes, value)?;
         finish(vm)
     })
+}
+
+/** The task of `typed_page`. */
+pub(super) fn typed_body(
+    vm: &mut Vm,
+    target: usize,
+    strokes: Vec<Stroke>,
+    value: Option<String>,
+) -> EngineResult<()> {
+    if !vm.page.exists(target) {
+        return Err(EngineError::invalid("Invalid projected input target."));
+    }
+    let known = value.is_some();
+    if let Some(text) = value {
+        vm.page.state.values.insert(target, text);
+    }
+    vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(vm);
+    platform::media::activate(&mut vm.page);
+    vm.page.effects.typed =
+        platform::type_strokes(vm, target, &strokes, known).map_err(super::fatal)?;
+    Ok(())
 }
 
 /** Dispatch a real native key to the current focused node; an optional target must match that focus. */
@@ -64,12 +76,21 @@ pub fn keyboard_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, super::vm::Limits::default())?;
-        platform::host_bridge::activate(&mut vm);
-        super::platform::media::activate(&mut vm.page);
-        platform::press_key(&mut vm, key, target).map_err(super::fatal)?;
-        vm.drain_jobs().map_err(super::fatal)?;
+        keyboard_body(&mut vm, key, target)?;
         finish(vm)
     })
+}
+
+/** The task of `keyboard_page`. */
+pub(super) fn keyboard_body(
+    vm: &mut Vm,
+    key: KeyboardKey,
+    target: Option<usize>,
+) -> EngineResult<()> {
+    platform::host_bridge::activate(vm);
+    super::platform::media::activate(&mut vm.page);
+    platform::press_key(vm, key, target).map_err(super::fatal)?;
+    vm.drain_jobs().map_err(super::fatal)
 }
 
 /** A host cannot redirect a focused key to a stale or unrelated node. */

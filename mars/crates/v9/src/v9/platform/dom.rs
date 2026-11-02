@@ -1122,7 +1122,7 @@ fn traverse_children(vm: &mut Vm, node: usize) -> Vec<usize> {
 }
 
 /** Parent for traversal: html's parent is the document. */
-fn traverse_parent(vm: &mut Vm, node: usize) -> Option<usize> {
+pub(super) fn traverse_parent(vm: &mut Vm, node: usize) -> Option<usize> {
     match node {
         DOCUMENT => None,
         HTML => Some(DOCUMENT),
@@ -2595,6 +2595,8 @@ fn reflect_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         super::scripts::after_insert(vm, node)?;
     } else if attribute == "media" {
         super::scripts::media_changed(vm, node);
+    } else if attribute == "async" {
+        super::scripts::async_set(vm, node, value.truthy());
     }
     Ok(JsValue::Undefined)
 }
