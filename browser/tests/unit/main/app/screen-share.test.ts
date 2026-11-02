@@ -6,7 +6,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ScreenShare } from '../../../../src/main/app/screen-share.ts';
-import { fixture as mediaFixture } from '../../support/media-fixture.ts';
+import { fixture as mediaFixture, details as audioDetails } from '../../support/media-fixture.ts';
 
 /** A screen share over the camera fixture: its gate, profile and store, plus a capturer and the macOS switch. */
 function fixture(platform = 'darwin') {
@@ -42,6 +42,55 @@ function fixture(platform = 'darwin') {
     new Promise((resolve) => handler({ frame, securityOrigin: 'https://call.test', ...overrides }, resolve));
   return { ...f, frame, electron, ses, request, share, picker, picks, opened, probes: () => probes, started };
 }
+
+it('a saved screen grant waits for pending microphone OS consent before opening its own picker', async () => {
+  const f = fixture();
+  f.deps.sitePermissions.grant('persist:one', 'https://call.test', ['audio', 'screen']);
+  const pending = Promise.withResolvers<boolean>();
+  f.electron.systemPreferences.askForMediaAccess = () => pending.promise;
+  const audio = f.service.request(f.contents as any, audioDetails as any);
+  const screen = f.request();
+  await new Promise(setImmediate);
+  assert.deepEqual(f.picks, []);
+  pending.resolve(true);
+  assert.equal(await audio, true);
+  assert.ok(await screen);
+  assert.equal(f.picks.length, 1);
+  assert.deepEqual(f.prompts, [], 'saved permissions do not need another site prompt');
+});
+
+it('both queued screen callbacks retain their original document, profile and ownership', async () => {
+  for (const display of [false, true])
+    for (const revoke of [
+      (f) => f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false }),
+      (f) => (f.deps.persona.partitionName = () => 'persist:two'),
+      (f) => (f.state.interactive = false),
+      (f) => (f.state.destroyed = true),
+      (f) => (f.deps.tabs.getActiveView = () => null),
+      (f) => (f.deps.governance.configuration = {}),
+      (f) => (f.state.url = 'https://different.test'),
+    ]) {
+      const f = fixture();
+      const pending = Promise.withResolvers<boolean>();
+      const active = f.service.gate.locked(
+        () => true,
+        () => pending.promise,
+      );
+      const queued = display
+        ? f.request()
+        : f.share.request(
+            f.contents as any,
+            { isMainFrame: true, securityOrigin: 'https://call.test', mediaTypes: [] } as any,
+          );
+      revoke(f);
+      pending.resolve(true);
+      await active;
+      assert.equal(await queued, display ? null : false);
+      assert.deepEqual(f.prompts, []);
+      assert.deepEqual(f.picks, []);
+      assert.equal(f.deps.sitePermissions.has('persist:one', 'https://call.test', 'screen'), false);
+    }
+});
 
 it('requires top-frame screen consent on the native media preflight', async () => {
   const f = fixture();
