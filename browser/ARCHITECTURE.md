@@ -16,6 +16,30 @@ The shared standards (size limits, doc comments, no magic numbers) are in the
 root [ARCHITECTURE.md](../ARCHITECTURE.md), and `npm run lint` enforces them.
 This file covers what is specific to the browser.
 
+## Page translation
+
+`main/translate/` owns consent and execution for personal desktop tabs. The
+toolbar and native context menu request the same main-owned confirmation; its
+opaque id binds the exact tab, document, origin, source and OS target language.
+Only confirmation permits page text to reach the project's model. Known-language
+pages can continue for up to 20 further pages in that tab and origin; leaving the
+language/site scope, Show original, recording or agent takeover revokes it.
+
+`page/translation-guard.ts` fences isolated-world collection, text writes and
+restoration by document and run. Restoration tombstones queued work. Up to three
+model requests may already be outstanding when stopped and can still be billed.
+Failed restoration of a live document blocks agent reads, including explicit-tab
+screenshots and the external front door, until restoration succeeds or the
+document is replaced. Failed old-document cleanup cannot poison a replacement.
+Only nodes Oya actually changed are restored, and only while they retain that
+written value. Text the site creates is not inferred to be a translated clone
+from string equality; dynamic text inside editable or excluded regions is left alone.
+
+`node tests/integration/desktop-translation.mjs` checks production translation,
+toolbar and dialogs in branded stock Oya with a disposable profile and fake model.
+It covers native view stacking, four consent layouts, keyboard focus and late
+results. It does not exercise a signed-in server or a live model provider.
+
 ## Required native agent-control architecture
 
 **Production control uses native browser APIs. Release validation is platform-specific.**

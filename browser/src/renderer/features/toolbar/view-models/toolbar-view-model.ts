@@ -8,6 +8,7 @@
  */
 import type { LibraryKind } from '../../../../shared/library.ts';
 import { BookmarksBarViewModel } from './bookmarks-bar-view-model.ts';
+import { TranslateViewModel, type TranslateHost, type TranslateBridge } from './translate-view-model.ts';
 import { ShareChipViewModel, type ShareChipBridge } from './share-chip-view-model.ts';
 import { FindBarViewModel, type FindBarBridge } from './find-bar-view-model.ts';
 import { ZoomChipViewModel, type ZoomChipBridge } from './zoom-chip-view-model.ts';
@@ -86,10 +87,13 @@ export type ToolbarBridge = Pick<
   | 'onUrlChanged'
   | 'onTitleChanged'
   | 'onTabsUpdated'
+  | 'translatePage'
+  | 'showOriginal'
 > &
   ShareChipBridge &
   FindBarBridge &
-  ZoomChipBridge;
+  ZoomChipBridge &
+  TranslateBridge;
 
 /** Before any tab: nothing loading, nowhere to go. */
 const IDLE: NavState = { loading: false, error: '', canGoBack: false, canGoForward: false };
@@ -125,15 +129,17 @@ export const askClass = (open: boolean, recording: boolean): string =>
 /** The navigation toolbar. */
 export class ToolbarViewModel extends ViewModel<ToolbarState> {
   /** The local address dropdown, with its own asynchronous lifecycle. */
-  readonly completion: AddressCompletion;
+  declare readonly completion: AddressCompletion;
   /** The bookmarks bar under the toolbar. */
-  readonly bookmarks: BookmarksBarViewModel;
+  declare readonly bookmarks: BookmarksBarViewModel;
+  /** The address bar's translate chip. */
+  declare readonly translate: TranslateViewModel;
   /** The share chip: what a call is capturing, and the way back to it. */
-  readonly share: ShareChipViewModel;
+  declare readonly share: ShareChipViewModel;
   /** The find bar under that (Cmd/Ctrl+F). */
-  readonly find: FindBarViewModel;
+  declare readonly find: FindBarViewModel;
   /** The address bar's zoom chip. */
-  readonly zoom: ZoomChipViewModel;
+  declare readonly zoom: ZoomChipViewModel;
   /** The main process. */
   private readonly bridge: ToolbarBridge;
   /** Last selected tab, to focus a new start page only once. */
@@ -149,20 +155,16 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   private heard = false;
 
   /** Empty, following the active page; the address starts from the main process's status. */
-  constructor(bridge: ToolbarBridge) {
+  constructor(bridge: ToolbarBridge, host?: TranslateHost) {
     super({ url: '', page: '', title: '', nav: IDLE, focusRequest: 0 });
     this.bridge = bridge;
-    this.completion = new AddressCompletion(bridge);
-    this.bookmarks = new BookmarksBarViewModel(bridge);
-    this.share = new ShareChipViewModel(bridge);
-    this.find = new FindBarViewModel(bridge);
-    this.zoom = new ZoomChipViewModel(bridge);
+    Object.assign(this, toolbarParts(bridge, host));
     this.follow(bridge);
   }
 
   /** The toolbar's own ViewModels, which end with it. */
   private parts(): { dispose(): void }[] {
-    return [this.completion, this.bookmarks, this.share, this.find, this.zoom];
+    return [this.completion, this.bookmarks, this.share, this.find, this.zoom, this.translate];
   }
 
   /** Follows the active page's address and title, and the tabs; the address starts from the status. Its parts end with it. */
@@ -260,4 +262,16 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   focusAddress(): void {
     this.set({ focusRequest: this.state.focusRequest + 1 });
   }
+}
+
+/** Compose the toolbar's owned view models together so construction and disposal share one inventory. */
+function toolbarParts(bridge: ToolbarBridge, host?: TranslateHost) {
+  return {
+    completion: new AddressCompletion(bridge),
+    bookmarks: new BookmarksBarViewModel(bridge),
+    share: new ShareChipViewModel(bridge),
+    find: new FindBarViewModel(bridge),
+    translate: new TranslateViewModel(bridge, host),
+    zoom: new ZoomChipViewModel(bridge),
+  };
 }
