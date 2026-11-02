@@ -8,9 +8,8 @@ import { metrics } from '../../../platform/metrics.ts';
 import { audit } from '../../../platform/audit.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { getKey } from '../../../app/http.ts';
-import * as usage from '../../../platform/usage.ts';
 import { registry } from '../registry.ts';
-import { browserQuota, countBrowsers, forget, quotaBody, refuseBadName } from '../lifecycle/fleet.ts';
+import { browserQuota, countBrowsers, forget, forgetDriver, quotaBody, refuseBadName } from '../lifecycle/fleet.ts';
 import { acquireSession, addCdpBrowser, claimSession, refusal, releaseQuietly } from '../lifecycle/sessions.ts';
 
 /** Attaches the caller's CDP browser; answers 201, 400 for a bad name, 429 over quota, or the failure. */
@@ -88,27 +87,20 @@ async function register(req, res, { key, session, browserId }, held: Held) {
  * closed here. An undo that throws is logged, never allowed to leave the
  * caller with no answer.
  */
-function letGoQuietly({ key, browserId }, driver: CDPDriver | null) {
+function letGoQuietly({ browserId }, driver: CDPDriver | null) {
   try {
-    if (registry.isConnected(browserId)) return dropRegistered(key, browserId);
+    if (driver && registry.isConnected(browserId)) return forget(browserId, driver);
     driver?.close();
   } catch (err) {
     console.error('[connect] undo:', err.message);
   }
 }
 
-/** Removes a browser that got as far as the registry, and ends its usage clock. */
-function dropRegistered(key, browserId) {
-  registry.remove(browserId);
-  usage.browserDisconnected(key, browserId);
-  countBrowsers();
-}
-
 /** A driver with no persona: the browser keeps whatever identity it already has. */
 const plainDriver = (session, browserId) => ({
   wsUrl: session.wsUrl,
   provider: session.provider,
-  onClose: () => forget(browserId),
+  onClose: forgetDriver(browserId),
 });
 
 /** Books the attach and answers 201. */

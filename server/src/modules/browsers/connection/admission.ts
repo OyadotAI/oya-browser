@@ -7,10 +7,9 @@ import { randomUUID } from 'crypto';
 import { authenticateToken, isShare, keyDigest, onKeyRevoked } from '../../auth/service.ts';
 import { dropBrowser } from '../lifecycle/fleet.ts';
 import { registry } from '../registry.ts';
-import { destroyMcpServer } from '../../../mcp/server.ts';
 import { container } from '../../../app/container.ts';
 import { Status } from '../../../platform/http-status.ts';
-import { failPending } from './commands.ts';
+import { releaseBrowser } from './release.ts';
 import { CloseCode, KEY_HINT_CHARS, MAX_CLOSE_REASON } from './constants.ts';
 
 /** A revoked key's browsers are dropped at once; they are refused if they dial back. */
@@ -99,14 +98,16 @@ const mayRegister = (principal, browserId: string) =>
 /** The end of a key, for the log. */
 const hint = (key?: string) => (key ? `…${String(key).slice(-KEY_HINT_CHARS)}` : '(none sent)');
 
-/** The same owner reconnected: the old socket's commands fail and it is closed. */
+/**
+ * The same owner reconnected: the old registration gives back everything it held, then its
+ * socket is closed. Released first, so the old socket's own close, whenever it comes, finds
+ * the browser no longer its own and releases nothing twice.
+ */
 function replaceSocket(browserId: string, existing) {
-  failPending(browserId, 'reconnected', 'Browser reconnected');
+  releaseBrowser(browserId, existing, 'reconnected');
   try {
     existing.ws.close(CloseCode.REPLACED, 'Replaced by new connection');
   } catch {}
-  registry.remove(browserId);
-  destroyMcpServer(browserId);
 }
 
 /**
