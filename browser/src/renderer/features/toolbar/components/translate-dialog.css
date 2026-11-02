@@ -11,6 +11,16 @@
 .translation-allowance {
   color: var(--secondary);
 }
+.translation-action-error {
+  color: var(--danger);
+}
+#translate-action-status:empty {
+  display: none;
+}
 .translation-dialog footer {
   justify-content: flex-end;
+}
+.translation-dialog button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
 }

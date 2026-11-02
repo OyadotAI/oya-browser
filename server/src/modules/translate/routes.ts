@@ -8,7 +8,7 @@ import { enforce } from '../../platform/limits.ts';
 import { Status } from '../../platform/http-status.ts';
 import { getKey, requireBrowser } from '../../app/http.ts';
 import { translateTexts } from './service.ts';
-import { TRANSLATE_BATCH_CHARS, TRANSLATE_BATCH_SEGMENTS, TRANSLATE_TAG } from './constants.ts';
+import { TRANSLATE_BATCH_CHARS, TRANSLATE_BATCH_SEGMENTS, TRANSLATE_TAG, TRANSLATE_TAG_CHARS } from './constants.ts';
 
 /** The translate route, mounted on the API router. */
 export const router = Router({ caseSensitive: true });
@@ -24,7 +24,7 @@ function validTexts(texts: unknown) {
 }
 
 /** Whether a value is a language tag. */
-const isTag = (v: unknown) => typeof v === 'string' && TRANSLATE_TAG.test(v);
+const isTag = (v: unknown) => typeof v === 'string' && v.length <= TRANSLATE_TAG_CHARS && TRANSLATE_TAG.test(v);
 
 /** Why a translate body is refused, or null. */
 export function translateRefusal(body: any): string | null {

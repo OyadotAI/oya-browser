@@ -73,4 +73,12 @@ describe('translate route', () => {
   it('refuses a source that is not a language tag', async () => {
     assert.equal((await post({ texts: ['Hola'], target: 'en', source: '' })).status, 400);
   });
+
+  it('bounds target and source metadata before any provider request', async () => {
+    const { requests } = stubLlm([]);
+    const oversized = `en${'-abcdefgh'.repeat(100)}`;
+    assert.equal((await post({ texts: ['Hola'], target: oversized })).status, 400);
+    assert.equal((await post({ texts: ['Hola'], target: 'en', source: oversized })).status, 400);
+    assert.deepEqual(requests, []);
+  });
 });

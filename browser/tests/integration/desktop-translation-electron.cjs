@@ -101,6 +101,7 @@ async function fixture() {
   ipcMain.handle('translation-fixture', (event, name, args) => {
     assert.equal(event.sender, win.webContents);
     assert.ok(Object.hasOwn(calls, name));
+    if (model.rejectAction === name) throw Error('Fixture action unavailable');
     return calls[name](...args);
   });
   win.on('resize', bounds);
@@ -111,6 +112,58 @@ async function fixture() {
   bounds();
   await translator.detect(tab);
   return { win, page, tab, model, deps, overlays, translator, publish };
+}
+
+/** Rejected bridge actions keep focus, disclose the failure and accept only an explicit keyboard retry. */
+async function actionErrorChecks(f) {
+  const { win, model, translator, tab } = f;
+  const read = (code) => win.webContents.executeJavaScript(code);
+  for (const [width, height] of [
+    [600, 400],
+    [1280, 860],
+  ])
+    for (const theme of ['light', 'dark']) {
+      win.setContentSize(width, height);
+      await read(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+      await translator.translate(tab);
+      await until(() => read('document.activeElement?.id === "translate-cancel"'), 'error fixture consent');
+      model.rejectAction = 'confirmTranslation';
+      key(win, 'Tab');
+      key(win, 'Enter');
+      await until(
+        () => read('document.getElementById("translate-confirm").textContent === "Try again"'),
+        'confirm error',
+      );
+      assert.equal(await read('document.activeElement.id'), 'translate-confirm');
+      assert.match(await read('document.getElementById("translate-action-status").textContent'), /confirm translation/);
+      assert.equal(model.calls, 0);
+      model.rejectAction = 'showOriginal';
+      key(win, 'Escape');
+      await until(
+        () => read('document.getElementById("translate-cancel").textContent === "Retry cancel"'),
+        'cancel error',
+      );
+      assert.equal(await read('document.getElementById("translate-confirm").getAttribute("aria-disabled")'), 'true');
+      assert.equal(win.getBrowserViews().includes(f.page), false, 'Error feedback stays above the native page');
+      await pause(650);
+      const geometry = await read(
+        '(() => {const d=document.querySelector(".translation-dialog"),r=d.getBoundingClientRect(),f=d.querySelector("footer").getBoundingClientRect();return {right:r.right,bottom:r.bottom,footer:f.bottom,width:innerWidth,height:innerHeight,overflow:d.scrollWidth>d.clientWidth};})()',
+      );
+      assert.ok(
+        geometry.right <= geometry.width && geometry.bottom <= geometry.height && geometry.footer <= geometry.height,
+      );
+      assert.equal(geometry.overflow, false);
+      if (process.env.OYA_TRANSLATION_SCREENSHOTS)
+        fs.writeFileSync(
+          path.join(process.env.OYA_TRANSLATION_SCREENSHOTS, `consent-error-${width}-${theme}.png`),
+          (await win.webContents.capturePage()).toPNG(),
+        );
+      model.rejectAction = '';
+      key(win, 'Tab');
+      await until(() => read('document.activeElement.id === "translate-cancel"'), 'retry cancel focus');
+      key(win, 'Enter');
+      await until(() => read('document.getElementById("translate-overlay").hidden'), 'cancel retry completes');
+    }
 }
 
 /** Consent geometry and keyboard affordances remain usable at both supported sizes and themes. */
@@ -269,6 +322,7 @@ async function main() {
   await app.whenReady();
   const f = await fixture();
   await dialogChecks(f);
+  await actionErrorChecks(f);
   await compactChecks(f);
   await translationChecks(f);
   console.log(
