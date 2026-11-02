@@ -27,6 +27,14 @@ export const detectJs = `(() => {
 const WALK = `const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'CODE', 'PRE', 'TEMPLATE', 'svg', 'SVG']);
   const skip = (el) => SKIP.has(el.tagName) || el.getAttribute('translate') === 'no' || el.classList.contains('notranslate')
     || el.isContentEditable || getComputedStyle(el).display === 'none';
+  const eligible = (node) => {
+    if (skip(document.documentElement) || document.querySelector('meta[name="google" i][content="notranslate" i]')) return false;
+    for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+      if (parent.nodeType !== 1 || skip(parent)) return false;
+      if (parent === document.body) return true;
+    }
+    return false;
+  };
   const walk = (el, onText) => {
     for (const node of el.childNodes) {
       if (node.nodeType === 1 && !skip(node)) { if (walk(node, onText) === false) return false; }
@@ -52,7 +60,7 @@ const COLLECT = `(maxChars, batchChars) => {
     seen.add(text); total += text.length; texts.push(text);
   };
   if (!optedOut) walk(root, take);
-  globalThis.__oyaTranslation = { texts, dict: new Map(), back: new Map(), done: new WeakSet(), written: [], observer: null };
+  globalThis.__oyaTranslation = { texts, dict: new Map(), done: new WeakSet(), written: [], observer: null };
   return { texts, partial };
 }`;
 
@@ -72,18 +80,18 @@ const APPLY = `(start, out) => {
     const original = state.texts[start + i];
     if (original === undefined) return;
     state.dict.set(original, String(text).trim());
-    state.back.set(String(text).trim(), original);
   });
-  // A node with a known text is translated; one that already holds a translation (the page
-  // copied a translated node) is only remembered, so Show original puts it back too.
+  // Only our actual writes have a known original. Text created by the page is never
+  // assumed to be a copy of a translation just because the strings happen to match.
   const write = (node) => {
-    if (state.done.has(node)) return;
+    if (state.done.has(node) || !eligible(node)) return;
     const now = node.data.trim(), lead = node.data.match(/^\\s*/)[0], trail = node.data.match(/\\s*$/)[0];
-    const text = state.dict.get(now), from = text === undefined ? state.back.get(now) : now;
-    if (from === undefined) return;
-    if (text !== undefined) node.data = lead + text + trail;
+    const text = state.dict.get(now);
+    if (text === undefined || text === now) return;
+    const original = node.data;
+    node.data = lead + text + trail;
     state.done.add(node);
-    state.written.push([node, lead + from + trail, node.data]);
+    state.written.push([node, original, node.data]);
   };
   const before = state.written.length;
   walk(document.body, write);

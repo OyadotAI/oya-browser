@@ -8,11 +8,13 @@ import { identifyJs, collectFor, applyFor, restoreFor } from '../../../src/page/
 function fixture() {
   const node = { nodeType: 3, data: 'Bonjour' };
   const element = {
+    nodeType: 1,
     tagName: 'BODY',
     childNodes: [node],
     getAttribute: () => null,
     classList: { contains: () => false },
   };
+  Object.assign(node, { parentNode: element });
   const context = createContext({
     document: { body: element, documentElement: { ...element, getAttribute: () => 'fr' }, querySelector: () => null },
     getComputedStyle: () => ({ display: 'block' }),

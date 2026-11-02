@@ -31,6 +31,9 @@ model requests may already be outstanding when stopped and can still be billed.
 Failed restoration of a live document blocks agent reads, including explicit-tab
 screenshots and the external front door, until restoration succeeds or the
 document is replaced. Failed old-document cleanup cannot poison a replacement.
+Only nodes Oya actually changed are restored, and only while they retain that
+written value. Text the site creates is not inferred to be a translated clone
+from string equality; dynamic text inside editable or excluded regions is left alone.
 
 `node tests/integration/desktop-translation.mjs` checks production translation,
 toolbar and dialogs in branded stock Oya with a disposable profile and fake model.

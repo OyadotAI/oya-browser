@@ -268,14 +268,63 @@ describe('page translation scripts', () => {
     assert.deepEqual(texts(body), ['Slide', ' Slide ', 'Neu']);
   });
 
-  it('restores the page’s copies of translated nodes, and stops translating added nodes', () => {
+  it('preserves text created by the page, and stops translating added nodes', () => {
     const body = page(el('body', {}, el('p', {}, 'Folie')));
     run(collectJs(1000, 100));
     run(applyJs(0, ['Slide']));
     FakeObserver.added(body, el('p', {}, 'Slide'));
-    assert.equal(run(restoreJs), 2);
-    assert.deepEqual(texts(body), ['Folie', 'Folie']);
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['Folie', 'Slide']);
     assert.equal(FakeObserver.live, null);
+  });
+
+  it('preserves original target-language text while batches finish out of order', () => {
+    for (const order of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      const body = page(el('body', {}, el('p', {}, 'Hallo'), el('p', {}, 'Hello')));
+      run(collectJs(1000, 100));
+      for (const index of order) run(applyJs(index, ['Hello']));
+      run(restoreJs);
+      assert.deepEqual(texts(body), ['Hallo', 'Hello']);
+    }
+  });
+
+  it('never translates inserted text inside editable, hidden or excluded ancestors', () => {
+    for (const region of [
+      el('textarea'),
+      el('div', { translate: 'no' }),
+      el('div', { class: 'notranslate' }),
+      el('pre'),
+      el('code'),
+      el('div'),
+      el('section'),
+    ]) {
+      if (region.tagName === 'SECTION') region.display = 'none';
+      if (region.tagName === 'DIV' && !Object.keys(region.attrs).length) region.isContentEditable = true;
+      page(el('body', {}, el('p', {}, 'Hallo'), region));
+      run(collectJs(1000, 100));
+      run(applyJs(0, ['Hello']));
+      const text = new Text('Hallo');
+      const nested = el('span', {}, el('b', {}, 'Hallo'));
+      FakeObserver.added(region, text, nested);
+      assert.equal(text.data, 'Hallo');
+      assert.deepEqual(texts(nested), ['Hallo']);
+      run(restoreJs);
+    }
+  });
+
+  it('honors a new root opt-out before later writes and observer mutations', () => {
+    const body = page(el('body', {}, el('p', {}, 'Hallo'), el('p', {}, 'Welt')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    body.attrs.translate = 'no';
+    run(applyJs(1, ['World']));
+    FakeObserver.added(body, el('p', {}, 'Hallo'));
+    assert.deepEqual(texts(body), ['Hello', 'Welt', 'Hallo']);
+    run(restoreJs);
+    assert.deepEqual(texts(body), ['Hallo', 'Welt', 'Hallo']);
   });
 
   it('restores nothing, and fails nothing, when nothing was collected', () => {
