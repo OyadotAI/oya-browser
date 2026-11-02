@@ -95,7 +95,8 @@ export class TabEvents {
     const translation = this.deps.translation;
     if (!translation) return;
     const contents = tab.view.webContents;
-    contents.on('did-navigate', () => translation.navigated(tab));
+    contents.on('did-navigate', (_event, url) => translation.navigated(tab, url));
+    contents.once('destroyed', () => translation.navigated(tab));
     contents.on('dom-ready', () => void translation.detect(tab));
     contents.on('did-finish-load', () => translation.loaded(tab));
   }

@@ -6,6 +6,7 @@
 import { useViewModel } from '../../../hooks/index.ts';
 import { Icon, StatusLine } from '../../../ui/index.ts';
 import type { TranslateViewModel } from '../view-models/translate-view-model.ts';
+import { TranslateDialog } from './translate-dialog.tsx';
 
 /** What the chip is given. */
 export interface TranslateChipProps {
@@ -25,12 +26,16 @@ export function TranslateChip({ vm }: TranslateChipProps) {
           id="btn-translate"
           className={`translate-chip${chip.tone === 'done' ? ' translated' : ''}${failed ? ' failed' : ''}`}
           title={chip.title}
+          aria-label={chip.text}
           aria-describedby={failed ? 'translate-reason' : undefined}
           aria-disabled={chip.action === 'none' || undefined}
           onClick={(event) => (vm.activate(), event.detail && event.currentTarget.blur())}
         >
           <Icon name="translate" />
           <span className="translate-chip-text">{chip.text}</span>
+          <span className="translate-chip-short" aria-hidden="true">
+            {chip.short}
+          </span>
           {failed && (
             <span id="translate-reason" className="sr-only">
               {chip.title}
@@ -41,6 +46,7 @@ export function TranslateChip({ vm }: TranslateChipProps) {
       <StatusLine live id="translate-status" className="sr-only">
         {said}
       </StatusLine>
+      <TranslateDialog vm={vm.dialog} />
     </>
   );
 }

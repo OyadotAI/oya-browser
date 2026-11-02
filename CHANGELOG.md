@@ -12,6 +12,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added page translation through the project's model, with confirmation before sending text, a disclosed same-site continuation limit, and Show original. Translation stops on navigation outside that scope, recording, or agent takeover; agent reads wait for the original page to be restored.
+
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
 
 - Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.

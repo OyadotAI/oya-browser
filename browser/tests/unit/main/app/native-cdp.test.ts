@@ -29,9 +29,11 @@ function fixture(nativeBrowsing = true) {
       },
     },
   };
-  const backend = new AppNativeBackend({ nativeBrowsing, windows: { allTabs: () => [tab] }, control } as any);
+  const deps: any = { nativeBrowsing, windows: { allTabs: () => [tab] }, control };
+  const backend = new AppNativeBackend(deps);
   return {
     backend,
+    deps,
     tab,
     control,
     inserted,
@@ -166,4 +168,46 @@ it('configured compatibility listener refuses legacy mode before allocating a se
     () => startAppNativeCdp({ nativeBrowsing: false } as any, { port: 12345, token: 'x'.repeat(32) }),
     /native browsing/i,
   );
+});
+
+it('native operations wait for original text restoration on their exact tab', async () => {
+  const f = fixture();
+  let release!: () => void;
+  f.deps.translation = {
+    released: async (view: unknown) => {
+      assert.equal(view, f.tab.view);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  };
+  const pending = f.backend.execute(f.target, 'input:text', { text: 'after restoration' });
+  f.finish();
+  await new Promise(setImmediate);
+  assert.deepEqual(f.inserted, []);
+  release();
+  await pending;
+  assert.deepEqual(f.inserted, ['after restoration']);
+  f.backend.dispose();
+});
+
+it('external passthrough cannot read a document whose original text failed to restore', async () => {
+  const f = fixture();
+  let debuggerRead = false;
+  Object.defineProperty(f.tab.view.webContents, 'debugger', {
+    get() {
+      debuggerRead = true;
+      throw Error('must not reach debugger');
+    },
+  });
+  f.deps.translation = {
+    released: async () => {
+      throw Error('original page unavailable');
+    },
+  };
+  const pending = f.backend.passthrough(f.target, 'Runtime.evaluate', { expression: 'document.body.innerText' });
+  f.finish();
+  await assert.rejects(pending, /original page unavailable/);
+  assert.equal(debuggerRead, false);
+  f.backend.dispose();
 });

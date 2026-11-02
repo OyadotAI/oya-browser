@@ -8,7 +8,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Translator } from '../../../../src/main/translate/index.ts';
 import { batches, failureOf } from '../../../../src/main/translate/translate-run.ts';
-import { detectJs, restoreJs } from '../../../../src/page/translate.ts';
 import {
   TRANSLATE_BATCH_CHARS,
   TRANSLATE_FIRST_BATCH_CHARS,
@@ -18,12 +17,23 @@ import {
 
 /** A tab's page, answering translation's scripts: `lang` it declares, `texts` it holds. */
 function contents(lang: string, texts: string[], partial = false) {
-  const page = { applied: [] as string[][], restored: 0, restore: Promise.resolve() };
+  const page = {
+    lang,
+    document: 'fixture-document',
+    applied: [] as string[][],
+    restored: 0,
+    restore: Promise.resolve(),
+    identify: Promise.resolve(),
+  };
   const run = async (code: string) => {
-    if (code === detectJs) return lang;
-    if (code === restoreJs) return page.restore.then(() => page.restored++);
+    if (code.includes('return { document: globalThis.__oyaTranslationDocument')) {
+      const reply = { document: page.document, lang: page.lang };
+      await page.identify;
+      return reply;
+    }
+    if (code.includes('Math.max(globalThis.__oyaTranslationSequence')) return page.restore.then(() => page.restored++);
     if (code.includes('maxChars, batchChars')) return { texts, partial };
-    page.applied.push(JSON.parse(code.slice(code.lastIndexOf(', [') + 2, -1)));
+    page.applied.push(JSON.parse(code.slice(code.lastIndexOf(', [') + 2, code.lastIndexOf(');'))));
   };
   const webContents = {
     isDestroyed: () => false,
@@ -63,6 +73,24 @@ function setup(page = contents('ja', ['こんにちは']), api = server(), over:
   return { tab, deps, claimed, translator, api, page: page.page, changes: () => changes };
 }
 
+/** Confirm the main-owned proposal, as an explicit click in the consent dialog would. */
+async function approve(translator: Translator, tab: any) {
+  await translator.translate(tab);
+  const id = tab.translation?.confirmation?.id;
+  if (id) await translator.confirm(tab, id);
+}
+
+/** A committed document, then its language detection and finished-load event. */
+async function go(t: ReturnType<typeof setup>, url: string, lang = 'ja') {
+  t.tab.url = url;
+  t.page.lang = lang;
+  t.page.document += '-next';
+  t.translator.navigated(t.tab, url);
+  await t.translator.detect(t.tab);
+  t.translator.loaded(t.tab);
+  await new Promise(setImmediate);
+}
+
 describe('Translator', () => {
   it('offers a page in a language the person does not read, named for the OS language', async () => {
     const { tab, translator } = setup();
@@ -87,7 +115,7 @@ describe('Translator', () => {
     for (const over of cases) {
       const { tab, translator, api } = setup(undefined, undefined, over);
       await translator.detect(tab);
-      await translator.translate(tab);
+      await approve(translator, tab);
       assert.equal(tab.translation, undefined);
       assert.equal(api.sent.length, 0);
     }
@@ -103,7 +131,7 @@ describe('Translator', () => {
   it('translates the page, writes the answers back, and says it is done', async () => {
     const { tab, translator, api, page } = setup();
     tab.pageLang = 'ja';
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.deepEqual(api.sent, [{ texts: ['こんにちは'], target: 'en-US' }]);
     assert.deepEqual(page.applied, [['こんにちは'.toUpperCase()]]);
     assert.equal(tab.translation.state, 'translated');
@@ -111,21 +139,21 @@ describe('Translator', () => {
 
   it('says a page longer than the limit was translated in part', async () => {
     const { tab, translator } = setup(contents('ja', ['a'], true));
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.equal(tab.translation.state, 'partial');
   });
 
   it('refuses a tab an agent holds: nothing is sent', async () => {
     const { tab, translator, api, claimed } = setup();
     claimed.add(1);
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.equal(api.sent.length, 0);
   });
 
   it('says signed_out when this browser cannot call the server', async () => {
     const api = { ...server(), canCall: () => false };
     const { tab, translator } = setup(undefined, api);
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.equal(tab.translation.error.code, 'signed_out');
   });
 
@@ -133,7 +161,7 @@ describe('Translator', () => {
     const refusal = async () => Response.json({ error: 'No model', code: 'llm_unconfigured' }, { status: 422 });
     const { tab, translator, page } = setup(contents('ja', ['a', 'b'.repeat(TRANSLATE_BATCH_CHARS)]), server(refusal));
     tab.translateKeep = { lang: 'ja', origin: 'https://example.jp', url: '', pages: 0 };
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.deepEqual(tab.translation.error, { code: 'llm_unconfigured', message: 'No model' });
     assert.equal(tab.translateKeep, undefined);
     assert.equal(page.restored, 1);
@@ -144,13 +172,13 @@ describe('Translator', () => {
       throw new TypeError('fetch failed');
     };
     const { tab, translator } = setup(undefined, server(down));
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.equal(tab.translation.error.code, 'offline');
   });
 
   it('says nothing_to_translate for a page with no text', async () => {
     const { tab, translator } = setup(contents('ja', []));
-    await translator.translate(tab);
+    await approve(translator, tab);
     assert.equal(tab.translation.error.code, 'nothing_to_translate');
   });
 
@@ -158,7 +186,7 @@ describe('Translator', () => {
     let answer!: (r: Response) => void;
     const late = () => new Promise<Response>((resolve) => (answer = resolve));
     const { tab, translator, page } = setup(undefined, server(late));
-    const running = translator.translate(tab);
+    const running = approve(translator, tab);
     await new Promise(setImmediate);
     translator.navigated(tab);
     answer(Response.json({ texts: ['HELLO'] }));
@@ -170,12 +198,8 @@ describe('Translator', () => {
   /** Translates the tab once (the click), then lands it on `url` declaring `lang` and lets the load finish. */
   async function clickThenGo(t: ReturnType<typeof setup>, url: string, lang = 'ja') {
     t.tab.pageLang = 'ja';
-    await t.translator.translate(t.tab);
-    t.translator.navigated(t.tab);
-    t.tab.url = url;
-    t.tab.pageLang = lang;
-    t.translator.loaded(t.tab);
-    await new Promise(setImmediate);
+    await approve(t.translator, t.tab);
+    await go(t, url, lang);
   }
 
   it('keeps translating the next page of the same site in the same language', async () => {
@@ -200,43 +224,43 @@ describe('Translator', () => {
     const t = setup();
     await clickThenGo(t, 'https://example.jp/1');
     t.tab.translateKeep.pages = TRANSLATE_KEEP_PAGES;
-    t.translator.navigated(t.tab);
-    t.tab.url = 'https://example.jp/2';
-    t.tab.pageLang = 'ja';
-    t.translator.loaded(t.tab);
+    await go(t, 'https://example.jp/2');
     assert.equal(t.api.sent.length, 2);
+    assert.equal(t.tab.translateKeep, undefined);
   });
 
   it('keeps translating a page that finished loading before its language was read', async () => {
-    const page = contents('ja', ['a']);
-    const t = setup(page);
-    await clickThenGo(t, 'https://example.jp/next', '');
+    const source = contents('ja', ['a']);
+    const t = setup(source);
+    await approve(t.translator, t.tab);
+    t.tab.url = 'https://example.jp/next';
+    t.translator.navigated(t.tab);
+    t.translator.loaded(t.tab);
     assert.equal(t.api.sent.length, 1);
-    page.webContents.isLoading = () => false;
+    source.webContents.isLoading = () => false;
     await t.translator.detect(t.tab);
     await new Promise(setImmediate);
     assert.equal(t.api.sent.length, 2);
   });
 
-  it('keeps translating a page the person comes back to after a detour', async () => {
-    const t = setup();
-    await clickThenGo(t, 'https://example.jp/p2');
-    t.translator.navigated(t.tab);
-    t.tab.url = 'https://example.jp/plain';
-    t.tab.pageLang = '';
-    t.translator.loaded(t.tab);
-    t.translator.navigated(t.tab);
-    t.tab.url = 'https://example.jp/p2';
-    t.tab.pageLang = 'ja';
-    t.translator.loaded(t.tab);
-    await new Promise(setImmediate);
-    assert.equal(t.api.sent.length, 3);
+  it('returning after another origin or language requires fresh consent', async () => {
+    for (const [url, lang] of [
+      ['https://other.example/', 'ja'],
+      ['https://example.jp/plain', ''],
+    ]) {
+      const t = setup();
+      await approve(t.translator, t.tab);
+      await go(t, url, lang);
+      await go(t, 'https://example.jp/', 'ja');
+      assert.equal(t.api.sent.length, 1);
+      assert.equal(t.tab.translateKeep, undefined);
+    }
   });
 
   it('is not offered under a persona that does not read the person’s language', async () => {
     const t = setup(undefined, undefined, { persona: { active: { navigator: { languages: ['de-DE', 'de'] } } } });
     await t.translator.detect(t.tab);
-    await t.translator.translate(t.tab);
+    await approve(t.translator, t.tab);
     assert.equal(t.tab.translation, undefined);
     assert.equal(t.api.sent.length, 0);
   });
@@ -250,7 +274,7 @@ describe('Translator', () => {
   it('Show original restores the page, ends keep-translating, and offers again', async () => {
     const { tab, translator, page } = setup();
     tab.pageLang = 'ja';
-    await translator.translate(tab);
+    await approve(translator, tab);
     await translator.showOriginal(tab);
     assert.equal(page.restored, 1);
     assert.equal(tab.translateKeep, undefined);
@@ -260,7 +284,7 @@ describe('Translator', () => {
   it('an agent’s claim restores the page, and a page command waits until it has', async () => {
     const { tab, translator, page, claimed } = setup();
     tab.pageLang = 'ja';
-    await translator.translate(tab);
+    await approve(translator, tab);
     let finish!: () => void;
     page.restore = new Promise((resolve) => (finish = resolve));
     claimed.add(1);
@@ -315,7 +339,7 @@ describe('translatePage in parallel', () => {
       return Response.json({ texts: body.texts });
     };
     const t = setup(contents('ja', texts), server(slow));
-    await t.translator.translate(t.tab);
+    await approve(t.translator, t.tab);
     assert.equal(most, TRANSLATE_PARALLEL);
     assert.equal(t.tab.translation.state, 'translated');
   });
@@ -332,9 +356,10 @@ describe('translatePage in parallel', () => {
     };
     const page = contents('ja', texts);
     const t = setup(page, server(answer));
-    const running = t.translator.translate(t.tab);
-    await running;
+    const running = approve(t.translator, t.tab);
+    await new Promise(setImmediate);
     release();
+    await running;
     await new Promise(setImmediate);
     assert.equal(t.tab.translation.error.code, 'llm_unavailable');
     assert.deepEqual(page.page.applied, []);
@@ -347,5 +372,133 @@ describe('failureOf', () => {
     assert.equal(failureOf({ code: 'llm_quota', message: 'm' }).code, 'llm_quota');
     assert.equal(failureOf({ status: 429, message: 'm' }).code, 'rate_limited');
     assert.equal(failureOf({ status: 500, message: 'm' }).code, 'failed');
+  });
+});
+
+describe('translation consent and document ownership', () => {
+  it('sends no text before the exact proposal is explicitly confirmed', async () => {
+    const t = setup();
+    await t.translator.translate(t.tab);
+    assert.equal(t.tab.translation.state, 'confirming');
+    assert.equal(t.api.sent.length, 0);
+    const id = t.tab.translation.confirmation.id;
+    await t.translator.confirm(t.tab, 'unrelated-confirmation');
+    assert.equal(t.api.sent.length, 0);
+    await t.translator.confirm(t.tab, id);
+    await t.translator.confirm(t.tab, id);
+    assert.equal(t.api.sent.length, 1);
+  });
+
+  it('cancelling confirmation sends nothing and revokes the proposal', async () => {
+    const t = setup();
+    await t.translator.translate(t.tab);
+    const id = t.tab.translation.confirmation.id;
+    await t.translator.showOriginal(t.tab);
+    await t.translator.confirm(t.tab, id);
+    assert.equal(t.api.sent.length, 0);
+  });
+
+  it('a same-address reload requires a new confirmation and an old reply cannot dismiss it', async () => {
+    const t = setup();
+    await t.translator.translate(t.tab);
+    const old = t.tab.translation.confirmation.id;
+    t.translator.navigated(t.tab);
+    await t.translator.translate(t.tab);
+    const current = t.tab.translation.confirmation.id;
+    await t.translator.confirm(t.tab, old);
+    assert.equal(t.tab.translation.confirmation.id, current);
+    assert.equal(t.api.sent.length, 0);
+    await t.translator.confirm(t.tab, current);
+    assert.equal(t.api.sent.length, 1);
+  });
+
+  it('takeover, recording, source or target changes revoke an unaccepted confirmation', async () => {
+    const changes = [
+      (t: ReturnType<typeof setup>) => t.claimed.add(t.tab.id),
+      (t: ReturnType<typeof setup>) => {
+        t.deps.recorder.recording = true;
+      },
+      (t: ReturnType<typeof setup>) => {
+        t.page.lang = 'de';
+      },
+      (t: ReturnType<typeof setup>) => {
+        t.deps.electron.app.getPreferredSystemLanguages = () => ['fr'];
+      },
+    ];
+    for (const change of changes) {
+      const t = setup();
+      await t.translator.translate(t.tab);
+      const id = t.tab.translation.confirmation.id;
+      change(t);
+      await t.translator.confirm(t.tab, id);
+      assert.equal(t.api.sent.length, 0);
+    }
+  });
+
+  it('unknown source language discloses and authorizes only this document', async () => {
+    const t = setup(contents('', ['hello']));
+    await t.translator.translate(t.tab);
+    assert.equal(t.tab.translation.confirmation.pages, 0);
+    await t.translator.confirm(t.tab, t.tab.translation.confirmation.id);
+    assert.equal(t.tab.translateKeep, undefined);
+  });
+
+  it('a late detection cannot overwrite the replacement document language', async () => {
+    const t = setup();
+    let release!: () => void;
+    t.page.identify = new Promise((resolve) => {
+      release = resolve;
+    });
+    const old = t.translator.detect(t.tab);
+    t.translator.navigated(t.tab);
+    t.page.lang = 'de';
+    t.page.identify = Promise.resolve();
+    await t.translator.detect(t.tab);
+    release();
+    await old;
+    assert.equal(t.tab.pageLang, 'de');
+    assert.equal(t.tab.translation.lang, 'de');
+  });
+
+  it('a failed live restoration blocks reads until a retry succeeds or the document is replaced', async () => {
+    const t = setup();
+    await approve(t.translator, t.tab);
+    t.page.restore = Promise.reject(Error('renderer refused'));
+    await assert.rejects(t.translator.released(t.tab.view), { code: 'restore_failed' });
+    assert.equal(t.translator.translated(t.tab), true);
+    await assert.rejects(t.translator.released(t.tab.view), { code: 'restore_failed' });
+    t.translator.navigated(t.tab);
+    await t.translator.released(t.tab.view);
+  });
+
+  it('explicit restore failure offers reload while retaining the agent barrier', async () => {
+    const t = setup();
+    await approve(t.translator, t.tab);
+    t.page.restore = Promise.reject(Error('renderer refused'));
+    await assert.rejects(t.translator.showOriginal(t.tab), { code: 'restore_failed' });
+    assert.equal(t.tab.translation.error.code, 'restore_failed');
+    assert.equal(t.translator.translated(t.tab), true);
+  });
+
+  it('recording restores translated tabs in other windows', async () => {
+    const t = setup();
+    await approve(t.translator, t.tab);
+    t.deps.windows = { allTabs: () => [t.tab] };
+    t.deps.tabs.list = [];
+    t.deps.recorder.recording = true;
+    await t.translator.sync();
+    assert.equal(t.page.restored, 1);
+    assert.equal(t.tab.translation, undefined);
+    assert.equal(t.tab.translateKeep, undefined);
+  });
+
+  it('malformed model replies never reach page writes', async () => {
+    const t = setup(
+      undefined,
+      server(async () => Response.json({ texts: [{}] })),
+    );
+    await approve(t.translator, t.tab);
+    assert.equal(t.tab.translation.error.code, 'translate_malformed');
+    assert.deepEqual(t.page.applied, []);
   });
 });

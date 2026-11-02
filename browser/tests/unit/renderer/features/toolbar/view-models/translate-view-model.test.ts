@@ -34,7 +34,7 @@ describe('chipLook', () => {
     assert.equal(chipLook(ja('translating'))?.text, 'Translating…');
     assert.equal(chipLook(ja('translated'))?.text, 'Translated from Japanese · Show original');
     assert.equal(chipLook({ ...ja('translated'), lang: '' })?.text, 'Translated to English · Show original');
-    assert.equal(chipLook(ja('partial'))?.text, 'Translated the first part · Show original');
+    assert.equal(chipLook(ja('partial'))?.text, 'Partially translated · Show original');
     assert.equal(chipLook(ja('translated'))?.tone, 'done');
   });
 
@@ -79,9 +79,12 @@ describe('announcement', () => {
   });
 
   it('says when a translation starts, ends, ends in part, fails or is undone', () => {
-    assert.equal(announcement(ja('offer'), ja('translating')), 'Translating from Japanese');
-    assert.equal(announcement(ja('translating'), ja('translated')), 'Translated from Japanese');
-    assert.equal(announcement(ja('translating'), ja('partial')), 'Translated the first part of this page');
+    assert.equal(announcement(ja('offer'), ja('translating')), 'Translating to English');
+    assert.equal(announcement(ja('translating'), ja('translated')), 'Translated to English');
+    assert.equal(
+      announcement(ja('translating'), ja('partial')),
+      'Partially translated. Some page text remains in its original language.',
+    );
     assert.equal(announcement(ja('translated'), ja('offer')), 'Showing the original page');
     assert.match(announcement(ja('translating'), failed('offline')), /can't be reached/);
   });
@@ -103,9 +106,9 @@ describe('TranslateViewModel', () => {
     const vm = new TranslateViewModel(fake.bridge);
     fake.emit('onTabsUpdated', tabs(ja('offer')));
     fake.emit('onTabsUpdated', tabs(ja('translating')));
-    assert.equal(vm.state.said, 'Translating from Japanese');
+    assert.equal(vm.state.said, 'Translating to English');
     fake.emit('onTabsUpdated', tabs(ja('translated'), 'https://b.jp/', 2));
-    assert.equal(vm.state.said, 'Translating from Japanese');
+    assert.equal(vm.state.said, 'Translating to English');
     vm.dispose();
   });
 

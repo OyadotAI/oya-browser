@@ -54,3 +54,43 @@ test('takeover and return during capture discard pixels even when agent mode is 
   };
   await assert.rejects(captureSpecifiedTab(deps, 7), /owner changed/);
 });
+
+test('explicit-tab capture waits for original text restoration', async () => {
+  const { deps, tab, image } = fixture();
+  let release!: () => void;
+  let captured = false;
+  deps.translation = {
+    released: async (view: unknown) => {
+      assert.equal(view, tab.view);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  };
+  tab.view.webContents.capturePage = async () => {
+    captured = true;
+    return image;
+  };
+  const capture = captureSpecifiedTab(deps, 7);
+  await new Promise(setImmediate);
+  assert.equal(captured, false);
+  release();
+  await capture;
+  assert.equal(captured, true);
+});
+
+test('a live restoration failure prevents explicit-tab capture', async () => {
+  const { deps, tab } = fixture();
+  let captured = false;
+  deps.translation = {
+    released: async () => {
+      throw Error('original page unavailable');
+    },
+  };
+  tab.view.webContents.capturePage = async () => {
+    captured = true;
+    throw Error('must not capture');
+  };
+  await assert.rejects(captureSpecifiedTab(deps, 7), /original page unavailable/);
+  assert.equal(captured, false);
+});

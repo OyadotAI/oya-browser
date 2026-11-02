@@ -26,3 +26,6 @@ export const TRANSLATE_FIRST_BATCH_CHARS = 1_000;
 
 /** Requests in flight at once for one page: a long page takes about a third of the time, and stays well within the server's burst. */
 export const TRANSLATE_PARALLEL = 3;
+
+/** Bounds expansion in a model reply before passing its text to the renderer. */
+export const TRANSLATE_RESPONSE_CHARS = 40_000;
