@@ -1,0 +1,425 @@
+/**
+ * Unit tests for src/page/translate.ts: page translation's scripts, run against
+ * a small fake page. What is collected and what is skipped, how translations are
+ * written back, and that "Show original" restores only what is still ours.
+ */
+import { describe, it, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { applyJs, collectJs, detectJs, restoreJs } from '../../../src/page/translate.ts';
+
+/** A fake text node. */
+class Text {
+  /** Element (1) or text (3). */
+  nodeType = 3;
+  /** Its parent, while attached. */
+  parentNode: El | null = null;
+  /** Its text. */
+  data: string;
+  /** Holds `data`. */
+  constructor(data: string) {
+    this.data = data;
+  }
+  /** Whether it is still in the page. */
+  get isConnected(): boolean {
+    return !!this.parentNode?.isConnected;
+  }
+}
+
+/** A fake element: a tag, attributes, children, and whether it is visible or editable. */
+class El {
+  /** Element (1). */
+  nodeType = 1;
+  /** Its parent, while attached. */
+  parentNode: El | null = null;
+  /** Whether it is the page's root. */
+  root = false;
+  /** Its tag, upper case. */
+  tagName: string;
+  /** Its attributes. */
+  attrs: Record<string, string>;
+  /** Its children. */
+  childNodes: Array<El | Text>;
+  /** As the DOM's. */
+  isContentEditable = false;
+  /** Its computed display. */
+  display = 'block';
+  /** Builds `<tag attrs>children</tag>`. */
+  constructor(tag: string, attrs: Record<string, string>, children: Array<El | Text>) {
+    this.tagName = tag.toUpperCase();
+    this.attrs = attrs;
+    this.childNodes = children;
+    for (const c of children) c.parentNode = this;
+  }
+  /** As the DOM's. */
+  getAttribute(name: string): string | null {
+    return this.attrs[name] ?? null;
+  }
+  /** As the DOM's. */
+  get classList() {
+    return { contains: (c: string) => (this.attrs.class || '').split(' ').includes(c) };
+  }
+  /** Whether it is in the page. */
+  get isConnected(): boolean {
+    return this.root || !!this.parentNode?.isConnected;
+  }
+  /** Detaches a child. */
+  remove(child: El | Text): void {
+    this.childNodes = this.childNodes.filter((c) => c !== child);
+    child.parentNode = null;
+  }
+}
+
+/** `<tag>` with attributes and children (strings become text nodes). */
+const el = (tag: string, attrs: Record<string, string> = {}, ...children: Array<El | Text | string>) =>
+  new El(
+    tag,
+    attrs,
+    children.map((c) => (typeof c === 'string' ? new Text(c) : c)),
+  );
+
+/** Installs a page with `body`, `<html>` attributes, and its metas by selector, as the script's globals. */
+function page(body: El, lang: string | null = null, meta: string | null = null, htmlAttrs = {}, metas = {}) {
+  body.root = true;
+  const html = el('html', { ...(lang === null ? {} : { lang }), ...htmlAttrs });
+  const found = { 'meta[http-equiv="content-language" i]': meta, ...metas };
+  const querySelector = (s: string) => (found[s] == null ? null : { getAttribute: () => found[s] });
+  const getComputedStyle = (e: El) => ({ display: e.display });
+  Object.assign(globalThis, {
+    getComputedStyle,
+    MutationObserver: FakeObserver,
+    document: { body, documentElement: html, querySelector },
+  });
+  return body;
+}
+
+/** The page's MutationObserver: a test calls `added` to say the page inserted nodes. */
+class FakeObserver {
+  /** The live observer, if one is watching. */
+  static live: FakeObserver | null = null;
+  /** What it calls with mutation records. */
+  callback: (records: unknown[]) => void;
+  /** Keeps `callback`. */
+  constructor(callback: (records: unknown[]) => void) {
+    this.callback = callback;
+  }
+  /** Starts watching. */
+  observe(): void {
+    FakeObserver.live = this;
+  }
+  /** Stops watching. */
+  disconnect(): void {
+    FakeObserver.live = null;
+  }
+  /** The page inserted `nodes` under `parent`. */
+  static added(parent: El, ...nodes: Array<El | Text>): void {
+    for (const n of nodes) {
+      parent.childNodes.push(n);
+      n.parentNode = parent;
+    }
+    FakeObserver.live?.callback([{ addedNodes: nodes, removedNodes: [] }]);
+  }
+  /** Deliver a completed removal, after any same-turn moves have settled. */
+  static removed(...nodes: Array<El | Text>): void {
+    FakeObserver.live?.callback([{ addedNodes: [], removedNodes: nodes }]);
+  }
+}
+
+/** Runs a page script. */
+const run = <T = any>(js: string): T => (0, eval)(js);
+
+/** The texts of the body's text nodes, in order. */
+const texts = (node: El): string[] => node.childNodes.flatMap((c) => (c instanceof Text ? [c.data] : texts(c)));
+
+describe('page translation scripts', () => {
+  afterEach(() => {
+    delete (globalThis as any).document;
+    delete (globalThis as any).getComputedStyle;
+    delete (globalThis as any).MutationObserver;
+    FakeObserver.live = null;
+    delete (globalThis as any).__oyaTranslation;
+  });
+
+  it('detects the primary html lang tag, then the content-language meta, and nothing when malformed', () => {
+    page(el('body'), 'ja-JP');
+    assert.equal(run(detectJs), 'ja-JP');
+    page(el('body'), null, 'de, en');
+    assert.equal(run(detectJs), 'de');
+    page(el('body'), 'not a tag!');
+    assert.equal(run(detectJs), '');
+    page(el('body'));
+    assert.equal(run(detectJs), '');
+    page(el('body'), 'ja', null, { translate: 'no' });
+    assert.equal(run(detectJs), '');
+    page(el('body', { class: 'notranslate' }), 'ja');
+    assert.equal(run(detectJs), '');
+    const editable = page(el('body'), 'ja');
+    editable.isContentEditable = true;
+    assert.equal(run(detectJs), '');
+    for (const none of ['und', 'zxx', 'mul-Latn']) {
+      page(el('body'), none);
+      assert.equal(run(detectJs), '', none);
+    }
+  });
+
+  it('collects text inside a display:contents wrapper', () => {
+    const wrapper = el('div', {}, el('span', {}, 'Inhalt'));
+    wrapper.display = 'contents';
+    page(el('body', {}, wrapper));
+    assert.deepEqual(run(collectJs(1000, 100)).texts, ['Inhalt']);
+  });
+
+  it('leaves form choices unchanged even when their text matches a translated paragraph', () => {
+    const select = el('select', {}, el('option', {}, 'Bonjour'));
+    const body = page(el('body', {}, el('p', {}, 'Bonjour'), select));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    FakeObserver.added(select, el('option', {}, 'Bonjour'));
+    assert.deepEqual(texts(body), ['Hello', 'Bonjour', 'Bonjour']);
+    run(restoreJs);
+    assert.deepEqual(texts(body), ['Bonjour', 'Bonjour', 'Bonjour']);
+  });
+
+  it('collects nothing from a page that opts out as a whole, or whose body is editable', () => {
+    const editable = el('body', {}, 'Entwurf');
+    editable.isContentEditable = true;
+    const cases: Array<[El, Record<string, string>, Record<string, string>]> = [
+      [el('body', {}, 'Text'), { translate: 'no' }, {}],
+      [el('body', { class: 'notranslate' }, 'Text'), {}, {}],
+      [el('body', {}, 'Text'), {}, { 'meta[name="google" i][content="notranslate" i]': 'notranslate' }],
+      [editable, {}, {}],
+    ];
+    for (const [body, htmlAttrs, metas] of cases) {
+      page(body, 'ja', null, htmlAttrs, metas);
+      assert.deepEqual(run(collectJs(1000, 100)).texts, []);
+    }
+  });
+
+  it('collects visible text and skips code, scripts, fields, translate=no, notranslate, editable and hidden text', () => {
+    const hidden = el('div', {}, 'Versteckt');
+    hidden.display = 'none';
+    const editable = el('div', {}, 'Bearbeitbar');
+    editable.isContentEditable = true;
+    page(
+      el(
+        'body',
+        {},
+        el('p', {}, '  Hallo  '),
+        el('script', {}, 'var x'),
+        el('code', {}, 'Code'),
+        el('textarea', {}, 'Feld'),
+        el('span', { translate: 'no' }, 'Marke'),
+        el('span', { class: 'a notranslate' }, 'Name'),
+        editable,
+        hidden,
+        el('p', {}, '1234 — 56'),
+        el('p', {}, 'Welt'),
+      ),
+    );
+    assert.deepEqual(run(collectJs(1000, 100)), { texts: ['Hallo', 'Welt'], partial: false });
+  });
+
+  it('stops at the page limit and says the page was translated in part', () => {
+    page(el('body', {}, el('p', {}, 'Eins'), el('p', {}, 'Zwei'), el('p', {}, 'Drei')));
+    assert.deepEqual(run(collectJs(8, 100)), { texts: ['Eins', 'Zwei'], partial: true });
+  });
+
+  it('leaves out a text longer than one batch and says the page was translated in part', () => {
+    page(el('body', {}, el('p', {}, 'x'.repeat(20)), el('p', {}, 'Kurz')));
+    assert.deepEqual(run(collectJs(1000, 10)), { texts: ['Kurz'], partial: true });
+  });
+
+  it('writes translations as text, keeping each node’s own leading and trailing whitespace', () => {
+    const body = page(el('body', {}, el('p', {}, '  Hallo\n'), el('p', {}, 'Welt')));
+    run(collectJs(1000, 100));
+    assert.equal(run(applyJs(0, ['Hello', ' World '])), 2);
+    assert.deepEqual(texts(body), ['  Hello\n', 'World']);
+  });
+
+  it('writes from the batch’s first index', () => {
+    const body = page(el('body', {}, el('p', {}, 'Eins'), el('p', {}, 'Zwei')));
+    run(collectJs(1000, 100));
+    run(applyJs(1, ['Two']));
+    assert.deepEqual(texts(body), ['Eins', 'Two']);
+  });
+
+  it('keeps model text that looks like code or markup as plain text', () => {
+    const hostile = 'a"b\\c</script><img src=x onerror=alert(1)> ${x}`';
+    const body = page(el('body', {}, el('p', {}, 'Hallo')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, [hostile]));
+    assert.deepEqual(texts(body), [hostile]);
+  });
+
+  it('skips a node the page changed or removed since it was collected', () => {
+    const p = el('p', {}, 'Zwei');
+    const body = page(el('body', {}, el('p', {}, 'Eins'), p));
+    run(collectJs(1000, 100));
+    ((body.childNodes[0] as El).childNodes[0] as Text).data = 'Neu';
+    body.remove(p);
+    assert.equal(run(applyJs(0, ['One', 'Two'])), 0);
+  });
+
+  it('restores the original text, but leaves a node the page changed after translation as the page has it', () => {
+    const body = page(el('body', {}, el('p', {}, 'Eins'), el('p', {}, 'Zwei')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['One', 'Two']));
+    ((body.childNodes[1] as El).childNodes[0] as Text).data = 'Live';
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['Eins', 'Live']);
+  });
+
+  it('sends a text the page repeats once, and writes every copy of it', () => {
+    const body = page(el('body', {}, el('p', {}, 'Nachricht'), el('p', {}, 'Nachricht'), el('p', {}, 'Ende')));
+    assert.deepEqual(run(collectJs(1000, 100)), { texts: ['Nachricht', 'Ende'], partial: false });
+    assert.equal(run(applyJs(0, ['News', 'End'])), 3);
+    assert.deepEqual(texts(body), ['News', 'News', 'End']);
+  });
+
+  it('translates nodes the page adds later with a known text, and nothing else', () => {
+    const body = page(el('body', {}, el('p', {}, 'Folie')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Slide']));
+    FakeObserver.added(body, el('p', {}, ' Folie '), el('p', {}, 'Neu'));
+    assert.deepEqual(texts(body), ['Slide', ' Slide ', 'Neu']);
+  });
+
+  it('preserves text created by the page, and stops translating added nodes', () => {
+    const body = page(el('body', {}, el('p', {}, 'Folie')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Slide']));
+    FakeObserver.added(body, el('p', {}, 'Slide'));
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['Folie', 'Slide']);
+    assert.equal(FakeObserver.live, null);
+  });
+
+  it('preserves original target-language text while batches finish out of order', () => {
+    for (const order of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      const body = page(el('body', {}, el('p', {}, 'Hallo'), el('p', {}, 'Hello')));
+      run(collectJs(1000, 100));
+      for (const index of order) run(applyJs(index, ['Hello']));
+      run(restoreJs);
+      assert.deepEqual(texts(body), ['Hallo', 'Hello']);
+    }
+  });
+
+  it('never translates inserted text inside editable, hidden or excluded ancestors', () => {
+    for (const region of [
+      el('textarea'),
+      el('div', { translate: 'no' }),
+      el('div', { class: 'notranslate' }),
+      el('pre'),
+      el('code'),
+      el('div'),
+      el('section'),
+    ]) {
+      if (region.tagName === 'SECTION') region.display = 'none';
+      if (region.tagName === 'DIV' && !Object.keys(region.attrs).length) region.isContentEditable = true;
+      page(el('body', {}, el('p', {}, 'Hallo'), region));
+      run(collectJs(1000, 100));
+      run(applyJs(0, ['Hello']));
+      const text = new Text('Hallo');
+      const nested = el('span', {}, el('b', {}, 'Hallo'));
+      FakeObserver.added(region, text, nested);
+      assert.equal(text.data, 'Hallo');
+      assert.deepEqual(texts(nested), ['Hallo']);
+      run(restoreJs);
+    }
+  });
+
+  it('honors a new root opt-out before later writes and observer mutations', () => {
+    const body = page(el('body', {}, el('p', {}, 'Hallo'), el('p', {}, 'Welt')));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    body.attrs.translate = 'no';
+    run(applyJs(1, ['World']));
+    FakeObserver.added(body, el('p', {}, 'Hallo'));
+    assert.deepEqual(texts(body), ['Hello', 'Welt', 'Hallo']);
+    run(restoreJs);
+    assert.deepEqual(texts(body), ['Hallo', 'Welt', 'Hallo']);
+  });
+
+  it('restores nothing, and fails nothing, when nothing was collected', () => {
+    page(el('body', {}, el('p', {}, 'Eins')));
+    assert.equal(run(restoreJs), 0);
+    assert.equal(run(applyJs(0, ['One'])), 0);
+  });
+
+  it('releases removed provenance during bounded live DOM churn', () => {
+    const body = page(el('body', {}, 'Hola'));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    for (let round = 0; round < 2000; round++) {
+      const old = body.childNodes[0] as Text;
+      body.remove(old);
+      FakeObserver.removed(old);
+      assert.equal(old.data, 'Hola');
+      FakeObserver.added(body, new Text('Hola'));
+      assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    }
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['Hola']);
+  });
+
+  it('restores removed nested subtrees and translates a later reinsertion from its own original', () => {
+    const nested = el('section', {}, el('p', {}, '  Hola\n'));
+    const body = page(el('body', {}, nested));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    body.remove(nested);
+    FakeObserver.removed(nested);
+    assert.deepEqual(texts(nested), ['  Hola\n']);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 0);
+    FakeObserver.added(body, nested);
+    assert.deepEqual(texts(body), ['  Hello\n']);
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['  Hola\n']);
+  });
+
+  it('keeps exact provenance across a same-turn move within the translated body', () => {
+    const text = new Text(' Hola ');
+    const left = el('p', {}, text),
+      right = el('p');
+    page(el('body', {}, left, right));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    left.remove(text);
+    FakeObserver.added(right, text);
+    FakeObserver.removed(text);
+    assert.equal(text.data, ' Hello ');
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    assert.equal(run(restoreJs), 1);
+    assert.equal(text.data, ' Hola ');
+  });
+
+  it('preserves page edits when a translated subtree is removed and reinserted', () => {
+    const text = new Text('Hola');
+    const body = page(el('body', {}, text));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    text.data = 'Page update';
+    body.remove(text);
+    FakeObserver.removed(text);
+    FakeObserver.added(body, text);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 0);
+    assert.equal(run(restoreJs), 0);
+    assert.equal(text.data, 'Page update');
+  });
+
+  it('releases the old body when the document replaces it', () => {
+    const old = page(el('body', {}, 'Hola'));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    const replacement = el('body', {}, 'Hola');
+    (globalThis as any).document.body = replacement;
+    FakeObserver.live?.callback([{ removedNodes: [old], addedNodes: [replacement] }]);
+    assert.deepEqual(texts(old), ['Hola']);
+    assert.deepEqual(texts(replacement), ['Hello']);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(replacement), ['Hola']);
+  });
+});

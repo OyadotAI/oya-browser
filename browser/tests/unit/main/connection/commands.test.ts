@@ -26,6 +26,22 @@ describe('CommandRunner', () => {
   /** The cmd_result for command `id`. */
   const resultOf = (id) => ctx.socket.ofType('cmd_result').filter((m) => m.id === id);
 
+  it('runs a page command only once the tab’s translation has been undone', async () => {
+    ctx.tabs.createTab('https://a.test/');
+    let restore!: () => void;
+    const order: string[] = [];
+    ctx.translation = {
+      released: () => new Promise<void>((resolve) => (restore = () => (order.push('restored'), resolve()))),
+    };
+    ctx.actions.runPageAction = async (id) => (order.push('ran'), ctx.commands.sendResult(id, true, {}));
+    const running = ctx.commands.handleCommand({ id: 't1', action: 'click' });
+    await flush();
+    assert.deepEqual(order, []);
+    restore();
+    await running;
+    assert.deepEqual(order, ['restored', 'ran']);
+  });
+
   it('says the browser is not ready outside browsing mode', async () => {
     ctx.shell.browsingMode = false;
     await ctx.commands.handleCommand({ id: 'c1', action: 'click' });
