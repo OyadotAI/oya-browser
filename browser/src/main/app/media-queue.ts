@@ -11,6 +11,8 @@ interface Waiting {
   resolve(answer: boolean): void;
   /** Stops waiting without releasing an active native dialog. */
   timer?: ReturnType<typeof setTimeout>;
+  /** Only identical document, origin, profile and device requests share a denial. */
+  key?: string;
 }
 
 /** At most one active approval and a small, time-bounded queue of independent requests. */
@@ -21,11 +23,11 @@ export class MediaApprovalQueue {
   private readonly waiting: Waiting[] = [];
 
   /** Refuse overload, otherwise preserve each request's own document-bound approval. */
-  run(current: () => boolean, prompt: () => Promise<boolean>): Promise<boolean> {
-    if (!this.active) return this.execute(current, prompt);
+  run(current: () => boolean, prompt: () => Promise<boolean>, key?: string): Promise<boolean> {
+    if (!this.active) return this.execute(current, prompt, key);
     if (this.waiting.length >= MEDIA_PERMISSION_WAITERS) return Promise.resolve(false);
     return new Promise((resolve) => {
-      const item: Waiting = { current, prompt, resolve };
+      const item: Waiting = { current, prompt, resolve, key };
       item.timer = setTimeout(() => this.expire(item), MEDIA_PERMISSION_WAIT_MS);
       this.waiting.push(item);
     });
@@ -36,16 +38,25 @@ export class MediaApprovalQueue {
     const index = this.waiting.indexOf(item);
     if (index < 0) return;
     this.waiting.splice(index, 1);
+    clearTimeout(item.timer);
     item.resolve(false);
   }
 
   /** Keep the active slot until native consent settles, even when its requester becomes stale. */
-  private execute(current: () => boolean, prompt: () => Promise<boolean>): Promise<boolean> {
+  private execute(current: () => boolean, prompt: () => Promise<boolean>, key?: string): Promise<boolean> {
     this.active = true;
-    return this.answer(current, prompt).finally(() => {
-      this.active = false;
-      this.advance();
-    });
+    return this.answer(current, prompt)
+      .then((answer) => this.decided(answer, key))
+      .finally(() => {
+        this.active = false;
+        this.advance();
+      });
+  }
+
+  /** Deny settles already-queued duplicates without prompting again; a later explicit retry is independent. */
+  private decided(answer: boolean, key?: string): boolean {
+    if (!answer && key) for (const item of [...this.waiting]) if (item.key === key) this.expire(item);
+    return answer;
   }
 
   /** Synchronous errors, rejected OS promises and stale requests always fail closed. */
@@ -62,6 +73,6 @@ export class MediaApprovalQueue {
     const item = this.waiting.shift();
     if (!item) return;
     clearTimeout(item.timer);
-    void this.execute(item.current, item.prompt).then(item.resolve);
+    void this.execute(item.current, item.prompt, item.key).then(item.resolve);
   }
 }

@@ -71,7 +71,8 @@ export class MediaPermissions {
     const types = details ? requestedMedia(details) : [];
     if (!origin || !types.length) return Promise.resolve(false);
     const current = this.gate.guard(contents, origin);
-    return this.gate.locked(current, () => this.approve(contents, origin, types));
+    const key = this.gate.decisionKey(contents, origin, types);
+    return this.gate.locked(current, () => this.approve(contents, origin, types), key);
   }
 
   /**
