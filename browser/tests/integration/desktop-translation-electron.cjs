@@ -23,7 +23,7 @@ const deadline = setTimeout(() => {
   app.exit(1);
 }, 60000);
 const markup =
-  '<!doctype html><html lang="fr"><style>body{font:24px system-ui;padding:40px;color:#243d2b;background:#fafcf8}</style><h1>Bonjour</h1><p>Bienvenue dans notre jardin.</p></html>';
+  '<!doctype html><html lang="fr"><style>body{font:24px system-ui;padding:40px;color:#243d2b;background:#fafcf8}</style><h1>Bonjour</h1><p>Bienvenue dans notre jardin.</p><form id="choice-form"><select name="choice"><option>Bonjour</option></select></form><div id="draft" contenteditable>Draft</div></html>';
 
 /** Bounded native readiness, without a browser automation library. */
 async function until(read, message) {
@@ -181,6 +181,20 @@ async function translationChecks(f) {
   await click(win, '#translate-confirm');
   await until(() => Promise.resolve(tab.translation?.state === 'translated'), 'translation completes');
   assert.match(await body(), /English: Bonjour/);
+  assert.equal(
+    await page.webContents.executeJavaScript('new FormData(document.getElementById("choice-form")).get("choice")'),
+    'Bonjour',
+    'Translation must not change a form option’s implicit submitted value',
+  );
+  await page.webContents.executeJavaScript(
+    'document.getElementById("draft").append(document.createTextNode("Bonjour"))',
+  );
+  await pause(20);
+  assert.equal(
+    await page.webContents.executeJavaScript('document.getElementById("draft").innerText'),
+    'DraftBonjour',
+    'New draft text is never translated',
+  );
   model.human = false;
   await translator.released(page);
   assert.doesNotMatch(await body(), /English:/);
