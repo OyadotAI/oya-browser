@@ -23,6 +23,8 @@ import {
   MINUTES_PER_DAY,
   MINUTES_PER_HOUR,
   DEFAULT_CHAT_BURST,
+  DEFAULT_TRANSLATE_PER_MIN,
+  DEFAULT_TRANSLATE_BURST,
   DEFAULT_CHAT_PER_MIN,
   DEFAULT_CHAT_TOKENS_PER_HOUR,
   DEFAULT_COMMANDS_BURST,
@@ -54,6 +56,11 @@ export const LIMITS = {
   chat: {
     perMinute: num('OYA_LIMIT_CHAT_PER_MIN', DEFAULT_CHAT_PER_MIN),
     burst: num('OYA_LIMIT_CHAT_BURST', DEFAULT_CHAT_BURST),
+  },
+  // Its own bucket: a page that reloads itself on a translating tab must not starve the project's agent runs.
+  translate: {
+    perMinute: num('OYA_LIMIT_TRANSLATE_PER_MIN', DEFAULT_TRANSLATE_PER_MIN),
+    burst: num('OYA_LIMIT_TRANSLATE_BURST', DEFAULT_TRANSLATE_BURST),
   },
   provision: {
     perMinute: num('OYA_LIMIT_PROVISION_PER_MIN', DEFAULT_PROVISION_PER_MIN),

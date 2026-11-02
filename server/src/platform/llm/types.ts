@@ -33,6 +33,13 @@ export type ChatRequest = {
   toolChoice?: any;
   /** Sends the request from elsewhere (the person's desktop) when the credential is not this server's to use. */
   transport?: ModelTransport;
+  /**
+   * 'low' asks a thinking model to think little: work like page translation needs no
+   * reasoning, and Gemini 3 spent most of 20–35 s a batch on it. Not 'minimal': Gemini
+   * 3.8 Flash refuses that level with a 400. Sent only where the provider is known to
+   * take it; elsewhere it is left out.
+   */
+  effort?: 'low';
 };
 
 /** One answer, OpenAI-shaped: the assistant message and the tokens it cost. */

@@ -30,19 +30,29 @@ function dialogKey(event: KeyboardEvent, root: HTMLElement | null, close: () => 
 }
 
 /** Puts focus back where it was before the dialog opened, once it closes. */
-function useRestoreFocus(open: boolean): void {
+function useRestoreFocus(open: boolean, fallback?: string): void {
   useEffect(() => {
     if (!open) return;
     const last = document.activeElement;
     return () => {
-      if (last instanceof HTMLElement && last.isConnected) last.focus();
+      if (last instanceof HTMLElement && last.isConnected && last !== document.body) last.focus();
+      else if (fallback) document.getElementById(fallback)?.focus();
     };
-  }, [open]);
+  }, [open, fallback]);
 }
 
+/** The existing hook arguments, with optional focus recovery for native-menu entry. */
+type DialogArguments = [
+  ref: RefObject<HTMLElement | null>,
+  open: boolean,
+  close: () => void,
+  focusId: string,
+  fallback?: string,
+];
+
 /** Makes the element in `ref` a modal dialog while `open`, focusing the element with id `focusId` (it changes with the page). */
-export function useDialog(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void, focusId: string): void {
-  useRestoreFocus(open);
+export function useDialog(...[ref, open, close, focusId, fallback]: DialogArguments): void {
+  useRestoreFocus(open, fallback);
   useEffect(() => {
     if (open) document.getElementById(focusId)?.focus();
   }, [open, focusId]);
