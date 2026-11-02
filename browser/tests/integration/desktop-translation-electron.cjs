@@ -202,14 +202,14 @@ async function translationChecks(f) {
 async function compactChecks(f) {
   const { win, tab, model, translator, publish } = f;
   win.setContentSize(600, 400);
-  model.target = 'tzm';
+  await f.page.webContents.executeJavaScript('document.documentElement.lang = "nb"');
   await translator.translate(tab);
   await until(
     () => win.webContents.executeJavaScript('document.activeElement?.id === "translate-cancel"'),
     'long target consent',
   );
   const copy = await win.webContents.executeJavaScript('document.querySelector(".translation-dialog").innerText');
-  assert.match(copy, /Central Atlas Tamazight/);
+  assert.match(copy, /Norwegian Bokmål/);
   if (process.env.OYA_TRANSLATION_SCREENSHOTS)
     fs.writeFileSync(
       path.join(process.env.OYA_TRANSLATION_SCREENSHOTS, 'consent-long-language.png'),
@@ -246,6 +246,7 @@ async function compactChecks(f) {
     );
   }
   model.target = 'en-US';
+  await f.page.webContents.executeJavaScript('document.documentElement.lang = "fr"');
   await translator.detect(tab);
 }
 
