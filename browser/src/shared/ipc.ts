@@ -31,6 +31,35 @@ export interface Failure {
   error?: string;
 }
 
+/** The address bar's translate chip for one tab, as main/translate sets it. */
+export interface TabTranslation {
+  /** Offered, running, done (in whole or in part), or failed. */
+  state: 'offer' | 'confirming' | 'translating' | 'translated' | 'partial' | 'failed';
+  /** The page's declared language tag, '' when it declared none. */
+  lang: string;
+  /** The person's language tag (the OS's, never the persona's). */
+  target: string;
+  /** Why it failed. */
+  error?: TranslateFailure;
+  /** Main-owned consent scope; the renderer can only confirm its opaque id. */
+  confirmation?: {
+    /** Identifies the exact pending document confirmation. */
+    id: string;
+    /** Origin disclosed before page text leaves the browser. */
+    origin: string;
+    /** Further pages covered by consent; zero for unknown source language. */
+    pages: number;
+  };
+}
+
+/** Why a translation failed. */
+export interface TranslateFailure {
+  /** The code the chip's words are looked up by (signed_out, llm_quota, …). */
+  code: string;
+  /** The server's own message. */
+  message: string;
+}
+
 /** A save's rename step: the playbook it renamed, or found gone (and so saved anew). */
 export interface SaveRename {
   /** The name the playbook had. */
@@ -87,6 +116,8 @@ export interface TabSummary {
   canGoBack?: boolean;
   /** Whether Forward has somewhere to go. */
   canGoForward?: boolean;
+  /** The translate chip's state; absent when there is nothing to offer or the person may not translate. */
+  translation?: TabTranslation;
 }
 
 /** A tab carried in another window over this window's strip, which opens a gap for it at `x`. */
@@ -342,6 +373,12 @@ export interface ShellCalls {
   setBookmarksBar(shown: boolean): Promise<void>;
   /** Bookmarks the page in the shown tab, or removes its bookmark (the toolbar's star, Cmd/Ctrl+D). */
   toggleBookmark(): Promise<void>;
+  /** Translates the tab's page into the person's language with the project's model (the translate chip). */
+  translatePage(tabId: number): Promise<void>;
+  /** Confirms only the exact main-owned document and scope the dialog displayed. */
+  confirmTranslation(tabId: number, id: string): Promise<void>;
+  /** Stops a translation, or undoes one, and shows the page's own text. */
+  showOriginal(tabId: number): Promise<void>;
   /** Searches the shown page for `text` as the person types; empty text clears the highlights. */
   findInPage(text: string): Promise<void>;
   /** Moves to the next (`forward`) or previous match of the current search. */
@@ -666,6 +703,12 @@ export const CALL_CHANNELS = {
   setBookmarksBar: 'set-bookmarks-bar',
   /** Bookmarks the page in the shown tab, or removes its bookmark (the toolbar's star, Cmd/Ctrl+D). */
   toggleBookmark: 'toggle-bookmark',
+  /** Translates a tab's page. */
+  translatePage: 'translate-page',
+  /** Accepts an existing translation confirmation. */
+  confirmTranslation: 'confirm-translation',
+  /** Shows a tab's page untranslated. */
+  showOriginal: 'show-original',
   /** Searches the shown page as the person types. */
   findInPage: 'find-in-page',
   /** The next or previous match. */

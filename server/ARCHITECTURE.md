@@ -9,6 +9,14 @@ The standards every part shares (size limits, documentation, no magic numbers)
 are in the root [ARCHITECTURE.md](../ARCHITECTURE.md) and enforced by
 `npm run lint`. This file covers what is specific to the server.
 
+## Page translation
+
+Personal desktop page translation uses `modules/translate/`. Its bounded route
+shares Assistant's model admission, quota and usage billing while keeping page
+text out of application logs and persistence. The client confirms data transfer
+before requesting it. Completed model requests count even if the person stopped
+the page translation while they were outstanding. Server-run browsers are refused.
+
 ## Cloud browser images
 
 Oya Cloud starts browser sandboxes from a Daytona snapshot; deploying the

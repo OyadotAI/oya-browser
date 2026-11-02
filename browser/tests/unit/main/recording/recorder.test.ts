@@ -44,6 +44,18 @@ describe('Recorder', () => {
     assert.deepEqual(ctx.workspace.edits, []);
   });
 
+  it('a failed translation refresh cannot reject outside recording shutdown', async () => {
+    await ctx.recorder.startRecording();
+    ctx.translation = {
+      sync: async () => {
+        throw Error('renderer unavailable');
+      },
+    };
+    await ctx.recorder.stopRecording();
+    await flush();
+    assert.equal(ctx.recorder.recording, false);
+  });
+
   it('starts where the person is, on a fresh draft', async () => {
     ctx.workspace.draft = { steps: [{ id: 'old', action: 'click' }], secrets: [] };
     const result = await ctx.recorder.startRecording();
