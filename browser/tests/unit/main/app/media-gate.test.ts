@@ -10,6 +10,21 @@ import { fixture, details } from '../../support/media-fixture.ts';
 /** A new top-level document starting, as Electron describes a reload. */
 const reload = { isMainFrame: true, isSameDocument: false };
 
+it('duplicate decisions match only the exact document, profile, origin and unordered device set', () => {
+  const f = fixture();
+  const key = (origin = 'https://call.test', devices = ['video', 'audio']) =>
+    f.service.gate.decisionKey(f.contents as any, origin, devices);
+  const original = key();
+  assert.equal(key('https://call.test', ['audio', 'video']), original);
+  assert.notEqual(key('https://elsewhere.test'), original);
+  assert.notEqual(key('https://call.test', ['audio']), original);
+  f.contents.emit('did-start-navigation', reload);
+  assert.notEqual(key(), original);
+  const reloaded = key();
+  f.deps.persona.partitionName = () => 'persist:two';
+  assert.notEqual(key(), reloaded);
+});
+
 /** A reload: the navigation starts, then the new document commits. */
 const navigate = (contents) => {
   contents.emit('did-start-navigation', reload);

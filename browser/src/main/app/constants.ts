@@ -59,6 +59,10 @@ export const END_CALL_NAMED_SITES = 2;
 export const SHUTDOWN_GRACE_MS = 60_000;
 /** The file in the user-data folder the remembered site permissions live in. */
 export const SITE_PERMISSIONS_FILE = 'site-permissions.json';
+/** Small bursts of device and screen preflights may wait behind one native consent dialog. */
+export const MEDIA_PERMISSION_WAITERS = 4;
+/** Abandoned approvals cannot retain waiting native permission callbacks indefinitely. */
+export const MEDIA_PERMISSION_WAIT_MS = 30_000;
 /** Bound native passkey chooser size and untrusted account labels. */
 export const PASSKEY_ACCOUNT_LIMIT = 20;
 /** Keep account buttons readable without control characters. */

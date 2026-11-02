@@ -7,6 +7,44 @@ import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fixture, details } from '../../support/media-fixture.ts';
+
+it('one denial settles a burst of identical device requests while a later retry asks again', async () => {
+  const f = fixture();
+  /** Native dialog result held while the page queues repeated requests. */
+  type Decision = { /** The person's selected button. */ response: number };
+  const pending = Promise.withResolvers<Decision>();
+  let prompts = 0;
+  f.deps.electron.dialog.showMessageBox = () => (prompts++, pending.promise);
+  const requests = Array.from({ length: 5 }, () => f.service.request(f.contents as any, details as any));
+  pending.resolve({ response: 0 });
+  assert.deepEqual(await Promise.all(requests), [false, false, false, false, false]);
+  assert.equal(prompts, 1);
+  await f.service.request(f.contents as any, details as any);
+  assert.equal(prompts, 2);
+});
+
+it('queued device consent cannot capture a document or profile that replaced its original requester', async () => {
+  for (const revoke of [
+    (f) => f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false }),
+    (f) => (f.deps.persona.partitionName = () => 'persist:two'),
+    (f) => (f.state.interactive = false),
+    (f) => (f.state.destroyed = true),
+  ]) {
+    const f = fixture();
+    const pending = Promise.withResolvers<boolean>();
+    const first = f.service.gate.locked(
+      () => true,
+      () => pending.promise,
+    );
+    const queued = f.service.request(f.contents as any, details as any);
+    revoke(f);
+    pending.resolve(true);
+    await first;
+    assert.equal(await queued, false);
+    assert.deepEqual(f.prompts, []);
+    assert.deepEqual(f.devices, []);
+  }
+});
 it('requires explicit site consent and macOS consent before granting the requested device', async () => {
   const f = fixture();
   assert.equal(f.check(), false);
