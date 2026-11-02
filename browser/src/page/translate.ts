@@ -96,10 +96,30 @@ const APPLY = `(start, out) => {
   };
   const before = state.written.length;
   walk(document.body, write);
+  // Keep provenance only while a node belongs to this body. Restore our unchanged
+  // detached writes before forgetting them, so later reinsertion starts from its
+  // actual original. Same-turn moves within the body retain their existing record.
+  const resident = (node) => {
+    for (let parent = node.parentNode; parent; parent = parent.parentNode) {
+      if (parent === document.body) return true;
+    }
+    return false;
+  };
+  const releaseRemoved = () => {
+    state.written = state.written.filter(([node, original, text]) => {
+      if (resident(node)) return true;
+      if (node.data === text) node.data = original;
+      state.done.delete(node);
+      return false;
+    });
+  };
   // Nodes the page adds later (a carousel rebuilding its slides, a menu redrawn) get any translation already known; nothing new is sent.
-  state.observer ??= new MutationObserver((records) => records.forEach((r) => r.addedNodes.forEach((n) =>
-    n.nodeType === 3 ? write(n) : n.nodeType === 1 && !skip(n) && walk(n, write))));
-  state.observer.observe(document.body, { childList: true, subtree: true });
+  state.observer ??= new MutationObserver((records) => {
+    if (records.some((r) => r.removedNodes.length)) releaseRemoved();
+    records.forEach((r) => r.addedNodes.forEach((n) =>
+      n.nodeType === 3 ? write(n) : n.nodeType === 1 && !skip(n) && walk(n, write)));
+  });
+  state.observer.observe(document, { childList: true, subtree: true });
   return state.written.length - before;
 }`;
 
