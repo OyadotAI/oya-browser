@@ -173,7 +173,7 @@ export class BrowserConnection implements Connection {
 
   /** Takes the browser out of every registry and returns its persona slot. */
   private unregister() {
-    releaseBrowser(this.browserId, this, 'disconnected');
+    releaseBrowser(this.browserId, registry.get(this.browserId), 'disconnected');
     metrics.wsDisconnections.inc({ client: 'oya' });
   }
 }
