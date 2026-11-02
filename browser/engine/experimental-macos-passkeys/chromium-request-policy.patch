@@ -1,0 +1,995 @@
+diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
+index 3162721..14ca581 100644
+--- a/content/browser/BUILD.gn
++++ b/content/browser/BUILD.gn
+@@ -3397,6 +3397,7 @@ source_set("browser") {
+       "webauth/default_authenticator_request_client_delegate.h",
+       "webauth/is_uvpaa.cc",
+       "webauth/is_uvpaa.h",
++      "webauth/oya_passkey_policy_state.h",
+       "webauth/virtual_authenticator.cc",
+       "webauth/virtual_authenticator.h",
+       "webauth/virtual_authenticator_manager_impl.cc",
+diff --git a/content/browser/webauth/authenticator_common_impl.cc b/content/browser/webauth/authenticator_common_impl.cc
+index 2a61a29..4b5f57b 100644
+--- a/content/browser/webauth/authenticator_common_impl.cc
++++ b/content/browser/webauth/authenticator_common_impl.cc
+@@ -42,6 +42,7 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/time/time.h"
+ #include "base/timer/timer.h"
++#include "base/unguessable_token.h"
+ #include "build/build_config.h"
+ #include "components/device_event_log/device_event_log.h"
+ #include "components/webauthn/core/browser/common_utils.h"
+@@ -54,6 +55,7 @@
+ #include "content/browser/webauth/authenticator_impl.h"
+ #include "content/browser/webauth/authenticator_request_outcome_enums.h"
+ #include "content/browser/webauth/client_data_json.h"
++#include "content/browser/webauth/oya_passkey_policy_state.h"
+ #include "content/browser/webauth/virtual_authenticator.h"
+ #include "content/browser/webauth/virtual_authenticator_manager_impl.h"
+ #include "content/browser/webauth/virtual_fido_discovery_factory.h"
+@@ -64,6 +66,7 @@
+ #include "content/public/browser/browser_context.h"
+ #include "content/public/browser/content_browser_client.h"
+ #include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/weak_document_ptr.h"
+ #include "content/public/browser/web_authentication_delegate.h"
+ #include "content/public/browser/web_authentication_request_proxy.h"
+ #include "content/public/browser/web_contents.h"
+@@ -801,7 +804,7 @@ void MaybeRecordBrowserAssistedLogin(CredentialRequestResult request_result) {
+     case CredentialRequestResult::kICloudKeychainError:
+     case CredentialRequestResult::kEnclaveError:
+     case CredentialRequestResult::kOtherError:
+-          // Ignore error cases.
++      // Ignore error cases.
+       break;
+     case CredentialRequestResult::kAndroidFido2HybridSuccess:
+     case CredentialRequestResult::kAndroidFido2Success:
+@@ -821,6 +824,63 @@ void MaybeRecordBrowserAssistedLogin(CredentialRequestResult request_result) {
+ }
+ }  // namespace
+ 
++// An attempt owns native document/window provenance and cannot be reused after
++// start-over. Retained JS callbacks hold only this tombstoned policy state.
++struct BrowserPasskeyAttempt {
++  BrowserPasskeyAttempt(
++      RenderFrameHost* frame,
++      base::flat_set<device::FidoTransportProtocol> allowed_transports)
++      : id(base::UnguessableToken::Create().ToString()),
++        browser_context(frame->GetBrowserContext()),
++        window(
++            WebContents::FromRenderFrameHost(frame)->GetTopLevelNativeWindow()),
++        transports(std::move(allowed_transports)) {
++    for (auto* current = frame; current; current = current->GetParent()) {
++      documents.push_back(current->GetWeakDocumentPtr());
++      origins.push_back(current->GetLastCommittedOrigin());
++    }
++  }
++  ~BrowserPasskeyAttempt() { Retire(); }
++
++  void Retire() {
++    policy.End();
++    cancellation_posted = true;
++    documents.clear();
++    origins.clear();
++    browser_context = nullptr;
++    window = nullptr;
++    if (retirement_callback)
++      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++          FROM_HERE, std::move(retirement_callback));
++  }
++
++  bool Current(RenderFrameHost* frame) const {
++    auto* contents = frame ? WebContents::FromRenderFrameHost(frame) : nullptr;
++    if (!contents || frame->GetBrowserContext() != browser_context ||
++        contents->GetTopLevelNativeWindow() != window)
++      return false;
++    size_t index = 0;
++    for (auto* current = frame; current;
++         current = current->GetParent(), ++index) {
++      if (index >= documents.size() || !current->IsActive() ||
++          documents[index].AsRenderFrameHostIfValid() != current ||
++          current->GetLastCommittedOrigin() != origins[index])
++        return false;
++    }
++    return index == documents.size();
++  }
++
++  const std::string id;
++  raw_ptr<BrowserContext> browser_context;
++  gfx::NativeWindow window;
++  const base::flat_set<device::FidoTransportProtocol> transports;
++  std::vector<WeakDocumentPtr> documents;
++  std::vector<url::Origin> origins;
++  oya::webauthn::PolicyState policy;
++  bool cancellation_posted = false;
++  base::OnceClosure retirement_callback;
++};
++
+ // RequestState contains all state that is specific to a single WebAuthn call.
+ // Since `AuthenticatorCommonImpl` can service multiple calls, it's important
+ // that this state be reset after processing each one and collecting it into
+@@ -829,6 +889,12 @@ struct AuthenticatorCommonImpl::RequestState {
+   // Uniquely identifies this request in the scope of its owning
+   // `AuthenticatorCommonImpl`.
+   RequestKey request_key;
++  std::shared_ptr<BrowserPasskeyAttempt> browser_passkey_attempt;
++  ~RequestState() {
++    if (!browser_passkey_attempt)
++      return;
++    browser_passkey_attempt->Retire();
++  }
+ 
+   std::unique_ptr<AuthenticatorRequestClientDelegate> request_delegate;
+   std::unique_ptr<device::FidoRequestHandlerBase> request_handler;
+@@ -989,6 +1055,27 @@ void AuthenticatorCommonImpl::StartMakeCredentialRequest(
+ 
+ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+     bool allow_skipping_pin_touch) {
++  // Retire the old attempt first. Its deferred notification must reach main
++  // before another admission, and must never run JS from RequestState teardown.
++  if (auto retired = req_state_->browser_passkey_attempt) {
++    const RequestKey key = GetRequestKey();
++    retired->Retire();
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++               std::shared_ptr<BrowserPasskeyAttempt> retired,
++               bool allow_skip) {
++              if (!self || !self->CheckRequestKey(key) ||
++                  self->req_state_->browser_passkey_attempt != retired)
++                return;
++              self->req_state_->browser_passkey_attempt.reset();
++              self->StartGetAssertionRequest(allow_skip);
++            },
++            weak_factory_.GetWeakPtr(), key, retired,
++            allow_skipping_pin_touch));
++    return;
++  }
+   req_state_->request_result.reset();
+   InitDiscoveryFactory();
+ 
+@@ -1005,6 +1092,34 @@ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+               UsesDiscoverableCreds(*ctap_get_assertion_request),
+               is_uvpaa_override_, is_immediate_mediation),
+           GetTransportsAllowedByRP(*ctap_get_assertion_request));
++  const RequestKey request_key = GetRequestKey();
++  auto weak_this = weak_factory_.GetWeakPtr();
++  if (!disable_ui_ &&
++      RequestSource() == AuthenticatorRequestClientDelegate::RequestSource::
++                             kWebAuthentication &&
++      req_state_->mode == AuthenticationRequestMode::kModalWebAuthn &&
++      transports.contains(device::FidoTransportProtocol::kHybrid) &&
++      req_state_->request_delegate->ShouldUseBrowserPasskeyPolicy(
++          *ctap_get_assertion_request, transports,
++          discovery_factory()->IsTestOverride())) {
++    req_state_->browser_passkey_attempt =
++        std::make_shared<BrowserPasskeyAttempt>(GetRenderFrameHost(),
++                                                transports);
++    auto attempt = req_state_->browser_passkey_attempt;
++    attempt->retirement_callback =
++        req_state_->request_delegate->CreateBrowserPasskeyRetirementCallback(
++            attempt->id);
++    const bool allowed = AuthorizeBrowserPasskeyAttempt(false);
++    if (!weak_this || !weak_this->CheckRequestKey(request_key))
++      return;
++    if (req_state_->browser_passkey_attempt != attempt)
++      return;
++    if (!allowed) {
++      CompleteGetAssertionRequest(
++          blink::mojom::AuthenticatorStatus::NOT_ALLOWED_ERROR);
++      return;
++    }
++  }
+   bool discover_enclave =
+       browser_passkeys_available_ &&
+       transports.contains(device::FidoTransportProtocol::kInternal);
+@@ -1029,39 +1144,117 @@ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+       discovery_factory(), std::move(platform_discoveries),
+       std::move(transports), *ctap_get_assertion_request,
+       *ctap_get_assertion_options, allow_skipping_pin_touch,
+-      base::BindOnce(&AuthenticatorCommonImpl::OnSignResponse,
+-                     weak_factory_.GetWeakPtr()));
++      base::BindOnce(
++          [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++             std::shared_ptr<BrowserPasskeyAttempt> attempt,
++             device::GetAssertionStatus status,
++             std::optional<std::vector<
++                 device::AuthenticatorGetAssertionResponse>> responses,
++             device::FidoAuthenticator* authenticator) {
++            if (!self || !self->CheckRequestKey(key))
++              return;
++            if (attempt &&
++                (!attempt->policy.active() ||
++                 !self->BrowserPasskeyAttemptCurrent(key, attempt->id)))
++              return;
++            self->OnSignResponse(status, std::move(responses), authenticator);
++          },
++          weak_factory_.GetWeakPtr(), request_key,
++          req_state_->browser_passkey_attempt));
+   auto cancel_ui_timeout_callback =
+       is_immediate_mediation
+           ? base::BindOnce(&AuthenticatorCommonImpl::CancelImmediateTimeout,
+                            weak_factory_.GetWeakPtr())
+           : base::DoNothing();
++  auto may_dispatch = base::BindRepeating(
++      [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++         std::shared_ptr<BrowserPasskeyAttempt> attempt) {
++        return self && self->CheckRequestKey(key) &&
++               self->req_state_->browser_passkey_attempt == attempt &&
++               (!attempt ||
++                (attempt->policy.active() &&
++                 self->BrowserPasskeyAttemptCurrent(key, attempt->id)));
++      },
++      weak_factory_.GetWeakPtr(), request_key,
++      req_state_->browser_passkey_attempt);
+   req_state_->request_delegate->RegisterActionCallbacks(
+-      base::BindOnce(&AuthenticatorCommonImpl::OnCancelFromUI,
+-                     weak_factory_.GetWeakPtr()) /* cancel_callback */,
++      base::BindOnce(
++          [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++             std::shared_ptr<BrowserPasskeyAttempt> attempt) {
++            if (!self || !self->CheckRequestKey(key) ||
++                self->req_state_->browser_passkey_attempt != attempt)
++              return;
++            self->OnCancelFromUI();
++          },
++          weak_factory_.GetWeakPtr(), request_key,
++          req_state_->browser_passkey_attempt) /* cancel_callback */,
+       base::BindOnce(
+           &AuthenticatorCommonImpl::CancelRequestForImmediateMediation,
+           weak_factory_.GetWeakPtr()) /* immediate_not_found_callback */,
+       base::BindRepeating(
+-          &AuthenticatorCommonImpl::StartGetAssertionRequest,
+-          weak_factory_.GetWeakPtr(),
+-          /*allow_skipping_pin_touch=*/false) /* start_over_callback */,
++          [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++             std::shared_ptr<BrowserPasskeyAttempt> attempt) {
++            if (!self || !self->CheckRequestKey(key) ||
++                self->req_state_->browser_passkey_attempt != attempt)
++              return;
++            if (attempt &&
++                (!attempt->policy.active() ||
++                 !self->BrowserPasskeyAttemptCurrent(key, attempt->id)))
++              return;
++            self->StartGetAssertionRequest(false);
++          },
++          weak_factory_.GetWeakPtr(), request_key,
++          req_state_->browser_passkey_attempt) /* start_over_callback */,
+       base::BindRepeating(
+-          &device::GetAssertionRequestHandler::PreselectAccount,
++          [](base::RepeatingCallback<bool()> allowed,
++             base::WeakPtr<device::GetAssertionRequestHandler> handler,
++             device::DiscoverableCredentialMetadata credential) {
++            if (allowed.Run() && handler)
++              handler->PreselectAccount(std::move(credential));
++          },
++          may_dispatch,
+           request_handler->GetWeakPtr()) /* account_preselected_callback */,
+       base::BindRepeating(
+-          &AuthenticatorCommonImpl::HandlePasswordResponse,
+-          weak_factory_.GetWeakPtr()) /*password_selected_callback */,
++          [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++             std::shared_ptr<BrowserPasskeyAttempt> attempt,
++             password_manager::CredentialInfo credential) {
++            if (!self || !self->CheckRequestKey(key) ||
++                self->req_state_->browser_passkey_attempt != attempt)
++              return;
++            if (attempt &&
++                (!attempt->policy.active() ||
++                 !self->BrowserPasskeyAttemptCurrent(key, attempt->id)))
++              return;
++            self->HandlePasswordResponse(std::move(credential));
++          },
++          weak_factory_.GetWeakPtr(), request_key,
++          req_state_->browser_passkey_attempt) /*password_selected_callback */,
+       base::BindRepeating(
+-          &device::GetAssertionRequestHandler::StartAuthenticatorRequest,
+-          request_handler->GetWeakPtr()) /* request_callback */,
++          [](base::RepeatingCallback<bool()> allowed,
++             base::WeakPtr<device::GetAssertionRequestHandler> handler,
++             const std::string& id) {
++            if (allowed.Run() && handler)
++              handler->StartAuthenticatorRequest(id);
++          },
++          may_dispatch, request_handler->GetWeakPtr()) /* request_callback */,
+       std::move(cancel_ui_timeout_callback),
+       base::BindRepeating(
+-          &device::FidoRequestHandlerBase::PowerOnBluetoothAdapter,
++          [](base::RepeatingCallback<bool()> allowed,
++             base::WeakPtr<device::GetAssertionRequestHandler> handler) {
++            if (allowed.Run() && handler)
++              handler->PowerOnBluetoothAdapter();
++          },
++          may_dispatch,
+           request_handler
+               ->GetWeakPtr()) /* bluetooth_adapter_power_on_callback */,
+       base::BindRepeating(
+-          &device::FidoRequestHandlerBase::RequestBluetoothPermission,
++          [](base::RepeatingCallback<bool()> allowed,
++             base::WeakPtr<device::GetAssertionRequestHandler> handler,
++             device::FidoRequestHandlerBase::BlePermissionCallback callback) {
++            if (allowed.Run() && handler)
++              handler->RequestBluetoothPermission(std::move(callback));
++          },
++          may_dispatch,
+           request_handler->GetWeakPtr()) /* request_ble_permission_callback */);
+ 
+   req_state_->request_handler = std::move(request_handler);
+@@ -2901,9 +3094,20 @@ void AuthenticatorCommonImpl::OnSignResponse(
+   DCHECK_EQ(status_code, device::GetAssertionStatus::kSuccess);
+   DCHECK(response_data.has_value());
+ 
++  const RequestKey policy_key = GetRequestKey();
++  auto policy_attempt = req_state_->browser_passkey_attempt;
++  auto policy_weak_this = weak_factory_.GetWeakPtr();
+   req_state_->request_delegate->OnTransactionSuccessful(
+       RequestSource(), device::FidoRequestType::kGetAssertion,
+       authenticator->GetType());
++  if (!policy_weak_this || !policy_weak_this->CheckRequestKey(policy_key))
++    return;
++  if (req_state_->browser_passkey_attempt != policy_attempt)
++    return;
++  if (policy_attempt &&
++      (!policy_attempt->policy.active() ||
++       !BrowserPasskeyAttemptCurrent(policy_key, policy_attempt->id)))
++    return;
+ 
+   // Show an account picker for discoverable credential requests (empty allow
+   // lists). Responses with a single credential are considered pre-selected if
+@@ -2937,8 +3141,20 @@ void AuthenticatorCommonImpl::OnSignResponse(
+   }
+   req_state_->request_delegate->SelectAccount(
+       std::move(*response_data),
+-      base::BindOnce(&AuthenticatorCommonImpl::OnAccountSelected,
+-                     weak_factory_.GetWeakPtr()));
++      base::BindOnce(
++          [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++             std::shared_ptr<BrowserPasskeyAttempt> attempt,
++             device::AuthenticatorGetAssertionResponse response) {
++            if (!self || !self->CheckRequestKey(key))
++              return;
++            if (attempt &&
++                (!attempt->policy.active() ||
++                 !self->BrowserPasskeyAttemptCurrent(key, attempt->id)))
++              return;
++            self->OnAccountSelected(std::move(response));
++          },
++          weak_factory_.GetWeakPtr(), GetRequestKey(),
++          req_state_->browser_passkey_attempt));
+ }
+ 
+ void AuthenticatorCommonImpl::OnAccountSelected(
+@@ -3412,6 +3628,26 @@ void AuthenticatorCommonImpl::CompleteGetAssertionRequest(
+     blink::mojom::AuthenticatorStatus status,
+     blink::mojom::GetAssertionAuthenticatorResponsePtr response,
+     blink::mojom::WebAuthnDOMExceptionDetailsPtr dom_exception_details) {
++  // This central boundary includes OS-preselected accounts which bypass the
++  // embedder account chooser. Never move the page callback before this gate.
++  if (status == blink::mojom::AuthenticatorStatus::SUCCESS &&
++      req_state_->browser_passkey_attempt) {
++    const RequestKey key = GetRequestKey();
++    auto weak_this = weak_factory_.GetWeakPtr();
++    auto attempt = req_state_->browser_passkey_attempt;
++    const bool allowed = AuthorizeBrowserPasskeyAttempt(true);
++    if (!weak_this || !weak_this->CheckRequestKey(key))
++      return;
++    if (req_state_->browser_passkey_attempt != attempt)
++      return;
++    if (!allowed) {
++      status = blink::mojom::AuthenticatorStatus::NOT_ALLOWED_ERROR;
++      response.reset();
++      dom_exception_details.reset();
++      req_state_->request_result.reset();
++      req_state_->request_outcome = std::monostate();
++    }
++  }
+   CHECK(std::holds_alternative<GetCredentialCallback>(
+             req_state_->response_callback) &&
+         std::get<GetCredentialCallback>(req_state_->response_callback));
+@@ -3473,6 +3709,66 @@ void AuthenticatorCommonImpl::CompleteReportRequest(
+   Cleanup();
+ }
+ 
++bool AuthenticatorCommonImpl::BrowserPasskeyAttemptCurrent(
++    RequestKey key,
++    const std::string& attempt_id) const {
++  return req_state_ && req_state_->request_key == key &&
++         req_state_->browser_passkey_attempt &&
++         req_state_->browser_passkey_attempt->id == attempt_id &&
++         req_state_->browser_passkey_attempt->Current(
++             RenderFrameHost::FromID(render_frame_host_id_));
++}
++
++void AuthenticatorCommonImpl::CancelBrowserPasskeyAttempt(
++    RequestKey key,
++    const std::string& attempt_id) {
++  if (!req_state_ || req_state_->request_key != key ||
++      !req_state_->browser_passkey_attempt ||
++      req_state_->browser_passkey_attempt->id != attempt_id)
++    return;
++  req_state_->browser_passkey_attempt->policy.Revoke();
++  OnCancelFromUI();
++}
++
++bool AuthenticatorCommonImpl::AuthorizeBrowserPasskeyAttempt(bool completing) {
++  const RequestKey key = GetRequestKey();
++  auto attempt = req_state_->browser_passkey_attempt;
++  const auto serial =
++      attempt->policy.Begin(completing ? oya::webauthn::PolicyPhase::kComplete
++                                       : oya::webauthn::PolicyPhase::kStart);
++  if (!serial || !BrowserPasskeyAttemptCurrent(key, attempt->id))
++    return false;
++  auto weak_this = weak_factory_.GetWeakPtr();
++  auto runner = base::SequencedTaskRunner::GetCurrentDefault();
++  const bool dispatched =
++      req_state_->request_delegate->AuthorizeBrowserPasskeys(
++          attempt->id, completing, req_state_->caller_origin,
++          req_state_->relying_party_id, attempt->transports,
++          base::BindRepeating(
++              [](std::shared_ptr<BrowserPasskeyAttempt> state,
++                 uint64_t dispatch,
++                 bool allowed) { state->policy.Decide(dispatch, allowed); },
++              attempt, *serial),
++          base::BindRepeating(
++              [](std::shared_ptr<BrowserPasskeyAttempt> state,
++                 scoped_refptr<base::SequencedTaskRunner> runner,
++                 base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key) {
++                if (state->cancellation_posted)
++                  return;
++                state->cancellation_posted = true;
++                state->policy.Revoke();
++                runner->PostTask(
++                    FROM_HERE,
++                    base::BindOnce(
++                        &AuthenticatorCommonImpl::CancelBrowserPasskeyAttempt,
++                        self, key, state->id));
++              },
++              attempt, runner, weak_this, key));
++  const bool current =
++      weak_this && weak_this->BrowserPasskeyAttemptCurrent(key, attempt->id);
++  return attempt->policy.Finish(*serial, dispatched, current, dispatched);
++}
++
+ void AuthenticatorCommonImpl::Cleanup() {
+   CHECK(!req_state_ || req_state_->request_key.value() == next_request_key_);
+   // `req_state_.reset()` destroys the embedder request delegate which can
+diff --git a/content/browser/webauth/authenticator_common_impl.h b/content/browser/webauth/authenticator_common_impl.h
+index 5aefb64..a8576a6 100644
+--- a/content/browser/webauth/authenticator_common_impl.h
++++ b/content/browser/webauth/authenticator_common_impl.h
+@@ -375,6 +375,14 @@ class CONTENT_EXPORT AuthenticatorCommonImpl : public AuthenticatorCommon {
+   // Get an identifier for the current request. Callbacks that might span a
+   // cancelation must hold one of these values to check whether they're still
+   // pertinent when called.
++  // Gated attempts retain native authority across both synchronous policy
++  // phases.
++  bool AuthorizeBrowserPasskeyAttempt(bool completing);
++  void CancelBrowserPasskeyAttempt(RequestKey key,
++                                   const std::string& attempt_id);
++  bool BrowserPasskeyAttemptCurrent(RequestKey key,
++                                    const std::string& attempt_id) const;
++
+   RequestKey GetRequestKey();
+   // Check whether the given `RequestKey` identifies the current request.
+   [[nodiscard]] bool CheckRequestKey(RequestKey key);
+diff --git a/content/browser/webauth/authenticator_impl_unittest.cc b/content/browser/webauth/authenticator_impl_unittest.cc
+index 0bfbff1..991a147 100644
+--- a/content/browser/webauth/authenticator_impl_unittest.cc
++++ b/content/browser/webauth/authenticator_impl_unittest.cc
+@@ -3305,6 +3305,291 @@ TEST_F(AuthenticatorImplRemoteClientDataJSONTest,
+   EXPECT_EQ(result.status, AuthenticatorStatus::SUCCESS);
+ }
+ 
++// These tests run the real Common/delegate/virtual-FIDO call graph. They do
++// not invoke an Apple controller and cannot establish physical phone support.
++struct BrowserPasskeyPolicyProbe {
++  bool selected = true;
++  bool allow_final = false;
++  bool cancel_final = false;
++  bool omit_start_decision = false;
++  int starts = 0;
++  int completions = 0;
++  int retirements = 0;
++  std::string attempt_id;
++  base::RepeatingCallback<void(bool)> saved_decision;
++  base::RepeatingClosure cancel;
++  base::RepeatingClosure retry;
++  base::RepeatingClosure cancel_lifetime;
++  device::FidoRequestHandlerBase::RequestCallback dispatch;
++};
++
++class BrowserPasskeyPolicyObserver
++    : public MockAuthenticatorRequestDelegateObserver {
++ public:
++  explicit BrowserPasskeyPolicyObserver(
++      std::shared_ptr<BrowserPasskeyPolicyProbe> probe)
++      : probe_(std::move(probe)) {}
++
++  bool ShouldUseBrowserPasskeyPolicy(
++      const device::CtapGetAssertionRequest&,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      bool is_virtual) const override {
++    // Only this explicit fixture permits a virtual provider to select policy.
++    EXPECT_TRUE(is_virtual);
++    EXPECT_TRUE(transports.contains(device::FidoTransportProtocol::kHybrid));
++    return probe_->selected;
++  }
++
++  bool AuthorizeBrowserPasskeys(
++      const std::string& attempt_id,
++      bool completing,
++      const url::Origin& origin,
++      const std::string& rp_id,
++      const base::flat_set<device::FidoTransportProtocol>&,
++      base::RepeatingCallback<void(bool)> decide,
++      base::RepeatingClosure cancel) override {
++    EXPECT_EQ(origin, AuthenticatorImplTest::GetTestOrigin());
++    EXPECT_FALSE(rp_id.empty());
++    probe_->cancel_lifetime = cancel;
++    if (!completing) {
++      ++probe_->starts;
++      probe_->attempt_id = attempt_id;
++      probe_->saved_decision = decide;
++      if (!probe_->omit_start_decision)
++        decide.Run(true);
++    } else {
++      ++probe_->completions;
++      EXPECT_EQ(attempt_id, probe_->attempt_id);
++      decide.Run(probe_->allow_final);
++      if (probe_->cancel_final)
++        cancel.Run();
++    }
++    return true;
++  }
++
++  void RegisterActionCallbacks(
++      base::OnceClosure cancel_callback,
++      base::OnceClosure immediate_not_found_callback,
++      base::RepeatingClosure start_over_callback,
++      AccountPreselectedCallback account_preselected_callback,
++      PasswordSelectedCallback password_selected_callback,
++      device::FidoRequestHandlerBase::RequestCallback request_callback,
++      base::OnceClosure cancel_ui_timeout_callback,
++      base::RepeatingClosure bluetooth_adapter_power_on_callback,
++      base::RepeatingCallback<
++          void(device::FidoRequestHandlerBase::BlePermissionCallback)>
++          request_ble_permission_callback) override {
++    auto cancel =
++        std::make_shared<base::OnceClosure>(std::move(cancel_callback));
++    probe_->cancel = base::BindRepeating(
++        [](std::shared_ptr<base::OnceClosure> callback) {
++          if (*callback)
++            std::move(*callback).Run();
++        },
++        cancel);
++    probe_->retry = start_over_callback;
++    probe_->dispatch = request_callback;
++    MockAuthenticatorRequestDelegateObserver::RegisterActionCallbacks(
++        base::BindOnce([](base::RepeatingClosure callback) { callback.Run(); },
++                       probe_->cancel),
++        std::move(immediate_not_found_callback), std::move(start_over_callback),
++        std::move(account_preselected_callback),
++        std::move(password_selected_callback), std::move(request_callback),
++        std::move(cancel_ui_timeout_callback),
++        std::move(bluetooth_adapter_power_on_callback),
++        std::move(request_ble_permission_callback));
++  }
++
++  base::OnceClosure CreateBrowserPasskeyRetirementCallback(
++      const std::string& attempt_id) override {
++    EXPECT_EQ(attempt_id.empty(), false);
++    return base::BindOnce(
++        [](std::shared_ptr<BrowserPasskeyPolicyProbe> probe, std::string id) {
++          EXPECT_EQ(id, probe->attempt_id);
++          ++probe->retirements;
++        },
++        probe_, attempt_id);
++  }
++
++ private:
++  std::shared_ptr<BrowserPasskeyPolicyProbe> probe_;
++};
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeyFinalDenialDropsNativeSuccess) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  virtual_device_factory_->SetTransport(device::FidoTransportProtocol::kHybrid);
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  ASSERT_TRUE(virtual_device_factory_->mutable_state()->InjectRegistration(
++      options->public_key->allow_credentials[0].id, kTestRelyingPartyId));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  auto authenticator = ConnectToFakeAuthenticator(
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe));
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  ASSERT_TRUE(future.Wait());
++  const auto& result = future.Get()->get_get_assertion_response();
++  EXPECT_EQ(result->status, AuthenticatorStatus::NOT_ALLOWED_ERROR);
++  EXPECT_FALSE(result->credential);
++  EXPECT_EQ(probe->starts, 1);
++  EXPECT_EQ(probe->completions, 1);
++  task_environment()->RunUntilIdle();
++  EXPECT_EQ(probe->retirements, 1);
++}
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeyCancellationWinsDuringFinalDispatch) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  virtual_device_factory_->SetTransport(device::FidoTransportProtocol::kHybrid);
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  ASSERT_TRUE(virtual_device_factory_->mutable_state()->InjectRegistration(
++      options->public_key->allow_credentials[0].id, kTestRelyingPartyId));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  probe->allow_final = true;
++  probe->cancel_final = true;
++  auto authenticator = ConnectToFakeAuthenticator(
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe));
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  ASSERT_TRUE(future.Wait());
++  EXPECT_EQ(future.Get()->get_get_assertion_response()->status,
++            AuthenticatorStatus::NOT_ALLOWED_ERROR);
++  task_environment()->RunUntilIdle();
++  task_environment()->RunUntilIdle();
++  EXPECT_EQ(probe->retirements, 1);
++}
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeyLateDecisionCannotStartDiscovery) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  probe->omit_start_decision = true;
++  auto delegate =
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe);
++  EXPECT_CALL(*delegate, OnTransportAvailabilityEnumerated(_)).Times(0);
++  auto authenticator = ConnectToFakeAuthenticator(std::move(delegate));
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  ASSERT_TRUE(future.Wait());
++  EXPECT_EQ(future.Get()->get_get_assertion_response()->status,
++            AuthenticatorStatus::NOT_ALLOWED_ERROR);
++  ASSERT_FALSE(probe->saved_decision.is_null());
++  probe->saved_decision.Run(true);
++  task_environment()->RunUntilIdle();
++  EXPECT_EQ(probe->starts, 1);
++  EXPECT_EQ(probe->completions, 0);
++  task_environment()->RunUntilIdle();
++  EXPECT_EQ(probe->retirements, 1);
++}
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeySelectionOffKeepsNativeSuccess) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  virtual_device_factory_->SetTransport(device::FidoTransportProtocol::kHybrid);
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  ASSERT_TRUE(virtual_device_factory_->mutable_state()->InjectRegistration(
++      options->public_key->allow_credentials[0].id, kTestRelyingPartyId));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  probe->selected = false;
++  auto authenticator = ConnectToFakeAuthenticator(
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe));
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  ASSERT_TRUE(future.Wait());
++  EXPECT_EQ(future.Get()->get_get_assertion_response()->status,
++            AuthenticatorStatus::SUCCESS);
++  EXPECT_EQ(probe->starts, 0);
++  EXPECT_EQ(probe->completions, 0);
++  EXPECT_EQ(probe->retirements, 0);
++}
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeyOldActionsCannotMutateRestartedAttempt) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  virtual_device_factory_->SetTransport(device::FidoTransportProtocol::kHybrid);
++  virtual_device_factory_->mutable_state()->simulate_press_callback =
++      base::BindRepeating([](device::VirtualFidoDevice*) { return false; });
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  ASSERT_TRUE(virtual_device_factory_->mutable_state()->InjectRegistration(
++      options->public_key->allow_credentials[0].id, kTestRelyingPartyId));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  auto authenticator = ConnectToFakeAuthenticator(
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe));
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  task_environment()->RunUntilIdle();
++  ASSERT_EQ(probe->starts, 1);
++  ASSERT_FALSE(probe->retry.is_null());
++  auto old_retry = probe->retry;
++  auto old_cancel = probe->cancel;
++  const auto old_id = probe->attempt_id;
++  old_retry.Run();
++  task_environment()->RunUntilIdle();
++  ASSERT_EQ(probe->starts, 2);
++  EXPECT_NE(probe->attempt_id, old_id);
++  old_cancel.Run();
++  old_retry.Run();
++  task_environment()->RunUntilIdle();
++  EXPECT_FALSE(future.IsReady());
++  EXPECT_EQ(probe->starts, 2);
++  probe->cancel.Run();
++  ASSERT_TRUE(future.Wait());
++  EXPECT_EQ(future.Get()->get_get_assertion_response()->status,
++            AuthenticatorStatus::NOT_ALLOWED_ERROR);
++}
++
++TEST_F(AuthenticatorImplRequestDelegateTest,
++       BrowserPasskeyRevokedAttemptCannotDispatchDuringPostedCleanup) {
++  NavigateAndCommit(GURL(kTestOrigin1));
++  virtual_device_factory_->SetTransport(device::FidoTransportProtocol::kHybrid);
++  int touches = 0;
++  virtual_device_factory_->mutable_state()->simulate_press_callback =
++      base::BindLambdaForTesting([&](device::VirtualFidoDevice*) {
++        ++touches;
++        return false;
++      });
++  auto options = GetTestGetCredentialOptions();
++  for (auto& credential : options->public_key->allow_credentials)
++    credential.transports = {device::FidoTransportProtocol::kHybrid};
++  ASSERT_TRUE(virtual_device_factory_->mutable_state()->InjectRegistration(
++      options->public_key->allow_credentials[0].id, kTestRelyingPartyId));
++  auto probe = std::make_shared<BrowserPasskeyPolicyProbe>();
++  auto delegate =
++      std::make_unique<testing::NiceMock<BrowserPasskeyPolicyObserver>>(probe);
++  EXPECT_CALL(*delegate, EmbedderControlsAuthenticatorDispatch(_))
++      .WillRepeatedly(testing::Return(true));
++  std::string authenticator_id;
++  EXPECT_CALL(*delegate, FidoAuthenticatorAdded(_))
++      .WillRepeatedly(
++          testing::Invoke([&](const device::FidoAuthenticator& authenticator) {
++            authenticator_id = authenticator.GetId();
++          }));
++  auto authenticator = ConnectToFakeAuthenticator(std::move(delegate));
++  TestGetCredentialFuture future;
++  authenticator->GetCredential(std::move(options), future.GetCallback());
++  task_environment()->RunUntilIdle();
++  ASSERT_EQ(probe->starts, 1);
++  ASSERT_FALSE(authenticator_id.empty());
++  ASSERT_FALSE(probe->cancel_lifetime.is_null());
++  probe->cancel_lifetime.Run();
++  probe->dispatch.Run(authenticator_id);
++  EXPECT_EQ(touches, 0);
++  ASSERT_TRUE(future.Wait());
++  EXPECT_EQ(future.Get()->get_get_assertion_response()->status,
++            AuthenticatorStatus::NOT_ALLOWED_ERROR);
++}
++
+ TEST_F(AuthenticatorImplRequestDelegateTest,
+        TestRequestDelegateObservesFidoRequestHandler) {
+   EXPECT_CALL(*mock_adapter_, IsPresent())
+diff --git a/content/browser/webauth/oya_passkey_policy_state.h b/content/browser/webauth/oya_passkey_policy_state.h
+new file mode 100644
+index 0000000..7b047c9
+--- /dev/null
++++ b/content/browser/webauth/oya_passkey_policy_state.h
+@@ -0,0 +1,123 @@
++/** Native policy decisions are one-use and attempt-local; no credential bytes enter this state machine. */
++#ifndef OYA_BROWSER_PASSKEY_POLICY_STATE_H_
++#define OYA_BROWSER_PASSKEY_POLICY_STATE_H_
++
++#include <cstdint>
++#include <optional>
++
++namespace oya::webauthn {
++
++/** Both native admission and final successful assertion delivery need independent policy decisions. */
++enum class PolicyPhase { kStart, kComplete };
++
++/** Owned by exactly one native request attempt, never reused for a replacement Chromium RequestState. */
++class PolicyState {
++ public:
++  /** A serial binds each callback to the still-open native dispatch, including reentrant callbacks. */
++  std::optional<std::uint64_t> Begin(PolicyPhase phase) {
++    if (!CanBegin(phase)) {
++      Revoke();
++      return std::nullopt;
++    }
++    phase_ = phase;
++    state_ = phase == PolicyPhase::kStart ? State::kStarting : State::kCompleting;
++    ResetDecision();
++    return ++serial_;
++  }
++
++  /** A saved start callback cannot authorize a later complete phase or a closed dispatch window. */
++  void Decide(std::uint64_t serial, bool allowed) {
++    if (serial != serial_ || !DispatchOpen()) return;
++    if (answered_) {
++      consistent_ = false;
++      allowed_ = false;
++      return;
++    }
++    answered_ = true;
++    allowed_ = allowed;
++  }
++
++  /** Actual browser dispatch closes before any OS discovery or page callback can proceed. */
++  bool Finish(std::uint64_t serial,
++              bool had_listener,
++              bool native_source_current,
++              bool dispatch_succeeded) {
++    if (serial != serial_ || !DispatchOpen()) return false;
++    const bool allowed = answered_ && consistent_ && allowed_ && had_listener &&
++                         native_source_current && dispatch_succeeded;
++    SetOutcome(allowed);
++    return allowed;
++  }
++
++  /** Native cancellation tombstones immediately, before posted Chromium cleanup or an OS callback. */
++  void Revoke() {
++    if (state_ == State::kCompleted || state_ == State::kEnded) return;
++    state_ = State::kRevoked;
++    allowed_ = false;
++  }
++
++  /** End is native request retirement, not proof that a separate OS controller finished cancellation. */
++  void End() { state_ = State::kEnded; }
++
++  /** Final native policy can run only after successful admission and before revocation. */
++  bool active() const { return state_ == State::kActive; }
++
++  /** Only one final policy dispatch may authorize the original native result. */
++  bool completed() const { return state_ == State::kCompleted; }
++
++ private:
++  /** Lifecycle transitions never infer permission from an old callback's boolean. */
++  enum class State {
++    kFresh,
++    kStarting,
++    kActive,
++    kCompleting,
++    kCompleted,
++    kRevoked,
++    kEnded,
++  };
++
++  /** Never let a repeated, out-of-order or reentrant gate create a second policy wait. */
++  bool CanBegin(PolicyPhase phase) const {
++    return (phase == PolicyPhase::kStart && state_ == State::kFresh) ||
++           (phase == PolicyPhase::kComplete && state_ == State::kActive);
++  }
++
++  /** Late callbacks have no effect once native event dispatch has closed. */
++  bool DispatchOpen() const {
++    return state_ == State::kStarting || state_ == State::kCompleting;
++  }
++
++  /** A fresh final phase cannot inherit admission's decision or callback count. */
++  void ResetDecision() {
++    answered_ = false;
++    consistent_ = true;
++    allowed_ = false;
++  }
++
++  /** Denial is permanent for this attempt; native retry creates a distinct attempt and object. */
++  void SetOutcome(bool allowed) {
++    if (!allowed) {
++      state_ = State::kRevoked;
++      return;
++    }
++    state_ = phase_ == PolicyPhase::kStart ? State::kActive : State::kCompleted;
++  }
++
++  /** Current native lifecycle. */
++  State state_ = State::kFresh;
++  /** The active decision phase. */
++  PolicyPhase phase_ = PolicyPhase::kStart;
++  /** Monotonic per-attempt dispatch identity, never a website-controlled request number. */
++  std::uint64_t serial_ = 0;
++  /** Exactly one callback must answer within native dispatch. */
++  bool answered_ = false;
++  /** Repeated decisions invalidate the gate instead of retaining the first allow. */
++  bool consistent_ = true;
++  /** No default allow exists for missing handlers or failed native dispatch. */
++  bool allowed_ = false;
++};
++
++}  // namespace oya::webauthn
++
++#endif  // OYA_BROWSER_PASSKEY_POLICY_STATE_H_
+diff --git a/content/public/browser/authenticator_request_client_delegate.cc b/content/public/browser/authenticator_request_client_delegate.cc
+index ff09813..f0b5d77 100644
+--- a/content/public/browser/authenticator_request_client_delegate.cc
++++ b/content/public/browser/authenticator_request_client_delegate.cc
+@@ -36,6 +36,30 @@ AuthenticatorRequestClientDelegate::AuthenticatorRequestClientDelegate() =
+ AuthenticatorRequestClientDelegate::~AuthenticatorRequestClientDelegate() =
+     default;
+ 
++bool AuthenticatorRequestClientDelegate::ShouldUseBrowserPasskeyPolicy(
++    const device::CtapGetAssertionRequest&,
++    const base::flat_set<device::FidoTransportProtocol>&,
++    bool) const {
++  return false;
++}
++
++bool AuthenticatorRequestClientDelegate::AuthorizeBrowserPasskeys(
++    const std::string&,
++    bool,
++    const url::Origin&,
++    const std::string&,
++    const base::flat_set<device::FidoTransportProtocol>&,
++    base::RepeatingCallback<void(bool)>,
++    base::RepeatingClosure) {
++  return false;
++}
++
++base::OnceClosure
++AuthenticatorRequestClientDelegate::CreateBrowserPasskeyRetirementCallback(
++    const std::string&) {
++  return base::OnceClosure();
++}
++
+ void AuthenticatorRequestClientDelegate::SetRelyingPartyId(const std::string&) {
+ }
+ 
+diff --git a/content/public/browser/authenticator_request_client_delegate.h b/content/public/browser/authenticator_request_client_delegate.h
+index 53691d2..5800123 100644
+--- a/content/public/browser/authenticator_request_client_delegate.h
++++ b/content/public/browser/authenticator_request_client_delegate.h
+@@ -12,6 +12,7 @@
+ #include <string_view>
+ #include <vector>
+ 
++#include "base/containers/flat_set.h"
+ #include "base/containers/span.h"
+ #include "base/functional/callback_forward.h"
+ #include "base/scoped_observation.h"
+@@ -29,6 +30,7 @@
+ #include "url/gurl.h"
+ 
+ namespace device {
++class CtapGetAssertionRequest;
+ class FidoAuthenticator;
+ class FidoDiscoveryFactory;
+ class PublicKeyCredentialDescriptor;
+@@ -144,6 +146,36 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
+ 
+   ~AuthenticatorRequestClientDelegate() override;
+ 
++  // Experimental browser-provider selection is default-off for every embedder.
++  // Called only for validated modal hybrid assertions before any discovery.
++  // This native-only predicate must not dispatch JS or mutate request state.
++  // Production implementations refuse virtual overrides; native fixtures can
++  // explicitly exercise the policy hook without opening OS authentication UI.
++  virtual bool ShouldUseBrowserPasskeyPolicy(
++      const device::CtapGetAssertionRequest& request,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      bool is_virtual) const;
++
++  // A main-only synchronous dispatch records exactly one decision. Returning
++  // true means dispatch had a listener and completed without an exception;
++  // content closes the decision window and rechecks native identity afterward.
++  // No challenge, credential ID or assertion bytes cross this policy boundary.
++  virtual bool AuthorizeBrowserPasskeys(
++      const std::string& attempt_id,
++      bool completing,
++      const url::Origin& origin,
++      const std::string& rp_id,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      base::RepeatingCallback<void(bool)> decide,
++      base::RepeatingClosure cancel_lifetime);
++
++  // Snapshot a deferred main-lease retirement notification without dispatching
++  // JS here. Content runs it in a later task, possibly after delegate teardown.
++  // Capture only weak session ownership and bounded attempt metadata, never a
++  // delegate/Common raw pointer. This is not OS-controller cleanup.
++  virtual base::OnceClosure CreateBrowserPasskeyRetirementCallback(
++      const std::string& attempt_id);
++
+   // SetRelyingPartyId sets the RP ID for this request. This is called after
+   // |WebAuthenticationDelegate::MaybeGetRelyingPartyIdOverride| is given the
+   // opportunity to affect this value. For typical origins, the RP ID is just a
