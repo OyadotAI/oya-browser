@@ -69,6 +69,8 @@ export const PASSKEY_ACCOUNT_LIMIT = 20;
 export const PASSKEY_LABEL_LIMIT = 100;
 /** Cancel abandoned account selection rather than retaining an authentication request indefinitely. */
 export const PASSKEY_PROMPT_TIMEOUT_MS = 60_000;
+/** Native frames have no removal event; recheck only while one bounded account chooser exists. */
+export const PASSKEY_RECHECK_MS = 100;
 
 /** Native chooser never makes credential use the default action. */
 export const PASSKEY_DIALOG = { message: 'Sign in with a passkey', defaultId: 0, cancelId: 0, noLink: true };

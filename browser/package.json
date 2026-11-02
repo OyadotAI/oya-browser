@@ -36,6 +36,7 @@
     "test:desktop-library": "node tests/integration/desktop-library.mjs",
     "test:desktop-media": "node tests/integration/desktop-media.mjs && node tests/integration/desktop-media-overlap.mjs",
     "test:desktop-window-selection": "npm run build && node tests/integration/desktop-window-selection.mjs",
+    "test:desktop-passkeys": "node tests/integration/desktop-passkeys.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
     "test:workflow": "node tests/integration/native-workflow.mjs",
