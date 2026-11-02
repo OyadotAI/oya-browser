@@ -33,6 +33,7 @@ export function fixture() {
       tabEvents: new WindowTabEvents(),
     },
     electron: {
+      app: new EventEmitter(),
       webContents: { fromFrame: () => contents },
       dialog: {
         showMessageBox: async (parent: any, options: any) => {

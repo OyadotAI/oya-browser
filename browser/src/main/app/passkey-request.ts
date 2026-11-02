@@ -44,7 +44,12 @@ export function passkeySource(deps: PasskeyDeps, contents: WebContents, frame: W
   const family = passkeyFamily(deps, tab);
   if (!family) return null;
   const source = { owner, tab, window, frame, contents, family, ...passkeyIdentity(deps, contents) };
-  return passkeyCurrent(deps, source) ? source : null;
+  return passkeyAdmitted(deps, source) ? source : null;
+}
+
+/** A background popup cannot start a chooser; its own native sheet may subsequently hold focus. */
+function passkeyAdmitted(deps: PasskeyDeps, source: PasskeySource): boolean {
+  return (!source.tab.window || source.window.isFocused()) && passkeyCurrent(deps, source);
 }
 
 /** Snapshot native session and the current persona transition before showing any account labels. */
@@ -60,7 +65,12 @@ export function passkeyCurrent(deps: PasskeyDeps, source: PasskeySource): boolea
   if (deps.governance.configuration || !familyCurrent(deps, source.family)) return false;
   if (deps.windows?.ownerOfContents(contents) !== owner || contents.session !== source.session) return false;
   if (deps.persona.policyEpoch !== source.epoch || deps.persona.partitionName() !== source.partition) return false;
-  return tab.window ? tab.window.isFocused() : owner.tabs.activeTabId === tab.id;
+  return passkeyWindowCurrent(source);
+}
+
+/** Native macOS sheets temporarily unfocus their parent; exact window ownership survives that transition. */
+function passkeyWindowCurrent({ tab, owner, window }: PasskeySource): boolean {
+  return (tab.window ?? owner.shell.window) === window && (!!tab.window || owner.tabs.activeTabId === tab.id);
 }
 
 /** Popup ids are not necessarily claimed by the opener's agent; preserve the entire native adoption provenance. */
@@ -108,6 +118,7 @@ export class PasskeyRequest {
     this.deps = deps;
     this.source = source;
     this.watch();
+    this.watchWindows();
   }
   /** All cancellation paths revoke the same request, including a late account response. */
   readonly cancel = (): void => this.controller.abort();
@@ -139,6 +150,19 @@ export class PasskeyRequest {
       clearInterval(recheck);
     });
   }
+  /** Another real Oya window ends the choice; the OS-owned sheet is not a replacement BrowserWindow. */
+  private watchWindows(): void {
+    const app = this.deps.electron.app;
+    if (!app) return;
+    app.on('browser-window-focus', this.focused);
+    this.cleanup.push(() => app.removeListener('browser-window-focus', this.focused));
+  }
+  /** A different tracked window is a real ownership transition, unlike focus moving into the owned OS sheet. */
+  private readonly focused = (_event: unknown, window: BrowserWindow): void => {
+    if (window === this.source.window) return;
+    const windows = this.deps.windows;
+    if (windows?.fromContents?.(window.webContents) || windows?.ownerOfContents(window.webContents)) this.cancel();
+  };
   /** Native navigation and parent destruction revoke consent promptly. */
   private listen(navigate: (event: WebContentsDidStartNavigationEventParams) => void): void {
     const contents = this.source.contents;
