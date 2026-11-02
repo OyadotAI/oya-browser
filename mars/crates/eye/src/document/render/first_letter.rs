@@ -135,7 +135,7 @@ fn synthetic(node: &Node, owner: usize, style: ComputedStyle, text: &str) -> Nod
     letter.href = None;
     letter.image_src = None;
     letter.table_cell = None;
-    letter.style = style;
+    letter.style = style.into();
     // A vertical flow lays out in a rotated copy whose styles are horizontal; a letter keeping
     // the vertical mode would root a rotated layout of its block's identity again, forever.
     letter.style.vertical_writing = node.style.vertical_writing;

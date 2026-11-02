@@ -317,9 +317,27 @@ fn append(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::string(&text.unwrap_or_default())?)
 }
 
-/** `host.activation()`: whether a person has clicked or typed in this page (sticky activation). */
+/** `host.activation()`: whether a person has clicked or typed in this page (sticky activation),
+or the page is on a site whose media Chrome lets autoplay without one. */
 fn activation(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    Ok(JsValue::Boolean(vm.page.state.media.activated))
+    let activated = vm.page.state.media.activated || seeded(&vm.page.environment.url);
+    Ok(JsValue::Boolean(activated))
+}
+
+/** Whether `url` is on a host of AUTOPLAY_SEEDED_HOSTS, itself or a subdomain. */
+fn seeded(url: &str) -> bool {
+    let Some(host) = url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+    else {
+        return false;
+    };
+    crate::constants::AUTOPLAY_SEEDED_HOSTS.iter().any(|seed| {
+        host == *seed
+            || host
+                .strip_suffix(seed)
+                .is_some_and(|rest| rest.ends_with('.'))
+    })
 }
 
 /** An attribute that can change what a media element loads was written. */

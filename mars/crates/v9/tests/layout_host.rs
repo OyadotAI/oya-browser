@@ -14,6 +14,8 @@ const FAKE_NODES: usize = 64;
 #[derive(Default)]
 struct Fake {
     calls: AtomicU32,
+    /** Exact journals delivered to the host expose whether an already-read prefix changes. */
+    journals: std::sync::Mutex<Vec<Vec<mars_v9::document::ScriptChange>>>,
 }
 
 impl LayoutHost for Fake {
@@ -21,11 +23,12 @@ impl LayoutHost for Fake {
     fn layout(
         &self,
         _: &[mars_v9::document::DomChange],
-        _: &[mars_v9::document::ScriptChange],
+        changes: &[mars_v9::document::ScriptChange],
         _: Option<&[String]>,
         styles_for: &BTreeSet<usize>,
     ) -> mars_v9::protocol::EngineResult<LayoutAnswer> {
         self.calls.fetch_add(1, Ordering::Relaxed);
+        self.journals.lock().unwrap().push(changes.to_vec());
         Ok(LayoutAnswer {
             geometry: (0..FAKE_NODES)
                 .map(|node| NodeBox {
@@ -44,6 +47,42 @@ impl LayoutHost for Fake {
             root_styles: BTreeMap::new(),
         })
     }
+}
+
+/** Writes after a successful layout preserve its prefix while writes between layouts coalesce. */
+#[test]
+fn successful_layout_seals_the_attribute_journal_prefix() {
+    let host = Arc::new(Fake::default());
+    let mut environment = environment(Some(Arc::clone(&host)));
+    environment.dom_level = mars_v9::DomLevel::Extended;
+    let execution = common::load_with(
+        "const d=document.createElement('div');document.body.appendChild(d);\
+         d.style.width='100px';d.style.width='200px';getComputedStyle(d).display;\
+         d.style.width='300px';d.style.width='400px';\
+         const e=document.createElement('div');document.body.appendChild(e);getComputedStyle(e).display;",
+        &environment,
+    );
+    let journals = host.journals.lock().unwrap();
+    assert_eq!(journals.len(), 2);
+    assert!(journals[1].starts_with(&journals[0]));
+    assert!(execution.script_changes.starts_with(&journals[1]));
+    let widths: Vec<_> = execution
+        .script_changes
+        .iter()
+        .filter_map(|change| match change {
+            mars_v9::document::ScriptChange::Attribute {
+                name,
+                value: Some(value),
+                ..
+            } if name == "style" => Some(value.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(widths.len(), 2);
+    assert!(
+        widths[0].contains("200px") && widths[1].contains("400px"),
+        "{widths:?}"
+    );
 }
 
 /** An environment whose last layout predates every node a script inserts. */

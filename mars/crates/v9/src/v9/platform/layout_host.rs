@@ -89,6 +89,9 @@ pub(in crate::v9) fn relayout(vm: &mut Vm, styles_for: Option<usize>) -> bool {
     let Ok(answer) = answer else {
         return false;
     };
+    // Eye may retain this prefix for the next forced read. Later attribute writes must append
+    // after it; writes between reads can still coalesce without rebuilding earlier mutations.
+    vm.page.attribute_slots.clear();
     adopt(&mut vm.page.environment, answer);
     true
 }

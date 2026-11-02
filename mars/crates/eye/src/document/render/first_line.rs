@@ -66,7 +66,8 @@ impl Looks {
     fn of(block: &Node) -> Self {
         let mut lined = block.clone();
         if let Some(line) = &block.style.first_line {
-            lined.style = super::first_line_layout::merged(&block.style, line, &block.style, false);
+            lined.style =
+                super::first_line_layout::merged(&block.style, line, &block.style, false).into();
             lined.style.color.clone_from(&line.color);
         }
         let item = |node: &Node| super::flow::box_item(node, 0.0, 0.0, 0.0, 0.0, Vec::new());

@@ -139,6 +139,7 @@ fn parse_scope(text: &str) -> Option<Scope> {
         bindings: Vec::new(),
         index: std::collections::HashMap::default(),
         env: !global,
+        captured: None,
         slots: 0,
         boundary: false,
         global,

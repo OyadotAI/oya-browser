@@ -210,7 +210,7 @@ fn authored_size(
 }
 /** The style a control's title is measured and drawn in: the page's font when it set one,
  * otherwise Chromium's system control face at `font`. */
-fn title_style(node: &Node, font: f64) -> crate::document::ComputedStyle {
+fn title_style(node: &Node, font: f64) -> crate::document::SharedStyle {
     let mut style = node.style.clone();
     style.font_size = font;
     if !node.style.font_authored {

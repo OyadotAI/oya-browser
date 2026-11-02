@@ -187,7 +187,7 @@ pub(super) fn stack(
             _ if item.bare => {}
             Some(style) => {
                 let mut generated = node.clone();
-                generated.style = style.clone();
+                generated.style = style.clone().into();
                 decorate(&mut item, &generated);
             }
             None if item.tag == super::multicol::RULE_TAG => {}
@@ -445,7 +445,7 @@ fn key(tree: &Tree<'_>, node: &Node, item: &DisplayItem) -> EngineResult<Vec<Ste
     for (index, element) in chain.iter().enumerate() {
         path.push(Link {
             style: &element.style,
-            parent: index.checked_sub(1).map(|parent| &chain[parent].style),
+            parent: index.checked_sub(1).map(|parent| &*chain[parent].style),
             order: tree.order(element.local_id),
             sub: 0,
             text: element.tag == "#text"

@@ -329,6 +329,8 @@ pub(in crate::v9) struct Heap {
     pub next_object: ObjectId,
     pub next_env: EnvId,
     pub counts: Counts,
+    /** Conservative proxy presence avoids rescanning a restored heap on every task. */
+    pub has_proxies: bool,
     /** Deduplicated resident string units found at the last GC, including active VM roots. */
     pub last_marked_string_units: usize,
     /** Conservative weakly registered string units, refreshed after cache publication and GC. */
@@ -447,6 +449,7 @@ impl Heap {
     /** Add or remove an object's contribution to the counts and the shared index. */
     fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
         if add {
+            self.has_proxies |= matches!(object.class, Class::Proxy(_));
             for (key, prop) in object.props.iter() {
                 if let Key::Str(text) | Key::Private(text) = key {
                     self.track_string(text);
@@ -634,10 +637,12 @@ impl Heap {
     counts between collections count every reference and so only ever overestimate. */
     pub fn recount(&mut self) {
         let mut counts = Counts::default();
+        self.has_proxies = false;
         self.shared_stores.clear();
         self.shared_gc_units.clear();
         self.shared.clear();
         for (id, object) in &self.objects {
+            self.has_proxies |= matches!(object.class, Class::Proxy(_));
             if shared_candidate(object) {
                 self.shared.insert(*id);
             }
@@ -905,6 +910,7 @@ impl<'de> Deserialize<'de> for Heap {
             next_object,
             next_env,
             counts: Counts::default(),
+            has_proxies: false,
             last_marked_string_units: 0,
             last_registered_string_units: 0,
             string_budget: super::string_budget::StringBudget::default(),

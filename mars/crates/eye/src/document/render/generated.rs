@@ -129,7 +129,7 @@ fn synthetic(node: &Node, generated: &crate::document::style::Generated) -> Node
     synthetic.href = None;
     synthetic.image_src = None;
     synthetic.table_cell = None;
-    synthetic.style = (*generated.style).clone();
+    synthetic.style = (*generated.style).clone().into();
     synthetic.style.generated.clear();
     synthetic
 }

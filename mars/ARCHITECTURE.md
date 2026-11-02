@@ -72,18 +72,65 @@ sandboxed subprocesses instead, for hermetic tests, crash recovery and the platf
 - **Synchronous layout** (`crates/v9/src/v9/platform/layout_host.rs`,
   `src/runtime/scripting/sync_layout.rs`): when script reads a box or computed style the last
   layout cannot answer, V9 calls the `LayoutHost` the app put on `PageEnvironment`. The host
-  applies the step's change log to the step's base document, cascades and lays out with Eye on
-  V9's thread, and the same run continues. At most `LAYOUT_CALLS` per step; past that, or with no
+  applies the step's change log, cascades and lays out on Eye's engine thread while V9 waits,
+  and the same run continues. Successful reads seal the attribute journal prefix. The next
+  read moves the previous document back to Eye and applies only the new suffix; changed
+  prefixes restart from the original document. `MutationCursor` retains the identity frontier
+  and whole-journal limits across reads, including IDs removed before a read. Commit also
+  reuses this document, marking styles dirty when it applies a final suffix.
+  At most `LAYOUT_CALLS` per step; past that, or with no
   host (subprocess mode), V9 reports `stale_geometry`/`style_requests` and the coordinator lays
   out and runs the step again, as before.
+- **Shared computed styles** (`crates/eye/src/document/style/shared.rs`): DOM nodes retain a
+  pointer to immutable computed values. Document snapshots and unchanged cascade results share
+  those values; a native edit detaches only the changed style. Node insertions and moves carry
+  the pointer instead of every CSS field. Serialization still writes the same value object.
+- **Persistent execution thread** (`crates/v9/src/v9/execution_thread.rs`): the in-process V9
+  service owns the full execution stack and runs successive calls on that thread, preserving
+  thread-local shape caches. Each call retains its panic boundary. Standalone callers and
+  framed services still acquire an execution thread when their caller does not own that stack.
+  This does not yet retain a live VM between tasks; resident state restoration remains.
+- **Custom element lifetime**: an upgrade registration does not root each instance. Connected
+  custom elements retain their wrappers and upgraded prototypes; detached instances follow
+  ordinary script and DOM reachability. Construction and queued slot changes keep their targets
+  alive until those operations finish. Opt-in `v9.allocations` records allocation charges per
+  resident step without serializing the heap.
+- **Native task collection**: desktop pages and workers enable `PageEnvironment.live_gc`.
+  Heap growth or bound pressure runs ordinary collection at the task checkpoint, reclaiming
+  unreachable weak-key cycles. Standalone snapshot callers retain weak identities as before.
+  Reachable DOM targets own mutation observers; observer registrations hold their target weakly,
+  so discarded observer/target cycles do not retain callbacks. Pending records remain roots.
+  Observation traversal includes the owning document and stops at shadow roots. A stable heap
+  near a bound does not trigger another collection without growth or actual bound pressure.
+- **Resident heap admission**: identity bounds use radix-tree lower bounds and proxy presence is
+  maintained with allocation/recounting, avoiding two whole-heap scans during task restoration.
+- **Script call forwarding**: the intrinsic `Function.prototype.call` enters a script closure on
+  the current interpreter loop, retaining the original caller and exception boundary. Native
+  callbacks, proxies, bound targets and replaced call properties retain ordinary dispatch.
+- **Dictionary property caches**: large objects retain a layout identity for own-property slots.
+  Dictionary snapshots share that identity until a key is added or removed, when only the changed
+  snapshot receives a fresh identity. Slot reads still inspect data/accessor kind and writes still
+  inspect writability, so redefinitions need no structural invalidation. Identities are process
+  metadata, rebuilt when state is deserialized.
+- **Request submission**: validated script tasks give their outgoing requests a bounded admission
+  turn before followup script loading. Network workers can download concurrently with that work;
+  responses stay queued for the ordinary network task source. Resize observer broadcasts continue
+  deferring resource work until their rendering cycle allows it.
+- **Closure environments**: function locals used by nested functions live in shared environment
+  slots; other locals remain activation registers and disappear when that activation returns.
+  Dependency analysis is memoized across lazy compilation. Direct eval, mapped arguments and
+  module scopes keep their existing full environments. Class scopes and lexical block scopes
+  retain their established layout.
 - **Engine call bound**: `rpc_timeout()` never sits under the effective V9 script deadline plus a
   margin, so a slow but bounded script reports its own limit instead of having its engine killed.
 
 ### V9 JIT bridge
-`v9::jit::JitBridge` only profiles today: it counts calls per function and reports V8-style tier
-bits to `%GetOptimizationStatus`. Nothing is compiled. The plan is inline caches in the
-interpreter first, then a baseline template JIT (dynasm-rs, ARM64 and x86-64), then an
-optimizing tier (Cranelift) for hot loops. A signed build needs the `allow-jit` entitlement.
+On Apple silicon macOS, hot functions use the owned ARM64 assembler and executable-memory
+manager in `v9::jit`. Forward jumps become native branches; other instructions call the
+interpreter's instruction helper and dispatch through a block table. This preserves interpreter
+semantics but does not yet specialize arithmetic or property accesses into native operations.
+Compilation currently runs on the execution thread. The separate conformance tier-status bridge
+reports optimization metadata; its status alone is not evidence of native specialization.
 
 ## Ownership and transactions
 

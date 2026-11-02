@@ -81,6 +81,58 @@ fn dynamic_classic_scripts_download_concurrently() {
     assert!(texts(&page).contains("ab"), "{page}");
 }
 
+/** A script-created fetch starts before the same task's dynamic script download is awaited. */
+#[test]
+fn fetch_submission_overlaps_followup_script_loading() {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    let arrived = ScriptArrival::default();
+    let api_arrived = Arc::clone(&arrived);
+    let api = Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = api_arrived.as_ref();
+            *count.lock().unwrap() += 1;
+            wake.notify_all();
+            reply("text/plain", "Access-Control-Allow-Origin: *\r\n", "ready")
+        }),
+        false,
+    );
+    let overlapped = Arc::new(AtomicBool::new(false));
+    let script_overlapped = Arc::clone(&overlapped);
+    let script = Fixture::start(
+        Box::new(move |_| {
+            let (count, wake) = arrived.as_ref();
+            let (count, _) = wake
+                .wait_timeout_while(count.lock().unwrap(), SCRIPT_OVERLAP_WAIT, |count| {
+                    *count == 0
+                })
+                .unwrap();
+            script_overlapped.store(*count > 0, std::sync::atomic::Ordering::SeqCst);
+            reply("text/javascript", "", "document.title='loaded'")
+        }),
+        false,
+    );
+    let body = format!(
+        "<script>fetch('{}/api');const s=document.createElement('script');s.src='{}/next.js';document.head.appendChild(s)</script>",
+        api.url, script.url
+    );
+    let fixture = Fixture::raw(html("", &body));
+    let mut runtime = Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        vec![fixture.url.clone(), api.url.clone(), script.url.clone()],
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(
+        overlapped.load(std::sync::atomic::Ordering::SeqCst),
+        "the fetch waited for the followup script to finish"
+    );
+}
+
 /** A denied dynamic script never reaches the network, including through batch prefetch. */
 #[test]
 fn dynamic_script_prefetch_preserves_csp_admission() {
@@ -500,6 +552,20 @@ fn measuring_an_inserted_node_sees_its_layout() {
     let width = clicked["viewport"]["width"].as_f64().unwrap();
     let expected = format!("width 200 left {}", (width - 200.0) / 2.0);
     assert!(texts(&clicked).contains(&expected), "{clicked}");
+}
+
+/** Consecutive forced reads see appended mutations even after a previous read's nodes are removed. */
+#[test]
+fn successive_layout_reads_apply_new_mutations() {
+    let (_fixture, _, page) = load(
+        "<p id=out></p><script>const widths=[];for(let i=0;i<6;i++){\
+         const box=document.createElement('div');box.style.width=(20+i)+'px';\
+         document.body.appendChild(box);getComputedStyle(box).display;\
+         widths.push(box.getBoundingClientRect().width);box.remove()}\
+         document.getElementById('out').textContent=widths.join(',')</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("20,21,22,23,24,25"), "{page}");
 }
 
 /** A new computed-style request must refresh layout after an earlier attribute entry changes. */

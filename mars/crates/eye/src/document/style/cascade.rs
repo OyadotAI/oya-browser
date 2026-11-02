@@ -181,7 +181,7 @@ impl<'a> Cascade<'a> {
             let node = &document.nodes[index];
             let previous = self.reuse.as_ref().and_then(|plan| {
                 let parent_style = parent
-                    .map(|index| &candidate.nodes[index].style)
+                    .map(|index| &*candidate.nodes[index].style)
                     .unwrap_or(&candidate.formatting.body.style);
                 plan.reusable(node, index, parent_style)
             });
@@ -195,7 +195,7 @@ impl<'a> Cascade<'a> {
                     self.ua_margin_top = ua_margin_top;
                     style
                 }
-                None => self.styled_node(node, index, parent, candidate)?,
+                None => self.styled_node(node, index, parent, candidate)?.into(),
             };
             if let Some(plan) = self.reuse.as_mut() {
                 let custom = self.scopes.last_own();
@@ -315,7 +315,7 @@ impl<'a> Cascade<'a> {
         candidate: &Document,
     ) -> EngineResult<ComputedStyle> {
         let parent_style = parent
-            .map(|index| &candidate.nodes[index].style)
+            .map(|index| &*candidate.nodes[index].style)
             .unwrap_or(&candidate.formatting.body.style);
         let mut style = super::resolve::inherited(parent_style);
         super::ua::defaults(node, &mut style);

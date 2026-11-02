@@ -376,6 +376,8 @@ impl Labeler<'_> {
 struct Labels<'a> {
     /** The document being labeled. */
     document: &'a Document,
+    /** Stable identities resolve after moves without rescanning the document for every ancestor. */
+    positions: BTreeMap<usize, usize>,
     /** Non-control child positions by parent identity, in node order, as `text` walks them. */
     children: BTreeMap<usize, Vec<usize>>,
     /** Label positions by their `for` value, in node order. */
@@ -390,6 +392,7 @@ impl<'a> Labels<'a> {
     fn new(document: &'a Document) -> Self {
         let mut labels = Self {
             document,
+            positions: BTreeMap::new(),
             children: BTreeMap::new(),
             by_for: BTreeMap::new(),
             by_id: BTreeMap::new(),
@@ -402,6 +405,7 @@ impl<'a> Labels<'a> {
     }
     /** Records one node in the child and label indexes. */
     fn index(&mut self, index: usize, node: &'a Node) {
+        self.positions.entry(node.local_id).or_insert(index);
         if let Some(parent) = node.parent.filter(|_| !control(node)) {
             self.children.entry(parent).or_default().push(index);
         }
@@ -423,7 +427,7 @@ impl<'a> Labels<'a> {
             .get(node.html_id.as_str())
             .cloned()
             .unwrap_or_default();
-        if let Some(owner) = ancestor(self.document, node, "label") {
+        if let Some(owner) = self.wrapping_label(node) {
             found.extend(self.by_id.get(&owner).into_iter().flatten());
         }
         found.sort_unstable();
@@ -452,6 +456,18 @@ impl<'a> Labels<'a> {
         choose_label(labels, node, has_own, || {
             capped(&self.text(index), cap).to_owned()
         })
+    }
+    /** Follow the validated bounded ancestry through the identity index, including moved nodes. */
+    fn wrapping_label(&self, node: &Node) -> Option<usize> {
+        let mut parent = node.parent;
+        while let Some(id) = parent {
+            let item = &self.document.nodes[*self.positions.get(&id)?];
+            if item.tag == "label" {
+                return Some(id);
+            }
+            parent = item.parent;
+        }
+        None
     }
     /** The same value `text` returns, memoized; recursion is bounded by validated depth. */
     fn text(&mut self, index: usize) -> Rc<str> {

@@ -1043,6 +1043,10 @@ fn keep_resident(execution: &mut v9::Execution, base: Option<u64>, keep: Option<
     let token = NEXT_TOKEN.get();
     NEXT_TOKEN.set(token.wrapping_add(1));
     let state = std::mem::take(&mut execution.state);
+    super::supervisor::perf::record("v9.allocations", std::time::Instant::now(), || {
+        let [objects, functions, environments, bindings] = state.allocation_counts();
+        format!("{objects}\t{functions}\t{environments}\t{bindings}")
+    });
     execution.state = state.summary();
     execution.state_token = Some(token);
     let identity = match state.identity() {

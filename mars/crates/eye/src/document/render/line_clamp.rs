@@ -167,7 +167,7 @@ fn baseline(context: &LayoutContext<'_>, items: &[DisplayItem], run: Run) -> Eng
     let line_y = item.lines[run.line].y;
     // A run on a `::first-line` takes that line's font for its baseline.
     let style = match super::first_line_layout::run_style(context, items, run.item, line_y) {
-        Some(style) => style,
+        Some(style) => style.into(),
         None => context.node(item.local_id)?.style.clone(),
     };
     Ok(line_y + super::sizing::text_ascent(&style))
@@ -218,6 +218,7 @@ fn cut_run(
     let line = line_of(items, &run).clone();
     // A run on its block's first line was measured in the `::first-line` fonts.
     let style = super::first_line_layout::run_style(context, items, run.item, line.y)
+        .map(crate::document::SharedStyle::from)
         .or_else(|| {
             context
                 .node(items[run.item].local_id)

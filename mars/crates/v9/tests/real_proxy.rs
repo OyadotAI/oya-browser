@@ -2,6 +2,22 @@
 use crate::common;
 use common::eval;
 
+/** Proxy presence survives both resident copies and wire transport before the next task. */
+#[test]
+fn proxy_prototypes_keep_traps_after_restore() {
+    let environment = common::environment();
+    let sources = vec!["const proto=new Proxy({},{get(t,k){return k==='answer'?42:Reflect.get(t,k)}});const value=Object.create(proto);let r=0;setTimeout(()=>r=value.answer,1);".to_owned()];
+    let execution = common::load_with(&sources[0], &environment);
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let host = common::host();
+    for state in [execution.state.clone(), common::round_trip(execution.state)] {
+        let next = mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1)
+            .unwrap();
+        assert!(next.failed.is_empty(), "{:?}", next.failed);
+        assert_eq!(common::global(&next, "r"), "42");
+    }
+}
+
 /** get/set/has/delete/ownKeys traps observe and steer every access, with Reflect forwarding. */
 #[test]
 fn traps_observe_reactive_access() {

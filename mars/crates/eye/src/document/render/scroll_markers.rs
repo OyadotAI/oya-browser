@@ -96,7 +96,7 @@ fn group_nodes(
     *next += 1;
     owners.insert(group_id, (scroller.local_id, GROUP_TAG));
     let mut group = synthetic(scroller, group_id, scroller.parent);
-    group.style = style.clone();
+    group.style = style.clone().into();
     let mut nodes = vec![group];
     for owner in markers {
         let Some(marker) = owner.style.scroll_marker.as_deref() else {
@@ -104,7 +104,7 @@ fn group_nodes(
         };
         let mut node = synthetic(owner, *next, Some(group_id));
         node.text = marker.content.clone();
-        node.style = (*marker.style).clone();
+        node.style = (*marker.style).clone().into();
         owners.insert(*next, (owner.local_id, MARKER_TAG));
         *next += 1;
         nodes.push(node);
@@ -118,7 +118,7 @@ fn button_nodes(owner: &Node, next: &mut usize, owners: &mut Owners) -> Vec<Node
     for button in &owner.style.scroll_buttons {
         let mut node = synthetic(owner, *next, owner.parent);
         node.text = button.content.clone();
-        node.style = (*button.style).clone();
+        node.style = (*button.style).clone().into();
         owners.insert(*next, (owner.local_id, BUTTON_TAG));
         *next += 1;
         nodes.push(node);

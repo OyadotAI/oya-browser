@@ -1,92 +1,66 @@
 /** Script change logs replay atomically on one candidate through the same core placement helpers as V9. */
-use super::{Document, Node, TextChange, parse_fragment, validate_content};
-use crate::{
-    constants::STATEMENTS,
-    protocol::{EngineError, EngineResult},
-};
+use super::{Document, Node, TextChange, parse_fragment};
+use crate::protocol::{EngineError, EngineResult};
 use mars_core::dom::{
     DomChange, InsertPosition, REFLECTED_ATTRIBUTES, ScriptChange, local_position, place, relocate,
-    script_attribute_allowed, validate_preorder, validate_text,
+    script_attribute_allowed, validate_text,
 };
 
-/// Replays text, insert, move and attribute changes in script order; any refusal leaves the input unchanged.
+mod cursor;
+pub use cursor::MutationCursor;
+
+/// Replays legacy changes atomically; errors leave the source document untouched.
 pub fn apply_changes(document: &Document, changes: &[DomChange]) -> EngineResult<Document> {
-    validate_content(document)?;
-    if changes.len() > STATEMENTS {
-        return Err(EngineError::limit("script changes", STATEMENTS));
-    }
-    let mut candidate = document.clone();
-    let mut high_water = document
-        .nodes
-        .iter()
-        .map(|node| node.local_id + 1)
-        .max()
-        .unwrap_or(0);
-    for change in changes {
-        apply_change(&mut candidate, change, &mut high_water, false)?;
-    }
-    validate_preorder(candidate.nodes.iter().map(key))?;
-    validate_content(&candidate)?;
-    Ok(candidate)
+    MutationCursor::new(document).apply(document.clone(), changes, &[])
 }
 
-/// Replays V9's extended log (the original changes plus removal, attributes, node text and field
-/// values) in order on one candidate; any refusal leaves the input unchanged. Attribute names are
-/// re-checked here, so an inline handler, srcdoc or http-equiv never becomes document data.
+/// Replays the extended journal atomically with the same authority and fresh-identity checks.
 pub fn apply_script_changes(
     document: &Document,
     changes: &[ScriptChange],
 ) -> EngineResult<Document> {
-    validate_content(document)?;
-    if changes.len() > STATEMENTS {
-        return Err(EngineError::limit("script changes", STATEMENTS));
-    }
-    let mut candidate = document.clone();
-    let mut high_water = document
-        .nodes
-        .iter()
-        .map(|node| node.local_id + 1)
-        .max()
-        .unwrap_or(0);
-    for change in changes {
-        match change {
-            ScriptChange::Canvas { node, bitmap } => {
-                bitmap.validate()?;
-                let target = candidate
-                    .nodes
-                    .iter_mut()
-                    .find(|n| n.local_id == *node && n.tag == "canvas")
-                    .ok_or_else(|| {
-                        EngineError::invalid("Canvas publication requires an actual canvas.")
-                    })?;
-                target.canvas = Some(bitmap.clone());
-            }
-            ScriptChange::Dom { change } => {
-                apply_change(&mut candidate, change, &mut high_water, true)?
-            }
-            ScriptChange::Remove { node } => remove(&mut candidate, *node)?,
-            ScriptChange::Attribute { node, name, value } => {
-                set_any_attribute(&mut candidate, *node, name, value.as_deref())?
-            }
-            ScriptChange::NodeText { node, text } => set_node_text(&mut candidate, *node, text)?,
-            ScriptChange::Selection { node, selected } => {
-                super::forms::script_selection(&mut candidate, *node, selected)?
-            }
-            ScriptChange::Value { node, value } => set_field_value(&mut candidate, *node, value)?,
-            ScriptChange::Defined { node } => mark_defined(&mut candidate, *node)?,
-            ScriptChange::RootAttribute { body, name, value } => {
-                set_root_attribute(&mut candidate, *body, name, value.as_deref())?
-            }
-            ScriptChange::Focus { node } => {
-                for entry in &mut candidate.nodes {
-                    entry.focused = Some(entry.local_id) == *node;
-                }
+    MutationCursor::new(document).apply(document.clone(), &[], changes)
+}
+
+/** One extended journal entry shares its validator with full and incremental replay. */
+fn apply_script_change(
+    candidate: &mut Document,
+    change: &ScriptChange,
+    high_water: &mut usize,
+) -> EngineResult<()> {
+    match change {
+        ScriptChange::Canvas { node, bitmap } => {
+            bitmap.validate()?;
+            let target = candidate
+                .nodes
+                .iter_mut()
+                .find(|n| n.local_id == *node && n.tag == "canvas")
+                .ok_or_else(|| {
+                    EngineError::invalid("Canvas publication requires an actual canvas.")
+                })?;
+            target.canvas = Some(bitmap.clone());
+        }
+        ScriptChange::Dom { change } => apply_change(candidate, change, high_water, true)?,
+        ScriptChange::Remove { node } => remove(candidate, *node)?,
+        ScriptChange::Attribute { node, name, value } => {
+            set_any_attribute(candidate, *node, name, value.as_deref())?
+        }
+        ScriptChange::NodeText { node, text } => set_node_text(candidate, *node, text)?,
+        ScriptChange::Selection { node, selected } => {
+            super::forms::script_selection(candidate, *node, selected)?
+        }
+        ScriptChange::Value { node, value } => set_field_value(candidate, *node, value)?,
+        ScriptChange::Defined { node } => mark_defined(candidate, *node)?,
+        ScriptChange::RootAttribute { body, name, value } => {
+            set_root_attribute(candidate, *body, name, value.as_deref())?
+        }
+        ScriptChange::Focus { node } => {
+            for entry in &mut candidate.nodes {
+                entry.focused = Some(entry.local_id) == *node;
             }
         }
     }
-    validate_preorder(candidate.nodes.iter().map(key))?;
-    validate_content(&candidate)?;
-    Ok(candidate)
+    Ok(())
 }
 
 /** A script's write to `<html>` or `<body>` attributes, which live on the formatting wrappers

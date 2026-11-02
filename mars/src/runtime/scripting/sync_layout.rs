@@ -6,14 +6,15 @@
  * (`forced_geometry`).
  *
  * The work runs on Eye's own engine thread when Eye is in process: Eye keeps its parsed sheets,
- * fonts and computed values in thread-locals, and V9 runs each step on a fresh thread, where those
- * caches start cold (re-parsing YouTube's sheets was most of every layout). That thread is idle
- * while V9 runs, since the coordinator is waiting on V9. A call that changed nothing since the
+ * fonts and computed values in thread-locals. Running on V9 would start separate Eye caches
+ * (re-parsing YouTube's sheets was most of every layout). Eye's thread is idle while V9 runs,
+ * since the coordinator is waiting on V9. A call that changed nothing since the
  * last one (a burst of getComputedStyle reads) reuses the last layout.
  */
 use super::{boxes, computed_styles, inserted_sheets, local_sheets};
 use crate::document::{
-    self, DisplayList, Document, DomChange, RenderContext, ScriptChange, ScrollOffsets,
+    self, DisplayList, Document, DomChange, MutationCursor, RenderContext, ScriptChange,
+    ScrollOffsets,
 };
 use crate::protocol::{EngineError, EngineResult};
 use crate::runtime::supervisor::{Inbound, Job};
@@ -40,6 +41,8 @@ pub(in crate::runtime) struct Inputs {
 struct Last {
     /** Exact changes it applied; attribute coalescing can replace an entry without growing a log. */
     changes: Arc<Changes>,
+    /** Fresh identities and whole-journal limits survive intermediate layout reads. */
+    cursor: MutationCursor,
     /** The V9-only style texts it used, when the step had changed them. */
     local: Option<Vec<String>>,
     /** The full sheet list it cascaded with. */
@@ -62,6 +65,13 @@ impl Changes {
     /** Equal lengths alone cannot distinguish two writes to the same attribute. */
     fn matches(&self, dom: &[DomChange], script: &[ScriptChange]) -> bool {
         self.dom == dom && self.script == script
+    }
+
+    /** Only unchanged prefixes can extend the previous document; legacy entries always go first. */
+    fn prefixes(&self, dom: &[DomChange], script: &[ScriptChange]) -> bool {
+        dom.starts_with(&self.dom)
+            && script.starts_with(&self.script)
+            && (dom.len() == self.dom.len() || self.script.is_empty())
     }
 }
 
@@ -111,14 +121,10 @@ impl crate::v9::LayoutHost for SyncLayout {
                 dom: changes.to_vec(),
                 script: script_changes.to_vec(),
             });
-            let (styled, display, sheets) = self.compute(Arc::clone(&changes), local.clone())?;
-            *last = Some(Last {
-                changes,
-                local,
-                sheets,
-                styled,
-                display,
-            });
+            let previous = last
+                .take()
+                .filter(|last| last.changes.prefixes(&changes.dom, &changes.script));
+            *last = Some(self.compute(changes, local, previous)?);
         }
         let last = last.as_ref().expect("layout just stored");
         Ok(LayoutAnswer {
@@ -132,43 +138,45 @@ impl crate::v9::LayoutHost for SyncLayout {
 }
 
 impl SyncLayout {
-    /** The step's final document already styled, with the sheets it was styled with, when the
-    last layout applied exactly the step's final change logs: the coordinator then
-    takes it instead of applying and restyling the same changes again. */
+    /** Reuse the last validated document at commit, replaying only its suffix when still valid.
+    Exact matches retain styles; a new suffix needs styling before its next layout. */
     pub(in crate::runtime) fn finished(
         &self,
         changes: &[DomChange],
         script_changes: &[ScriptChange],
-    ) -> Option<(Document, Vec<String>)> {
-        let last = self.last.lock().ok()?.take()?;
-        last.changes
-            .matches(changes, script_changes)
-            .then_some((last.styled, last.sheets))
+    ) -> Option<(Document, Option<Vec<String>>)> {
+        let mut last = self.last.lock().ok()?.take()?;
+        if last.changes.matches(changes, script_changes) {
+            return Some((last.styled, Some(last.sheets)));
+        }
+        if !last.changes.prefixes(changes, script_changes) {
+            return None;
+        }
+        let applied = last
+            .cursor
+            .apply(
+                last.styled,
+                &changes[last.changes.dom.len()..],
+                &script_changes[last.changes.script.len()..],
+            )
+            .ok()?;
+        Some((applied, None))
     }
 
-    /** Style and lay out on Eye's thread when there is one, else here. */
+    /** Move the last document to Eye's thread so unchanged journal prefixes need no replay or copy. */
     fn compute(
         &self,
         changes: Arc<Changes>,
         local: Option<Vec<String>>,
-    ) -> EngineResult<(Document, DisplayList, Vec<String>)> {
+        previous: Option<Last>,
+    ) -> EngineResult<Last> {
         let Some(engine) = &self.engine else {
-            return lay_out(
-                &self.inputs,
-                &changes.dom,
-                &changes.script,
-                local.as_deref(),
-            );
+            return lay_out(&self.inputs, changes, local, previous);
         };
         let inputs = Arc::clone(&self.inputs);
         let (answer, result) = mpsc::sync_channel(1);
         let job: Job = Box::new(move || {
-            let _ = answer.send(lay_out(
-                &inputs,
-                &changes.dom,
-                &changes.script,
-                local.as_deref(),
-            ));
+            let _ = answer.send(lay_out(&inputs, changes, local, previous));
         });
         engine
             .try_send(Inbound::Job(job))
@@ -179,21 +187,59 @@ impl SyncLayout {
     }
 }
 
-/** Apply the step's changes to the base, cascade with the step's sheets and lay out. */
+/** Apply only new mutations when the previous journal still prefixes the current one. */
 fn lay_out(
     inputs: &Inputs,
-    changes: &[DomChange],
-    script_changes: &[ScriptChange],
-    local: Option<&[String]>,
-) -> EngineResult<(Document, DisplayList, Vec<String>)> {
-    let mut applied = document::apply_changes(&inputs.base, changes)?;
-    if !script_changes.is_empty() {
-        applied = document::apply_script_changes(&applied, script_changes)?;
-    }
-    let sheets = sheets_for(inputs, &applied, local);
+    changes: Arc<Changes>,
+    local: Option<Vec<String>>,
+    previous: Option<Last>,
+) -> EngineResult<Last> {
+    let (base, mut cursor, dom_start, script_start) = match previous {
+        Some(last) => (
+            last.styled,
+            last.cursor,
+            last.changes.dom.len(),
+            last.changes.script.len(),
+        ),
+        None => (
+            inputs.base.as_ref().clone(),
+            MutationCursor::new(&inputs.base),
+            0,
+            0,
+        ),
+    };
+    let phase = std::time::Instant::now();
+    let applied = cursor.apply(
+        base,
+        &changes.dom[dom_start..],
+        &changes.script[script_start..],
+    )?;
+    super::super::supervisor::perf::record("layout.replay", phase, || {
+        format!(
+            "{}\t{}\t{}\t{}",
+            dom_start,
+            script_start,
+            changes.dom.len(),
+            changes.script.len()
+        )
+    });
+    let sheets = sheets_for(inputs, &applied, local.as_deref());
+    let phase = std::time::Instant::now();
     let styled = document::compute_styles_with_context(&applied, &sheets, inputs.context)?;
+    super::super::supervisor::perf::record("layout.styles", phase, || {
+        styled.nodes.len().to_string()
+    });
+    let phase = std::time::Instant::now();
     let display = document::render_scrolled(&styled, inputs.context, &inputs.scroll)?;
-    Ok((styled, display, sheets))
+    super::super::supervisor::perf::record("layout.render", phase, String::new);
+    Ok(Last {
+        changes,
+        cursor,
+        local,
+        sheets,
+        styled,
+        display,
+    })
 }
 
 /** The sheets to cascade with: the page's own, the V9-only block replaced when the step changed

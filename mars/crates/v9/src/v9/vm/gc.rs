@@ -268,6 +268,14 @@ impl Vm<'_> {
                 _ => None,
             })
             .collect();
+        let observed_nodes: FastSet<usize> = self
+            .page
+            .state
+            .components
+            .observations
+            .iter()
+            .map(|observation| observation.target)
+            .collect();
         for (node, id) in wrappers {
             if self.page.state.canvases.contains_key(&node) && self.page.connected(node) {
                 marker.object(id);
@@ -278,9 +286,14 @@ impl Vm<'_> {
                 })
             });
             let listened = listened_nodes.contains(&node);
+            let observed = observed_nodes.contains(&node);
+            // Connected custom elements retain their upgraded prototype even without own data.
+            let upgraded = self.page.state.components.custom.contains_key(&node);
             let virtual_node = node >= super::super::platform::nodes_virtual_base()
                 && node < super::super::platform::nodes_detached_base();
-            if ((data || listened) && self.page.connected(node)) || virtual_node {
+            if ((data || listened || observed || upgraded) && self.page.connected(node))
+                || virtual_node
+            {
                 marker.object(id);
             }
         }
@@ -310,6 +323,7 @@ impl Vm<'_> {
         self.trace(&mut marker);
         let mut dom_visited = FastSet::default();
         let mut listeners_visited = FastSet::default();
+        let mut observers_visited = FastSet::default();
         // Weak keys compare stable identities, and collection never mutates those keys.
         #[allow(clippy::mutable_key_type)]
         let mut weak_waiting = super::heap::FastMap::default();
@@ -322,6 +336,7 @@ impl Vm<'_> {
             }
             self.trace_dom(&mut marker, &mut dom_visited);
             self.trace_listener_edges(&mut marker, &mut listeners_visited);
+            self.trace_observer_edges(&mut marker, &mut observers_visited);
             if marker.objects.len() == before {
                 break;
             }
@@ -389,6 +404,22 @@ impl Vm<'_> {
                 if let Some(signal) = &listener.signal {
                     marker.value(signal);
                 }
+            }
+        }
+        self.trace(marker);
+    }
+    /** Reachable nodes retain their registered observers; registrations cannot root target cycles. */
+    fn trace_observer_edges(&self, marker: &mut Marker, visited: &mut FastSet<ObjectId>) {
+        for observation in &self.page.state.components.observations {
+            let reachable = observation.target == super::super::platform::DOCUMENT_NODE
+                || self
+                    .page
+                    .state
+                    .wrappers
+                    .get(&observation.target)
+                    .is_some_and(|id| marker.objects.contains(id));
+            if reachable && visited.insert(observation.observer) {
+                marker.object(observation.observer);
             }
         }
         self.trace(marker);

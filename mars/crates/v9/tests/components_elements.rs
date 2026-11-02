@@ -28,6 +28,103 @@ fn eval(source: &str, name: &str) -> String {
     global(&execution, name)
 }
 
+/** A discarded custom element's self-referencing closures must not become permanent page roots. */
+#[test]
+fn detached_custom_elements_release_their_closures() {
+    const DEFINITION: &str = "class XGarbage extends HTMLElement {constructor(){super();this.callback=()=>this;}}customElements.define('x-garbage',XGarbage);";
+    let baseline = run(DEFINITION);
+    let churn = run(&format!(
+        "{DEFINITION}(()=>{{for(let i=0;i<128;i++){{const e=document.createElement('x-garbage');document.body.appendChild(e);e.remove();}}}})();"
+    ));
+    assert!(churn.failed.is_empty(), "{:?}", churn.failed);
+    let count = |execution: &Execution| {
+        let wire = serde_json::to_value(&execution.state).unwrap();
+        wire["heap"][0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|object| object[1]["c"].get("function").is_some())
+            .count()
+    };
+    assert!(
+        count(&churn) <= count(&baseline) + 2,
+        "discarded elements retained functions: {} -> {}",
+        count(&baseline),
+        count(&churn)
+    );
+}
+
+/** Even without own properties, a connected custom wrapper keeps the prototype installed by upgrade. */
+#[test]
+fn connected_custom_elements_keep_their_wrappers() {
+    let execution = run(
+        "class XKept extends HTMLElement{}customElements.define('x-kept',XKept);document.body.appendChild(document.createElement('x-kept'));",
+    );
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let wire = serde_json::to_value(&execution.state).unwrap();
+    let custom = wire["page"]["components"]["custom"].as_object().unwrap();
+    assert_eq!(custom.len(), 1);
+    let wrappers = wire["page"]["wrappers"].as_object().unwrap();
+    assert!(custom.keys().all(|node| wrappers.contains_key(node)));
+}
+
+/** Script reachability keeps detached instances and their closures across collection and transport. */
+#[test]
+fn referenced_detached_custom_elements_survive_the_next_task() {
+    let sources = ["class XHeld extends HTMLElement{constructor(){super();this.callback=()=>this;}}customElements.define('x-held',XHeld);const held=document.createElement('x-held');let r='';setTimeout(()=>{r=[held instanceof XHeld,held.callback()===held].join()},1);".to_owned()];
+    let execution = run(&sources[0]);
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let state = serde_json::from_value(serde_json::to_value(execution.state).unwrap()).unwrap();
+    let host = host();
+    let mut environment = environment();
+    environment.dom_level = DomLevel::Extended;
+    let next =
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).unwrap();
+    assert_eq!(global(&next, "r"), "true,true");
+}
+
+/** Observation registration is a weak link to its node, so a discarded observer/target cycle is collectible. */
+#[test]
+fn discarded_mutation_observers_release_their_callbacks() {
+    let baseline = run("");
+    let churn = run(
+        "(()=>{for(let i=0;i<128;i++){const e=document.createElement('div');new MutationObserver(()=>e).observe(e,{attributes:true});}})();",
+    );
+    assert!(churn.failed.is_empty(), "{:?}", churn.failed);
+    assert!(
+        churn.state.allocation_counts()[1] <= baseline.state.allocation_counts()[1] + 2,
+        "discarded observers retained functions: {:?} -> {:?}",
+        baseline.state.allocation_counts(),
+        churn.state.allocation_counts()
+    );
+}
+
+/** A reachable observed node keeps its callback even when script no longer holds the observer. */
+#[test]
+fn reachable_mutation_targets_keep_callbacks_across_tasks() {
+    let sources = ["let calls=0;const kept=document.createElement('div');(()=>{new MutationObserver(()=>calls++).observe(kept,{attributes:true});new MutationObserver(()=>calls++).observe(document.getElementById('main'),{attributes:true});new MutationObserver(()=>calls++).observe(document,{attributes:true,subtree:true});})();setTimeout(()=>{kept.setAttribute('title','x');document.getElementById('main').setAttribute('title','x');},1);".to_owned()];
+    let execution = run(&sources[0]);
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    let state = common::round_trip(execution.state);
+    let host = host();
+    let mut environment = environment();
+    environment.dom_level = DomLevel::Extended;
+    let next =
+        mars_v9::run_timers(common::input(&sources, &host, &environment), state, 1.0, 1).unwrap();
+    assert_eq!(global(&next, "calls"), "3");
+}
+
+/** Document and host subtree observations stop at a shadow boundary while observers inside it deliver. */
+#[test]
+fn mutation_observations_respect_document_and_shadow_boundaries() {
+    let execution = run(
+        "let outer=0,inner=0;const h=document.createElement('div');document.body.appendChild(h);const s=h.attachShadow({mode:'open'});const child=document.createElement('span');s.appendChild(child);new MutationObserver(()=>outer++).observe(document,{attributes:true,subtree:true});new MutationObserver(()=>outer++).observe(h,{attributes:true,subtree:true});new MutationObserver(()=>inner++).observe(s,{attributes:true,subtree:true});child.setAttribute('title','inside');",
+    );
+    assert!(execution.failed.is_empty(), "{:?}", execution.failed);
+    assert_eq!(global(&execution, "outer"), "0");
+    assert_eq!(global(&execution, "inner"), "1");
+}
+
 #[test]
 fn defined_elements_construct_and_run_their_lifecycle_callbacks() {
     let source = "const log=[];class XA extends HTMLElement{constructor(){super();log.push('ctor')}\

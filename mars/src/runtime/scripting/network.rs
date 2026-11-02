@@ -8,17 +8,32 @@ use super::{FAILED_TO_FETCH, failed, readable, script_request_from};
 use crate::network::WebResponse;
 use crate::protocol::EngineResult;
 use crate::runtime::page::Page;
-use crate::runtime::resources::{InFlight, Progress, ScriptAnswer};
+use crate::runtime::resources::{InFlight, Progress, ScriptAnswer, ScriptLoad};
 use crate::runtime::supervisor::Runtime;
 use crate::v9::{HostRequest, HostResponse};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use url::Url;
 
 /// Finished hops kept for pages that have not taken them. A page that navigated away never
 /// will, so past this many the oldest are dropped.
 const LOADED_RESULTS: usize = 256;
+/** Outbound admission gets a short turn before followup script and render work can block it. */
+const REQUEST_DISPATCH_WALL: Duration = Duration::from_millis(2);
 
 impl Runtime {
+    /** Start task-created requests now; responses still execute through the ordinary network task source. */
+    pub(super) fn dispatch_pending_requests(&mut self, page: &mut Page) -> EngineResult<()> {
+        if page.scripting.requests.is_empty() {
+            return Ok(());
+        }
+        let requests = std::mem::take(&mut page.scripting.requests);
+        let until = Instant::now() + REQUEST_DISPATCH_WALL;
+        let mut responses = self.perform_requests(page, requests, until)?;
+        responses.append(&mut page.scripting.ready);
+        page.scripting.ready = responses;
+        Ok(())
+    }
+
     /** Move every hop the loader finished into `loaded`, dropping the oldest past the bound. */
     pub(super) fn collect_loaded(&mut self) {
         let done = self.loader.poll();
@@ -47,7 +62,7 @@ impl Runtime {
 
     /** Wait until `until` for a hop of this page to finish; true when one did. For a settle
     that has nothing else to do, so a page acted on settles with its data when it comes fast. */
-    pub(super) fn wait_for_network(&mut self, page: &Page, until: Instant) -> bool {
+    pub(in crate::runtime) fn wait_for_network(&mut self, page: &Page, until: Instant) -> bool {
         if page.scripting.in_flight.is_empty() {
             return false;
         }
@@ -82,11 +97,26 @@ impl Runtime {
         let mut answers = Vec::new();
         for (state, result) in self.take_landed(page) {
             let identity = (state.id, state.beacon);
+            let load = state.load.clone();
             let preflights = &mut page.scripting.preflights;
             let progress = self.resume_script_fetch(state, result, preflights, until)?;
-            answers.extend(self.progressed(page, progress, identity));
+            match load {
+                Some(load) => self.progressed_load(page, progress, load),
+                None => answers.extend(self.progressed(page, progress, identity)),
+            }
         }
         Ok(answers)
+    }
+
+    /** A script load: kept while on the wire, or landed for the next `modules` step. */
+    fn progressed_load(&self, page: &mut Page, progress: Progress, load: ScriptLoad) {
+        match progress {
+            Progress::Sent(state) => page.scripting.in_flight.push(*state),
+            Progress::Answered(answer) => {
+                let source = super::super::modules::loaded_source(&load, answer);
+                super::super::modules::land(page, load, source);
+            }
+        }
     }
 
     /** This page's hops that have results, removed from its in-flight list. */

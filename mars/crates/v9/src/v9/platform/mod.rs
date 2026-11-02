@@ -22,6 +22,8 @@ mod console;
 /** DevTools evaluation (Runtime.evaluate and friends) over the page's realm; new entry points only. */
 pub mod devtools;
 mod dom;
+/** The active document has an intrinsic wrapper and is always a reachable observation target. */
+pub(in crate::v9) use dom::DOCUMENT as DOCUMENT_NODE;
 mod dom_parser;
 mod encoding;
 pub(in crate::v9) mod events;
@@ -341,6 +343,9 @@ pub struct PageEnvironment {
     /// Native hosts opt into within-task time; standalone and replay inputs stay deterministic.
     #[serde(default)]
     pub live_clock: bool,
+    /// Native event loops collect unreachable weak targets at task checkpoints under heap pressure.
+    #[serde(default)]
+    pub live_gc: bool,
     /// Local time minus UTC in minutes, for Date's local-time methods.
     pub timezone_offset_minutes: f64,
     /// Offset before the first supplied timezone transition, in seconds including historical LMT precision.
@@ -727,6 +732,7 @@ impl Default for PageEnvironment {
             screen_height: DEFAULT_SCREEN_HEIGHT,
             time_origin_ms: 0.0,
             live_clock: false,
+            live_gc: false,
             timezone_offset_minutes: 0.0,
             timezone_initial_offset_seconds: None,
             timezone_transitions: Vec::new(),
@@ -1652,6 +1658,7 @@ pub(in crate::v9) struct Page<'h> {
     /**
      * Where each (node, attribute) last written sits in `script_changes`. A hint only: a stale
      * slot is checked against the log before use, so a restored log cannot be corrupted by it.
+     * Successful forced layouts seal the current prefix by clearing these coalescing hints.
      */
     pub attribute_slots: std::collections::BTreeMap<(usize, String), usize>,
     /** Events this request created, which give each one its own timestamp tick. */
@@ -1896,6 +1903,15 @@ impl<'h> Page<'h> {
         self.state.active_animations.retain(|id| live.contains(id));
         self.state.live_ranges.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
+        self.state.components.observations.retain(|observation| {
+            live.contains(&observation.observer)
+                && (observation.target == dom::DOCUMENT
+                    || self.state.wrappers.contains_key(&observation.target))
+        });
+        self.state
+            .components
+            .custom
+            .retain(|node, _| self.state.wrappers.contains_key(node));
         self.state
             .listeners
             .retain(|listener| match listener.target {

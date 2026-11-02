@@ -32,7 +32,7 @@ pub(super) fn install(b: &mut Builder) {
     install_thrower(b, proto);
     let ctor = b.constructor("Function", 1, construct, proto, None);
     b.global("Function", ctor);
-    b.method(proto, "call", 1, call_method);
+    b.ids.function_call = b.method(proto, "call", 1, call_method);
     b.method(proto, "apply", 2, apply);
     b.method(proto, "bind", 1, bind);
     b.method(proto, "toString", 0, to_string);

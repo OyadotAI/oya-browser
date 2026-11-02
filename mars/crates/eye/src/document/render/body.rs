@@ -181,7 +181,7 @@ pub(super) fn container_root(document: &Document) -> Option<(Document, usize)> {
     }
     let id = document.nodes.iter().map(|node| node.local_id).max()? + 1;
     let mut root = crate::document::markup::node("body", id, None, Default::default()).ok()?;
-    root.style = layout_only(body);
+    root.style = layout_only(body).into();
     let mut copy = document.clone();
     for node in copy.nodes.iter_mut().filter(|node| node.parent.is_none()) {
         node.parent = Some(id);
