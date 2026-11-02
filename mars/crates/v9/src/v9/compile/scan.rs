@@ -152,15 +152,20 @@ impl Walker {
     }
     /** Parameters and body share the same visitor in use and capture analysis. */
     fn function_contents(&mut self, func: &Func) {
+        self.parameters(func);
+        match &func.body {
+            Body::Block(body) => self.stmts(body),
+            Body::Expr(value) => self.expr(value),
+        }
+    }
+    /** The parameter list alone: its patterns and their default expressions, which run in the
+    parameter scope before the body's declarations exist. */
+    fn parameters(&mut self, func: &Func) {
         for param in &func.params {
             self.pattern(param);
         }
         if let Some(rest) = &func.rest {
             self.pattern(rest);
-        }
-        match &func.body {
-            Body::Block(body) => self.stmts(body),
-            Body::Expr(value) => self.expr(value),
         }
     }
     /** Plain identifier references contribute to the function's lexical dependencies. */

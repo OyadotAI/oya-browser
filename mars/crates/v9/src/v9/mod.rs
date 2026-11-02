@@ -83,6 +83,8 @@ use compile::{Code, Registry};
 use serde::{Deserialize, Serialize};
 mod execution_thread;
 pub use execution_thread::spawn_execution_thread;
+mod live;
+pub use live::{LiveAction, LiveInput, LiveVm};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1059,6 +1061,16 @@ pub fn precompile_script(source: &str, offset: usize) -> EngineResult<()> {
     })
 }
 
+/// Compile the deferred functions of a page script already in the process cache on `workers`
+/// threads, in source order, while the page's load runs on its own thread: YouTube's bundle
+/// declares 69,000 functions and compiles each on its first call, 0.4 s of the load step on one
+/// core when every other core is idle. A function the load reaches first compiles there and the
+/// pool finds it done; one the pool reaches first is ready when the load calls it. Returns the
+/// number of functions handed to the pool.
+pub fn precompile_deferred(source: &str, offset: usize, workers: usize) -> usize {
+    compile::precompile_deferred(&compile::source_key(source), offset, workers)
+}
+
 /// The key under which a module source's compiled code is cached, from `classic` telling a
 /// classic script delivered for a page element (keyed as `source_key`) from a module.
 pub fn module_source_key(source: &str, classic: bool) -> SourceKey {
@@ -1775,19 +1787,28 @@ fn at_bounds(vm: &Vm<'_>) -> bool {
     .any(|(count, limit)| count >= limit)
 }
 
-/** Collect, validate and package the request's outcome. */
+/** Collect, validate and package the request's outcome; the VM is spent. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
+    finish_live(&mut vm)
+}
+
+/**
+ * As `finish`, leaving the VM able to run the next task: the state packaged is a copy (the heap
+ * is persistent, so the copy shares every object the next task does not write, as a resident
+ * step's copy did), and the page's per-task fields are drained for the next task to fill.
+ */
+fn finish_live(vm: &mut Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
     if vm.page.environment.worker_name.is_some() {
-        vm.page.effects.worker_ready = Some(modules::worker_ready(&vm));
+        vm.page.effects.worker_ready = Some(modules::worker_ready(&*vm));
     }
     platform::canvas::publish(&mut vm.page)?;
-    platform::images::requests(&mut vm)?;
+    platform::images::requests(vm)?;
     if !vm.page.sampled_observer_turn {
-        platform::intersection_observers::sample(&mut vm).map_err(fatal)?;
-        platform::resize_observers::sample(&mut vm).map_err(fatal)?;
+        platform::intersection_observers::sample(vm).map_err(fatal)?;
+        platform::resize_observers::sample(vm).map_err(fatal)?;
     }
-    vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
+    vm.page.effects.opacity_effects = platform::animations::snapshot(vm);
     vm.frames.clear();
     vm.pins.clear();
     #[cfg(feature = "conformance")]
@@ -1796,7 +1817,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     // (and counted exactly) before its bounds are checked. Elsewhere the running counts stand:
     // a bound reached mid-script collects there (`collect_if_needed`), so an overestimate
     // carried into the next request can only cause a collection, never a refusal.
-    if vm.heap.grew_since_collection() || at_bounds(&vm) {
+    if vm.heap.grew_since_collection() || at_bounds(&*vm) {
         if vm.page.environment.live_gc {
             vm.collect_now().map_err(fatal)?;
         } else {
@@ -1806,7 +1827,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     #[cfg(feature = "conformance")]
     vm.save_interned_strings();
     platform::broadcast::publish(&mut vm.page);
-    platform::publish_local_sheets(&mut vm);
+    platform::publish_local_sheets(vm);
     let effects_timer = vm.next_timer();
     let frame_requests = std::mem::take(&mut vm.page.state.frame_requests);
     let script_requests: Vec<ScriptLoadRequest> = vm
@@ -1823,30 +1844,27 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         })
         .collect();
     vm.page.retain_clock();
-    let platform::Page {
-        state: page,
-        storage,
-        document,
-        changes,
-        script_changes,
-        mut effects,
-        ..
-    } = vm.page;
+    let page = vm.page.state.clone();
+    let storage = vm.page.storage.clone();
+    let document = vm.page.document.take();
+    let changes = std::mem::take(&mut vm.page.changes);
+    let script_changes = std::mem::take(&mut vm.page.script_changes);
+    let mut effects = std::mem::take(&mut vm.page.effects);
     effects.next_timer_ms = effects_timer;
     let module_requests = std::mem::take(&mut vm.modules.requests);
     let state = VmState {
         #[cfg(feature = "conformance")]
-        realms: vm.realms,
-        globals: vm.globals,
-        heap: vm.heap,
-        symbols: vm.symbols,
-        jobs: vm.jobs.into(),
+        realms: vm.realms.clone(),
+        globals: vm.globals.clone(),
+        heap: vm.heap.export(),
+        symbols: vm.symbols.clone(),
+        jobs: std::mem::take(&mut vm.jobs).into(),
         page,
-        dynamic: vm.dynamic,
-        templates: vm.templates,
-        modules: std::mem::take(&mut vm.modules.state),
+        dynamic: vm.dynamic.clone(),
+        templates: vm.templates.clone(),
+        modules: vm.modules.state.clone(),
         verified: true,
-        registry: std::mem::take(&mut vm.registry),
+        registry: vm.registry.clone(),
     };
     state.validate_bounds(&vm.limits)?;
     storage.validate()?;
@@ -2149,53 +2167,45 @@ fn page_event_with(
     event: PageEvent,
     limits: Limits,
 ) -> EngineResult<Execution> {
+    let (mut vm, _) = open(&input, state, limits)?;
+    event_body(&mut vm, event)?;
+    finish(vm)
+}
+
+/** One page event against an open VM: the task of `page_event`. */
+pub(in crate::v9) fn event_body(vm: &mut Vm, event: PageEvent) -> EngineResult<()> {
     {
-        let (mut vm, _) = open(&input, state, limits)?;
+        let vm = &mut *vm;
         match event {
             PageEvent::WorkerMessage { id, data, ports } => {
-                let result = platform::workers::receive(&mut vm, id, &data, &ports)
+                let result = platform::workers::receive(vm, id, &data, &ports)
                     .and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                report_thrown(vm, result)?;
             }
             PageEvent::WorkerError { id, message } => {
                 let result =
-                    platform::workers::error(&mut vm, id, &message).and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                    platform::workers::error(vm, id, &message).and_then(|()| vm.drain_jobs());
+                report_thrown(vm, result)?;
             }
             PageEvent::DomContentLoaded => {
                 vm.page.state.ready = platform::ReadyState::Interactive;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "readystatechange",
-                    false,
-                )?;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "DOMContentLoaded",
-                    true,
-                )?;
+                fire_lifecycle(vm, platform::Target::Document, "readystatechange", false)?;
+                fire_lifecycle(vm, platform::Target::Document, "DOMContentLoaded", true)?;
             }
             PageEvent::Load => {
                 vm.page.state.ready = platform::ReadyState::Complete;
-                fire_lifecycle(
-                    &mut vm,
-                    platform::Target::Document,
-                    "readystatechange",
-                    false,
-                )?;
-                fire_lifecycle(&mut vm, platform::Target::Window, "load", false)?;
-                fire_lifecycle(&mut vm, platform::Target::Window, "pageshow", false)?;
+                fire_lifecycle(vm, platform::Target::Document, "readystatechange", false)?;
+                fire_lifecycle(vm, platform::Target::Window, "load", false)?;
+                fire_lifecycle(vm, platform::Target::Window, "pageshow", false)?;
             }
             PageEvent::Scroll => {
-                fire_lifecycle(&mut vm, platform::Target::Document, "scroll", true)?;
+                fire_lifecycle(vm, platform::Target::Document, "scroll", true)?;
             }
             PageEvent::PopState {
                 state,
                 hash_changed,
-            } => pop_state(&mut vm, state.as_deref(), hash_changed)?,
-            PageEvent::Submit { form } => submit_event(&mut vm, form)?,
+            } => pop_state(vm, state.as_deref(), hash_changed)?,
+            PageEvent::Submit { form } => submit_event(vm, form)?,
             PageEvent::Message {
                 data,
                 origin,
@@ -2205,7 +2215,7 @@ fn page_event_with(
             } => {
                 vm.remaining = vm.limits.operations;
                 let received = platform::messaging::receive(
-                    &mut vm,
+                    vm,
                     &data,
                     &origin,
                     source,
@@ -2213,28 +2223,27 @@ fn page_event_with(
                     &queued_port_messages,
                 )
                 .and_then(|_| vm.drain_jobs());
-                report_thrown(&mut vm, received)?;
+                report_thrown(vm, received)?;
             }
             PageEvent::BroadcastMessage { id, data, origin } => {
-                let result = platform::broadcast::receive(&mut vm, id, &data, &origin)
+                let result = platform::broadcast::receive(vm, id, &data, &origin)
                     .and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                report_thrown(vm, result)?;
             }
-            PageEvent::PortClose { link } => platform::channel::remote_close(&mut vm, link),
+            PageEvent::PortClose { link } => platform::channel::remote_close(vm, link),
             PageEvent::Media { updates } => {
                 vm.remaining = vm.limits.operations;
-                let result =
-                    platform::media::deliver(&mut vm, &updates).and_then(|()| vm.drain_jobs());
-                report_thrown(&mut vm, result)?;
+                let result = platform::media::deliver(vm, &updates).and_then(|()| vm.drain_jobs());
+                report_thrown(vm, result)?;
             }
             PageEvent::PortMessage { link, data } => {
                 vm.remaining = vm.limits.operations;
-                let received = platform::messaging::receive_on_port(&mut vm, link, &data)
+                let received = platform::messaging::receive_on_port(&mut *vm, link, &data)
                     .and_then(|_| vm.drain_jobs());
-                report_thrown(&mut vm, received)?;
+                report_thrown(&mut *vm, received)?;
             }
         }
-        finish(vm)
+        Ok(())
     }
 }
 
@@ -2361,9 +2370,14 @@ fn report_thrown(vm: &mut Vm, result: Result<(), Thrown>) -> EngineResult<()> {
 pub fn observe_page(input: PageInput<'_>, state: VmState) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        platform::resize_observers::advance(&mut vm, true).map_err(fatal)?;
+        observe_body(&mut vm)?;
         finish(vm)
     })
+}
+
+/** The task of `observe_page`. */
+pub(in crate::v9) fn observe_body(vm: &mut Vm) -> EngineResult<()> {
+    platform::resize_observers::advance(vm, true).map_err(fatal)
 }
 
 /// Report media query changes for a viewport the page has not yet seen (a resize while idle):
@@ -2383,13 +2397,18 @@ pub fn continue_resize_observers(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        if complete {
-            platform::resize_observers::complete(&mut vm).map_err(fatal)?;
-        } else {
-            platform::resize_observers::advance(&mut vm, false).map_err(fatal)?;
-        }
+        resize_body(&mut vm, complete)?;
         finish(vm)
     })
+}
+
+/** The task of `continue_resize_observers`. */
+pub(in crate::v9) fn resize_body(vm: &mut Vm, complete: bool) -> EngineResult<()> {
+    if complete {
+        platform::resize_observers::complete(vm).map_err(fatal)
+    } else {
+        platform::resize_observers::advance(vm, false).map_err(fatal)
+    }
 }
 
 /// A person typed into a field the app already updated: V9 records the value (None for a
@@ -2403,28 +2422,38 @@ pub fn input_page(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        if !vm.page.exists(target) {
-            return Err(EngineError::invalid("Invalid projected input target."));
-        }
-        if vm.page.tag(target) == "select" {
-            for option in vm.page.select_options(target) {
-                vm.page.state.selected_options.remove(&option);
-                vm.page.state.dirty_options.insert(option);
-            }
-        } else if let Some(value) = value {
-            vm.page.state.values.insert(target, value);
-        }
-        vm.remaining = vm.limits.operations;
-        platform::host_bridge::activate(&mut vm);
-        platform::media::activate(&mut vm.page);
-        if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
-            return Err(error);
-        }
-        for kind in ["input", "change"] {
-            fire_lifecycle(&mut vm, platform::Target::Node(target), kind, true)?;
-        }
+        input_body(&mut vm, target, value)?;
         finish(vm)
     })
+}
+
+/** The task of `input_page`. */
+pub(in crate::v9) fn input_body(
+    vm: &mut Vm,
+    target: usize,
+    value: Option<String>,
+) -> EngineResult<()> {
+    if !vm.page.exists(target) {
+        return Err(EngineError::invalid("Invalid projected input target."));
+    }
+    if vm.page.tag(target) == "select" {
+        for option in vm.page.select_options(target) {
+            vm.page.state.selected_options.remove(&option);
+            vm.page.state.dirty_options.insert(option);
+        }
+    } else if let Some(value) = value {
+        vm.page.state.values.insert(target, value);
+    }
+    vm.remaining = vm.limits.operations;
+    platform::host_bridge::activate(vm);
+    platform::media::activate(&mut vm.page);
+    if let Err(Thrown::Fatal(error)) = platform::focus(vm, target) {
+        return Err(error);
+    }
+    for kind in ["input", "change"] {
+        fire_lifecycle(vm, platform::Target::Node(target), kind, true)?;
+    }
+    Ok(())
 }
 
 /// Dispatch a trusted click at a projected node (bubbling to the document and window), then
@@ -2441,24 +2470,30 @@ fn click_page_with(
     limits: Limits,
 ) -> EngineResult<Execution> {
     let (mut vm, _) = open(&input, state, limits)?;
+    click_body(&mut vm, target)?;
+    finish(vm)
+}
+
+/** The task of `click_page`. */
+pub(in crate::v9) fn click_body(vm: &mut Vm, target: usize) -> EngineResult<()> {
     if !vm.page.exists(target) {
         return Err(EngineError::invalid("Invalid projected click target."));
     }
     vm.remaining = vm.limits.operations;
-    platform::host_bridge::activate(&mut vm);
+    platform::host_bridge::activate(vm);
     platform::media::activate(&mut vm.page);
     // A press focuses what it lands on before the click, as a pointer's mousedown does.
-    if let Err(Thrown::Fatal(error)) = platform::focus(&mut vm, target) {
+    if let Err(Thrown::Fatal(error)) = platform::focus(vm, target) {
         return Err(error);
     }
-    let fired = platform::fire(&mut vm, platform::Target::Node(target), "click", true);
+    let fired = platform::fire(vm, platform::Target::Node(target), "click", true);
     let proceed = !matches!(fired, Ok(false));
     let drained = fired.map(|_| ()).and_then(|_| vm.drain_jobs());
-    report_thrown(&mut vm, drained)?;
+    report_thrown(vm, drained)?;
     if proceed {
-        platform::follow_link(&mut vm, target);
+        platform::follow_link(vm, target);
     }
-    finish(vm)
+    Ok(())
 }
 
 /// The error a step fails with when it runs out of wall-clock time (see `is_time_limit`).
@@ -2487,11 +2522,17 @@ fn run_timers_with(
     limits: Limits,
 ) -> EngineResult<Execution> {
     let (mut vm, _) = open(&input, state, limits)?;
+    timers_body(&mut vm, now_ms, budget)?;
+    finish(vm)
+}
+
+/** The task of `run_timers`. */
+pub(in crate::v9) fn timers_body(vm: &mut Vm, now_ms: f64, budget: usize) -> EngineResult<()> {
     if !now_ms.is_finite() {
         return Err(EngineError::invalid("Invalid V9 timer clock."));
     }
     vm.remaining = vm.limits.operations;
-    match platform::intersection_observers::deliver_all(&mut vm) {
+    match platform::intersection_observers::deliver_all(vm) {
         Ok(()) => {
             vm.run_due_timers(now_ms, budget).map_err(fatal)?;
         }
@@ -2499,7 +2540,7 @@ fn run_timers_with(
         Err(Thrown::Fatal(error)) if platform::is_time_limit(&error) => vm.drop_timed_out_task(),
         Err(thrown) => return Err(fatal(thrown)),
     }
-    finish(vm)
+    Ok(())
 }
 
 /// Hand back responses to `effects.requests`; fetch promises settle and XMLHttpRequests fire.
@@ -2510,10 +2551,15 @@ pub fn resume_requests(
 ) -> EngineResult<Execution> {
     on_v9_stack(|| {
         let (mut vm, _) = open(&input, state, Limits::default())?;
-        vm.remaining = vm.limits.operations;
-        vm.deliver(responses).map_err(fatal)?;
+        resume_body(&mut vm, responses)?;
         finish(vm)
     })
+}
+
+/** The task of `resume_requests`. */
+pub(in crate::v9) fn resume_body(vm: &mut Vm, responses: Vec<HostResponse>) -> EngineResult<()> {
+    vm.remaining = vm.limits.operations;
+    vm.deliver(responses).map_err(fatal)
 }
 
 /// Deliver actual host image fetch/decode outcomes in a later task, ignoring stale source generations.
@@ -2527,6 +2573,11 @@ pub fn resume_images(
         platform::images::deliver(&mut vm, responses)?;
         finish(vm)
     })
+}
+
+/** The task of `resume_images`. */
+pub(in crate::v9) fn images_body(vm: &mut Vm, responses: Vec<ImageResponse>) -> EngineResult<()> {
+    platform::images::deliver(vm, responses)
 }
 
 /** The default environment for entry points that predate PageEnvironment. */

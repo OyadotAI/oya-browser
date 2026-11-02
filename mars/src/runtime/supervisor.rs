@@ -137,6 +137,12 @@ pub struct Runtime {
     navigation or script step builds its candidate. */
     pub(super) prefetched:
         std::collections::HashMap<String, EngineResult<crate::network::WebResponse>>,
+    /** Head scripts downloading on the loader, by their exact request: `take_prefetched`
+    waits for the hop when `acquire` asks, so the page is styled and painted while its scripts
+    (YouTube's 12 MB) are still on the wire instead of after them. */
+    pub(super) prefetching: BTreeMap<String, u64>,
+    /** Answers of those hops that landed before anyone asked. */
+    pub(super) prefetch_results: BTreeMap<u64, EngineResult<crate::network::WebResponse>>,
     /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
     bounded list; a wrong guess only costs one resend. */
     pub(super) v9_sources: std::collections::VecDeque<String>,
@@ -630,6 +636,8 @@ impl Runtime {
             languages: super::languages::preferred(),
             revisions: Default::default(),
             prefetched: Default::default(),
+            prefetching: Default::default(),
+            prefetch_results: Default::default(),
             v9_sources: Default::default(),
             shared_sources: Vec::new(),
             sync_layout: None,

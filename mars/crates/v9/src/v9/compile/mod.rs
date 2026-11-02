@@ -12,7 +12,7 @@ mod early;
 mod expr;
 mod function;
 mod iteration;
-mod lazy;
+pub(in crate::v9) mod lazy;
 mod member_reference;
 mod module;
 mod parameters;
@@ -806,6 +806,7 @@ impl Registry {
             }
         };
         self.adopted.insert(unit.entry.site);
+        self.codes.reserve(unit.codes.len() + 1);
         for code in &unit.codes {
             if fresh && self.codes.contains_key(&code.site) {
                 return Err(EngineError::invalid("Duplicate V9 code site."));
@@ -884,6 +885,45 @@ fn cached_unit(
     cache::put(key, unit.clone());
     cache::remember(text, offset, key);
     Ok(unit)
+}
+
+/** Hand the deferred functions of the cached unit at `offset` to `workers` executor threads
+(see `v9::precompile_deferred`); the units stay the cache's and the stubs' own. */
+pub(in crate::v9) fn precompile_deferred(
+    text: &cache::Key,
+    offset: usize,
+    workers: usize,
+) -> usize {
+    let Some(unit) = cache::get(&cache::at(text, offset)) else {
+        return 0;
+    };
+    let lazies: Vec<(Arc<Code>, Arc<lazy::Lazy>)> = unit
+        .codes
+        .iter()
+        .filter_map(|code| code.lazy.clone().map(|lazy| (code.clone(), lazy)))
+        .collect();
+    let total = lazies.len();
+    if total == 0 || workers == 0 {
+        return 0;
+    }
+    let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let lazies = Arc::new(lazies);
+    for index in 0..workers.min(total) {
+        let (next, lazies) = (Arc::clone(&next), Arc::clone(&lazies));
+        let _ = crate::v9::execution_thread::spawn_execution_thread(
+            format!("oya-defer-{index}"),
+            move || {
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((code, lazy)) = lazies.get(at) else {
+                        return;
+                    };
+                    let _ = lazy.unit(code.source.as_ref());
+                }
+            },
+        );
+    }
+    total
 }
 
 /** Fill the process cache with `source` compiled as a classic script at `offset`, for a page

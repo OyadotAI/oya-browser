@@ -547,3 +547,22 @@ pub(in crate::v9) fn validate(vm: &Vm) -> EngineResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::seeded;
+
+    /** The seeded host itself and its subdomains autoplay; a lookalike host, a host that merely
+    ends in the name, and an address that does not parse do not. */
+    #[test]
+    fn seeded_hosts_match_exactly_or_as_a_subdomain() {
+        assert!(seeded("https://youtube.com/watch?v=x"));
+        assert!(seeded("https://www.youtube.com/"));
+        assert!(seeded("https://m.youtube.com/watch"));
+        assert!(!seeded("https://notyoutube.com/"));
+        assert!(!seeded("https://youtube.com.evil.example/"));
+        assert!(!seeded("https://youtube.co/"));
+        assert!(!seeded("not a url"));
+        assert!(!seeded("about:blank"));
+    }
+}

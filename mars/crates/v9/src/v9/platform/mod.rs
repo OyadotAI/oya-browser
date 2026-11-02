@@ -1291,6 +1291,11 @@ pub(in crate::v9) struct ScriptLoad {
     /// The element's `crossorigin` attribute, which picks the app's fetch mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross_origin: Option<String>,
+    /// Set `async = false` by script: it runs after every earlier ordered load, as the HTML
+    /// "execute in order" list does, however the sources arrive. Other inserted scripts run as
+    /// they land.
+    #[serde(default)]
+    pub ordered: bool,
     /// Whether it ran (or failed) already.
     pub done: bool,
 }
@@ -1492,6 +1497,10 @@ pub(in crate::v9) struct PageState {
     /// connected script is checked in constant time and never starts or fails twice.
     #[serde(default)]
     pub script_elements: std::collections::BTreeSet<usize>,
+    /// Script elements whose `async` a script set to false before they started: a created
+    /// script is async by default, and only this assignment puts it on the in-order list.
+    #[serde(default)]
+    pub ordered_scripts: std::collections::BTreeSet<usize>,
     /** Stable parser-created script identities survive module loading pauses. */
     #[serde(default)]
     pub parsed_scripts: Option<Vec<usize>>,

@@ -99,8 +99,14 @@ use crate::constants::STEP_RESPONSE_BYTES;
 const FAILED_TO_FETCH: &str = "Failed to fetch";
 /// Fetch labels a string body with this when the page set no Content-Type.
 const TEXT_BODY_TYPE: &str = "text/plain;charset=UTF-8";
-/// Wall time between background timer runs while a page is open.
+/// Wall time between background timer runs while a page is open and has nothing due.
 const TICK_INTERVAL: Duration = Duration::from_millis(100);
+/// Wall time between runs while the page has work due: one frame, so a page still booting runs
+/// its tasks nearly back to back as a browser does. On YouTube's watch page the 100 ms wait
+/// between some eighty busy ticks idled the page for 17 s of its first minute.
+const TICK_BUSY_INTERVAL: Duration = Duration::from_millis(16);
+/// The longest a busy page waits after a slow run, so people and agents still get a turn.
+const TICK_THROTTLE_CAP: Duration = Duration::from_millis(32);
 /// Real time one background run may spend, so the coordinator keeps answering people promptly.
 const TICK_WALL: Duration = Duration::from_millis(400);
 /// Background timers keep running this long after the page's last quiet point, then wait for the
@@ -213,7 +219,7 @@ pub(super) struct Scripting {
     /// CORS preflights this page's requests already passed, so they are not repeated.
     pub preflights: crate::network::cors::PreflightCache,
     /// Wall time the last background run took. The next waits at least this long, up to
-    /// TICK_INTERVAL, so a slow run still leaves the coordinator a window for people and
+    /// TICK_THROTTLE_CAP, so a slow run still leaves the coordinator a window for people and
     /// agents; waiting as long as the run itself ran YouTube's boot at half speed.
     pub tick_cost: Duration,
     /// Module scripts, import maps and the modules fetched for them.
@@ -408,11 +414,16 @@ impl Scripting {
 
     /** Native transition frames use their next sample time while expensive work stays throttled. */
     pub(super) fn tick_interval(&self) -> Duration {
+        let interval = if self.loaded && self.pending() {
+            TICK_BUSY_INTERVAL
+        } else {
+            TICK_INTERVAL
+        };
         super::animations::next_sample(self)
             .map(|due| Duration::from_secs_f64((due - self.clock_ms).max(0.0) / MS_PER_SECOND))
-            .unwrap_or(TICK_INTERVAL)
-            .min(TICK_INTERVAL)
-            .max(self.tick_cost.min(TICK_INTERVAL))
+            .unwrap_or(interval)
+            .min(interval)
+            .max(self.tick_cost.min(TICK_THROTTLE_CAP))
     }
 }
 
@@ -813,7 +824,7 @@ impl Runtime {
         let deadline = Instant::now() + INSERTED_IMAGE_WALL;
         // The inserted images go out together, as in `build_page`.
         let left = crate::constants::IMAGE_COUNT.saturating_sub(page.images.len());
-        self.prefetched.clear();
+        self.clear_prefetches();
         let loaded = self
             .prefetch_images_skipping(
                 &page.document,
@@ -834,7 +845,7 @@ impl Runtime {
                     &page.scripting.image_loading.managed,
                 )
             });
-        self.prefetched.clear();
+        self.clear_prefetches();
         let images = match loaded {
             Ok(images) => images,
             Err(error) if super::images::stops_loading(&error) => return Err(error),

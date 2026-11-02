@@ -368,6 +368,26 @@ impl Heap {
         self.string_budget.register(text);
         self.last_registered_string_units = self.string_budget.upper_units();
     }
+    /** The heap as a kept state: the persistent trees shared (O(1)), the derived string
+    registrations left out, since a restore registers the strings it finds (`register_existing_strings`)
+    and cloning the registration map was the whole cost of keeping a task's state. */
+    pub fn export(&self) -> Self {
+        Self {
+            objects: self.objects.clone(),
+            envs: self.envs.clone(),
+            next_object: self.next_object,
+            next_env: self.next_env,
+            counts: self.counts,
+            has_proxies: self.has_proxies,
+            last_marked_string_units: self.last_marked_string_units,
+            last_registered_string_units: self.last_registered_string_units,
+            string_budget: Default::default(),
+            shared_stores: self.shared_stores.clone(),
+            shared_gc_units: self.shared_gc_units.clone(),
+            collected: self.collected,
+            shared: self.shared.clone(),
+        }
+    }
     /** Restore weak registrations for strings already present in a decoded or copied heap. */
     pub(super) fn register_existing_strings(&mut self) {
         let mut strings = Vec::new();

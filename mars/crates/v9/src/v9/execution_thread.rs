@@ -27,6 +27,12 @@ fn builder(name: String) -> Builder {
         .stack_size(crate::constants::V9_STACK_BYTES)
 }
 
+/** Whether this thread was constructed here with the execution stack, so a live realm, which
+cannot move to a scoped thread, may run on it. */
+pub(super) fn has_stack() -> bool {
+    HAS_EXECUTION_STACK.get()
+}
+
 /** A request keeps its panic boundary, whether on an owned executor or a temporary scoped thread. */
 pub(super) fn run<T: Send>(work: impl FnOnce() -> EngineResult<T> + Send) -> EngineResult<T> {
     if HAS_EXECUTION_STACK.get() {

@@ -280,12 +280,16 @@ fn recent(sheets: &[String], context: RenderContext) -> Option<(Rc<State>, bool,
         let mut entry = recent.remove(best)?;
         // Valid under both contexts; the next lookup under this one is then an exact match.
         entry.context = context;
-        let kept = entry.checkpoints[..shared].to_vec();
+        let usable = shared.min(entry.checkpoints.len());
+        let kept = entry.checkpoints[..usable].to_vec();
         // The entry's own state keeps its identity, which the `Parsed` lookup is keyed by.
         let state = if shared == entry.sheets.len() {
             Rc::clone(&entry.state)
+        } else if usable == 0 {
+            recent.push_front(entry);
+            return None;
         } else {
-            Rc::clone(&entry.checkpoints[shared - 1])
+            Rc::clone(&entry.checkpoints[usable - 1])
         };
         let exact = shared == entry.sheets.len() && shared == sheets.len();
         recent.push_front(entry);
@@ -343,7 +347,12 @@ fn parse(
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, skipped)?;
         state.count = index + 1;
-        checkpoints.push(Rc::new(state.clone()));
+        // Bounded: a checkpoint holds every rule parsed so far, so only the sheets within the
+        // count budget get one, at most STYLE_SHEETS of them; a later change resumes from the
+        // last kept checkpoint and parses the few sheets after it again.
+        if !skipped && checkpoints.len() < STYLE_SHEETS {
+            checkpoints.push(Rc::new(state.clone()));
+        }
     }
     if scoped.is_empty() {
         return Ok((state, Vec::new()));

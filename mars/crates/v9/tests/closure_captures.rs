@@ -90,3 +90,16 @@ fn captures_survive_transport_before_first_call() {
     assert_eq!(common::failure(&next), None);
     assert_eq!(common::global(&next, "r"), "83");
 }
+
+/** A parameter default reads the outer binding even when the body shadows the same name: the
+default runs before the body's declarations exist, so the outer name is still a dependency. */
+#[test]
+fn parameter_defaults_read_outer_names_the_body_shadows() {
+    assert_eq!(
+        common::eval(
+            "function f(){let x=1;function g(a=x){let x=2;return a+x}return g()}const r=f();",
+            "r"
+        ),
+        "3"
+    );
+}

@@ -37,6 +37,7 @@ impl Cache {
         for name in local_names(func) {
             walk.free.remove(&name);
         }
+        walk.free.extend(self.default_dependencies(func));
         let summary = Arc::new(Summary {
             free: walk.free,
             captured: Arc::new(walk.captured),
@@ -48,6 +49,24 @@ impl Cache {
             .entry(func.site)
             .or_insert(summary)
             .clone()
+    }
+}
+
+impl Cache {
+    /** Names a parameter default reads from outside the function. Defaults run in the parameter
+    scope, where only the parameters themselves bind, so a body declaration of the same name
+    does not shadow them: `function g(a = x) { let x = 2 }` still reads the outer `x`. */
+    fn default_dependencies(&self, func: &Func) -> HashSet<Name> {
+        let mut walker = Walker {
+            capture: Some(Walk::new(self.clone())),
+            ..Walker::default()
+        };
+        walker.parameters(func);
+        let mut free = walker.capture.unwrap().free;
+        for name in parameter_names(func) {
+            free.remove(&name);
+        }
+        free
     }
 }
 
@@ -74,8 +93,9 @@ impl Walk {
     }
 }
 
-/** Function-wide bindings stop references from escaping; block-local shadows stay conservative. */
-fn local_names(func: &Func) -> Vec<Name> {
+/** What the parameter scope binds: the parameters, and for an ordinary function its own
+`this`, `arguments`, `new.target` and home object. */
+fn parameter_names(func: &Func) -> Vec<Name> {
     let mut names = Vec::new();
     for param in &func.params {
         super::bound_names(param, &mut names);
@@ -83,6 +103,19 @@ fn local_names(func: &Func) -> Vec<Name> {
     if let Some(rest) = &func.rest {
         super::bound_names(rest, &mut names);
     }
+    if !func.flags.arrow {
+        names.extend(
+            ["this", "arguments", "new.target", "%home"]
+                .into_iter()
+                .map(Name::from),
+        );
+    }
+    names
+}
+
+/** Function-wide bindings stop references from escaping; block-local shadows stay conservative. */
+fn local_names(func: &Func) -> Vec<Name> {
+    let mut names = parameter_names(func);
     if let Body::Block(body) = &func.body {
         super::var_names(body, func.strict, true, &mut names);
         names.extend(
@@ -94,13 +127,6 @@ fn local_names(func: &Func) -> Vec<Name> {
             super::function_declarations(body)
                 .iter()
                 .filter_map(|func| func.name.clone()),
-        );
-    }
-    if !func.flags.arrow {
-        names.extend(
-            ["this", "arguments", "new.target", "%home"]
-                .into_iter()
-                .map(Name::from),
         );
     }
     names

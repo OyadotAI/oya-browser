@@ -39,9 +39,23 @@ impl SiteMap {
             self.merge();
         }
     }
+    /** Room for `additional` codes about to be filed in a run (a unit's functions): a run past
+    the merge point goes straight to the shared map sized for it, a smaller one into the
+    recent map, so YouTube's 69,000 functions no longer rehash both maps on the way in. */
+    pub fn reserve(&mut self, additional: usize) {
+        if additional >= MERGE_AT {
+            self.merge();
+            Arc::make_mut(&mut self.shared).reserve(additional);
+        } else {
+            self.recent.reserve(additional);
+        }
+    }
     /** Move the recent entries into the shared map: in place when this map alone holds it. */
     fn merge(&mut self) {
-        let recent = std::mem::take(&mut self.recent);
+        let recent = std::mem::replace(
+            &mut self.recent,
+            FastMap::with_capacity_and_hasher(MERGE_AT, Default::default()),
+        );
         Arc::make_mut(&mut self.shared).extend(recent);
     }
     /** Codes filed. */

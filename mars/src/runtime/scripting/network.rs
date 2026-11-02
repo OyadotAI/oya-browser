@@ -41,10 +41,17 @@ impl Runtime {
     }
 
     /** Record finished hops; true when any arrived. */
-    fn keep_loaded(&mut self, done: Vec<crate::runtime::loader::Done>) -> bool {
+    pub(in crate::runtime) fn keep_loaded(
+        &mut self,
+        done: Vec<crate::runtime::loader::Done>,
+    ) -> bool {
         let arrived = !done.is_empty();
         for hop in done {
-            self.loaded.insert(hop.id, hop.result);
+            if self.prefetching.values().any(|&id| id == hop.id) {
+                self.prefetch_results.insert(hop.id, hop.result);
+            } else {
+                self.loaded.insert(hop.id, hop.result);
+            }
         }
         while self.loaded.len() > LOADED_RESULTS {
             self.loaded.pop_first();
@@ -65,6 +72,11 @@ impl Runtime {
     pub(in crate::runtime) fn wait_for_network(&mut self, page: &Page, until: Instant) -> bool {
         if page.scripting.in_flight.is_empty() {
             return false;
+        }
+        // A hop that landed during an earlier wait (for another purpose, or another page) is
+        // delivered now; waiting a slice for the next arrival left it sitting for the whole wall.
+        if self.landed(page) {
+            return true;
         }
         let done = self.loader.wait(until);
         self.keep_loaded(done) && self.landed(page)

@@ -23,16 +23,31 @@ impl Precompile {
         let handle = crate::v9::spawn_execution_thread("oya-precompile".into(), move || {
             for (index, offset) in jobs {
                 let _ = crate::v9::precompile_script(&sources[index], offset);
+                crate::v9::precompile_deferred(&sources[index], offset, deferred_workers());
             }
         });
         Self(handle.ok())
     }
     /** Wait for the compile, so the load step reads the cache rather than racing it. */
     pub fn finish(self) {
-        if let Some(handle) = self.0 {
+        drop(self);
+    }
+}
+
+/** A load that stops early (a refused document, a failed fetch, a navigation away) still waits
+for its compile thread, so no thread with V9's stack is left running on its own. */
+impl Drop for Precompile {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
             let _ = handle.join();
         }
     }
+}
+
+/// Threads that compile a script's deferred functions ahead of the load: every core but the
+/// two the coordinator and V9 keep, at least one.
+fn deferred_workers() -> usize {
+    std::thread::available_parallelism().map_or(1, |cores| cores.get().saturating_sub(2).max(1))
 }
 
 /** Index and page offset of each script V9's `compile_sources` would compile, under the same

@@ -50,8 +50,9 @@ pub const CACHE_VARIANTS: usize = 4;
 /// Last-Modified.
 pub const HEURISTIC_DIVISOR: u32 = 10;
 
-/// Concurrent workers for a batch of subresource fetches.
-pub const BATCH_WORKERS: usize = 6;
+/// Concurrent workers for a batch of subresource fetches: twelve, as a page's head is a dozen
+/// or more sheets and scripts over one or two HTTP/2 origins, where streams are cheap.
+pub const BATCH_WORKERS: usize = 12;
 
 /// Cookies kept in total. Chromium's store holds at most 3000 before global eviction.
 pub const COOKIE_COUNT: usize = 3000;

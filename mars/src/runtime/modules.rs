@@ -160,7 +160,7 @@ impl Runtime {
         let requests = std::mem::take(&mut page.scripting.modules.pending);
         let base = page_base(page)?;
         for request in requests {
-            if page.scripting.modules.known(&request.url) {
+            if page.scripting.modules.known(&request.url) || in_flight(page, &request.url) {
                 continue;
             }
             let integrity = request
@@ -184,7 +184,7 @@ impl Runtime {
         let requests = std::mem::take(&mut page.scripting.modules.pending_scripts);
         let base = page_base(page)?;
         for request in requests {
-            if page.scripting.modules.known(&request.url) {
+            if page.scripting.modules.known(&request.url) || in_flight(page, &request.url) {
                 continue;
             }
             let load = ScriptLoad {
@@ -246,6 +246,32 @@ impl Runtime {
         }
         Ok(changed)
     }
+    /**
+     * What DOMContentLoaded waits for, as a browser's does: the module scripts the parser
+     * inserted (deferred by default), each run as it lands, within MODULE_WALL. Async classic
+     * scripts and images are left to `load`. DuckDuckGo's results page builds itself from its
+     * module bundle in a DOMContentLoaded handler and stayed blank when the event came first.
+     * Returns whether the document changed.
+     */
+    pub(super) fn settle_modules_before_content_loaded(
+        &mut self,
+        page: &mut Page,
+        deadline: Instant,
+    ) -> EngineResult<bool> {
+        let until = deadline.min(Instant::now() + MODULE_WALL);
+        let mut changed = false;
+        while Instant::now() < until {
+            if page.scripting.modules.landed {
+                page.scripting.modules.landed = false;
+                changed |= self.script_step(page, json!({"kind":"modules"}))?.changed;
+            } else if loading_modules(page) {
+                changed |= self.deliver_landed(page, until)?;
+            } else {
+                break;
+            }
+        }
+        Ok(changed)
+    }
     /** Wait one slice for a hop to land, then deliver what did: script loads to V9 through
     `drain_landed`, and any fetch answers that landed with them to the page. */
     fn deliver_landed(&mut self, page: &mut Page, until: Instant) -> EngineResult<bool> {
@@ -260,6 +286,24 @@ impl Runtime {
         let step = self.script_step(page, json!({"kind":"resume","responses":responses}))?;
         Ok(step.changed)
     }
+}
+
+/** Whether this URL is already on the loader: V9 asks for a script again on every step until
+it lands, and a second delivery of the same source doubled the delivered bytes past
+MODULE_BYTES on github and airbnb. */
+fn in_flight(page: &Page, url: &str) -> bool {
+    page.scripting
+        .in_flight
+        .iter()
+        .any(|hop| hop.load.as_ref().is_some_and(|load| load.url == url))
+}
+
+/** Whether a module script is still on the loader; DOMContentLoaded waits for these alone. */
+fn loading_modules(page: &Page) -> bool {
+    page.scripting
+        .in_flight
+        .iter()
+        .any(|hop| hop.load.as_ref().is_some_and(|load| !load.classic))
 }
 
 /** Whether a script the page asked for is still on the loader. */

@@ -560,3 +560,49 @@ fn eval_extended(source: &str, name: &str) -> String {
     assert!(execution.failed.is_empty(), "{:?}", execution.failed);
     common::global(&execution, name)
 }
+
+/** Two scripts inserted with `async = false` take effect in insertion order however their
+sources arrive: the second, delivered first, waits for the first. A script left async runs as
+soon as it lands. */
+#[test]
+fn ordered_inserted_scripts_run_in_insertion_order_whatever_lands_first() {
+    let environment = common::environment();
+    let sources = vec![
+        "let ran = '';
+         for (const name of ['a', 'b']) {
+           const s = document.createElement('script'); s.async = false; s.src = '/' + name + '.js';
+           document.head.appendChild(s);
+         }
+         const free = document.createElement('script'); free.src = '/c.js'; document.head.appendChild(free);"
+            .to_string(),
+    ];
+    let execution = load_with(&sources[0], &environment);
+    assert_eq!(failure(&execution), None);
+    assert_eq!(execution.script_requests.len(), 3);
+    let delivered = |urls: &[(&str, &str)]| ModuleInput {
+        entries: Vec::new(),
+        sources: urls
+            .iter()
+            .map(|(url, body)| ModuleSource {
+                url: format!("https://example.com/{url}"),
+                source: Some(body.to_string()),
+                classic: true,
+            })
+            .collect(),
+    };
+    let host = host();
+    let later = delivered(&[("b.js", "ran += 'b'"), ("c.js", "ran += 'c'")]);
+    let mut page_input = input(&sources, &host, &environment);
+    page_input.modules = &later;
+    let after = mars_v9::load_modules(page_input, round_trip(execution.state)).expect("b and c");
+    assert_eq!(common::global(&after, "ran"), "c");
+    let all = delivered(&[
+        ("b.js", "ran += 'b'"),
+        ("c.js", "ran += 'c'"),
+        ("a.js", "ran += 'a'"),
+    ]);
+    let mut page_input = input(&sources, &host, &environment);
+    page_input.modules = &all;
+    let after = mars_v9::load_modules(page_input, round_trip(after.state)).expect("a too");
+    assert_eq!(common::global(&after, "ran"), "cab");
+}
