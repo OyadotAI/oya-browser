@@ -26,7 +26,7 @@ mars-avif = { path = "crates/avif" }
 mars-mp4 = { path = "crates/mp4" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
-rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 url = "=2.5.8"
 # Already in the tree through rustls; verifies Subresource Integrity hashes.
 ring = "=0.17.14"
@@ -94,7 +94,7 @@ path = "tests/media_source.rs"
 required-features = ["test-support"]
 
 [patch.crates-io]
-# Mars vendors rustls 0.23.45 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
+# Mars vendors rustls 0.23.46 with one additive change: Chrome-shaped ClientHellos (vendor/rustls/MARS.md).
 rustls = { path = "vendor/rustls" }
 
 # V9's interpreter runs tests (and debug builds) optimized: unoptimized it is 10-50x slower and
