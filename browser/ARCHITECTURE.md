@@ -856,9 +856,24 @@ closing back to the start page deliberately saves an empty session.
 Desktop page protection no longer installs the synthetic WebAuthn cancellation
 shim. Chromium owns RP validation, registration, assertion and abort handling.
 `app/passkeys.ts` supplies a Cancel-default native account chooser for Electron's
-`select-webauthn-account` event. Choices are limited to the current human-controlled
-surface and cancelled on navigation, destruction or timeout. Credentials and
-private keys are never exposed through renderer IPC, notifications or agent tools.
+`select-webauthn-account` event. `app/passkey-request.ts` resolves the source's
+actual window and per-tab human ownership, so an agent in another tab does not
+block a person's chooser. The original native frame/session, profile epoch and
+window remain bound throughout selection. A tracked popup opener losing human
+ownership cancels the chooser. Popup
+adoption provenance is checked through every exact opener and owning window;
+an unclaimed popup cannot inherit consent from an agent's originating tab.
+Requester/ancestor navigation, destruction, takeover and timeout cancel;
+same-document changes and unrelated
+iframe navigation do not. Frame removal is checked every 100ms only while the
+bounded chooser exists because stock Electron has no frame-removal event.
+Credentials and private keys are never exposed through renderer IPC,
+notifications or agent tools.
+
+`test:desktop-passkeys` uses actual stock Oya windows and frame events with a
+controlled native-dialog seam to verify scoped ownership, parent selection,
+navigation and takeover. It does not exercise a biometric ceremony or prove
+keychain/iCloud/phone support; those require the signed app and physical method.
 
 Provisioned macOS builds use `APPLE_TEAM_ID` and `OYA_WEBAUTHN_PROFILE` to configure one stable keychain access group.
 The build embeds it for `app.configureWebAuthn` and the packaging hook adds the

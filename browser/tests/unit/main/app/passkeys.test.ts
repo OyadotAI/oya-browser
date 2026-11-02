@@ -2,38 +2,96 @@
 import { it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { Passkeys, configurePasskeys } from '../../../../src/main/app/passkeys.ts';
+import { configurePasskeys } from '../../../../src/main/app/passkeys.ts';
 import { PASSKEY_PROMPT_TIMEOUT_MS } from '../../../../src/main/app/constants.ts';
 
-/** Minimal native seams; no credentials or hardware are used. */
-function fixture() {
-  const contents = Object.assign(new EventEmitter(), { isDestroyed: () => false });
-  const details = {
-    frame: { detached: false },
-    relyingPartyId: 'example.com',
-    accounts: [
-      { credentialId: 'one', name: 'Person' },
-      { credentialId: 'two', name: 'Other' },
-    ],
+import { fixture } from '../../support/passkey-fixture.ts';
+
+it('permits the selected human tab while an agent owns another tab and parents to its real window', async () => {
+  const f = fixture();
+  const checked: number[] = [];
+  f.deps.agentTab.humanMay = (id: number) => (checked.push(id), id === f.tab.id);
+  f.deps.control = { snapshot: () => ({ interactive: false }) };
+  f.deps.tabs = { activeTabId: 99, getActiveView: () => null };
+  assert.equal(await f.service.choose(f.details as any), 'two');
+  assert.ok(checked.every((id) => id === f.tab.id));
+  assert.deepEqual(f.parents, [f.window]);
+});
+
+it('same-document navigation and unrelated frame loads leave the requesting chooser active', async () => {
+  for (const event of [
+    { isMainFrame: true, isSameDocument: true },
+    { isMainFrame: false, isSameDocument: false, frame: {} },
+  ]) {
+    const f = fixture();
+    f.deps.electron.dialog.showMessageBox = async (_parent, options) => {
+      f.contents.emit('did-start-navigation', event);
+      assert.equal(options.signal.aborted, false);
+      return { response: 1 };
+    };
+    assert.equal(await f.service.choose(f.details as any), 'one');
+  }
+});
+
+it('requester and ancestor replacement cancel without confusing an unrelated iframe', async () => {
+  for (const target of ['requester', 'ancestor']) {
+    const f = fixture();
+    const parent = { parent: null };
+    f.details.frame.parent = parent;
+    f.deps.electron.dialog.showMessageBox = async (_parent, options) => {
+      f.contents.emit('did-start-navigation', {
+        isMainFrame: false,
+        isSameDocument: false,
+        frame: target === 'requester' ? f.details.frame : parent,
+      });
+      assert.equal(options.signal.aborted, true);
+      return { response: 1 };
+    };
+    assert.equal(await f.service.choose(f.details as any), undefined);
+  }
+});
+
+it('control revocation cannot be undone by returning control before a late account response', async () => {
+  const f = fixture();
+  f.deps.electron.dialog.showMessageBox = async (_parent, options) => {
+    f.deps.agentTab.humanMay = () => false;
+    f.service.sync();
+    f.deps.agentTab.humanMay = () => true;
+    assert.equal(options.signal.aborted, true);
+    return { response: 1 };
   };
-  const boxes: any[] = [];
-  const deps: any = {
-    governance: { configuration: null },
-    control: { snapshot: () => ({ interactive: true }) },
-    tabs: { getActiveView: () => ({ webContents: contents }) },
-    electron: {
-      webContents: { fromFrame: () => contents },
-      BrowserWindow: { fromWebContents: () => null },
-      dialog: {
-        showMessageBox: async (options: any) => {
-          boxes.push(options);
-          return { response: 2 };
-        },
-      },
-    },
-  };
-  return { contents, details, boxes, deps, service: new Passkeys(deps) };
-}
+  assert.equal(await f.service.choose(f.details as any), undefined);
+});
+
+it('profile epoch, native session, tab ownership and window lifetime are rechecked after account selection', async () => {
+  for (const revoke of [
+    (f) => (f.deps.persona.policyEpoch = Symbol()),
+    (f) => (f.deps.persona.partitionName = () => 'persist:two'),
+    (f) => (f.contents.session = {}),
+    (f) => (f.deps.windows.ownerOfContents = () => undefined),
+    (f) => (f.owner.tabs.activeTabId = 9),
+    (f) => f.window.emit('closed'),
+  ]) {
+    const f = fixture();
+    f.deps.electron.dialog.showMessageBox = async () => {
+      revoke(f);
+      return { response: 1 };
+    };
+    assert.equal(await f.service.choose(f.details as any), undefined);
+    assert.equal(f.window.listenerCount('closed'), 0);
+  }
+});
+
+it('only a tracked focused human popup may open the native account chooser', async () => {
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 1;
+  f.owner.tabs.list.push({ id: 1 });
+  f.owner.tabs.activeTabId = 99;
+  assert.equal(await f.service.choose(f.details as any), 'two');
+  f.window.isFocused = () => false;
+  assert.equal(await f.service.choose(f.details as any), undefined);
+});
 
 it('configures only macOS with a valid signing-bound access group', () => {
   const calls: any[] = [];
@@ -61,10 +119,10 @@ it('cancels rather than choosing an account on cancel or an invalid response', a
 it('refuses background, remote-controlled, governed and detached requesters', async () => {
   const edits = [
     (f: any) => {
-      f.deps.tabs.getActiveView = () => null;
+      f.owner.tabs.activeTabId = 9;
     },
     (f: any) => {
-      f.deps.control.snapshot = () => ({ interactive: false });
+      f.deps.agentTab.humanMay = () => false;
     },
     (f: any) => {
       f.deps.governance.configuration = {};
@@ -86,7 +144,7 @@ it('fences navigation and concurrent prompts and cleans up listeners', async () 
   f.deps.electron.dialog.showMessageBox = () => pending.promise;
   const result = f.service.choose(f.details as any);
   assert.equal(await f.service.choose(f.details as any), undefined);
-  f.contents.emit('did-start-navigation');
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, frame: f.details.frame });
   pending.resolve({ response: 1 });
   assert.equal(await result, undefined);
   assert.equal(f.contents.listenerCount('destroyed'), 0);
@@ -94,7 +152,7 @@ it('fences navigation and concurrent prompts and cleans up listeners', async () 
 it('rechecks human control when the prompt resolves', async () => {
   const f = fixture();
   f.deps.electron.dialog.showMessageBox = async () => {
-    f.deps.control.snapshot = () => ({ interactive: false });
+    f.deps.agentTab.humanMay = () => false;
     return { response: 1 };
   };
   assert.equal(await f.service.choose(f.details as any), undefined);
@@ -118,7 +176,7 @@ it('aborts an abandoned native prompt at the bounded timeout', async () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const f = fixture();
-    f.deps.electron.dialog.showMessageBox = (options: any) =>
+    f.deps.electron.dialog.showMessageBox = (_parent: any, options: any) =>
       new Promise((resolve) => options.signal.addEventListener('abort', () => resolve({ response: 0 })));
     const result = f.service.choose(f.details as any);
     mock.timers.tick(PASSKEY_PROMPT_TIMEOUT_MS);
