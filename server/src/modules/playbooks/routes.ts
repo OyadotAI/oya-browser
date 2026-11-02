@@ -13,6 +13,7 @@ import { track } from '../telemetry/index.ts';
 import * as runs from './runs.ts';
 import { saveRefusal, recordedRun, playable, runnable } from './requests.ts';
 import { runJob } from './jobs.ts';
+import { definitionOf, replacePlaybook } from './editing.ts';
 import { quietCheckpointFor } from './checkpoint.ts';
 import { getKey, longJson, requireBrowser } from '../../app/http.ts';
 
@@ -64,6 +65,16 @@ router.delete('/playbooks/:name', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+/** GET /playbooks/:name, the playbook's whole definition for editing; secret defaults are left out. */
+router.get('/playbooks/:name', authMiddleware, (req, res) => {
+  res.json(definitionOf(getKey(req), req.params.name));
+});
+
+/** PUT /playbooks/:name, replace the playbook's definition with an edited one, checked as an import is. */
+router.put('/playbooks/:name', authMiddleware, async (req, res) => {
+  res.json(await replacePlaybook(getKey(req), req.params.name, req.body));
+});
+
 /** GET /playbooks/:name/export, the playbook as one JSON document another environment can import. */
 router.get('/playbooks/:name/export', authMiddleware, (req, res) => {
   res.json(playbooks.exportPlaybook(getKey(req), req.params.name));
@@ -101,7 +112,7 @@ router.post('/browsers/:browserId/runs', authMiddleware, enforce('chat'), requir
   const { pb, status, error } = runnable(key, { prompt, playbook, data, secrets });
   if (error) return res.status(status).json({ error });
   const job = { key, browserId, pb, prompt, data, secrets, autoHeal };
-  const run = runs.start(key, browserId, ({ requestHuman }) => runJob(job, requestHuman));
+  const run = runs.start(key, browserId, ({ requestHuman, onStep }) => runJob({ ...job, onStep }, requestHuman));
   res.status(Status.ACCEPTED).json(run);
 });
 

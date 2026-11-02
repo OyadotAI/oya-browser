@@ -41,7 +41,6 @@ const renderer = {
       input: {
         index: resolve('src/renderer/index.html'),
         shield: resolve('src/renderer/control-shield/index.html'),
-        preview: resolve('src/renderer/tab-preview/index.html'),
       },
     },
   },

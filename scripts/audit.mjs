@@ -10,11 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /** Advisories that may stay, by GHSA id, with why. Remove an entry once a fix ships. */
-export const ALLOWED = {
-  // braces stack exhaustion on deeply nested patterns, pulled in by the server's
-  // dependencies: no fixed release to move to yet.
-  'GHSA-vfj7-8cjw-p6xm': 'braces: no fixed version published',
-};
+export const ALLOWED = {};
 
 /** Severities that fail the build. */
 const BLOCKING = new Set(['high', 'critical']);

@@ -9,9 +9,13 @@ import type { Session, WebContents, MediaAccessPermissionRequest } from 'electro
 import type { AppServices } from './services.ts';
 import { shareScreenPrompt } from './media-prompts.ts';
 import { ALLOW_MEDIA_CHOICE } from './constants.ts';
+import type { ShareVideo } from '../screen-share/sources.ts';
 
 /** The gate and dialog (through mediaPermissions), the profile, the grants, and the capturer. */
-type Deps = Pick<AppServices, 'electron' | 'mediaPermissions' | 'persona' | 'sitePermissions' | 'screenPicker'>;
+type Deps = Pick<
+  AppServices,
+  'electron' | 'mediaPermissions' | 'persona' | 'sitePermissions' | 'screenPicker' | 'shareIndicator'
+>;
 
 /** Electron's exact handler type, without re-declaring its unions. */
 type DisplayHandler = NonNullable<Parameters<Session['setDisplayMediaRequestHandler']>[0]>;
@@ -71,9 +75,10 @@ export class ScreenShare {
     const current = () =>
       this.deps.mediaPermissions.gate.current(contents, generation) && this.deps.persona.partitionName() === partition;
     const streams = await this.deps.screenPicker.pick(contents, new URL(contents.getURL()).origin, current);
-    if (!current()) return null;
+    if (!streams || !current()) return null;
     // Marked only once a source is handed over: the person can still cancel the picker.
-    if (streams) this.deps.mediaPermissions.gate.markLive(contents);
+    this.deps.mediaPermissions.gate.markLive(contents);
+    this.deps.shareIndicator?.started(streams.video as ShareVideo, contents);
     return streams;
   }
 

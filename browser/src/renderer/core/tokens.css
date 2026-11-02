@@ -121,6 +121,12 @@
   --chrome-strip: #0b0d0c;
   --chrome-bar: #1a1e1b;
 }
+/* An incognito window (always dark): violet-grey chrome, so it never passes for a normal dark window's green-black. */
+:root[data-incognito='true'] {
+  --chrome-strip: #17161c;
+  --chrome-bar: #26242e;
+  --stage: radial-gradient(120% 90% at 50% 0%, #1f1d27 0%, #121117 55%, #0a090d 100%);
+}
 :root {
   /* The strip's height: the toolbar starts under it (88px of chrome in all, shell-layout.cjs). */
   --tab-strip-height: 40px;

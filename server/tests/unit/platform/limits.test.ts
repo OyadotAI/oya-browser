@@ -1,7 +1,7 @@
 /**
  * Unit tests for rate limits and quotas: token buckets that refill over time,
  * the 429 answer with its headers, point-in-time and hourly quotas, and
- * limits switched off by configuration.
+ * limits switched off by configuration, and the sweep that reclaims idle buckets.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,11 +12,13 @@ import {
   checkQuota,
   consume,
   enforce,
+  heldBuckets,
   reset,
   status,
+  sweepNow,
 } from '../../../src/platform/limits.ts';
 import * as usage from '../../../src/platform/usage.ts';
-import { MS_PER_MINUTE } from '../../../src/platform/constants.ts';
+import { LIMIT_SWEEP_MS, MS_PER_HOUR, MS_PER_MINUTE } from '../../../src/platform/constants.ts';
 import { FakeResponse, fakeRequest } from '../support/browsers.ts';
 
 /** Spends every token `key` has on the command limit. */
@@ -165,5 +167,42 @@ describe('status', () => {
   it('reports what a key has left after spending', () => {
     consume('command', 'spender');
     assert.equal(status('spender').limits.command.remaining, LIMITS.command.burst - 1);
+  });
+});
+
+describe('sweep', () => {
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    reset();
+    usage.reset();
+  });
+  afterEach(() => mock.timers.reset());
+
+  it('reclaims a bucket that is full again and idle past the sweep interval', () => {
+    consume('login', 'idle@example.com');
+    mock.timers.tick(MS_PER_HOUR + LIMIT_SWEEP_MS);
+    sweepNow();
+    assert.equal(heldBuckets(), 0);
+  });
+
+  it('keeps a bucket that is still owed tokens, however long it sits', () => {
+    for (let i = 0; i < LIMITS.login.burst; i++) consume('login', 'owed@example.com');
+    mock.timers.tick(LIMIT_SWEEP_MS + MS_PER_MINUTE);
+    sweepNow();
+    assert.equal(heldBuckets(), 1);
+  });
+
+  it('keeps a full bucket touched within the sweep interval', () => {
+    consume('command', 'busy');
+    mock.timers.tick(MS_PER_MINUTE);
+    sweepNow();
+    assert.equal(heldBuckets(), 1);
+  });
+
+  it('leaves a swept bucket free to start full again', () => {
+    consume('login', 'back@example.com');
+    mock.timers.tick(MS_PER_HOUR + LIMIT_SWEEP_MS);
+    sweepNow();
+    assert.equal(consume('login', 'back@example.com').remaining, LIMITS.login.burst - 1);
   });
 });

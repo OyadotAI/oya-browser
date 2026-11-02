@@ -121,6 +121,12 @@ describe('Persona', () => {
     assert.equal(ctx.shell.sentOn('fingerprint-changed')[0].id, 'p1');
   });
 
+  it('switching persona closes every incognito window before the old jar, so no incognito page is reopened', async () => {
+    ctx.windows = { closeIncognito: () => order.push('close-incognito') };
+    await ctx.persona.applyServerFingerprint(PROFILE, [{}, {}], 9000);
+    assert.deepEqual(order.slice(0, 2), ['close-incognito', 'drop']);
+  });
+
   it('restores the last session only after the persona cookies are in the jar, and a switch restores none of its own', async () => {
     ctx.sessionTabs = { calls: [], restore: () => order.push('restore') };
     await ctx.persona.applyServerFingerprint(PROFILE, [{}], 9000);

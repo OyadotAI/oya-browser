@@ -48,7 +48,14 @@ const ELEMENT_FIELDS = [
   'hrefRepeats',
 ];
 /** Draft fields copied through untouched when present. */
-const PASSTHROUGH = ['repairedFrom', 'publishedAt', 'publishedRevision', 'run'] as const;
+const PASSTHROUGH = [
+  'repairedFrom',
+  'publishedAt',
+  'publishedRevision',
+  'publishedName',
+  'publishedTo',
+  'run',
+] as const;
 
 /** A deep copy, so a normalized draft never shares state with its input. */
 const clone = <T>(value: T): T => structuredClone(value);

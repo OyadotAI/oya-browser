@@ -36,6 +36,13 @@ describe('shortcutFor', () => {
     assert.equal(shortcutFor(key('PageDown', { shift: true, code: 'PageDown' })), 'move-tab-right');
   });
 
+  it('maps find in page, and next and previous match, as Safari and Chrome do', () => {
+    assert.equal(shortcutFor(key('f')), 'find');
+    assert.equal(shortcutFor(key('g')), 'find-next');
+    assert.equal(shortcutFor(key('G', { shift: true })), 'find-previous');
+    assert.equal(shortcutFor(key('f', { alt: true })), undefined);
+  });
+
   it('leaves a plain Tab, and Tab with Alt, to the page', () => {
     assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab' }), undefined);
     assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab', control: true, alt: true }), undefined);
@@ -93,6 +100,20 @@ describe('Shortcuts', () => {
     assert.equal(press({ type: 'keyDown', key: 'a' }), false);
   });
 
+  it('runs find in page, and next and previous match, in the main process, keeping the keys from the page', () => {
+    const open = mock.method(ctx.findBar, 'open');
+    const step = mock.method(ctx.findBar, 'step');
+    assert.equal(press(key('f')), true);
+    press(key('g'));
+    press(key('G', { shift: true }));
+    assert.equal(open.mock.callCount(), 1);
+    assert.deepEqual(
+      step.mock.calls.map((c) => c.arguments),
+      [[true], [false]],
+    );
+    assert.deepEqual(ctx.shell.sentOn('shell-command'), []);
+  });
+
   it('hands shell commands to the shell page', () => {
     assert.equal(press(key('k')), true);
     assert.deepEqual(ctx.shell.sentOn('shell-command'), ['commands']);
@@ -107,6 +128,19 @@ describe('Shortcuts', () => {
     ctx.control.state.interactive = false;
     press(key('t'));
     assert.equal(ctx.tabs.list.length, 1);
+  });
+
+  it('shift-primary-N opens an incognito window, only for a person in control and only where offered', () => {
+    let opened = 0;
+    ctx.windows = { ownerOfContents: () => undefined, newIncognitoWindow: async () => void opened++ };
+    press(key('n', { shift: true }));
+    assert.equal(opened, 1);
+    ctx.control.state.interactive = false;
+    press(key('n', { shift: true }));
+    ctx.control.state.interactive = true;
+    ctx.incognito = { available: () => false };
+    press(key('n', { shift: true }));
+    assert.equal(opened, 1);
   });
 
   it('closes the active tab and moves between tabs', () => {

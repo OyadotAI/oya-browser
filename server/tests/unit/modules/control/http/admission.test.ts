@@ -33,16 +33,16 @@ function response() {
 describe('reserve', () => {
   it('reserves for the request, marking a server-run provider managed', async () => {
     const id = nextId();
-    const x = await reserve('key-a', request({ id }), 'oya-selfhosted', { id: 'p1', maxConcurrent: 2 });
+    const x = await reserve('key-a', request({ id }), 'oya-selfhosted', { persona: { id: 'p1', maxConcurrent: 2 } });
     assert.equal(x.managed, true);
     assert.equal(x.persona, 'p1');
     assert.equal(x.provider, 'oya-selfhosted');
-    assert.equal((await reserve('key-a', request(), 'cdp', null)).managed, false);
+    assert.equal((await reserve('key-a', request(), 'cdp', {})).managed, false);
   });
 
   it('replays by Idempotency-Key', async () => {
-    const first = await reserve('key-a', request({ a: 1 }, 'idem-1'), 'cdp', null);
-    const again = await reserve('key-a', request({ a: 1 }, 'idem-1'), 'cdp', null);
+    const first = await reserve('key-a', request({ a: 1 }, 'idem-1'), 'cdp', {});
+    const again = await reserve('key-a', request({ a: 1 }, 'idem-1'), 'cdp', {});
     assert.equal(again.id, first.id);
     assert.equal(again.replay, true);
   });

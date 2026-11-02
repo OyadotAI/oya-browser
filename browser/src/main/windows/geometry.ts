@@ -1,6 +1,7 @@
-/** Pure screen-space hit testing for transfers between existing tab strips. */
+/** Screen-space hit testing for transfers between existing tab strips, and where a new window lands. */
 import type { Point, Rectangle } from 'electron';
-import { WINDOW_TAB_STRIP_HEIGHT, DRAG_PREVIEW_OFFSET, DRAG_PREVIEW_SIZE } from './constants.ts';
+import type { AppServices } from '../app/services.ts';
+import { WINDOW_DROP_OFFSET, WINDOW_TAB_STRIP_HEIGHT } from './constants.ts';
 /** Electron screen and window bounds are both device-independent, including on mixed-DPI monitors. */
 export function inTabStrip(point: Point, bounds: Rectangle): boolean {
   return (
@@ -21,13 +22,11 @@ export function inWindow(point: Point, bounds: Rectangle): boolean {
   );
 }
 
-/** Fit a cursor-offset card inside the current display without covering the pointer at the right edge. */
-export function previewPosition(point: Point, area: Rectangle): Point {
-  const right = point.x + DRAG_PREVIEW_OFFSET;
-  const x =
-    right + DRAG_PREVIEW_SIZE.width <= area.x + area.width
-      ? right
-      : point.x - DRAG_PREVIEW_SIZE.width - DRAG_PREVIEW_OFFSET;
-  const y = Math.min(point.y + DRAG_PREVIEW_OFFSET, area.y + area.height - DRAG_PREVIEW_SIZE.height);
-  return { x: Math.round(Math.max(area.x, x)), y: Math.round(Math.max(area.y, y)) };
+/** Keep a new window within the target display's work area, including negative-coordinate monitors. */
+export function placeNear(scope: AppServices, point: Point): void {
+  const area = scope.electron.screen.getDisplayNearestPoint(point).workArea;
+  const bounds = scope.shell.window!.getBounds();
+  const x = Math.max(area.x, Math.min(point.x - WINDOW_DROP_OFFSET, area.x + area.width - bounds.width));
+  const y = Math.max(area.y, Math.min(point.y - WINDOW_DROP_OFFSET, area.y + area.height - bounds.height));
+  scope.shell.window!.setPosition(Math.round(x), Math.round(y));
 }

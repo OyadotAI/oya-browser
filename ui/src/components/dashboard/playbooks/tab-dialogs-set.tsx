@@ -7,6 +7,7 @@ import type { BrowserRow, Persona } from '../types';
 import RecordDialog from './record-dialog';
 import RenameDialog from './rename-dialog';
 import RunDialog from './run-dialog';
+import PlaybookEditor from './editor/playbook-editor';
 import { CodeDialog, RemoveConfirm } from './tab-dialogs';
 import type { PlaybooksTabState } from './use-playbooks-tab';
 
@@ -22,7 +23,7 @@ interface Props {
   personas: Persona[];
 }
 
-/** Code, rename, run, record and delete. */
+/** Code, rename, run, edit, record and delete. */
 export default function PlaybookDialogs({ tab, apiKey, browsers, personas }: Props) {
   const { actions: a, dialogs: d, refresh } = tab;
   return (
@@ -44,6 +45,15 @@ export default function PlaybookDialogs({ tab, apiKey, browsers, personas }: Pro
           personas={personas}
           onClose={() => d.setRunning(null)}
           onFinished={refresh}
+        />
+      )}
+      {d.editing && (
+        <PlaybookEditor
+          apiKey={apiKey}
+          playbook={d.editing}
+          browsers={browsers}
+          onClose={() => d.setEditing(null)}
+          onSaved={refresh}
         />
       )}
       {d.recording && (

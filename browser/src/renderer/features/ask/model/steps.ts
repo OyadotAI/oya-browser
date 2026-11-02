@@ -4,7 +4,7 @@
  */
 import { RendererConstants as C } from '../../../core/constants.ts';
 import { COMMAND_ENTRY, STEP_DETAILS, STEP_NAMES } from './constants.ts';
-import type { DevLogEntry } from './types.ts';
+import type { DevLogEntry, RunUsage } from './types.ts';
 
 /** A command entry's JSON: the command's parameters among its fields. */
 interface CommandJson {
@@ -46,6 +46,27 @@ export function stepLabel(action: string, params: Record<string, unknown>): stri
 export const progressMeta = (steps: number, seconds: number): string =>
   (steps ? `step ${steps} · ` : '') + `${seconds}s`;
 
-/** A finished run's summary: "1 step · 4s", "3 steps · 12s". */
-export const runSummary = (count: number, seconds: number): string =>
-  `${count} step${count === 1 ? '' : 's'} · ${seconds}s`;
+/** A token count off the network: anything but a positive finite number is none. */
+const tokenCount = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0);
+
+/** A run's tokens in all, input and output together: the one figure a per-run budget is set on. */
+const totalTokens = (usage?: RunUsage): number => tokenCount(usage?.input) + tokenCount(usage?.output);
+
+/** Token totals written short: "840", "4.2K", "212K", "1.4M". */
+const COMPACT = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+
+/** The summary's token figure, or '' when the run reported none: a made-up zero would mislead a budget. */
+function tokensPart(usage?: RunUsage): string {
+  const total = totalTokens(usage);
+  return total ? ` · ${COMPACT.format(total)} token${total === 1 ? '' : 's'}` : '';
+}
+
+/** A finished run's summary: "1 step · 4s", "3 steps · 12s · 212K tokens". */
+export const runSummary = (count: number, seconds: number, usage?: RunUsage): string =>
+  `${count} step${count === 1 ? '' : 's'} · ${seconds}s${tokensPart(usage)}`;
+
+/** The exact input and output split, for the summary's tooltip, since they are priced apart; '' with no tokens. */
+export const usageTitle = (usage?: RunUsage): string =>
+  totalTokens(usage)
+    ? `${tokenCount(usage?.input).toLocaleString()} input · ${tokenCount(usage?.output).toLocaleString()} output tokens`
+    : '';

@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Built from the ground up</title></head><body>
+<div><h1>Meet Mars.</h1><p>Three Rust engines. One shared document. Native tools for you and your agents.</p>
+<h2>JavaScript arithmetic</h2><p id="math">Calculating…</p><button id="calculate" onclick="calculate(1)">Use the saved numeric result</button>
+<h2>State and branches</h2><p>Each click updates the counter and recalculates the sum from 1 to count. Reach three to change the message.</p>
+<p id="count">Count: 0</p><p id="sum">Sum from 1 to count: 0</p><p id="branch">Keep going.</p>
+<div><button id="add" onclick="add()">Add one</button></div><div><button id="reset" onclick="reset()">Reset counter</button></div>
+<h2>Methods and saved callbacks</h2><p>Enter a name and create a greeting. The saved callback keeps using the same controller between clicks.</p>
+<label for="name">Your name</label><input id="name" type="text" placeholder="Your name" value="world"><button id="greet" type="button">Say hello</button>
+<p id="result">Your greeting appears here.</p><p id="greeting-count">Greetings created: 0</p><a id="next" href="/second">Continue to the second page →</a>
+<a id="forms" href="/forms">Try styled forms and a session →</a><a id="choose-option" href="/compat/choose-option">Try choosing an option →</a><h2>Owned all the way down</h2><p>Oya handles HTTP framing, document parsing, block flow, text wrapping, event execution and agent operations. macOS supplies the window, controls, fonts and drawing.</p>
+<p>Mars is Oya’s Rust browser for people and agents. Eye owns documents and rendering, V9 runs JavaScript, and Relay handles networking. These engines are under active development toward replacing Oya’s Electron browser.</p>
+<h2>Control is yours</h2><p>Allow an agent from the native toolbar. Take control immediately to revoke queued and in-flight agent changes. Inspection and screenshots observe this same page.</p>
+<h2>Keep exploring</h2><p>Resize this window to see owned text wrapping. Scroll to inspect more of the document. Back, Forward and Reload operate on successfully loaded pages.</p>
+<p>Public HTTPS uses verified TLS. Failed navigation keeps your current page available and shows a recovery message.</p></div>
+<script>/* Object identity and array values survive native service messages. */
+const math = { factors: [2, 3], total: 0 };
+let count = 0;
+const target = 3;
+function showCount() { let sum = 0; for (let i = 1; i <= count; i++) { sum += i; } document.getElementById("count").textContent = "Count: " + count; document.getElementById("sum").textContent = "Sum from 1 to count: " + sum; document.getElementById("branch").textContent = count >= target ? "Target reached." : "Keep going."; }
+function add() { count++; showCount(); }
+function reset() { count = 0; showCount(); }
+function multiply(left, right) { return left * right; }
+let total = multiply(math.factors[0], math.factors[1]) + 8;
+math.total = total;
+document.getElementById("math").textContent = "2 + 3 × 4 = " + math.total;
+function calculate(increment) { let next = math.total + increment; if (next > 14) { math.total = next; } else { math.total = 14; } document.getElementById("math").textContent = "Saved result + 1 = " + math.total; return math.total; }
+function createGreetingController() { const input = document.getElementById("name"); const output = document.getElementById("result"); const counterOutput = document.getElementById("greeting-count"); const button = document.getElementById("greet"); var controller = { greetings: 0, greet: function(prefix, value, processName) { const remember = () => this; var name = processName.call(undefined, value); var name; this.greetings++; output.textContent = prefix + name + "! From your own Rust V9."; counterOutput.textContent = "Greetings created: " + remember().greetings; } }; const saved = controller.greet.bind(controller, "Hello, "); button.addEventListener("click", function(event) { saved.apply(undefined, [input.value, value => value.trim() || "world"]); }); return saved; }
+var controllerBeforeDeclaration = greetingController;
+var greetingController = createGreetingController();
+</script>
+</body></html>

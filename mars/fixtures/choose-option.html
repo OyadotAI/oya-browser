@@ -1,0 +1,36 @@
+<!-- A synthetic native compatibility journey exercises ordinary V9 equality and array predicates. -->
+<!doctype html><html><head><meta charset="utf-8"><title>Choose an option</title>
+<style>body{font:16px system-ui,sans-serif;margin:32px;max-width:620px}input{max-width:480px}</style>
+</head><body>
+<h1>Choose an option</h1>
+<p>Enter an option number or language code, then choose Find option.</p>
+<p>1 · en · English</p><p>2 · es · Español</p><p>3 · ja · 日本語</p>
+<label for="option-query">Number or language code</label>
+<input id="option-query" type="text" value="2" placeholder="For example, 2 or es">
+<button id="option-check" type="button" onclick="chooseOption()">Find option</button>
+<p id="option-status">Ready to check.</p><p id="option-result">No option selected.</p>
+<a id="option-back" href="/demo">Back to the native demo</a>
+<script>
+const europeanOptions=[{id:1,code:'en',label:'English'},{id:2,code:'es',label:'Español'}]
+const japaneseOptions=[{id:3,code:'ja',label:[...'日本語'].join('')}]
+const options=[...europeanOptions,...japaneseOptions]
+function chooseOption(){
+  const query=document.getElementById('option-query').value.trim()
+  let status='Enter a number or language code.'
+  let detail='No option selected.'
+  if(query){
+    const matches=option=>option.id==query||option.code===query
+    const available=options.some(matches)
+    if(available){
+      const selected=options.find(matches)
+      status='Match found.'
+      detail='Selected: '+selected.label+' ('+selected.id+', '+selected.code+').'
+    }else{
+      status='No matching option.'
+      detail='Try 1, 2, 3, en, es or ja.'
+    }
+  }
+  document.getElementById('option-status').textContent=status
+  document.getElementById('option-result').textContent=detail
+}
+</script></body></html>

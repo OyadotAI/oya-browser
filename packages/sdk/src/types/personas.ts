@@ -91,6 +91,8 @@ export interface PersonaInfo {
   proxy: {
     /** Two-letter country, optionally a region. */
     geo: string | null;
+    /** Present and true when it runs with no proxy at all. */
+    direct?: boolean;
   } | null;
   /** The proxy it is actually on, once assigned or pinned. */
   exit: {
@@ -239,3 +241,15 @@ export interface Cookie {
 
 /** The formats a jar is exported in: as stored, or ready for Playwright's `context.addCookies()`. */
 export type CookieFormat = 'json' | 'playwright';
+
+/** A named set of personas a browser start can run as instead of one persona. */
+export interface PersonaGroup {
+  /** What `start({ personaGroup })` passes; unique per key, and cannot be renamed. */
+  name: string;
+  /** Its member personas that still exist. */
+  personaIds: string[];
+  /** When it was made (ISO). */
+  createdAt: string;
+  /** When its members last changed (ISO). */
+  updatedAt: string;
+}

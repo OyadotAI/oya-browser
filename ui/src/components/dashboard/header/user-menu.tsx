@@ -79,7 +79,7 @@ function AccountMenu({ onOpenProfile, onClose }: Props & { /** Closes the menu. 
             logout();
             onClose();
           }}
-          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red hover:bg-red/10 rounded-md transition-colors"
         >
           <LogOut className="w-4 h-4" />
           Log out

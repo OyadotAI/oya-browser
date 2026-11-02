@@ -14,6 +14,7 @@ export const ROUTINES_TEXT = {
   off: 'Off',
   dueNow: 'Due now',
   waiting: (why: string) => `Waiting: ${why}`,
+  otherProfile: 'switch to this routine’s profile',
   next: (when: string) => `Next ${when}`,
   runningHere: (elapsed: string) => `Running on this browser · ${elapsed}`,
   runningElsewhere: 'Running on another Oya browser',
@@ -68,6 +69,13 @@ export const EDITOR_TEXT = {
   editTitle: 'Edit routine',
   create: 'Save routine',
   update: 'Save changes',
+  values: 'Values',
+  valuesHint: 'Leave a value blank to use the playbook’s own.',
+  secret: 'Uses the playbook’s saved value',
+  profile: 'Profile',
+  defaultProfile: 'Default',
+  profileHint: 'Runs only while this browser is on this profile.',
+  profileCloudHint: 'The cloud browser runs as this profile.',
 } as const;
 
 /** The editor's field sizes (match the server's limits on a name and a prompt). */

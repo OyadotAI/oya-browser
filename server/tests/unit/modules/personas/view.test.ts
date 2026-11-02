@@ -56,6 +56,22 @@ describe('describePersona', () => {
     assert.equal(view.exit, null);
   });
 
+  it('shows no exit for a direct persona, even one still pinned to a proxy', () => {
+    const pinned = { id: 'px-1', label: 'Denver', geo: 'US', available: true };
+    const { service, deps } = personaService({
+      proxies: { assigned: () => pinned, residential: () => ({ geo: 'DE' }) },
+    });
+    const view = describePersona(service.create('k', { proxy: { direct: true } }), service, deps);
+    assert.equal(view.exit, null);
+    assert.equal(view.proxy?.direct, true);
+  });
+
+  it('leaves direct out of the proxy of a persona that is not direct', () => {
+    const { service, deps } = personaService({ proxies: { assigned: () => null, residential: () => null } });
+    const view = describePersona(service.create('k', { proxy: { host: 'h' } }), service, deps);
+    assert.equal('direct' in (view.proxy ?? {}), false);
+  });
+
   it('shows no exit when there is none to fall back to', () => {
     const { service, deps } = personaService();
     assert.equal(describePersona(service.create('k'), service, deps).exit, null);

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { DesktopDialogs } from '../../../../src/main/dialogs/index.ts';
+import { incognitoSession } from '../../support/incognito.ts';
 /** Test engine replies are not auto-deciding, and debugger access always fails. */
 function fixture(initial = true) {
   let human = initial;
@@ -181,5 +182,18 @@ test('a stock engine page is left to its own dialogs instead of failing the tab'
   const { dialogs } = fixture();
   const page = Object.assign(new EventEmitter(), { isDestroyed: () => false });
   assert.doesNotThrow(() => dialogs.watch(page as any));
+  assert.equal(page.listenerCount('did-start-navigation'), 0);
+});
+test('an incognito page keeps its own dialogs: never hooked for an agent or noted', async () => {
+  const dialogs = new DesktopDialogs(
+    () => false,
+    () => () => {},
+    () => assert.fail('no note'),
+  );
+  const page = Object.assign(new EventEmitter(), {
+    session: await incognitoSession(),
+    _setOyaDialogHandler: () => assert.fail('an incognito page must not be hooked'),
+  });
+  dialogs.watch(page as any);
   assert.equal(page.listenerCount('did-start-navigation'), 0);
 });

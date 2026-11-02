@@ -1,0 +1,960 @@
+/** Statement lowering: declarations, scopes, loops, switch, labels and exception handlers. */
+use super::scan;
+use super::*;
+use crate::v9::syntax::{Case, Declarator, ForHead, ForInit, Pattern, StmtKind, VarKind};
+
+/** Which kind of for-each loop is being lowered. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Each {
+    In,
+    Of,
+    AwaitOf,
+}
+
+impl Compiler {
+    /** Top-level declarations: global vars and functions now, global lexical bindings in their dead zone. */
+    pub(super) fn global_declarations(&mut self, body: &[Stmt]) -> EngineResult<()> {
+        early_conflict(body, self.f().strict, true, &[])?;
+        let mut vars = Vec::new();
+        scan::var_names(body, self.f().strict, true, &mut vars);
+        let mut required = Vec::new();
+        scan::var_names(body, true, true, &mut required);
+        let functions = scan::function_declarations(body);
+        self.check_global_declarations(&required, &functions, false)?;
+        let lexical = lexical_declarations(body);
+        // Every check passes before any binding exists (spec GlobalDeclarationInstantiation).
+        for (name, _, pos) in &lexical {
+            self.at(*pos);
+            let index = self.name(name)?;
+            self.emit(Op::CheckGlobalLexical(index));
+        }
+        let required: std::collections::HashSet<&Name> = required.iter().collect();
+        for name in &vars {
+            let index = self.name(name)?;
+            self.emit(if required.contains(name) {
+                Op::DeclareVar(index, false)
+            } else {
+                Op::DeclareOptionalVar(index)
+            });
+            self.declare(name, Declared::Var)?;
+        }
+        // Hoisted, yet a redeclaration error points at the declaration's own line.
+        for (name, kind, pos) in lexical {
+            self.at(pos);
+            let index = self.name(&name)?;
+            self.emit(Op::DeclareLexical(index, kind.immutable()));
+            self.declare(
+                &name,
+                if kind.immutable() {
+                    Declared::Const
+                } else {
+                    Declared::Let
+                },
+            )?;
+        }
+        for func in functions {
+            let name = func.name.clone().expect("declaration name");
+            self.closure(&func, false)?;
+            let index = self.name(&name)?;
+            self.emit(Op::DeclareFunction(index, false));
+            self.declare(&name, Declared::Var)?;
+        }
+        Ok(())
+    }
+    /** Check each final function first, then ordinary vars, before declarations can mutate the global. */
+    pub(super) fn check_global_declarations(
+        &mut self,
+        vars: &[Name],
+        functions: &[Arc<Func>],
+        eval: bool,
+    ) -> EngineResult<()> {
+        let mut seen = std::collections::HashSet::new();
+        for function in functions.iter().rev() {
+            let name = function.name.as_ref().expect("declaration name");
+            if seen.insert(name) {
+                let index = self.name(name)?;
+                self.emit(Op::CheckGlobalFunction(index, eval));
+            }
+        }
+        for name in vars {
+            if seen.insert(name) {
+                let index = self.name(name)?;
+                self.emit(Op::CheckGlobalVar(index, eval));
+            }
+        }
+        Ok(())
+    }
+    /** Statements, with top-level expression values stored for eval's completion value. */
+    pub(super) fn statements_with_result(
+        &mut self,
+        body: &[Stmt],
+        result: Option<Slot>,
+    ) -> EngineResult<()> {
+        let outer = std::mem::replace(&mut self.f().completion, result);
+        let done = self.statements(body);
+        self.f().completion = outer;
+        done
+    }
+    /** Reset the completion value to undefined: the statement about to run produces undefined
+    unless something inside it stores a value (spec UpdateEmpty(stmtResult, undefined)). */
+    fn reset_completion(&mut self) {
+        if let Some(slot) = self.f().completion {
+            self.emit(Op::Undefined);
+            self.emit(Op::SetReg(slot));
+            self.emit(Op::Pop);
+        }
+    }
+    /** Statements in order. */
+    pub(super) fn statements(&mut self, body: &[Stmt]) -> EngineResult<()> {
+        if let Some(asynchronous) = super::resources::resource_kind(body) {
+            return self.resource_scope(asynchronous, |this| this.statements_plain(body));
+        }
+        self.statements_plain(body)
+    }
+    /** Lower a list inside an already installed resource region, if it has any resources. */
+    fn statements_plain(&mut self, body: &[Stmt]) -> EngineResult<()> {
+        for stmt in body {
+            self.stmt(stmt)?;
+        }
+        Ok(())
+    }
+    /** One statement. */
+    pub(super) fn stmt(&mut self, stmt: &Stmt) -> EngineResult<()> {
+        self.at(stmt.pos);
+        let labels = std::mem::take(&mut self.f().pending_labels);
+        if matches!(
+            stmt.kind,
+            StmtKind::If(..)
+                | StmtKind::For { .. }
+                | StmtKind::ForIn(..)
+                | StmtKind::ForOf(..)
+                | StmtKind::While(..)
+                | StmtKind::DoWhile(..)
+                | StmtKind::Try { .. }
+                | StmtKind::Switch(..)
+                | StmtKind::With(..)
+        ) {
+            self.reset_completion();
+        }
+        match &stmt.kind {
+            StmtKind::Expr(value) => {
+                self.expr(value)?;
+                if let Some(slot) = self.f().completion {
+                    self.emit(Op::SetReg(slot));
+                }
+                self.emit(Op::Pop);
+            }
+            StmtKind::Var(kind, list) => self.declarations(*kind, list)?,
+            StmtKind::Function(func) => {
+                // Hoisted; sloppy block functions also update the function-level var (Annex B).
+                if !self.f().strict
+                    && !func.flags.generator
+                    && !func.flags.asynchronous
+                    && let Some(name) = &func.name
+                    && self.scopes.last().is_some_and(|scope| !scope.boundary)
+                    && !self.f().annex_skip.contains(name)
+                {
+                    self.load_name(name, stmt.pos)?;
+                    self.store_var_outward(name, stmt.pos)?;
+                    self.emit(Op::Pop);
+                }
+            }
+            StmtKind::Class(class) => {
+                self.class(class)?;
+                let name = class.name.clone().expect("class declaration name");
+                self.initialize(&name, stmt.pos)?;
+                self.emit(Op::Pop);
+            }
+            StmtKind::Return(value) => self.return_statement(value.as_ref())?,
+            StmtKind::If(test, yes, no) => {
+                self.expr(test)?;
+                let skip = self.emit(Op::JumpIfFalse(0));
+                self.stmt(yes)?;
+                if let Some(no) = no {
+                    let end = self.emit(Op::Jump(0));
+                    self.patch(skip);
+                    self.stmt(no)?;
+                    self.patch(end);
+                } else {
+                    self.patch(skip);
+                }
+            }
+            StmtKind::Block(body) => self.block(body, labels)?,
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(ForInit::Declare(kind, _)) = init
+                    && kind.resource()
+                {
+                    self.resource_scope(*kind == VarKind::AwaitUsing, |this| {
+                        this.for_loop(
+                            stmt,
+                            init.as_ref(),
+                            test.as_ref(),
+                            update.as_ref(),
+                            body,
+                            labels,
+                        )
+                    })?;
+                } else {
+                    self.for_loop(
+                        stmt,
+                        init.as_ref(),
+                        test.as_ref(),
+                        update.as_ref(),
+                        body,
+                        labels,
+                    )?;
+                }
+            }
+            StmtKind::ForIn(head, right, body) => {
+                self.for_each(stmt, head, right, body, Each::In, labels)?
+            }
+            StmtKind::ForOf(head, right, body, is_await) => {
+                let kind = if *is_await { Each::AwaitOf } else { Each::Of };
+                self.for_each(stmt, head, right, body, kind, labels)?
+            }
+            StmtKind::While(test, body) => {
+                self.push_target(labels, TargetKind::Loop);
+                let start = self.here();
+                self.expr(test)?;
+                let exit = self.emit(Op::JumpIfFalse(0));
+                self.stmt(body)?;
+                self.emit(Op::Jump(start as u32));
+                self.patch(exit);
+                self.pop_target(start as u32);
+            }
+            StmtKind::DoWhile(body, test) => {
+                self.push_target(labels, TargetKind::Loop);
+                let start = self.here();
+                self.stmt(body)?;
+                let next = self.here() as u32;
+                self.expr(test)?;
+                self.emit(Op::JumpIfTrue(start as u32));
+                self.pop_target(next);
+            }
+            StmtKind::Break(label) => self.jump(label.as_ref(), true, stmt.pos)?,
+            StmtKind::Continue(label) => self.jump(label.as_ref(), false, stmt.pos)?,
+            StmtKind::Throw(value) => {
+                self.expr(value)?;
+                self.at(stmt.pos);
+                self.emit(Op::Throw);
+            }
+            StmtKind::Try {
+                block,
+                param,
+                handler,
+                finalizer,
+            } => self.try_statement(
+                block,
+                param.as_ref(),
+                handler.as_deref(),
+                finalizer.as_deref(),
+            )?,
+            StmtKind::Switch(value, cases) => self.switch(value, cases, labels)?,
+            StmtKind::Labeled(name, body) => {
+                let mut labels = labels;
+                labels.push(name.clone());
+                if is_loop(body) {
+                    self.f().pending_labels = labels;
+                    self.stmt(body)?;
+                } else {
+                    self.push_target(labels, TargetKind::Block);
+                    self.stmt(body)?;
+                    let end = self.here() as u32;
+                    self.pop_target(end);
+                }
+            }
+            StmtKind::Empty => {}
+            // Strict eval code inherits its caller's strictness after parsing (spec 14.11.1).
+            StmtKind::With(..) if self.f().strict => {
+                return Err(errors::syntax(
+                    stmt.pos.location(),
+                    "Strict mode code may not include a with statement",
+                ));
+            }
+            StmtKind::With(object, body) => self.with_statement(object, body, labels)?,
+            StmtKind::Field(key, value) => self.field(key, value.as_ref())?,
+        }
+        Ok(())
+    }
+    /**
+     * `with (object) body` (spec 14.11, V8's with context): the object, converted with
+     * ToObject, sits in the hidden `%with` slot of a fresh environment, and every name the body
+     * looks up across that scope checks it first (see `ext_checks`).
+     */
+    fn with_statement(
+        &mut self,
+        object: &Expr,
+        body: &Stmt,
+        labels: Vec<Name>,
+    ) -> EngineResult<()> {
+        let labeled = !labels.is_empty();
+        if labeled {
+            self.push_target(labels, TargetKind::Block);
+        }
+        self.expr(object)?;
+        self.emit(Op::ToObject);
+        self.push_scope(true, false);
+        self.f().envs += 1;
+        self.emit(Op::PushEnv(1));
+        self.declare(&Name::from(super::eval::WITH), Declared::Hidden)?;
+        self.emit(Op::SetEnv(0, 0));
+        self.emit(Op::Pop);
+        self.stmt(body)?;
+        self.scopes.pop();
+        self.emit(Op::PopEnv);
+        self.f().envs -= 1;
+        if labeled {
+            let end = self.here() as u32;
+            self.pop_target(end);
+        }
+        Ok(())
+    }
+    /** A block with its own scope when it declares anything lexical. */
+    fn block(&mut self, body: &[Stmt], labels: Vec<Name>) -> EngineResult<()> {
+        let labeled = !labels.is_empty();
+        if labeled {
+            self.push_target(labels, TargetKind::Block);
+        }
+        let mark = self.enter_block(body)?;
+        self.statements(body)?;
+        self.leave_block(mark);
+        if labeled {
+            let end = self.here() as u32;
+            self.pop_target(end);
+        }
+        Ok(())
+    }
+    /** Open a block scope for a statement list's lexical declarations; returns cleanup data. */
+    pub(super) fn enter_block(
+        &mut self,
+        body: &[Stmt],
+    ) -> EngineResult<Option<(Slot, bool, usize)>> {
+        early_conflict(body, self.f().strict, false, &[])?;
+        let lexical = scan::lexical_names(body, true);
+        if lexical.is_empty() {
+            return Ok(None);
+        }
+        let env = scan::has_closure(body);
+        let mark = self.f().registers;
+        self.push_scope(env, false);
+        let push = if env {
+            self.f().envs += 1;
+            Some(self.emit(Op::PushEnv(0)))
+        } else {
+            None
+        };
+        for (name, kind) in lexical {
+            let declared = if kind.immutable() {
+                Declared::Const
+            } else {
+                Declared::Let
+            };
+            if let Place::Register(slot) = self.declare(&name, declared)? {
+                self.emit(Op::Hole);
+                self.emit(Op::SetReg(slot));
+                self.emit(Op::Pop);
+            }
+        }
+        for func in scan::function_declarations(body) {
+            let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
+            self.closure(&func, false)?;
+            self.initialize(&name, func.pos)?;
+            self.emit(Op::Pop);
+        }
+        Ok(Some((mark, env, push.unwrap_or(usize::MAX))))
+    }
+    /** Close a block scope opened by `enter_block`. */
+    pub(super) fn leave_block(&mut self, mark: Option<(Slot, bool, usize)>) {
+        let Some((registers, env, push)) = mark else {
+            return;
+        };
+        let scope = self.scopes.pop().expect("block scope");
+        if env {
+            self.f().ops[push] = Op::PushEnv(scope.slots);
+            self.emit(Op::PopEnv);
+            self.f().envs -= 1;
+        }
+        self.release(registers);
+    }
+    /** `var`, `let` and `const` declarations. */
+    fn declarations(&mut self, kind: VarKind, list: &[Declarator]) -> EngineResult<()> {
+        for declarator in list {
+            match &declarator.init {
+                Some(init) => {
+                    self.expr(init)?;
+                    self.resource_add(kind);
+                    let source = Source::Expr(init);
+                    self.bind_pattern(&declarator.target, kind != VarKind::Var, source)?;
+                    self.emit(Op::Pop);
+                }
+                None if kind == VarKind::Let => {
+                    self.emit(Op::Undefined);
+                    self.bind_pattern(&declarator.target, true, Source::Parameter)?;
+                    self.emit(Op::Pop);
+                }
+                None => {}
+            }
+        }
+        Ok(())
+    }
+    /** `return`, which constructors and derived constructors finish specially. */
+    fn return_statement(&mut self, value: Option<&Expr>) -> EngineResult<()> {
+        match value {
+            Some(value) => {
+                self.expr(value)?;
+                // An async generator awaits the value it returns.
+                let flags = self.f().flags;
+                if flags.asynchronous && flags.generator {
+                    self.emit(Op::Await);
+                }
+            }
+            None => {
+                self.emit(Op::Undefined);
+            }
+        }
+        if self.f().flags.derived {
+            self.load_this_raw()?;
+            self.emit(Op::ReturnDerived);
+        } else {
+            self.emit(Op::Return);
+        }
+        Ok(())
+    }
+    /** Push a break/continue target. */
+    fn push_target(&mut self, labels: Vec<Name>, kind: TargetKind) {
+        let (handlers, envs) = (self.f().handlers, self.f().envs);
+        self.f().targets.push(Target {
+            labels,
+            kind,
+            breaks: Vec::new(),
+            continues: Vec::new(),
+            handlers,
+            envs,
+        });
+    }
+    /** Pop a target, pointing continues at `next` and breaks here. */
+    fn pop_target(&mut self, next: u32) {
+        let target = self.f().targets.pop().expect("target");
+        for index in target.continues {
+            self.patch_to(index, next);
+        }
+        for index in target.breaks {
+            self.patch(index);
+        }
+    }
+    /** `break` and `continue`, leaving handlers and environments on the way. */
+    fn jump(&mut self, label: Option<&Name>, is_break: bool, pos: Pos) -> EngineResult<()> {
+        let targets = &self.f().targets;
+        let index = match label {
+            Some(label) => targets
+                .iter()
+                .rposition(|target| target.labels.contains(label)),
+            None if is_break => targets
+                .iter()
+                .rposition(|target| target.kind != TargetKind::Block),
+            None => targets
+                .iter()
+                .rposition(|target| target.kind == TargetKind::Loop),
+        }
+        .ok_or_else(|| self.error(pos, "Illegal break or continue target"))?;
+        let (handlers, envs) = {
+            let target = &self.f().targets[index];
+            (target.handlers, target.envs)
+        };
+        let jump = if handlers != self.f().handlers {
+            self.emit(Op::JumpOut(0, handlers, envs))
+        } else {
+            for _ in envs..self.f().envs {
+                self.emit(Op::PopEnv);
+            }
+            self.emit(Op::Jump(0))
+        };
+        let target = &mut self.f().targets[index];
+        if is_break {
+            target.breaks.push(jump);
+        } else {
+            target.continues.push(jump);
+        }
+        Ok(())
+    }
+    /** A C-style for loop; `let` bindings are copied per iteration when closures can see them. */
+    fn for_loop(
+        &mut self,
+        stmt: &Stmt,
+        init: Option<&ForInit>,
+        test: Option<&Expr>,
+        update: Option<&Expr>,
+        body: &Stmt,
+        labels: Vec<Name>,
+    ) -> EngineResult<()> {
+        let lexical = match init {
+            Some(ForInit::Declare(
+                kind @ (VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing),
+                list,
+            )) => Some((*kind, list)),
+            _ => None,
+        };
+        let mut scope = None;
+        if let Some((_, list)) = lexical {
+            let mut names = Vec::new();
+            for declarator in list {
+                scan::bound_names(&declarator.target, &mut names);
+            }
+            head_conflict(stmt, &names, body)?;
+        }
+        if let Some((kind, list)) = lexical {
+            let env = scan::stmt_has_closure(stmt);
+            let mark = self.f().registers;
+            self.push_scope(env, false);
+            let push = env.then(|| {
+                self.f().envs += 1;
+                self.emit(Op::PushEnv(0))
+            });
+            for declarator in list {
+                let mut names = Vec::new();
+                scan::bound_names(&declarator.target, &mut names);
+                for name in names {
+                    let declared = if kind.immutable() {
+                        Declared::Const
+                    } else {
+                        Declared::Let
+                    };
+                    if let Place::Register(slot) = self.declare(&name, declared)? {
+                        self.emit(Op::Hole);
+                        self.emit(Op::SetReg(slot));
+                        self.emit(Op::Pop);
+                    }
+                }
+            }
+            scope = Some((mark, env, push));
+        }
+        match init {
+            Some(ForInit::Declare(kind, list)) => self.declarations(*kind, list)?,
+            Some(ForInit::Expr(value)) => {
+                self.expr(value)?;
+                self.emit(Op::Pop);
+            }
+            None => {}
+        }
+        self.push_target(labels, TargetKind::Loop);
+        let start = self.here();
+        let exit = match test {
+            Some(test) => {
+                self.expr(test)?;
+                Some(self.emit(Op::JumpIfFalse(0)))
+            }
+            None => None,
+        };
+        self.stmt(body)?;
+        let next = self.here() as u32;
+        if scope.as_ref().is_some_and(|(_, env, _)| *env) {
+            self.emit(Op::CopyEnv);
+        }
+        if let Some(update) = update {
+            self.expr(update)?;
+            self.emit(Op::Pop);
+        }
+        self.emit(Op::Jump(start as u32));
+        if let Some(exit) = exit {
+            self.patch(exit);
+        }
+        self.pop_target(next);
+        if let Some((mark, env, push)) = scope {
+            let block = self.scopes.pop().expect("for scope");
+            if env {
+                if let Some(push) = push {
+                    self.f().ops[push] = Op::PushEnv(block.slots);
+                }
+                self.emit(Op::PopEnv);
+                self.f().envs -= 1;
+            }
+            self.release(mark);
+        }
+        Ok(())
+    }
+    /** for-in and for-of; the iterator lives in a register so jumps never strand stack values. */
+    fn for_each(
+        &mut self,
+        stmt: &Stmt,
+        head: &ForHead,
+        right: &Expr,
+        body: &Stmt,
+        kind: Each,
+        labels: Vec<Name>,
+    ) -> EngineResult<()> {
+        let of = kind != Each::In;
+        let mark = self.f().registers;
+        let iterator = self.temp()?;
+        let iteration_value = self.temp()?;
+        self.iteration_rhs(head, right, scan::stmt_has_closure(stmt))?;
+        if kind == Each::Of {
+            self.record_iterable(right);
+        }
+        self.emit(match kind {
+            Each::In => Op::ForIn,
+            Each::Of => Op::GetIterator,
+            Each::AwaitOf => Op::GetAsyncIterator,
+        });
+        self.emit(Op::SetReg(iterator));
+        self.emit(Op::Pop);
+        self.push_target(labels, TargetKind::Loop);
+        let start = self.here();
+        self.emit(Op::GetReg(iterator));
+        let exit = match kind {
+            Each::In => self.emit(Op::ForInNext(0)),
+            Each::Of => self.emit(Op::IterNext(0)),
+            Each::AwaitOf => {
+                // for await: the next() result is awaited before its done and value are read.
+                self.emit(Op::AsyncIterNext);
+                self.emit(Op::Await);
+                self.emit(Op::AsyncIterValue(0))
+            }
+        };
+        self.emit(Op::SetReg(iteration_value));
+        self.emit(Op::Pop);
+        // Each iteration gets fresh lexical bindings.
+        let lexical = matches!(
+            head,
+            ForHead::Declare(
+                VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing,
+                _
+            )
+        );
+        let mut scope = None;
+        if let ForHead::Declare(
+            kind @ (VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing),
+            pattern,
+        ) = head
+        {
+            let env = scan::stmt_has_closure(stmt);
+            let inner = self.f().registers;
+            self.push_scope(env, false);
+            let push = env.then(|| {
+                self.f().envs += 1;
+                self.emit(Op::PushEnv(0))
+            });
+            let mut names = Vec::new();
+            scan::bound_names(pattern, &mut names);
+            head_conflict(stmt, &names, body)?;
+            for name in names {
+                let place = self.declare(
+                    &name,
+                    if kind.immutable() {
+                        Declared::Const
+                    } else {
+                        Declared::Let
+                    },
+                )?;
+                self.emit(Op::Hole);
+                self.set_place(place, 0);
+                self.emit(Op::Pop);
+            }
+            scope = Some((inner, env, push));
+        }
+        let iteration = |this: &mut Self| -> EngineResult<()> {
+            this.emit(Op::GetReg(iteration_value));
+            match head {
+                ForHead::Declare(kind, pattern) => {
+                    this.resource_add(*kind);
+                    this.bind_pattern(pattern, lexical, Source::Text(FOR_VALUE))?;
+                }
+                ForHead::Target(pattern) => {
+                    this.assign_pattern(pattern, Source::Text(FOR_VALUE))?
+                }
+            }
+            this.emit(Op::Pop);
+            this.stmt(body)
+        };
+        let cleanup = |this: &mut Self| -> EngineResult<()> {
+            if let ForHead::Declare(kind, _) = head
+                && kind.resource()
+            {
+                this.resource_scope(*kind == VarKind::AwaitUsing, iteration)
+            } else {
+                iteration(this)
+            }
+        };
+        if of {
+            self.iterator_scope(iterator, start as u32, kind == Each::AwaitOf, cleanup)?;
+        } else {
+            cleanup(self)?;
+        }
+        if let Some((inner, env, push)) = scope {
+            let block = self.scopes.pop().expect("loop scope");
+            if env {
+                if let Some(push) = push {
+                    self.f().ops[push] = Op::PushEnv(block.slots);
+                }
+                self.emit(Op::PopEnv);
+                self.f().envs -= 1;
+            }
+            self.release(inner);
+        }
+        self.emit(Op::Jump(start as u32));
+        // Each abrupt iteration closes before leaving; exhaustion and local continue bypass closure.
+        self.pop_target(start as u32);
+        self.patch(exit);
+        self.release(mark);
+        Ok(())
+    }
+    /** `switch`: one scope for all clauses, strict-equality dispatch, fallthrough bodies. */
+    fn switch(&mut self, value: &Expr, cases: &[Case], labels: Vec<Name>) -> EngineResult<()> {
+        let mark = self.f().registers;
+        let discriminant = self.temp()?;
+        self.expr(value)?;
+        self.emit(Op::SetReg(discriminant));
+        self.emit(Op::Pop);
+        let all: Vec<&Stmt> = cases.iter().flat_map(|case| case.body.iter()).collect();
+        let block_mark = self.enter_block_refs(&all)?;
+        let mut jumps = Vec::new();
+        for case in cases {
+            if let Some(test) = &case.test {
+                self.emit(Op::GetReg(discriminant));
+                self.expr(test)?;
+                self.emit(Op::StrictEq);
+                jumps.push(Some(self.emit(Op::JumpIfTrue(0))));
+            } else {
+                jumps.push(None);
+            }
+        }
+        let fallback = self.emit(Op::Jump(0));
+        self.push_target(labels, TargetKind::Switch);
+        let mut default = None;
+        for (case, jump) in cases.iter().zip(jumps) {
+            match jump {
+                Some(jump) => self.patch(jump),
+                None => default = Some(self.here()),
+            }
+            self.statements(&case.body)?;
+        }
+        match default {
+            Some(default) => self.patch_to(fallback, default as u32),
+            None => self.patch(fallback),
+        }
+        let end = self.here() as u32;
+        self.pop_target(end);
+        self.leave_block(block_mark);
+        self.release(mark);
+        Ok(())
+    }
+    /** `enter_block` over statements gathered from several clauses. */
+    fn enter_block_refs(&mut self, body: &[&Stmt]) -> EngineResult<Option<(Slot, bool, usize)>> {
+        // Lexical names and closures are found per statement, so a borrowed list suffices.
+        let mut lexical = Vec::new();
+        let mut functions = Vec::new();
+        let mut env = false;
+        for stmt in body {
+            lexical.extend(scan::lexical_names(std::slice::from_ref(*stmt), true));
+            functions.extend(scan::function_declarations(std::slice::from_ref(*stmt)));
+            env |= scan::stmt_has_closure(stmt);
+        }
+        if lexical.is_empty() {
+            return Ok(None);
+        }
+        let mark = self.f().registers;
+        self.push_scope(env, false);
+        let push = if env {
+            self.f().envs += 1;
+            self.emit(Op::PushEnv(0))
+        } else {
+            usize::MAX
+        };
+        for (name, kind) in lexical {
+            let declared = if kind.immutable() {
+                Declared::Const
+            } else {
+                Declared::Let
+            };
+            if let Place::Register(slot) = self.declare(&name, declared)? {
+                self.emit(Op::Hole);
+                self.emit(Op::SetReg(slot));
+                self.emit(Op::Pop);
+            }
+        }
+        for func in functions {
+            let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
+            self.closure(&func, false)?;
+            self.initialize(&name, func.pos)?;
+            self.emit(Op::Pop);
+        }
+        Ok(Some((mark, env, push)))
+    }
+    /** try/catch/finally with handler records and a saved completion for finally. */
+    fn try_statement(
+        &mut self,
+        block: &[Stmt],
+        param: Option<&Pattern>,
+        handler: Option<&[Stmt]>,
+        finalizer: Option<&[Stmt]>,
+    ) -> EngineResult<()> {
+        let mark = self.f().registers;
+        let completion = if finalizer.is_some() {
+            let first = self.temp()?;
+            self.temp()?;
+            self.temp()?;
+            Some(first)
+        } else {
+            None
+        };
+        let outer = match completion {
+            Some(slot) => {
+                self.f().handlers += 1;
+                Some(self.emit(Op::PushTry(0, 0, slot)))
+            }
+            None => None,
+        };
+        let inner = handler.map(|_| {
+            self.f().handlers += 1;
+            self.emit(Op::PushTry(0, 0, 0))
+        });
+        self.block(block, Vec::new())?;
+        if let (Some(handler), Some(inner)) = (handler, inner) {
+            self.emit(Op::PopTry);
+            self.f().handlers -= 1;
+            let skip = self.emit(Op::Jump(0));
+            let catch = self.here() as u32;
+            self.f().ops[inner] = Op::PushTry(catch, 0, 0);
+            self.reset_completion();
+            self.catch_clause(param, handler)?;
+            self.patch(skip);
+        }
+        if let (Some(finalizer), Some(outer), Some(slot)) = (finalizer, outer, completion) {
+            self.emit(Op::PopTry);
+            self.f().handlers -= 1;
+            self.emit(Op::Normal(slot));
+            let start = self.here() as u32;
+            self.f().ops[outer] = Op::PushTry(0, start, slot);
+            // A finally block that completes normally keeps the try's completion value.
+            let saved = match self.f().completion {
+                Some(result) => {
+                    let saved = self.temp()?;
+                    self.emit(Op::GetReg(result));
+                    self.emit(Op::SetReg(saved));
+                    self.emit(Op::Pop);
+                    Some((result, saved))
+                }
+                None => None,
+            };
+            self.statements_scoped(finalizer)?;
+            if let Some((result, saved)) = saved {
+                self.emit(Op::GetReg(saved));
+                self.emit(Op::SetReg(result));
+                self.emit(Op::Pop);
+            }
+            self.emit(Op::EndFinally(slot));
+        }
+        self.release(mark);
+        Ok(())
+    }
+    /** A finally body as its own block. */
+    fn statements_scoped(&mut self, body: &[Stmt]) -> EngineResult<()> {
+        let mark = self.enter_block(body)?;
+        self.statements(body)?;
+        self.leave_block(mark);
+        Ok(())
+    }
+    /** The catch clause: the thrown value is on the stack. */
+    fn catch_clause(&mut self, param: Option<&Pattern>, body: &[Stmt]) -> EngineResult<()> {
+        let Some(param) = param else {
+            self.emit(Op::Pop);
+            return self.block(body, Vec::new());
+        };
+        let mut names = Vec::new();
+        scan::bound_names(param, &mut names);
+        super::catch_bindings::validate(param, &names, body)?;
+        let env = scan::has_closure(body) || scan::pattern_has_closure(param);
+        let mark = self.f().registers;
+        self.push_scope(env, false);
+        let push = env.then(|| {
+            self.f().envs += 1;
+            self.emit(Op::PushEnv(0))
+        });
+        let declared = if matches!(param, Pattern::Ident(..)) {
+            Declared::Catch
+        } else {
+            Declared::Let
+        };
+        for name in &names {
+            let place = self.declare(name, declared)?;
+            self.emit(Op::Hole);
+            self.set_place(place, 0);
+            self.emit(Op::Pop);
+        }
+        self.bind_pattern(param, true, Source::Text(CATCH_VALUE))?;
+        self.emit(Op::Pop);
+        self.block(body, Vec::new())?;
+        let scope = self.scopes.pop().expect("catch scope");
+        if let Some(push) = push {
+            self.f().ops[push] = Op::PushEnv(scope.slots);
+            self.emit(Op::PopEnv);
+            self.f().envs -= 1;
+        }
+        self.release(mark);
+        Ok(())
+    }
+}
+
+/** Loops take their labels directly so `continue label` reaches them. */
+fn is_loop(mut stmt: &Stmt) -> bool {
+    while let StmtKind::Labeled(_, body) = &stmt.kind {
+        stmt = body;
+    }
+    matches!(
+        stmt.kind,
+        StmtKind::For { .. }
+            | StmtKind::ForIn(..)
+            | StmtKind::ForOf(..)
+            | StmtKind::While(..)
+            | StmtKind::DoWhile(..)
+    )
+}
+
+/** Top-level lexical names with the position of the statement declaring each. */
+fn lexical_declarations(body: &[Stmt]) -> Vec<(Name, VarKind, Pos)> {
+    body.iter()
+        .flat_map(|stmt| {
+            scan::lexical_names(std::slice::from_ref(stmt), false)
+                .into_iter()
+                .map(move |(name, kind)| (name, kind, stmt.pos))
+        })
+        .collect()
+}
+
+/** A conflicting declaration in a statement list is an early SyntaxError for the whole script. */
+pub(super) fn early_conflict(
+    body: &[Stmt],
+    strict: bool,
+    top: bool,
+    outer: &[Name],
+) -> EngineResult<()> {
+    match (scan::conflict(body, strict, top, outer), body.first()) {
+        (Some(name), Some(first)) => Err(errors::syntax(
+            first.pos.location(),
+            &format!("Identifier '{}' has already been declared", name),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/** A loop's lexical head names may not be redeclared by a `var` in its body. */
+pub(super) fn head_conflict(stmt: &Stmt, names: &[Name], body: &Stmt) -> EngineResult<()> {
+    let vars = scan::stmt_var_names(body);
+    if let Some(name) = vars.iter().find(|name| names.contains(name)) {
+        return Err(errors::syntax(
+            stmt.pos.location(),
+            &format!("Identifier '{}' has already been declared", name),
+        ));
+    }
+    Ok(())
+}

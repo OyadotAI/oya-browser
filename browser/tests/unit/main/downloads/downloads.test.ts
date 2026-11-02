@@ -6,7 +6,7 @@
 import { it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Downloads, type StoredDownload } from '../../../../src/main/downloads/index.ts';
@@ -48,6 +48,8 @@ class FakeItem extends EventEmitter {
   getTotalBytes = () => this.total;
   /** Records the save path. */
   setSavePath = (path: string) => void (this.path = path);
+  /** Where it is saving: '' until a path is set or the person picks one in Save As. */
+  getSavePath = () => this.path;
 }
 
 /** Downloads over a kept list, a session, and the shown profile `partition`. */
@@ -175,10 +177,117 @@ it('keeps only the scheme of a data: address, which carries the whole file', () 
   assert.equal(downloads.list()[0].url, 'data:');
 });
 
-it('leaves a download from a page an agent drives to the Save As dialog, unsaved and unlisted', () => {
-  const { downloads, start } = setup();
-  downloads.mayAutoSave = () => false;
+/** Downloads where every page is one an agent drives, so each download goes to the Save As dialog. */
+function agentSetup() {
+  const parts = setup();
+  parts.downloads.mayAutoSave = () => false;
+  return parts;
+}
+
+it('a download from a page an agent drives is listed once the person picks where, under the name they chose', () => {
+  const { downloads, start } = agentSetup();
   const item = start();
-  assert.equal(item.path, '', 'no save path: Electron asks the person');
+  assert.deepEqual(downloads.list(), [], 'nothing while Save As is open');
+  item.path = join(folder, 'Q3 report.pdf');
+  item.emit('updated', {}, 'progressing');
+  assert.equal(downloads.list().length, 1);
+  assert.equal(downloads.list()[0].title, 'Q3 report.pdf');
+  item.emit('done', {}, 'completed');
+  assert.equal(downloads.list().length, 1, 'listed once');
+  assert.equal(downloads.list()[0].state, 'completed');
+});
+
+it('a Save As the person cancels is never listed', () => {
+  const { downloads, start } = agentSetup();
+  start().emit('done', {}, 'cancelled');
   assert.deepEqual(downloads.list(), []);
+});
+
+it('progress before a path is chosen lists nothing', () => {
+  const { downloads, start } = agentSetup();
+  start().emit('updated', {}, 'progressing');
+  assert.deepEqual(downloads.list(), []);
+});
+
+it('the chosen path is used as it is, never claimed or renamed', () => {
+  const { downloads, start, opened } = agentSetup();
+  const item = start();
+  const chosen = join(folder, 'mine.pdf');
+  let told = '';
+  item.setSavePath = (path: string) => void (told = path);
+  item.path = chosen;
+  item.emit('done', {}, 'completed');
+  assert.equal(told, '', 'Oya never sets the save path of a file the person placed');
+  assert.equal(existsSync(chosen), false, 'and never creates a file for it');
+  writeFileSync(chosen, 'x');
+  assert.equal(downloads.reveal(downloads.list()[0].id), true);
+  assert.deepEqual(opened, [`folder:${chosen}`]);
+});
+
+it('a tiny file that goes straight to done after the choice is listed as saved', () => {
+  const { downloads, start } = agentSetup();
+  const item = start();
+  item.path = join(folder, 'tiny.txt');
+  item.emit('done', {}, 'completed');
+  assert.equal(downloads.list()[0].state, 'completed');
+});
+
+it('a chosen download that fails or is cancelled later says so', () => {
+  const { downloads, start } = agentSetup();
+  const cancelled = start();
+  cancelled.path = join(folder, 'a.pdf');
+  cancelled.emit('updated', {}, 'progressing');
+  cancelled.emit('done', {}, 'cancelled');
+  const failed = start(new FakeItem(undefined, 'b.zip'));
+  failed.path = join(folder, 'b.zip');
+  failed.emit('updated', {}, 'interrupted');
+  failed.emit('done', {}, 'interrupted');
+  assert.deepEqual(
+    downloads.list().map((d) => [d.title, d.state]),
+    [
+      ['b.zip', 'interrupted'],
+      ['a.pdf', 'cancelled'],
+    ],
+  );
+});
+
+it('a transient interruption keeps a download in progress: only its end says how it went', () => {
+  const { downloads, start } = setup();
+  const item = start();
+  item.emit('updated', {}, 'interrupted');
+  mock.timers.tick(1000);
+  assert.equal(downloads.list()[0].state, 'progressing', 'a resumable pause is not a failure');
+  item.emit('done', {}, 'completed');
+  assert.equal(downloads.list()[0].state, 'completed');
+});
+
+it('a download names the page it came from before a download-only tab closes', () => {
+  const { downloads } = setup();
+  const session = new EventEmitter();
+  const order: string[] = [];
+  const page = { id: 'page' };
+  downloads.listedFrom = (id, contents) => order.push(`listed:${(contents as any)?.id}:${!!id}`);
+  downloads.started = () => order.push('started');
+  downloads.install(session as any, 'persist:oya-a');
+  session.emit('will-download', {}, new FakeItem(), page);
+  assert.deepEqual(order, ['listed:page:true', 'started']);
+});
+
+it('a Save As download names its page only once a path is chosen, and never when cancelled', () => {
+  const { downloads } = agentSetup();
+  const session = new EventEmitter();
+  const told: string[] = [];
+  downloads.listedFrom = (id) => told.push(id);
+  downloads.install(session as any, 'persist:oya-b');
+  const cancelled = new FakeItem();
+  session.emit('will-download', {}, cancelled, {});
+  cancelled.emit('done', {}, 'cancelled');
+  const chosen = new FakeItem(undefined, 'b.zip');
+  session.emit('will-download', {}, chosen, {});
+  chosen.emit('updated', {}, 'progressing');
+  assert.equal(told.length, 0, 'nothing before a path is chosen');
+  chosen.path = join(folder, 'b.zip');
+  chosen.emit('updated', {}, 'progressing');
+  chosen.emit('done', {}, 'completed');
+  assert.equal(told.length, 1, 'once, when it is listed');
 });

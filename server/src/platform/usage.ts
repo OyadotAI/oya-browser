@@ -34,6 +34,8 @@ const live = new Map();
 const cloud = new Set();
 /** fingerprint -> the user id that owns the key, learned when billing admits it. */
 const owners = new Map();
+/** [fingerprint, bucket] of ended hours whose last counts are not stored yet; the next flush writes them. */
+let retired = [];
 /** The counters a plan is priced on: each is also added to the owner's own row, which outlives any one key. */
 const BILLED = ['cloud_seconds', 'residential_proxy_bytes', 'hosted_llm_microusd', 'agent_steps'];
 let dirty = false;
@@ -58,7 +60,9 @@ export function forget(ids: Set<string>) {
 function bucket(id) {
   const hour = hourOf();
   let b = buckets.get(id);
-  if (!b || b.hour !== hour) {
+  // `<`, not `!==`: a clock stepped back keeps counting into the newer bucket instead of retiring it twice.
+  if (!b || b.hour < hour) {
+    if (b) retired.push([id, b]);
     b = { hour, counters: Object.fromEntries(FIELDS.map((f) => [f, 0])) };
     buckets.set(id, b);
   }
@@ -174,19 +178,23 @@ async function flush() {
   settleOpenBrowsers();
   if (!dirty) return;
   dirty = false;
-  const rows = usageRows();
-  if (rows.length) await getConnection().upsert('usage', rows, { update: true }).catch(keepDirty);
+  // An ended hour whose id has no bucket was erased since: forget() drops the bucket, never the retired entry.
+  const ended = retired.filter(([id]) => buckets.has(id));
+  retired = [];
+  const rows = usageRows(ended);
+  if (rows.length) await getConnection().upsert('usage', rows, { update: true }).catch(keepDirty(ended));
 }
 
-/** A failed write leaves the counters for the next flush, and says so. */
-function keepDirty(e) {
+/** A failed write leaves the counters, and the ended hours it carried, for the next flush, and says so. */
+const keepDirty = (ended) => (e) => {
   dirty = true;
+  retired = ended.concat(retired);
   console.error(`[usage] write failed (${e.message}); the next flush retries it`);
-}
+};
 
-/** One row per key bucket, stamped with the time of this flush. */
-function usageRows() {
-  return [...buckets.entries()].map(([id, b]) => ({
+/** One row per key bucket, ended hours first, stamped with the time of this flush. */
+function usageRows(ended) {
+  return [...ended, ...buckets.entries()].map(([id, b]) => ({
     api_key: id,
     hour: b.hour,
     ...b.counters,
@@ -227,5 +235,6 @@ export function reset() {
   live.clear();
   cloud.clear();
   owners.clear();
+  retired = [];
   dirty = false;
 }

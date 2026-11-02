@@ -46,6 +46,10 @@ export const TABLES: Record<string, Table> = {
       ...{ max_concurrent: 'int', is_default: 'bool', created_at: 'time', last_used_at: 'time', updated_at: 'time' },
     },
   },
+  persona_groups: {
+    key: ['owner', 'name'],
+    columns: { owner: 'text', name: 'text', persona_ids: 'json', created_at: 'time', updated_at: 'time' },
+  },
   api_keys: {
     key: ['key_hash'],
     columns: {

@@ -11,6 +11,7 @@ import BrowserPanel from '@/components/dashboard/browser-panel';
 import PersonasTab from '@/components/dashboard/personas-tab';
 import ControlTab from '@/components/dashboard/control-tab';
 import PlaybooksTab from '@/components/dashboard/playbooks-tab';
+import RoutinesTab from '@/components/dashboard/routines-tab';
 import DesktopBanner from '@/components/dashboard/desktop-banner';
 import { isOyaProvider } from '@/components/dashboard/config';
 import type { Console } from './use-console';
@@ -120,6 +121,7 @@ function TabContent({ c }: Props) {
       {view.tab === 'playbooks' && (
         <PlaybooksTab key={project ?? ''} apiKey={apiKey} browsers={c.browsers} personas={c.personas} now={c.now} />
       )}
+      {view.tab === 'routines' && <RoutinesTab key={project ?? ''} apiKey={apiKey} now={c.now} personas={c.personas} />}
       {view.tab === 'control' && (
         <div className="h-full min-w-0 overflow-hidden">
           <ControlTab key={project ?? ''} apiKey={apiKey} />

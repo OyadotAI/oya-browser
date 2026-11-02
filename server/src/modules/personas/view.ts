@@ -37,12 +37,15 @@ const usageOf = (p: Persona, personas: PersonaService) => ({
   proxy: proxyOf(p.proxy),
 });
 
-/** Host, port and geo of the persona's own proxy; never its credentials. */
+/** Host, port and geo of the persona's own proxy, and `direct` when it runs with none; never its credentials. */
 const proxyOf = (proxy: PersonaProxy | null) =>
-  proxy ? { host: proxy.host, port: proxy.port, geo: proxy.geo || null } : null;
+  proxy
+    ? { host: proxy.host, port: proxy.port, geo: proxy.geo || null, ...(proxy.direct === true && { direct: true }) }
+    : null;
 
-/** The proxy the persona is assigned or pinned to, else the residential one it would fall back to. */
+/** The proxy the persona is assigned or pinned to, else the residential one it would fall back to; none when direct. */
 function exitOf(p: Persona, deps: PersonaDeps) {
+  if (p.proxy?.direct === true) return null;
   const exit = deps.proxies.assigned(p.id);
   return exit ? { id: exit.id, label: exit.label, geo: exit.geo, healthy: exit.available } : residentialExit(p, deps);
 }

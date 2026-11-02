@@ -14,10 +14,20 @@ export const origin = (flags: Flags): Origin =>
 
 /** A client for this call's key and address. Throws without a key: nothing can be sent. */
 export function client(flags: Flags): Oya {
-  const { apiKey, baseUrl } = origin(flags);
-  if (!apiKey)
-    throw new CliError('No API key.', 'no_api_key', { hint: 'Run oya login, or pass --key, or set OYA_API_KEY.' });
+  const { apiKey, baseUrl, savedKey, savedUrl } = origin(flags);
+  if (!apiKey) throw new CliError('No API key.', 'no_api_key', { hint: noKeyHint(baseUrl, savedKey, savedUrl) });
   return new Oya({ apiKey, baseUrl });
+}
+
+/**
+ * What to do without a key. A saved key that went unused is one `oya login` saved
+ * for another control plane; the hint names it, and offers --key and OYA_API_KEY
+ * before `oya login --url`, which would replace the saved key.
+ */
+function noKeyHint(baseUrl: string, savedKey: boolean, savedUrl?: string): string {
+  if (!savedKey) return 'Run oya login, or pass --key, or set OYA_API_KEY.';
+  const why = `The key oya login saved is for ${savedUrl ?? 'another control plane'} and is only sent there.`;
+  return `${why} Pass --key or set OYA_API_KEY for ${baseUrl}, or run oya login --url ${baseUrl} to replace the saved key.`;
 }
 
 /** Prints a value as indented JSON. */

@@ -3,7 +3,15 @@
  * their first page loads. Opening, closing, switching, and the tab strip the
  * shell draws.
  */
-import type { BrowserView, BrowserWindow, LoadURLOptions, NavigationHistory, WebPreferences, Session } from 'electron';
+import type {
+  BrowserView,
+  BrowserViewConstructorOptions,
+  BrowserWindow,
+  LoadURLOptions,
+  NavigationHistory,
+  Session,
+  WebContents,
+} from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { TabEvents, type TabEventsDeps } from './tab-events.ts';
 import { AddressBar } from './navigation.ts';
@@ -11,13 +19,19 @@ import { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } from './constants.ts';
 import * as popups from './popup-tabs.ts';
 import { loadInTab, isUnprotected } from './load.ts';
 import { isHome, shownViewOf } from './home.ts';
-import { initialTab, mountTab, updateTabTitle, updateTabUrl } from './tab-lifecycle.ts';
+import {
+  initialTab,
+  mountTab,
+  sessionPreferences,
+  tabPreferences,
+  updateTabTitle,
+  updateTabUrl,
+} from './tab-lifecycle.ts';
 import { TabSelection } from './tab-selection.ts';
 import { ClosedTabs, reopenable } from './tab-order.ts';
-import { recordingPreferences } from '../recording/preload.ts';
-import { isNativeEngine } from '../native-policy/index.ts';
 import type { Tab, TabView } from './types.ts';
 import type { TabTranslation } from '../../shared/ipc.ts';
+import { reloadOrRecover } from './tab-recovery.ts';
 
 export { normalizeAddress } from './navigation.ts';
 
@@ -25,11 +39,33 @@ export { normalizeAddress } from './navigation.ts';
 type Deps = TabEventsDeps &
   Pick<
     AppServices,
-    'electron' | 'layout' | 'overlays' | 'cookies' | 'windows' | 'nativeBrowsing' | 'appDir' | 'agentTab'
+    | 'electron'
+    | 'layout'
+    | 'overlays'
+    | 'cookies'
+    | 'windows'
+    | 'nativeBrowsing'
+    | 'appDir'
+    | 'agentTab'
+    | 'shareIndicator'
+    | 'findBar'
   >;
 
 /** Optional native session is application-owned, never chosen by page-supplied partition strings. */
-type CreateTabArguments = [url: string, activate?: boolean, loadOptions?: LoadURLOptions, session?: Session];
+type CreateTabArguments = [
+  url: string,
+  activate?: boolean,
+  loadOptions?: LoadURLOptions,
+  session?: Session,
+  /** The page Electron already made for a page's own `window.open`, to wrap rather than create. */
+  contents?: WebContents,
+];
+
+/** Electron's BrowserView shim adopts an existing page through `webContents`; its typings have not caught up. */
+type PageViewOptions = BrowserViewConstructorOptions & {
+  /** An existing page to wrap instead of a new one. */
+  webContents?: WebContents;
+};
 
 /** How a close treats the last tab. */
 interface CloseOptions {
@@ -57,6 +93,8 @@ export interface TabSummary {
   pinned: boolean;
   /** Whether the agent drives it. */
   agent: boolean;
+  /** Whether a call is capturing it. */
+  sharing: boolean;
   /** Whether it is loading. */
   loading: boolean;
   /** Why its page failed, or null. */
@@ -69,13 +107,27 @@ export interface TabSummary {
   translation?: TabTranslation;
 }
 
+/** Per-tab marks that come from other services: which tabs the agent drives, which a call captures. */
+interface TabMarks {
+  /** Tabs the agent drives, or null for whichever tab is shown. */
+  agentTabs: Array<number | null> | null;
+  /** Whether a call is capturing the tab. */
+  sharing: (id: number) => boolean;
+}
+
+/** Whether the agent drives the tab, and whether a call captures it. */
+const markSummary = (t: Tab, marks: TabMarks): Pick<TabSummary, 'agent' | 'sharing'> => ({
+  agent: !!marks.agentTabs?.includes(t.id),
+  sharing: marks.sharing(t.id),
+});
+
 /** What the tab strip shows for one tab. */
-function tabSummary(t: Tab, activeTabId: number | null, agentTabs: Array<number | null>): TabSummary {
+function tabSummary(t: Tab, activeTabId: number | null, marks: TabMarks): TabSummary {
   return {
     id: t.id,
     ...placeSummary(t),
     active: t.id === activeTabId,
-    agent: agentTabs.includes(t.id),
+    ...markSummary(t, marks),
     ...loadSummary(t),
     ...historySummary(t.view.webContents.navigationHistory),
   };
@@ -134,21 +186,10 @@ function reportFirstLoad(e: LoadFailure): void {
 function openFirstPage(tab: Tab, tabReady: Promise<void>, url: string, loadOptions?: LoadURLOptions): void {
   tab.setup = tabReady;
   const load = (): Promise<void> | undefined =>
-    url && !isHome(url) && !tab.navigationRequest ? loadInTab(tab, url, loadOptions) : undefined;
+    url && !isHome(url) && !tab.navigationRequest && !tab.openedByPage ? loadInTab(tab, url, loadOptions) : undefined;
   tab.ready = Promise.resolve(tabReady).then(load);
   tab.ready.catch(reportFirstLoad);
 }
-
-/**
- * A tab's page settings. Background throttling is off so a tab keeps drawing while
- * the window is hidden or covered, and an agent's click is not left waiting for a
- * frame (see KEEP_RENDERING_SWITCHES in src/main/app/constants.ts).
- */
-const tabPreferences = (partition: string, appDir: string, owner: Session): WebPreferences => ({
-  ...recordingPreferences(appDir, !isNativeEngine(owner)),
-  partition,
-  backgroundThrottling: false,
-});
 
 /**
  * A person's close is remembered for Reopen closed tab; a bulk close (log
@@ -158,7 +199,16 @@ const tabPreferences = (partition: string, appDir: string, owner: Session): WebP
 function rememberClosed(tabs: TabManager, idx: number, keepOne: boolean): void {
   const tab = tabs.list[idx];
   if (!keepOne) return tabs.closed.clear();
-  if (reopenable(tab)) tabs.closed.push(tab.url, idx);
+  // An incognito window remembers its own closes in memory, and reopens them in its own session.
+  if (reopenable(tab, tabs.privateSession)) tabs.closed.push(tab.url, idx);
+}
+
+/** The last tab closed. */
+function closedLast(tabs: TabManager, keepOne: boolean): void {
+  tabs.activeTabId = null;
+  // Only a person's close keeps one tab; a bulk close wants the list empty (recreating here looped forever).
+  if (keepOne) tabs.createTab(HOME_URL, true);
+  else tabs.sendTabList();
 }
 
 /** Stops a load and forgets the navigation it was for. */
@@ -175,27 +225,44 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
   else tabs.reloadTab(tab);
 }
 
-/** Creates a page in the active partition, with white behind sites that paint no background. */
-function createPageView(deps: Deps, session?: Session): BrowserView {
-  const owner = session || deps.persona.session();
+/**
+ * Creates a page in the active partition, with white behind sites that paint no
+ * background. Given `contents` (a page Electron made for `window.open`), it wraps
+ * that page, and checks the session the page actually runs in.
+ */
+function createPageView(deps: Deps, session?: Session, contents?: WebContents): BrowserView {
+  const owner = contents?.session ?? session ?? deps.persona.session();
   deps.protection.assertSession(owner);
   const webPreferences = session
-    ? { ...tabPreferences('', deps.appDir, owner), session }
+    ? sessionPreferences(deps.appDir, owner)
     : tabPreferences(deps.persona.partitionName(), deps.appDir, owner);
-  const view = new deps.electron.BrowserView({ webPreferences });
+  const view = new deps.electron.BrowserView({ webPreferences, webContents: contents } as PageViewOptions);
   view.setBackgroundColor(PAGE_BACKGROUND);
   return view;
 }
 
-/** The tabs agents claimed; none while an agent drives whichever tab is shown. */
-const claimedTabs = ({ agentTab }: Pick<AppServices, 'agentTab'>): number[] =>
-  agentTab.scoped() ? agentTab.claimed() : [];
+/**
+ * The tabs agents drive: the ones they claimed while agents work in their own tabs,
+ * none while the person holds control, and null (whichever tab is shown) while an
+ * agent holds the whole browser. Idle AI Mode claims nothing: marking the shown tab
+ * there made the strip refuse to drag it, so a one-tab window could never be moved.
+ */
+function agentTabs({ agentTab, control }: Pick<AppServices, 'agentTab' | 'control'>): number[] | null {
+  if (agentTab.scoped()) return agentTab.claimed();
+  return control.snapshot().interactive ? [] : null;
+}
+
+/** The strip's marks from the agent's claims and the live tab shares. */
+const tabMarks = (deps: Deps): TabMarks => ({
+  agentTabs: agentTabs(deps),
+  sharing: (id) => !!deps.shareIndicator?.has(id),
+});
 
 /** Hidden transfer shells render metadata without owning a second copy of the page. */
-function windowTabSummaries(tabs: TabManager, agentTabs: number[], staged?: Tab) {
+function windowTabSummaries(tabs: TabManager, marks: TabMarks, staged?: Tab) {
   const visible = tabs.list.length ? tabs.list : staged ? [staged] : [];
   const active = tabs.activeTabId ?? staged?.id ?? null;
-  return visible.map((tab) => tabSummary(tab, active, agentTabs.length ? agentTabs : [active]));
+  return visible.map((tab) => tabSummary(tab, active, { ...marks, agentTabs: marks.agentTabs ?? [active] }));
 }
 /** The events a new tab is wired to: its window's, when the app has several, else this manager's own. */
 function eventsFor(deps: AppServices, tab: Tab, own: TabEvents): TabEvents {
@@ -219,11 +286,14 @@ export class TabManager {
   readonly closed = new ClosedTabs();
   /** Recently selected tabs, newest last, independent of strip order. */
   private readonly selection = new TabSelection();
+  /** An incognito window's session: every tab it opens without one lands here, never in the profile. */
+  readonly privateSession?: Session;
 
-  /** `deps` are the main-process services (see services.ts). */
-  constructor(deps: Deps) {
+  /** `deps` are the main-process services (see services.ts); `privateSession` makes the window incognito. */
+  constructor(deps: Deps, privateSession?: Session) {
     this.deps = deps;
     this.events = new TabEvents(deps);
+    this.privateSession = privateSession;
   }
 
   /** The tab with this id, if open. */
@@ -248,8 +318,8 @@ export class TabManager {
 
   /** Opens a tab on `url`, loaded with Electron's `loadOptions` (a referrer, a POST body); returns its id. */
   createTab(...args: CreateTabArguments): number {
-    const [url, activate = true, loadOptions, session] = args;
-    const tab = this.addTab(url, session);
+    const [url, activate = true, loadOptions, session, contents] = args;
+    const tab = this.addTab(url, session ?? this.privateSession, contents);
     const tabReady = eventsFor(this.deps as AppServices, tab, this.events).wire(tab);
     openFirstPage(tab, tabReady, url, loadOptions);
     if (activate) this.deps.layout.inherit(tab.id, url);
@@ -259,10 +329,10 @@ export class TabManager {
   }
 
   /** A new view in the persona's partition, on the list. */
-  private addTab(url: string, session?: Session): Tab {
+  private addTab(url: string, session?: Session, contents?: WebContents): Tab {
     const id = this.deps.windows?.allocateTabId() ?? this.nextTabId++;
-    const tab = initialTab(id, createPageView(this.deps, session), url);
-    this.list.push(tab);
+    const tab = initialTab(id, createPageView(this.deps, session, contents), url);
+    this.list.push(Object.assign(tab, contents && { openedByPage: true }));
     return tab;
   }
 
@@ -327,23 +397,15 @@ export class TabManager {
 
   /** Picks what shows after a close. */
   private afterClose(idx: number, wasActive: boolean, keepOne: boolean): void {
-    if (this.list.length === 0) return this.closedLast(keepOne);
+    if (this.list.length === 0) return closedLast(this, keepOne);
     if (!wasActive) return this.sendTabList();
     this.activeTabId = null;
     this.activateTab(this.selection.previous(this.list) ?? this.list[Math.min(idx, this.list.length - 1)].id);
   }
 
-  /** The last tab closed. */
-  private closedLast(keepOne: boolean): void {
-    this.activeTabId = null;
-    // Only a person's close keeps one tab; a bulk close wants the list empty (recreating here looped forever).
-    if (keepOne) this.createTab(HOME_URL, true);
-    else this.sendTabList();
-  }
-
   /** Sends the tab strip to the shell. */
   sendTabList(): void {
-    this.deps.shell.send('tabs-updated', windowTabSummaries(this, claimedTabs(this.deps), this.deps.shell.stagedTab));
+    this.deps.shell.send('tabs-updated', windowTabSummaries(this, tabMarks(this.deps), this.deps.shell.stagedTab));
     this.deps.windows?.tabEvents?.changed();
   }
 
@@ -390,12 +452,11 @@ export class TabManager {
     return new AddressBar(this.deps).navigate(url);
   }
 
-  /** Reload, or stop a load in progress. */
-  reloadActivePage(): void {
-    this.deps.agentTab.requireFor(this.activeTabId);
+  /** The person's Reload: recovers a stuck page (tab-recovery.ts), else reloads, or stops a load in progress. */
+  reloadActivePage(): Promise<void> {
+    this.deps.agentTab.requireFor(this.activeTabId); // refuses at once, before any wait
     const tab = this.find(this.activeTabId);
-    if (!tab) return;
-    reloadOrStop(this, tab);
+    return tab ? reloadOrRecover(this.deps, tab, () => reloadOrStop(this, tab)) : Promise.resolve();
   }
 
   /** Reloads a tab, clearing its error; one that could not be protected keeps saying so (only about:blank reloads). */

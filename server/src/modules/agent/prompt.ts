@@ -227,8 +227,9 @@ const secretsSection = (secrets) =>
     )}. Type them as placeholders; the real value is filled in and reads back as the placeholder, so a field showing one is filled correctly. Filters work on them too.`;
 
 /**
- * Said on a follow-up message in a chat. The chat's history carries only what was
- * said, not what was done, so a model reading "start a request" in the first message
+ * Said on a follow-up message in a chat. The chat's history carries what was said;
+ * what earlier runs read rides in front of the newest message (findings.ts), but not
+ * what they did, so a model reading "start a request" in the first message
  * started it again on every later one: a three-message chat recorded the request
  * three times and submitted it on the message that said not to.
  */

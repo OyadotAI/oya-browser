@@ -9,6 +9,8 @@ import { withinTime } from '../../shared/within-time.ts';
 /** Fixed macOS recovery destination, never supplied by a website. */
 export const SCREEN_RECORDING_SETTINGS_URL = PICKER.SETTINGS_URL;
 
+export { ShareIndicator } from './indicator.ts';
+
 /** Native capture, tab policy and private UI services. */
 type Deps = Pick<AppServices, 'electron' | 'appDir' | 'windows' | 'tabs' | 'agentTab'>;
 /** Identity and guard of a pending share. */

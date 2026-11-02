@@ -3,11 +3,11 @@
  * checked, the filter, and which dialogs are open. One object, changed by
  * patches.
  */
-import { Monitor, Users, Activity, Workflow } from 'lucide-react';
+import { Monitor, Users, Activity, Workflow, CalendarClock } from 'lucide-react';
 import type { FleetFilter } from '@/components/dashboard/fleet-strip';
 
 /** The console's tabs. */
-export type MainTab = 'browsers' | 'personas' | 'playbooks' | 'control';
+export type MainTab = 'browsers' | 'personas' | 'playbooks' | 'routines' | 'control';
 
 /** A tab's key, label and icon. */
 export interface TabSpec {
@@ -24,6 +24,7 @@ export const TABS: TabSpec[] = [
   { key: 'browsers', label: 'Browsers', icon: Monitor },
   { key: 'personas', label: 'Profiles', icon: Users },
   { key: 'playbooks', label: 'Playbooks', icon: Workflow },
+  { key: 'routines', label: 'Routines', icon: CalendarClock },
   { key: 'control', label: 'Control', icon: Activity },
 ];
 

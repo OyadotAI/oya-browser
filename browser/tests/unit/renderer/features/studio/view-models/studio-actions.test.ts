@@ -6,7 +6,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { studioApp, settle } from '../studio-app.ts';
+import { ACCOUNT, studioApp, settle } from '../studio-app.ts';
 import {
   expandLabel,
   finishCopy,
@@ -244,8 +244,39 @@ describe('StudioActions', () => {
     vm.focusField('name');
     vm.typeField('name', 'lookup');
     await vm.actions.save();
-    assert.deepEqual(fake.called('saveRecording')[0], ['lookup', 'lookup']);
+    assert.deepEqual(fake.called('saveRecording')[0], ['lookup', 'lookup', false]);
     assert.equal(vm.state.messages['save-result'].text, 'Saved “lookup” to Oya.');
+  });
+
+  it('Save as copy asks for a new playbook instead of renaming the saved one', async () => {
+    const { vm, fake } = await studioApp({ answers: { saveRecording: async (name: string) => ({ name }) } });
+    vm.typeField('name', 'lookup-copy');
+    await vm.actions.save(true);
+    assert.deepEqual(fake.called('saveRecording')[0], ['lookup-copy', 'lookup-copy', true]);
+  });
+
+  it('says a confirmed rename happened, and a refused one saved nothing', async () => {
+    const renamed = await studioApp({ answers: { saveRecording: async () => ({ renamed: { from: 'old' } }) } });
+    renamed.vm.typeField('name', 'lookup');
+    await renamed.vm.actions.save();
+    assert.equal(renamed.vm.state.messages['save-result'].text, 'Renamed “old” to “lookup” and saved it to Oya.');
+    const taken = { error: 'A playbook named lookup already exists', renameFailed: { from: 'old', status: 409 } };
+    const refused = await studioApp({ answers: { saveRecording: async () => taken } });
+    refused.vm.typeField('name', 'lookup');
+    await refused.vm.actions.save();
+    assert.deepEqual(refused.vm.state.messages['save-result'], {
+      text: 'A playbook named lookup already exists. Nothing was saved. Choose another name.',
+      error: true,
+    });
+  });
+
+  it('a copy names the playbook it left unchanged', async () => {
+    const { vm, ws, push } = await studioApp({ answers: { saveRecording: async () => ({}) } });
+    Object.assign(ws.draft, { publishedName: 'old', publishedTo: ACCOUNT });
+    await push();
+    vm.typeField('name', 'lookup');
+    await vm.actions.save(true);
+    assert.equal(vm.state.messages['save-result'].text, 'Saved “lookup” to Oya as a copy. “old” is unchanged.');
   });
 
   it('does not save while Save is off', async () => {

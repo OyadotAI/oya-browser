@@ -61,6 +61,14 @@ describe('run events', () => {
     ]);
   });
 
+  it('tells the run’s tokens so far, and nothing when there are none', () => {
+    const ws = connectBrowser(B);
+    const run = new LiveRun(B);
+    run.usage({ input: 0, output: 0 });
+    run.usage({ input: 120, output: 30 });
+    assert.deepEqual(eventsOn(ws), [{ kind: 'usage', input: 120, output: 30 }]);
+  });
+
   it('never throws when the browser cannot be told, so the run goes on', () => {
     const ws = connectBrowser(B);
     ws.failWith = new Error('socket closed');

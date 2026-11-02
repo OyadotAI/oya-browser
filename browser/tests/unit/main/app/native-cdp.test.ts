@@ -1,6 +1,7 @@
 /** Native backend admission must survive asynchronous tab protection and a human takeover. */
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { AppNativeBackend, startAppNativeCdp } from '../../../../src/main/app/native-cdp.ts';
 
 /** A published native tab can still have protection settlement awaiting its final microtask. */
@@ -31,6 +32,7 @@ function fixture(nativeBrowsing = true) {
   const backend = new AppNativeBackend({ nativeBrowsing, windows: { allTabs: () => [tab] }, control } as any);
   return {
     backend,
+    tab,
     control,
     inserted,
     finish,
@@ -45,6 +47,84 @@ it('refuses native input when human control changes while tab protection is awai
   f.finish();
   await assert.rejects(pending, /control is unavailable/i);
   assert.deepEqual(f.inserted, []);
+  f.backend.dispose();
+});
+
+/** The real backend receives a deferred isolated layout operation on its exact protected tab. */
+function wheelFixture() {
+  const f = fixture();
+  let ready!: () => void, start!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const layout = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const events: unknown[] = [];
+  const contents = Object.assign(new EventEmitter(), f.tab.view.webContents, {
+    mainFrame: {
+      detached: false,
+      _executeJavaScriptInOyaWorld: () => {
+        start();
+        return layout;
+      },
+    },
+    getZoomFactor: () => 1,
+    sendInputEvent: (event: unknown) => {
+      events.push(event);
+    },
+  });
+  f.tab.view.webContents = contents;
+  f.finish();
+  const pending = f.backend.execute(f.target, 'input:pointer', {
+    type: 'mouseWheel',
+    x: 150,
+    y: 150,
+    deltaX: 0,
+    deltaY: 120,
+  });
+  return { ...f, reading, ready, pending, events };
+}
+
+for (const mode of ['localHeld', 'busy', 'human']) {
+  it(`refuses a pending wheel when control changes through ${mode} during layout readiness`, async () => {
+    const f = wheelFixture();
+    await f.reading;
+    if (mode === 'human') f.control.state.mode = 'human';
+    else f.control[mode] = true;
+    f.ready();
+    await assert.rejects(f.pending, /control is unavailable/i);
+    assert.deepEqual(f.events, []);
+    f.backend.dispose();
+  });
+}
+
+it('sends the native wheel only while its original protected tab remains authorized', async () => {
+  const f = wheelFixture();
+  await f.reading;
+  f.ready();
+  await f.pending;
+  assert.equal(f.events.length, 1);
+  f.backend.dispose();
+});
+
+it('does not send a saved wheel when the protected tab is retired during readiness', async () => {
+  const f = wheelFixture();
+  await f.reading;
+  f.tab.protection = 'failed';
+  f.ready();
+  await assert.rejects(f.pending, /target is unavailable/i);
+  assert.deepEqual(f.events, []);
+  f.backend.dispose();
+});
+
+it('does not send or retarget a saved wheel when the tab replaces its native view', async () => {
+  const f = wheelFixture();
+  await f.reading;
+  f.tab.view = { ...f.tab.view };
+  f.ready();
+  await assert.rejects(f.pending, /input target changed/i);
+  assert.deepEqual(f.events, []);
   f.backend.dispose();
 });
 

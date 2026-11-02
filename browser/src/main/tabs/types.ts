@@ -60,6 +60,10 @@ export interface Tab {
   navigationPending?: boolean;
   /** Why its page failed, shown on the tab; null when it did not. */
   loadError?: string | null;
+  /** The person's Reload just ended its renderer to recover it: the page reloads when that renderer is reported gone, with no crash message. */
+  recovering?: boolean;
+  /** A person's Reload is asking the page whether it still answers: a second click waits for that. */
+  probing?: boolean;
   /** Its icon as a data: URL, or null. */
   favicon?: string | null;
   /** The icon address last asked for. */
@@ -70,6 +74,12 @@ export interface Tab {
   blankCommitted?: boolean;
   /** The tab that opened it, so a test run's tabs close with it. */
   openerId?: number;
+  /**
+   * Electron made this page for the page's own named `window.open` and is already
+   * loading it: protection must not blank it, nothing loads it again, and the
+   * page that opened it may close it.
+   */
+  openedByPage?: boolean;
   /** Pinned to the strip's leading block: drawn as its icon, spared by bulk closes, restored pinned. */
   pinned?: boolean;
   /** What the address bar's translate chip shows for this page; main/translate owns it. */

@@ -2,7 +2,8 @@
 export { evaluatePage, capturePage, screenshotOptions, type NativePage } from './page.ts';
 export { World, type WorldDeps, type EnsureOptions, type EvalOptions } from './world.ts';
 export { evaluateFrame, useFramePages, type NativeAgentFrame } from './frames.ts';
-export { useStockWorld } from './stock-world.ts';
+export { useStockWorld, runInWorld } from './stock-world.ts';
+export { ANALYZER_WORLD_ID } from './constants.ts';
 export { watchNativeDialogs, type NativeDialogInfo, type NativeDialogReply, type NativeDialogPage } from './dialogs.ts';
 export { NativeRecordingInbox, type NativeRecordingMessage } from './recording.ts';
 export { nativeFramePath } from './frame-path.ts';

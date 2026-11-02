@@ -79,8 +79,8 @@ describe('control format', () => {
     expect(usedPct(3, 0)).toBe(0);
     expect(usedPct(5, 2)).toBe(100);
     expect(barTone(50)).toBe('bg-accent');
-    expect(barTone(80)).toBe('bg-amber-500');
-    expect(barTone(95)).toBe('bg-red-500');
+    expect(barTone(80)).toBe('bg-yellow');
+    expect(barTone(95)).toBe('bg-red');
   });
 
   it('flags a live limit under a fifth of its burst, never a disabled one', () => {

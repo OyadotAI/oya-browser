@@ -10,4 +10,9 @@ paths = [
   '''^server/test-[^/]+\.js$''',
   '''^examples/\.env\.example$''',
   '''^extension/content/agent\.js$''',
+  '''^mars/crates/link/data/generate\.mjs$''',
 ]
+
+[[allowlists]]
+description = "TLS key-share group names in the Mars fingerprint notes read as a generic API key."
+regexes = ['''X25519MLKEM768''']

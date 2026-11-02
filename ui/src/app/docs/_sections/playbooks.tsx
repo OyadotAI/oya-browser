@@ -29,9 +29,18 @@ function Sub({ id, children }: SubProps) {
 
 /** The playbook endpoints, for callers without the SDK. */
 const REST_ROWS: ReactNode[][] = [
-  ['POST', <InlineCode key="a">/api/browsers/:id/playbooks</InlineCode>, 'Save the browser’s last run: { name }'],
+  [
+    'POST',
+    <InlineCode key="a">/api/browsers/:id/playbooks</InlineCode>,
+    'Save the browser’s last run: { name }. Overwrites a playbook of the same name',
+  ],
   ['POST', <InlineCode key="b">/api/browsers/:id/playbooks/:name/play</InlineCode>, 'Replay: { variables, autoHeal }'],
   ['GET', <InlineCode key="c">/api/playbooks</InlineCode>, 'Every saved playbook'],
+  [
+    'PATCH',
+    <InlineCode key="g">/api/playbooks/:name</InlineCode>,
+    'Rename: { name }. 409 if the name is taken, 404 if there is none; its healed draft moves too',
+  ],
   ['GET', <InlineCode key="d">/api/playbooks/:name/export</InlineCode>, 'One playbook as a JSON document'],
   ['POST', <InlineCode key="e">/api/playbooks/import</InlineCode>, 'Save an export: { playbook, name?, overwrite? }'],
   ['DELETE', <InlineCode key="f">/api/playbooks/:name</InlineCode>, 'Delete a playbook'],

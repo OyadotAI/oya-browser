@@ -112,7 +112,7 @@ export class SessionTabs {
   /** Not a governed browser, in browsing mode, and no page open yet (a switch reopened its own, or the person already typed one). */
   private restorable(): boolean {
     const { tabs, shell, governance } = this.deps;
-    return !governance.configuration && !!shell.browsingMode && !tabs.list.some(reopenable);
+    return !governance.configuration && !!shell.browsingMode && !tabs.list.some((tab) => reopenable(tab));
   }
 
   /** Opens the pages in order, shows the one that was shown, closes the start page they replace, and pins the first `pinned`. */

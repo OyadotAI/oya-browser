@@ -8,6 +8,10 @@
 export const CHROME_HEIGHT = 88;
 /** The bookmarks bar's height under the toolbar, when it shows. */
 export const BOOKMARKS_BAR_HEIGHT = 30;
+/** The find bar's height under the toolbar (and bookmarks bar), while it is open on the shown tab. */
+export const FIND_BAR_HEIGHT = 32;
+/** Longest find query, in characters: the field and the main process share one limit. */
+export { FIND_QUERY_MAX_CHARS } from '../../shared/constants.ts';
 /** Most bookmarks the bar carries; the rest are under All bookmarks. */
 export const BOOKMARKS_BAR_ITEMS = 40;
 
@@ -31,6 +35,12 @@ export const COMPACT_PANEL_SHARE = 0.45;
 
 /** The main window's first size and the smallest it may shrink to. */
 export const WINDOW_SIZE = { width: 1280, height: 860, minWidth: 600, minHeight: 400 } as const;
+/** The largest saved window side believed: beyond any real display, so a bigger one in the file is corrupt. */
+export const WINDOW_SIZE_MAX = 16384;
+/** How much of a restored window must be on a connected display, each way, to be seen and dragged back. */
+export const WINDOW_VISIBLE_MIN = 100;
+/** The main window's saved bounds, beside config.json. */
+export const WINDOW_BOUNDS_FILE = 'window-bounds.json';
 /** Where macOS draws the traffic lights on the inset title bar: centred on the tabs (34px tall, ending at the strip's 40px; renderer/tabs.css). */
 export const TRAFFIC_LIGHTS = { x: 12, y: 16 } as const;
 /** The shell's background in each theme, before its page paints: the launch stage's own edge colour, so nothing flashes. */
@@ -40,6 +50,10 @@ export const TRANSPARENT = '#00000000';
 
 /** One zoom step, in Chromium zoom levels (each level is 20% larger). */
 export const ZOOM_STEP = 0.5;
+/** How much larger each Chromium zoom level is than the one below it. */
+export const ZOOM_BASE = 1.2;
+/** A page at its actual size, as a percentage. */
+export const FULL_SIZE_PERCENT = 100;
 /** A resize is saved once the drag has been still this long. */
 export const PANEL_SAVE_DELAY_MS = 180;
 /** How long the dev panel takes to slide open or shut. */
@@ -66,7 +80,14 @@ export const NARRATION_NAME_MAX = 42;
 export const SHIELD_TRACK_FOR_MS = 10000;
 
 /** Menu items that act on the page, disabled while an agent has control. */
-export const HUMAN_MENU_ITEMS: readonly string[] = ['browser-new-tab', 'browser-close-tab', 'browser-reload'];
+export const HUMAN_MENU_ITEMS: readonly string[] = [
+  'browser-new-tab',
+  'browser-close-tab',
+  'browser-reload',
+  'browser-find',
+  'browser-find-next',
+  'browser-find-previous',
+];
 /** Cmd/Ctrl + this digit goes to the last tab, whatever their number (Chrome's rule). */
 export const LAST_TAB_DIGIT = 9;
 /** Named overlays the renderer may raise over the page. */

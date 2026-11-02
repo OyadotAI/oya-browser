@@ -126,4 +126,14 @@ export interface AgentText {
   failed?: boolean;
   /** The answer in the shape of the schema `extract()` asked for. */
   data?: unknown;
+  /** The tokens the run used, as the provider reported them; left out when the model reported none. */
+  usage?: RunUsage;
+}
+
+/** A run's tokens: what was sent to the model and what came back, every call in the run included. */
+export interface RunUsage {
+  /** Prompt tokens, cached ones included. */
+  input: number;
+  /** Completion tokens, reasoning included. */
+  output: number;
 }

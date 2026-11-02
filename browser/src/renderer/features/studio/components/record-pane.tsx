@@ -1,12 +1,12 @@
 /**
  * The Record pane (#pane-record): the workflow header, the record and
- * test-run controls, what blocks a run, the save card, the studio tabs and
- * their panels. The stylesheet shows each part per stage from
- * #pane-record[data-stage].
+ * test-run controls, what blocks a run, the save card (together .studio-top),
+ * the studio tabs and their panels. The stylesheet shows each part per stage
+ * from #pane-record[data-stage].
  */
 import { useRef, type KeyboardEvent } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
-import { Tab, TabList } from '../../../ui/index.ts';
+import { Button, Tab, TabList } from '../../../ui/index.ts';
 import './studio.css';
 import { STUDIO_TABS, TAB_LABELS } from '../model/constants.ts';
 import { studioMode, type StudioState } from '../model/studio-model.ts';
@@ -49,14 +49,20 @@ export function RecordPane({ vm, active = false, controlBlocked = false, onViewP
       data-stage={studioMode(state).stage}
       aria-label="Workflow workspace"
     >
-      <StudioHeader vm={vm} state={state} />
-      <RecordControls vm={vm} state={state} controlBlocked={controlBlocked} />
-      <StudioNotes vm={vm} state={state} />
-      <SlotStatus slot="record-result" message={state.messages['record-result']} />
-      <FinishCard vm={vm} state={state} />
-      {state.snapshot?.saved && onViewPlaybook && (
-        <button onClick={() => onViewPlaybook(state.name)}>View playbook</button>
-      )}
+      <div className="studio-top">
+        <StudioHeader vm={vm} state={state} />
+        <RecordControls vm={vm} state={state} controlBlocked={controlBlocked} />
+        <StudioNotes vm={vm} state={state} />
+        <SlotStatus slot="record-result" message={state.messages['record-result']} />
+        <FinishCard vm={vm} state={state} />
+        {state.snapshot?.saved && onViewPlaybook && (
+          <div className="studio-view-playbook">
+            <Button variant="secondary" id="record-view-playbook" onClick={() => onViewPlaybook(state.name)}>
+              View playbook
+            </Button>
+          </div>
+        )}
+      </div>
       <StudioTabs vm={vm} state={state} />
       <div className="studio-scroll">
         <section id="studio-steps" role="tabpanel" hidden={hidden('steps')}>

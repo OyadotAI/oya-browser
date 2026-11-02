@@ -85,7 +85,8 @@ async function saveHealed(apiKey, browserId, pb, i, result) {
   const healed = healedSteps(browserId);
   // An agent that found the task already done (a login it was still signed in to)
   // recorded nothing to replay; saving that cut the playbook off at the broken step.
-  if (healed.some((s) => s.action !== 'navigate')) {
+  // An unsaved definition the console's tester ran is never stored, healed or not.
+  if (!pb.transient && healed.some((s) => s.action !== 'navigate')) {
     await keyConfig.savePlaybook(apiKey, pb.name, healedPlaybook(pb, i, healed));
     await keyConfig.deletePlaybook(apiKey, `${pb.name}:draft`);
   }

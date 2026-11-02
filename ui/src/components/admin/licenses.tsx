@@ -56,7 +56,7 @@ function IssueForm({ issue }: { /** Issues a license. */ issue: AdminState['issu
           Issue
         </button>
       </div>
-      {f.error && <p className="text-xs text-red-400">{f.error}</p>}
+      {f.error && <p className="text-xs text-red">{f.error}</p>}
       {f.key && (
         <label className="flex flex-col gap-1 text-xs text-text-dim">
           License key, shown once. Send it to the licensee to set as OYA_LICENSE_KEY:
@@ -81,7 +81,7 @@ const row = (l: License, revoke: AdminState['revoke']) => [
   l.revoked_at ? (
     `revoked ${dayOf(l.revoked_at)}`
   ) : (
-    <button key={l.id} onClick={() => void revoke(l.id)} className="text-red-400 hover:underline">
+    <button key={l.id} onClick={() => void revoke(l.id)} className="text-red hover:underline">
       Revoke
     </button>
   ),

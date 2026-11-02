@@ -7,6 +7,7 @@
 import { it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ChatgptAuth } from '../../../../src/main/chatgpt/auth.ts';
+import * as C from '../../../../src/main/chatgpt/constants.ts';
 
 const PLAN = 'openid email offline_access chatgpt.tokens.use.direct';
 
@@ -72,7 +73,7 @@ it('refuses a first sign-in that came back without an issued client, and a cance
   await assert.rejects(bare.auth.signIn(), /did not finish/);
   assert.equal(bare.fetch.mock.callCount(), 0);
   const cancelled = setup((state) => ({ state, error: 'access_denied' }));
-  await assert.rejects(cancelled.auth.signIn(), /cancelled/);
+  await assert.rejects(cancelled.auth.signIn(), { message: C.SIGN_IN_CANCELLED });
   assert.equal(cancelled.saved(), null);
 });
 
@@ -123,9 +124,9 @@ it('opens a later sign-in under the issued client, without registering again', a
 it('keeps the issued client when the exchange is refused, so the retry uses it', async () => {
   const { auth, fetch, opened, values } = setup((state) => ({ state, code: 'c', client_id: 'oaiapp_x' }));
   fetch.mock.mockImplementation(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
-  await assert.rejects(auth.signIn(), /invalid_grant/);
+  await assert.rejects(auth.signIn(), { message: C.SIGN_IN_REFUSED });
   assert.equal(values.chatgptClientId, 'oaiapp_x');
-  await assert.rejects(auth.signIn(), /invalid_grant/);
+  await assert.rejects(auth.signIn(), { message: C.SIGN_IN_REFUSED });
   assert.equal(new URL(opened()).searchParams.get('client_id'), 'oaiapp_x');
 });
 
@@ -152,11 +153,37 @@ it('ignores a kept host id or client that is not text, registering afresh instea
   assert.equal(values.chatgptClientId, 'oaiapp_x');
 });
 
-it('says what OpenAI refused, so a failed sign-in can be told apart', async () => {
+it("a refused code exchange says Oya needs Plus or Pro, and keeps OpenAI's code in the log only", async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
   const { auth, fetch } = setup((state) => ({ state, code: 'c', client_id: 'oaiapp_x' }));
   fetch.mock.mockImplementation(
     async () =>
       new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'Code expired' }), { status: 400 }),
   );
-  await assert.rejects(auth.signIn(), /invalid_grant: Code expired/);
+  const error = await auth.signIn().catch((e: Error) => e);
+  assert.equal((error as Error).message, C.SIGN_IN_REFUSED);
+  assert.doesNotMatch((error as Error).message, /invalid_grant/);
+  assert.ok(warn.mock.calls.some((c) => String(c.arguments[1]).includes('invalid_grant: Code expired')));
+});
+
+it('a server error, rate limit or lost connection at the exchange says to try again, never naming a plan or code', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const answers = [
+    async () => new Response(JSON.stringify({ error: 'server_error', error_description: 'upstream' }), { status: 503 }),
+    async () => new Response(JSON.stringify({ error: 'rate_limit_exceeded' }), { status: 429 }),
+    async () => new Response('<html>', { status: 400 }),
+    async () => Promise.reject(new TypeError('fetch failed')),
+  ];
+  for (const answer of answers) {
+    const { auth, fetch } = setup((state) => ({ state, code: 'c', client_id: 'oaiapp_x' }));
+    fetch.mock.mockImplementation(answer as never);
+    await assert.rejects(auth.signIn(), { message: C.SIGN_IN_FAILED });
+  }
+});
+
+it("a sign-in ChatGPT cancelled or refused says the plan Oya needs, and logs OpenAI's code", async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { auth } = setup((state) => ({ state, error: 'access_denied' }));
+  await assert.rejects(auth.signIn(), { message: C.SIGN_IN_CANCELLED });
+  assert.ok(warn.mock.calls.some((c) => c.arguments[1] === 'access_denied'));
 });

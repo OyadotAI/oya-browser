@@ -47,12 +47,12 @@ function Alert({ c }: PanelProps) {
   const { error, restore } = c.ui;
   if (!error) return null;
   return (
-    <div role="alert" className="mx-4 mt-3 rounded-lg bg-red-500/8 px-3 py-2.5 text-xs leading-relaxed text-red-400">
+    <div role="alert" className="mx-4 mt-3 rounded-lg bg-red/8 px-3 py-2.5 text-xs leading-relaxed text-red">
       {error}
       {restore && (
         <button
           onClick={() => show(c, 'import', restore)}
-          className="mt-2 flex items-center gap-1.5 font-medium text-red-300 underline-offset-2 hover:underline"
+          className="mt-2 flex items-center gap-1.5 font-medium text-red underline underline-offset-2"
         >
           <KeyRound className="h-3.5 w-3.5" />
           Restore with API key

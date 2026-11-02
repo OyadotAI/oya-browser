@@ -45,7 +45,7 @@ export default function ProjectKey({ projectId }: { /** The open project. */ pro
         {k.copied ? 'Copied to clipboard' : k.key ? 'Copy again' : 'Show and copy API key'}
       </button>
       {k.error && (
-        <p role="alert" className="text-xs text-red-400">
+        <p role="alert" className="text-xs text-red">
           {k.error}
         </p>
       )}

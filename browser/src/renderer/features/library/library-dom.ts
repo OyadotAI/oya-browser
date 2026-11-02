@@ -1,6 +1,7 @@
 /** Accessible, literal DOM for local library rows; no remote icons or unsafe markup. */
 import { host, fileSize } from './library-model.ts';
 import type { SavedPage, LibraryAction, DownloadEntry } from '../../../shared/library.ts';
+import { isMac } from '../../../shared/shortcuts.ts';
 /** Website titles remain plain text even when they contain markup. */
 export function text(tag: string, className: string, value: string): HTMLElement {
   const node = document.createElement(tag);
@@ -75,10 +76,13 @@ function downloadStatus(d: DownloadEntry): string {
   return d.total ? `${fileSize(d.received)} of ${fileSize(d.total)}` : `${fileSize(d.received)}…`;
 }
 
+/** The reveal action's words, as the platform names its file browser (the toolbar's chip says the same). */
+const SHOW_FILE = isMac(globalThis.navigator?.platform ?? '') ? 'Show in Finder' : 'Show in folder';
+
 /** A download's actions: show a saved file in its folder, and take a finished one off the list. */
 function downloadButtons(d: DownloadEntry, action: (kind: LibraryAction, id: string) => void): HTMLElement {
   const group = text('span', 'download-actions', '');
-  if (d.state === 'completed') group.append(button('Show in folder', 'download-reveal', () => action('reveal', d.id)));
+  if (d.state === 'completed') group.append(button(SHOW_FILE, 'download-reveal', () => action('reveal', d.id)));
   if (d.state !== 'progressing') group.append(removeButton(d, action));
   return group;
 }

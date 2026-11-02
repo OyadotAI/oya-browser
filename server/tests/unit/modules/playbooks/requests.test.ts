@@ -87,6 +87,18 @@ describe('playable and runnable', () => {
     assert.equal(runnable(KEY, { playbook: 'signup', data: {}, secrets: { pw: 'x' } } as any).pb.name, 'signup');
   });
 
+  it('runs an unsaved playbook definition, checked as a save would be, without storing it', () => {
+    const draft = { steps: [{ action: 'navigate', url: 'https://a.test/{{path}}' }], defaults: {} };
+    const ok = runnable(KEY, { playbook: draft, data: { path: 'x' }, secrets: {} } as any);
+    assert.equal(ok.pb.name, 'draft');
+    assert.deepEqual(runnable(KEY, { playbook: draft, data: {}, secrets: {} } as any), {
+      status: 400,
+      error: 'Missing data: path',
+    });
+    const broken = runnable(KEY, { playbook: { steps: [{ action: 'rm -rf' }] }, data: {}, secrets: {} } as any);
+    assert.deepEqual(broken, { status: 400, error: 'Step 1 is not a step this server can replay' });
+  });
+
   it('refuses both or neither of prompt and playbook', () => {
     const both = runnable(KEY, { prompt: 'go', playbook: 'signup', data: {}, secrets: {} } as any);
     assert.deepEqual(both, { status: 400, error: 'Pass exactly one of prompt or playbook' });

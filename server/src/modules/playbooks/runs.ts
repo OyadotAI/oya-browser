@@ -12,6 +12,7 @@ import { control } from '../control/service.ts';
 import { fingerprint } from '../../platform/audit.ts';
 import { track as telemetry } from '../telemetry/index.ts';
 import { Status } from '../../platform/http-status.ts';
+import { MAX_STEPS } from './constants.ts';
 import { HUMAN_WAIT_MS, RUN_KEEP_MS } from './constants.ts';
 
 /** Records one event about a run on the project's event log. */
@@ -31,13 +32,20 @@ export function start(apiKey, browserId, work) {
   const announce = (run.announce = announcer(apiKey, browserId, run));
   const requestHuman = (attention) => waitForHuman(run, attention, announce);
   announce('run.started', {});
-  track(run, work({ requestHuman }), announce, apiKey);
+  track(run, work({ requestHuman, onStep: stepRecorder(run) }), announce, apiKey);
   return view(run);
 }
 
+/** Adds each replayed step to the run's timeline, as many as a playbook may have. */
+const stepRecorder = (run) => (event) => void (run.events.length < MAX_STEPS && run.events.push(event));
+
 /** A run that has just started. */
 function newRun(owner, browserId) {
-  return { id: `run_${randomUUID()}`, owner, browserId, status: 'running', createdAt: Date.now(), attention: null };
+  return {
+    ...{ id: `run_${randomUUID()}`, owner, browserId, status: 'running', createdAt: Date.now(), attention: null },
+    // The steps a replay has played, for the console's tester; a prompt run has none.
+    events: [],
+  };
 }
 
 /**

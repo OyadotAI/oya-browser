@@ -18,7 +18,14 @@ import * as proxies from '../modules/proxies/service.ts';
 import * as mfa from '../modules/challenges/mfa.ts';
 import * as credentials from '../modules/personas/credentials.ts';
 import * as logins from '../modules/personas/cookies.ts';
-import { PersonaService, PersonaTable, type PersonaRepository } from '../modules/personas/index.ts';
+import {
+  GroupService,
+  GroupTable,
+  PersonaService,
+  PersonaTable,
+  type GroupRepository,
+  type PersonaRepository,
+} from '../modules/personas/index.ts';
 import { createBilling } from '../modules/billing/index.ts';
 import { claimUrl, getKeyOwner, isUnclaimedAgentKey, keyDigest, keysOf } from '../modules/auth/service.ts';
 import { registry } from '../modules/browsers/registry.ts';
@@ -37,9 +44,17 @@ function personaRepository(): PersonaRepository {
   return new PersonaTable(dataPath('personas.json'));
 }
 
-/** The persona service, wired to its repository and the modules it calls. */
-function personaService() {
-  return new PersonaService({ repository: personaRepository(), ownerOf, proxies, mfa, credentials, logins, metrics });
+/** What the persona service calls besides its repository and the groups. */
+const PERSONA_MODULES = { ownerOf, proxies, mfa, credentials, logins, metrics };
+
+/** The persona service, wired to its repository, the groups its personas leave, and the modules it calls. */
+function personaService(groups: GroupRepository) {
+  return new PersonaService({ repository: personaRepository(), ...PERSONA_MODULES, groups });
+}
+
+/** The persona group service, over the same group table the persona service drops members from. */
+function groupService(repository: GroupRepository, personas: PersonaService) {
+  return new GroupService({ repository, personas, ownerOf });
 }
 
 /** The key of every cloud browser this replica runs. */
@@ -93,10 +108,11 @@ function erasure(personas: PersonaService) {
 
 /** Build every service once, wired to its dependencies. */
 export function createContainer() {
-  const personas = personaService();
+  const groupTable = new GroupTable();
+  const personas = personaService(groupTable);
   personas.startAutosave();
   setUnexpectedReporter(reportUnexpected);
-  return { personas, billing: billing(), erasure: erasure(personas) };
+  return { personas, groups: groupService(groupTable, personas), billing: billing(), erasure: erasure(personas) };
 }
 
 /** The services the composition root provides. */

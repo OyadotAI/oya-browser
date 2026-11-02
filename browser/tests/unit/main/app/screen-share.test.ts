@@ -30,14 +30,17 @@ function fixture(platform = 'darwin') {
     pick: async (...args) => (picks.push(args), { video: { id: 'screen:0', name: 'Screen 1' } }),
   };
   electron.systemPreferences.getMediaAccessStatus = () => 'granted';
-  const share = new ScreenShare({ ...f.deps, mediaPermissions: f.service, screenPicker: picker } as any, platform);
+  const started = [];
+  const shareIndicator = { started: (...args) => started.push(args) };
+  const deps = { ...f.deps, mediaPermissions: f.service, screenPicker: picker, shareIndicator };
+  const share = new ScreenShare(deps as any, platform);
   const ses: any = {};
   let handler;
   ses.setDisplayMediaRequestHandler = (fn, opts) => ((handler = fn), (ses.opts = opts));
   share.install(ses);
   const request = (overrides = {}) =>
     new Promise((resolve) => handler({ frame, securityOrigin: 'https://call.test', ...overrides }, resolve));
-  return { ...f, frame, electron, ses, request, share, picker, picks, opened, probes: () => probes };
+  return { ...f, frame, electron, ses, request, share, picker, picks, opened, probes: () => probes, started };
 }
 
 it('requires top-frame screen consent on the native media preflight', async () => {
@@ -175,4 +178,15 @@ it('a prior microphone denial does not suppress Screen Recording recovery', asyn
   f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
   assert.equal(await f.request(), null);
   assert.equal(f.opened.length, 1);
+});
+
+it('an approved share is reported to the indicator; a cancelled or revoked one is not', async () => {
+  const f = fixture();
+  await f.request();
+  assert.deepEqual(f.started, [[{ id: 'screen:0', name: 'Screen 1' }, f.contents]]);
+  f.picker.pick = async () => null;
+  await f.request();
+  f.picker.pick = async () => ((f.state.interactive = false), { video: { id: 'screen:0' } });
+  await f.request();
+  assert.equal(f.started.length, 1);
 });

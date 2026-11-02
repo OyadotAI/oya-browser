@@ -16,8 +16,8 @@ import { RendererConstants as C } from '../../../core/constants.ts';
 import type { OrbState } from '../../../ui/index.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { AgentEvent } from '../../../../shared/ipc.ts';
-import type { AgentRunEvent, DevLogEntry, PlanStep } from '../model/types.ts';
-import { commandAction, commandParams, elapsedSeconds, runSummary, stepLabel } from '../model/steps.ts';
+import type { AgentRunEvent, DevLogEntry, PlanStep, RunUsage } from '../model/types.ts';
+import { commandAction, commandParams, elapsedSeconds, runSummary, stepLabel, usageTitle } from '../model/steps.ts';
 
 /** One narrated action in a run's timeline. */
 export interface StepRow {
@@ -39,8 +39,10 @@ export interface RunCard {
 export interface FinishedRun extends RunCard {
   /** How it went. */
   outcome: 'done' | 'failed';
-  /** "3 steps · 12s", or '' for a run with a plan and no steps (shown open, without a summary). */
+  /** "3 steps · 12s · 212K tokens", or '' for a run with a plan and no steps (shown open, without a summary). */
   summary: string;
+  /** The summary's tooltip: the exact input and output tokens, or '' when the run reported none. */
+  title: string;
 }
 
 /** What the live run shows. */
@@ -70,6 +72,8 @@ export class RunViewModel extends ViewModel<RunState> {
   private live = false;
   /** When the run began. */
   private started = 0;
+  /** The run's tokens so far, as the server last told them: a run stopped before its answer still shows them. */
+  private used: RunUsage | undefined;
   /** The timer that keeps the elapsed count moving. */
   private ticker: ReturnType<typeof setInterval> | undefined;
   /** The timer that rests the orb after a run. */
@@ -90,21 +94,26 @@ export class RunViewModel extends ViewModel<RunState> {
   /** A question was asked: a new card with its live line, and the orb starts thinking. */
   begin(): void {
     this.stopTimers();
-    Object.assign(this, { runId: null, live: false, started: Date.now() });
+    Object.assign(this, { runId: null, live: false, started: Date.now(), used: undefined });
     this.set({ card: { plan: [], steps: [] }, label: '', count: 0, seconds: 0, orb: 'thinking' });
     this.ticker = setInterval(() => this.tick(), C.CHAT_PROGRESS_TICK_MS);
   }
 
   /** The answer came: the card folds (or goes, with neither steps nor a plan) and the orb shows how it went. */
-  finish(ok: boolean): FinishedRun | null {
+  finish(ok: boolean, usage?: RunUsage): FinishedRun | null {
     const card = this.state.card;
     if (!card) return null;
     clearInterval(this.ticker);
     this.set({ card: null });
     this.settle(ok);
     if (!card.steps.length && !card.plan.length) return null;
-    const summary = card.steps.length ? runSummary(card.steps.length, this.elapsed()) : '';
-    return { ...card, outcome: ok ? 'done' : 'failed', summary };
+    return this.folded(card, ok, usage ?? this.used);
+  }
+
+  /** The finished card: how it went, and its summary and tooltip with the tokens the answer, or else the live run, gave. */
+  private folded(card: RunCard, ok: boolean, used?: RunUsage): FinishedRun {
+    const summary = card.steps.length ? runSummary(card.steps.length, this.elapsed(), used) : '';
+    return { ...card, outcome: ok ? 'done' : 'failed', summary, title: summary ? usageTitle(used) : '' };
   }
 
   /** The chat was cleared mid-run: the card goes with it, and the orb rests. */
@@ -122,6 +131,7 @@ export class RunViewModel extends ViewModel<RunState> {
     if (!this.runId || runId !== this.runId) return;
     if (run.kind === 'plan') this.setPlan(run.steps ?? []);
     if (run.kind === 'step') this.step(run.line || run.tool || '');
+    if (run.kind === 'usage') this.used = { input: run.input, output: run.output };
   }
 
   /** Redraws the plan. */

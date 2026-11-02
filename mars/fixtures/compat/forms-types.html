@@ -1,0 +1,17 @@
+<!DOCTYPE html><html><head><title>Checkout</title></head><body>
+<form id="checkout" method="post" action="/buy">
+<label>Quantity <input type="number" name="qty" min="1" max="9" value="1"></label>
+<label>Date <input type="date" name="when"></label>
+<label>Email <input type="EMAIL" name="email" required></label>
+<label>Phone <input type="tel" name="phone" pattern="[0-9]+"></label>
+<label>Fancy <input type="fancy-new-type" name="fancy"></label>
+<label>Color <input type="color" name="color" value="#ff0000"></label>
+<input type="image" src="go.png" alt="Go">
+<input type="reset" value="Clear">
+<select name="toppings" multiple><option selected>Cheese<option>Olives<option selected>Basil</select>
+<input list="cities" name="city"><datalist id="cities"><option value="Cairo"><option value="Amman"></datalist>
+<output name="total" for="qty">$10</output>
+<progress value="70" max="100">70%</progress>
+<meter value="0.6">60%</meter>
+<button type="submit" onclick="track()">Buy now</button>
+</form></body></html>

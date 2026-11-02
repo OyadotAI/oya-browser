@@ -18,6 +18,7 @@ import { lineFor, namesFrom, idOf, changesPage, type ActionParams, type Analyzed
 import { HighlightReader } from './highlight-reader.ts';
 import { holdStill, inContainer } from './hold-still.ts';
 import { keepAgentRendering } from './view-stack.ts';
+import { logShieldPresses } from './shield-press.ts';
 
 /** A closing BrowserView may have already lost its web contents before the page's destruction event. */
 function liveContents(view: BrowserView | null): WebContents | null {
@@ -35,7 +36,17 @@ function loadShield(view: BrowserView, appDir: string): void {
 /** The services the shield uses. */
 type Deps = Pick<
   AppServices,
-  'electron' | 'appDir' | 'control' | 'shell' | 'recorder' | 'shortcuts' | 'overlays' | 'tabs' | 'world' | 'agentTab'
+  | 'electron'
+  | 'appDir'
+  | 'control'
+  | 'shell'
+  | 'recorder'
+  | 'shortcuts'
+  | 'overlays'
+  | 'tabs'
+  | 'world'
+  | 'agentTab'
+  | 'tabHealthLog'
 >;
 
 /** What each window's shell was last told about its shown tab. */
@@ -59,10 +70,11 @@ function announcePage(deps: Deps): void {
   deps.shell.send('control-state', shellState(deps, deps.control.snapshot()));
 }
 
-/** Install shell shortcuts and quiet input blocking on the shield alone. */
+/** Install shell shortcuts, quiet input blocking and the press log on the shield alone. */
 function installShieldInput(deps: Deps, takeover: TakeoverPrompt, view: BrowserView): void {
   deps.shortcuts.install(view.webContents);
   takeover.install(view.webContents);
+  logShieldPresses(deps, view.webContents, view);
 }
 
 /** Recheck ownership and window identity before restoring focus after a native focus callback. */

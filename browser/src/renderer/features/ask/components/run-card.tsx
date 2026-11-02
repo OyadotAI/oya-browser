@@ -66,7 +66,13 @@ export function FinishedRunCard({ item, onToggle }: FinishedRunProps) {
   return (
     <div className={`chat-run ${run.outcome}${folded ? ' folded' : ''}`}>
       {run.summary && (
-        <button type="button" className="run-summary" aria-expanded={!folded} onClick={onToggle}>
+        <button
+          type="button"
+          className="run-summary"
+          aria-expanded={!folded}
+          title={run.title || undefined}
+          onClick={onToggle}
+        >
           {run.summary}
         </button>
       )}

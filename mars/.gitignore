@@ -1,0 +1,3 @@
+# Native compiler outputs stay local (scratch builds in target-* too); source and the lockfile are retained.
+/target/
+/target-*/

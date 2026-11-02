@@ -60,16 +60,29 @@ export function authorizeUrl(login: Login, hostId: string): string {
   return `${C.AUTHORIZE_URL}?${params}`;
 }
 
-/** One form POST to the token endpoint; its JSON, or an error carrying only OpenAI's error code. */
+/** A token request OpenAI refused. */
+export interface Refusal extends Error {
+  /** OpenAI's OAuth error code (invalid_grant, server_error…), when it sent one. */
+  code?: string;
+  /** The token endpoint's HTTP status. */
+  status?: number;
+}
+
+/** The error a refused token request throws, logged with OpenAI's code and description. */
+function tokenRefusal(status: number, body: Record<string, string | undefined>): Refusal {
+  const why = [body?.error || status, body?.error_description].filter(Boolean).join(': ');
+  console.warn('[chatgpt] token request refused:', why);
+  return Object.assign(Error(`ChatGPT refused the sign-in (${why}). Try again.`), { code: body?.error, status });
+}
+
+/** One form POST to the token endpoint; its JSON, or a Refusal carrying OpenAI's error code and status. */
 export async function tokenRequest(form: Record<string, string>, fetchImpl: Fetch = fetch) {
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
   const init = { method: 'POST', redirect: 'error' as const, signal: AbortSignal.timeout(C.TOKEN_TIMEOUT_MS) };
   const res = await fetchImpl(C.TOKEN_URL, { ...init, headers, body: new URLSearchParams(form).toString() });
   const body = await res.json().catch(() => ({}));
   if (res.ok) return body;
-  const why = [body?.error || res.status, body?.error_description].filter(Boolean).join(': ');
-  console.warn('[chatgpt] token request refused:', why);
-  throw Object.assign(Error(`ChatGPT refused the sign-in (${why}). Try again.`), { code: body?.error });
+  throw tokenRefusal(res.status, body);
 }
 
 /** An ID token's claims, read without verifying it: it came straight from the token endpoint over TLS. */
@@ -103,7 +116,7 @@ function checkGrant(tokens: TokenAnswer, signed: unknown, nonce?: string): void 
       .split(' ')
       .includes(C.PLAN_SCOPE)
   )
-    throw Error('ChatGPT did not allow Oya to use your plan. Allow "Use your ChatGPT plan" and try again.');
+    throw Error(C.NO_PLAN_SCOPE);
 }
 
 /** The credential a token answer makes, once it may spend the plan and, at sign-in, carries the right nonce. */
@@ -115,10 +128,31 @@ export function credentialFrom(tokens: TokenAnswer, clientId: string, nonce?: st
   return { client_id: clientId, refresh_token, access_token, expires_at, email };
 }
 
-/** Exchanges a sign-in's code under the client ChatGPT issued. */
+/** Statuses below 500 that are OpenAI's trouble, not a refusal of the account. */
+const TRANSIENT = [C.HTTP_TIMEOUT, C.HTTP_TOO_MANY];
+
+/** Whether OpenAI refused the account itself: an OAuth code on a 4xx that is not a timeout or rate limit. */
+const refusedAccount = ({ code, status = 0 }: Refusal) =>
+  typeof code === 'string' && status < C.HTTP_SERVER_ERROR && !TRANSIENT.includes(status);
+
+/**
+ * A failed code exchange in words a person can act on, never OpenAI's code: a
+ * refusal of the account says the plan Oya needs; anything else (OpenAI busy,
+ * rate-limited, unreachable) says to try again, since telling a paying person to
+ * upgrade over OpenAI's hiccup would be wrong. The cause stays in the log.
+ */
+function refusedSignIn(error: Refusal): never {
+  if (refusedAccount(error)) throw Error(C.SIGN_IN_REFUSED);
+  console.warn('[chatgpt] sign-in exchange failed:', error.message);
+  throw Error(C.SIGN_IN_FAILED);
+}
+
+/** Exchanges a sign-in's code under the client ChatGPT issued; a refusal says the plan Oya needs. Sign-in only: a refresh keeps OpenAI's code. */
 export function exchangeCode(login: Login, clientId: string, code: string, fetchImpl?: Fetch) {
   const form = { grant_type: 'authorization_code', client_id: clientId, code, code_verifier: login.verifier };
-  return tokenRequest({ ...form, redirect_uri: login.redirectUri, resource: C.RESOURCE }, fetchImpl);
+  return tokenRequest({ ...form, redirect_uri: login.redirectUri, resource: C.RESOURCE }, fetchImpl).catch(
+    refusedSignIn,
+  );
 }
 
 /** A refreshed credential; an answer that leaves out the refresh token or scope keeps the old ones. */

@@ -47,3 +47,11 @@ export const ROUTINE_PLAY_MS = 1_800_000;
  * replica the cloud browser joined.
  */
 export const ROUTINE_SELF_URL = process.env.OYA_SELF_URL || `http://127.0.0.1:${process.env.PORT || DEFAULT_PORT}`;
+/** The most playbook variable values a routine keeps. */
+export const ROUTINE_MAX_VALUES = 50;
+/** The longest value a routine keeps for one variable. */
+export const ROUTINE_VALUE_CHARS = 2000;
+/** The longest persona id a routine names. */
+export const ROUTINE_PERSONA_CHARS = 128;
+/** The longest variable name a routine keeps a value for, as playbooks name them. */
+export const ROUTINE_VALUE_NAME_CHARS = 64;

@@ -8,7 +8,7 @@ import { sealText } from '../../../platform/secrets.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { capacityReached, fault, hash, instanceId, live, projectId, stamp } from './model.ts';
 import { validatePolicy } from './policy.ts';
-import { atCapacity, spentUsd } from './capacity.ts';
+import { atCapacity, leastLoaded, spentUsd } from './capacity.ts';
 import { ensure } from './projects.ts';
 import {
   DEFAULT_MAX_CONCURRENT,
@@ -25,6 +25,7 @@ import {
 const DEFAULTS = {
   persona: null,
   personaLimit: null,
+  personaChoices: null,
   maxConcurrent: DEFAULT_MAX_CONCURRENT,
   hourlyLimit: 0,
   request: {},
@@ -266,6 +267,8 @@ async function admitInTx(tx, key, o, requestHash) {
   const replay = await replayed(tx, idempotency, requestHash);
   if (replay) return replay;
   const sessions = await liveSessions(tx, p, o.id);
+  // A group start picks its member here, under the lock, so caps, queueing and the sealed request see it.
+  if (o.personaChoices) Object.assign(o, leastLoaded(sessions, o.personaChoices));
   const full = mustQueue(sessions, p, o);
   return recordSession(tx, p, o, { full, requestHash, idempotency, ...admit(sessions, p, o, full) });
 }

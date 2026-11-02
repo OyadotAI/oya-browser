@@ -1,0 +1,20 @@
+<!doctype html>
+<HTML lang=en><head><meta charset='utf-8'><title>Native forms</title>
+<link rel=stylesheet href=/forms.css></head><body>
+<main class=panel><h1>Forms, owned by Rust.</h1>
+<p>Native controls, an owned CSS cascade and a session carried by the networking service.</p>
+<form method=post action=/login>
+<div class=fields>
+<div class=field><label for=user>Username</label><input id=user name=username required placeholder='Your name'></div>
+<div class=field><label for=pass>Password</label><input id=pass name=password type=password required></div>
+<div class=field><label for=region>Region</label><select id=region name=region><option value=us>United States<option value=ca>Canada<option disabled value=else>Unavailable</select></div>
+<div class=field><label for=notes>Notes</label><textarea id=notes name=notes placeholder='A few lines'></textarea></div>
+</div>
+<label for=remember>Keep this session</label><input id=remember name=remember type=checkbox value=yes checked>
+<label for=standard>Standard</label><input id=standard type=radio name=plan value=standard checked>
+<label for=plus>Plus</label><input id=plus type=radio name=plan value=plus>
+<input type=hidden name=token value=synthetic-demo-token>
+<div class=concealed><button id=concealed>Hidden action</button></div>
+<button id=submit name=intent value=login>Start demo session</button></form>
+<p>This is a synthetic local session. Use any username and password.</p>
+<a href=/demo>Back to the V9 demo</a></main></body></HTML>

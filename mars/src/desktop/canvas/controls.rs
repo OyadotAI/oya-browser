@@ -1,0 +1,468 @@
+/** Real AppKit primitives receive only owned control roles and engine geometry. */
+use super::*;
+use objc2_app_kit::{NSButtonType, NSPopUpButton, NSScrollView, NSSecureTextField, NSTextView};
+
+/// Native checkbox and radio frame; the glyph is 13 points and AppKit needs a little room around it.
+const CHOICE_FRAME: f64 = 16.0;
+/** Room an unbezeled text field cell keeps around its line, two points above and below. */
+const FIELD_CELL_MARGIN: f64 = 4.0;
+
+/** Native controls retain identity across revisions and never parse HTML themselves. */
+pub(super) enum Widget {
+    Input(Retained<NSTextField>),
+    Button(Retained<NSButton>),
+    Push(Retained<super::push_button::PushButton>),
+    Select(Retained<NSPopUpButton>, Vec<usize>),
+    Textarea(Retained<NSScrollView>, Retained<NSTextView>),
+}
+impl Widget {
+    /** Common placement uses the engine's exact box. */
+    pub fn view(&self) -> &NSView {
+        match self {
+            Self::Input(v) => v,
+            Self::Button(v) => v,
+            Self::Push(v) => v,
+            Self::Select(v, _) => v,
+            Self::Textarea(v, _) => v,
+        }
+    }
+    /** Ownership disables all edit/activation surfaces, including multiline editing. */
+    pub fn enable(&self, enabled: bool) {
+        match self {
+            Self::Input(v) => v.setEnabled(enabled),
+            Self::Button(v) => v.setEnabled(enabled),
+            Self::Push(v) => v.setEnabled(enabled),
+            Self::Select(v, _) => v.setEnabled(enabled),
+            Self::Textarea(_, v) => v.setEditable(enabled),
+        }
+    }
+}
+/** Chromium drops a control's native look once the author gives it a background or a border
+(including `border: none`); the canvas has already painted that CSS box, so the widget must not cover
+it with a bezel or an opaque field, or the page's own design and any child content disappear. */
+fn styled(item: &DisplayItem, node: &crate::document::Node) -> bool {
+    item.background.is_some()
+        || !item.backgrounds.is_empty()
+        || item.border > 0.0
+        || item.border_widths != [0.0; 4]
+        || node.style.border_style_none
+}
+/** A styled field's text takes the page's color; an unstyled one keeps AppKit's control text. */
+fn text_color(item: &DisplayItem, styled: bool) -> Option<Retained<NSColor>> {
+    item.color
+        .as_deref()
+        .filter(|_| styled)
+        .and_then(super::literal_color)
+}
+/** The tags that become native widgets; only these read an accessible name from the labels. */
+pub(super) fn is_control(tag: &str) -> bool {
+    ["input", "button", "a", "label", "select", "textarea"].contains(&tag)
+}
+/** What `sync` needs of a node beyond the node itself, indexed once per update by the caller. */
+pub(super) struct Facts<'a> {
+    /// The node's accessible name, as inspection reports it.
+    pub name: &'a str,
+    /// Whether any node has this one as its parent.
+    pub has_children: bool,
+}
+impl Canvas {
+    /** Only supported interactive roles become native widgets. */
+    pub(super) fn sync(
+        &self,
+        item: &DisplayItem,
+        node: &crate::document::Node,
+        facts: Facts<'_>,
+        human: bool,
+    ) {
+        if !is_control(&item.tag) || node.hidden() {
+            return;
+        }
+        let mut widgets = self.ivars().widgets.borrow_mut();
+        let widget = widgets
+            .entry(item.local_id)
+            .or_insert_with(|| self.widget(item, node));
+        let height = item.control_height.unwrap_or(item.height);
+        let frame = if ["checkbox", "radio"].contains(&node.input_type()) && item.tag == "input" {
+            // Chromium centers the fixed glyph in a wider authored box; AppKit draws it at the left.
+            rect(
+                item.x + (item.width - CHOICE_FRAME) / 2.0,
+                item.y + (height - CHOICE_FRAME) / 2.0,
+                CHOICE_FRAME,
+                CHOICE_FRAME,
+            )
+        } else {
+            rect(item.x, item.y, item.width, height)
+        };
+        widget.view().setFrame(frame);
+        // Pages hide styled-over native inputs with opacity:0 and keep them clickable, as Chromium does;
+        // an AppKit view at alpha 0 still takes its clicks.
+        widget.view().setAlphaValue(item.opacity.clamp(0.0, 1.0));
+        // Agent control blocks input at the canvas instead of greying every control out.
+        widget.enable(!node.disabled && node.style.interactive);
+        let name = facts.name;
+        match widget {
+            Widget::Input(field) => {
+                if !["checkbox", "radio"].contains(&node.input_type()) {
+                    let styled = styled(item, node);
+                    field.setBezeled(!styled);
+                    field.setDrawsBackground(!styled);
+                    if styled {
+                        field.setFrame(line_frame(item));
+                    }
+                    if let Some(color) = text_color(item, styled) {
+                        field.setTextColor(Some(&color));
+                    }
+                }
+                if field.currentEditor().is_none() {
+                    if field.stringValue().to_string() != node.value {
+                        field.setStringValue(&NSString::from_str(&node.value));
+                    }
+                    self.ivars()
+                        .drafts
+                        .borrow_mut()
+                        .insert(node.local_id, node.value.clone());
+                }
+                placeholder(field, item, node);
+                field.setEditable(human && !node.readonly());
+                field.setAccessibilityLabel(Some(&NSString::from_str(name)));
+            }
+            Widget::Button(button) => {
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
+                if ["checkbox", "radio"].contains(&node.input_type()) {
+                    button.setState(if node.checked { 1 } else { 0 });
+                }
+            }
+            Widget::Push(button) => {
+                // A button with element children shows them, never a bezel painted over them.
+                button.update(item, facts.has_children || styled(item, node));
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
+            }
+            Widget::Select(button, ids) => {
+                if let Some(document) = self
+                    .ivars()
+                    .snapshot
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.document.as_ref())
+                {
+                    let selected = crate::document::select_options(document, node.local_id)
+                        .into_iter()
+                        .find(|n| n.selected)
+                        .map(|n| n.local_id);
+                    let index = ids
+                        .iter()
+                        .position(|id| Some(*id) == selected)
+                        .map_or(-1, |index| index as isize);
+                    button.selectItemAtIndex(index);
+                }
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
+            }
+            Widget::Textarea(scroll, field) => {
+                let styled = styled(item, node);
+                scroll.setBorderType(if styled {
+                    objc2_app_kit::NSBorderType::NoBorder
+                } else {
+                    objc2_app_kit::NSBorderType::BezelBorder
+                });
+                scroll.setDrawsBackground(!styled);
+                field.setDrawsBackground(!styled);
+                if let Some(color) = text_color(item, styled) {
+                    field.setTextColor(Some(&color));
+                }
+                place_text(field, item, styled);
+                let focused = self
+                    .window()
+                    .and_then(|w| w.firstResponder())
+                    .is_some_and(|v| {
+                        std::ptr::eq(
+                            &*v as *const _ as *const (),
+                            &**field as *const _ as *const (),
+                        )
+                    });
+                if !focused && field.string().to_string() != node.value {
+                    field.setString(&NSString::from_str(&node.value));
+                }
+                field.setEditable(human && !node.disabled && !node.readonly());
+                field.setAccessibilityLabel(Some(&NSString::from_str(name)));
+            }
+        }
+    }
+    /** Targets/selectors are fixed Rust choices, never author-provided native code. */
+    fn widget(&self, item: &DisplayItem, node: &crate::document::Node) -> Widget {
+        if item.tag == "textarea" {
+            return self.textarea(item, node);
+        }
+        if item.tag == "select" {
+            return self.popup(item, node);
+        }
+        if item.tag == "input"
+            && !["submit", "button", "checkbox", "radio"].contains(&node.input_type())
+        {
+            let field = if node.input_type() == "password" {
+                NSSecureTextField::initWithFrame(
+                    NSSecureTextField::alloc(self.mtm()),
+                    rect(0.0, 0.0, item.width, item.height),
+                )
+                .into_super()
+            } else {
+                NSTextField::textFieldWithString(&NSString::from_str(&node.value), self.mtm())
+            };
+            field.setStringValue(&NSString::from_str(&node.value));
+            field.setFont(Some(&platform::font(item.font_size, item.bold)));
+            field.setTag(item.local_id as isize + NODE_TAG);
+            unsafe {
+                field.setDelegate(Some(ProtocolObject::from_ref(self)));
+                field.setTarget(Some(self));
+                field.setAction(Some(sel!(submit:)));
+                if let Some(cell) = field.cell() {
+                    cell.setSendsActionOnEndEditing(false);
+                }
+                self.addSubview(&field);
+            }
+            return Widget::Input(field);
+        }
+        if item.tag == "button"
+            || (item.tag == "input" && ["submit", "button"].contains(&node.input_type()))
+        {
+            let button = super::push_button::PushButton::new(item, self);
+            self.addSubview(&button);
+            return Widget::Push(button);
+        }
+        let button = if ["checkbox", "radio"].contains(&node.input_type()) {
+            super::choice_button::ChoiceButton::make(item, node.input_type() == "radio", self)
+        } else {
+            button("", item.local_id as isize + NODE_TAG, self)
+        };
+        if ["checkbox", "radio"].contains(&node.input_type()) {
+            button.setButtonType(if node.input_type() == "radio" {
+                NSButtonType::Radio
+            } else {
+                NSButtonType::Switch
+            });
+            button.setBordered(true);
+        } else if item.tag == "button"
+            || (item.tag == "input" && ["submit", "button"].contains(&node.input_type()))
+        {
+            button.setBordered(true);
+        }
+        button.setFont(Some(&platform::font(item.font_size, item.bold)));
+        self.addSubview(&button);
+        Widget::Button(button)
+    }
+    /** Popup option identities stay separate from duplicate visible labels/values. */
+    fn popup(&self, item: &DisplayItem, node: &crate::document::Node) -> Widget {
+        let button = NSPopUpButton::initWithFrame_pullsDown(
+            NSPopUpButton::alloc(self.mtm()),
+            rect(0.0, 0.0, item.width, item.height),
+            false,
+        );
+        let mut ids = Vec::new();
+        if let Some(document) = self
+            .ivars()
+            .snapshot
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.document.as_ref())
+        {
+            for option in crate::document::select_options(document, node.local_id) {
+                let entry = unsafe {
+                    objc2_app_kit::NSMenuItem::initWithTitle_action_keyEquivalent(
+                        objc2_app_kit::NSMenuItem::alloc(self.mtm()),
+                        &NSString::from_str(&option.text),
+                        None,
+                        &NSString::from_str(""),
+                    )
+                };
+                entry.setEnabled(!crate::document::option_disabled(document, option));
+                if let Some(menu) = button.menu() {
+                    menu.setAutoenablesItems(false);
+                    menu.addItem(&entry);
+                }
+                ids.push(option.local_id);
+            }
+        }
+        button.setTag(item.local_id as isize + NODE_TAG);
+        button.setControlSize(objc2_app_kit::NSControlSize::Small);
+        button.setFont(Some(&platform::font(item.font_size, item.bold)));
+        unsafe {
+            button.setTarget(Some(self));
+            button.setAction(Some(sel!(selectOption:)));
+        }
+        self.addSubview(&button);
+        Widget::Select(button, ids)
+    }
+    /** Plain multiline editing preserves newlines while its own scroll view bounds overflow. */
+    fn textarea(&self, item: &DisplayItem, node: &crate::document::Node) -> Widget {
+        let scroll = NSScrollView::initWithFrame(
+            NSScrollView::alloc(self.mtm()),
+            rect(0.0, 0.0, item.width, item.height),
+        );
+        scroll.setHasVerticalScroller(true);
+        scroll.setAutohidesScrollers(true);
+        scroll.setBorderType(objc2_app_kit::NSBorderType::BezelBorder);
+        let field = NSTextView::initWithFrame(
+            NSTextView::alloc(self.mtm()),
+            rect(0.0, 0.0, item.width, item.height),
+        );
+        field.setRichText(false);
+        field.setImportsGraphics(false);
+        field.setAllowsUndo(true);
+        field.setFont(Some(&platform::font(item.font_size, item.bold)));
+        field.setString(&NSString::from_str(&node.value));
+        field.setDelegate(Some(ProtocolObject::from_ref(self)));
+        field.setVerticallyResizable(true);
+        field.setHorizontallyResizable(false);
+        scroll.setDocumentView(Some(&field));
+        self.addSubview(&scroll);
+        Widget::Textarea(scroll, field)
+    }
+    /** Native popup target/action emits one explicit selection intention. */
+    pub(super) fn select_action(&self, sender: &NSPopUpButton) {
+        let id = (sender.tag() - NODE_TAG) as usize;
+        if let Some(Widget::Select(_, options)) = self.ivars().widgets.borrow().get(&id)
+            && let Some(option) = options.get(sender.indexOfSelectedItem() as usize)
+            && let Some(page) = self.page_id()
+        {
+            self.push(Action::Select(id, *option, page));
+        }
+    }
+    /** Multiline delegate callbacks use retained native identity, never source IDs. */
+    pub(super) fn multiline_changed(&self, notification: &NSNotification) {
+        if self.ivars().reconciling.get() {
+            return;
+        }
+        let Some(field) = notification
+            .object()
+            .and_then(|o| o.downcast::<NSTextView>().ok())
+        else {
+            return;
+        };
+        let id = self.ivars().widgets.borrow().iter().find_map(|(id, w)| {
+            if let Widget::Textarea(_, v) = w {
+                std::ptr::eq(&**v, &*field).then_some(*id)
+            } else {
+                None
+            }
+        });
+        if let Some(id) = id
+            && let Some(page) = self.page_id()
+        {
+            let text = field.string().to_string();
+            if text.len() > crate::constants::TEXT_BYTES {
+                if let Some(value) = self.committed(id) {
+                    self.ivars().reconciling.set(true);
+                    field.setString(&NSString::from_str(&value));
+                    self.ivars().reconciling.set(false);
+                }
+                self.push(Action::Rejected);
+            } else {
+                self.push(Action::Edit(id, text, page));
+            }
+        }
+    }
+}
+
+/** A page-styled textarea's text starts where CSS puts it: inside the element's padding and
+border (Google's search box sets `padding-top: 14px` to center its one line). An unstyled one
+keeps the native look. ponytail: AppKit's own five-point line padding stays, as the binding for
+NSTextContainer is not enabled; text sits that much right of CSS. */
+fn place_text(field: &NSTextView, item: &DisplayItem, styled: bool) {
+    let (left, top) = match (styled, item.content_box) {
+        (true, Some([x, y, _, _])) => ((x - item.x).max(0.0), (y - item.y).max(0.0)),
+        _ => (0.0, 0.0),
+    };
+    field.setTextContainerInset(objc2_foundation::NSSize::new(left, top));
+}
+
+/** A page-styled single-line field: one line of text, vertically centered in the element's
+content box, as Chrome centers an input's text. AppKit draws a field's text at the top of its
+frame, so a tall styled input (padding, a fixed height) showed its text near the top edge. The
+canvas paints the element's box; a click in its padding focuses the field (`focus_input`). */
+fn line_frame(item: &DisplayItem) -> NSRect {
+    let height = item.control_height.unwrap_or(item.height);
+    let [x, y, width, inner] = item
+        .content_box
+        .unwrap_or([item.x, item.y, item.width, height]);
+    let (_, natural) = platform::metrics(face(item));
+    let line = (natural + FIELD_CELL_MARGIN).min(inner).max(0.0);
+    rect(x, y + (inner - line) / 2.0, width, line)
+}
+
+impl Canvas {
+    /** A press on a styled text input outside its centered field (in the padding) focuses the
+    field, as a click anywhere in an input's box does in Chrome. */
+    pub(super) fn focus_input(&self, id: usize) {
+        let widgets = self.ivars().widgets.borrow();
+        if let (Some(Widget::Input(field)), Some(window)) = (widgets.get(&id), self.window()) {
+            window.makeFirstResponder(Some(&**field));
+        }
+    }
+}
+
+/** The face an item's text is set in, for measuring a field's line and drawing its placeholder. */
+fn face(item: &DisplayItem) -> platform::Face {
+    platform::Face {
+        size: item.font_size,
+        weight: item.font_weight,
+        family: item.font_family,
+        spacing: item.letter_spacing,
+        italic: item.italic,
+        autospace: item.autospace,
+        upright: crate::platform::upright::TURNED,
+    }
+}
+
+/** A field's placeholder, in the page's `::placeholder` color and the field's own face when a rule
+set one, else AppKit's default gray. */
+fn placeholder(field: &NSTextField, item: &DisplayItem, node: &crate::document::Node) {
+    let color = node
+        .style
+        .placeholder_color
+        .as_deref()
+        .and_then(super::literal_color);
+    match color {
+        Some(color) => {
+            let text = platform::spaced(&node.placeholder, face(item), &color, item.rtl, 0.0);
+            field.setPlaceholderAttributedString(Some(&text));
+        }
+        None => field.setPlaceholderString(Some(&NSString::from_str(&node.placeholder))),
+    }
+}
+
+impl Canvas {
+    /** Return in a search-style textarea (one row, or a combobox such as Google's search box) is a
+    key press the page handles: Google submits from its keydown handler. Any other textarea
+    keeps inserting the newline at the caret itself, since the engine's fallback only appends. */
+    pub(super) fn multiline_enter(&self, view: &NSTextView) -> bool {
+        let id = self
+            .ivars()
+            .widgets
+            .borrow()
+            .iter()
+            .find_map(|(id, widget)| match widget {
+                Widget::Textarea(_, field) => std::ptr::eq(&**field, view).then_some(*id),
+                _ => None,
+            });
+        let (Some(id), Some(page)) = (id, self.page_id()) else {
+            return false;
+        };
+        if !self.search_style(id) {
+            return false;
+        }
+        self.push(Action::Enter(id, page));
+        true
+    }
+
+    /** A textarea that behaves as a one-line field: `rows=1` or `role=combobox`. */
+    fn search_style(&self, id: usize) -> bool {
+        let snapshot = self.ivars().snapshot.borrow();
+        let node = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.document.as_ref())
+            .and_then(|document| document.nodes.iter().find(|node| node.local_id == id));
+        node.is_some_and(|node| {
+            node.attributes.get("rows").map(String::as_str) == Some("1")
+                || node.attributes.get("role").map(String::as_str) == Some("combobox")
+        })
+    }
+}

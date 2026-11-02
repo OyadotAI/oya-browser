@@ -1,8 +1,9 @@
 /**
  * The selected step's editor (#step-editor): a heading, an icon row (on or
  * off, breakpoint, move) with a More menu (duplicate, delete, run to here),
- * the target and value, and the rarely needed fields under Advanced. Every
- * control is off while the draft is locked. Hidden while recording.
+ * the target and value, and the rarely needed fields under Advanced (those in
+ * .editor-body, which scrolls apart from the heading so the More menu is never
+ * clipped). Every control is off while the draft is locked. Hidden while recording.
  */
 import { Button, Icon, IconButton } from '../../../ui/index.ts';
 import { STRATEGIES, TARGETED_ACTIONS, VALUE_FIELDS } from '../model/constants.ts';
@@ -37,13 +38,15 @@ export function StepEditorView({ vm, state }: StudioPartProps) {
             <h3>{editorTitle(step, steps)}</h3>
             <EditorIcons vm={vm} step={step} locked={mode.locked} runnable={mode.runnable} />
           </div>
-          {TARGETED_ACTIONS.includes(step.action) && (
-            <EditorTarget key={step.id} vm={vm} step={step} locked={mode.locked} />
-          )}
-          <ValueField key={'value:' + step.id} vm={vm} step={step} locked={mode.locked} />
-          {step.captureIssue && <p className="studio-issue">{step.captureIssue}</p>}
-          {issue && <p className="studio-issue">{issue.message}</p>}
-          <EditorAdvanced key={'advanced:' + step.id} vm={vm} step={step} locked={mode.locked} />
+          <div className="editor-body">
+            {TARGETED_ACTIONS.includes(step.action) && (
+              <EditorTarget key={step.id} vm={vm} step={step} locked={mode.locked} />
+            )}
+            <ValueField key={'value:' + step.id} vm={vm} step={step} locked={mode.locked} />
+            {step.captureIssue && <p className="studio-issue">{step.captureIssue}</p>}
+            {issue && <p className="studio-issue">{issue.message}</p>}
+            <EditorAdvanced key={'advanced:' + step.id} vm={vm} step={step} locked={mode.locked} />
+          </div>
         </>
       )}
     </section>

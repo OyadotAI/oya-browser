@@ -9,6 +9,7 @@ import type { AppServices } from '../app/services.ts';
 import { HOME_URL } from './constants.ts';
 import { openBeside, closeOthers, closeToRight, reopenClosed, pinnable, setPinned } from './tab-order.ts';
 import type { Tab } from './types.ts';
+import { reloadOrRecover } from './tab-recovery.ts';
 
 /** The services the menu uses. */
 type Deps = Pick<AppServices, 'agentTab' | 'tabs' | 'control' | 'electron' | 'shell' | 'windows'>;
@@ -52,7 +53,7 @@ export class TabMenu {
     return [
       this.item(tab, 'New Tab to the Right', () => openBeside(tabs, tab.id, HOME_URL)),
       { type: 'separator' },
-      this.item(tab, 'Reload', () => tabs.reloadTab(tab), !tab.home),
+      this.item(tab, 'Reload', () => reloadOrRecover(this.deps, tab, () => tabs.reloadTab(tab)), !tab.home),
       this.item(tab, 'Duplicate', () => openBeside(tabs, tab.id, tab.url || HOME_URL)),
       ...this.placeItems(tab),
     ];

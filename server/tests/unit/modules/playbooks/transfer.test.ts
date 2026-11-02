@@ -77,4 +77,15 @@ describe('playbook transfer', () => {
   it('says so when there is no playbook to export', () => {
     assert.throws(() => transfer.exportPlaybook(FROM, 'nope'), { status: 404 });
   });
+
+  it('leaves secrets’ values out of an export', async () => {
+    await keyConfig.savePlaybook(FROM, 'login', {
+      ...structuredClone(PB),
+      defaults: { email: 'a@x', pw: 'hunter2' },
+      variables: { pw: { secret: true, default: 'hunter2' } },
+    });
+    const doc = transfer.exportPlaybook(FROM, 'login');
+    assert.deepEqual(doc.playbook.defaults, { email: 'a@x' });
+    assert.equal(doc.playbook.variables.pw.default, undefined);
+  });
 });

@@ -1,0 +1,805 @@
+/**
+ * What a Media Source element streams, kept on the native side: for each source buffer, its tracks and the coded
+ * frames the script accepted, per track in decode order with their presentation times. The script owns the
+ * buffered ranges and the MSE algorithm; this module parses what it was handed (mars-mp4), clips frames to the
+ * append window, enforces the byte quotas, removes ranges, and evicts frames behind the playhead at a keyframe, so
+ * what remains still decodes. Every refusal leaves the buffer as it was.
+ */
+use super::constants::{
+    AUDIO_QUOTA_BYTES, KEEP_BEHIND, MAX_PICTURE_HEIGHT, MAX_PICTURE_WIDTH, TOTAL_QUOTA_BYTES,
+    VIDEO_QUOTA_BYTES,
+};
+use mars_mp4::{Error, Track, TrackKind, parse_init, parse_segment};
+use std::collections::{BTreeMap, VecDeque};
+use std::fmt;
+
+/// The missing-initialization error's box name: a media segment needs the moov that came before it.
+const MOOV: [u8; 4] = *b"moov";
+
+/** The byte limits a Stream enforces: per SourceBuffer for each kind of media, and across every buffer. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Quotas {
+    /** Video bytes one SourceBuffer may hold. */
+    pub video: usize,
+    /** Audio bytes one SourceBuffer may hold. */
+    pub audio: usize,
+    /** Bytes held across all buffers of the stream. */
+    pub total: usize,
+}
+
+impl Default for Quotas {
+    /** The limits the constants file sets, which every real stream uses. */
+    fn default() -> Self {
+        Self {
+            video: VIDEO_QUOTA_BYTES,
+            audio: AUDIO_QUOTA_BYTES,
+            total: TOTAL_QUOTA_BYTES,
+        }
+    }
+}
+
+/** One coded frame: where it decodes, where it presents, how long it lasts, whether it is a sync point, and its bytes. */
+#[derive(Clone, Debug, PartialEq)]
+pub struct Frame {
+    /** Decode time in seconds, shifted by the buffer's timestamp offset. */
+    pub decode: f64,
+    /** Presentation time in seconds, shifted by the buffer's timestamp offset. */
+    pub pts: f64,
+    /** Presentation duration in seconds. */
+    pub duration: f64,
+    /** Whether a decoder can start here without the frames before it. */
+    pub sync: bool,
+    /** The frame's bytes as the segment carried them (an AVCC or raw AAC access unit). */
+    pub data: Vec<u8>,
+}
+
+/** One track of a source buffer and the frames it has accepted, in decode order. */
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lane {
+    /** The track's description from its init segment: codec, decoder configuration, layout. */
+    pub track: Track,
+    /** The accepted frames, oldest decode time first. */
+    pub frames: VecDeque<Frame>,
+    /** The sum of the frames' byte lengths, kept in step with `frames`. */
+    pub bytes: usize,
+    /** Where the lane's media ends: the latest frame end, kept in step with `frames`; zero when empty. */
+    pub end: f64,
+}
+
+impl Lane {
+    /** A lane for a track with no frames yet. */
+    fn new(track: Track) -> Self {
+        Self {
+            track,
+            frames: VecDeque::new(),
+            bytes: 0,
+            end: 0.0,
+        }
+    }
+    /** The track's kind, which decides whether its frames are pictures or sound. */
+    pub fn kind(&self) -> TrackKind {
+        self.track.kind
+    }
+    /** Recount the bytes and the end after frames were removed. */
+    fn recount(&mut self) {
+        self.bytes = self.frames.iter().map(|frame| frame.data.len()).sum();
+        self.end = self
+            .frames
+            .iter()
+            .map(|frame| frame.pts + frame.duration)
+            .fold(0.0, f64::max);
+    }
+}
+
+/** One source buffer: the tracks its init segment declared, and a lane per track. */
+#[derive(Debug, Default)]
+struct Buffer {
+    tracks: Vec<Track>,
+    lanes: BTreeMap<u32, Lane>,
+}
+
+impl Buffer {
+    /** Take an init segment's tracks: each track keeps its frames if it was declared before, and a new one gets a lane. */
+    fn adopt(&mut self, tracks: Vec<Track>) {
+        for track in &tracks {
+            self.lanes
+                .entry(track.id)
+                .and_modify(|lane| lane.track = track.clone())
+                .or_insert_with(|| Lane::new(track.clone()));
+        }
+        self.tracks = tracks;
+    }
+    /** The bytes this buffer holds of one kind of media. */
+    fn stored(&self, kind: TrackKind) -> usize {
+        self.lanes
+            .values()
+            .filter(|lane| lane.kind() == kind)
+            .map(|lane| lane.bytes)
+            .sum()
+    }
+}
+
+/** One append the script accepted: its whole boxes, how many lead an init segment, and the buffer's offset and window. */
+#[derive(Clone, Copy, Debug)]
+pub struct Append<'a> {
+    /** Whole top-level boxes: the init segment (if `init_len` is nonzero) followed by media segments. */
+    pub bytes: &'a [u8],
+    /** Bytes at the front of `bytes` that are the init segment. */
+    pub init_len: usize,
+    /** The buffer's timestamp offset, in seconds. */
+    pub offset: f64,
+    /** The append window's start and optional end, in seconds. */
+    pub window: (f64, Option<f64>),
+}
+
+/** Why an append was refused: the bytes are not valid ISO BMFF, or accepting them would exceed a byte quota. */
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /** The segment failed to parse, or a media segment came before any init segment. */
+    Container(Error),
+    /** The buffer or the whole stream would hold more bytes than its quota allows. */
+    Quota,
+}
+
+impl From<Error> for Refusal {
+    /** A parse failure is a container refusal. */
+    fn from(error: Error) -> Self {
+        Self::Container(error)
+    }
+}
+
+impl fmt::Display for Refusal {
+    /** A one-line description for logs. */
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Container(error) => write!(f, "{error}"),
+            Self::Quota => write!(f, "source buffer quota exceeded"),
+        }
+    }
+}
+
+/** Every source buffer of one Media Source player. Main thread only, like the players that own it. */
+#[derive(Debug)]
+pub struct Stream {
+    buffers: BTreeMap<u32, Buffer>,
+    quotas: Quotas,
+}
+
+impl Default for Stream {
+    /** A stream with the limits the constants file sets. */
+    fn default() -> Self {
+        Self::with_quotas(Quotas::default())
+    }
+}
+
+impl Stream {
+    /** A stream with the given limits; tests use small ones to exercise refusals without megabytes of media. */
+    pub fn with_quotas(quotas: Quotas) -> Self {
+        Self {
+            buffers: BTreeMap::new(),
+            quotas,
+        }
+    }
+
+    /** Apply one accepted append to a buffer. The append is checked as a whole before anything is stored. */
+    pub fn append(&mut self, buffer: u32, append: Append<'_>) -> Result<(), Refusal> {
+        let (init, media) = append
+            .bytes
+            .split_at(append.init_len.min(append.bytes.len()));
+        let tracks = if init.is_empty() {
+            self.tracks(buffer)
+        } else {
+            within_ceiling(parse_init(init)?)?
+        };
+        let frames = if media.is_empty() {
+            Vec::new()
+        } else {
+            if tracks.is_empty() {
+                return Err(Error::Missing(MOOV).into());
+            }
+            collect_frames(&tracks, media, &append)?
+        };
+        self.kinds_unchanged(buffer, &tracks)?;
+        self.admit(buffer, &tracks, &frames)?;
+        let target = self.buffers.entry(buffer).or_default();
+        if !init.is_empty() {
+            target.adopt(tracks);
+        }
+        for (track, frame) in frames {
+            if let Some(lane) = target.lanes.get_mut(&track) {
+                lane.bytes += frame.data.len();
+                lane.end = lane.end.max(frame.pts + frame.duration);
+                lane.frames.push_back(frame);
+            }
+        }
+        Ok(())
+    }
+
+    /** The tracks a buffer's init segment declared, empty when it has none yet. */
+    fn tracks(&self, buffer: u32) -> Vec<Track> {
+        self.buffers
+            .get(&buffer)
+            .map_or_else(Vec::new, |found| found.tracks.clone())
+    }
+
+    /** Refuse an init segment that gives a track id a different kind than the lane it already has, so every byte stays in its bucket. */
+    fn kinds_unchanged(&self, buffer: u32, tracks: &[Track]) -> Result<(), Refusal> {
+        let Some(found) = self.buffers.get(&buffer) else {
+            return Ok(());
+        };
+        for track in tracks {
+            if found
+                .lanes
+                .get(&track.id)
+                .is_some_and(|lane| lane.kind() != track.kind)
+            {
+                return Err(Error::Malformed("track id changed kind").into());
+            }
+        }
+        Ok(())
+    }
+
+    /** Refuse the append when its bytes would take the buffer or the stream past a quota; nothing is changed. */
+    fn admit(&self, buffer: u32, tracks: &[Track], frames: &[(u32, Frame)]) -> Result<(), Refusal> {
+        let (video, audio) = incoming(tracks, frames);
+        let held = self.buffers.get(&buffer);
+        let video_held = held.map_or(0, |found| found.stored(TrackKind::Video));
+        let audio_held = held.map_or(0, |found| found.stored(TrackKind::Audio));
+        let over_buffer =
+            video_held + video > self.quotas.video || audio_held + audio > self.quotas.audio;
+        if over_buffer || self.total() + video + audio > self.quotas.total {
+            return Err(Refusal::Quota);
+        }
+        Ok(())
+    }
+
+    /** `remove`: drop the frames of one buffer whose presentation time lies in `[start, end)`. */
+    pub fn remove(&mut self, buffer: u32, start: f64, end: f64) {
+        let Some(target) = self.buffers.get_mut(&buffer) else {
+            return;
+        };
+        for lane in target.lanes.values_mut() {
+            lane.frames
+                .retain(|frame| frame.pts < start || frame.pts >= end);
+            lane.recount();
+        }
+    }
+
+    /**
+     * Eviction behind the playhead: in each lane, drop everything before the first sync frame at or after the point
+     * `KEEP_BEHIND` seconds behind the playhead. Cutting at a sync frame keeps the rest decodable; a lane with no such
+     * frame keeps everything, since nothing behind it is old enough to go. Returns the bytes freed.
+     */
+    pub fn evict_behind(&mut self, playhead: f64) -> usize {
+        let cut = playhead - KEEP_BEHIND;
+        let mut freed = 0;
+        for lane in self.lanes_mut() {
+            let keep_from = lane
+                .frames
+                .iter()
+                .position(|frame| frame.sync && frame.pts >= cut)
+                .unwrap_or(0);
+            lane.frames.drain(..keep_from);
+            let before = lane.bytes;
+            lane.recount();
+            freed += before - lane.bytes;
+        }
+        freed
+    }
+
+    /** The video and audio bytes one buffer holds, for reporting to the script's quota check. */
+    pub fn stored(&self, buffer: u32) -> [usize; 2] {
+        self.buffers.get(&buffer).map_or([0, 0], |found| {
+            [
+                found.stored(TrackKind::Video),
+                found.stored(TrackKind::Audio),
+            ]
+        })
+    }
+
+    /** Every buffer's stored bytes, by buffer id. */
+    pub fn buffers(&self) -> Vec<(u32, [usize; 2])> {
+        self.buffers
+            .keys()
+            .map(|id| (*id, self.stored(*id)))
+            .collect()
+    }
+
+    /**
+     * Where the buffered media ends for playback: the earliest end among the lanes, since the playhead must stall
+     * when any track runs dry. None while there is no lane or a lane holds no frames.
+     */
+    pub fn buffered_end(&self) -> Option<f64> {
+        self.lanes()
+            .map(|lane| (!lane.frames.is_empty()).then_some(lane.end))
+            .try_fold(f64::INFINITY, |end, lane| lane.map(|lane| end.min(lane)))
+            .filter(|end| end.is_finite())
+    }
+
+    /** Bytes held across every buffer. */
+    pub fn total(&self) -> usize {
+        self.lanes().map(|lane| lane.bytes).sum()
+    }
+
+    /** Every lane of every buffer, for the presenters that feed decoders and renderers. */
+    pub fn lanes(&self) -> impl Iterator<Item = &Lane> {
+        self.buffers
+            .values()
+            .flat_map(|buffer| buffer.lanes.values())
+    }
+
+    /** Every lane of every buffer, mutably, for eviction. */
+    fn lanes_mut(&mut self) -> impl Iterator<Item = &mut Lane> {
+        self.buffers
+            .values_mut()
+            .flat_map(|buffer| buffer.lanes.values_mut())
+    }
+}
+
+/** Refuse an init segment whose video is larger than the decoder opens, as an unsupported codec would be. */
+fn within_ceiling(tracks: Vec<Track>) -> Result<Vec<Track>, Error> {
+    let oversize = tracks.iter().any(|track| {
+        track.kind == TrackKind::Video
+            && (track.width > MAX_PICTURE_WIDTH || track.height > MAX_PICTURE_HEIGHT)
+    });
+    if oversize {
+        return Err(Error::Malformed("picture larger than the decoder plays"));
+    }
+    Ok(tracks)
+}
+
+/** The frames a media segment yields, each tagged with its track id; the append window clips them. */
+fn collect_frames(
+    tracks: &[Track],
+    media: &[u8],
+    append: &Append<'_>,
+) -> Result<Vec<(u32, Frame)>, Error> {
+    let samples = parse_segment(media, tracks)?;
+    let mut frames = Vec::with_capacity(samples.len());
+    for sample in samples {
+        let track = tracks
+            .iter()
+            .find(|track| track.id == sample.track)
+            .ok_or(Error::Malformed("sample for an unknown track"))?;
+        if track.timescale == 0 {
+            return Err(Error::Malformed("timescale"));
+        }
+        if track.kind == TrackKind::Other {
+            return Err(Error::Malformed(
+                "samples of a track kind MSE does not play",
+            ));
+        }
+        let scale = f64::from(track.timescale);
+        let pts = sample.pts as f64 / scale + append.offset;
+        let duration = f64::from(sample.duration) / scale;
+        if clipped(pts, pts + duration, append.window).is_none() {
+            continue;
+        }
+        frames.push((
+            sample.track,
+            Frame {
+                decode: sample.decode_time as f64 / scale + append.offset,
+                pts,
+                duration,
+                sync: sample.sync,
+                data: media[sample.offset..sample.offset + sample.size].to_vec(),
+            },
+        ));
+    }
+    Ok(frames)
+}
+
+/** The video and audio bytes the frames add, by the kind of track each belongs to. */
+fn incoming(tracks: &[Track], frames: &[(u32, Frame)]) -> (usize, usize) {
+    frames
+        .iter()
+        .fold((0, 0), |(video, audio), (track, frame)| {
+            let kind = tracks
+                .iter()
+                .find(|candidate| candidate.id == *track)
+                .map(|candidate| candidate.kind);
+            match kind {
+                Some(TrackKind::Video) => (video + frame.data.len(), audio),
+                Some(TrackKind::Audio) => (video, audio + frame.data.len()),
+                _ => (video, audio),
+            }
+        })
+}
+
+/** The part of `[start, end)` inside the append window, or None when none of it is. */
+fn clipped(start: f64, end: f64, window: (f64, Option<f64>)) -> Option<(f64, f64)> {
+    let (window_start, window_end) = window;
+    let start = start.max(window_start);
+    let end = end.min(window_end.unwrap_or(f64::INFINITY));
+    (end > start).then_some((start, end))
+}
+
+#[cfg(test)]
+mod tests {
+    /**
+     * Synthetic segments for the stream tests: one video track at timescale 1000 with an avcC record, and media
+     * segments whose samples take their sizes and sync flags from the caller.
+     */
+    use super::{Append, Quotas, Refusal, Stream};
+
+    /** A box of `kind` around `payload`. */
+    fn bx(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        [
+            &((payload.len() + 8) as u32).to_be_bytes()[..],
+            kind,
+            payload,
+        ]
+        .concat()
+    }
+
+    /** A version-0 full box: the version byte, 24-bit flags, then the payload. */
+    fn fb(kind: &[u8; 4], flags: u32, payload: &[u8]) -> Vec<u8> {
+        bx(
+            kind,
+            &[&[0u8][..], &flags.to_be_bytes()[1..], payload].concat(),
+        )
+    }
+
+    /** A moov with one video track: id 1, timescale 1000, 320 by 240, and an avc1 entry with a short avcC. */
+    fn init() -> Vec<u8> {
+        init_with(b"vide")
+    }
+
+    /** A moov with one track of the given handler type, id 1, carrying the same avc1 entry as `init`. */
+    fn init_with(handler: &[u8; 4]) -> Vec<u8> {
+        init_sized(handler, 320, 240)
+    }
+
+    /** `init_with` at a display size of the caller's choosing. */
+    fn init_sized(handler: &[u8; 4], width: u32, height: u32) -> Vec<u8> {
+        let mut tkhd = vec![0u8; 8];
+        tkhd.extend(1u32.to_be_bytes());
+        tkhd.extend([0u8; 68]);
+        tkhd.extend((width << 16).to_be_bytes());
+        tkhd.extend((height << 16).to_be_bytes());
+        let mut mdhd = vec![0u8; 8];
+        mdhd.extend(1000u32.to_be_bytes());
+        mdhd.extend([0u8; 4]);
+        let hdlr = [&[0u8; 4][..], &handler[..], &[0u8; 13][..]].concat();
+        let avcc = bx(b"avcC", &[1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0, 0]);
+        let avc1 = bx(b"avc1", &[&[0u8; 78][..], &avcc].concat());
+        let stsd = fb(b"stsd", 0, &[1u32.to_be_bytes().as_slice(), &avc1].concat());
+        let stbl = bx(b"stbl", &stsd);
+        let minf = bx(b"minf", &stbl);
+        let mdia = bx(
+            b"mdia",
+            &[fb(b"mdhd", 0, &mdhd), fb(b"hdlr", 0, &hdlr), minf].concat(),
+        );
+        let trak = bx(b"trak", &[fb(b"tkhd", 0, &tkhd), mdia].concat());
+        bx(b"moov", &trak)
+    }
+
+    /** A media segment: one moof with a single traf, then the mdat holding `data`. Each sample is (duration, size, sync). */
+    fn media(decode: u32, samples: &[(u32, u32, bool)], data: &[u8]) -> Vec<u8> {
+        let mut rows = Vec::new();
+        for &(duration, size, sync) in samples {
+            let flags = if sync { 0 } else { 0x0001_0000 };
+            rows.extend(
+                [duration, size, flags]
+                    .iter()
+                    .flat_map(|v: &u32| v.to_be_bytes()),
+            );
+        }
+        let count = samples.len() as u32;
+        let trun = |offset: u32| {
+            let payload = [&count.to_be_bytes()[..], &offset.to_be_bytes()[..], &rows].concat();
+            fb(b"trun", 0x701, &payload)
+        };
+        let traf = |offset: u32| {
+            let tfhd = fb(b"tfhd", 0x0002_0000, &1u32.to_be_bytes());
+            let tfdt = fb(b"tfdt", 0, &decode.to_be_bytes());
+            bx(b"traf", &[tfhd, tfdt, trun(offset)].concat())
+        };
+        let placeholder = bx(b"moof", &traf(0));
+        let moof = bx(b"moof", &traf(placeholder.len() as u32 + 8));
+        [moof, bx(b"mdat", data)].concat()
+    }
+
+    /** The first append of a buffer: the init segment and a media segment together, at offset zero with no window. */
+    fn first(bytes: &[u8], init_len: usize) -> Append<'_> {
+        Append {
+            bytes,
+            init_len,
+            offset: 0.0,
+            window: (0.0, None),
+        }
+    }
+
+    /** A media segment appended with a timestamp offset starts its frames at the offset, not at the segment's own time. */
+    #[test]
+    fn media_frames_take_the_buffer_timestamp_offset() {
+        let init = init();
+        let segment = media(0, &[(1000, 2, true)], &[7, 8]);
+        let mut stream = Stream::default();
+        let bytes = [init.clone(), segment.clone()].concat();
+        stream.append(1, first(&bytes, init.len())).unwrap();
+        let shifted = Append {
+            bytes: &segment,
+            init_len: 0,
+            offset: 10.0,
+            window: (0.0, None),
+        };
+        stream.append(1, shifted).unwrap();
+        let frames: Vec<f64> = stream
+            .lanes()
+            .next()
+            .unwrap()
+            .frames
+            .iter()
+            .map(|f| f.pts)
+            .collect();
+        assert_eq!(frames, vec![0.0, 10.0]);
+    }
+
+    /** An init segment gives each track a lane with its codec, decoder configuration and display size. */
+    #[test]
+    fn init_segment_gives_each_track_a_lane_with_its_config() {
+        let init = init();
+        let mut stream = Stream::default();
+        stream.append(1, first(&init, init.len())).unwrap();
+        let lane = stream.lanes().next().unwrap();
+        assert_eq!(lane.track.codec, "avc1.42C01E");
+        assert_eq!(
+            lane.track.config,
+            vec![1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1, 0, 0]
+        );
+        assert_eq!((lane.track.width, lane.track.height), (320, 240));
+        assert!(lane.frames.is_empty());
+    }
+
+    /** A media segment before any init segment is refused, and nothing is buffered. */
+    #[test]
+    fn a_media_segment_without_an_init_segment_is_refused() {
+        let segment = media(0, &[(1000, 1, true)], &[1]);
+        let mut stream = Stream::default();
+        assert!(matches!(
+            stream.append(1, first(&segment, 0)),
+            Err(Refusal::Container(_))
+        ));
+        assert_eq!(stream.lanes().count(), 0);
+    }
+
+    /** A frame that ends before the append window starts is dropped; a frame the window only partly covers is kept whole. */
+    #[test]
+    fn frames_outside_the_append_window_are_dropped() {
+        let init = init();
+        let segment = media(0, &[(1000, 1, true), (1000, 1, true)], &[1, 2]);
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream
+            .append(
+                1,
+                Append {
+                    bytes: &bytes,
+                    init_len: init.len(),
+                    offset: 0.0,
+                    window: (1.5, None),
+                },
+            )
+            .unwrap();
+        let frames = &stream.lanes().next().unwrap().frames;
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].pts, 1.0);
+        assert_eq!(frames[0].data, vec![2]);
+    }
+
+    /** remove drops the frames whose presentation starts inside its bounds and keeps the rest. */
+    #[test]
+    fn remove_drops_frames_between_its_bounds() {
+        let init = init();
+        let segment = media(
+            0,
+            &[(1000, 1, true), (1000, 1, true), (1000, 1, true)],
+            &[1, 2, 3],
+        );
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream.append(1, first(&bytes, init.len())).unwrap();
+        stream.remove(1, 1.0, 2.0);
+        let pts: Vec<f64> = stream
+            .lanes()
+            .next()
+            .unwrap()
+            .frames
+            .iter()
+            .map(|f| f.pts)
+            .collect();
+        assert_eq!(pts, vec![0.0, 2.0]);
+        assert_eq!(stream.total(), 2);
+    }
+
+    /** Eviction cuts only at a sync frame, so the frames it keeps still decode: at playhead 50 the cut is 20, the sync frame there. */
+    #[test]
+    fn eviction_keeps_a_decodable_run_behind_the_playhead() {
+        let init = init();
+        let samples: Vec<(u32, u32, bool)> = (0..60).map(|i| (1000, 1, i % 20 == 0)).collect();
+        let segment = media(0, &samples, &[0u8; 60]);
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream.append(1, first(&bytes, init.len())).unwrap();
+        stream.evict_behind(50.0);
+        let frames = &stream.lanes().next().unwrap().frames;
+        assert_eq!(frames.front().unwrap().pts, 20.0);
+        assert!(frames.front().unwrap().sync);
+        assert_eq!(frames.len(), 40);
+    }
+
+    /** Eviction frees the bytes it drops, and the stored total falls by the same amount. */
+    #[test]
+    fn tick_eviction_frees_the_bytes_it_drops() {
+        let init = init();
+        let samples: Vec<(u32, u32, bool)> = (0..60).map(|i| (1000, 1, i % 20 == 0)).collect();
+        let segment = media(0, &samples, &[0u8; 60]);
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream.append(1, first(&bytes, init.len())).unwrap();
+        assert_eq!(stream.total(), 60);
+        let freed = stream.evict_behind(50.0);
+        assert_eq!(freed, 20);
+        assert_eq!(stream.total(), 40);
+        assert_eq!(stream.stored(1), [40, 0]);
+    }
+
+    /** An append that would take a buffer past its video quota is refused, and the buffer keeps what it had. */
+    #[test]
+    fn an_append_past_the_buffer_quota_is_refused_and_changes_nothing() {
+        let init = init();
+        let small = media(0, &[(1000, 1, true), (1000, 1, true)], &[1, 2]);
+        let big = media(
+            2000,
+            &[(1000, 1, true), (1000, 1, true), (1000, 1, true)],
+            &[3, 4, 5],
+        );
+        let quotas = Quotas {
+            video: 4,
+            audio: 4,
+            total: 100,
+        };
+        let mut stream = Stream::with_quotas(quotas);
+        stream
+            .append(1, first(&[init.clone(), small].concat(), init.len()))
+            .unwrap();
+        let outcome = stream.append(
+            1,
+            Append {
+                bytes: &big,
+                init_len: 0,
+                offset: 0.0,
+                window: (0.0, None),
+            },
+        );
+        assert_eq!(outcome, Err(Refusal::Quota));
+        assert_eq!(stream.stored(1), [2, 0]);
+        assert_eq!(stream.lanes().next().unwrap().frames.len(), 2);
+    }
+
+    /** The stream-wide cap refuses an append that fits one buffer but not the stream's total. */
+    #[test]
+    fn an_append_past_the_stream_total_is_refused() {
+        let init = init();
+        let first_segment = media(0, &[(1000, 1, true)], &[1]);
+        let second = media(1000, &[(1000, 1, true), (1000, 1, true)], &[2, 3]);
+        let quotas = Quotas {
+            video: 100,
+            audio: 100,
+            total: 2,
+        };
+        let mut stream = Stream::with_quotas(quotas);
+        stream
+            .append(
+                1,
+                first(&[init.clone(), first_segment].concat(), init.len()),
+            )
+            .unwrap();
+        let outcome = stream.append(
+            1,
+            Append {
+                bytes: &second,
+                init_len: 0,
+                offset: 0.0,
+                window: (0.0, None),
+            },
+        );
+        assert_eq!(outcome, Err(Refusal::Quota));
+        assert_eq!(stream.total(), 1);
+    }
+
+    /** A box whose size runs past its segment is refused, and nothing is buffered. */
+    #[test]
+    fn a_refused_segment_leaves_the_buffer_empty() {
+        let init = init();
+        let hostile = [
+            init.clone(),
+            vec![0xFF, 0xFF, 0xFF, 0xFF, b'm', b'o', b'o', b'f', 1, 2, 3],
+        ]
+        .concat();
+        let mut stream = Stream::default();
+        let outcome = stream.append(1, first(&hostile, init.len()));
+        assert!(outcome.is_err());
+        assert_eq!(
+            stream.lanes().flat_map(|lane| lane.frames.iter()).count(),
+            0
+        );
+    }
+
+    /** Samples of a track whose kind MSE does not play are an append error, so no byte is stored outside the quotas. */
+    #[test]
+    fn samples_of_an_unplayed_track_kind_are_refused() {
+        let init = init_with(b"subt");
+        let segment = media(0, &[(1000, 1, true)], &[9]);
+        let bytes = [init.clone(), segment].concat();
+        let mut stream = Stream::default();
+        let outcome = stream.append(1, first(&bytes, init.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(stream.total(), 0);
+    }
+
+    /** The buffered end is the earliest lane end, and nothing while a lane holds no frames. */
+    #[test]
+    fn buffered_end_is_the_earliest_lane_end() {
+        let video = init();
+        let three = media(
+            0,
+            &[(1000, 1, true), (1000, 1, true), (1000, 1, true)],
+            &[1, 2, 3],
+        );
+        let mut stream = Stream::default();
+        stream
+            .append(1, first(&[video.clone(), three].concat(), video.len()))
+            .unwrap();
+        assert_eq!(stream.buffered_end(), Some(3.0));
+        let audio = init_with(b"soun");
+        stream.append(2, first(&audio, audio.len())).unwrap();
+        assert_eq!(stream.buffered_end(), None);
+        let two = media(0, &[(1000, 1, true), (1000, 1, true)], &[4, 5]);
+        stream
+            .append(
+                2,
+                Append {
+                    bytes: &two,
+                    init_len: 0,
+                    offset: 0.0,
+                    window: (0.0, None),
+                },
+            )
+            .unwrap();
+        assert_eq!(stream.buffered_end(), Some(2.0));
+        stream.remove(2, 0.0, 5.0);
+        assert_eq!(stream.buffered_end(), None);
+    }
+
+    /** An init segment whose video is larger than the decoder's ceiling is refused, so no picture of it is ever decoded. */
+    #[test]
+    fn an_init_segment_past_the_picture_ceiling_is_refused() {
+        let huge = init_sized(b"vide", 7680, 4320);
+        let mut stream = Stream::default();
+        let outcome = stream.append(1, first(&huge, huge.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(stream.lanes().count(), 0);
+        let fits = init_sized(b"vide", 4096, 2304);
+        assert!(stream.append(1, first(&fits, fits.len())).is_ok());
+    }
+
+    /** An init segment that gives an existing track id another kind is refused, and the lane keeps its kind and bytes. */
+    #[test]
+    fn a_track_id_that_changes_kind_is_refused() {
+        let video = init();
+        let segment = media(0, &[(1000, 1, true)], &[9]);
+        let bytes = [video.clone(), segment].concat();
+        let mut stream = Stream::default();
+        stream.append(1, first(&bytes, video.len())).unwrap();
+        let audio = init_with(b"soun");
+        let outcome = stream.append(1, first(&audio, audio.len()));
+        assert!(matches!(outcome, Err(Refusal::Container(_))));
+        assert_eq!(
+            stream.lanes().next().unwrap().kind(),
+            mars_mp4::TrackKind::Video
+        );
+        assert_eq!(stream.stored(1), [1, 0]);
+    }
+}

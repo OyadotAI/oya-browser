@@ -4,7 +4,7 @@ import type { Session } from 'electron';
 import type { AppServices } from './services.ts';
 import { NativeContexts } from '../native-contexts/index.ts';
 import { capturePersonaPolicy } from './persona-policy.ts';
-import { configureSession } from '../identity/session.ts';
+import { configureSession, type SessionExtras } from '../identity/session.ts';
 /** Exclusively owned session resources are installed after policy and revoked before tab disposal. */
 interface Resources {
   /** Native download owner. */
@@ -26,6 +26,26 @@ export function appNativeContexts(deps: AppServices, resources: Resources): Nati
     close: (session) => setup.close(session),
   });
 }
+/**
+ * The active persona's proxy, egress and page protection on an in-memory
+ * session, before any renderer exists. Agent contexts and incognito windows
+ * share it, so neither can hand out a page that fingerprints differently from
+ * the profile; a persona or egress change mid-setup throws instead.
+ */
+export async function protectPrivateSession(deps: AppServices, session: Session, extras: Extras = {}): Promise<void> {
+  if (!deps.nativeBrowsing) throw Error('Browser contexts require native browsing mode');
+  const assertCurrent = capturePersonaPolicy(deps.persona, deps.governance);
+  await routePrivateSession(deps, session, extras);
+  assertCurrent();
+  deps.protection.configureSession(session);
+}
+/** Install permissions and proxy before any private renderer exists. */
+function routePrivateSession(deps: AppServices, session: Session, extras: Partial<SessionExtras>): Promise<void> {
+  const routing = { nativeBrowsing: true, governance: deps.governance, ...extras };
+  return configureSession(deps.electron.app, session, deps.persona.active, routing);
+}
+/** What a private session may add to the agent-context defaults: the person-confirmed app-link handoff. */
+type Extras = Pick<SessionExtras, 'externalApp'>;
 /** Native session policy precedes every private renderer, preserving existing refusal semantics. */
 class ContextSetup {
   /** Application policy services. */
@@ -39,21 +59,8 @@ class ContextSetup {
   }
   /** No copied cookie jar or silently bypassed persona/proxy policy. */
   async configure(session: Session): Promise<void> {
-    const d = this.deps;
-    if (!d.nativeBrowsing) throw Error('Browser contexts require native browsing mode');
-    const assertCurrent = capturePersonaPolicy(d.persona, d.governance);
-    await this.routeSession(session);
-    assertCurrent();
-    d.protection.configureSession(session);
+    await protectPrivateSession(this.deps, session);
     this.installResources(session);
-  }
-  /** Install permissions and proxy before any private renderer exists. */
-  private routeSession(session: Session): Promise<void> {
-    const d = this.deps;
-    return configureSession(d.electron.app, session, d.persona.active, {
-      nativeBrowsing: true,
-      governance: d.governance,
-    });
   }
   /** Resource activation follows complete native identity installation. */
   private installResources(session: Session): void {

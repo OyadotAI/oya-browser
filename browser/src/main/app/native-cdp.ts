@@ -217,7 +217,7 @@ export class AppNativeBackend implements NativeBackend {
   /** Route supported operations without retargeting after protection settles. */
   private native(tab: Tab, target: string, action: string, params: Record<string, unknown>): Promise<unknown> | object {
     if (action.startsWith('history:')) return this.historyCommand(tab, action, params);
-    if (action.startsWith('input:')) return dispatchNativeInput(tab.view, action, params);
+    if (action.startsWith('input:')) return input(() => this.tab(target), tab, action, params);
     if (action.startsWith('page:')) return nativePageCommand(tab.view, action, params);
     if (action === 'metrics:set') return this.metrics.set(tab.view, params);
     if (action === 'metrics:clear') return this.metrics.clear(tab.view);
@@ -266,6 +266,14 @@ function nativeServices(deps: AppServices) {
     beginCommand: () => deps.control.beginLocalCommand(),
     clientChanged: (delta: number) => deps.control.localClient(delta),
   };
+}
+
+/** An awaited layout read cannot retain a grant to a replaced view or a tab whose control was revoked. */
+function input(current: () => Tab, tab: Tab, action: string, params: Record<string, unknown>) {
+  const view = tab.view;
+  return dispatchNativeInput(view, action, params, () => {
+    if (current() !== tab || tab.view !== view) throw Error('Native input target changed');
+  });
 }
 
 /** Existing command ownership rules also constrain asynchronous browser activity. */

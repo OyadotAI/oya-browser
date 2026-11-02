@@ -21,7 +21,7 @@ export interface ControlValue {
   revision?: number;
   /** Whether this app decided it, with no server involved. */
   local?: boolean;
-  /** Whether a takeover is being asked for again after a reconnect. */
+  /** Whether a takeover is being asked for again, after a reconnect or a lapsed hold. */
   reclaiming?: boolean;
 }
 
@@ -77,6 +77,9 @@ export function drivenElsewhere(state: ControlValue): boolean {
   return state.mode === 'agent' || (state.mode === 'human' && !state.mine);
 }
 
+/** Whether `state` is a person's hold on this desktop. */
+const held = (state: ControlValue): boolean => state.mode === 'human' && !!state.mine;
+
 /** The control state and the handoff protocol with the server. */
 class ControlState {
   /** The server's (or the local) control state: mode, mine, expiresAt, revision. */
@@ -93,11 +96,13 @@ class ControlState {
   renewing = false;
   /** Local CDP clients connected to the front door. */
   localClients = 0;
+  /** The revision of the hold the last retake won: it is not retaken again (see settle). */
+  private retaken: number | undefined;
   /** Local automation commands running now. */
   localInFlight = 0;
   /** A person took control locally, with no server involved. */
   localHeld = false;
-  /** A person held control when the socket dropped, so a reconnect takes it back. */
+  /** A person held control, or was taking it (a retake after a lapse included), and was not giving it back, when the socket dropped, so a reconnect takes it back. */
   heldAtDrop = false;
   /** desktop_control requests waiting on the server. */
   protected readonly requests: ControlRequests;
@@ -149,8 +154,37 @@ class ControlState {
   /** A state from the server; an older revision than the current one is ignored. */
   receive(value: ControlValue | null | undefined): void {
     if (!value || (value.revision || 0) < (this.state.revision || 0)) return;
-    this.state = value;
+    this.settle(value);
+  }
+
+  /**
+   * Takes in a new state. When the person's own hold has just lapsed into a pause
+   * (a renewal refused, the server's lease sweep, the expiry tick) and nothing here
+   * was letting go, control is asked for once more, as after a reconnect: a lapse
+   * otherwise left every tab shielded with nobody driving. Only 'paused' qualifies,
+   * which is stricter than drivenElsewhere(): an agent's or another person's
+   * control is never taken back. A refused retake leaves a state not held, so it
+   * cannot fire again until the next lapse, and a hold a retake won is not
+   * retaken until a renewal replaces it: a desktop clock running ahead of the
+   * server's sees every new hold as expired, and would otherwise retake each tick.
+   */
+  private settle(next: ControlValue): void {
+    const retakable = held(this.state) && this.state.revision !== this.retaken;
+    if (this.connected && !this.busy && retakable && next.mode === 'paused') {
+      this.state = { ...next, mine: false, reclaiming: true };
+      return this.reclaim(next);
+    }
+    this.state = next;
     this.publish();
+  }
+
+  /** Takes control back; when the server refuses before answering, its own state `value` stands. */
+  protected reclaim(value: ControlValue): void {
+    const won = (): void => void (this.retaken = this.state.revision);
+    this.change('acquire').then(won, () => {
+      if (this.state.reclaiming) this.state = value;
+      this.publish();
+    });
   }
 
   /** Takes ('acquire') or gives back ('return') control; resolves with the new snapshot. */
@@ -217,10 +251,8 @@ class ControlState {
     const { state } = this;
     if (!this.connected || state.mode !== 'human' || !state.mine) return;
     const left = (state.expiresAt ?? NaN) - Date.now();
-    if (left <= 0) {
-      this.state = { mode: 'paused', mine: false };
-      this.publish();
-    } else if (!this.busy && !this.renewing && left < CONTROL_RENEW_BEFORE_MS) this.renew();
+    if (left <= 0) this.settle({ mode: 'paused', mine: false });
+    else if (!this.busy && !this.renewing && left < CONTROL_RENEW_BEFORE_MS) this.renew();
   }
 
   /** Asks the server to extend human control. */
@@ -239,26 +271,45 @@ class ControlState {
  * control state: what the socket and the front door report.
  */
 export class DesktopControl extends ControlState {
+  /** The newest server revision this desktop saw before the socket dropped. */
+  private seen = 0;
+
   /**
    * The socket authenticated; `value` is the server's control state, if it supports control.
    * A server that forgot the person's hold (a restart, a lapse while offline) is asked for it
-   * again, so a network blip never hands a person's page to the agent mid-task.
+   * again, so a network blip never hands a person's page to the agent mid-task. An agent
+   * handed control after the drop (a newer revision) keeps it.
    */
   connect(value: ControlValue | null | undefined): void {
-    const reclaim = this.heldAtDrop && !!value && !(value.mode === 'human' && value.mine);
+    const reclaim = this.reclaimsOn(value);
     Object.assign(this, { heldAtDrop: false, connected: true, supported: !!value, localHeld: false });
-    this.state =
-      reclaim && value ? { ...value, mode: 'paused', mine: false, reclaiming: true } : value || { mode: 'unavailable' };
-    if (reclaim && value) this.reclaim(value);
+    this.state = reclaim
+      ? { ...value, mode: 'paused', mine: false, reclaiming: true }
+      : value || { mode: 'unavailable' };
+    if (reclaim) this.reclaim(value);
     else this.publish();
   }
 
-  /** Takes control back after a reconnect; when the server refuses before answering, its own state stands. */
-  private reclaim(value: ControlValue): void {
-    this.change('acquire').catch(() => {
-      if (this.state.reclaiming) this.state = value;
-      this.publish();
-    });
+  /**
+   * Whether a reconnect to `value` takes control back: the person held it at the drop,
+   * does not hold it now, and nobody handed it to the agent since. A new or forgotten
+   * session (revision 0, or no newer) and a lapse swept to paused still come back.
+   */
+  private reclaimsOn(value: ControlValue | null | undefined): value is ControlValue {
+    if (!this.heldAtDrop || !value || held(value)) return false;
+    return !(value.mode === 'agent' && (value.revision || 0) > this.seen);
+  }
+
+  /** Notes, as the socket drops, whether a reconnect takes control back and the newest revision seen. */
+  private rememberAtDrop(wasConnected: boolean): void {
+    this.heldAtDrop = this.holdsAtDrop(wasConnected);
+    this.seen = Math.max(this.seen, this.state.revision || 0);
+  }
+
+  /** Whether the reconnect should take control back: the person held it or was taking it, and was not giving it back. */
+  private holdsAtDrop(wasConnected: boolean): boolean {
+    if (this.busyAction === 'return') return false;
+    return this.heldAtDrop || (wasConnected && (held(this.state) || this.busyAction === 'acquire'));
   }
 
   /** The socket closed: fall back to local control and fail every pending request. */
@@ -266,7 +317,7 @@ export class DesktopControl extends ControlState {
     const wasConnected = this.connected;
     const { localClients } = this;
     this.localHeld = localClients > 0 && (this.localHeld || this.busy || this.state.mode !== 'agent');
-    this.heldAtDrop ||= wasConnected && this.state.mode === 'human' && !!this.state.mine;
+    this.rememberAtDrop(wasConnected);
     Object.assign(this, { connected: false, supported: false });
     this.state = { mode: this.disconnectedMode(wasConnected), mine: this.localHeld, local: localClients > 0 };
     this.requests.failAll();

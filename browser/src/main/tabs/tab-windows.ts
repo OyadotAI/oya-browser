@@ -1,15 +1,27 @@
 /**
  * Windows a tab's page opens, and its right-click menu. An anonymous
- * target="_blank" becomes a tab; a sign-in popup, a window the page named and a
- * blank one it fills itself stay real windows, protected and adopted onto the tab list.
+ * target="_blank" becomes a tab; so does a window the page named without asking
+ * for a size, kept linked to its opener. A sign-in popup, a named window with
+ * features and a blank one the page fills itself stay real windows, protected and
+ * adopted onto the tab list.
  */
-import type { BrowserWindow, HandlerDetails, LoadURLOptions, WindowOpenHandlerResponse } from 'electron';
+import { isIncognito } from '../incognito/index.ts';
+import type {
+  BrowserWindow,
+  BrowserWindowConstructorOptions,
+  HandlerDetails,
+  LoadURLOptions,
+  WebContents,
+  WindowOpenHandlerResponse,
+} from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { isAuthPopup, opensBlankWindow, opensNamedWindow } from './auth-popup.ts';
 import { recordingPreferences } from '../recording/preload.ts';
 import { isNativeEngine } from '../native-policy/index.ts';
+import { sessionPreferences } from './tab-lifecycle.ts';
 import { GmailPopup } from './gmail-popup.ts';
 import { ContextMenu } from './context-menu.ts';
+import { openLink } from './tab-order.ts';
 import { AUTH_POPUP_SIZE, LOCAL_FILE } from './constants.ts';
 import type { Tab, TabView } from './types.ts';
 
@@ -32,8 +44,23 @@ export type TabWindowsDeps = Pick<
   | 'windows'
 >;
 
-/** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
+/** What Electron hands `createWindow`: the window options, with the page it already made for the opener. */
+type ChildOptions = BrowserWindowConstructorOptions & {
+  /** The page Electron made, already linked to the opener's `window.open`. */
+  webContents: WebContents;
+};
+
+/**
+ * A window the page named, at an address, with no size asked for: Chrome opens
+ * it as a tab. A sized one stays a popup, and a blank one stays a window the
+ * page fills itself (opensBlankWindow).
+ */
+const opensNamedTab = ({ frameName, features, url }: HandlerDetails): boolean =>
+  opensNamedWindow(frameName) && !features?.trim() && !opensBlankWindow(url);
+
+/** Joins a recording in progress; a page that refuses is logged and tried again on its next load. Incognito pages never join. */
 export function joinRecording(recorder: AppServices['recorder'], view: TabView): Promise<unknown> {
+  if (isIncognito(view.webContents.session)) return Promise.resolve();
   return Promise.resolve(recorder.joinIfRecording(view)).catch((err: Error) =>
     console.error('[recording]', err.message),
   );
@@ -92,10 +119,20 @@ export class TabWindows {
     return { action: 'deny' };
   }
 
-  /** Ordinary links inherit the exact opener session, including ephemeral contexts. */
-  private openSibling(details: HandlerDetails, opener: Tab): void {
-    const id = this.deps.tabs.createTab(details.url, true, loadOptionsFor(details), opener.view.webContents.session);
-    this.markOpener(id, opener);
+  /**
+   * Ordinary links open beside the opener in its exact session, including
+   * ephemeral contexts. A Cmd- or middle-click asks for a background tab, so
+   * the person stays on the page; a plain target="_blank" click shows it.
+   * `contents` is a page Electron already made for a named window.
+   */
+  private openSibling(details: HandlerDetails, opener: Tab, contents?: WebContents): void {
+    const id = openLink(this.deps.tabs, {
+      page: opener.view,
+      url: details.url,
+      show: details.disposition !== 'background-tab',
+      options: loadOptionsFor(details),
+      contents,
+    });
     this.deps.agentTab.handOff(opener.id, id); // the agent's page opened it: still the agent's
   }
   /** Preserve sign-in and named windows with the opener's persona partition. */
@@ -104,16 +141,36 @@ export class TabWindows {
     const webPreferences = { ...recordingPreferences(this.deps.appDir, !isNativeEngine(session)), session };
     if (isAuthPopup(details.url, details.features))
       return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
+    if (opensNamedTab(details)) return this.namedTab(details, opener);
     if (opensNamedWindow(details.frameName) || opensBlankWindow(details.url))
       return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
     return null;
   }
-  /** Notes which tab opened a tab, so what a test run's tabs open closes with them. */
-  private markOpener(id: number, opener: Tab): void {
-    const tab: Tab | undefined = this.deps.tabs.list.find((t: Tab) => t.id === id);
-    if (tab && opener) tab.openerId = opener.id;
+  /**
+   * A named window with no size asked for opens as a tab, as Chrome does. Electron
+   * makes the page so `window.open` keeps a live reference and later opens into the
+   * name reach the same tab; it outlives its opener like any tab.
+   */
+  private namedTab(details: HandlerDetails, opener: Tab): WindowOpenHandlerResponse {
+    if (LOCAL_FILE.test(details.url)) return { action: 'deny' };
+    const webPreferences = sessionPreferences(this.deps.appDir, opener.view.webContents.session);
+    return {
+      action: 'allow',
+      outlivesOpener: true,
+      overrideBrowserWindowOptions: { webPreferences },
+      createWindow: (options) => this.adoptPage(details, opener, (options as ChildOptions).webContents),
+    };
   }
-
+  /** Puts the page Electron made on the strip; one that cannot be a tab is destroyed, never left as a window. */
+  private adoptPage(details: HandlerDetails, opener: Tab, contents: WebContents): WebContents {
+    try {
+      this.openSibling(details, opener, contents);
+    } catch (err) {
+      console.error('[tabs] a named window could not open as a tab:', (err as Error).message);
+      contents.close();
+    }
+    return contents;
+  }
   /** Protocol interception is installed before a popup can navigate. */
   private protectPopup(window: BrowserWindow): void {
     this.followPopupFocus(window);

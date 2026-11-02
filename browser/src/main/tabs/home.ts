@@ -57,10 +57,14 @@ export function contentReady(tab: Tab): boolean {
   return true;
 }
 
-/** Follows the view, ending the start page as soon as the view holds anything but its blank page. */
-export function wireHome(host: HomeHost, tab: Tab): void {
+/**
+ * Follows the view, ending the start page as soon as the view holds anything but its blank page.
+ * `host` is asked on every event: a torn-off tab moves to another window, and the window it
+ * was created in neither shows it nor can mount it.
+ */
+export function wireHome(host: () => HomeHost, tab: Tab): void {
   const contents = tab.view.webContents;
-  const show = (): false | void => tab.id === host.activeTabId && host.showInShell(tab);
+  const show = (): false | void => tab.id === host().activeTabId && host().showInShell(tab);
   contents.on('did-start-navigation', (details) => details?.isMainFrame && leaveHomeFor(tab, details.url) && show());
   contents.on('did-navigate', (_e, url) => isBlank(url) && (tab.blankCommitted = true));
   contents.on('dom-ready', () => contentReady(tab) && show());

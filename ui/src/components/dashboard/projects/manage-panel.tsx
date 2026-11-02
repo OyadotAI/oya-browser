@@ -54,7 +54,7 @@ export default function ManagePanel({ c, target }: TargetProps) {
         disabled={busy}
         aria-label={`Delete ${target.name}`}
         onClick={() => show(c, 'delete', target)}
-        className={`${ACTION_CLASS} text-red-400 hover:bg-red-500/8 hover:text-red-400`}
+        className={`${ACTION_CLASS} text-red hover:bg-red/8 hover:text-red`}
       >
         <Trash2 className="h-4 w-4" />
         Delete project

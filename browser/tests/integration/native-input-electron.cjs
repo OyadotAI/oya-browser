@@ -183,6 +183,7 @@ app
     const before = await contents.executeJavaScript('scrollY');
     await mouse.scroll(view, 400, 300, 0, -100);
     await until(() => contents.executeJavaScript(`scrollY < ${before}`));
+    await require('./native-pointer-readiness.cjs')(win, profile, until);
     assert.ok(replies.every((reply) => reply[1] === true));
     await require('./native-page-commands.cjs')(win, profile);
     await require('./native-shielded-input.cjs')(win, profile);

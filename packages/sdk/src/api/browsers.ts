@@ -13,7 +13,9 @@ export type WaitUntilConnected = (id: string, timeoutMs: number) => Promise<void
 /** The body `POST /api/browsers/start` takes. */
 function startBody(options: StartOptions) {
   const { profile, persona, provider, wsUrl, name, queueMs, priority, budgetUsd, governed, policy } = options;
-  return { profile: profile || persona, provider, wsUrl, name, queueMs, priority, budgetUsd, governed, policy };
+  const personaGroup = options.personaGroup || options.profileGroup;
+  const runs = { profile: profile || persona, personaGroup };
+  return { ...runs, provider, wsUrl, name, queueMs, priority, budgetUsd, governed, policy };
 }
 
 /** The caller's idempotency key, refused before the call when a header could not carry it; a fresh one otherwise. */

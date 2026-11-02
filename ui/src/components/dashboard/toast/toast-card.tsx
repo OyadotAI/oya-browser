@@ -11,7 +11,7 @@ import type { ToastItem, ToastType } from './types';
 /** Colors per type. */
 const TONE: Record<ToastType, string> = {
   success: 'bg-accent/10 border-accent/25 text-accent',
-  error: 'bg-red-500/10 border-red-500/20 text-red-400',
+  error: 'bg-red/10 border-red/20 text-red',
   info: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400',
 };
 

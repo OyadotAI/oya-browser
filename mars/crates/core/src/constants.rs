@@ -1,0 +1,652 @@
+/** Explicit resource budgets for the native Rust browser runtime. */
+use std::sync::OnceLock;
+use std::time::Duration;
+
+/// Wire compatibility is independent of the package version.
+pub const VERSION: u32 = 2;
+/// Includes JSON escaping and the terminating newline. The largest frames are the styled
+/// Document beside its stylesheets and the script projection beside its sources: NODES *
+/// NODE_WIRE_BYTES (8 MiB) plus worst-case six-byte escaping of SCRIPT_TOTAL_BYTES or
+/// STYLE_TOTAL_BYTES plus the other source-derived strings stays under this frame
+/// (asserted below). It is a ceiling checked as bytes arrive, never a preallocated buffer.
+pub const FRAME_BYTES: usize = 2 * 1024 * 1024 * 1024;
+/// The measured upper bound on one styled node's JSON, used only by the frame assert.
+pub const NODE_WIRE_BYTES: usize = 1024;
+/** The first native MCP adapter explicitly supports this initialization-based protocol revision. */
+pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+/** MCP returns native inspection JSON as both structured content and escaped text; 16 MiB fits any inspection reply without allocating multi-gigabyte stdio buffers. */
+pub const MCP_FRAME_BYTES: usize = 16 * 1024 * 1024;
+/** Whole-session request identities remain unique without an unbounded replay-tracking set. */
+pub const MCP_SESSION_REQUESTS: usize = 4096;
+/** Human and agent commands share one bounded coordinator admission queue. */
+pub const DESKTOP_QUEUE: usize = 16;
+/** Cancelled calls retain a slot until their native reply has been drained. */
+pub const MCP_PENDING_REQUESTS: usize = DESKTOP_QUEUE;
+/** Protocol output cannot grow indefinitely behind an unresponsive client. */
+pub const MCP_OUTPUT_QUEUE: usize = DESKTOP_QUEUE;
+/** Initialization must complete even if a client keeps pinging an otherwise idle connection. */
+pub const MCP_INITIALIZE_DEADLINE: Duration = Duration::from_secs(30);
+/** Native request deadlines include coordinator admission and queue delay. */
+pub const MCP_REQUEST_DEADLINE: Duration = Duration::from_secs(30);
+/** Partial output progress cannot keep a blocked stdio connection alive indefinitely. */
+pub const MCP_WRITE_DEADLINE: Duration = Duration::from_secs(2);
+/// Committed V9 state (heap, globals, platform) as JSON. Wikipedia's startup needs 488 KB and
+/// five large libraries together 459 KB; YouTube's app holds 19 MB once its page renders, so
+/// 64 MiB leaves room for what it builds while a person browses.
+pub const VM_STATE_BYTES: usize = 64 * 1024 * 1024;
+/// Origin storage has an independent bounded serialized profile record.
+pub const WEB_STORAGE_PROFILE_BYTES: usize = 512 * 1024;
+/// A bounded encrypted record stores at most the active native tab session.
+pub const SESSION_PROFILE_BYTES: usize = 64 * 1024;
+/// Versioned tab-session records reject incompatible restore semantics.
+pub const SESSION_PROFILE_VERSION: u32 = 1;
+/// Versioned secure Web Storage records reject unknown future semantics.
+pub const WEB_STORAGE_PROFILE_VERSION: u32 = 1;
+/// A single Web Storage value remains small enough for a bounded page candidate.
+pub const STORAGE_VALUE_BYTES: usize = 16 * 1024;
+/// Each origin area has a small explicit entry ceiling.
+pub const STORAGE_ENTRIES: usize = 256;
+/// Each local or session area is bounded independently.
+pub const STORAGE_AREA_BYTES: usize = 64 * 1024;
+/// Limits a fetched page before parsing or interpretation; 16 MiB fits cnn.com's 6.9 MB homepage.
+pub const HTML_BYTES: usize = 16 * 1024 * 1024;
+/// One image transfer: 2 MiB fits real hero photos and stays small inside one private JSON frame.
+pub const IMAGE_BYTES: usize = 2 * 1024 * 1024;
+/// Image requests one page may make. Busy pages pass a hundred (a Wikipedia article showed 67,
+/// a YouTube results page sixty thumbnails before scrolling), and the old bound of 64 silently
+/// turned the rest into alt text; the byte budgets below are what bound memory.
+pub const IMAGE_COUNT: usize = 1024;
+/// Encoded bytes all of a page's images may hold together, separate from the per-image bound.
+pub const IMAGE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+/// Decoded bitmap pixels (4 bytes each) a page's images may hold together: about 180 photos at
+/// Airbnb's listing size. ponytail: every image stays decoded for the page's life; decoding on
+/// demand and dropping offscreen bitmaps, as Chrome does, would let long scrolls hold more.
+pub const IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
+/// Image dimensions prevent pathological decoder allocations; 8192 admits 2x hero images, and
+/// IMAGE_DECODED_BYTES stays the real bound on what one image may decode to.
+pub const IMAGE_DIMENSION: u32 = 8192;
+/// Table grids stay below document and display-list caps; Hacker News lays out about 90 rows.
+pub const TABLE_ROWS: usize = 256;
+/// A wide grid cannot consume the full node budget with empty cells.
+pub const TABLE_COLUMNS: usize = 16;
+/// Cell allocations remain independently bounded per table.
+pub const TABLE_CELLS: usize = TABLE_ROWS * TABLE_COLUMNS;
+/// Headers have a separate budget from the body; github sends 10.9 KB and youtube 12.3 KB.
+pub const HEADER_BYTES: usize = 32 * 1024;
+/// Chunk-size lines and CRLFs share their own budget, allowing chunks averaging about 150 B at the
+/// maximum body (HTML_BYTES / 16 = 128 KiB of framing).
+pub const CHUNK_FRAMING_BYTES: usize = HTML_BYTES / 16;
+/// Bounds snapshots and layout work; wikipedia has about 4051 tags. FRAME_BYTES, PAINT_LINES
+/// and LAYOUT_WORK derive from it.
+pub const NODES: usize = 32768;
+/// Editable values, attributes and script/native text writes share one per-node bound; 64 KiB
+/// lets a script fill a text area or a status line the way real pages do.
+pub const TEXT_BYTES: usize = 64 * 1024;
+/// Ordinary reading text can exceed an editable field without raising any VM or mutation quota.
+/// It stays above TEXT_BYTES so a script or a person can fill any node a page can hold.
+pub const STATIC_TEXT_NODE_BYTES: usize = 2 * TEXT_BYTES;
+/// Stored static text shares one document allowance before serialization or measurement.
+/// Readable text is a fraction of source; a quarter of HTML_BYTES bounds worst-case six-byte
+/// JSON escaping to 3 MiB of frame.
+pub const STATIC_TEXT_TOTAL_BYTES: usize = HTML_BYTES / 4;
+/// Painted lines scale with the node budget so a flat maximum-size page fits.
+pub const PAINT_LINES: usize = NODES * 4;
+/// Style rules per page. Real sites ship thousands (wikipedia, python.org, amazon), and the
+/// cascade buckets rules by id, class and tag, so matching stays cheap even at this bound.
+pub const CSS_RULES: usize = 65536;
+/// Compatibility facades use the same initial page viewport as the native coordinator.
+pub const DEFAULT_VIEWPORT_WIDTH: f64 = 1100.0;
+/// The Mars shell (toolbar, tabs, status) is excluded when the native window later supplies its actual viewport.
+pub const DEFAULT_VIEWPORT_HEIGHT: f64 = 680.0;
+/// The error banner must preserve a usable page viewport rather than collapse it to zero.
+pub const MIN_VIEWPORT_HEIGHT: f64 = 120.0;
+/// The existing native normal line advance remains stable for unstyled documents.
+pub const CSS_NORMAL_LINE_HEIGHT: f64 = 1.5;
+/// Limits one script's source before tokenization; 16 MiB fits the largest real bundles seen
+/// (CNN inlines 2.3 MB, YouTube's app bundle is several MB, Discord's is 12.75 MB). A larger script is skipped, never page-fatal.
+pub const SCRIPT_BYTES: usize = 16 * 1024 * 1024;
+/// Bounds the number of executable scripts accepted in one candidate document; later ones are
+/// skipped with a diagnostic. Chromium has no count cap, and real apps ship many chunks (Twitch
+/// loads 78), so this sits well past them; SCRIPT_TOTAL_BYTES still bounds the work.
+pub const SCRIPT_COUNT: usize = 512;
+/// All of a page's sources cross the V9 pipe in one frame, so they share this allowance; a
+/// script that would cross it is skipped and the page keeps the ones before it. Discord's app
+/// loads over 300 scripts past 24 MiB in all, so this admits four of the largest bundles.
+pub const SCRIPT_TOTAL_BYTES: usize = 4 * SCRIPT_BYTES;
+/// JavaScript modules one page may load, statically imported and dynamically imported together;
+/// github.com's home page loads 77. A module past it fails its graph, never the page.
+pub const MODULES: usize = 256;
+/// Classic `<script src>` elements one page may start over its life, inline ones included. Real
+/// pages insert hundreds of dynamic scripts (YouTube's chunk loader does), so this sits well past
+/// them. It is cumulative per page, not per request: every V9 request re-supplies the page's
+/// sources, which compile at fixed offsets, so admitted loads cannot be pruned. An element past
+/// it fails at once with `error`; it never hangs.
+pub const SCRIPT_LOADS: usize = 1024;
+/// Sources the app may deliver to V9 for one page: its classic script loads plus its modules.
+/// Both are already bounded above, so every admitted source fits this count.
+pub const MODULE_SOURCES: usize = SCRIPT_LOADS + MODULES;
+/// Every fetched module's source crosses the V9 pipe beside the classic sources on each request,
+/// so they share this allowance (github.com's graph is 6.7 MB); one module stays under
+/// SCRIPT_BYTES. A module past either bound fails its graph.
+pub const MODULE_BYTES: usize = 16 * 1024 * 1024;
+/// Compiled code the V9 process keeps between requests, in bytes of bytecode, strings and
+/// positions: a page's lifecycle is many requests over one set of sources, and recompiling them
+/// each time cost more than running them. YouTube's 10.8 MB app bundle compiles to 74 MB, so
+/// this holds two such pages' worth (the one open and the one just left); the least recently
+/// used unit goes first.
+pub const CODE_CACHE_BYTES: usize = 256 * 1024 * 1024;
+/// Specifier entries across a page's import maps (imports and every scope together); entries past
+/// it are ignored, as an invalid entry is.
+pub const IMPORT_MAP_ENTRIES: usize = 4096;
+/// Bounds parsed statements per script, interpreter variables and proposed mutations. Minified
+/// bundles average about one statement per 30 source bytes, so a thirty-second of SCRIPT_BYTES
+/// admits any script the source bound admits (YouTube's 10.8 MB app bundle needs over 65536).
+pub const STATEMENTS: usize = SCRIPT_BYTES / 32;
+/// Bounds one script's tokens and AST nodes. Every token is at least one byte and minified code
+/// averages three to four, so half of SCRIPT_BYTES admits any realistic bundle.
+pub const TOKENS: usize = SCRIPT_BYTES / 2;
+/// Bounds one script's (or one event's handlers') interpreter work; the script deadline stops it
+/// sooner on slow hardware. YouTube's app runs past 50 million operations initializing its
+/// components after load, so this admits a few seconds of optimized work.
+pub const OPERATIONS: usize = 400_000_000;
+/// Product default for the wall-clock guard on one V9 request (all of a page's scripts, or one
+/// click). It sits under RPC_TIMEOUT so decoding and the reply still fit before the coordinator
+/// gives up on the service. Loading YouTube's 10.8 MB app bundle and the scripts around it takes
+/// over 1.5 s in an optimized build, so the guard allows what a real page load needs on this
+/// hardware. Use `script_deadline()` at runtime; this constant is only the default and the bound.
+/// eBay's and aa.com's startup bundles passed 4 s on V9 (about 10x V8's interpreter) and every
+/// script of the page stopped; browsers have no such limit, only a slow-script prompt.
+pub const SCRIPT_DEADLINE_DEFAULT: Duration = Duration::from_millis(15_000);
+/// Environment variable that overrides the script deadline in milliseconds. The test
+/// configuration sets it generously so parallel load cannot stop scripts before the heap bounds
+/// under test are reached; a product deployment normally leaves it unset.
+pub const SCRIPT_DEADLINE_ENV: &str = "MARS_V9_SCRIPT_DEADLINE_MS";
+/** The effective script deadline: the environment override when it is a positive whole number of
+milliseconds, otherwise the product default. Read once per process, so every V9 request in the
+process sees the same guard and a malformed value cannot change it midway. */
+pub fn script_deadline() -> Duration {
+    static DEADLINE: OnceLock<Duration> = OnceLock::new();
+    *DEADLINE
+        .get_or_init(|| parse_script_deadline(std::env::var(SCRIPT_DEADLINE_ENV).ok().as_deref()))
+}
+
+/** Parses the override text; anything that is not a positive number keeps the default. */
+fn parse_script_deadline(raw: Option<&str>) -> Duration {
+    raw.and_then(|text| text.trim().parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map_or(SCRIPT_DEADLINE_DEFAULT, Duration::from_millis)
+}
+
+/// Sites whose media may autoplay unmuted before any click, as Chrome's shipped media
+/// engagement list lets youtube.com play a typed watch URL in a fresh profile; a host matches
+/// exactly or as a subdomain. Everywhere else the autoplay policy needs a trusted click or key.
+pub const AUTOPLAY_SEEDED_HOSTS: [&str; 1] = ["youtube.com"];
+/// Heap entries a page may add between end-of-request collections before one runs again.
+pub const GC_GROWTH_MIN: usize = 1_000;
+/// Or the entries alive after the last collection divided by this, whichever is larger: at 1
+/// the heap doubles between collections, as V8 lets a growing heap do. At 4 YouTube spent a
+/// tenth of its script time in collections that each marked the same hundred thousand live
+/// objects again; the bounds still collect a heap that reaches them.
+pub const GC_GROWTH_DIVISOR: usize = 1;
+/// Real time one timer run may spend before it leaves the rest of its due callbacks for the
+/// next run, as a browser does on a busy main thread: a page with many timers (YouTube) would
+/// otherwise run all of them in one uninterruptible step while the person's click waits.
+pub const TIMER_SLICE: Duration = Duration::from_millis(150);
+/// The interpreter reads the clock once per this many operations, keeping the guard cheap.
+pub const SCRIPT_CLOCK_STRIDE: usize = 4096;
+/// Text and attribute bytes one V9 request may propose in DOM changes, so STATEMENTS changes of
+/// TEXT_BYTES each cannot outgrow the reply frame.
+pub const SCRIPT_CHANGE_BYTES: usize = 4 * 1024 * 1024;
+/// Parsing and evaluation recurse along the syntax tree; this bounds the combined depth across
+/// statements, expressions and nested functions so the V9 thread stack always suffices.
+pub const SYNTAX_DEPTH: usize = 1024;
+/// V9 runs each request on its own thread with this stack, sized for SYNTAX_DEPTH levels of
+/// parsing, evaluation, cloning and dropping in unoptimized builds.
+pub const V9_STACK_BYTES: usize = 512 * 1024 * 1024;
+/// Numeric update operators add or subtract one after supported primitive conversion.
+pub const JS_UPDATE_STEP: f64 = 1.0;
+/// Registered click callbacks retain functions and must not grow the document graph without bound.
+pub const JS_EVENT_LISTENERS: usize = 64;
+/// Retained event facades count toward a separate per-document allocation allowance.
+pub const JS_EVENT_RECORDS: usize = 64;
+/// Limits control input before URL parsing. Google's sign-in reports errors to a URL that
+/// embeds the whole page address, past 2 KiB; 8 KiB is what common servers accept.
+pub const URL_BYTES: usize = 8 * 1024;
+/// Limits response correlation identifiers.
+pub const ID_BYTES: usize = 128;
+/// Bytes of an element's `id` that serve as its lookup key. Browsers bound ids only by memory;
+/// YouTube sets ids past ID_BYTES, and refusing them stopped every script on the page. An id that
+/// is empty or longer keeps its attribute but gets an internal key (`@<node>`), as an element
+/// without an id does.
+pub const HTML_ID_BYTES: usize = 4096;
+/// Absolute deadline for a complete HTTP exchange.
+pub const NETWORK_TIMEOUT: Duration = Duration::from_secs(2);
+/// Covers child writes and reads, not just response reads; two seconds past the script deadline
+/// for decoding the request and encoding the reply. Use `rpc_timeout()` at runtime.
+pub const RPC_TIMEOUT: Duration = Duration::from_secs(17);
+/// What an engine call allows past the script deadline for its request and reply.
+pub const RPC_DEADLINE_MARGIN: Duration = Duration::from_secs(2);
+
+/** The engine call bound: never under the effective script deadline plus its margin. With a
+fixed bound, a raised deadline (the test configuration's) let a slow but bounded script outlive
+the call, so the coordinator killed the engine instead of V9 reporting its own limit. */
+pub fn rpc_timeout() -> Duration {
+    RPC_TIMEOUT.max(script_deadline() + RPC_DEADLINE_MARGIN)
+}
+/// Successful status supported by the minimal HTTP implementation.
+pub const HTTP_OK: u16 = 200;
+/// Protocol separator for HTTP headers and body.
+pub const HEADER_END: &[u8] = b"\r\n\r\n";
+/// Small socket reads keep transient allocation below the complete response budget.
+pub const NETWORK_CHUNK_BYTES: usize = 1024;
+/// Native layout coordinates count Unicode scalars, not pixels.
+pub const LAYOUT_UNIT: &str = "unicode_scalar_cells";
+/// Desktop web requests include TLS and redirects within one absolute budget.
+pub const WEB_TIMEOUT: Duration = Duration::from_secs(8);
+/// A network request fails only when it stops making progress, never for being slow: browsers
+/// set no total time on a load, so a slow link (a phone in a weak signal) still loads the page.
+/// Connecting (DNS, TCP and TLS) may take this long.
+pub const WEB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// A connection that delivers no byte for this long has stalled and the request fails.
+pub const WEB_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// The outer bound on one request that keeps trickling bytes; any real download that moves at
+/// all finishes long before it. Page loads, script fetches and navigations use it in place of a
+/// fixed load time.
+pub const WEB_REQUEST_CEILING: Duration = Duration::from_secs(600);
+/// The external supervisor also bounds uncancellable operating-system DNS calls.
+pub const WEB_RPC_TIMEOUT: Duration = Duration::from_secs(630);
+/// Connecting is Relay's `network.prepare`, which Relay itself stops at WEB_CONNECT_TIMEOUT; a
+/// network process that has not answered five seconds later is hung (a DNS call the system will
+/// not cancel) and is replaced, rather than holding the page until WEB_RPC_TIMEOUT.
+pub const WEB_PREPARE_RPC_TIMEOUT: Duration = Duration::from_secs(35);
+/// Redirects must revalidate destinations and cannot create an unbounded chain.
+pub const REDIRECTS: usize = 5;
+/// A synchronous XMLHttpRequest blocks its page's script until the answer comes, so the tab waits
+/// at most this long for it; a slower answer is a network error, and the other tabs keep running.
+pub const SYNC_XHR_WAIT: Duration = Duration::from_secs(10);
+/// A step runs again once per synchronous request it reached, so this bounds those replays: a
+/// page that blocks on more requests than this in one step reports the feature as unsupported.
+pub const SYNC_XHR_REPLAYS: usize = 4;
+/// Excessive or mixed DNS answer sets are rejected rather than partially trusted.
+pub const DNS_ANSWERS: usize = 16;
+/// Explicit supported markup depth prevents recursive parser/layout exhaustion. Real apps nest
+/// deep (YouTube's search results pass 32 levels of components); the document service runs on a
+/// SERVICE_STACK_BYTES stack so every recursive pass fits at this depth.
+pub const DOCUMENT_DEPTH: usize = 256;
+/// Engine services handle each request on a thread with this stack, so recursive passes over a
+/// DOCUMENT_DEPTH tree never overflow the process's small main-thread stack. It is reserved, not
+/// committed, so an idle service costs nothing for it.
+pub const SERVICE_STACK_BYTES: usize = 256 * 1024 * 1024;
+/// Committed history is a bounded local session resource.
+pub const HISTORY_ENTRIES: usize = 64;
+/// The full Chrome version Mars reports where Chrome reports one: the high-entropy client hints
+/// Relay sends and V9's `navigator.userAgentData.getHighEntropyValues`. One constant, so the two
+/// agree; its major matches Relay's `CHROME_ENGINE` (a Relay test pins that).
+pub const CHROME_FULL_VERSION: &str = "152.0.7977.167";
+/// The macOS version Chrome reports as `Sec-CH-UA-Platform-Version` and `platformVersion`.
+pub const MACOS_PLATFORM_VERSION: &str = "26.6.2";
+/// Native windows cap retained page documents to bound aggregate tab memory.
+pub const TABS: usize = 16;
+/// Cancellation stays responsive even while a worker waits for a child reply.
+pub const RPC_POLL: Duration = Duration::from_millis(25);
+/// A child can detect coordinator death independently of a blocked engine dispatch.
+pub const OWNER_PID_ENV: &str = "OYA_NATIVE_OWNER_PID";
+/// One stylesheet's bytes Eye applies in full; CNN inlines a 2.94 MB sheet. A larger sheet still
+/// reaches Eye, which keeps only its hiding rules (as agent masks) or fails closed for agents.
+pub const STYLE_BYTES: usize = 4 * 1024 * 1024;
+/// Linked sheets fetched for one candidate; later ones are skipped with a diagnostic. Chromium
+/// has no count limit, and The Verge links 66 sheets, so this is a sanity bound well above real
+/// pages; STYLE_TOTAL_BYTES still caps what they carry together. Discord's app links more than
+/// 256 sheets (one per lazy chunk), so the bound sits well past that.
+pub const STYLE_SHEETS: usize = 1024;
+/// All of a page's sheets cross the document pipe together, so they share this allowance (the
+/// largest the frame assert below admits beside a maximum document). Sheets past it cannot
+/// reach Eye, so the runtime fails that page closed for agents instead of dropping hiding rules.
+/// GitHub's home page links more than 6 MiB of CSS; dropping the rest left its hero blank.
+pub const STYLE_TOTAL_BYTES: usize = 8 * STYLE_BYTES;
+/// Submission data is bounded independently of document source: what a form or a script may
+/// send in one request body (Google's sign-in posts 20 KiB error reports), the same bound V9
+/// applies before a request leaves the page.
+pub const FORM_BYTES: usize = VM_REQUEST_BODY_BYTES;
+/// Deprecated: Relay's jar no longer uses this; it keeps up to 3000 cookies.
+pub const COOKIE_COUNT: usize = 64;
+/// Deprecated: Relay's jar no longer uses this per-host bound.
+pub const HOST_COOKIES: usize = 16;
+/// A cookie cannot grow a request beyond the framing budget.
+pub const COOKIE_BYTES: usize = 4096;
+/// Deprecated: Relay bounds its jar with its own COOKIE_JAR_BYTES.
+pub const COOKIE_JAR_BYTES: usize = 32 * 1024;
+/// One saved jar record: at least Relay's own bound (1 MiB of cookies plus framing for 3000).
+pub const COOKIE_PROFILE_BYTES: usize = 1024 * 1024 + 3000 * 192;
+/// A stuck OS Keychain request cannot hold the browser worker or shutdown indefinitely.
+pub const PROFILE_STORE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Resource and compatibility reports never grow with arbitrary source features.
+pub const DIAGNOSTICS: usize = 32;
+/// Recursive parsing and AST evaluation share an independently checked depth bound; minified
+/// string concatenations and call chains need a few hundred levels, and Discord's bundle nests
+/// past 256. It shares SYNTAX_DEPTH's bound, which the V9 thread stack is sized for.
+pub const EXPRESSION_DEPTH: usize = SYNTAX_DEPTH;
+/// Blocks and single-statement control bodies cannot exhaust the parser or evaluator stack.
+pub const STATEMENT_DEPTH: usize = 128;
+/// UTF-16 code units of one JavaScript string or literal. Google's inline scripts carry
+/// literals past 2048 units; a whole script response body (VM_RESPONSE_BYTES) must fit too, and
+/// YouTube serializes its initial data (over 256K units) into one string while loading. At 1M
+/// units a 2 MB JSON payload or a Unicode property table (test262 builds 2.2M units for one)
+/// failed; 8M units is 16 MB of text, half of JS_ENVIRONMENT_UNITS, so two such strings may
+/// live at once and the collector still has room.
+pub const JS_STRING_UNITS: usize = 8 * 1024 * 1024;
+/** Small compact strings may be flattened once for repeated substring searches. */
+pub const STRING_SEARCH_FLAT_UNITS: usize = 4096;
+/** A leading UTF-16 surrogate combines only with an immediately following trailing surrogate. */
+pub const UTF16_HIGH_SURROGATE_START: u16 = 0xd800;
+/** The inclusive upper bound prevents low surrogates from being treated as leading units. */
+pub const UTF16_HIGH_SURROGATE_END: u16 = 0xdbff;
+/** Trailing surrogates remain independent when no leading surrogate immediately precedes them. */
+pub const UTF16_LOW_SURROGATE_START: u16 = 0xdc00;
+/** This inclusive endpoint retains all valid UTF-16 surrogate pairs without decoding them. */
+pub const UTF16_LOW_SURROGATE_END: u16 = 0xdfff;
+/// Live string units across the heap. Wikipedia's startup holds 48714 and five large libraries
+/// together 36868; YouTube's loaded app holds 1.73 million distinct units. Counts overestimate
+/// between collections (every reference to a string counts), so a bound near a page's real
+/// size makes the collector run over and over mid-script: at 2M units YouTube spent more time
+/// collecting than running. 32 MB of text stays far below what a browser tab may hold.
+pub const JS_ENVIRONMENT_UNITS: usize = 16 * 1024 * 1024;
+/// Live objects. Google's main bundle and YouTube's app need far more than Wikipedia's 5204:
+/// YouTube holds 47869 once loaded and allocates as it renders, and LinkedIn's React app keeps
+/// more than 262144 alive while it hydrates (Chromium has no count bound at all, only memory).
+/// VM_STATE_BYTES stays the memory cap on what a page commits; this only stops a runaway run.
+pub const VM_OBJECTS: usize = 4_194_304;
+/** The first allocation is the page's permanent global receiver, never a replaceable supplied object. */
+pub const VM_GLOBAL_OBJECT_ID: u32 = 0;
+/// Live properties. Google's main bundle needs more than 131072 and YouTube's loaded app holds
+/// 225108 before it renders anything; four per object at the old 262144-object bound keeps the
+/// ratio real pages show (many objects a large app keeps are small: arrays, fibers, closures' data).
+/// Array elements count here, and YouTube's results page passed 1048576 during a search, which
+/// stopped all of its scripts and froze the results and watch pages; 4194304 keeps it running.
+pub const VM_PROPERTIES: usize = 4_194_304;
+/// UTF-16 units of one property key; CNN's inline scripts use keys past 64 units, and YouTube's
+/// app keys its caches by whole request URLs and serialized bodies past 1024.
+pub const VM_PROPERTY_KEY_UNITS: usize = 64 * 1024;
+/// Elements of one array. Wikipedia's startup builds a module registry past 1024 entries and
+/// YouTube's app bundle builds tables past 16384 while loading.
+pub const VM_ARRAY_LENGTH: usize = 262_144;
+/// Explicit formal parameters and syntactic call arguments, matching V8's receiver-inclusive
+/// 16-bit argument ceiling with its ten reserved implicit-argument positions.
+pub const FUNCTION_PARAMETERS: usize = u16::MAX as usize - 10;
+/// Retained lexical contexts and within-request allocations have explicit independent ceilings.
+/// Five large libraries together hold 680 live environments. Every live closure may hold its
+/// own captured environment, so this is at least VM_FUNCTIONS.
+pub const VM_ENVIRONMENTS: usize = VM_FUNCTIONS;
+/// Live closures include per-component accessors and reactive callbacks. YouTube's search-to-watch
+/// flow reaches the old 262144 ceiling with live components: 43566 callbacks at its three busiest
+/// sites belonged to 397 connected elements. Keep room for the player while retaining independent
+/// object, property, string and committed-state bounds.
+pub const VM_FUNCTIONS: usize = 524_288;
+/// Function literals one page's sources may contain, fetched scripts included; YouTube's app
+/// bundle and the chunks it loads declare tens of thousands.
+pub const VM_CODE_SITES: usize = 131_072;
+/// Captured cells cannot multiply the per-variable string budget without bound. Five large
+/// libraries together hold 3682 live bindings; YouTube's app bundle captures more than 16384
+/// while loading (every module closure keeps its module's locals).
+pub const VM_BINDINGS: usize = 2 * VM_FUNCTIONS;
+/// Function syntax nesting is bounded independently of calls and ordinary expression grouping;
+/// bundlers wrap modules in several function layers.
+pub const FUNCTION_NESTING: usize = 64;
+/// Callable helpers cannot expand one invocation beyond the parser's argument ceiling.
+pub const VM_CALL_ARGUMENTS: usize = FUNCTION_PARAMETERS;
+/// Binding chains are checked iteratively before evaluation or private-state publication.
+pub const VM_BOUND_HOPS: usize = 16;
+/// Canonical intrinsic identities are page-owned and cannot be selected by serialized code.
+pub const VM_FUNCTION_CONSTRUCTOR_ID: u32 = 0;
+pub const VM_FUNCTION_PROTOTYPE_ID: u32 = 1;
+pub const VM_FUNCTION_CALL_ID: u32 = 2;
+pub const VM_FUNCTION_APPLY_ID: u32 = 3;
+pub const VM_FUNCTION_BIND_ID: u32 = 4;
+/// The document lookup method has one stable owned function identity across native events.
+pub const VM_GET_ELEMENT_BY_ID_ID: u32 = 5;
+/// Listener registration remains a first-class function without exposing native authority.
+pub const VM_ADD_EVENT_LISTENER_ID: u32 = 6;
+/// Removal shares the callable layer and compares the original callback identity.
+pub const VM_REMOVE_EVENT_LISTENER_ID: u32 = 7;
+/// Event cancellation changes only a bounded candidate event record.
+pub const VM_PREVENT_DEFAULT_ID: u32 = 8;
+/// Source closures allocate beyond every canonical callable reserved by this build.
+pub const VM_FUNCTION_INTRINSICS: u32 = 19;
+/** String trimming shares one callable identity throughout the page realm. */
+pub const VM_STRING_TRIM_ID: u32 = 9;
+/** Literal splitting is a bounded owned builtin, not a parser-special call. */
+pub const VM_STRING_SPLIT_ID: u32 = 10;
+/** Array mapping preserves callback and result identities through native events. */
+pub const VM_ARRAY_MAP_ID: u32 = 11;
+/** Array filtering shares normal callback invocation and candidate rollback. */
+pub const VM_ARRAY_FILTER_ID: u32 = 12;
+/** Array joining uses the same UTF-16 output bounds as other string operations. */
+pub const VM_ARRAY_JOIN_ID: u32 = 13;
+/** Array existence predicates keep one first-class identity across requests. */
+pub const VM_ARRAY_SOME_ID: u32 = 14;
+/** Array selection returns an existing value without allocating another array. */
+pub const VM_ARRAY_FIND_ID: u32 = 15;
+/** Type-selector queries share one callable identity across Document, Body and Element hosts. */
+pub const VM_QUERY_SELECTOR_ALL_ID: u32 = 16;
+/** Fragment insertion goes through one owned callable so its bounds apply on every receiver. */
+pub const VM_INSERT_ADJACENT_HTML_ID: u32 = 17;
+/** Subtree moves to first child share one callable identity across hosts. */
+pub const VM_PREPEND_ID: u32 = 18;
+/** ECMAScript ToUint32 wraps finite truncated numbers at this exact power of two. */
+pub const JS_UINT32_MODULUS: f64 = 4_294_967_296.0;
+/** Linear string scans consume request work in bounded groups of UTF-16 units. */
+pub const JS_STRING_SCAN_UNITS: usize = 64;
+/** Repeated measurement and final placement share one finite per-document work allowance. */
+pub const LAYOUT_WORK_PER_NODE: usize = 128;
+/** Measuring, wrapping and placing one stored text byte charges a few units across the passes. */
+pub const LAYOUT_WORK_PER_TEXT_BYTE: usize = 8;
+/**
+ * Nested flex measurement cannot multiply work beyond this shared request budget. It covers a
+ * page at both NODES and STATIC_TEXT_TOTAL_BYTES: 1,048,576 for nodes plus 4,194,304 for text.
+ */
+pub const LAYOUT_WORK: usize =
+    NODES * LAYOUT_WORK_PER_NODE + STATIC_TEXT_TOTAL_BYTES * LAYOUT_WORK_PER_TEXT_BYTE;
+/**
+ * Distinct native text measurements per layout. Each costs a fixed AppKit call (about 20 us)
+ * that per-scalar work undercounts, so cache-defeating text is refused inside the render budget.
+ */
+pub const LAYOUT_MEASURES: usize = 16_384;
+/** Native positions and extents must remain finite and inside this logical-point bound. */
+pub const LAYOUT_EXTENT: f64 = 1_048_576.0;
+/** Flexible-size freezing ignores only numerical noise beneath this tolerance. */
+pub const LAYOUT_EPSILON: f64 = 1e-7;
+/** CSS numeric inputs remain within the finite geometry range; larger lengths clamp to it. Long
+ * pages and reftests set `height: 10000px`, which a 4096 bound dropped. */
+pub const CSS_MAX_SCALAR: f64 = 65_536.0;
+/** Native text remains readable under the supported bounded CSS font range. */
+pub const CSS_MIN_FONT_SIZE: f64 = 8.0;
+/** Upper font sizing limits bound glyph measurement and line allocation. Reftests draw Ahem
+ * squares at 100px and 200px, so a 72px cap shrank every one of them. */
+pub const CSS_MAX_FONT_SIZE: f64 = 1024.0;
+/** Unitless line-height factors stay bounded through inheritance (the old 4096 / 72 range). */
+pub const CSS_MAX_LINE_HEIGHT_FACTOR: f64 = 56.0;
+/** Border widths share the finite geometry bound; Blink caps none below it, and paint work
+ * already scales with the bounded box, so a 96px reftest border paints whole. */
+pub const CSS_MAX_BORDER_WIDTH: f64 = CSS_MAX_SCALAR;
+/** Font-relative CSS lengths share the owned default root font size. */
+pub const CSS_ROOT_FONT_SIZE: f64 = 16.0;
+/// ToLength clamps to ECMAScript's maximum safe integer before the smaller invocation cap applies.
+pub const VM_MAX_SAFE_LENGTH: f64 = 9_007_199_254_740_991.0;
+/** Markup a script inserts in one piece is split at this size when it is a node moving into the
+page (appendChild of a large subtree), so each parse stays small. It refuses nothing: a single
+fragment is bounded by HTML_BYTES, the same bound as a document, and by the node budget. */
+pub const FRAGMENT_BYTES: usize = TEXT_BYTES;
+/** All fragments one execution inserts share a budget that still fits the reply frame; a
+component framework registers hundreds of templates while its bundle loads. */
+pub const FRAGMENT_TOTAL_BYTES: usize = SCRIPT_CHANGE_BYTES;
+const _: () = assert!(VM_STATE_BYTES + STORAGE_AREA_BYTES + FRAGMENT_TOTAL_BYTES < FRAME_BYTES);
+/* A maximum-size styled Document plus source-derived strings crosses the private pipe. */
+const _: () =
+    assert!(NODES * NODE_WIRE_BYTES + 2 * HTML_BYTES + 6 * STATIC_TEXT_TOTAL_BYTES <= FRAME_BYTES);
+/* Decoded source with worst-case \u00XX escaping crosses the network pipe. */
+const _: () = assert!(6 * HTML_BYTES < FRAME_BYTES);
+/* One image fits the page total, and the page's images, base64-encoded, fit one engine frame. */
+const _: () = assert!(IMAGE_BYTES <= IMAGE_TOTAL_BYTES && IMAGE_TOTAL_BYTES / 3 * 4 < FRAME_BYTES);
+/* STATEMENTS changes of the smallest wire size (about 64 bytes each) fit one reply frame. */
+const _: () = assert!(STATEMENTS * 64 < FRAME_BYTES);
+/* A script fetched over the network pipe is bounded by the body limit before SCRIPT_BYTES. */
+const _: () = assert!(SCRIPT_BYTES <= HTML_BYTES);
+/* The script projection, escaped sources/text/metadata, storage and one step's responses fit.
+PageCall carries one Option<VmState>, and Execution carries one result state in a DIFFERENT
+frame. VmState is serialized as an object, not a JSON string, so its already-encoded size is
+charged once (the old factor of two counted request and reply together). Resident PageCall
+sends no state at all. Actual frame and state writers independently enforce the unchanged caps. */
+const _: () = assert!(
+    NODES * NODE_WIRE_BYTES
+        + 6 * SCRIPT_TOTAL_BYTES
+        + 6 * MODULE_BYTES
+        + 6 * STATIC_TEXT_TOTAL_BYTES
+        + 6 * METADATA_BYTES
+        + METADATA_ELEMENTS * METADATA_WIRE_BYTES
+        + VM_STATE_BYTES
+        + 2 * STORAGE_AREA_BYTES
+        + SCRIPT_CHANGE_BYTES
+        + 6 * (STEP_RESPONSE_BYTES + VM_RESPONSE_BYTES)
+        <= FRAME_BYTES
+);
+/* One module fits the per-script source bound, and the graph's sources fit their own total. */
+const _: () = assert!(SCRIPT_BYTES <= MODULE_BYTES && MODULE_SOURCES <= MODULE_BYTES);
+/* Each live closure can keep its own environment alive. */
+const _: () = assert!(VM_ENVIRONMENTS >= VM_FUNCTIONS);
+/* No single string can exceed what the live heap may hold. */
+const _: () = assert!(JS_STRING_UNITS <= JS_ENVIRONMENT_UNITS);
+/* UTF-8 metadata never needs more UTF-16 units than bytes when read as one JS string. */
+const _: () = assert!(METADATA_BYTES <= JS_STRING_UNITS);
+/* The styled Document crosses beside every escaped stylesheet in one document frame. */
+const _: () = assert!(
+    NODES * NODE_WIRE_BYTES + 2 * HTML_BYTES + 6 * STATIC_TEXT_TOTAL_BYTES + 6 * STYLE_TOTAL_BYTES
+        <= FRAME_BYTES
+);
+/* The V9 guard must fire before the coordinator abandons the service call. */
+const _: () = assert!(SCRIPT_DEADLINE_DEFAULT.as_millis() < RPC_TIMEOUT.as_millis());
+/** navigator.languages exposes at most this many preferred language tags. */
+pub const NAVIGATOR_LANGUAGES: usize = 16;
+/** BCP 47 recommends implementations accept language tags of at least this length. */
+pub const LANGUAGE_TAG_BYTES: usize = 35;
+/** One SVG path cannot request unbounded native drawing work. */
+pub const SVG_PATH_SEGMENTS: usize = 1024;
+/** An SVG `use` may reference an element but never another `use`. */
+pub const SVG_USE_DEPTH: usize = 1;
+/// Bytecode frames one V9 request may nest, like a browser's call stack (Chrome's holds about ten
+/// thousand): YouTube's ad and result rendering recursed past 512 and its results never got
+/// their data. Frames live on V9's own stack; native recursion through them fits V9_STACK_BYTES.
+pub const VM_CALL_DEPTH: usize = 10_000;
+/// A native re-entry retains both its caller and host bridge on the native stack.
+pub const VM_NATIVE_FRAME_WEIGHT: usize = 2;
+/// Nesting that recurses natively without a bytecode frame (bound-function chains, WebAssembly
+/// calls, structured-clone graphs), kept at the bound V8's native stack gives such chains.
+pub const VM_NESTING_DEPTH: usize = 512;
+/// Promise jobs and queued microtasks one page may hold at once.
+pub const VM_PENDING_JOBS: usize = 4096;
+/// Pending setTimeout, setInterval and requestAnimationFrame callbacks one page may hold;
+/// YouTube's app keeps hundreds scheduled while it renders.
+pub const VM_TIMERS: usize = 4096;
+/// fetch and XMLHttpRequest calls waiting on the app at once; later calls fail like a network error.
+/// YouTube fetches its icon set in a burst of over thirty while its telemetry and data requests
+/// are in flight; at 32 the overflow failed the requests that carry its content and icons.
+pub const VM_HOST_REQUESTS: usize = 256;
+/// Bytes of one request body a script may send through the app. Amazon's product page posts
+/// telemetry past 64 KiB; browsers set no limit, so this is only a memory bound.
+pub const VM_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
+/// Bytes of one response body the app may hand back to a script. WebAssembly modules (Discord's
+/// libdiscore) and large JSON APIs run to megabytes; at 256 KiB their fetches failed.
+pub const VM_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+/// Response bytes one resume step carries in all. A response that would pass it waits for the
+/// next step (the first one in a step always goes), so a step holds at most this plus one
+/// VM_RESPONSE_BYTES response, which the frame assert below admits.
+pub const STEP_RESPONSE_BYTES: usize = 48 * 1024 * 1024;
+/// Script requests the app performs per V9 round trip; later ones fail like a network error.
+/// YouTube fetches its icon set in one burst of over thirty requests.
+pub const SCRIPT_REQUESTS_PER_STEP: usize = 48;
+/// Console entries one execution returns; later ones are counted, not kept.
+pub const VM_CONSOLE_ENTRIES: usize = DIAGNOSTICS;
+/// Bytes of one console entry's text.
+pub const VM_CONSOLE_BYTES: usize = 1024;
+/// Symbols one page may create beyond the well-known ones.
+pub const VM_SYMBOLS: usize = 1024;
+/// Backtracking steps one regular expression match may take before it fails as a limit.
+pub const REGEXP_STEPS: usize = 1_000_000;
+/// Backtracking steps a match may take per UTF-16 unit of its input, past REGEXP_STEPS: a search
+/// over long text visits every position, and the script deadline still bounds the whole run.
+pub const REGEXP_STEPS_PER_UNIT: usize = 64;
+/// Nested matcher calls one match may make. The matcher recurses once per repetition, so a
+/// greedy loop over long text fails at this depth as a limit instead of overflowing
+/// V9_STACK_BYTES (an unoptimized build's frames are the largest).
+pub const REGEXP_DEPTH: usize = 50_000;
+/// A match reads the clock once per this many steps, keeping the deadline check cheap.
+pub const REGEXP_DEADLINE_STEPS: usize = 4096;
+/// Nodes in one compiled regular expression.
+pub const REGEXP_NODES: usize = 16_384;
+/// Capture groups in one regular expression; their slots remain bounded in each match result.
+pub const REGEXP_GROUPS: usize = 16_384;
+/// Virtual milliseconds between animation frames, as on a 60 Hz display.
+pub const ANIMATION_FRAME_MS: f64 = 16.0;
+/// Browsers clamp repeating and deeply nested timers to this delay in milliseconds.
+pub const TIMER_MIN_DELAY_MS: f64 = 4.0;
+/// Navigation, history and cookie writes one execution records for the app.
+pub const VM_HOST_RECORDS: usize = 64;
+/// Dynamic sources (new Function, indirect eval, and inline scripts inserted by script) one
+/// page may compile; YouTube's app inserts dozens while loading.
+pub const VM_DYNAMIC_SOURCES: usize = 512;
+/// Bytes of all dynamic sources one page keeps so later requests can recompile them; a page
+/// that inserts inline scripts needs far more than the 64 KiB `new Function` alone did.
+pub const VM_DYNAMIC_BYTES: usize = 2 * 1024 * 1024;
+/// Nodes a script may create outside the document before inserting them: as many as the
+/// document itself may hold, since a component framework keeps every element's template
+/// content detached (YouTube's app registers hundreds of templates while loading).
+pub const VM_DETACHED_NODES: usize = NODES;
+/// Metadata elements (`meta`, `link`, `style`, `title`, `base`, inert `script`) one page gives
+/// V9 as local records. Reserve room for every accepted executable script; html/head/body are
+/// virtual identities, not detached allocations. Later script-created nodes share the remaining cap.
+pub const METADATA_ELEMENTS: usize = VM_DETACHED_NODES - SCRIPT_COUNT;
+/// Aggregate UTF-8 bytes of metadata tags, attribute names/values and raw text, including parsed
+/// executable-script attributes. Half the HTML limit admits substantial inert JSON and styles;
+/// it also fits one JS string and the unchanged VM/frame budgets. Whole over-budget records are
+/// diagnosed and omitted rather than published with an invented empty textContent.
+pub const METADATA_BYTES: usize = HTML_BYTES / 2;
+/// Fixed JSON fields, punctuation, booleans and bounded parent/next identities of one metadata
+/// record fit 256 bytes. Attribute-map punctuation is covered by six times its nonempty names;
+/// all tag/name/value/text strings are charged separately with worst-case JSON escaping.
+pub const METADATA_WIRE_BYTES: usize = 256;
+/// Event listeners one page may register on nodes, the document and the window together.
+pub const VM_LISTENERS: usize = 512;
+/// Bytes of the `document.cookie` string the app supplies, and of one cookie a script writes.
+pub const VM_DOCUMENT_COOKIE_BYTES: usize = 4096;
+
+/** Unit tests for the deadline override parser, the only logic in this module. */
+#[cfg(test)]
+mod script_deadline_tests {
+    use super::*;
+
+    /** A missing override keeps the product default. */
+    #[test]
+    fn unset_override_keeps_the_default() {
+        assert_eq!(parse_script_deadline(None), SCRIPT_DEADLINE_DEFAULT);
+    }
+
+    /** A positive whole number of milliseconds replaces the default. */
+    #[test]
+    fn positive_override_replaces_the_default() {
+        assert_eq!(
+            parse_script_deadline(Some(" 60000 ")),
+            Duration::from_millis(60_000)
+        );
+    }
+
+    /** Zero, negative, fractional and non-numeric text is refused and keeps the default. */
+    #[test]
+    fn malformed_override_keeps_the_default() {
+        for raw in ["0", "-5", "1.5", "soon", ""] {
+            assert_eq!(
+                parse_script_deadline(Some(raw)),
+                SCRIPT_DEADLINE_DEFAULT,
+                "{raw}"
+            );
+        }
+    }
+}

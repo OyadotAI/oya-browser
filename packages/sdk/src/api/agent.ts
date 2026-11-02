@@ -8,7 +8,8 @@ import { Http, createHttp, segment } from '../client.js';
 import { Browser } from '../browser.js';
 import { builtin, saveKey } from '../cli-config.js';
 import { OyaError } from '../errors.js';
-import { DESKTOP_DOWNLOAD_URL, DESKTOP_PROVIDER, DESKTOP_TIMEOUT_MS, READY_POLL_MS, Status } from '../constants.js';
+import { pollPause } from './ready.js';
+import { DESKTOP_DOWNLOAD_URL, DESKTOP_PROVIDER, DESKTOP_TIMEOUT_MS, Status } from '../constants.js';
 import type { BrowserInfo, DesktopOptions, Signup, SignupOptions } from '../types/index.js';
 import type { ConnectedBrowser, HttpRef } from './shapes.js';
 
@@ -127,16 +128,22 @@ function openLink(link: string): void {
   child.unref();
 }
 
+/** The 504 when the desktop app never connected before the budget ran out. */
+const desktopTimeout = (link: string) => {
+  const how = `Install it from ${DESKTOP_DOWNLOAD_URL} if needed, then open ${link} and click Connect.`;
+  return new OyaError(`The Oya desktop app did not connect. ${how}`, Status.GATEWAY_TIMEOUT, { link });
+};
+
 /** Polls until the desktop app shows up on this key as `persona`; throws, with what to do, when it never does. */
 async function waitForDesktop(list: () => Promise<BrowserInfo[]>, link: string, timeoutMs: number, persona?: string) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  // The check runs once more at the deadline, so an app that connects during the last pause is not a 504.
+  for (;;) {
     const found = desktopOf(await list(), persona);
     if (found) return found;
-    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+    if (Date.now() >= deadline) throw desktopTimeout(link);
+    await pollPause(deadline);
   }
-  const how = `Install it from ${DESKTOP_DOWNLOAD_URL} if needed, then open ${link} and click Connect.`;
-  throw new OyaError(`The Oya desktop app did not connect. ${how}`, Status.GATEWAY_TIMEOUT, { link });
 }
 
 /** A handle on the person's desktop app. Marked reused: `stop()` must not disconnect the person's own browser. */

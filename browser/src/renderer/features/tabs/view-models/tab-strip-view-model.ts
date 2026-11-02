@@ -9,6 +9,7 @@
 import { ViewModel } from '../../../core/view-model.ts';
 import { RendererConstants as C } from '../../../core/constants.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
+import type { IncomingTab } from '../../../../shared/ipc.ts';
 import { mergeItems, moveItem, type Tab, type TabItemModel } from '../model/tab-model.ts';
 import { pinnedCount, tabSize, tabWidth, type TabSize } from '../model/tab-math.ts';
 import { isRovingKey, rovingIndex } from '../../../hooks/index.ts';
@@ -27,6 +28,16 @@ export interface TabStripState {
   frozen: number | null;
   /** The last drop, for the view to settle the slides and glide the tab home; null before any. */
   drop: Drop | null;
+  /** A tab carried in another window over this strip, which opens a gap for it; null when none is. */
+  incoming?: IncomingTab | null;
+}
+
+/** Where an incoming tab would land: its index among the open tabs, and how far from that slot it is drawn. */
+interface Aim {
+  /** Its index among the open tabs. */
+  to: number;
+  /** Pixels from its slot to where it is drawn, for the glide home. */
+  offset: number;
 }
 
 /** How the tabs are laid out. */
@@ -42,7 +53,7 @@ export interface StripLayout {
 /** The parts of the bridge the strip uses. */
 export type TabStripBridge = Pick<
   OyaBrowser,
-  'onTabsUpdated' | 'newTab' | 'closeTab' | 'activateTab' | 'moveTab' | 'showTabMenu' | 'detachTab'
+  'onTabsUpdated' | 'onTabIncoming' | 'newTab' | 'closeTab' | 'activateTab' | 'moveTab' | 'showTabMenu' | 'detachTab'
 >;
 
 /** What the strip uses. */
@@ -60,9 +71,9 @@ export interface TabStripDeps {
 }
 
 /** The layout for `state`: a held width, or an even share of the room left after the pinned tabs, which keep their fixed width. */
-export function stripLayout({ tabs, room, frozen }: TabStripState): StripLayout {
+export function stripLayout({ tabs, room, frozen, incoming }: TabStripState): StripLayout {
   const pinned = pinnedCount(tabs) * C.TAB_PINNED_WIDTH;
-  const unpinned = tabs.length - pinnedCount(tabs);
+  const unpinned = tabs.length - pinnedCount(tabs) + (incoming ? 1 : 0);
   const width = frozen ?? tabWidth(room - pinned, unpinned);
   return { width, size: tabSize(width), overflowing: pinned + unpinned * width > room };
 }
@@ -75,12 +86,15 @@ export class TabStripViewModel extends ViewModel<TabStripState> {
   private drawn = false;
   /** The timers that take folded tabs away. */
   private readonly folds = new Set<ReturnType<typeof setTimeout>>();
+  /** Where the incoming tab would land now, as the view measured it. */
+  private aimed: Aim = { to: 0, offset: 0 };
 
   /** Empty, following the main process's tab list. */
   constructor(deps: TabStripDeps) {
     super({ tabs: [], items: [], room: 0, frozen: null, drop: null });
     this.deps = deps;
     this.own(deps.bridge.onTabsUpdated((tabs) => this.update(tabs)));
+    this.own(deps.bridge.onTabIncoming((incoming) => this.set({ incoming })));
     this.own(() => this.folds.forEach(clearTimeout));
   }
 
@@ -93,6 +107,28 @@ export class TabStripViewModel extends ViewModel<TabStripState> {
     items.filter((item) => item.closing && !folding.has(item.tab.id)).forEach((item) => this.foldAway(item.tab.id));
     this.drawn = true;
     this.set({ tabs, items });
+    this.landIncoming(tabs);
+  }
+
+  /** The view measured where the incoming tab would land. */
+  aim(to: number, offset: number): void {
+    this.aimed = { to, offset };
+  }
+
+  /** Lands the incoming tab once it is among `tabs`. */
+  private landIncoming(tabs: Tab[]): void {
+    const id = this.state.incoming?.id;
+    if (id !== undefined && tabs.some((tab) => tab.id === id)) this.land(id);
+  }
+
+  /** The incoming tab arrived: it takes the gap at once, glides home from where it was drawn, and the main process hears its place. */
+  private land(id: number): void {
+    const { to, offset } = this.aimed;
+    const items = moveItem(this.state.items, id, to).map((item) =>
+      item.tab.id === id ? { ...item, opening: false } : item,
+    );
+    this.set({ items, incoming: null, drop: { id, to, offset } });
+    this.deps.bridge.moveTab(id, to).catch(() => this.update(this.state.tabs));
   }
 
   /** The view measured the room the tabs share. */

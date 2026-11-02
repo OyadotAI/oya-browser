@@ -13,7 +13,7 @@ looking at them.
 - Find the project's design system before inventing one: tokens (CSS variables, Tailwind config,
   theme file), the component library, how an existing page of the same kind is built. Grep for
   the pattern you are about to write; reuse it. Two ways to draw a button is one too many.
-- Read `CLAUDE.md` for who the users are. A dashboard for engineers wants density; a landing page
+- Read the repository instructions (`CLAUDE.md` or `AGENTS.md`) for who the users are. A dashboard for engineers wants density; a landing page
   wants one idea per screen.
 
 ## 2. Commit to a direction
@@ -22,8 +22,8 @@ When there is no system yet, or the ask is a new surface, choose a clear aesthet
 execute it with precision — refined minimalism and bold maximalism both work; intentionality is
 the point. Never the generic AI look:
 
-- no default font stack as the design (Inter, Roboto, Arial, system-ui alone); pair a
-  characterful display face with a readable body face
+- choose typography for the product; preserve established app fonts and use native system fonts
+  where appropriate; introduce a display face only when the content benefits from one
 - no purple-to-blue gradient on white, no evenly spread timid palette: one dominant colour, sharp
   accents, and colour reserved for meaning
 - no card grid because it is the default; compose for the content — asymmetry, overlap, generous
@@ -52,12 +52,15 @@ thing they are waiting for. Images are sized and lazy below the fold; fonts are 
 
 ## 6. Responsive
 
-Works from 320px wide to a large desktop with no horizontal scroll. Touch targets at least 44px.
-Test at 375, 768 and 1440.
+Check the supported minimum width and a comfortable desktop width with no accidental horizontal
+scroll. For responsive websites, check 375, 768 and 1440px. Use at least 44px touch targets on
+touch interfaces; keep desktop controls consistent with the existing application.
 
 ## 7. Look at it
 
-Run the dev server and open the page. Take a screenshot at each width and in each theme and look
+Read the `oya-browser` skill and use Oya Browser exclusively. If Oya is unavailable,
+report the blocker without substituting another browser or harness. Run the dev server and open
+the page in an owned Oya tab. Take a screenshot at each width and in each theme and look
 at it; read the console for errors and warnings. Check the empty and error states by forcing
 them. A UI change is not done until you have seen it render — the type checker cannot see a
 button that is white on white.

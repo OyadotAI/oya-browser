@@ -40,7 +40,8 @@ export class TabProtector {
    */
   async protect(tab: Tab): Promise<void> {
     tab.protection = 'pending';
-    const blank = tab.view.webContents.loadURL('about:blank').catch(() => {});
+    // A page Electron is already loading for `window.open` has its renderer; blanking it would abort that page.
+    const blank = tab.openedByPage ? Promise.resolve() : tab.view.webContents.loadURL('about:blank').catch(() => {});
     if (await this.protectOnce(tab.view, blank)) return markProtected(tab);
     this.deps.protection.resetTabCDP(tab.view);
     console.error('[anonymity] tab protection did not finish on the first attempt, trying once more');
@@ -63,6 +64,8 @@ export class TabProtector {
   private failClosed(tab: Tab): void {
     this.deps.protection.resetTabCDP(tab.view);
     tab.protection = 'failed';
+    // A page made for `window.open` is already loading: close it rather than leave it showing.
+    if (tab.openedByPage) tab.view.webContents.close();
     console.error('[anonymity] tab protection failed twice, tab not loaded');
     showUnprotected(this.deps.tabs, tab);
   }

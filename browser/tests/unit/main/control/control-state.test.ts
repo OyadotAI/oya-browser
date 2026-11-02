@@ -14,6 +14,9 @@ import {
   LOCAL_DRAIN_TIMEOUT_MS,
 } from '../../../../src/main/control/constants.ts';
 
+/** The server's human-control lease, as the fake server grants it. */
+const HUMAN_CONTROL_MS = 300_000;
+
 /** Server modes after each handoff action. */
 const MODES = { request: 'paused', acquire: 'human', return: 'agent', renew: 'human' };
 
@@ -30,7 +33,7 @@ function withServer({ up = true } = {}) {
     if (message.action === 'command-end') return { id: message.id };
     const mode = MODES[message.action];
     server.revision++;
-    const state = { mode, mine: mode !== 'agent', expiresAt: Date.now() + 300_000, revision: server.revision };
+    const state = { mode, mine: mode !== 'agent', expiresAt: Date.now() + HUMAN_CONTROL_MS, revision: server.revision };
     return { id: message.id, state };
   };
   const control: DesktopControl = new DesktopControl({
@@ -45,11 +48,33 @@ function withServer({ up = true } = {}) {
   return { control, sent, snapshots, server };
 }
 
+/** The handoff actions sent to the server so far, command slots left out. */
+const actions = (ctx) => ctx.sent.map((m) => m.action).filter((a) => !a.startsWith('command-'));
+
+/** The fake server's default answer, for a test that overrides one action. */
+let answer: (message: any) => unknown;
+
+/** A server answer refusing `action` with `error`, pausing the browser with nobody holding it. */
+function refuse(ctx, action: string, error: string) {
+  return (message) => {
+    if (message.action !== action) return undefined;
+    const revision = ++ctx.server.revision;
+    return { id: message.id, error, state: { mode: 'paused', mine: false, revision } };
+  };
+}
+
+/** Connects with the agent driving and takes control, as a person pressing Human Mode. */
+async function holdConnected(ctx): Promise<void> {
+  ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+  await ctx.control.change('acquire');
+}
+
 describe('DesktopControl', () => {
   let ctx: any;
   beforeEach(() => {
     mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: 1_000_000 });
     ctx = withServer();
+    answer = ctx.server.answer;
   });
   afterEach(() => {
     ctx.control.dispose();
@@ -210,6 +235,68 @@ describe('DesktopControl', () => {
     );
   });
 
+  it('takes control back after a reconnect when the socket dropped mid-retake', async () => {
+    await holdConnected(ctx);
+    ctx.server.answer = () => undefined;
+    ctx.control.receive({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    ctx.control.disconnect();
+    await flush();
+    ctx.server.answer = answer;
+    ctx.control.connect({ mode: 'paused', mine: true, revision: ctx.server.revision + 2 });
+    await flush();
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().interactive], ['human', true]);
+  });
+
+  /** Holds control, then sends a return whose answer never comes, and drops the socket under it. */
+  async function dropDuringReturn(ctx): Promise<void> {
+    await holdConnected(ctx);
+    ctx.server.answer = () => undefined;
+    const returning = ctx.control.change('return').catch(() => {});
+    ctx.control.disconnect();
+    await returning;
+    ctx.server.answer = answer;
+    ctx.sent.length = 0;
+  }
+
+  it('never takes control back after a reconnect when the socket dropped while the person was giving it back', async () => {
+    await dropDuringReturn(ctx);
+    ctx.control.connect({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), []);
+  });
+
+  it("leaves the agent in control after a reconnect when the person's return was applied but its answer was lost", async () => {
+    await dropDuringReturn(ctx);
+    ctx.control.connect({ mode: 'agent', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), []);
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().mine], ['agent', false]);
+  });
+
+  it('leaves the agent in control after a reconnect when someone handed it over while the socket was down', async () => {
+    await holdConnected(ctx);
+    ctx.server.answer = () => undefined;
+    ctx.control.receive({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    ctx.control.disconnect();
+    await flush();
+    ctx.server.answer = answer;
+    ctx.sent.length = 0;
+    ctx.control.connect({ mode: 'agent', mine: false, revision: ctx.server.revision + 2 });
+    await flush();
+    assert.deepEqual(actions(ctx), []);
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().mine], ['agent', false]);
+  });
+
+  it('takes control back after a reconnect to a new session that says agent with revision 0', async () => {
+    await holdConnected(ctx);
+    ctx.control.disconnect();
+    ctx.sent.length = 0;
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 0 });
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire']);
+    assert.equal(ctx.control.snapshot().interactive, true);
+  });
+
   it('leaves control with the agent after a reconnect when the person did not hold it', async () => {
     ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
     ctx.control.disconnect();
@@ -237,11 +324,104 @@ describe('DesktopControl', () => {
     assert.ok(ctx.control.snapshot().expiresAt > Date.now() + CONTROL_RENEW_BEFORE_MS);
   });
 
-  it('pauses when human control expires', () => {
+  it('shows a retake as a paused handoff, never the agent, while it waits', () => {
     ctx.server.answer = () => undefined;
     ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() + 500 });
     mock.timers.tick(CONTROL_TICK_MS);
-    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().interactive], ['paused', false]);
+    const { mode, interactive, busyAction } = ctx.control.snapshot();
+    assert.deepEqual([mode, interactive, busyAction], ['paused', false, 'acquire']);
+  });
+
+  it('takes control back once a held hold lapses, with nobody else driving', async () => {
+    ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() + 500 });
+    ctx.snapshots.length = 0;
+    mock.timers.tick(CONTROL_TICK_MS);
+    await flush();
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().interactive], ['human', true]);
+    assert.equal(
+      ctx.snapshots.some((s) => s.mode === 'agent'),
+      false,
+    );
+  });
+
+  it("takes control back when the server's lease sweep pauses the hold", async () => {
+    await holdConnected(ctx);
+    ctx.control.receive({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire', 'request', 'acquire']);
+    assert.equal(ctx.control.snapshot().interactive, true);
+  });
+
+  it('takes control back when the server refuses a renewal and pauses the hold', async () => {
+    const renew = refuse(ctx, 'renew', 'Human control has expired or changed');
+    ctx.server.answer = (message) => (message.action === 'renew' ? renew(message) : answer(message));
+    ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() + CONTROL_RENEW_BEFORE_MS });
+    mock.timers.tick(CONTROL_TICK_MS);
+    await flush();
+    assert.deepEqual(actions(ctx), ['renew', 'request', 'acquire']);
+    assert.equal(ctx.control.snapshot().interactive, true);
+  });
+
+  it('stays with the agent when the hold ends in agent control', async () => {
+    await holdConnected(ctx);
+    ctx.control.receive({ mode: 'agent', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire']);
+    assert.equal(ctx.control.snapshot().mode, 'agent');
+  });
+
+  it("stays out of another operator's hold", async () => {
+    await holdConnected(ctx);
+    ctx.control.receive({ mode: 'human', mine: false, revision: ctx.server.revision + 1, expiresAt: Date.now() + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire']);
+    assert.equal(ctx.control.snapshot().interactive, false);
+  });
+
+  it('asks once per lapse: a refused retake stays paused', async () => {
+    ctx.server.answer = refuse(ctx, 'request', 'Another operator has control');
+    ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() + 500 });
+    for (let i = 0; i < 10; i++) {
+      mock.timers.tick(CONTROL_TICK_MS);
+      await flush();
+    }
+    assert.deepEqual(actions(ctx), ['request']);
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().busy], ['paused', false]);
+  });
+
+  it('never retakes a hold the person was giving back, even when the return is refused', async () => {
+    await holdConnected(ctx);
+    ctx.server.answer = refuse(ctx, 'return', 'Only the current operator can return control');
+    await assert.rejects(ctx.control.change('return'), /Only the current operator/);
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire', 'return']);
+  });
+
+  it('retakes again after a later lapse of a renewed hold', async () => {
+    await holdConnected(ctx);
+    ctx.control.receive({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    mock.timers.tick(HUMAN_CONTROL_MS - CONTROL_RENEW_BEFORE_MS + CONTROL_TICK_MS);
+    await flush();
+    ctx.control.receive({ mode: 'paused', mine: false, revision: ctx.server.revision + 1 });
+    await flush();
+    assert.deepEqual(actions(ctx), ['request', 'acquire', 'request', 'acquire', 'renew', 'request', 'acquire']);
+    assert.equal(ctx.control.snapshot().interactive, true);
+  });
+
+  it('retakes once when the desktop clock runs ahead and every hold looks expired', async () => {
+    const granted = answer;
+    ctx.server.answer = (message) => {
+      const reply: any = granted(message);
+      if (reply?.state) reply.state.expiresAt = Date.now() - 1;
+      return reply;
+    };
+    ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() - 1 });
+    for (let i = 0; i < 10; i++) {
+      mock.timers.tick(CONTROL_TICK_MS);
+      await flush();
+    }
+    assert.deepEqual(actions(ctx), ['request', 'acquire']);
   });
 
   it('publishes every change to the listener', async () => {

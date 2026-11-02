@@ -51,6 +51,32 @@ export interface TranslateFailure {
   message: string;
 }
 
+/** A save's rename step: the playbook it renamed, or found gone (and so saved anew). */
+export interface SaveRename {
+  /** The name the playbook had. */
+  from: string;
+  /** It was no longer on the server, so nothing was renamed and the save made a new playbook. */
+  missing?: boolean;
+}
+
+/** A rename the server refused, so nothing was saved. */
+export interface SaveRefusal {
+  /** The name the playbook still has. */
+  from: string;
+  /** The server's status, when it answered (409: the new name is taken). */
+  status?: number;
+  /** The server did not answer in time, so whether it renamed is unknown. */
+  timedOut?: boolean;
+}
+
+/** What saving a recording answers besides the server's body: whether a rename happened, or why it refused. */
+export interface SaveResult extends Failure {
+  /** Set only once the server confirmed the rename (or said the old playbook was gone). */
+  renamed?: SaveRename;
+  /** The rename the server refused; nothing was saved. */
+  renameFailed?: SaveRefusal;
+}
+
 /** One open tab, as the tab strip draws it. */
 export interface TabSummary {
   /** The tab's id in the main process. */
@@ -71,6 +97,8 @@ export interface TabSummary {
   pinned?: boolean;
   /** Whether the agent drives this tab; the strip marks it while the agent works. */
   agent?: boolean;
+  /** Whether a call is capturing this tab, so the strip rings its icon. */
+  sharing?: boolean;
   /** Whether the page is loading. */
   loading?: boolean;
   /** Why the last load failed, if it did. */
@@ -81,6 +109,35 @@ export interface TabSummary {
   canGoForward?: boolean;
   /** The translate chip's state; absent when there is nothing to offer or the person may not translate. */
   translation?: TabTranslation;
+}
+
+/** A tab carried in another window over this window's strip, which opens a gap for it at `x`. */
+export interface IncomingTab {
+  /** The tab's id in the main process. */
+  id: number;
+  /** The page's title. */
+  title: string;
+  /** The page's icon as a data URL, once fetched. */
+  favicon: string | null;
+  /** Whether it shows the start page, which draws the Oya mark. */
+  home: boolean;
+  /** The pointer's x in this window's content pixels. */
+  x: number;
+}
+
+/**
+ * The live tab share the toolbar chip names: the most recent one whose calling tab
+ * still exists. Hosts only, never a full address; null for a page that is not a website.
+ */
+export interface ShareChip {
+  /** The tab being captured. */
+  sharedTabId: number;
+  /** The tab whose page asked to capture it. */
+  callTabId: number;
+  /** The shared tab's web host, or null. */
+  shared: string | null;
+  /** The calling tab's web host, or null. */
+  call: string | null;
 }
 
 /** A rectangle in window pixels. */
@@ -113,6 +170,24 @@ export interface ShellLayout {
   chromeHeight: number;
   /** The page's bounds in the window. */
   page: Bounds;
+}
+
+/** The find bar on the shown tab (src/main/shell/find-bar.ts): whether it is open, and the count to show. */
+export interface FindBarState {
+  /** Whether the bar shows. */
+  open: boolean;
+  /** Which match is selected, from 1; 0 when there is none. */
+  active: number;
+  /** How many matches the page has, or null before any search (no count is shown). */
+  total: number | null;
+}
+
+/** The shown tab's zoom (src/main/shell/page-zoom.ts), for the address bar's chip. */
+export interface PageZoom {
+  /** The zoom as a percentage; 100 is actual size, and hides the chip. */
+  percent: number;
+  /** A person just zoomed: a screen reader says the new size. A tab switch or a new page says nothing. */
+  announce: boolean;
 }
 
 /** Who drives the browser (src/main/control/control-state.ts `snapshot()`). */
@@ -281,6 +356,8 @@ export interface ShellCalls {
   readLibrary(tabId: number): Promise<LibraryPresentation>;
   /** Changes an existing saved page after checking this tab and profile. */
   libraryAction(tabId: number, action: LibraryAction, url?: string): Promise<LibraryPresentation | void>;
+  /** Opens a saved download, or shows it in its folder, by id (the toolbar's download chip). */
+  downloadAction(id: string, action: DownloadAction): Promise<void>;
   /** The bookmarks bar: whether it shows, and the bookmarks on it. */
   bookmarksBar(): Promise<Payload>;
   /** Shows or hides the bookmarks bar. */
@@ -291,6 +368,14 @@ export interface ShellCalls {
   translatePage(tabId: number): Promise<void>;
   /** Stops a translation, or undoes one, and shows the page's own text. */
   showOriginal(tabId: number): Promise<void>;
+  /** Searches the shown page for `text` as the person types; empty text clears the highlights. */
+  findInPage(text: string): Promise<void>;
+  /** Moves to the next (`forward`) or previous match of the current search. */
+  findStep(forward: boolean): Promise<void>;
+  /** Closes the find bar, clears its highlights and gives the keyboard back to the page. */
+  closeFind(): Promise<void>;
+  /** Puts the shown page back to actual size (the address bar's zoom chip); refused while an agent holds it. */
+  resetZoom(): Promise<void>;
   /** Confirms handoff when the person interacts with an agent-owned page. */
   requestTakeover(): Promise<void>;
   /** Lists, manages, imports, exports, and runs project playbooks on this browser. */
@@ -360,6 +445,8 @@ export interface ShellCalls {
   newTab(url?: string): Promise<number>;
   /** Open a full browser window in the same profile. */
   newWindow(): Promise<void>;
+  /** Open an incognito window: the shared throwaway session, out of history, restore and agents' reach. */
+  newIncognitoWindow(): Promise<void>;
   /** Move this shell's live tab into another window or a new window at the pointer. */
   detachTab(id: number): Promise<void>;
   /** Begin native drag feedback for a tab owned by this shell. */
@@ -370,6 +457,8 @@ export interface ShellCalls {
   closeTab(id: number): Promise<void>;
   /** Shows a tab. */
   activateTab(id: number): Promise<void>;
+  /** Shows the tab of the call sharing a tab, in whichever window holds it; main knows which, so the shell names none. */
+  goToShareCall(): Promise<void>;
   /** Moves a tab in the strip. */
   moveTab(id: number, toIndex: number): Promise<unknown>;
   /** Opens a tab's right-click menu. */
@@ -380,8 +469,8 @@ export interface ShellCalls {
   startRecording(): Promise<unknown>;
   /** Stops recording. */
   stopRecording(): Promise<unknown>;
-  /** Saves the recording as a playbook. */
-  saveRecording(name: string, description?: string): Promise<unknown>;
+  /** Saves the recording as a playbook: under a new name it renames the one it was saved as, unless `asCopy`. */
+  saveRecording(name: string, description?: string, asCopy?: boolean): Promise<unknown>;
   /** Sets the workspace panel width. */
   resizeDevPanel(width: number): Promise<void>;
   /** The active page's HTML and markdown. */
@@ -432,6 +521,23 @@ export interface ShellCalls {
   installUpdate(): Promise<void>;
 }
 
+/** What a window's download chip shows: the latest download started from its pages, and the totals of those running. */
+export interface DownloadBubbleState {
+  /** The newest download from this window, in the profile on screen; null when there is none to show. */
+  latest: import('./library.ts').DownloadEntry | null;
+  /** How many of this window's downloads are still running. */
+  running: number;
+  /** Bytes saved so far across the running ones. */
+  received: number;
+  /** Their total size, or null when any of them did not say. */
+  total: number | null;
+  /** Whether the window is focused: a finished chip waits for the person to look. */
+  focused: boolean;
+}
+
+/** What the download chip can do with a saved file, by id. */
+export type DownloadAction = 'open' | 'reveal';
+
 /** Every event the shell page hears, with its payload. */
 export interface ShellEvents {
   /** The session inbox changed; fetch it through the trusted shell bridge. */
@@ -470,8 +576,18 @@ export interface ShellEvents {
   onViewSource: PageSource;
   /** The tab list changed. */
   onTabsUpdated: TabSummary[];
+  /** A tab carried in another window hovers this strip (null once it leaves). */
+  onTabIncoming: IncomingTab | null;
+  /** A tab share started, moved or ended (null). */
+  onShareChip: ShareChip | null;
   /** The bookmarks bar changed: shown or hidden, or a bookmark added or removed. */
   onBookmarksBar: Payload;
+  /** The find bar opened, closed, or has a new count. */
+  onFindBar: FindBarState;
+  /** This window's download chip changed: a download started, moved on or ended here. */
+  onDownloadBubble: DownloadBubbleState;
+  /** The shown tab's zoom: a person zoomed, the tab switched, or the page went to another site. */
+  onPageZoom: PageZoom;
   /** The routines or their runs changed. */
   onRoutinesChanged: Payload;
   /** The server stored the profile. */
@@ -569,6 +685,7 @@ export const CALL_CHANNELS = {
   showLibrary: 'show-library',
   readLibrary: 'read-library',
   libraryAction: 'library-action',
+  downloadAction: 'download-action',
   /** The bookmarks bar: whether it shows, and the bookmarks on it. */
   bookmarksBar: 'bookmarks-bar-state',
   /** Shows or hides the bookmarks bar. */
@@ -579,8 +696,17 @@ export const CALL_CHANNELS = {
   translatePage: 'translate-page',
   /** Shows a tab's page untranslated. */
   showOriginal: 'show-original',
+  /** Searches the shown page as the person types. */
+  findInPage: 'find-in-page',
+  /** The next or previous match. */
+  findStep: 'find-step',
+  /** Closes the find bar. */
+  closeFind: 'close-find',
+  /** Puts the shown page back to actual size. */
+  resetZoom: 'reset-zoom',
   newTab: 'new-tab',
   newWindow: 'new-window',
+  newIncognitoWindow: 'new-incognito-window',
   detachTab: 'detach-tab',
   beginTabDrag: 'begin-tab-drag',
   endTabDrag: 'end-tab-drag',
@@ -588,6 +714,8 @@ export const CALL_CHANNELS = {
   closeTab: 'close-tab',
   /** Shows a tab. */
   activateTab: 'activate-tab',
+  /** Shows the tab of the call sharing a tab. */
+  goToShareCall: 'go-to-share-call',
   /** Moves a tab in the strip. */
   moveTab: 'move-tab',
   /** Opens a tab's right-click menu. */
@@ -688,8 +816,18 @@ export const EVENT_CHANNELS = {
   onViewSource: 'view-source',
   /** The tab list changed. */
   onTabsUpdated: 'tabs-updated',
+  /** A tab carried in another window hovers this strip (null once it leaves). */
+  onTabIncoming: 'tab-incoming',
+  /** A tab share started, moved or ended. */
+  onShareChip: 'share-chip',
   /** The bookmarks bar changed: shown or hidden, or a bookmark added or removed. */
   onBookmarksBar: 'bookmarks-bar',
+  /** The find bar opened, closed, or has a new count. */
+  onFindBar: 'find-bar',
+  /** This window's download chip changed: a download started, moved on or ended here. */
+  onDownloadBubble: 'download-bubble',
+  /** The shown tab's zoom. */
+  onPageZoom: 'page-zoom',
   /** The routines or their runs changed. */
   onRoutinesChanged: 'routines-changed',
   /** The server stored the profile. */

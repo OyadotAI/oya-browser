@@ -73,8 +73,7 @@ export const usedPct = (used: number, capacity: number) =>
   capacity ? Math.min(PERCENT, (used / capacity) * PERCENT) : 0;
 
 /** Bar colour for a capacity percentage. */
-export const barTone = (pct: number) =>
-  pct > BAR_BAD_PCT ? 'bg-red-500' : pct > BAR_WARN_PCT ? 'bg-amber-500' : 'bg-accent';
+export const barTone = (pct: number) => (pct > BAR_BAD_PCT ? 'bg-red' : pct > BAR_WARN_PCT ? 'bg-yellow' : 'bg-accent');
 
 /** A live limit whose remaining allowance is nearly spent. */
 export const limitIsLow = (l: Limit) => !l.disabled && l.remaining < (l.burst ?? 0) * LOW_REMAINING_SHARE;

@@ -135,7 +135,7 @@ describe('Routines', () => {
 
   it('plays the saved playbook of a routine that names one, through the runs route, and records how it ended', async () => {
     mock.timers.enable({ apis: ['setTimeout'] });
-    const server = fakeServer([held({ prompt: '', playbook: 'check-prices' })], {
+    const server = fakeServer([held({ prompt: '', playbook: 'check-prices', values: { item: 'tea' } })], {
       'POST browsers/b1/runs': () => ({ id: 'run_1', status: 'running' }),
       'GET runs/run_1': () => ({ id: 'run_1', status: 'succeeded', result: { steps: 2, total: 2, fellBack: false } }),
     });
@@ -148,7 +148,10 @@ describe('Routines', () => {
     await ticking;
     mock.timers.reset();
     assert.equal(run.mock.callCount(), 0, 'a playbook routine never asks the agent');
-    assert.deepEqual(server.called('POST', 'browsers/b1/runs')[0][2], { playbook: 'check-prices' });
+    assert.deepEqual(server.called('POST', 'browsers/b1/runs')[0][2], {
+      playbook: 'check-prices',
+      data: { item: 'tea' },
+    });
     const [ending] = server.calls.filter(([m, p]) => m === 'PATCH' && p.startsWith('routines/r1/runs/'));
     assert.deepEqual(ending[2], { status: 'done', result: 'Played 2 of 2 steps.', steps: [] });
   });
@@ -160,6 +163,45 @@ describe('Routines', () => {
     await routines.save({ id: 'r1', name: 'Prices', prompt: 'Check prices', schedule: held().schedule });
     assert.equal(server.called('POST', 'routines')[0][2].playbook, 'check-prices');
     assert.equal(server.called('PATCH', 'routines/r1')[0][2].playbook, null);
+  });
+
+  it('saves a playbook routine’s values and profile, and drops the values of a prompt routine', async () => {
+    const server = fakeServer([]);
+    const routines = new Routines(ctx);
+    const task = { name: 'Prices', prompt: '', playbook: 'check-prices', schedule: held().schedule };
+    await routines.save({ ...task, values: { item: 'tea' }, persona: 'p1' });
+    await routines.save({
+      id: 'r1',
+      name: 'Prices',
+      prompt: 'Check',
+      values: { item: 'tea' },
+      schedule: held().schedule,
+    });
+    const created = server.called('POST', 'routines')[0][2];
+    assert.deepEqual([created.values, created.persona], [{ item: 'tea' }, 'p1']);
+    const edited = server.called('PATCH', 'routines/r1')[0][2];
+    assert.deepEqual([edited.values, edited.persona], [undefined, null]);
+  });
+
+  it('holds a desktop routine for another profile until this desktop is on it, and says so on Run now', async () => {
+    fakeServer([held({ persona: 'p1' })]);
+    const run = mock.fn(async () => ({ text: 'x' }));
+    const routines = new Routines(ctx, run);
+    await routines.tick(EIGHT_AM + HOUR);
+    assert.equal(run.mock.callCount(), 0);
+    assert.match((await routines.runNow('r1')).error, /routine's profile/);
+    ctx.config.values.persona = 'p1';
+    await routines.tick(EIGHT_AM + HOUR);
+    assert.equal(run.mock.callCount(), 1);
+    assert.equal(routines.snapshot().persona, 'p1');
+  });
+
+  it('runs a routine with no profile as whichever profile this desktop is on', async () => {
+    fakeServer([held()]);
+    const run = mock.fn(async () => ({ text: 'x' }));
+    ctx.config.values.persona = 'p1';
+    await new Routines(ctx, run).tick(EIGHT_AM + HOUR);
+    assert.equal(run.mock.callCount(), 1);
   });
 
   it('lets another desktop have a run it claimed first, without running the agent', async () => {

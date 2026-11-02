@@ -40,3 +40,5 @@ export const DESKTOP_SOURCES = {
   types: ['window', 'screen'] as ('window' | 'screen')[],
   thumbnailSize: PICKER.THUMBNAIL,
 };
+/** How often a live tab share is checked for having ended; the badge clears at most this late. */
+export const SHARE_POLL_MS = 1000;

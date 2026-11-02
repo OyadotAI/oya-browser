@@ -17,7 +17,14 @@ import { chatCompletion } from '../../platform/llm.ts';
 import type { ModelTransport } from '../../platform/llm/index.ts';
 import { metrics } from '../../platform/metrics.ts';
 import * as usage from '../../platform/usage.ts';
-import { DEFAULT_MAX_ITERATIONS, AGENT_LOG, AGENT_LOG_CHARS, WRAP_UP_STEPS, STOPPED_TEXT } from './constants.ts';
+import {
+  DEFAULT_MAX_ITERATIONS,
+  AGENT_LOG,
+  AGENT_LOG_CHARS,
+  FINDINGS_ARGS_CHARS,
+  WRAP_UP_STEPS,
+  STOPPED_TEXT,
+} from './constants.ts';
 import { newGuard, afterCall, afterEmpty, failed, type Guard } from './guards.ts';
 import { verify, recheck } from './verifier.ts';
 import { CHALLENGE_TOOLS, CHALLENGE_HANDLERS, type Challenges } from './challenge-tools.ts';
@@ -74,6 +81,8 @@ export type LoopContext = {
   secrets: Record<string, any>;
   /** Told about each tool call before it runs. */
   onToolCall?: (call: any) => void;
+  /** Told each tool call's result as the model read it (redacted), with its redacted arguments, as it comes back. */
+  onToolResult?: (name: string, args: string, seen: string) => void;
   /** Given the final text answer. */
   onText?: (text: string) => void;
   /** Runs after each successful page-changing tool. */
@@ -106,6 +115,18 @@ export type LoopContext = {
   shownSites?: Set<string>;
   /** Aborted when the caller gives up (the person pressed Stop); the run ends at the next step. */
   signal?: AbortSignal;
+  /** The run's tokens so far, every model call and the check before done included, for the caller to show per run. */
+  usage?: RunUsage;
+  /** Told the run's tokens so far after each model call, so a run the caller stops still shows what it used. */
+  onUsage?: (usage: RunUsage) => void;
+};
+
+/** A run's tokens, as the providers report them: what was sent and what came back. */
+export type RunUsage = {
+  /** Prompt tokens, cached ones included. */
+  input: number;
+  /** Completion tokens, reasoning included. */
+  output: number;
 };
 
 /** Counts one direction of an iteration's tokens against the key. */
@@ -261,8 +282,13 @@ async function callTool(ctx: LoopContext, tc, batch: Batch) {
   ctx.onToolCall?.({ name, args: args || parseArgs(tc.function?.arguments) });
   const { result, acted } = await runAimed(ctx, name, args);
   if (ran(result)) await afterSuccess(ctx, name, args, acted);
-  const seen = guarded(ctx, name, args, String(result));
+  return told(ctx, name, args, guarded(ctx, name, args, String(result)));
+}
+
+/** Hands a result on as the model reads it: logged when asked, and told to whoever keeps what the run read. */
+function told(ctx: LoopContext, name, args, seen: string) {
   if (AGENT_LOG) logCall(ctx, name, args, seen);
+  ctx.onToolResult?.(name, askedFor(ctx, args), seen);
   return seen;
 }
 
@@ -273,6 +299,10 @@ function guarded(ctx: LoopContext, name, args, result: string) {
   // ponytail: whole secret values are redacted; a filtered piece of one (its digits, a first name) read back from the page is not.
   return redact(result, ctx.secrets) + note + notesHere(ctx);
 }
+
+/** A tool call's arguments as kept beside its result: redacted and short. */
+const askedFor = (ctx: LoopContext, args) =>
+  redact(JSON.stringify(args ?? {}), ctx.secrets).slice(0, FINDINGS_ARGS_CHARS);
 
 /** One line per tool call on the server console: what was asked and how the result starts. */
 function logCall(ctx: LoopContext, name, args, result) {
@@ -342,9 +372,18 @@ async function complete(ctx: LoopContext, allMessages) {
   // Every iteration of the agentic loop bills, so account per iteration
   // rather than once per request. Each is also one agent step, the unit the
   // platform fee is on, whoever's model it ran on; the verifier's calls are not steps.
-  billUsage(ctx, completion.usage);
+  recordUsage(ctx, completion.usage);
   usage.record(ctx.apiKey, 'agent_steps', 1);
   return completion;
+}
+
+/** Counts a model call's tokens against the key. */
+function recordUsage(ctx: LoopContext, used) {
+  ctx.usage ??= { input: 0, output: 0 };
+  ctx.usage.input += used?.prompt_tokens || 0;
+  ctx.usage.output += used?.completion_tokens || 0;
+  ctx.onUsage?.({ ...ctx.usage });
+  billUsage(ctx, used);
 }
 
 /** Counts a model call's tokens against the key, so the hourly chat cap sees them; on the operator's model, its cost too. */
@@ -361,7 +400,7 @@ export function billUsage(ctx: Pick<LoopContext, 'apiKey' | 'llm'>, used) {
  */
 async function accepted(ctx: LoopContext, allMessages, text: string) {
   if (!ctx.verify || failed(text) || !ctx.guard?.total || (ctx.rechecks || 0) >= VERIFY_ROUNDS) return true;
-  const verdict = await verify(ctx, allMessages, text, (used) => billUsage(ctx, used));
+  const verdict = await verify(ctx, allMessages, text, (used) => recordUsage(ctx, used));
   if (verdict.pass) return true;
   ctx.rechecks = (ctx.rechecks || 0) + 1;
   allMessages.push({ role: 'assistant', content: text }, { role: 'user', content: recheck(verdict.reason) });
@@ -406,6 +445,8 @@ export type AgentResult = {
   limited?: boolean;
   /** What return_data answered, for a run given a schema. */
   data?: any;
+  /** The tokens the run used; absent when no model call reported any. */
+  usage?: RunUsage;
 };
 
 /**
@@ -421,6 +462,14 @@ function wrapUp(allMessages, left: number, maxIterations: number) {
   });
 }
 
+/** A result with the run's tokens on it, when its model calls reported any: a made-up zero would mislead a budget. */
+const withUsage = (ctx: LoopContext, result: AgentResult): AgentResult =>
+  ctx.usage?.input || ctx.usage?.output ? { ...result, usage: { ...ctx.usage } } : result;
+
+/** The run's answer: the report, whether it failed, return_data's data, and the tokens it used. */
+const answered = (ctx: LoopContext, text: string): AgentResult =>
+  withUsage(ctx, { text, toolCalls: [], failed: failed(text), ...(ctx.data !== undefined && { data: ctx.data }) });
+
 /** Loops until the model answers in text, or CHAT_MAX_ITERATIONS runs out. */
 export async function agentLoop(ctx: LoopContext, allMessages): Promise<AgentResult> {
   const maxIterations = parseInt(process.env.CHAT_MAX_ITERATIONS || DEFAULT_MAX_ITERATIONS, 10);
@@ -428,7 +477,7 @@ export async function agentLoop(ctx: LoopContext, allMessages): Promise<AgentRes
   for (let iterations = 0; iterations < maxIterations; iterations++) {
     wrapUp(allMessages, maxIterations - iterations, maxIterations);
     const text = stopRequested(ctx) || (await iterate(ctx, allMessages));
-    if (text) return { text, toolCalls: [], failed: failed(text), ...(ctx.data !== undefined && { data: ctx.data }) };
+    if (text) return answered(ctx, text);
   }
-  return { text: 'Reached iteration limit.', toolCalls: [], limited: true, failed: true };
+  return withUsage(ctx, { text: 'Reached iteration limit.', toolCalls: [], limited: true, failed: true });
 }

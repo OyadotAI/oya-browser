@@ -4,12 +4,23 @@
  */
 
 /**
- * Page rendering: the longest page an analysis returns, the budget cut keeps for
- * its note, and the element index's off-screen list and link lengths.
+ * Page rendering: the longest page an analysis returns, the room cut keeps for
+ * its note, the size a markdown block may take beyond its own line, and the
+ * element index's off-screen list and link lengths.
  */
 export const PAGE_RENDER = {
   MAX_PAGE_CHARS: 80000,
   TRUNCATED_ROOM: 120,
+  // One block may take at most this share of the room, so a raw text file or a huge code block shows its start and leaves room for what is around it.
+  MAX_BLOCK_SHARE: 0.5,
+  // Bounds the renders a markdown cut makes: each re-pick is a full render, so a page of thousands of blocks would otherwise stall the cut.
+  MAX_REFITS: 3,
+  // How much faster the room shrinks on each refit pass: an overflow smaller than one row must still take a row off before MAX_REFITS runs out.
+  REFIT_GROWTH: 2,
+  // Bounds how often a block's text is shrunk to its share: escapes and markup can keep a shrunk text over the share, and each pass is a full size measure.
+  MAX_SHRINK_PASSES: 3,
+  // The blank lines and newlines a markdown block can add around its own line, counted as one character each, so the cut's size never undercounts.
+  MARKDOWN_BLOCK_LINES: 7,
   MAX_OFFSCREEN_LISTED: 30,
   MAX_INDEX_LINK: 80,
 } as const;

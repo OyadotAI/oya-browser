@@ -7,6 +7,7 @@
  * cannot hear (gone, on another replica, an old app) never slows or breaks the run.
  */
 import { currentLane } from '../browsers/connection/lane.ts';
+import type { RunUsage } from './loop.ts';
 import { randomUUID } from 'node:crypto';
 import { registry } from '../browsers/registry.ts';
 import { elementOf } from './recorder.ts';
@@ -116,6 +117,11 @@ export class LiveRun {
     const element = args?.element_id == null ? undefined : elementOf(this.browserId, args.element_id);
     const line = stepLine(name, args, element);
     if (line) this.send({ kind: 'step', tool: name, line: this.safe(line) });
+  }
+
+  /** The run's tokens so far, after a model call: what a run stopped before its answer still shows. */
+  usage({ input, output }: RunUsage) {
+    if (input || output) this.send({ kind: 'usage', input, output });
   }
 
   /** The run ended with a report; `failed` when it says the task could not be done. */

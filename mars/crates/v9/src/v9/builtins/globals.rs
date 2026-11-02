@@ -1,0 +1,291 @@
+/** Global functions: number parsing, URI coding, escape/unescape and indirect eval. */
+use super::*;
+use crate::v9::vm::realm::NativeFn;
+
+/** The global function objects; the global object itself is installed by the platform. */
+pub(super) fn install(b: &mut Builder) {
+    let functions: [(&'static str, u32, NativeFn); 11] = [
+        ("parseInt", 2, parse_int),
+        ("parseFloat", 1, parse_float),
+        ("isNaN", 1, is_nan),
+        ("isFinite", 1, is_finite),
+        ("encodeURIComponent", 1, |vm, call| {
+            encode(vm, call, COMPONENT_SAFE)
+        }),
+        ("encodeURI", 1, |vm, call| encode(vm, call, URI_SAFE)),
+        ("decodeURIComponent", 1, |vm, call| decode(vm, call, "")),
+        ("decodeURI", 1, |vm, call| decode(vm, call, URI_RESERVED)),
+        ("escape", 1, escape),
+        ("unescape", 1, unescape),
+        ("eval", 1, eval),
+    ];
+    for (name, length, function) in functions {
+        let id = b.function(name, length, function);
+        b.global(name, id);
+        if matches!(name, "parseInt" | "parseFloat") {
+            super::number::install_parser(b, name, id);
+        }
+    }
+    // The global object's value properties. The page's window makes the first three frozen
+    // own properties and replaces the globalThis placeholder with itself when it is created.
+    b.globals.extend([
+        ("NaN", JsValue::Number(f64::NAN)),
+        ("Infinity", JsValue::Number(f64::INFINITY)),
+        ("undefined", JsValue::Undefined),
+        ("globalThis", JsValue::Undefined),
+    ]);
+}
+
+/** parseInt. */
+fn parse_int(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?.lossy();
+    let mut radix = crate::v9::value::to_int32(arg_number(vm, &call, 1)?);
+    let trimmed = text.trim_start_matches(|c: char| crate::v9::source::whitespace(c));
+    let (sign, rest) = match trimmed.as_bytes().first() {
+        Some(b'-') => (-1.0, &trimmed[1..]),
+        Some(b'+') => (1.0, &trimmed[1..]),
+        _ => (1.0, trimmed),
+    };
+    let mut rest = rest;
+    if (radix == 0 || radix == 16)
+        && let Some(stripped) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X"))
+    {
+        rest = stripped;
+        radix = 16;
+    }
+    if radix == 0 {
+        radix = 10;
+    }
+    if !(2..=36).contains(&radix) {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let digits: String = rest
+        .chars()
+        .take_while(|c| c.is_digit(radix as u32))
+        .collect();
+    if digits.is_empty() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let value = if radix == 10 {
+        digits.parse::<f64>().unwrap_or(f64::NAN)
+    } else {
+        digits.chars().fold(0.0, |acc, c| {
+            acc * f64::from(radix) + f64::from(c.to_digit(radix as u32).unwrap_or(0))
+        })
+    };
+    Ok(JsValue::Number(sign * value))
+}
+
+/** parseFloat. */
+fn parse_float(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?.lossy();
+    let trimmed = text.trim_start_matches(|c: char| crate::v9::source::whitespace(c));
+    for infinity in ["Infinity", "+Infinity", "-Infinity"] {
+        if trimmed.starts_with(infinity) {
+            return Ok(JsValue::Number(if infinity.starts_with('-') {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            }));
+        }
+    }
+    let bytes = trimmed.as_bytes();
+    let mut end = 0;
+    if matches!(bytes.first(), Some(b'+' | b'-')) {
+        end = 1;
+    }
+    let digits_start = end;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+    }
+    if end == digits_start || trimmed[digits_start..end] == *"." {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let mut exponent = end + 1;
+        if matches!(bytes.get(exponent), Some(b'+' | b'-')) {
+            exponent += 1;
+        }
+        if bytes.get(exponent).is_some_and(u8::is_ascii_digit) {
+            end = exponent;
+            while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+        }
+    }
+    Ok(JsValue::Number(trimmed[..end].parse().unwrap_or(f64::NAN)))
+}
+
+/** isNaN. */
+fn is_nan(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(JsValue::Boolean(arg_number(vm, &call, 0)?.is_nan()))
+}
+
+/** isFinite. */
+fn is_finite(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(JsValue::Boolean(arg_number(vm, &call, 0)?.is_finite()))
+}
+
+/** Characters encodeURIComponent leaves alone. */
+const COMPONENT_SAFE: &str = "-_.!~*'()";
+/** Characters encodeURI also leaves alone. */
+const URI_SAFE: &str = "-_.!~*'();/?:@&=+$,#";
+/** Characters decodeURI keeps escaped. */
+const URI_RESERVED: &str = ";/?:@&=+$,#";
+
+/** Percent-encode UTF-8 except unreserved characters. */
+fn encode(vm: &mut Vm, call: Call, safe: &str) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?;
+    let decoded: Result<String, _> =
+        char::decode_utf16((0..text.len()).filter_map(|index| text.unit_at(index))).collect();
+    let decoded = match decoded {
+        Ok(decoded) => decoded,
+        Err(_) => return Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
+    };
+    let mut out = String::with_capacity(decoded.len());
+    for c in decoded.chars() {
+        if c.is_ascii_alphanumeric() || safe.contains(c) {
+            out.push(c);
+        } else {
+            let mut buffer = [0u8; 4];
+            for byte in c.encode_utf8(&mut buffer).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        }
+    }
+    super::text(vm, &out)
+}
+
+/** Units in one `%XX` escape. */
+const ESCAPE_UNITS: usize = 3;
+/** Radix of the two digits in an escape. */
+const HEX_RADIX: u32 = 16;
+
+/** Percent-decode UTF-8, keeping escapes of `reserved` characters. Works on UTF-16 units so a lone
+surrogate outside any escape passes through as the spec requires instead of becoming U+FFFD. */
+fn decode(vm: &mut Vm, call: Call, reserved: &str) -> Res<JsValue> {
+    let source = arg_string(vm, &call, 0)?;
+    let units: Vec<u16> = (0..source.len())
+        .filter_map(|index| source.unit_at(index))
+        .collect();
+    match decode_units(&units, reserved) {
+        Some(out) => Ok(JsValue::String(JsString::from_units(out)?)),
+        None => Err(vm.throw(crate::v9::vm::error::ErrorKind::Uri, "URI malformed")),
+    }
+}
+
+/** The decoded units, or None for a malformed escape: a bad hex digit, a byte that cannot start
+a UTF-8 sequence, a sequence cut short, or one that is not valid UTF-8 (overlong, surrogate). */
+fn decode_units(units: &[u16], reserved: &str) -> Option<Vec<u16>> {
+    let mut out = Vec::with_capacity(units.len());
+    let mut index = 0;
+    while index < units.len() {
+        if units[index] != u16::from(b'%') {
+            out.push(units[index]);
+            index += 1;
+            continue;
+        }
+        let count = utf8_length(percent_byte(units, index)?)?;
+        let bytes: Vec<u8> = (0..count)
+            .map(|offset| percent_byte(units, index + ESCAPE_UNITS * offset))
+            .collect::<Option<_>>()?;
+        let text = std::str::from_utf8(&bytes).ok()?;
+        if count == 1 && reserved.contains(text) {
+            out.extend_from_slice(&units[index..index + ESCAPE_UNITS]);
+        } else {
+            out.extend(text.encode_utf16());
+        }
+        index += ESCAPE_UNITS * count;
+    }
+    Some(out)
+}
+
+/** The byte of the `%XX` escape at `at`; only ASCII hex digits count, so `%+1` is malformed
+(Rust's `from_str_radix` would accept the sign). */
+fn percent_byte(units: &[u16], at: usize) -> Option<u8> {
+    if units.get(at) != Some(&u16::from(b'%')) {
+        return None;
+    }
+    let digit = |offset: usize| {
+        let unit = *units.get(at + offset)?;
+        char::from_u32(u32::from(unit))?.to_digit(HEX_RADIX)
+    };
+    u8::try_from(digit(1)? * HEX_RADIX + digit(2)?).ok()
+}
+
+/** Bytes in the UTF-8 sequence a lead byte opens; None for a continuation or invalid lead. */
+fn utf8_length(lead: u8) -> Option<usize> {
+    match lead.leading_ones() {
+        0 => Some(1),
+        count @ 2..=4 => Some(count as usize),
+        _ => None,
+    }
+}
+
+/** escape (legacy). */
+fn escape(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?;
+    let mut out = String::new();
+    for unit in (0..text.len()).filter_map(|index| text.unit_at(index)) {
+        let c = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
+        if c.is_ascii_alphanumeric() || "@*_+-./".contains(c) {
+            out.push(c);
+        } else if unit < 0x100 {
+            out.push_str(&format!("%{unit:02X}"));
+        } else {
+            out.push_str(&format!("%u{unit:04X}"));
+        }
+    }
+    super::text(vm, &out)
+}
+
+/** unescape (legacy). */
+fn unescape(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?;
+    let mut out = Vec::with_capacity(text.len());
+    let mut index = 0;
+    while index < text.len() {
+        if text.unit_at(index) == Some(u16::from(b'%')) {
+            let read = |start: usize, count: usize| -> Option<u16> {
+                let units: Vec<_> = (start..start + count)
+                    .map(|index| text.unit_at(index))
+                    .collect::<Option<_>>()?;
+                u16::from_str_radix(&String::from_utf16(&units).ok()?, 16).ok()
+            };
+            if text.unit_at(index + 1) == Some(u16::from(b'u'))
+                && let Some(value) = read(index + 2, 4)
+            {
+                out.push(value);
+                index += 6;
+                continue;
+            }
+            if let Some(value) = read(index + 1, 2) {
+                out.push(value);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(text.unit_at(index).expect("valid string index"));
+        index += 1;
+    }
+    Ok(JsValue::String(JsString::from_units(out)?))
+}
+
+/** Indirect eval: compile and run at the top level with V9's parser. */
+fn eval(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let argument = call.arg(0);
+    let source = match &argument {
+        JsValue::String(source) => source.clone(),
+        other => match crate::v9::platform::trusted_script_text(vm, other)? {
+            Some(JsValue::String(source)) => source,
+            _ => return Ok(argument),
+        },
+    };
+    super::function::evaluate(vm, source.lossy())
+}

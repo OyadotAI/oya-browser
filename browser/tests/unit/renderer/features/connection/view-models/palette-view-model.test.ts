@@ -18,6 +18,20 @@ describe('the command palette', () => {
     assert.equal(commandsFor('Win32').find((c) => c.id === 'inspect')?.shortcut, 'Ctrl Alt I');
   });
 
+  it('offers New incognito window only where the browser has incognito, and no agent command in one', (t) => {
+    const marks: Record<string, string> = { incognitoAvailable: 'true' };
+    (globalThis as any).document = { documentElement: { dataset: marks } };
+    t.after(() => delete (globalThis as any).document);
+    const ids = () => commandsFor('MacIntel').map((c) => c.id);
+    assert.ok(ids().includes('newIncognitoWindow'));
+    assert.ok(ids().includes('ask'));
+    marks.incognito = 'true';
+    for (const agent of ['ask', 'record', 'playbooks', 'routines', 'inspect', 'network', 'source'])
+      assert.equal(ids().includes(agent as any), false, agent);
+    marks.incognitoAvailable = 'false';
+    assert.equal(ids().includes('newIncognitoWindow'), false);
+  });
+
   it('lists the commands whose label holds the search, ignoring case', () => {
     const labels = matching(commandsFor('MacIntel'), 'TAB').map((c) => c.label);
     assert.deepEqual(labels, ['New tab']);

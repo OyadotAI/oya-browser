@@ -35,8 +35,10 @@ export class RecordingHandlers {
       return this.deps.recorder.queueRecording(() => this.deps.recorder.startRecording());
     },
     'stop-recording': () => this.deps.recorder.queueRecording(() => this.deps.recorder.stopRecording()),
-    'save-recording': (_e, name, description) =>
-      this.deps.recorder.queueRecording(() => new RecordingPublisher(this.deps).save(name, description)),
+    'save-recording': (_e, name, description, asCopy) =>
+      this.deps.recorder.queueRecording(() =>
+        new RecordingPublisher(this.deps).save(name, description, asCopy === true),
+      ),
     'export-playwright': (_e, payload) => this.exportPlaywright(payload),
   };
   /** The main-process services. */

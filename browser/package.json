@@ -1,6 +1,6 @@
 {
   "name": "oya-browser",
-  "version": "1.0.193",
+  "version": "1.0.206",
   "description": "AI-controlled browser, your real browser as an MCP server",
   "main": "out/main/index.js",
   "author": "Oya <hello@oya.ai>",
@@ -30,7 +30,9 @@
     "test:native-input": "node tests/integration/native-input.mjs",
     "test:windows": "npm run build && node tests/integration/windows.mjs",
     "test:shell": "npm run build && node tests/integration/shell.mjs",
+    "test:tear-off": "npm run build && node tests/integration/tab-tear-off.mjs agent && node tests/integration/tab-tear-off.mjs human",
     "test:control": "npm run build && node tests/integration/control.mjs",
+    "test:incognito": "npm run build && node tests/integration/incognito.mjs",
     "test:desktop-library": "node tests/integration/desktop-library.mjs",
     "test:desktop-media": "node tests/integration/desktop-media.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
@@ -60,35 +62,36 @@
     "test:native-pre-scripts": "node tests/integration/native-pre-scripts.mjs",
     "test:native-app": "npm run build && node tests/integration/native-app.mjs",
     "test:native-packaged-app": "node tests/integration/native-packaged-app.mjs",
-    "test:desktop-highlights": "node tests/integration/desktop-highlights.mjs"
+    "test:desktop-highlights": "node tests/integration/desktop-highlights.mjs",
+    "postinstall": "node build/minimatch-compat.cjs"
   },
   "dependencies": {
-    "@playwright/test": "^1.64.0",
-    "electron-updater": "^6.8.9",
-    "mime-types": "^2.1.35",
+    "@playwright/test": "^1.64.1",
+    "electron-updater": "^6.8.11",
+    "mime-types": "^3.0.2",
     "ws": "^8.22.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^24.19.1",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
-    "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^44.7.0",
-    "electron-builder": "^26.15.3",
-    "electron-vite": "^5.0.0",
-    "eslint": "^10.12.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.10.1",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-jsdoc": "^65.3.0",
+    "eslint-plugin-jsdoc": "^65.4.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
-    "prettier": "^3.9.9",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.1",
-    "vite": "^7.3.6"
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.5"
   },
   "build": {
     "appId": "ai.oya.browser",
@@ -192,5 +195,13 @@
       "url": "https://oyabrowser.com/downloads",
       "channel": "latest"
     }
+  },
+  "overrides": {
+    "minimatch": "11.0.4",
+    "zod": "4.6.6",
+    "undici@^6.0.0": "6.29.1",
+    "undici@^7.0.0": "7.30.1",
+    "undici@^8.0.0": "8.12.2",
+    "fast-uri": "3.1.9"
   }
 }

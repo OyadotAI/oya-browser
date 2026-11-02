@@ -1,0 +1,8 @@
+[package]
+name = "mars-xml"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# No dependencies: a namespace-aware XML well-formedness parser any engine can reach.
+[dependencies]

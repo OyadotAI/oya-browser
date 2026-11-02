@@ -74,7 +74,7 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
           {SALES_EMAIL}
         </a>
       </p>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-red">{error}</p>}
     </div>
   );
 }

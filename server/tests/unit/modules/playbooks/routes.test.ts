@@ -92,6 +92,15 @@ describe('playbook routes', () => {
     assert.equal(res.body.status, 422);
   });
 
+  it('answers a playbook’s definition for editing, and replaces it with an edited one', async () => {
+    await keyConfig.savePlaybook(KEY, 'edit-me', { steps: STEPS, defaults: {}, secrets: [] });
+    const def = await as('GET', '/playbooks/edit-me');
+    assert.deepEqual([def.status, def.body.steps], [200, STEPS]);
+    const put = await as('PUT', '/playbooks/edit-me', { ...def.body, steps: [STEPS[0]] });
+    assert.deepEqual([put.status, put.body.steps], [200, 1]);
+    assert.equal((await as('PUT', '/playbooks/edit-me', { steps: [{ action: 'teleport' }] })).status, 400);
+  });
+
   it('refuses to play an unknown playbook', async () => {
     const res = await as('POST', `/browsers/${BROWSER}/playbooks/ghost/play`, {});
     assert.equal(res.status, 404);

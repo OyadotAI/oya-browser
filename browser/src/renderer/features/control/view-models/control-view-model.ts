@@ -158,23 +158,32 @@ export interface ModeSwitch {
   status: string;
 }
 
+/**
+ * The shown page is the person's: they hold control, or the agent drives only its own
+ * tab and this is another. Without the second, browsing beside the agent read as AI Mode.
+ */
+const shownIsYours = (c: ControlSnapshot | null): boolean =>
+  !!c && (isMine(c) || (c.mode === 'agent' && !!c.pageInteractive));
+
 /** The switch for this state, built on the control bar's look so the two never disagree. */
 export function modeSwitch(state: ControlState): ModeSwitch {
   const look = controlLook(state);
   const mine = !!state.control && isMine(state.control);
-  const human = { on: mine, disabled: mine || look.action.hidden || look.action.disabled, title: TEXT.take };
+  const yours = shownIsYours(state.control);
+  // Still clickable on your own tab beside a working agent: it is the one way to take over from there.
+  const human = { on: yours, disabled: mine || look.action.hidden || look.action.disabled, title: TEXT.take };
   const hidden = look.action.hidden && look.resume.hidden;
-  return { hidden, agent: agentSide(look, mine), human, status: statusOf(state, look, mine) };
+  return { hidden, agent: agentSide(look, mine, yours), human, status: statusOf(state, look, mine) };
 }
 
 /**
- * AI Mode: in effect while the agent drives; never while control is still yours,
+ * AI Mode: in effect while the agent drives the shown page; never while it is yours,
  * as during a hand-back (the agent's next command must find it returned). Chosen, it
  * hands back (yours) or resumes (paused).
  */
-function agentSide(look: ControlBarLook, mine: boolean): SwitchSide {
+function agentSide(look: ControlBarLook, mine: boolean, yours: boolean): SwitchSide {
   const paused = look.mode === 'paused';
-  const on = !mine && (look.mode === 'agent' || look.mode === 'taking');
+  const on = !yours && (look.mode === 'agent' || look.mode === 'taking');
   const back = paused ? look.resume : { ...look.action, hidden: look.action.hidden || !mine };
   return { on, disabled: on || back.hidden || back.disabled, title: paused ? RESUME_TITLE : TEXT.release };
 }

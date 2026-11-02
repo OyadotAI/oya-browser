@@ -1,0 +1,9 @@
+/* A documented basic cascade; required visibility is resolved before publication. */
+main.panel { box-sizing: border-box; max-width: 620px; padding: 12px; border: 1px solid #808080; }
+h1 { color: #008080; }
+label { font-weight: bold; margin-top: 8px; }
+form input, form select, form textarea { box-sizing: border-box; width: 100%; }
+.fields { display: flex; flex-direction: row; flex-wrap: wrap; gap: 16px; justify-content: flex-start; align-items: flex-start; }
+.field { display: flex; flex-direction: column; flex: 1 1 280px; min-width: 0; gap: 8px; }
+.field label { margin: 0; }
+.concealed { display: none; }

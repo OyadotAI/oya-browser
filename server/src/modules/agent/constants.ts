@@ -130,3 +130,30 @@ export const NOTIFICATION_ID_MAX = 128;
 
 /** Largest bounded native trace page accepted by Oya. */
 export const TRACE_READ_MAX = 1000;
+
+/** The most characters of what earlier runs read that a follow-up is handed: about 8k tokens, the cap on what remembering costs. */
+export const FINDINGS_CHARS = 32_000;
+
+/** The most characters one tool result keeps for a follow-up, so a long page read leaves room for the other pages. */
+export const FINDINGS_RESULT_CHARS = 3_000;
+
+/** The most characters of a tool call's arguments kept beside its result. */
+export const FINDINGS_ARGS_CHARS = 200;
+
+/** The most chats (lanes) per browser whose findings are kept, so one key cycling lane names evicts only its own. */
+export const FINDINGS_LANES_PER_BROWSER = 8;
+
+/** The most browsers whose chats' findings are kept: at worst FINDINGS_CHARS times FINDINGS_LANES_PER_BROWSER each. */
+export const FINDINGS_BROWSERS_KEPT = 100;
+
+/** The most runs a chat keeps, so requests that read nothing cannot grow a lane without end. */
+export const FINDINGS_RUNS_KEPT = 20;
+
+/** Milliseconds in a minute, for how long ago a run read what it read. */
+export const MS_PER_MINUTE = 60_000;
+
+/** Minutes in an hour. */
+export const MINUTES_PER_HOUR = 60;
+
+/** Hours in a day. */
+export const HOURS_PER_DAY = 24;

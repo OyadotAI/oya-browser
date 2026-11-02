@@ -6,6 +6,9 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { client, tickUntil } from '../support/fake-fetch.ts';
 
+/** The SDK's poll interval (READY_POLL_MS): a wait that gives up before it was not stretched to a whole poll. */
+const POLL_MS = 2000;
+
 const START = 'POST /api/browsers/start';
 const starting = { body: { id: 'c1', provider: 'oya-cloud', persona: 'p', status: 'starting' } };
 
@@ -21,6 +24,14 @@ describe('oya.browser.start', () => {
     assert.equal(b.id, 'b1');
     assert.deepEqual(calls[0].body, { profile: 'auto', queueMs: 5, governed: true });
     assert.match(calls[0].headers['Idempotency-Key'], /^[0-9a-f-]{36}$/);
+  });
+
+  it('sends a persona group as personaGroup, taking profileGroup as its alias', async () => {
+    const { oya, calls } = client({ [START]: { body: { id: 'b1', persona: 'p-2', status: 'ready' } } });
+    const b = await oya.browser.start({ personaGroup: 'pool' });
+    await oya.browser.start({ profileGroup: 'other' });
+    assert.deepEqual([calls[0].body, calls[1].body], [{ personaGroup: 'pool' }, { personaGroup: 'other' }]);
+    assert.equal(b.persona, 'p-2');
   });
 
   it('uses the caller idempotency key when given', async () => {
@@ -69,6 +80,32 @@ describe('oya.browser.start', () => {
     const started = oya.browser.start({ readyTimeoutMs: 6000 });
     await tickUntil(started, 2000);
     await assert.rejects(started, { status: 504, message: 'Browser c1 did not come up within 6s' });
+  });
+
+  it('does not sleep past the ready timeout when the poll interval is longer', async () => {
+    const { oya } = client({
+      [START]: starting,
+      'GET /api/browsers': { body: [] },
+      'GET /api/control/sessions/c1': { body: { id: 'c1', state: 'provisioning' } },
+    });
+    const begun = Date.now();
+    const started = oya.browser.start({ readyTimeoutMs: 1000 });
+    await tickUntil(started, 100);
+    await assert.rejects(started, { status: 504, message: 'Browser c1 did not come up within 1s' });
+    assert.ok(Date.now() - begun < POLL_MS, `gave up after ${Date.now() - begun}ms, not a whole poll`);
+  });
+
+  it('succeeds when the browser dials in during the final capped pause', async () => {
+    const { oya } = client({
+      [START]: starting,
+      // First in-budget check empty; after the last pause (and final check) it is up.
+      'GET /api/browsers': [{ body: [] }, { body: [] }, { body: [{ id: 'c1', health: 'ok' }] }],
+      'GET /api/control/sessions/c1': { body: { id: 'c1', state: 'provisioning' } },
+      'GET /api/browsers/c1': { body: { id: 'c1', cdpUrl: 'wss://c1' } },
+    });
+    const started = oya.browser.start({ readyTimeoutMs: 3000 });
+    await tickUntil(started, 1000);
+    assert.equal((await started).cdpUrl, 'wss://c1');
   });
 });
 

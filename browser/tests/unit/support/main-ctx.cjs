@@ -10,6 +10,7 @@ const { FakeWebContents } = require('./fakes.cjs');
 const { DesktopDialogs } = require('../../../src/main/dialogs/index.ts');
 const { Governance } = require('../../../src/main/identity/governance.ts');
 const { AgentTab } = require('../../../src/main/control/agent-tab.ts');
+const { IncognitoSession } = require('../../../src/main/incognito/index.ts');
 const { SitePermissionStore } = require('../../../src/main/app/site-permissions.ts');
 const { MediaPermissions } = require('../../../src/main/app/media-permissions.ts');
 const { CallGuard } = require('../../../src/main/app/call-guard.ts');
@@ -76,6 +77,27 @@ class FakePageContents extends FakeWebContents {
     this.record('reload');
   }
 
+  /** As Electron's: runs code in an isolated world; `probeImpl` answers (a hung page never does). */
+  executeJavaScriptInIsolatedWorld() {
+    this.record('probe');
+    return this.probeImpl ? this.probeImpl() : Promise.resolve(1);
+  }
+
+  /** As Electron's: whether the renderer died (`crashed`, set by a test). */
+  isCrashed() {
+    return !!this.crashed;
+  }
+
+  /** As Electron's: ends the renderer. */
+  forcefullyCrashRenderer() {
+    this.record('crash');
+  }
+
+  /** As Electron's: the renderer's OS process id (`pid`, 0 by default). */
+  getOSProcessId() {
+    return this.pid || 0;
+  }
+
   /** As Electron's. */
   goBack() {
     this.record('goBack');
@@ -122,8 +144,10 @@ class FakeBrowserView {
   constructor(options = {}) {
     /** Construction options. */
     this.options = options;
-    /** Its page. */
-    this.webContents = new FakePageContents({});
+    /** Its page: the one it was given to adopt (a page's own window.open), else a new one in the app-owned session it was given (an agent context or incognito), as Electron's. */
+    this.webContents = options.webContents ?? new FakePageContents({});
+    if (!options.webContents && options.webPreferences?.session)
+      this.webContents.session = options.webPreferences.session;
     /** Last bounds set. */
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     /** Last background colour. */
@@ -148,9 +172,17 @@ class FakeBrowserView {
 
 /** The shell's BrowserWindow: which views it shows, and what it was told. */
 class FakeWindow extends EventEmitter {
-  /** An open window. */
-  constructor() {
+  /** An open window; `options` are what it was built with. */
+  constructor(options = {}) {
     super();
+    /** The construction options. */
+    this.options = options;
+    /** What getNormalBounds() answers; a test sets it. */
+    this.normalBounds = { x: 0, y: 0, width: 1280, height: 860 };
+    /** Set by a test, as the person going fullscreen would. */
+    this.fullScreen = false;
+    /** Set by a test, as the person minimizing to the Dock would. */
+    this.minimized = false;
     /** The shell page. */
     this.webContents = new FakePageContents({});
     this.webContents.mainFrame = {};
@@ -221,6 +253,26 @@ class FakeWindow extends EventEmitter {
   maximize() {
     this.maximized = true;
   }
+
+  /** As Electron's. */
+  isMaximized() {
+    return !!this.maximized;
+  }
+
+  /** As Electron's. */
+  isFullScreen() {
+    return this.fullScreen;
+  }
+
+  /** As Electron's. */
+  isMinimized() {
+    return this.minimized;
+  }
+
+  /** As Electron's: the bounds before maximizing. */
+  getNormalBounds() {
+    return this.normalBounds;
+  }
 }
 
 /** The Electron module, faked: views, menus, dialogs, sessions, IPC. */
@@ -244,6 +296,7 @@ function fakeElectron() {
       items: menuItems,
     },
     nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false }),
+    screen: { getAllDisplays: () => [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }] },
     autoUpdater: new EventEmitter(),
     shell: {
       opened: [],
@@ -280,7 +333,9 @@ function fakeElectron() {
       },
     },
     webContents: { getAllWebContents: () => [] },
-    session: { fromPartition: (name) => ({ name, cookies: { flushStore: async () => {} }, flushStorageData() {} }) },
+    session: {
+      fromPartition: (name) => ({ name, on() {}, cookies: { flushStore: async () => {} }, flushStorageData() {} }),
+    },
     app: Object.assign(new EventEmitter(), {
       quit() {
         this.quitted = true;
@@ -427,6 +482,7 @@ function mainCtx(real = {}) {
     },
     layout: { open: false, layoutActiveTab() {}, reveal() {}, closeAll() {}, flush() {}, inherit() {}, openFor() {} },
     overlays: { names: new Set() },
+    findBar: { open() {}, search() {}, step() {}, close() {}, dismiss() {}, follow() {}, sync() {}, height: () => 0 },
     protection: {
       assertSession() {},
       configureSession() {},
@@ -510,6 +566,7 @@ function mainCtx(real = {}) {
   ctx.mediaPermissions = new MediaPermissions(ctx, 'darwin');
   ctx.callGuard = new CallGuard(ctx, 'darwin');
   ctx.downloads = new Downloads(ctx, memoryFile());
+  ctx.incognito = new IncognitoSession(ctx);
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);
   return ctx;
 }

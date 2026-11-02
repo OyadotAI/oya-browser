@@ -43,6 +43,8 @@ export interface PersonaDeps {
   credentials: { list(personaId: string): unknown; clearAll(personaId: string): void };
   /** Login state kept for a persona. */
   logins: { summary(personaId: string): unknown; clear(personaId: string): void };
+  /** The persona groups a deleted persona leaves; absent where nothing keeps groups. */
+  groups?: { dropMember(owner: string, personaId: string): Promise<void> };
   /** Gauges and counters the service reports into. */
   metrics: {
     /** Counts starts refused by a persona's concurrency cap. */
@@ -98,6 +100,17 @@ function coherentDevice(device: any) {
 function mirroredFingerprint(persona: Pick<Persona, 'id' | 'proxy' | 'device'>) {
   const device = persona.device as any;
   return { ...coherentDevice(device), id: persona.id, proxy: persona.proxy || device.proxy || null };
+}
+
+/**
+ * A generated persona's fingerprint: a deep copy of the cached profile, with
+ * the persona's proxy as it is now. A connection puts its own proxy on it (the
+ * operator's residential gateway, for a cloud browser on a paid plan); on the
+ * shared object that proxy reached every later browser of the persona,
+ * desktops included. The copy is deep so no write, nested or not, reaches the cache.
+ */
+function generatedFingerprint({ id, seed, prefs, proxy }: Pick<Persona, 'id' | 'seed' | 'prefs' | 'proxy'>) {
+  return { ...structuredClone(getFingerprintForPersona({ id, seed, prefs, proxy })), proxy: proxy || null };
 }
 
 /** One real browser profile to mirror into a persona. */
@@ -210,6 +223,18 @@ function newPersona(ids: PersonaIds, { name, proxy, maxConcurrent, prefs, prefsC
 /** Least recently used first; never-used personas lead. */
 const byLastUse = (a: Persona, b: Persona) => String(a.lastUsedAt || '').localeCompare(String(b.lastUsedAt || ''));
 
+/**
+ * Takes a deleted persona out of its owner's groups. A mirrored persona's id is
+ * derived from its profile, so re-importing the profile makes the same id, which
+ * must not quietly rejoin the groups it was in. A failure is logged: a start
+ * skips members that no longer exist, so it cannot run as the deleted one.
+ */
+function dropMembership(deps: PersonaDeps, p: Persona) {
+  deps.groups
+    ?.dropMember(p.owner, p.id)
+    .catch((e) => console.error(`[personas] removing ${p.id} from its groups failed:`, e.message));
+}
+
 /** Drops a persona's login state, factors and credentials. */
 function clearSecrets(deps: PersonaDeps, id: string) {
   deps.logins.clear(id);
@@ -308,6 +333,7 @@ export class PersonaService {
     if (p.isDefault) throw new HttpError(Status.BAD_REQUEST, 'The default persona cannot be deleted');
     if (this.activeCount(id) > 0) throw new HttpError(Status.CONFLICT, 'Persona is in use');
     this.forget(id);
+    dropMembership(this.deps, p);
     return true;
   }
 
@@ -345,11 +371,10 @@ export class PersonaService {
    * The device fingerprint a persona runs as: its captured real device when it
    * mirrors one, otherwise the profile its seed, prefs and proxy generate. The
    * id and proxy are always the persona's own, so a device captured on one
-   * machine still carries this persona's id and proxy.
+   * machine still carries this persona's id and proxy. Either way a new object.
    */
   fingerprintFor(persona: Pick<Persona, 'id' | 'seed' | 'prefs' | 'proxy' | 'device'>) {
-    if (persona.device) return mirroredFingerprint(persona);
-    return getFingerprintForPersona({ id: persona.id, seed: persona.seed, prefs: persona.prefs, proxy: persona.proxy });
+    return persona.device ? mirroredFingerprint(persona) : generatedFingerprint(persona);
   }
 
   /**

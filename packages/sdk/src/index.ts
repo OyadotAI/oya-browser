@@ -24,6 +24,7 @@ import { controlApi } from './api/control.js';
 import { llmApi, playbookApi } from './api/playbooks.js';
 import { proxyApi } from './api/proxies.js';
 import { personaApi } from './api/personas.js';
+import { personaGroupApi } from './api/persona-groups.js';
 import { configApi } from './api/config.js';
 import { waitUntilConnected } from './api/ready.js';
 import { desktopApi, signup } from './api/agent.js';
@@ -96,6 +97,15 @@ export class Oya {
 
   /** Saved profiles. `personas` is retained as an alias for existing clients. */
   readonly profiles = this.personas;
+
+  /**
+   * Persona groups: name a set of your personas, then start browsers with
+   * `oya.browser.start({ personaGroup: name })` to spread them across the set.
+   */
+  readonly personaGroups = personaGroupApi(() => this.http);
+
+  /** The same as `personaGroups`, matching the `profiles` alias. */
+  readonly profileGroups = this.personaGroups;
 
   /** What this key has spent. */
   usage(): Promise<unknown> {

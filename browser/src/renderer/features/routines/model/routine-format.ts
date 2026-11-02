@@ -45,6 +45,13 @@ export function duration(run: Pick<RoutineRun, 'startedAt' | 'finishedAt'>): str
   return minutes ? `${minutes}m ${seconds % SECONDS_PER_MINUTE}s` : `${seconds}s`;
 }
 
+/** Why a due desktop routine waits: the browser is busy, or on another profile than the routine's; '' when it runs. */
+function waitReason(r: Routine, s: RoutinesSnapshot): string {
+  if (r.target === 'cloud') return '';
+  const otherProfile = !!r.persona && r.persona !== (s.persona ?? null);
+  return s.busy || (otherProfile ? ROUTINES_TEXT.otherProfile : '');
+}
+
 /** Phase → the card's one-line status. */
 const PHASE_LINE: Readonly<Record<Phase, (r: Routine, snap: RoutinesSnapshot, now: number) => string>> = {
   here: (r, _s, now) =>
@@ -52,8 +59,10 @@ const PHASE_LINE: Readonly<Record<Phase, (r: Routine, snap: RoutinesSnapshot, no
   elsewhere: (r) => (r.target === 'cloud' ? ROUTINES_TEXT.runningCloud : ROUTINES_TEXT.runningElsewhere),
   off: (r) => `${scheduleOf(r)} · ${ROUTINES_TEXT.off}`,
   // A busy desktop holds back only its own routines; the cloud runs a cloud one regardless.
-  due: (r, s) =>
-    `${scheduleOf(r)} · ${s.busy && r.target !== 'cloud' ? ROUTINES_TEXT.waiting(s.busy) : ROUTINES_TEXT.dueNow}`,
+  due: (r, s) => {
+    const why = waitReason(r, s);
+    return `${scheduleOf(r)} · ${why ? ROUTINES_TEXT.waiting(why) : ROUTINES_TEXT.dueNow}`;
+  },
   scheduled: (r, _s, now) => `${scheduleOf(r)} · ${ROUTINES_TEXT.next(when(r.nextRunAt ?? now, now))}`,
 };
 

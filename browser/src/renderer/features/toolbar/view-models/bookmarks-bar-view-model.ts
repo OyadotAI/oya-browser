@@ -7,6 +7,7 @@ import type { LibraryKind } from '../../../../shared/library.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { Payload } from '../../../../shared/ipc.ts';
+import { DownloadChipViewModel, type DownloadChipBridge } from './download-chip-view-model.ts';
 
 /** One bookmark on the bar. */
 export interface BarBookmark {
@@ -30,7 +31,8 @@ export interface BookmarksBarState {
 export type BookmarksBarBridge = Pick<
   OyaBrowser,
   'bookmarksBar' | 'onBookmarksBar' | 'setBookmarksBar' | 'navigate' | 'newTab' | 'showLibrary' | 'toggleBookmark'
->;
+> &
+  DownloadChipBridge;
 
 /** The bar's state from what the main process sent; anything malformed shows nothing. */
 function stateOf(payload: Payload | null | undefined): BookmarksBarState {
@@ -46,11 +48,20 @@ function stateOf(payload: Payload | null | undefined): BookmarksBarState {
 export class BookmarksBarViewModel extends ViewModel<BookmarksBarState> {
   /** The main process. */
   private readonly bridge: BookmarksBarBridge;
+  /** The Downloads button's chip, the same in either row the library buttons sit in. */
+  readonly downloads: DownloadChipViewModel;
 
   /** Shown and empty until the main process says, then following it. */
   constructor(bridge: BookmarksBarBridge) {
     super({ shown: true, saved: [], bookmarks: [] });
     this.bridge = bridge;
+    this.downloads = new DownloadChipViewModel(bridge);
+    this.own(() => this.downloads.dispose());
+    this.follow(bridge);
+  }
+
+  /** Follows the bar as the main process reports it, starting from what it says now. */
+  private follow(bridge: BookmarksBarBridge): void {
     this.own(bridge.onBookmarksBar((payload) => this.set(stateOf(payload))));
     void bridge.bookmarksBar().then(
       (payload) => this.set(stateOf(payload)),

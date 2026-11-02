@@ -294,9 +294,21 @@ describe('startBrowser', () => {
     await start({ provider: 'cdp', wsUrl: 'wss://8.8.8.8/devtools' });
     const persona = registry.get(B).persona;
     assert.equal(container.personas.activeCount(persona.id), 1);
-    registry.remove(B);
+    registry.get(B).driver.engine.onClose();
     await new Promise((r) => setImmediate(r));
     assert.equal(container.personas.activeCount(persona.id), 0);
+  });
+
+  it('delayed vendor cleanup cannot release a replacement persona slot', async () => {
+    connectable();
+    await start({ provider: 'cdp', wsUrl: 'wss://8.8.8.8/devtools' });
+    const old = registry.get(B);
+    old.driver.engine.onClose();
+    container.personas.acquire(old.persona, B);
+    connectBrowser(B, KEY);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(container.personas.activeCount(old.persona.id), 1);
+    container.personas.release(old.persona, B);
   });
 
   it(

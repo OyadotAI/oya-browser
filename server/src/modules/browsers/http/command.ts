@@ -84,6 +84,12 @@ function badChat({ messages, data = {}, secrets = {}, schema }) {
   return validSchema(schema) ? null : BAD_SCHEMA;
 }
 
+/**
+ * Whether what the run reads is kept for the chat's next message: a lane the caller named is a chat it will
+ * follow up in, unless the caller says this run is not part of it (remember: false, as a desktop routine sends).
+ */
+const remembered = (body) => !!body.lane && body.remember !== false;
+
 /** LLM + MCP tools for natural-language browser control; with a schema, the answer comes back as data in that shape. */
 export async function chat(req, res) {
   noTimeouts(req, res);
@@ -92,7 +98,8 @@ export async function chat(req, res) {
   // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
   if (!withLlm(req, res)) return;
   const { messages, data = {}, secrets = {}, schema } = req.body;
-  const work = () => converse(req, messages, { data, secrets, schema, signal: abortOnHangUp(res) });
+  const task = { data, secrets, schema, signal: abortOnHangUp(res), remember: remembered(req.body) };
+  const work = () => converse(req, messages, task);
   await inFlight(longJson(res, () => inChatLane(req, work)));
 }
 
@@ -210,26 +217,32 @@ async function converse(req, messages, task) {
   return chatAnswer(result, toolCalls, replayableRun(req));
 }
 
-/** Keeps the limit outcome in the public answer so clients can offer continuation. */
+/** The fields an answer carries only when they apply: the limit outcome, the run's tokens and return_data's data. */
+const answerExtras = (result) => ({
+  ...(result.limited && { limited: true }),
+  ...(result.usage && { usage: result.usage }),
+  ...(result.data !== undefined && { data: result.data }),
+});
+
+/** Keeps the limit outcome and the run's tokens in the public answer, so clients can offer continuation and show what a run used. */
 function chatAnswer(result, toolCalls, replayable: boolean) {
-  const answer = {
-    text: result.text,
-    failed: !!result.failed,
-    ...(result.limited && { limited: true }),
-    toolCalls,
-    replayable,
-  };
-  return result.data === undefined ? answer : { ...answer, data: result.data };
+  return { text: result.text, failed: !!result.failed, toolCalls, replayable, ...answerExtras(result) };
 }
 
-/** The run's options: the key, the task, a listener that keeps and tells each tool call, and the walls it may clear. */
+/** What the run tells as it goes: each tool call (kept for the answer) and the tokens so far, both to the browser that asked. */
+const listeners = (toolCalls: any[], live: LiveRun) => ({
+  onToolCall: collecting(toolCalls, live),
+  onUsage: (used) => live.usage(used),
+  onText: () => {},
+});
+
+/** The run's options: the key, the task, listeners that tell what it does and uses, and the walls it may clear. */
 function chatOptions(req, task, toolCalls: any[], live: LiveRun) {
   const key = getKey(req);
   return {
     apiKey: key,
     ...task,
-    onToolCall: collecting(toolCalls, live),
-    onText: () => {},
+    ...listeners(toolCalls, live),
     ...walls(key, req.params.browserId),
   };
 }

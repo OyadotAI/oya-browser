@@ -17,6 +17,7 @@ import { sentryDsn } from '@/lib/sentry';
 import { validRb2bId } from '@/lib/rb2b';
 import { validMetaPixelId } from '@/lib/meta-pixel';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
+import { THEME_SCRIPT } from '@/lib/theme-script';
 import './globals.css';
 
 /** The body font. */
@@ -168,7 +169,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
         <script
           nonce={nonce}
           dangerouslySetInnerHTML={{
-            __html: `try{document.documentElement.dataset.theme=localStorage.getItem('oya_theme')==='light'?'light':'dark'}catch{}`,
+            __html: THEME_SCRIPT,
           }}
         />
         <script

@@ -55,6 +55,10 @@ export interface Routine {
   nextRunAt?: number | null;
   /** Where it runs: on a desktop, or in the cloud. */
   target?: 'desktop' | 'cloud';
+  /** What it sets its playbook's variables to. */
+  values?: Record<string, string>;
+  /** The persona it runs as; absent for the default. */
+  persona?: string | null;
 }
 
 /** What the Routines pane shows (`RoutinesSnapshot` in the main process). */
@@ -71,6 +75,8 @@ export interface RoutinesSnapshot {
   error?: string;
   /** Why a routine cannot run now, or ''. */
   busy: string;
+  /** The persona this desktop runs as, or null for the default. */
+  persona?: string | null;
 }
 
 /** What a routine is doing: running here or elsewhere, off, due, or scheduled. */

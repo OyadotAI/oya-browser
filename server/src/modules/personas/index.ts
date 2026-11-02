@@ -6,3 +6,5 @@
 export { PersonaService, type PersonaDeps, type CreatePersona, type UpdatePersona } from './service.ts';
 export { type PersonaRepository, PersonaTable } from './repository.ts';
 export { type Persona, type PersonaPrefs, type PersonaProxy, describeProfile } from './model.ts';
+export { GroupService, type GroupDeps, type GroupView, type PersonaChoice } from './groups.ts';
+export { type GroupRepository, type PersonaGroup, GroupTable } from './group-repository.ts';

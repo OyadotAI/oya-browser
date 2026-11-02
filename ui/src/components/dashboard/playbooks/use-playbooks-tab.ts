@@ -7,12 +7,13 @@ import { usePlaybookList } from './use-playbook-list';
 import type { RowHandlers } from './playbook-row';
 import type { PlaybookBody, PlaybookInfo } from './types';
 
-/** Which of the code, run and record dialogs is open. */
+/** Which of the code, run, record and edit dialogs is open. */
 function useOpenDialogs() {
   const [code, setCode] = useState<PlaybookBody | null>(null);
   const [running, setRunning] = useState<PlaybookInfo | null>(null);
   const [recording, setRecording] = useState(false);
-  return { code, setCode, running, setRunning, recording, setRecording };
+  const [editing, setEditing] = useState<PlaybookInfo | null>(null);
+  return { code, setCode, running, setRunning, recording, setRecording, editing, setEditing };
 }
 
 /** Everything the tab shows and does. */
@@ -29,7 +30,8 @@ type Actions = ReturnType<typeof usePlaybookActions>;
 /** What each row button opens or does. */
 function rowHandlers(actions: Actions, dialogs: ReturnType<typeof useOpenDialogs>): RowHandlers {
   const { setRenaming: onRename, setRemoving: onRemove, promote: onPromote, exportOne: onExport } = actions;
-  return { onCode: dialogs.setCode, onRun: dialogs.setRunning, onRename, onRemove, onPromote, onExport };
+  const { setCode: onCode, setRunning: onRun, setEditing: onEdit } = dialogs;
+  return { onCode, onRun, onEdit, onRename, onRemove, onPromote, onExport };
 }
 
 /** The tab's state. */

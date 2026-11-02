@@ -10,7 +10,12 @@ const COMMANDS = {
   'input:text': (page: NativePage, params: Record<string, unknown>) => insertNativeText(page, params.text as string),
 };
 /** The command's already-authorized exact page remains its destination for the whole dispatch. */
-export function dispatchNativeInput(page: NativePage, action: string, params: Record<string, unknown>) {
+export function dispatchNativeInput(
+  page: NativePage,
+  action: string,
+  params: Record<string, unknown>,
+  guard = () => {},
+) {
   if (!Object.hasOwn(COMMANDS, action)) throw Error('Unsupported native input operation');
-  return COMMANDS[action as keyof typeof COMMANDS](page, params);
+  return COMMANDS[action as keyof typeof COMMANDS](page, params, guard);
 }

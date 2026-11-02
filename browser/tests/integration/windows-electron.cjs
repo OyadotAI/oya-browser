@@ -149,21 +149,14 @@ app
       modifiers: ['leftButtonDown'],
     });
     await until(() => primary.webContents.executeJavaScript('!!document.querySelector(".tab-item.dragging")'));
-    const preview = await until(() =>
-      BrowserWindow.getAllWindows().find(
-        (win) => win.webContents.getURL().includes('/tab-preview/index.html') && win.isVisible(),
-      ),
-    );
-    assert.equal(preview.isFocusable(), false);
-    assert.equal(primary.isFocused(), true);
-    assert.ok(primary.getBrowserViews().some((view) => view.webContents === page));
-    await until(() => preview.webContents.executeJavaScript('document.getElementById("thumbnail").naturalWidth > 0'));
-    fs.writeFileSync(path.join(os.tmpdir(), 'oya-tab-preview.png'), (await preview.webContents.capturePage()).toPNG());
+    // As in Chrome, the torn-off tab is in its own real window while the button is still down.
+    const secondary = await until(() => shells().find((win) => win !== primary && win.isVisible()));
+    assert.ok(secondary.getBrowserViews().some((view) => view.webContents === page));
+    const carried = secondary.getPosition();
+    screen.getCursorScreenPoint = () => ({ x: 160, y: 560 });
+    await until(() => secondary.getPosition()[0] === carried[0] + 60 && secondary.getPosition()[1] === carried[1] + 60);
     primary.webContents.sendInputEvent({ type: 'mouseUp', x: drag.x, y: drag.y + 130, button: 'left', clickCount: 1 });
-    const secondary = await until(() => shells().find((win) => win !== primary));
-    await until(() => secondary.isVisible());
     await ready(secondary);
-    await until(() => preview.isDestroyed());
     assert.deepEqual(await firstShows.get(secondary.id), {
       ready: 'true',
       tab: true,

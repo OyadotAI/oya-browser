@@ -34,6 +34,7 @@ describe('console shortcuts', () => {
       'mod+2',
       'mod+3',
       'mod+4',
+      'mod+5',
       '?',
       'n',
       '/',
@@ -47,13 +48,22 @@ describe('console shortcuts', () => {
       'r',
       's',
     ]);
-    expect(list.filter((s) => s.global).map((s) => s.keys)).toEqual(['mod+1', 'mod+2', 'mod+3', 'mod+4', 'escape']);
+    expect(list.filter((s) => s.global).map((s) => s.keys)).toEqual([
+      'mod+1',
+      'mod+2',
+      'mod+3',
+      'mod+4',
+      'mod+5',
+      'escape',
+    ]);
   });
 
   it('switches tabs', () => {
     const c = ctx();
     run(c, 'mod+4');
     expect(c.patch).toHaveBeenCalledWith({ tab: 'playbooks' });
+    run(c, 'mod+5');
+    expect(c.patch).toHaveBeenCalledWith({ tab: 'routines' });
   });
 
   it('moves the selection through the rows in table order, stopping at the ends', () => {
