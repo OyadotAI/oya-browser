@@ -29,3 +29,5 @@ export const TRANSLATE_PARALLEL = 3;
 
 /** Bounds expansion in a model reply before passing its text to the renderer. */
 export const TRANSLATE_RESPONSE_CHARS = 40_000;
+/** A hung live renderer must report failed restoration without releasing its agent-access barrier. */
+export const TRANSLATE_RESTORE_TIMEOUT_MS = 10_000;

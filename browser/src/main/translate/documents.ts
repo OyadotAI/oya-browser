@@ -4,7 +4,8 @@ import type { WebContents } from 'electron';
 import type { Tab } from '../tabs/types.ts';
 import { runInWorld } from '../native/stock-world.ts';
 import { identifyJs } from '../../page/translation-guard.ts';
-import { TRANSLATE_WORLD_ID } from './constants.ts';
+import { TRANSLATE_WORLD_ID, TRANSLATE_RESTORE_TIMEOUT_MS } from './constants.ts';
+import { withinTime } from '../../shared/within-time.ts';
 import { TranslateError, restorePage } from './translate-run.ts';
 
 /** One isolated document's identity and declared language, read together. */
@@ -131,7 +132,7 @@ export class TranslationDocuments {
   /** A live document's restore failure blocks inspection; a discarded document has no text left to expose. */
   private async restoreRun(tab: Tab, state: TranslationDocument, run: TranslationRun): Promise<void> {
     try {
-      await restorePage(run.contents, run.document, run.serial);
+      await withinTime(restorePage(run.contents, run.document, run.serial), TRANSLATE_RESTORE_TIMEOUT_MS);
       if (state.last === run) state.last = undefined;
     } catch {
       if (this.current(tab, state))

@@ -152,7 +152,14 @@ export class Translator {
   /** Claims and recording starts restore every affected tab, including tabs in another window. */
   async sync(): Promise<void> {
     const lost = this.tabs().filter((tab) => !this.mayTranslate(tab));
-    await Promise.all(lost.map((tab) => this.undo(tab)));
+    const results = await Promise.allSettled(lost.map((tab) => this.undo(tab)));
+    this.publishIdle();
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+  }
+
+  /** Publish eligible idle tabs even when another document still needs recovery. */
+  private publishIdle(): void {
     for (const tab of this.tabs())
       if (this.mayTranslate(tab) && !tab.translation && !this.translated(tab))
         tab.translation = idleTranslation(this.deps, tab);

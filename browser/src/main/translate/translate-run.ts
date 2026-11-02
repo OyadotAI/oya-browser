@@ -78,7 +78,7 @@ interface Translated {
 /** Malformed or oversized model replies never reach a page script. */
 function translations(value: unknown, count: number): string[] {
   const texts = (value as Translated)?.texts;
-  if (!Array.isArray(texts) || texts.length !== count || texts.some((text) => typeof text !== 'string'))
+  if (!Array.isArray(texts) || texts.length !== count || texts.some((text) => typeof text !== 'string' || !text.trim()))
     throw new TranslateError('translate_malformed');
   return boundedTexts(texts);
 }

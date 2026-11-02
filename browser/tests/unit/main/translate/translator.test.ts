@@ -13,6 +13,7 @@ import {
   TRANSLATE_FIRST_BATCH_CHARS,
   TRANSLATE_KEEP_PAGES,
   TRANSLATE_PARALLEL,
+  TRANSLATE_RESTORE_TIMEOUT_MS,
 } from '../../../../src/main/translate/constants.ts';
 
 /** A tab's page, answering translation's scripts: `lang` it declares, `texts` it holds. */
@@ -480,6 +481,46 @@ describe('translation consent and document ownership', () => {
     assert.equal(t.translator.translated(t.tab), true);
   });
 
+  it('a hung renderer times out without releasing its restoration barrier', async (context) => {
+    const t = setup();
+    await approve(t.translator, t.tab);
+    context.mock.timers.enable({ apis: ['setTimeout'] });
+    const pending = Promise.withResolvers<void>();
+    t.page.restore = pending.promise;
+    const rejected = assert.rejects(t.translator.released(t.tab.view), { code: 'restore_failed' });
+    context.mock.timers.tick(TRANSLATE_RESTORE_TIMEOUT_MS);
+    await rejected;
+    assert.equal(t.translator.translated(t.tab), true);
+    pending.resolve();
+    await new Promise(setImmediate);
+    assert.equal(t.translator.translated(t.tab), true, 'late native completion is not an acknowledged retry');
+    await t.translator.released(t.tab.view);
+    assert.equal(t.translator.translated(t.tab), false);
+  });
+
+  it('a failed restore waits for the other affected window before synchronization rejects', async () => {
+    const t = setup(),
+      other = contents('fr', ['Bonjour']);
+    const tab: any = { id: 2, url: 'https://example.fr/', view: { webContents: other.webContents } };
+    t.deps.windows = { allTabs: () => [t.tab, tab] };
+    await approve(t.translator, t.tab);
+    await approve(t.translator, tab);
+    t.page.restore = Promise.reject(Error('first renderer failed'));
+    const pending = Promise.withResolvers<void>();
+    other.page.restore = pending.promise;
+    t.deps.recorder.recording = true;
+    let settled = false;
+    const result = assert.rejects(t.translator.sync(), { code: 'restore_failed' }).then(() => {
+      settled = true;
+    });
+    await new Promise(setImmediate);
+    assert.equal(settled, false);
+    pending.resolve();
+    await result;
+    assert.equal(t.translator.translated(t.tab), true);
+    assert.equal(t.translator.translated(tab), false);
+  });
+
   it('recording restores translated tabs in other windows', async () => {
     const t = setup();
     await approve(t.translator, t.tab);
@@ -500,5 +541,17 @@ describe('translation consent and document ownership', () => {
     await approve(t.translator, t.tab);
     assert.equal(t.tab.translation.error.code, 'translate_malformed');
     assert.deepEqual(t.page.applied, []);
+  });
+
+  it('blank model replies cannot erase original page text', async () => {
+    for (const text of ['', ' \n\t']) {
+      const t = setup(
+        undefined,
+        server(async () => Response.json({ texts: [text] })),
+      );
+      await approve(t.translator, t.tab);
+      assert.equal(t.tab.translation.error.code, 'translate_malformed');
+      assert.deepEqual(t.page.applied, []);
+    }
   });
 });
