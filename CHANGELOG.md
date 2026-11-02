@@ -6,9 +6,77 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Security
+
+- Updated vulnerable runtime and development dependencies, including Electron and Mars's vendored Rustls. Retained the existing TLS ClientHello shaping and adapted legacy build tooling to the patched minimatch implementation.
+
 ### Added
 
-- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; the 16,384-live-listener bound remains.
+- Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
+
+- Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.
+
+- Forwarded Mars script functions through the running interpreter loop when invoked with the intrinsic `Function.prototype.call`, avoiding nested native interpreter entry. Increased the live function allowance to accommodate YouTube's connected components and player while retaining resource bounds.
+
+- Reduced Mars closure retention by keeping uncaptured function locals in activation registers. Nested lexical dependencies still share environment slots, with memoized analysis across lazy compilation and conservative handling of direct eval, mapped arguments and modules.
+
+- Made Mars native task checkpoints collect dead weak-key cycles under allocation or bound pressure, while saved-state replay retains snapshot semantics. Mutation observers now follow target reachability instead of retaining discarded target/callback cycles, deliver document-subtree changes and respect shadow boundaries. Resident task restoration uses maintained proxy presence and indexed identity checks.
+
+- Fixed Mars retaining every upgraded custom element as a permanent JavaScript root. Discarded elements can now release their closures; connected elements and script-referenced detached elements preserve their upgraded identity.
+
+- Shared Mars computed styles across document snapshots and unchanged cascades, reducing node movement and copy costs while isolating edits through copy-on-write. The document wire format stays unchanged. Layout fallback checks now index direct children once and only copy documents that need a fallback.
+
+- Reused Mars's V9 execution thread across in-process script tasks, retaining thread-local object-shape caches and each task's panic boundary.
+
+- Made Mars forced-layout mutation replay incremental: successful reads seal the journal prefix, subsequent reads apply its suffix, and commits reuse the latest validated document. Removed identities and whole-journal limits remain enforced across reads.
+
+- Indexed Mars's batch label ancestry and agent visibility lookups, removing repeated linear scans of reordered page nodes during presentation and inspection.
+
+- Fixed stale synchronous layout reuse after coalesced DOM attribute writes in Mars. Forced layouts now use the latest edits, and final writes no longer trigger a false script/document structure disagreement.
+
+- Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
+
+- Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
+
+- Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
+
+- Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
+
+- Made Mars pages show sooner: the first paint lands before images and web fonts resolve and again when they do, the head's scripts download on the loader while the sheets arrive, classic scripts and their deferred functions compile on their own threads while the document is styled, and the scripts' own DOM paints before the lifecycle events. YouTube's home paints in under a second and publishes in about two.
+
+- Kept Mars's YouTube realm resident between timer and event tasks, so each one runs in place instead of restoring the page's state first; loads and module steps keep the copying path. Audio for content playback now sounds from the first frame: the native player applies the page's volume when it is built rather than on a later settings change.
+
+- Fixed Mars pages that stayed blank or failed to load: DOMContentLoaded now waits for the parser's module scripts (DuckDuckGo's results), a script V9 asks for again before it lands is no longer started twice (github.com and airbnb.com hit the delivered-bytes limit), `DOMParser.parseFromString` no longer stops the page on text that opens with a multibyte letter, and a script inserted with `async = false` runs after the ones inserted before it however their downloads land.
+
+- Fixed a Mars closure-capture miscompile: a parameter default that reads an outer name the function body also declares now reads the outer binding, as the default runs before the body's declarations exist.
+
+- Stopped Mars's macOS painter from drawing a box shadow at the viewport's edge for an element parked far off the page (Amazon's keyboard-shortcut menu): a shadow whose landing spot misses the clip is skipped.
+
+- Sped up Mars styling of large pages: the parsed-sheet cache resumes after the longest shared prefix of the sheet list, rule buckets key a compound selector by its rarest class (airbnb's atomic classes dropped from millions of candidates per cascade to thousands), and a page with due work ticks every 16 ms.
+
+- Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
+
+- Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
+
+- Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
+
+- Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
+
+- Added opt-in, privacy-limited script request diagnostics for native failure stages and HTTP response statuses, retaining the original POST failure before uncertainty wrapping without changing web-visible fetch behavior.
+
+- Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
+
+- Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
+
+- Added bounded listener-refusal counts and stages, with opt-in numeric startup logging, to distinguish registration pressure from restore or validation failures.
+
+- Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
+
+- Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
+
+- Scoped Mars intrinsic keyword width caches to each layout, publishing measured child constraints immediately and restoring enclosing widths after nested vertical layout. Earlier pages can no longer seed current-node measurements with stale widths.
+
+- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; listener storage remains bounded.
 
 - Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
 
