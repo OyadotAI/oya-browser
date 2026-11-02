@@ -124,3 +124,11 @@ export const PASSTHROUGH_REFUSED: Record<string, string> = {
 };
 /** The browser's own profile as a CDP browserContextId: Playwright needs one on every target. */
 export const DEFAULT_BROWSER_CONTEXT = 'default';
+/** The maintainer-authorized isolated experiment is never enabled by ordinary desktop launches. */
+export const BROWSER_PASSKEY_SWITCH = '--oya-native-passkeys';
+/** Native policy events must implement both admission and final-success checks before the app trusts them. */
+export const BROWSER_PASSKEY_PROTOCOL_VERSION = 1;
+/** Opaque native attempt identities never become unbounded stored renderer strings. */
+export const BROWSER_PASSKEY_REQUEST_ID_LIMIT = 128;
+/** Only canonical native transport metadata is accepted; it carries no credential identifiers. */
+export const BROWSER_PASSKEY_TRANSPORTS = ['usb', 'nfc', 'ble', 'internal', 'hybrid'] as const;
