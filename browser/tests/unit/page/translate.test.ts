@@ -116,7 +116,11 @@ class FakeObserver {
       parent.childNodes.push(n);
       n.parentNode = parent;
     }
-    FakeObserver.live?.callback([{ addedNodes: nodes }]);
+    FakeObserver.live?.callback([{ addedNodes: nodes, removedNodes: [] }]);
+  }
+  /** Deliver a completed removal, after any same-turn moves have settled. */
+  static removed(...nodes: Array<El | Text>): void {
+    FakeObserver.live?.callback([{ addedNodes: [], removedNodes: nodes }]);
   }
 }
 
@@ -342,5 +346,80 @@ describe('page translation scripts', () => {
     page(el('body', {}, el('p', {}, 'Eins')));
     assert.equal(run(restoreJs), 0);
     assert.equal(run(applyJs(0, ['One'])), 0);
+  });
+
+  it('releases removed provenance during bounded live DOM churn', () => {
+    const body = page(el('body', {}, 'Hola'));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    for (let round = 0; round < 2000; round++) {
+      const old = body.childNodes[0] as Text;
+      body.remove(old);
+      FakeObserver.removed(old);
+      assert.equal(old.data, 'Hola');
+      FakeObserver.added(body, new Text('Hola'));
+      assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    }
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['Hola']);
+  });
+
+  it('restores removed nested subtrees and translates a later reinsertion from its own original', () => {
+    const nested = el('section', {}, el('p', {}, '  Hola\n'));
+    const body = page(el('body', {}, nested));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    body.remove(nested);
+    FakeObserver.removed(nested);
+    assert.deepEqual(texts(nested), ['  Hola\n']);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 0);
+    FakeObserver.added(body, nested);
+    assert.deepEqual(texts(body), ['  Hello\n']);
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(body), ['  Hola\n']);
+  });
+
+  it('keeps exact provenance across a same-turn move within the translated body', () => {
+    const text = new Text(' Hola ');
+    const left = el('p', {}, text),
+      right = el('p');
+    page(el('body', {}, left, right));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    left.remove(text);
+    FakeObserver.added(right, text);
+    FakeObserver.removed(text);
+    assert.equal(text.data, ' Hello ');
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    assert.equal(run(restoreJs), 1);
+    assert.equal(text.data, ' Hola ');
+  });
+
+  it('preserves page edits when a translated subtree is removed and reinserted', () => {
+    const text = new Text('Hola');
+    const body = page(el('body', {}, text));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    text.data = 'Page update';
+    body.remove(text);
+    FakeObserver.removed(text);
+    FakeObserver.added(body, text);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 0);
+    assert.equal(run(restoreJs), 0);
+    assert.equal(text.data, 'Page update');
+  });
+
+  it('releases the old body when the document replaces it', () => {
+    const old = page(el('body', {}, 'Hola'));
+    run(collectJs(1000, 100));
+    run(applyJs(0, ['Hello']));
+    const replacement = el('body', {}, 'Hola');
+    (globalThis as any).document.body = replacement;
+    FakeObserver.live?.callback([{ removedNodes: [old], addedNodes: [replacement] }]);
+    assert.deepEqual(texts(old), ['Hola']);
+    assert.deepEqual(texts(replacement), ['Hello']);
+    assert.equal(run('globalThis.__oyaTranslation.written.length'), 1);
+    assert.equal(run(restoreJs), 1);
+    assert.deepEqual(texts(replacement), ['Hola']);
   });
 });

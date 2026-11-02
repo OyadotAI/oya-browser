@@ -6,6 +6,7 @@ const { setTimeout: pause } = require('node:timers/promises');
 const electron = require('electron');
 const { app, BrowserWindow, BrowserView, ipcMain } = electron;
 const { Translator } = require('../../src/main/translate/index.ts');
+const { TRANSLATE_WORLD_ID } = require('../../src/main/translate/constants.ts');
 const { Overlays } = require('../../src/main/shell/overlays.ts');
 const profile = process.env.OYA_TRANSLATION_PROFILE;
 if (!profile) throw Error('Run desktop-translation.mjs');
@@ -234,6 +235,7 @@ async function translationChecks(f) {
   await click(win, '#translate-confirm');
   await until(() => Promise.resolve(tab.translation?.state === 'translated'), 'translation completes');
   assert.match(await body(), /English: Bonjour/);
+  await churnChecks(page.webContents);
   assert.equal(
     await page.webContents.executeJavaScript('new FormData(document.getElementById("choice-form")).get("choice")'),
     'Bonjour',
@@ -263,6 +265,29 @@ async function translationChecks(f) {
   await running;
   assert.doesNotMatch(await body(), /English:/);
   assert.equal(tab.translateKeep, undefined);
+}
+
+/** Native MutationObserver delivery releases detached history without changing live translated text. */
+async function churnChecks(contents) {
+  const retained = () =>
+    contents.executeJavaScriptInIsolatedWorld(TRANSLATE_WORLD_ID, [
+      { code: 'globalThis.__oyaTranslation.written.length' },
+    ]);
+  const before = await retained();
+  const result = await contents.executeJavaScript(`(async () => {
+    const host = document.createElement('section'); document.body.append(host);
+    let restored = 0;
+    for (let round = 0; round < 2000; round++) {
+      const text = document.createTextNode('Bonjour'); host.append(text);
+      await Promise.resolve();
+      if (text.data !== 'English: Bonjour') throw Error('Inserted node not translated');
+      text.remove(); await Promise.resolve();
+      if (text.data === 'Bonjour') restored++;
+    }
+    host.remove(); await Promise.resolve(); return restored;
+  })()`);
+  assert.equal(result, 2000, 'Detached writes restore before their provenance is released');
+  assert.equal(await retained(), before, 'Native DOM churn retains only the original live writes');
 }
 
 /** Long disclosures wrap, and compact state labels remain visible without relying on their icon. */
