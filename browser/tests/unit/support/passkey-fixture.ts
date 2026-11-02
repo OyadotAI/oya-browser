@@ -9,7 +9,10 @@ export function fixture() {
   const frame: any = { detached: false, isDestroyed: () => false, parent: null };
   const window = Object.assign(new EventEmitter(), { isDestroyed: () => false, isFocused: () => true });
   const tab: any = { id: 2, view: { webContents: contents } };
-  const owner: any = { tabs: { activeTabId: tab.id, list: [tab] }, shell: { window } };
+  const owner: any = {
+    tabs: { activeTabId: tab.id, list: [tab], find: (id) => owner.tabs.list.find((item) => item.id === id) },
+    shell: { window },
+  };
   const details = {
     frame,
     relyingPartyId: 'example.com',
@@ -24,7 +27,11 @@ export function fixture() {
     governance: { configuration: null },
     agentTab: { humanMay: () => true },
     persona: { policyEpoch: Symbol(), partitionName: () => 'persist:one' },
-    windows: { ownerOfContents: (page) => (page === contents ? owner : undefined), tabEvents: new WindowTabEvents() },
+    windows: {
+      owner: (id) => (owner.tabs.find(id) ? owner : undefined),
+      ownerOfContents: (page) => (page === contents ? owner : undefined),
+      tabEvents: new WindowTabEvents(),
+    },
     electron: {
       webContents: { fromFrame: () => contents },
       dialog: {
