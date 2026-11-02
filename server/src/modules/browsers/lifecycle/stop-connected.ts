@@ -5,6 +5,7 @@
 import { isConfigured as sandboxConfigured, removeSandbox } from '../../../drivers/sandbox.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { control } from '../../control/service.ts';
+import { registry } from '../registry.ts';
 import { countBrowsers, dropBrowser } from './fleet.ts';
 import { auditStop } from './stop-results.ts';
 
@@ -16,8 +17,13 @@ export async function stopConnected(req, key, browserId, browser, sandbox) {
   if (durable) await control().update(key, browserId, { state: 'cleanup_pending' });
   const failed = await releaseAndDrop(browserId, browser);
   if (failed) return failed;
-  if (durable && sandboxRemoved !== false) await control().update(key, browserId, { state: 'stopped' });
+  await markStopped(key, browserId, durable && sandboxRemoved !== false);
   return stopped(req, key, browserId, browser, sandboxRemoved);
+}
+
+/** Only the stopped registration may finish durable cleanup; a reconnect owns its new session state. */
+async function markStopped(key, browserId, durable) {
+  if (durable && !registry.isConnected(browserId)) await control().update(key, browserId, { state: 'stopped' });
 }
 
 /** A managed runtime session is cancelled; its runtime cleans up. */
