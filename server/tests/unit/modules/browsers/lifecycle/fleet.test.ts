@@ -3,7 +3,7 @@
  * gauge, dropping and forgetting browsers, the per-key browser quota and the
  * name a CDP browser is listed under.
  */
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   browserQuota,
@@ -11,6 +11,7 @@ import {
   displayName,
   dropBrowser,
   forget,
+  forgetDriver,
   quotaBody,
 } from '../../../../../src/modules/browsers/lifecycle/fleet.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
@@ -18,6 +19,8 @@ import { metrics, snapshot } from '../../../../../src/platform/metrics.ts';
 import { QUOTAS } from '../../../../../src/platform/limits.ts';
 import { MAX_NAME, OPERATOR_CLOSE } from '../../../../../src/modules/browsers/constants.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
+import * as usage from '../../../../../src/platform/usage.ts';
+import { container } from '../../../../../src/app/container.ts';
 
 const B = 'b-fleet';
 
@@ -47,11 +50,65 @@ describe('fleet', () => {
     assert.equal(registry.isConnected(B), false);
   });
 
+  // A FakeSocket never reports its close, as a real ws does not while its closing handshake runs.
+  it('stops a dropped browser’s usage clock and frees its persona slot without waiting for its socket’s close', () => {
+    const ws = connectBrowser(B, 'fleet-drop');
+    usage.browserConnected('fleet-drop', B);
+    const released = mock.method(container.personas, 'release', () => {});
+    try {
+      dropBrowser(B, ws, 'API key revoked');
+      assert.equal(usage.current('fleet-drop').openBrowsers, 0);
+      assert.deepEqual(released.mock.calls[0].arguments, [{ id: 'p-1' }, B]);
+    } finally {
+      released.mock.restore();
+    }
+  });
+
+  it('drops nothing for a browser already gone, but still closes its socket', () => {
+    const ws = connectBrowser(B);
+    disconnectBrowser(B);
+    dropBrowser(B, ws, 'Key disconnected by operator');
+    assert.equal(ws.closed.code, OPERATOR_CLOSE);
+  });
+
+  it('a delayed drop closes only its old socket and preserves the replacement', () => {
+    const old = connectBrowser(B, 'fleet-stale');
+    const replacement = connectBrowser(B, 'fleet-stale');
+    usage.browserConnected('fleet-stale', B);
+    dropBrowser(B, old, 'Stopped by operator');
+    assert.equal(registry.get(B)?.ws, replacement);
+    assert.equal(usage.current('fleet-stale').openBrowsers, 1);
+    usage.browserDisconnected('fleet-stale', B);
+  });
+
   it('forgets a browser whose driver closed, and ignores one already gone', () => {
     connectBrowser(B);
     forget(B);
     assert.equal(registry.isConnected(B), false);
     assert.doesNotThrow(() => forget(B));
+  });
+
+  it('a retired driver close cannot forget or stop billing its replacement', () => {
+    const old = { close() {}, onClose: forgetDriver(B) };
+    const replacement = { close() {}, onClose: forgetDriver(B) };
+    registry.add(B, { apiKey: 'fleet-driver', name: 'old', engine: old, clientType: 'cdp' });
+    registry.add(B, { apiKey: 'fleet-driver', name: 'new', engine: replacement, clientType: 'cdp' });
+    usage.browserConnected('fleet-driver', B);
+    old.onClose();
+    assert.equal(registry.get(B)?.driver.engine, replacement);
+    assert.equal(usage.current('fleet-driver').openBrowsers, 1);
+    replacement.onClose();
+    assert.equal(registry.get(B), undefined);
+    assert.equal(usage.current('fleet-driver').openBrowsers, 0);
+  });
+
+  it('a delayed socketless drop respects the captured registration', () => {
+    registry.add(B, { apiKey: 'fleet-outbound', name: 'old' });
+    const old = registry.get(B);
+    registry.add(B, { apiKey: 'fleet-outbound', name: 'new' });
+    const replacement = registry.get(B);
+    dropBrowser(B, undefined, 'Stopped by operator', old);
+    assert.equal(registry.get(B), replacement);
   });
 
   it('counts the key’s own browsers against its quota', () => {

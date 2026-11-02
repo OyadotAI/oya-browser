@@ -8,6 +8,7 @@ import './live-view.ts';
 import { registry } from './registry.ts';
 
 export { sendCommand, takeDialogNote } from './connection/commands.ts';
+export { releaseBrowser } from './connection/release.ts';
 
 /** The actions a connected browser does, or null when it is not connected here. */
 export const actionsOf = (browserId: string): readonly string[] | null =>
