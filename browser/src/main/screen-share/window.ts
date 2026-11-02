@@ -6,9 +6,13 @@ import type { BrowserWindow, WebContents, IpcMainEvent, IpcMainInvokeEvent } fro
 import type { AppServices } from '../app/services.ts';
 import { SHARE_PICKER, type SharePresentation } from '../../shared/share-picker.ts';
 import { PICKER, PICKER_WINDOW, PICKER_WEB } from './constants.ts';
+import { NativeShareFlow, type NativeShareServices } from './native-share-flow.ts';
 
 /** Native window ownership and packaged UI location. */
-type Deps = Pick<AppServices, 'electron' | 'appDir' | 'windows'>;
+type Deps = Pick<AppServices, 'electron' | 'appDir' | 'windows'> & {
+  /** Optional main-owned direct selection attached by the picker facade. */
+  native?: NativeShareServices;
+};
 
 /** The picker owns no website cookies and can load only its packaged asset and browser-produced PNGs. */
 function pickerSession(deps: Deps, file: string) {
@@ -24,13 +28,26 @@ function pickerSession(deps: Deps, file: string) {
 /** Parent to the requesting page's actual window, not whichever browser happens to be focused. */
 function pickerWindow(deps: Deps, page: WebContents, file: string): BrowserWindow {
   const parent = deps.electron.BrowserWindow.fromWebContents(page) ?? deps.windows?.ownerOfContents(page)?.shell.window;
-  const webPreferences = pickerPreferences(deps, file);
   return new deps.electron.BrowserWindow({
     ...PICKER_WINDOW,
+    ...pickerSize(deps, parent),
     parent: parent ?? undefined,
     modal: !!parent,
-    webPreferences,
+    webPreferences: pickerPreferences(deps, file),
   });
+}
+
+/** Keep both footer and scrollable catalog inside the requesting display's available work area. */
+function pickerSize(deps: Deps, parent: BrowserWindow | null | undefined) {
+  const screen = deps.electron.screen;
+  if (!screen) return { width: PICKER.WIDTH, height: PICKER.HEIGHT };
+  const area = (parent ? screen.getDisplayMatching(parent.getBounds()) : screen.getPrimaryDisplay()).workAreaSize;
+  return { width: Math.min(PICKER.WIDTH, area.width), height: Math.min(PICKER.HEIGHT, area.height) };
+}
+
+/** Install timers only after native creation succeeds, so a failed constructor cannot retain a request. */
+function pickerTimers(cancel: () => void, checkOwner: () => void) {
+  return { load: setTimeout(cancel, PICKER.LOAD_TIMEOUT_MS), owner: setInterval(checkOwner, PICKER.OWNER_CHECK_MS) };
 }
 
 /** Load only the packaged isolated bridge on an ephemeral session. */
@@ -59,10 +76,10 @@ export class ShareSheet {
   private readonly window: BrowserWindow;
   /** Main-process ownership and document guard checked while the sheet is open. */
   private readonly current: () => boolean;
-  /** Bounded startup for a missing or broken picker asset. */
-  private readonly loadTimer: NodeJS.Timeout;
-  /** Closing on ownership change does not depend on a renderer callback. */
-  private readonly ownerTimer: NodeJS.Timeout;
+  /** Optional native selection stays bound to this exact private sheet. */
+  private readonly native?: NativeShareFlow;
+  /** Native startup and owner checks do not depend on a responding renderer. */
+  private readonly timers: ReturnType<typeof pickerTimers>;
   /** Resolves at most once, before window destruction callbacks run. */
   private finish: ((id: string | null) => void) | null = this.pending.resolve;
   /** A native timer revokes the sheet even when its renderer is busy. */
@@ -75,11 +92,42 @@ export class ShareSheet {
     this.current = () => stillCurrent(current);
     const file = path.join(deps.appDir, 'out/renderer/share-picker.html');
     this.window = pickerWindow(deps, page, file);
-    this.loadTimer = setTimeout(() => this.answer(null), PICKER.LOAD_TIMEOUT_MS);
-    this.ownerTimer = setInterval(this.checkOwner, PICKER.OWNER_CHECK_MS);
-    this.wire(data);
-    this.settings(deps, data);
+    this.timers = pickerTimers(() => this.answer(null), this.checkOwner);
+    if (deps.native) this.native = new NativeShareFlow(this.window, deps.native, this.current, () => this.answer(null));
+    this.configure(deps, data);
     void this.window.loadFile(file).catch(() => this.answer(null));
+  }
+  /** Bind the exact private frame before any packaged renderer code is loaded. */
+  private configure(deps: Deps, data: SharePresentation): void {
+    this.wire(data);
+    this.nativeActions(data);
+    this.settings(deps, data);
+  }
+
+  /** Every native action checks the same exact frame and live document as ordinary source selection. */
+  private nativeActions(data: SharePresentation): void {
+    const ipc = this.window.webContents.ipc;
+    const choose = this.authorized(data, () => this.native?.choose());
+    const list = this.authorized(data, () => this.native?.back());
+    ipc.handle(SHARE_PICKER.NATIVE, choose);
+    ipc.handle(SHARE_PICKER.LIST, list);
+    ipc.handle(SHARE_PICKER.CONFIRM, (event, id) => this.confirmNative(event, id, data));
+  }
+  /** Native UI intents receive the same immutable sender-frame authorization as preview reads. */
+  private authorized(data: SharePresentation, action: () => unknown) {
+    return (event: IpcMainInvokeEvent) => {
+      this.read(event, data);
+      return action();
+    };
+  }
+  /** Final confirmation can only close this sheet after fresh native resolution succeeds. */
+  private async confirmNative(event: IpcMainInvokeEvent, id: unknown, data: SharePresentation) {
+    this.read(event, data);
+    if (typeof id === 'string' && (await this.native?.confirm(id))) {
+      this.answer(id);
+      return { status: 'ended' };
+    }
+    return this.native?.list('This window is no longer available. Nothing was shared.');
   }
 
   /** Only the trusted picker's main frame can obtain previews or supply a choice token. */
@@ -125,13 +173,13 @@ export class ShareSheet {
   /** A malformed or foreign IPC message can never select a source. */
   private onAnswer(event: IpcMainEvent, id: unknown): void {
     if (event.senderFrame !== this.window.webContents.mainFrame || (id !== null && typeof id !== 'string')) return;
-    this.answer(id);
+    if (id === null || this.native?.acceptsList !== false) this.answer(id);
   }
 
   /** Show only a fully rendered picker while the requesting page still owns the operation. */
   private show(): void {
     if (!this.finish || !this.current()) return this.answer(null);
-    clearTimeout(this.loadTimer);
+    clearTimeout(this.timers.load);
     this.window.show();
     this.window.focus();
   }
@@ -141,10 +189,15 @@ export class ShareSheet {
     const finish = this.finish;
     if (!finish) return;
     this.finish = null;
-    clearTimeout(this.loadTimer);
-    clearInterval(this.ownerTimer);
     const selected = this.current() ? id : null;
-    if (!this.window.isDestroyed()) this.window.destroy();
+    this.close();
     finish(selected);
+  }
+  /** Closing an already-destroyed native window must not throw while settling the requester. */
+  private close(): void {
+    this.native?.dispose();
+    clearTimeout(this.timers.load);
+    clearInterval(this.timers.owner);
+    if (!this.window.isDestroyed()) this.window.destroy();
   }
 }

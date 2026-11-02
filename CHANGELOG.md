@@ -12,6 +12,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Added optional macOS on-screen window selection with a separate Oya confirmation before capture. The existing window list remains available, and closed windows or changed requesting tabs cannot inherit a pending choice.
+
 - Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.
 
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.

@@ -4,10 +4,27 @@ export const SHARE_PICKER = {
   READY: 'oya:share-picker:ready',
   ANSWER: 'oya:share-picker:answer',
   SETTINGS: 'oya:share-picker:settings',
+  NATIVE: 'oya:share-picker:native',
+  LIST: 'oya:share-picker:list',
+  CONFIRM: 'oya:share-picker:confirm',
 } as const;
 
 /** Categories offered by the browser-owned picker. */
 export type ShareKind = 'tab' | 'window' | 'screen';
+/** Unsupported hosts never offer a direct action; unavailable hosts keep their list fallback. */
+export type NativePickerAvailability = 'unsupported' | 'ready' | 'unavailable';
+/** Native results contain only an opaque token and literal presentation, never OS identity. */
+export type NativePickerPresentation =
+  | {
+      /** One verified candidate still requires Oya confirmation. */ status: 'confirmation';
+      /** Safe title/preview. */ source: ShareOption;
+    }
+  | {
+      /** The existing catalog remains usable. */ status: 'list';
+      /** Direct selection may be quarantined. */ availability: NativePickerAvailability;
+      /** Human-readable recovery, never raw OS errors. */ message: string;
+    }
+  | { /** A revoked request cannot reopen or take focus. */ status: 'ended' };
 
 /** A preview and opaque choice token, safe to render as text and a browser-produced image. */
 export interface ShareOption {
@@ -33,4 +50,6 @@ export interface SharePresentation {
   desktopError: string;
   /** Show a browser-owned macOS recovery action, never a website-supplied URL. */
   canOpenSettings: boolean;
+  /** Optional direct selection is omitted on older hosts and fixtures. */
+  native?: NativePickerAvailability;
 }
