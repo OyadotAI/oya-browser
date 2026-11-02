@@ -1,0 +1,16 @@
+{
+  "name": "@oya/window-selector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Oya's main-process ScreenCaptureKit window selection adapter",
+  "main": "build/Release/window_selector.node",
+  "os": [
+    "darwin"
+  ],
+  "gypfile": true,
+  "files": [
+    "binding.gyp",
+    "selector.mm",
+    "build/Release/window_selector.node"
+  ]
+}

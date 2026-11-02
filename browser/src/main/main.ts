@@ -209,17 +209,19 @@ ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
 ctx.routines = new Routines(ctx);
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
-ctx.agentTab = new AgentTab(ctx, () =>
+ctx.agentTab = new AgentTab(ctx, () => {
+  ctx.screenPicker.sync();
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.findBar.sync();
     scope.tabs.sendTabList();
-  }),
-);
+  });
+});
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
   changed: (state) => {
     ctx.agentTab.sync(state);
+    ctx.screenPicker.sync();
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
     ctx.windows?.each((scope) => scope.findBar.sync());

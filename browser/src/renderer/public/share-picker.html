@@ -60,6 +60,7 @@
       #origin {
         color: #eeefe9;
         font-weight: 500;
+        overflow-wrap: anywhere;
       }
       nav {
         display: flex;
@@ -238,6 +239,112 @@
         color: #78836c;
         border-color: #343d2d;
       }
+      #native-start,
+      #native-another,
+      #native-list {
+        border: 1px solid #46503b;
+        background: transparent;
+        color: #eeefe9;
+        padding: 9px 14px;
+        font-size: 13px;
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      #native-entry {
+        margin-bottom: 20px;
+      }
+      #native-entry p,
+      #native-candidate p,
+      #native-status {
+        font-size: 13px;
+        line-height: 1.5;
+        color: #a7af9c;
+        overflow-wrap: anywhere;
+      }
+      #native-recipient {
+        color: #eeefe9;
+      }
+      #native-status:empty {
+        display: none;
+      }
+      #native-preview {
+        display: block;
+        max-width: 128px;
+      }
+      .native-summary {
+        display: grid;
+        grid-template-columns: 128px minmax(0, 1fr);
+        align-items: start;
+        gap: 14px;
+      }
+      #native-title {
+        margin: 0 0 6px;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        font-size: 16px;
+      }
+      #native-title-full {
+        font-size: 12px;
+        color: #a7af9c;
+      }
+      .native-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      footer {
+        flex-wrap: wrap;
+      }
+      #selection {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+      }
+      @media (max-width: 680px) {
+        header {
+          padding: 16px;
+        }
+        h1 {
+          font-size: 22px;
+          margin-top: 9px;
+        }
+        nav {
+          margin: 0 16px;
+          gap: 20px;
+        }
+        .catalog {
+          padding: 16px;
+        }
+        #sources {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        footer {
+          padding: 12px 16px;
+        }
+      }
+      @media (max-width: 420px) {
+        .native-summary {
+          grid-template-columns: 88px minmax(0, 1fr);
+          gap: 12px;
+        }
+        #sources {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        footer .summary {
+          flex-basis: 100%;
+        }
+        nav {
+          gap: 14px;
+        }
+      }
       button:focus-visible {
         outline: 2px solid #b4efa5;
         outline-offset: 4px;
@@ -251,10 +358,10 @@
     <form id="content" hidden>
       <header>
         <div class="brand"><span class="mark" aria-hidden="true"></span>Oya Browser</div>
-        <h1>Choose what to share</h1>
+        <h1 id="picker-heading">Choose what to share</h1>
         <p class="recipient">Share with <span id="origin"></span></p>
       </header>
-      <nav role="tablist" aria-label="Source type">
+      <nav id="categories" role="tablist" aria-label="Source type">
         <button type="button" role="tab" id="tab" aria-controls="sources">
           Oya tab<span class="count" id="tab-count"></span>
         </button>
@@ -266,14 +373,41 @@
         </button>
       </nav>
       <main class="catalog">
-        <div id="sources" role="tabpanel" aria-labelledby="tab"></div>
-        <p id="empty" hidden></p>
-        <div id="recovery" hidden>
+        <div id="native-entry" hidden>
+          <button type="button" id="native-start">Choose a window on screen</button>
           <p>
-            Allow Oya Browser in Screen &amp; System Audio Recording. If it is missing, use + to add Oya Browser from
-            Applications. Then quit and reopen Oya and try sharing again.
+            macOS will help you choose a window. You'll confirm in Oya before sharing with
+            <span id="native-recipient"></span>.
           </p>
-          <button type="button" id="settings">Open Screen Recording settings</button>
+        </div>
+        <p id="native-status" role="status" aria-live="polite"></p>
+        <section id="native-candidate" aria-label="Selected window" hidden>
+          <div class="native-summary">
+            <span id="native-preview"></span>
+            <div>
+              <h2 id="native-title"></h2>
+              <details>
+                <summary>Full window title</summary>
+                <div id="native-title-full"></div>
+              </details>
+            </div>
+          </div>
+          <p>Nothing is shared until you select Select and share.</p>
+          <div class="native-actions">
+            <button type="button" id="native-another">Choose another window</button>
+            <button type="button" id="native-list">Use window list</button>
+          </div>
+        </section>
+        <div id="list-content">
+          <div id="sources" role="tabpanel" aria-labelledby="tab"></div>
+          <p id="empty" hidden></p>
+          <div id="recovery" hidden>
+            <p>
+              Allow Oya Browser in Screen &amp; System Audio Recording. If it is missing, use + to add Oya Browser from
+              Applications. Then quit and reopen Oya and try sharing again.
+            </p>
+            <button type="button" id="settings">Open Screen Recording settings</button>
+          </div>
         </div>
       </main>
       <footer>
